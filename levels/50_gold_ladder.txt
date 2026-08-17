@@ -1,0 +1,21 @@
+# The end of the first fifty. Only the gold counts, the ladder is offset at
+# every step, and the common crab is in the way of the one tile that
+# matters.
+name: Gold Ladder
+posts: 3
+goal: golden
+crab: 0,0 R R golden
+crab: 0,4 R R common
+solution: 2,0 D; 4,1 D; 4,2 R
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++-+-+ +-+-+-+-+
+|. . . . . . .|
++-+-+-+-+ +-+-+
+|. . . . . . 0|
++-+-+-+-+ +-+-+
+|. . . . . . .|
++-+-+ +-+-+-+-+
+|. . . . . . .|
++-+-+-+-+-+-+-+

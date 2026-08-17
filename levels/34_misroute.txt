@@ -1,0 +1,22 @@
+# One corridor, one log, and a castle behind it. The log deflects each
+# crab the other way from the last, so half the line goes right and half
+# goes wrong. Catch the half that goes wrong.
+name: Misroute
+posts: 2
+crab: 0,2 R R common
+crab: 1,2 R R common
+crab: 2,2 R R common
+crab: 3,2 R R common
+solution: 6,0 D; 6,3 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+ +-+-+
+|# # # # # # . # #|
++-+-+-+-+-+-+ +-+-+
+|. . . . . . T . 0|
++-+-+-+-+-+-+ +-+-+
+|# # # # # # . # #|
++-+-+-+-+-+-+ +-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

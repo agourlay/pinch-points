@@ -1,0 +1,26 @@
+# The lure as a tool: bank the molting crab and, for ten seconds, every
+# loose crab on the beach ignores every signpost and comes home to you.
+# One signpost is all you get. Spend it on the molt.
+name: Follow the Molt
+posts: 1
+crab: 1,1 R L molting
+crab: 7,1 R L common
+crab: 1,5 L R common
+crab: 7,5 R R common
+solution: 4,0 D
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . 0 . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

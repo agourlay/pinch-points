@@ -1,0 +1,21 @@
+# The castle is in the top row and every crab starts below it. One gull,
+# one rock, and a wall that only lets you up in two places.
+name: Castle On High
+posts: 2
+crab: 0,4 U L common
+crab: 0,1 R R common
+crab: 8,2 L L common
+gull: 8,0 L
+solution: 3,2 U; 7,3 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . 0 . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+ +-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+ +-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. # . . . . . . .|
++-+-+-+-+-+-+-+-+-+

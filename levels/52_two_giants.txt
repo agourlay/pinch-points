@@ -1,0 +1,26 @@
+# Two giants and a common, and giants are slow. The gulls are not. What
+# saves the slow ones is not the same tile that saves the quick one.
+name: Two Giants
+posts: 2
+crab: 0,5 R L giant
+crab: 0,4 R R giant
+crab: 0,2 R L common
+gull: 6,2 L
+gull: 0,6 R
+solution: 5,2 U; 4,4 U
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++-+-+ +-+-+-+-+
+|. . 0 . . . .|
++-+-+-+-+ + +-+
+|. . . . . . .|
++ +-+-+-+ +-+-+
+|. . . . . . .|
++-+-+-+-+ + +-+
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++-+-+-+-+-+ +-+
+|. . . . . . .|
++-+-+-+-+-+-+-+

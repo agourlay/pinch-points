@@ -1,0 +1,25 @@
+# Nothing to bank here: keep them alive until the tide. A gull will not
+# step into kelp and a crab walks straight through it, so the weed bed on
+# the west wall is the only safe ground on the beach. Both crabs are
+# walking the wrong way.
+name: Kelp Keep
+posts: 2
+goal: survive
+round: 300
+crab: 3,1 R R common
+crab: 3,3 R L common
+gull: 8,1 L
+gull: 8,3 L
+solution: 4,1 D; 4,3 U
+map:
++-+-+-+-+-+-+-+-+-+
+|K K . . . . . . .|
++ + +-+-+-+-+-+-+-+
+|K K . . . . . . .|
++ + +-+-+-+-+-+-+-+
+|K K . . . . . . .|
++ + +-+-+-+-+-+-+-+
+|K K . . . . . . .|
++ + +-+-+-+-+-+-+-+
+|K K . . . . . . .|
++-+-+-+-+-+-+-+-+-+

@@ -1,0 +1,21 @@
+# Kelp in the second row, gulls down the east side, and a castle low on
+# the right. A crab walks through weed and a walking gull does not.
+name: Weed Between
+posts: 3
+crab: 0,0 R R common
+crab: 8,4 L L common
+gull: 8,0 L
+gull: 8,2 L
+solution: 1,0 D; 4,1 D; 1,2 D
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++ +-+-+-+-+ +-+-+-+
+|. K . . . . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . . . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . . . . . . 0 .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

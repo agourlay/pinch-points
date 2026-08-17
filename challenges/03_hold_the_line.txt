@@ -1,0 +1,21 @@
+name: Hold the Line
+posts: 3
+rule: evict 3
+round: 900
+goal: survive
+crab: 0,0 R L common
+crab: 1,0 R L common
+gull: 4,0 L
+solution: 2,0 D
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++-+-+-+-+-+-+-+

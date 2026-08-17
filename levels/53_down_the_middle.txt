@@ -1,0 +1,27 @@
+# Three crabs off the east wall and gulls at both corners of the west.
+# The castle is in the far corner behind a pool, and the lane that
+# reaches it is not the lane they are in.
+name: Down The Middle
+posts: 3
+crab: 6,1 L R common
+crab: 6,0 L L common
+crab: 6,2 L L common
+gull: 0,0 R
+gull: 0,6 R
+solution: 0,0 D; 3,0 R; 5,3 D
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++-+-+-+-+-+-+ +
+|. . . . . . .|
++ +-+-+-+-+-+-+
+|. . . . . . .|
++-+-+-+-+-+ +-+
+|. . . . . . .|
++-+-+-+-+-+-+ +
+|. . . . . . .|
++ + + + + + + +
+|. . . . ~ 0 .|
++-+-+-+-+-+-+-+

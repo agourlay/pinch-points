@@ -1,0 +1,19 @@
+# The wrap lesson: with the edges open, a crab that walks off the east side
+# comes back on the west. Put your one signpost where it comes back around.
+name: Open Ocean
+posts: 1
+wrap: on
+crab: 2,0 R L common
+solution: 0,0 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|0 . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

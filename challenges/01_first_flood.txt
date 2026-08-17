@@ -1,0 +1,16 @@
+name: First Flood
+posts: 3
+rule: evict 3
+round: 900
+goal: bank 15
+solution: 4,0 D; 4,2 U
+spawner: 0,0 R 10
+spawner: 8,2 L 10
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|# # # # 0 # # # #|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

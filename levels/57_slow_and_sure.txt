@@ -1,0 +1,25 @@
+# A giant on the bottom lane and a common above it, with a gull waiting
+# at the end of each. The giant needs longer, so it needs turning first.
+name: Slow And Sure
+posts: 3
+crab: 0,3 R L common
+crab: 0,6 R L giant
+gull: 6,3 L
+gull: 6,6 L
+solution: 3,2 D; 3,5 U; 1,6 U
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++-+-+-+-+ +-+-+
+|. . . . . . .|
++-+-+-+-+-+-+ +
+|. . . . . . .|
++ + + + + + + +
+|. . . 0 . . .|
++ + + + + + + +
+|. . . . . . .|
++-+-+-+ +-+-+-+
+|. . . . . . .|
++ +-+-+-+-+-+-+
+|. . . . . . .|
++-+-+-+-+-+-+-+

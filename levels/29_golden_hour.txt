@@ -1,0 +1,24 @@
+# The gold is worth the whole beach: bank it and the stage is yours, whatever
+# happens to the rest. It is also quicker than they are, and its claw sends it
+# straight down into the gulls. Lift it out of their lane.
+name: Golden Hour
+posts: 1
+goal: golden
+crab: 4,2 R R golden
+crab: 0,4 R R common
+crab: 2,4 R R common
+gull: 4,4 L
+gull: 7,4 R
+solution: 8,2 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . 0|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

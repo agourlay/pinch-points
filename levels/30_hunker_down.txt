@@ -1,0 +1,26 @@
+# Not every stage asks you to bank them. The tide is coming in, the gulls are
+# already on the sand, and all you have to do is keep every crab alive until
+# the water arrives. A gull will not follow a crab into the weeds.
+name: Hunker Down
+posts: 1
+goal: survive
+round: 300
+crab: 0,2 R R common
+crab: 1,2 R R common
+crab: 2,2 R R common
+gull: 8,2 L
+gull: 8,4 L
+gull: 3,4 R
+solution: 4,2 U
+map:
++-+-+-+-+-+-+-+-+-+
+|K K K K K K K K K|
++-+-+-+-+ +-+-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|0 . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

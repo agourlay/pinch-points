@@ -1,0 +1,83 @@
+[package]
+name = "pinch-points"
+version = "0.1.0"
+edition = "2024"
+description = "A fast, kid-friendly crab-routing game: route streams of crabs into your sandcastle before the tide comes in"
+repository = "https://github.com/agourlay/pinch-points"
+license = "Apache-2.0"
+# The crate tarball needs what the build embeds (assets, levels,
+# challenges) but not the repo's paperwork, all of which lives in docs/;
+# the screenshots are the bulk and would not render on crates.io anyway.
+exclude = ["docs/", ".github/"]
+
+[dependencies]
+bevy = { version = "0.19.1", features = ["wav", "vorbis", "system_clipboard"] }
+include_dir = "0.7.4"
+semver = "1"
+# The start-up release check (`app::update`): one HTTPS GET to GitHub and
+# the JSON it answers with. serde_json is already in the tree under Bevy;
+# ureq brings rustls and a bundled root store, so the check works the same
+# on every desktop without asking the OS for certificates.
+serde_json = "1"
+ureq = "3"
+# One type, `Script`, for one call: telling the text stack which face to
+# reach for when a line is in a script the UI font has no glyphs for
+# (`app::boot`, Japanese). This is the crate that type actually lives in
+# - parley and fontique both re-export it from here - so naming it
+# directly is what keeps the version out of the argument. Depending on
+# parley instead would mean tracking whichever version bevy_text pulls,
+# and a second copy of parley and fontique in the build whenever we drift.
+parlance = "0.1"
+# Not called from here: this turns on the one feature that makes the text
+# stack's data layer report through `log` rather than straight to stderr.
+# Japanese line breaking wants a CJK dictionary the baked data does not
+# carry, and says so once per line per frame; routed through `log` it can
+# be filtered, which `app::schedule` does.
+icu_provider = { version = "2", features = ["logging"] }
+
+[dev-dependencies]
+# A progress bar for `examples/verify_levels`, the campaign minimality
+# proof: a release run of it is minutes of otherwise-silent solving, and a
+# bar is how you tell "still working" from "wedged". Examples build against
+# dev-dependencies, and nothing the game ships links this.
+indicatif = "0.17"
+
+[lints]
+workspace = true
+
+[workspace.lints.clippy]
+cast_lossless = "warn"
+doc_link_with_quotes = "warn"
+enum_glob_use = "warn"
+explicit_into_iter_loop = "warn"
+filter_map_next = "warn"
+flat_map_option = "warn"
+from_iter_instead_of_collect = "warn"
+implicit_clone = "warn"
+inconsistent_struct_constructor = "warn"
+inefficient_to_string = "warn"
+manual_is_variant_and = "warn"
+manual_let_else = "warn"
+needless_continue = "warn"
+needless_raw_string_hashes = "warn"
+ptr_as_ptr = "warn"
+ref_option_ref = "warn"
+uninlined_format_args = "warn"
+unnecessary_wraps = "warn"
+unused_self = "warn"
+used_underscore_binding = "warn"
+match_wildcard_for_single_variants = "warn"
+needless_pass_by_ref_mut = "warn"
+unused_async = "warn"
+wildcard_enum_match_arm = "warn"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+# Release speed with the symbols a profiler needs. `debug` costs nothing at
+# run time; it only stops `perf` reporting the whole solver as one
+# unnamed frame.
+[profile.profiling]
+inherits = "release"
+debug = true

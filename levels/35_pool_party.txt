@@ -1,0 +1,20 @@
+# Three pools on three lanes. None of them blocks anything: they only slow
+# a crab down, and slowing one down is sometimes the whole answer.
+name: Pool Party
+posts: 2
+crab: 0,0 R R common
+crab: 0,2 R R common
+crab: 8,4 L L common
+solution: 5,0 D; 2,3 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. ~ . . . . . . .|
++-+-+-+-+-+ +-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . 0 . . ~ .|
++-+-+ +-+-+-+-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . ~ . .|
++-+-+-+-+-+-+-+-+-+

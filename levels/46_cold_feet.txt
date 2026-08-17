@@ -1,0 +1,19 @@
+# A ladder with a pool at the foot of it. The crab that wades is the one
+# that arrives second, and second is not always worse.
+name: Cold Feet
+posts: 3
+crab: 8,3 L R common
+crab: 0,4 R R common
+solution: 1,3 U; 1,2 R; 6,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++ +-+-+-+-+ +-+-+-+
+|. . . . . . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . . . . . . 0 .|
++-+ +-+-+-+-+-+-+-+
+|. . ~ . . . . . .|
++-+-+-+-+-+-+ +-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

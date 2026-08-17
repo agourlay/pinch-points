@@ -1,0 +1,20 @@
+# The castle sits in the water. A crab wading through a pool walks at half
+# speed, which costs nothing here except the time you do not have.
+name: Rock Pool
+posts: 2
+crab: 0,0 R R common
+crab: 8,2 L L common
+crab: 0,4 R R common
+solution: 3,0 D; 4,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+ + +-+-+-+-+
+|. # . ~ ~ . # . .|
++ + + + + + + + + +
+|. . . ~ 0 ~ . . .|
++ + + + + + + + + +
+|. . # ~ ~ # . . .|
++-+-+-+ + +-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

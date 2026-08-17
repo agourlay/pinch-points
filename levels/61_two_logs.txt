@@ -1,0 +1,22 @@
+# Two logs, one in the middle of the board and one at the bottom, and a
+# juvenile coming the other way. A log turns each crosser the opposite way
+# from the last.
+name: Two Logs
+posts: 2
+crab: 0,4 R R common
+crab: 0,0 R R common
+crab: 6,1 L R juvenile
+gull: 0,3 R
+solution: 3,0 D; 3,4 U
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++ + + + + + + +
+|. . . 0 . . .|
++ + + + + + + +
+|. . . . . . .|
++-+-+-+ +-+-+-+
+|. . t K . . .|
++ + + + + + + +
+|. . . . . t .|
++-+-+-+-+-+-+-+

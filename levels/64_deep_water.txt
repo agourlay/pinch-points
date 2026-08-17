@@ -1,0 +1,25 @@
+# Rock in the middle, a pool at the bottom, and a gull walking the top
+# row. Three crabs, and the way down is not the way it looks.
+name: Deep Water
+posts: 2
+crab: 6,2 L L common
+crab: 6,4 L R common
+crab: 0,6 R R common
+gull: 0,0 R
+solution: 5,2 D; 3,6 U
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++ +-+-+-+-+-+-+
+|. . . # . . .|
++-+-+-+-+-+ +-+
+|. . . . 0 . .|
++ + +-+-+-+-+-+
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++-+-+-+ +-+ +-+
+|. . . . ~ . .|
++-+-+-+-+-+-+-+

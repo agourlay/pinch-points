@@ -1,0 +1,21 @@
+# A giant, two commons, and a gull in the middle lane. The log sits right
+# beside the castle, so the last step is the one to get right.
+name: Round The Log
+posts: 2
+crab: 6,0 L L common
+crab: 6,1 L R common
+crab: 6,4 L R giant
+gull: 6,2 L
+solution: 3,0 D; 4,2 D
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++-+-+-+ +-+-+-+
+|. . . . . . .|
++-+-+-+-+ +-+-+
+|. . . . . . .|
++ + + + + + + +
+|. . . . t 0 .|
++-+-+-+-+-+-+-+

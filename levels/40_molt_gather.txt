@@ -1,0 +1,22 @@
+# One molting crab in the corner and three commons scattered around it.
+# Bank the molt and every loose crab on the beach forgets your signposts
+# and walks home to you. Getting the molt there is the puzzle.
+name: Molt Gather
+posts: 2
+crab: 0,0 R R molting
+crab: 8,0 L L common
+crab: 0,4 R R common
+crab: 8,4 L L common
+solution: 4,0 D; 3,4 D
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . 0 . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

@@ -1,0 +1,19 @@
+# The same staircase, walked from the other end and with two crabs on it.
+# What sends one down sends the other past the turn.
+name: Zigzag
+posts: 3
+crab: 8,4 L R common
+crab: 8,0 L R common
+solution: 1,0 D; 6,1 D; 5,2 D
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+ +-+-+
+|. . . . . . . . .|
++-+-+-+-+-+ +-+-+-+
+|. . . . . . . . .|
++-+-+ +-+-+ +-+-+-+
+|. 0 . . . . . . .|
++-+-+-+-+-+-+-+-+-+

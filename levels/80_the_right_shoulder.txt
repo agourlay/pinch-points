@@ -1,0 +1,21 @@
+# The same beach with the sidestep the other way. If the last one taught
+# you a habit, this is where it costs you.
+name: The Right Shoulder
+posts: 4
+crab: 2,0 L R common
+crab: 2,2 L L giant
+crab: 2,3 L R common
+crab: 2,4 L R common
+solution: 1,0 D; 1,1 R; 1,2 U; 1,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . .|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . 0|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . .|. . . . . .|
++ +-+-+-+-+-+-+-+-+
+|. . .|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|t . .|. . . . . .|
++-+-+-+-+-+-+-+-+-+

@@ -1,0 +1,21 @@
+# A gull walking the middle lane, a log in the corner by the castle, and
+# a pool at the top. Three posts, and one of them is spent turning a crab
+# back the way it came.
+name: Kelp And Cross
+posts: 3
+crab: 6,1 L L common
+crab: 0,2 R L common
+gull: 6,2 L
+solution: 1,1 D; 1,2 L; 5,3 D
+map:
++-+-+-+-+-+-+-+
+|. . . . ~ . .|
++-+ + +-+-+-+-+
+|. . . . . . .|
++-+ +-+-+-+-+-+
+|. . . . . . .|
++ +-+-+-+-+-+-+
+|. K . . . . .|
++-+-+-+-+-+ +-+
+|. . . 0 T . .|
++-+-+-+-+-+-+-+

@@ -1,0 +1,25 @@
+# Kelp in the middle of the board, a juvenile, a common, and a gull below.
+# The weed is a door for a crab and a wall for the gull.
+name: Weed Gate
+posts: 2
+crab: 6,0 L L common
+crab: 0,3 R R juvenile
+crab: 0,2 R L common
+gull: 0,5 R
+solution: 1,0 D; 4,1 D
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++-+ +-+-+-+-+-+
+|. . . . . . .|
++-+-+-+-+ +-+-+
+|. . . K . . .|
++-+-+-+-+-+-+ +
+|. . . 0 . . .|
++ +-+-+-+-+-+-+
+|. . . . . . .|
++-+-+-+-+ +-+-+
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++-+-+-+-+-+-+-+

@@ -1,0 +1,22 @@
+# Four crabs, four corners, and a rock wall down each side. The only way
+# in is the middle, and every claw turns away from it. Two signposts, one
+# for each pair that shares a mistake.
+name: Crossfall
+posts: 2
+crab: 0,0 R R common
+crab: 8,0 L L common
+crab: 0,4 R L common
+crab: 8,4 L R common
+solution: 3,0 D; 4,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+ + +-+-+-+-+
+|# # . . . . # # #|
++-+-+ + + + +-+-+-+
+|. . . . 0 . . . .|
++-+-+ + + + +-+-+-+
+|# # . . . . # # #|
++-+-+-+ + +-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

@@ -1,0 +1,22 @@
+# A giant coming west and a common coming east on a board of long
+# shelves. The castle is in the top corner and neither crab is aimed
+# anywhere near it.
+name: The Long Shelf
+posts: 3
+crab: 0,3 R R common
+crab: 8,2 L L giant
+gull: 0,1 R
+gull: 8,3 L
+solution: 5,1 U; 2,2 U; 1,3 D
+map:
++-+-+-+-+-+-+-+-+-+
+|. 0 . . . . . . .|
++-+-+-+-+-+ +-+-+-+
+|. . . . . . . . .|
++-+-+ +-+-+-+-+-+-+
+|. . . . . . . . .|
++ +-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

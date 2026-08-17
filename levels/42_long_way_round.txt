@@ -1,0 +1,22 @@
+# Open edges, three crabs, and a castle in the corner. A crab that walks
+# off the east side comes back on the west, which turns the far edge into
+# the near one if you are patient about it.
+name: Long Way Round
+posts: 2
+wrap: on
+crab: 4,0 R R common
+crab: 4,2 L L common
+crab: 4,4 R L common
+solution: 8,0 U; 8,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . 0|
++ + + + + + + + + +
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

@@ -1,0 +1,25 @@
+# Two juveniles, which are fast, and two gulls, which are not. Speed is
+# only an advantage if it is pointed the right way.
+name: Quick Feet
+posts: 3
+crab: 0,2 R R juvenile
+crab: 0,5 R L juvenile
+gull: 6,4 L
+gull: 6,6 L
+solution: 3,2 R; 5,4 U; 4,3 U
+map:
++-+-+-+-+-+-+-+
+|. . 0 . . . .|
++-+-+-+-+-+ + +
+|. . . . . . .|
++-+-+-+-+-+-+ +
+|. . . . . . .|
++-+-+-+-+ +-+-+
+|. . . . . . .|
++-+-+-+-+-+ +-+
+|. . . . . . .|
++ +-+-+ +-+-+-+
+|. . . . . . .|
++-+-+-+ +-+-+-+
+|. . . . . . .|
++-+-+-+-+-+-+-+

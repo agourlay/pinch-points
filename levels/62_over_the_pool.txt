@@ -1,0 +1,22 @@
+# Three crabs down the east wall, a log and a pool stacked in the middle
+# column, and the castle in the far corner. The pool costs time the gull
+# is happy to take.
+name: Over The Pool
+posts: 2
+crab: 6,1 L L common
+crab: 6,3 L R common
+crab: 6,0 L L common
+gull: 6,4 L
+solution: 4,0 D; 4,1 D
+map:
++-+-+-+-+-+-+-+
+|. . . ~ . . .|
++-+-+-+-+ +-+-+
+|. . . T . . .|
++-+-+-+-+ +-+-+
+|. . . . . . .|
++-+-+-+-+-+-+ +
+|. . # . . . .|
++ + + + + + + +
+|. 0 . . . . .|
++-+-+-+-+-+-+-+

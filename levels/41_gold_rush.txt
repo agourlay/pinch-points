@@ -1,0 +1,23 @@
+# The gold is the only crab that counts, and it starts in a gull's lane,
+# walking straight at it. There is one gap out of that lane and you have
+# to reach it first; the second gull is what the other post is for.
+name: Gold Rush
+posts: 2
+goal: golden
+crab: 0,4 R R golden
+crab: 0,0 R R common
+gull: 5,4 L
+gull: 8,2 L
+solution: 8,2 L; 2,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+ +-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . 0 . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+ +-+-+-+-+ +-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

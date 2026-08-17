@@ -1,0 +1,19 @@
+# No gulls on this one. A row of rock across the top, a castle set in it,
+# and a staircase of gaps that does not run straight.
+name: Rock Row
+posts: 3
+crab: 0,4 R L common
+crab: 6,0 L L common
+solution: 3,4 U; 4,3 U; 1,2 U
+map:
++-+-+-+-+-+-+-+
+|# . # . 0 . .|
++-+-+-+-+-+-+ +
+|. . . . . . .|
++-+ +-+-+-+-+-+
+|. . . . . . .|
++-+-+-+-+ +-+-+
+|. . . . . . .|
++-+-+-+ +-+-+-+
+|. . . . . . .|
++-+-+-+-+-+-+-+

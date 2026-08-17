@@ -1,0 +1,20 @@
+# Two crabs off the same edge, one at the top and one at the bottom, and
+# a castle in the top row between them. The stair each one needs is not
+# the stair the other one needs.
+name: The Back Stair
+posts: 3
+crab: 6,4 L L common
+crab: 6,0 L L common
+solution: 3,4 U; 3,2 U; 2,1 U
+map:
++-+-+-+-+-+-+-+
+|. . . . . 0 .|
++-+-+ +-+-+-+-+
+|. . . . . . .|
++-+-+-+ +-+-+-+
+|. . . . . . .|
++ +-+-+-+-+-+-+
+|. . . . . . .|
++-+-+-+ +-+ +-+
+|. . . . . . .|
++-+-+-+-+-+-+-+

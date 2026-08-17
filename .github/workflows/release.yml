@@ -1,0 +1,107 @@
+name: release binaries
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  upload-bins:
+    name: "Upload release binaries"
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            # Built on an arm runner rather than cross-compiled from x86_64.
+            # The three system libraries below come from pkg-config, and a
+            # cross build needs arm64 copies of each plus a cross toolchain;
+            # a native runner needs neither.
+            os: ubuntu-24.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      # A stock runner has around 14 GB free and a debug Bevy link does not
+      # fit in it, which is what took CI down in "Put the disk back". A
+      # release build is far smaller - no debuginfo, one binary, no test or
+      # example links - so this is insurance rather than a fix, on the one
+      # build nobody gets to casually retry. Linux only: the action clears
+      # the Android SDK, .NET, GHC and Docker images, which are paths of the
+      # Ubuntu image and mean nothing on the Windows and macOS legs. It is
+      # defensive about what it does not find, so the arm runner is fine.
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+      # Bevy links three system libraries on Linux and finds them through
+      # pkg-config: wayland-client (winit's Wayland backend, and the clipboard
+      # `system_clipboard` reaches for), alsa (audio), udev (gamepads).
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libasound2-dev libudev-dev
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          target: ${{ matrix.target }}
+          bin: pinch-points
+          archive: $bin-$tag-$target
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-crate:
+    name: "Publish on crates.io"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v7
+      # The verification build below is a *debug* build of the whole crate,
+      # which is the shape that ran the disk out in CI, so this leg wants
+      # the space more than the release binaries do. Always Ubuntu, so no
+      # guard.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+      # `cargo publish` verifies the packaged crate by building it, so this
+      # leg needs the same libraries the binary builds do.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libasound2-dev libudev-dev
+      # Pinned rather than left to whatever the runner image happens to
+      # ship: this crate is edition 2024, and the publish is the one build
+      # nobody gets to retry against a different toolchain.
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+      # The token goes in the environment rather than in argv, where it
+      # would sit in the process list of a machine we do not own.
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+        run: cargo publish

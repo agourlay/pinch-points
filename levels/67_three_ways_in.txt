@@ -1,0 +1,22 @@
+# A giant from the east and two commons from the west, with a gull behind
+# the giant. The castle has more than one door and they do not all suit
+# the same crab.
+name: Three Ways In
+posts: 2
+crab: 8,3 L L giant
+crab: 0,4 R L common
+crab: 0,2 R L common
+gull: 8,4 L
+solution: 1,1 D; 6,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+ +-+-+-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . . . 0 . . . .|
++-+-+-+-+-+-+ +-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

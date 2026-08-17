@@ -1,0 +1,21 @@
+# A gull on each side and a castle on the east wall. Both crabs are
+# walking into the jaws; only one of them can be turned away in time.
+name: Pincer
+posts: 2
+crab: 6,0 L R common
+crab: 0,2 R L common
+gull: 0,1 R
+gull: 6,1 L
+solution: 5,0 U; 4,1 D
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++-+-+-+-+-+-+ +
+|. . . . . . .|
++-+-+-+-+ +-+-+
+|. . . . . . 0|
++ + + + + + + +
+|. . . . . . .|
++ + + + + + + +
+|. . . . T . .|
++-+-+-+-+-+-+-+

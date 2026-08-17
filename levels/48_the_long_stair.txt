@@ -1,0 +1,19 @@
+# Four rows, four gaps, and a log on the way to the castle. The stair is
+# walkable. Finding which step to leave it on is not.
+name: The Long Stair
+posts: 3
+crab: 0,0 R L common
+crab: 6,1 L R common
+solution: 3,0 D; 2,1 D; 5,2 D
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++-+-+-+ +-+-+-+
+|. . . . . . .|
++-+-+ +-+-+-+-+
+|. . . . . . T|
++-+-+-+-+-+ +-+
+|. . . . . . 0|
++-+ +-+-+-+-+-+
+|. . . . . . .|
++-+-+-+-+-+-+-+

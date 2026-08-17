@@ -1,0 +1,21 @@
+# Two gulls on the east wall and a crab starting under them. The log at
+# the top turns whoever crosses it, and it turns the other way next time.
+name: Left Behind
+posts: 2
+crab: 8,4 L R common
+crab: 0,0 R L common
+gull: 8,1 L
+gull: 8,0 L
+solution: 3,0 D; 0,3 D
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . t . . . .|
++-+-+-+ +-+-+-+-+-+
+|. . . . . . 0 . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+ +
+|. . K . . . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

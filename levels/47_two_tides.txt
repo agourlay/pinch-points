@@ -1,0 +1,20 @@
+# Two sealed corridors, one gap each, and neither crab walks over its own
+# gap. Turning them in is only two thirds of it: what they do after they
+# are through is the third signpost.
+name: Two Tides
+posts: 3
+crab: 0,0 R R common
+crab: 0,4 R R common
+solution: 2,0 D; 4,1 D; 6,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+ +-+-+-+-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . 0 . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+-+-+ +-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

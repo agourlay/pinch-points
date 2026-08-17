@@ -1,0 +1,26 @@
+# The last beach before the four-post dozen. A juvenile, two commons, a
+# gull in the corner, a rock at the bottom, and a castle nobody is walking
+# towards.
+name: Last Of The Tide
+posts: 2
+crab: 0,2 R R common
+crab: 6,6 L L common
+crab: 0,4 R L juvenile
+gull: 0,6 R
+solution: 5,4 U; 1,3 U
+map:
++-+-+-+-+-+-+-+
+|. . . . . . .|
++-+-+-+-+ +-+-+
+|. . . . . . .|
++ + + + + + + +
+|. . . 0 . . .|
++-+ +-+-+-+-+-+
+|. . . . . . .|
++-+-+-+-+-+ +-+
+|. . . . . . .|
++ +-+-+-+-+ +-+
+|. . . . . . .|
++-+-+-+ +-+-+-+
+|. . # . . . .|
++-+-+-+-+-+-+-+

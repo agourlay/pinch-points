@@ -1,0 +1,25 @@
+# The castle in the top right, a giant coming the wrong way along the
+# bottom, and a gull between them. Everything has to cross the board.
+name: The Far Corner
+posts: 3
+crab: 6,4 L R giant
+crab: 0,6 R L common
+crab: 6,5 L L common
+gull: 0,4 R
+solution: 4,2 U; 2,4 L; 2,5 U
+map:
++-+-+-+-+-+-+-+
+|. . . . . . 0|
++-+-+-+-+ +-+-+
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++ +-+-+-+-+-+-+
+|. . . . . . .|
++ + +-+-+-+-+-+
+|. . . . . . .|
++-+-+ +-+-+-+-+
+|. . . . . . .|
++ + + + + + + +
+|. . . . . . .|
++-+-+-+-+-+-+-+

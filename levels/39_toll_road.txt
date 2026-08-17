@@ -1,0 +1,22 @@
+# Four logs around one castle, two turning right and two turning left. The
+# crabs come from both sides at once, so the same signpost cannot answer
+# for both.
+name: Toll Road
+posts: 2
+crab: 0,1 R R common
+crab: 0,3 R R common
+crab: 8,1 L L common
+crab: 8,3 L L common
+solution: 4,1 D; 4,3 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . t . T . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . 0 . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . T . t . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

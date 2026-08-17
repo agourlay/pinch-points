@@ -1,0 +1,22 @@
+# Four lanes, four crabs, and one door out of each. No door serves two of
+# them, so there is nothing clever to find here: four signposts, and the
+# only question is which tile in each lane.
+name: The Four Doors
+posts: 4
+crab: 0,0 R R common
+crab: 0,1 R R common
+crab: 0,2 R R common
+crab: 0,3 R R common
+solution: 1,0 D; 1,1 D; 1,2 D; 1,3 D
+map:
++-+-+-+-+-+-+-+-+-+
+|. . .|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . .|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . .|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . .|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|0 . .|. . . . . .|
++-+-+-+-+-+-+-+-+-+

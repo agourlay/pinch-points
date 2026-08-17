@@ -1,0 +1,21 @@
+# A log at the top and a log at the bottom, each pointing a crab back the
+# way it came. A log cannot be removed, only arrived at from a side that
+# suits you.
+name: Mill Race
+posts: 2
+crab: 0,0 R R common
+crab: 0,2 R R common
+crab: 0,4 R R common
+solution: 4,0 D; 4,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . T . . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . . . . . .|
++ + + + + + + + + +
+|. . . . 0 . . . .|
++ + + + + + + + + +
+|. . . . . . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . . t . . .|
++-+-+-+-+-+-+-+-+-+

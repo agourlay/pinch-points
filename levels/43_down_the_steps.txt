@@ -1,0 +1,19 @@
+# A staircase of gaps, each one column off the last. There is exactly one
+# way down and it does not run straight.
+name: Down The Steps
+posts: 3
+crab: 8,2 L L common
+crab: 0,1 R R common
+solution: 2,1 D; 5,2 D; 4,3 D
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+ +-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+ +-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+ +-+-+-+
+|. . . . . . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . . . . 0 .|
++-+-+-+-+-+-+-+-+-+

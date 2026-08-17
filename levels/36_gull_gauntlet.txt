@@ -1,0 +1,27 @@
+# Three lanes, three gulls, one castle between them. A gull walks the lane
+# it is in until something turns it. So does a crab.
+name: Gull Gauntlet
+posts: 3
+crab: 0,1 R R common
+crab: 0,3 R R common
+crab: 0,5 R R common
+gull: 8,1 L
+gull: 8,3 L
+gull: 8,5 L
+solution: 4,1 D; 5,3 R; 4,5 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . 0 . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

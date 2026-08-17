@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Rust CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true  
+      # Bevy links three system libraries on Linux and finds them through
+      # pkg-config, so a bare runner fails in a build script rather than in
+      # our code: wayland-client (winit's Wayland backend, and the clipboard
+      # `system_clipboard` reaches for), alsa (audio), udev (gamepads).
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libasound2-dev libudev-dev
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Build
+        run: cargo build
+      - name: Check code formatting
+        run: cargo fmt --all -- --check
+      - name: Check cargo clippy warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings  
+      - name: Run tests
+        run: cargo nextest run
+      # The campaign minimality proof - no level grants a post it does not
+      # need - is an exhaustive-per-level solver search, a minute even in
+      # release across every core, and too expensive to spend on every push.
+      # It is not run here: it lives in `examples/verify_levels.rs`, to be
+      # run by hand after editing a level file (`cargo run --release --example
+      # verify_levels`), since levels change far less often than code does.

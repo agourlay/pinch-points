@@ -1,0 +1,19 @@
+# One ladder on each side of the beach and a castle in the middle of the
+# top row. Both crabs can reach it. Neither does.
+name: Two Ladders
+posts: 3
+crab: 0,0 R R common
+crab: 8,4 L L common
+solution: 1,0 D; 1,1 R; 1,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+ +-+-+-+-+-+ +-+
+|. . . . 0 . . . .|
++-+ +-+-+-+-+-+ +-+
+|. . . . . . . . .|
++-+ +-+-+-+-+-+ +-+
+|. . . . . . . . .|
++-+ +-+-+-+-+-+ +-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+
