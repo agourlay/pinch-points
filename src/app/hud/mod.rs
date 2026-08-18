@@ -157,7 +157,7 @@ pub struct TideClock;
 
 /// The one shipped level whose lesson is the keys themselves (see
 /// `LEVEL_HINTS`); a test checks the table still says so.
-const KEY_LESSON_LEVEL: &str = "Welcome Ashore";
+pub(crate) const KEY_LESSON_LEVEL: &str = "Welcome Ashore";
 
 /// Show a level's teaching hint while its signposts are being placed.
 pub fn update_hint(
@@ -180,7 +180,9 @@ pub fn update_hint(
             // ones, and the prompt line already points at Settings.
             let honest = name != KEY_LESSON_LEVEL || settings.stock_legend();
             if *phase.get() == Phase::Setup && honest {
-                settings.language.level_hint(name).unwrap_or("").to_string()
+                settings
+                    .keycaps
+                    .legend(settings.language.level_hint(name).unwrap_or(""))
             } else {
                 String::new()
             }

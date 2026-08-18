@@ -393,7 +393,7 @@ pub fn lobby_input(
     // first line composed picks up every keystroke since the lobby opened.
     typed.clear();
     // T for talk, once there is anyone to talk to.
-    if intent.is_none() && keys.just_pressed(KeyCode::KeyT) && state.can_chat() {
+    if intent.is_none() && settings.keycaps.just_pressed(&keys, 'T') && state.can_chat() {
         state.typing = Some(Typing::chat());
         return;
     }
@@ -422,7 +422,7 @@ pub fn lobby_input(
     }
     let step = host_step(HostAsk {
         answered: intent == Some(Intent::Host),
-        pressed_h: keys.just_pressed(KeyCode::KeyH),
+        pressed_h: settings.keycaps.just_pressed(&keys, 'H'),
         busy: state.standing().at_a_beach(),
         auto: auto_host,
     });

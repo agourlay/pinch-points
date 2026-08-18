@@ -501,7 +501,7 @@ pub(super) fn row_text(
         Row::CommitKeys => (
             tr.set_commit_keys,
             if settings.ijkl_commits {
-                tr.val_ijkl.to_string()
+                settings.keycaps.legend(tr.val_ijkl)
             } else {
                 tr.val_arrows.to_string()
             },

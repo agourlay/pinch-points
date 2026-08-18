@@ -147,7 +147,7 @@ pub fn copy_round_code(
     mut clipboard: ResMut<Clipboard>,
     mut feed: ResMut<crate::app::side_panels::EventLog>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyC) {
+    if !settings.keycaps.just_pressed(&keys, 'C') {
         return;
     }
     let round = Suspended {

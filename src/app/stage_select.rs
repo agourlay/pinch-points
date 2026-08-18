@@ -628,13 +628,15 @@ pub fn update_stage_tiles(
     // what to do about it.
     if let Ok(mut text) = hints.single_mut() {
         let hint = match state {
-            TileState::Locked => "",
-            TileState::Cleared | TileState::Open => settings
-                .language
-                .level_hint(&campaign.levels[list.selected].name)
-                .unwrap_or(""),
+            TileState::Locked => String::new(),
+            TileState::Cleared | TileState::Open => settings.keycaps.legend(
+                settings
+                    .language
+                    .level_hint(&campaign.levels[list.selected].name)
+                    .unwrap_or(""),
+            ),
         };
-        menu_ui::set_text(&mut text, hint);
+        menu_ui::set_text(&mut text, &hint);
     }
 }
 

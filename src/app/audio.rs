@@ -296,9 +296,14 @@ pub fn surge_tempo(
     }
 }
 
-/// M toggles the background music anywhere.
-pub fn toggle_music(keys: Res<ButtonInput<KeyCode>>, sinks: Query<&AudioSink, With<Music>>) {
-    if keys.just_pressed(KeyCode::KeyM) {
+/// M toggles the background music anywhere: the cap that says M, on
+/// whatever keyboard this is.
+pub fn toggle_music(
+    keys: Res<ButtonInput<KeyCode>>,
+    settings: Res<crate::app::settings::GameSettings>,
+    sinks: Query<&AudioSink, With<Music>>,
+) {
+    if settings.keycaps.just_pressed(&keys, 'M') {
         for sink in &sinks {
             sink.toggle_playback();
         }

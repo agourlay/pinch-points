@@ -266,7 +266,7 @@ pub fn setup_input(
     if keys.just_pressed(KeyCode::Enter) {
         next_phase.set(Phase::Running);
     }
-    if keys.just_pressed(KeyCode::KeyN) {
+    if settings.keycaps.just_pressed(&keys, 'N') {
         // Browsing forward stops at the ladder: the stage list is the only
         // way past a stage you have not cleared.
         let next = (campaign.index + 1) % campaign.levels.len();
@@ -278,7 +278,7 @@ pub fn setup_input(
             denied.write(PlacementDenied { player: 0 });
         }
     }
-    if keys.just_pressed(KeyCode::KeyP) {
+    if settings.keycaps.just_pressed(&keys, 'P') {
         campaign.index = (campaign.index + campaign.levels.len() - 1) % campaign.levels.len();
         load.write(LoadLevel { keep_posts: false });
     }
@@ -287,13 +287,14 @@ pub fn setup_input(
 /// Puzzle running phase: R resets to setup (keeping placed posts), Esc pauses.
 pub fn running_input(
     keys: Res<ButtonInput<KeyCode>>,
+    settings: Res<GameSettings>,
     mut paused: ResMut<Paused>,
     mut load: MessageWriter<LoadLevel>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         paused.0 = !paused.0;
     }
-    if keys.just_pressed(KeyCode::KeyR) {
+    if settings.keycaps.just_pressed(&keys, 'R') {
         load.write(LoadLevel { keep_posts: true });
     }
 }
@@ -301,6 +302,7 @@ pub fn running_input(
 /// Puzzle won/lost phase: Enter advances (or retries after a loss), R replays.
 pub fn done_input(
     keys: Res<ButtonInput<KeyCode>>,
+    settings: Res<GameSettings>,
     phase: Res<State<Phase>>,
     mut campaign: ResMut<Campaign>,
     mut next_screen: ResMut<NextState<Screen>>,
@@ -327,7 +329,7 @@ pub fn done_input(
         campaign.index += 1;
         load.write(LoadLevel { keep_posts: false });
     }
-    if keys.just_pressed(KeyCode::KeyR) {
+    if settings.keycaps.just_pressed(&keys, 'R') {
         load.write(LoadLevel { keep_posts: true });
     }
 }

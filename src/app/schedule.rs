@@ -402,6 +402,14 @@ fn add_frame_systems(app: &mut App) {
         })
         .in_set(Frame::Play),
     );
+    // Learns what the keys say before anything this frame spells one out:
+    // the controls screen labelling a rebind, the prompt line naming the
+    // move keys. After Bevy's own input pass, so the modifier check sees
+    // this frame's Shift, not last frame's.
+    app.add_systems(
+        PreUpdate,
+        keycaps::learn_keycaps.after(bevy::input::InputSystems),
+    );
     app.configure_sets(
         Update,
         (

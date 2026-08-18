@@ -281,10 +281,10 @@ pub fn library_input(
         library.selected = menu_ui::nav(&keys, library.selected, shown);
         library.settle();
     }
-    if keys.just_pressed(KeyCode::KeyC) {
+    if settings.keycaps.just_pressed(&keys, 'C') {
         library.feedback = copy_selected(&mut clipboard, tr, &library);
     }
-    if keys.just_pressed(KeyCode::KeyV) {
+    if settings.keycaps.just_pressed(&keys, 'V') {
         library.feedback = keep_pasted(&mut clipboard, tr);
         // Whatever happened, the shelf may have grown; re-read it so the new
         // round is there to pick rather than waiting for the screen to be

@@ -145,7 +145,10 @@ pub fn controls_input(
             menu.feedback.clear();
             return;
         }
-        let Some(&key) = keys.get_just_pressed().find(|&&k| binds::bindable(k)) else {
+        let Some(&key) = keys
+            .get_just_pressed()
+            .find(|&&k| binds::bindable(k) && !settings.keycaps.is_global(k))
+        else {
             return;
         };
         let seat = menu.seat;
@@ -154,7 +157,7 @@ pub fn controls_input(
             Err((_, taken_by)) => fill(
                 tr.ctl_taken,
                 &[
-                    ("k", &binds::key_label(key)),
+                    ("k", &settings.keycaps.label(key)),
                     ("a", tr.bind_actions[taken_by.index()]),
                 ],
             ),
@@ -222,7 +225,7 @@ pub fn update_controls_ui(
                 let value = if menu.capturing == Some(action) {
                     tr.ctl_listening.to_string()
                 } else {
-                    binds::key_label(key)
+                    settings.keycaps.label(key)
                 };
                 (tr.bind_actions[action.index()].to_string(), value)
             }

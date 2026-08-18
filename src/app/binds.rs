@@ -152,6 +152,18 @@ pub const GLOBAL_KEYS: [KeyCode; 6] = [
     KeyCode::KeyC,
 ];
 
+/// The same six as the letters on their caps: what the game actually
+/// listens for, through [`crate::app::keycaps::KeyCaps::key_for`], since a
+/// mnemonic belongs to its letter and not to a position. [`GLOBAL_KEYS`]
+/// is where those letters sit on QWERTY.
+pub const GLOBAL_LETTERS: [char; 6] = ['M', 'H', 'N', 'P', 'R', 'C'];
+
+/// [`key_from_name`] for the global keys, which are not bindable and so
+/// not in its catalogue.
+pub fn global_key_from_name(name: &str) -> Option<KeyCode> {
+    GLOBAL_KEYS.into_iter().find(|&key| key_name(key) == name)
+}
+
 /// Keys a player may bind. Anything outside this list is ignored during
 /// capture, which keeps Escape (cancel), the [`GLOBAL_KEYS`] and the odd
 /// media key from being swallowed by a rebind.

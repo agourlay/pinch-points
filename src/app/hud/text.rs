@@ -356,6 +356,9 @@ pub(super) fn screen_text(screen: Screen, r: &Readout) -> HudText {
     if matches!(screen, Screen::Versus | Screen::Puzzle) {
         said.prompt = format!("{} | {}", said.prompt, r.tr.prompt_mute);
     }
+    // Spelled in this keyboard's caps here, once, rather than in each of
+    // the legends that name the move keys.
+    said.prompt = r.settings.keycaps.legend(&said.prompt);
     said
 }
 

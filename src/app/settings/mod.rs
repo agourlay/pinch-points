@@ -157,6 +157,10 @@ pub struct GameSettings {
     /// the game says to the wider internet, so it is the player's to
     /// switch off.
     pub check_updates: bool,
+    /// What the letter keys say on this keyboard, learned from presses
+    /// (see [`crate::app::keycaps`]). Not a preference - nobody sets it -
+    /// but per-machine state that belongs beside the bindings it labels.
+    pub keycaps: crate::app::keycaps::KeyCaps,
 }
 
 /// Longest seat name we keep. The score chips and the event feed are laid
@@ -270,6 +274,7 @@ impl Default for GameSettings {
             replay_cap: REPLAY_CAP_DEFAULT,
             last_beach: String::new(),
             check_updates: true,
+            keycaps: crate::app::keycaps::KeyCaps::default(),
         }
     }
 }
@@ -299,13 +304,14 @@ impl GameSettings {
             replay_cap,
             last_beach,
             check_updates,
+            keycaps,
         } = self;
         format!(
             "commit_scheme: {}\nrepeat_delay: {:.2}\nrepeat_interval: {:.2}\n\
              music: {}\nsfx: {}\npuzzle_speed: {}\nteams: {}\nlanguage: {}\n\
              rumble: {}\npad_deadzone: {}\npalette: {}\nui_scale: {}\n\
              reduced_motion: {}\nnames: {}\nreplay_cap: {}\nbeach: {}\n\
-             updates: {}\n\
+             updates: {}\nkeycaps: {}\n\
              p1_input: {}\np2_input: {}\n{}",
             if *ijkl_commits { "ijkl" } else { "arrows" },
             repeat_delay,
@@ -324,6 +330,7 @@ impl GameSettings {
             replay_cap,
             last_beach,
             if *check_updates { "on" } else { "off" },
+            keycaps.to_text(),
             seat_input[0].name(),
             seat_input[1].name(),
             crate::app::binds::to_text(binds),
@@ -409,6 +416,7 @@ impl GameSettings {
                     }
                 }
                 "updates" => settings.check_updates = value != "off",
+                "keycaps" => settings.keycaps = crate::app::keycaps::KeyCaps::parse(value),
                 "keys_p1" | "keys_p2" => {
                     let seat = usize::from(key.trim() == "keys_p2");
                     if let Some(seat_binds) = crate::app::binds::parse_seat(value) {
@@ -561,6 +569,7 @@ mod tests {
                 String::new(),
             ],
             last_beach: "10.0.0.5:47777".into(),
+            keycaps: crate::app::keycaps::KeyCaps::parse("KeyW=Z KeyA=Q"),
             ..GameSettings::default()
         };
         let reparsed = GameSettings::parse(&settings.to_text());

@@ -93,11 +93,12 @@ fn next_step(campaign: &Campaign, sim: &Sim) -> Option<Placement> {
 /// H, once the player has failed enough, reveals one signpost.
 pub fn hint_input(
     keys: Res<ButtonInput<KeyCode>>,
+    settings: Res<crate::app::settings::GameSettings>,
     campaign: Res<Campaign>,
     sim: Res<Sim>,
     mut hints: ResMut<Hints>,
 ) {
-    if !keys.just_pressed(KeyCode::KeyH) || !hints.offered() {
+    if !settings.keycaps.just_pressed(&keys, 'H') || !hints.offered() {
         return;
     }
     hints.shown = next_step(&campaign, &sim);
@@ -207,6 +208,7 @@ mod tests {
 
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::settings::GameSettings>();
         app.init_resource::<Hints>();
         app.insert_resource(campaign_at(27));
         let level = campaign_at(27).current().clone();

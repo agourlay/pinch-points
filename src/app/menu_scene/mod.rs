@@ -365,7 +365,7 @@ pub fn menu_input(
     }
     // A pasted round is the other way onto a beach mid-play, and it does not
     // belong to any one row: V works wherever the cursor is.
-    if keys.just_pressed(KeyCode::KeyV) {
+    if settings.keycaps.just_pressed(&keys, 'V') {
         match crate::app::suspend::round_from(
             crate::app::codes::paste(&mut clipboard),
             settings.tr(),
