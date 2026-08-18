@@ -5,6 +5,8 @@ edition = "2024"
 description = "A fast, kid-friendly crab-routing game: route streams of crabs into your sandcastle before the tide comes in"
 repository = "https://github.com/agourlay/pinch-points"
 license = "Apache-2.0"
+keywords = ["game", "bevy", "puzzle", "multiplayer", "chuchu-rocket"]
+categories = ["games"]
 # The crate tarball needs what the build embeds (assets, levels,
 # challenges) but not the repo's paperwork, all of which lives in docs/;
 # the screenshots are the bulk and would not render on crates.io anyway.
