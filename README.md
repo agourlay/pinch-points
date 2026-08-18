@@ -1,11 +1,38 @@
 # Pinch Points 🦀
 
+[![Build status](https://github.com/agourlay/pinch-points/actions/workflows/ci.yml/badge.svg)](https://github.com/agourlay/pinch-points/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/pinch-points.svg)](https://crates.io/crates/pinch-points)
+
 A fast, kid-friendly crab-routing game for 1-6 players, built in Rust with
 [Bevy](https://bevyengine.org). The tide is out: place signposts in the sand
 to route streams of crabs into your castle before the sea (and the gulls)
 take everything back.
 
 ![Four-player Turf War: the ranked leaderboard, growing castles, and the tide clock over a live event feed](docs/screenshots/turf_war.png)
+
+## How to install
+
+Pick whichever suits you:
+
+- **Prebuilt binaries** for Linux, macOS and Windows (x86_64 and arm64) are
+  attached to each [GitHub release](https://github.com/agourlay/pinch-points/releases).
+  Unpack the archive and run `pinch-points`.
+- **From crates.io** with a Rust toolchain installed:
+  ```sh
+  cargo install pinch-points
+  ```
+  ([crates.io/crates/pinch-points](https://crates.io/crates/pinch-points))
+- **From source**, in release mode:
+  ```sh
+  git clone https://github.com/agourlay/pinch-points
+  cd pinch-points
+  cargo build --release
+  ./target/release/pinch-points
+  ```
+
+The last two need Bevy's Linux build dependencies (`libudev-dev`,
+`libasound2-dev`, `libwayland-dev` or X11 equivalents); see
+[Building & running](#building--running).
 
 ## Lineage
 
