@@ -415,6 +415,10 @@ fn add_frame_systems(app: &mut App) {
         PreUpdate,
         keycaps::learn_keycaps.after(bevy::input::InputSystems),
     );
+    // Asked once, before the first frame draws a legend: the platform
+    // knows the whole board, including the punctuation nobody will press.
+    // What it will not answer, the presses above go on answering.
+    app.add_systems(Startup, keymap::read_keymap);
     app.configure_sets(
         Update,
         (

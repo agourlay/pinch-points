@@ -12,18 +12,24 @@
 //! says so: "M: mute" on an AZERTY board means the key that reads M, which
 //! is `Semicolon` to Bevy. Those reads go through [`KeyCaps::key_for`].
 //!
-//! Nothing lets a program ask winit for the keymap up front, so the caps
-//! come from two places, in this order:
+//! Nothing lets a program ask *winit* for the keymap up front, so the caps
+//! come from three places, in this order:
 //!
-//! 1. **Learned.** Each key press carries both the physical code and the
-//!    layout-aware character, and the pair is remembered (see
-//!    [`learn_keycaps`]). This is evidence, so it always wins, and it
-//!    lives in the settings file.
-//! 2. **Presumed from the language.** A player who reads the game in
+//! 1. **Read from the platform.** [`crate::app::keymap`] asks the
+//!    operating system directly at start-up - X11, `user32`, Carbon - and
+//!    hands over the whole board through [`KeyCaps::adopt`]. This is the
+//!    real answer where it can be had, which is most machines.
+//! 2. **Learned from presses.** Each key press carries both the physical
+//!    code and the layout-aware character, and the pair is remembered
+//!    (see [`learn_keycaps`]). This is what catches a layout switched
+//!    mid-session, and what answers on a platform with no query. Both of
+//!    these live in the settings file, as one table: a fact is a fact
+//!    whichever asked for it.
+//! 3. **Presumed from the language.** A player who reads the game in
 //!    French is typing on AZERTY, and one who reads it in German on
-//!    QWERTZ - so the first menu of a first run is already spelled right,
-//!    before a single letter key has been pressed. See [`Layout::of`].
-//!    Never saved: it is re-derived from the language at every load.
+//!    QWERTZ - so a first run is spelled right even before the query
+//!    lands. See [`Layout::of`]. Never saved: it is re-derived from the
+//!    language at every load.
 //!
 //! A presumption is a guess, and the first press that disagrees with it
 //! retires it (see [`KeyCaps::learn`]) - one press of W on a Québécois or
@@ -154,17 +160,28 @@ pub struct KeyCaps {
     presumed: Option<Layout>,
 }
 
-/// The two four-key blocks the legends name by their QWERTY caps, and the
-/// physical keys they stand for.
-const BLOCKS: [(&str, [KeyCode; 4]); 2] = [
+/// The key groups the legends name by their QWERTY caps, and the physical
+/// keys they stand for, letter for letter.
+///
+/// The move blocks are the obvious pair, but "W/S" and "A/D" are the ones
+/// most players read most often: every menu, settings and setup prompt in
+/// every language opens with one, so a board they are not respelled on is
+/// a board where the very first line on screen names the wrong keys.
+///
+/// The punctuation inside a spelling is kept as it is written; only the
+/// letters are looked up. Longest first, so a shorter group cannot eat
+/// part of a longer one.
+const BLOCKS: &[(&str, &[KeyCode])] = &[
     (
         "WASD",
-        [KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD],
+        &[KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD],
     ),
     (
         "IJKL",
-        [KeyCode::KeyI, KeyCode::KeyJ, KeyCode::KeyK, KeyCode::KeyL],
+        &[KeyCode::KeyI, KeyCode::KeyJ, KeyCode::KeyK, KeyCode::KeyL],
     ),
+    ("W/S", &[KeyCode::KeyW, KeyCode::KeyS]),
+    ("A/D", &[KeyCode::KeyA, KeyCode::KeyD]),
 ];
 
 impl KeyCaps {
@@ -215,20 +232,49 @@ impl KeyCaps {
             .any(|&l| self.key_for(l) == key)
     }
 
-    /// A legend with its `WASD` / `IJKL` block names respelled in this
-    /// keyboard's caps: "WASD move" becomes "ZQSD move" on AZERTY. The
-    /// legends across every language name the blocks by these exact four
-    /// letters, so one respelling serves them all.
+    /// A legend with its [`BLOCKS`] respelled in this keyboard's caps:
+    /// "WASD move" becomes "ZQSD move" on AZERTY, and "W/S: choose"
+    /// becomes "Z/S: choose". The legends across every language name the
+    /// groups by these exact letters, so one respelling serves them all.
     pub fn legend(&self, text: &str) -> String {
         let mut out = text.to_string();
         for (spelling, keys) in BLOCKS {
             if !out.contains(spelling) {
                 continue;
             }
-            let caps: String = keys.iter().map(|&k| self.label(k)).collect();
+            let mut keys = keys.iter();
+            let caps: String = spelling
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphabetic() {
+                        keys.next().map_or_else(String::new, |&key| self.label(key))
+                    } else {
+                        c.to_string()
+                    }
+                })
+                .collect();
             out = out.replace(spelling, &caps);
         }
         out
+    }
+
+    /// Take the operating system's word for the caps, key by key.
+    ///
+    /// Each pair goes through [`Self::learn`], because a keymap read from
+    /// the platform is the same kind of fact as a press and deserves the
+    /// same treatment: it overwrites a stale cap, forgets one that is
+    /// back to its QWERTY spelling, and retires a presumption it
+    /// disagrees with. Whether anything changed.
+    ///
+    /// The keys the platform would not answer for - a dead key, a cap
+    /// outside ASCII - are simply absent from `keymap`, so whatever the
+    /// presses and the language had to say about them still stands.
+    pub fn adopt(&mut self, keymap: &[(KeyCode, char)]) -> bool {
+        let mut changed = false;
+        for &(key, cap) in keymap {
+            changed |= self.learn(key, cap);
+        }
+        changed
     }
 
     /// Take `layout` as this keyboard, until a press says otherwise.
@@ -337,9 +383,15 @@ fn learnable(key: KeyCode) -> bool {
 /// A press under a modifier is skipped: Shift turns "," into "<" and AltGr
 /// turns "E" into "€", neither of which is what the cap says at a glance.
 /// Repeats are skipped for being the same press again.
+///
+/// The table is kept in memory whatever screen this is, but written out
+/// only once a language has been taken - the first-run picker is chosen
+/// on the settings file not existing yet, so a cap learned in the picker
+/// must not be what creates it.
 pub fn learn_keycaps(
     mut typed: MessageReader<KeyboardInput>,
     keys: Res<ButtonInput<KeyCode>>,
+    screen: Res<State<crate::app::Screen>>,
     mut settings: ResMut<GameSettings>,
 ) {
     const MODIFIERS: [KeyCode; 8] = [
@@ -373,7 +425,8 @@ pub fn learn_keycaps(
             changed = true;
         }
     }
-    if changed {
+    // Not on the picker: see [`crate::app::language::may_save`].
+    if changed && crate::app::language::may_save(screen.get()) {
         settings.save();
     }
 }
@@ -593,6 +646,119 @@ mod tests {
             assert!(tr.prompt_versus_local.contains("IJKL"), "{lang:?}");
             assert!(tr.val_ijkl.contains("IJKL"), "{lang:?}");
         }
+    }
+
+    /// A block has to name exactly as many keys as it spells letters, or
+    /// the respelling would run out of keys and drop a letter on the
+    /// floor - silently, in the one line every player reads first.
+    #[test]
+    fn every_block_spells_as_many_letters_as_it_names_keys() {
+        for (spelling, keys) in BLOCKS {
+            let letters = spelling.chars().filter(char::is_ascii_alphabetic).count();
+            assert_eq!(letters, keys.len(), "{spelling}");
+        }
+        // Longest first, so "W/S" cannot be respelled inside a "WASD"
+        // that has not been dealt with yet.
+        let mut lengths: Vec<usize> = BLOCKS.iter().map(|(s, _)| s.len()).collect();
+        let sorted = {
+            let mut sorted = lengths.clone();
+            sorted.sort_unstable_by(|a, b| b.cmp(a));
+            sorted
+        };
+        lengths.dedup();
+        assert_eq!(
+            BLOCKS.iter().map(|(s, _)| s.len()).collect::<Vec<_>>(),
+            sorted,
+            "the blocks are not longest-first"
+        );
+    }
+
+    /// The menu, settings and setup prompts open with "W/S" or "A/D" in
+    /// every language, and they are the first line a player reads on any
+    /// screen. A translation that spelled one differently would keep the
+    /// QWERTY letters on an AZERTY board, so this pins all eight.
+    #[test]
+    fn every_language_names_the_menu_keys_by_their_qwerty_caps() {
+        let mut azerty = KeyCaps::default();
+        azerty.presume(Some(Layout::Azerty));
+        for lang in crate::app::i18n::ALL_LANGS {
+            let tr = lang.tr();
+            for prompt in [
+                tr.menu_prompt,
+                tr.prompt_new_version,
+                tr.prompt_pick_language,
+                tr.prompt_replays,
+                tr.prompt_controls,
+            ] {
+                assert!(prompt.contains("W/S"), "{lang:?}: {prompt:?}");
+                let respelled = azerty.legend(prompt);
+                assert!(respelled.contains("Z/S"), "{lang:?}: {respelled:?}");
+                assert!(!respelled.contains("W/S"), "{lang:?}: {respelled:?}");
+            }
+            for prompt in [tr.prompt_settings, tr.prompt_match_setup] {
+                assert!(prompt.contains("A/D"), "{lang:?}: {prompt:?}");
+                let respelled = azerty.legend(prompt);
+                assert!(respelled.contains("Q/D"), "{lang:?}: {respelled:?}");
+                assert!(!respelled.contains("A/D"), "{lang:?}: {respelled:?}");
+            }
+        }
+    }
+
+    /// The whole path an AZERTY player takes, without an AZERTY keyboard
+    /// to take it on: what [`crate::app::keymap`] reads off the platform,
+    /// handed to [`KeyCaps::adopt`], has to move the legends and the
+    /// mnemonics exactly as a board full of presses would.
+    #[test]
+    fn a_keymap_read_from_the_platform_moves_everything() {
+        // What an X11 `GetKeyboardMapping` answers on a French board, in
+        // the order the query walks the keys. The dead keys (`^`) and the
+        // caps outside ASCII (`ù`) are absent, because the query drops
+        // them rather than guessing.
+        let french = [
+            (KeyCode::KeyA, 'q'),
+            (KeyCode::KeyM, ','),
+            (KeyCode::KeyQ, 'a'),
+            (KeyCode::KeyW, 'z'),
+            (KeyCode::KeyZ, 'w'),
+            (KeyCode::Comma, ';'),
+            (KeyCode::Period, ':'),
+            (KeyCode::Slash, '!'),
+            (KeyCode::Semicolon, 'm'),
+            (KeyCode::Backslash, '*'),
+            (KeyCode::Minus, ')'),
+            (KeyCode::Equal, '='),
+        ];
+        let mut caps = KeyCaps::default();
+        assert!(caps.adopt(&french));
+        assert_eq!(caps.legend("WASD move | IJKL"), "ZQSD move | IJKL");
+        assert_eq!(
+            caps.legend("W/S: choose | A/D: adjust"),
+            "Z/S: choose | Q/D: adjust"
+        );
+        assert_eq!(
+            caps.key_for('M'),
+            KeyCode::Semicolon,
+            "mute moves to its cap"
+        );
+        assert!(caps.is_global(KeyCode::Semicolon));
+        assert_eq!(caps.label(KeyCode::Slash), "!");
+        // `Equal` says "=" on both boards, so it is not worth writing
+        // down, and `KeyM` is a global key the caps table will not take.
+        assert!(!caps.to_text().contains("Equal"), "{}", caps.to_text());
+        assert!(!caps.to_text().contains("KeyM="), "{}", caps.to_text());
+
+        // Plugged into a QWERTY board next: the same call takes it all
+        // back, rather than leaving half a French keyboard behind.
+        let us: Vec<(KeyCode, char)> = french
+            .iter()
+            .map(|&(key, _)| (key, binds::key_label(key).chars().next().unwrap()))
+            .collect();
+        assert!(caps.adopt(&us));
+        assert_eq!(
+            caps.legend("WASD move | W/S: choose"),
+            "WASD move | W/S: choose"
+        );
+        assert_eq!(caps.key_for('M'), KeyCode::KeyM);
     }
 
     #[test]

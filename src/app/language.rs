@@ -269,6 +269,22 @@ pub fn opening_screen(saved: bool) -> Screen {
     }
 }
 
+/// Whether the settings file may be written yet.
+///
+/// [`opening_screen`] reads "first run" off the absence of that file and
+/// off nothing else, so any write before a language has been taken
+/// answers the picker's question on the player's behalf: they close the
+/// window on the first screen, having chosen nothing, and are never asked
+/// again. Two things would otherwise do exactly that - a keyboard that
+/// learns a cap from a press in the picker, and the start-up keymap read
+/// - so both ask here first.
+///
+/// Nothing is lost by waiting. The caps stay in the resource, and the
+/// Enter that takes the language writes them out with it.
+pub fn may_save(screen: &Screen) -> bool {
+    !matches!(screen, Screen::Language)
+}
+
 /// What a keypress does to the picker: where the cursor lands, and
 /// whether that was the player taking it.
 ///

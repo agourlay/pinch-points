@@ -28,6 +28,7 @@ mod hint;
 mod hud;
 pub(crate) mod i18n;
 mod keycaps;
+mod keymap;
 mod language;
 pub mod layout;
 mod lobby;

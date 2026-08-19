@@ -10,6 +10,12 @@
 //! decoding them, is the last place to want manual memory handling.
 //! Forbidden rather than merely denied, so it cannot be turned back on
 //! locally without saying so here.
+//!
+//! The one thing that genuinely needs it lives next door instead: asking
+//! Windows and macOS what the keys say means calling their keyboard
+//! APIs, so that lives in `pinch-keymap`, a crate of its own, where the
+//! unsafe is a dozen lines with a reason written over each of them. See
+//! [`app::keymap`].
 #![forbid(unsafe_code)]
 
 pub mod app;
