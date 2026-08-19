@@ -458,7 +458,10 @@ pub fn settings_input(
         }
         // Doors: worked with Enter, not adjusted with A/D.
         Row::KeyBindings | Row::ResetProgress => {}
-        Row::Language => settings.language = settings.language.cycled(right),
+        Row::Language => {
+            let next = settings.language.cycled(right);
+            settings.set_language(next);
+        }
         Row::UpdateCheck => settings.check_updates = !settings.check_updates,
     }
 }

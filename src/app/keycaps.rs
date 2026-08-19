@@ -13,10 +13,21 @@
 //! is `Semicolon` to Bevy. Those reads go through [`KeyCaps::key_for`].
 //!
 //! Nothing lets a program ask winit for the keymap up front, so the caps
-//! are learned: each key press carries both the physical code and the
-//! layout-aware character, and the pair is remembered (see
-//! [`learn_keycaps`]). The table lives in the settings file so the second
-//! launch reads right from its first menu.
+//! come from two places, in this order:
+//!
+//! 1. **Learned.** Each key press carries both the physical code and the
+//!    layout-aware character, and the pair is remembered (see
+//!    [`learn_keycaps`]). This is evidence, so it always wins, and it
+//!    lives in the settings file.
+//! 2. **Presumed from the language.** A player who reads the game in
+//!    French is typing on AZERTY, and one who reads it in German on
+//!    QWERTZ - so the first menu of a first run is already spelled right,
+//!    before a single letter key has been pressed. See [`Layout::of`].
+//!    Never saved: it is re-derived from the language at every load.
+//!
+//! A presumption is a guess, and the first press that disagrees with it
+//! retires it (see [`KeyCaps::learn`]) - one press of W on a Québécois or
+//! Swiss board and the game stops believing in AZERTY.
 
 use std::collections::BTreeMap;
 
@@ -24,12 +35,124 @@ use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 
 use crate::app::binds;
+use crate::app::i18n::Lang;
 use crate::app::settings::GameSettings;
 
-/// Physical key -> the character on its cap, for the keys whose cap
-/// differs from Bevy's QWERTY spelling. Empty on a QWERTY board.
+/// A keyboard layout the game knows by name, as the caps it puts where
+/// QWERTY puts others.
+///
+/// Only the two layouts that move *letters* are here. The other languages
+/// the game speaks are typed on boards whose letters sit exactly where
+/// QWERTY puts them - Spanish, Italian and Dutch are QWERTY with their own
+/// punctuation and accents, a Japanese JIS board carries the same Latin
+/// letters, and a Russian ЙЦУКЕН board is dual-legend with QWERTY beneath
+/// the Cyrillic - so for them there is nothing to presume and nothing that
+/// would read wrong.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Layout {
+    /// France and Belgium.
+    Azerty,
+    /// Germany, Austria and Switzerland.
+    Qwertz,
+}
+
+impl Layout {
+    pub const ALL: [Layout; 2] = [Layout::Azerty, Layout::Qwertz];
+
+    /// The layout the country behind a language types on, where it is not
+    /// QWERTY. This is the whole of what the language tells us about the
+    /// keyboard, and it is a majority rather than a rule: a French speaker
+    /// in Montréal types on QWERTY, which is why one press is enough to
+    /// take it back.
+    pub fn of(lang: Lang) -> Option<Layout> {
+        match lang {
+            Lang::Fr => Some(Layout::Azerty),
+            Lang::De => Some(Layout::Qwertz),
+            Lang::En | Lang::Es | Lang::It | Lang::Nl | Lang::Ru | Lang::Ja => None,
+        }
+    }
+
+    /// Every cap this layout spells differently from QWERTY, in printable
+    /// ASCII. The accented caps are left out - `ù`, `ö`, `ß` and their
+    /// kin are not stored for a learned board either, so they are not
+    /// presumed for a guessed one.
+    pub fn caps(self) -> &'static [(KeyCode, char)] {
+        match self {
+            // ² & é " ' ( - è _ ç à ) =  /  a z e r t y u i o p ^ $
+            // q s d f g h j k l m ù *    /  w x c v b n , ; : !
+            // (the "," at QWERTY's M is left out: `learnable` refuses the
+            // global keys, so no press could ever confirm or deny it)
+            Layout::Azerty => &[
+                (KeyCode::Backslash, '*'),
+                (KeyCode::BracketLeft, '^'),
+                (KeyCode::BracketRight, '$'),
+                (KeyCode::Comma, ';'),
+                (KeyCode::KeyA, 'Q'),
+                (KeyCode::KeyQ, 'A'),
+                (KeyCode::KeyW, 'Z'),
+                (KeyCode::KeyZ, 'W'),
+                (KeyCode::Minus, ')'),
+                (KeyCode::Period, ':'),
+                (KeyCode::Semicolon, 'M'),
+                (KeyCode::Slash, '!'),
+            ],
+            // ^ 1 2 3 4 5 6 7 8 9 0 ß ´  /  q w e r t z u i o p ü +
+            // a s d f g h j k l ö ä #    /  y x c v b n m , . -
+            Layout::Qwertz => &[
+                (KeyCode::Backquote, '^'),
+                (KeyCode::Backslash, '#'),
+                (KeyCode::BracketRight, '+'),
+                (KeyCode::KeyY, 'Z'),
+                (KeyCode::KeyZ, 'Y'),
+                (KeyCode::Slash, '-'),
+            ],
+        }
+    }
+
+    /// The caps that give this layout away: press one and the board is
+    /// this one, so the rest of [`Self::caps`] can be taken as read.
+    ///
+    /// A tell has to be unmistakable, which is less than "differs from
+    /// QWERTY": a UK board says "#" on the key beside Enter, exactly as
+    /// QWERTZ does, so that one names no layout. The letters do.
+    pub fn tells(self) -> &'static [(KeyCode, char)] {
+        match self {
+            Layout::Azerty => &[
+                (KeyCode::KeyA, 'Q'),
+                (KeyCode::KeyQ, 'A'),
+                (KeyCode::KeyW, 'Z'),
+                (KeyCode::KeyZ, 'W'),
+                (KeyCode::Semicolon, 'M'),
+            ],
+            Layout::Qwertz => &[(KeyCode::KeyY, 'Z'), (KeyCode::KeyZ, 'Y')],
+        }
+    }
+
+    fn cap(self, key: KeyCode) -> Option<char> {
+        self.caps().iter().find(|(k, _)| *k == key).map(|(_, c)| *c)
+    }
+
+    fn key_for(self, letter: char) -> Option<KeyCode> {
+        self.caps()
+            .iter()
+            .find(|(_, c)| *c == letter)
+            .map(|(k, _)| *k)
+    }
+}
+
+/// What this keyboard's caps say, where they differ from Bevy's QWERTY
+/// spelling: what presses have shown, over what the language presumes.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct KeyCaps(BTreeMap<KeyCode, char>);
+pub struct KeyCaps {
+    /// Physical key -> the character on its cap, from presses. Empty on a
+    /// QWERTY board that has never been guessed at. Saved.
+    learned: BTreeMap<KeyCode, char>,
+    /// The language's layout, until a press says otherwise. Not saved.
+    ///
+    /// While this is `Some`, `learned` never contradicts it: the press
+    /// that would have is the press that clears it.
+    presumed: Option<Layout>,
+}
 
 /// The two four-key blocks the legends name by their QWERTY caps, and the
 /// physical keys they stand for.
@@ -44,25 +167,13 @@ const BLOCKS: [(&str, [KeyCode; 4]); 2] = [
     ),
 ];
 
-/// The two layouts common enough to finish from one press: a board that
-/// says "Z" where QWERTY says "W" is AZERTY, and its Q/A moved with it
-/// (and M, to the key QWERTY calls Semicolon); one that swaps Y and Z is
-/// QWERTZ. Any key actually pressed still overrides the presumption.
-const FAMILIES: &[&[(KeyCode, char)]] = &[
-    &[
-        (KeyCode::KeyW, 'Z'),
-        (KeyCode::KeyZ, 'W'),
-        (KeyCode::KeyA, 'Q'),
-        (KeyCode::KeyQ, 'A'),
-        (KeyCode::Semicolon, 'M'),
-    ],
-    &[(KeyCode::KeyY, 'Z'), (KeyCode::KeyZ, 'Y')],
-];
-
 impl KeyCaps {
     /// What the cap says, if it differs from the QWERTY spelling.
     pub fn cap(&self, key: KeyCode) -> Option<char> {
-        self.0.get(&key).copied()
+        self.learned
+            .get(&key)
+            .copied()
+            .or_else(|| self.presumed.and_then(|layout| layout.cap(key)))
     }
 
     /// How a key reads on screen on this keyboard: the learned cap, or
@@ -74,14 +185,16 @@ impl KeyCaps {
     }
 
     /// The physical key whose cap says `letter`: the one learned to say
-    /// so, else the key QWERTY spells that way. This is how a mnemonic
-    /// stays on its letter across layouts.
+    /// so, else the one the presumed layout puts it on, else the key
+    /// QWERTY spells that way. This is how a mnemonic stays on its letter
+    /// across layouts.
     pub fn key_for(&self, letter: char) -> KeyCode {
         let letter = letter.to_ascii_uppercase();
-        self.0
+        self.learned
             .iter()
             .find(|(_, c)| **c == letter)
             .map(|(k, _)| *k)
+            .or_else(|| self.presumed.and_then(|layout| layout.key_for(letter)))
             .or_else(|| binds::key_from_name(&format!("Key{letter}")))
             .or_else(|| binds::global_key_from_name(&format!("Key{letter}")))
             .unwrap_or_else(|| panic!("no key spells {letter}"))
@@ -118,7 +231,23 @@ impl KeyCaps {
         out
     }
 
-    /// Remember what `key`'s cap says. Whether the table changed.
+    /// Take `layout` as this keyboard, until a press says otherwise.
+    ///
+    /// Called with the language's [`Layout::of`] whenever the language is
+    /// set, which is also every load - so a guess disproved in an earlier
+    /// session is not made again: the press that disproved it is in
+    /// `learned`, and a presumption is refused outright by any learned cap
+    /// that spells one of its keys differently.
+    pub fn presume(&mut self, layout: Option<Layout>) {
+        self.presumed = layout.filter(|layout| {
+            layout
+                .caps()
+                .iter()
+                .all(|&(key, cap)| self.learned.get(&key).is_none_or(|&said| said == cap))
+        });
+    }
+
+    /// Remember what `key`'s cap says. Whether anything changed.
     ///
     /// Only a printable ASCII character is taken as a cap: the letters and
     /// punctuation are what move between layouts, while a digit row that
@@ -127,30 +256,44 @@ impl KeyCaps {
     /// players read WASD. Storing only the caps that differ from the
     /// spelling keeps a QWERTY file empty and lets a board switched back
     /// to QWERTY unlearn itself.
+    ///
+    /// The exception is a press that disproves the presumed layout. That
+    /// one is written down even though it agrees with QWERTY, because it
+    /// is the only record that the guess was wrong - without it the
+    /// language would make the same guess at the next launch, and the
+    /// player would spend every session's first keypress taking it back.
     pub fn learn(&mut self, key: KeyCode, cap: char) -> bool {
         if !cap.is_ascii_graphic() || !learnable(key) {
             return false;
         }
         let cap = cap.to_ascii_uppercase();
-        let before = self.0.clone();
-        if binds::key_label(key) == cap.to_string() {
-            self.0.remove(&key);
-        } else {
-            self.0.insert(key, cap);
+        let before = self.clone();
+        let disproves = self
+            .presumed
+            .and_then(|layout| layout.cap(key))
+            .is_some_and(|presumed| presumed != cap);
+        if disproves {
+            self.presumed = None;
         }
-        for family in FAMILIES {
-            if family.contains(&(key, cap)) {
-                for &(k, c) in *family {
-                    self.0.entry(k).or_insert(c);
+        if !disproves && binds::key_label(key) == cap.to_string() {
+            self.learned.remove(&key);
+        } else {
+            self.learned.insert(key, cap);
+        }
+        for layout in Layout::ALL {
+            if layout.tells().contains(&(key, cap)) {
+                for &(k, c) in layout.caps() {
+                    self.learned.entry(k).or_insert(c);
                 }
             }
         }
-        self.0 != before
+        *self != before
     }
 
-    /// Settings-file text: `KeyW=Z KeyA=Q`, empty on QWERTY.
+    /// Settings-file text: `KeyW=Z KeyA=Q`, empty on QWERTY. Presses only:
+    /// what the language presumes is presumed again on the way back in.
     pub fn to_text(&self) -> String {
-        self.0
+        self.learned
             .iter()
             .map(|(k, c)| format!("{}={c}", binds::key_name(*k)))
             .collect::<Vec<_>>()
@@ -171,7 +314,7 @@ impl KeyCaps {
                 && learnable(key)
                 && c.is_ascii_graphic()
             {
-                caps.0.insert(key, c.to_ascii_uppercase());
+                caps.learned.insert(key, c.to_ascii_uppercase());
             }
         }
         caps
@@ -239,6 +382,102 @@ pub fn learn_keycaps(
 mod tests {
     use super::*;
 
+    /// The caps a layout claims have to be caps the rest of the module
+    /// would accept from a press, or a presumed board and a learned one
+    /// would not read alike.
+    #[test]
+    fn every_layout_table_is_learnable_and_says_something_new() {
+        for layout in Layout::ALL {
+            let mut seen = Vec::new();
+            for &(key, cap) in layout.caps() {
+                assert!(cap.is_ascii_graphic(), "{layout:?} {key:?}");
+                assert!(learnable(key), "{layout:?} {key:?}");
+                assert_ne!(binds::key_label(key), cap.to_string(), "{layout:?}");
+                assert!(!seen.contains(&key), "{layout:?} spells {key:?} twice");
+                seen.push(key);
+            }
+            for tell in layout.tells() {
+                assert!(layout.caps().contains(tell), "{layout:?} {tell:?}");
+            }
+        }
+    }
+
+    /// Every language answers for its country's keyboard, and the six that
+    /// answer "QWERTY" do so by name rather than by falling through.
+    #[test]
+    fn every_language_names_its_keyboard() {
+        assert_eq!(Layout::of(Lang::Fr), Some(Layout::Azerty));
+        assert_eq!(Layout::of(Lang::De), Some(Layout::Qwertz));
+        for lang in crate::app::i18n::ALL_LANGS {
+            if matches!(lang, Lang::Fr | Lang::De) {
+                continue;
+            }
+            assert_eq!(Layout::of(lang), None, "{lang:?}");
+        }
+    }
+
+    /// French spells the legends and the mnemonics AZERTY before a key has
+    /// been touched: the first menu of a first run reads right.
+    #[test]
+    fn the_language_presumes_its_countrys_keyboard() {
+        let mut caps = KeyCaps::default();
+        caps.presume(Layout::of(Lang::Fr));
+        assert_eq!(caps.legend("WASD bouger | IJKL"), "ZQSD bouger | IJKL");
+        assert_eq!(caps.key_for('M'), KeyCode::Semicolon);
+        assert!(caps.is_global(KeyCode::Semicolon));
+        // Presumed, not learned: nothing was seen, so nothing is written.
+        assert_eq!(caps.to_text(), "");
+
+        let mut german = KeyCaps::default();
+        german.presume(Layout::of(Lang::De));
+        assert_eq!(german.label(KeyCode::KeyY), "Z");
+        assert_eq!(german.label(KeyCode::Slash), "-");
+        assert_eq!(
+            german.legend("WASD"),
+            "WASD",
+            "QWERTZ leaves the block alone"
+        );
+        assert_eq!(german.key_for('M'), KeyCode::KeyM);
+
+        let mut english = KeyCaps::default();
+        english.presume(Layout::of(Lang::En));
+        assert_eq!(english, KeyCaps::default());
+    }
+
+    /// The French speaker on a QWERTY board takes it back with one press,
+    /// and the press is kept so the next launch does not guess again.
+    #[test]
+    fn one_press_disproves_the_languages_keyboard() {
+        let mut caps = KeyCaps::default();
+        caps.presume(Layout::of(Lang::Fr));
+        assert!(caps.learn(KeyCode::KeyW, 'w'));
+        assert_eq!(caps.presumed, None);
+        assert_eq!(caps.label(KeyCode::KeyW), "W");
+        assert_eq!(caps.key_for('M'), KeyCode::KeyM, "the mnemonics come home");
+        assert_eq!(caps.legend("WASD"), "WASD");
+
+        // Saved, reloaded, and presumed at again: the record stands.
+        let reloaded = KeyCaps::parse(&caps.to_text());
+        assert_eq!(reloaded.to_text(), "KeyW=W");
+        let mut reloaded = reloaded;
+        reloaded.presume(Layout::of(Lang::Fr));
+        assert_eq!(reloaded.presumed, None);
+        assert_eq!(reloaded.legend("WASD"), "WASD");
+    }
+
+    /// A board that has already shown itself to be another layout is not
+    /// talked out of it by the language: the Swiss French player types on
+    /// QWERTZ, and said so.
+    #[test]
+    fn a_learned_board_refuses_the_languages_guess() {
+        let mut caps = KeyCaps::default();
+        caps.learn(KeyCode::KeyZ, 'y');
+        caps.presume(Layout::of(Lang::Fr));
+        assert_eq!(caps.presumed, None);
+        assert_eq!(caps.label(KeyCode::KeyY), "Z");
+        assert_eq!(caps.legend("WASD"), "WASD");
+    }
+
     #[test]
     fn a_qwerty_board_learns_nothing() {
         let mut caps = KeyCaps::default();
@@ -251,14 +490,16 @@ mod tests {
     }
 
     /// One press of the key under QWERTY's W says "Z": AZERTY, and the
-    /// whole family follows so the first legend is already right.
+    /// whole board follows so the first legend is already right - this is
+    /// the path for an AZERTY player reading the game in English.
     #[test]
-    fn azerty_is_presumed_from_one_press_and_respells_the_legends() {
+    fn azerty_is_learned_from_one_press_and_respells_the_legends() {
         let mut caps = KeyCaps::default();
         assert!(caps.learn(KeyCode::KeyW, 'z'));
         assert_eq!(caps.label(KeyCode::KeyW), "Z");
         assert_eq!(caps.label(KeyCode::KeyA), "Q");
         assert_eq!(caps.label(KeyCode::Semicolon), "M");
+        assert_eq!(caps.label(KeyCode::Slash), "!");
         assert_eq!(
             caps.legend("WASD bouger | flèches placer | IJKL"),
             "ZQSD bouger | flèches placer | IJKL"
@@ -361,10 +602,14 @@ mod tests {
         caps.learn(KeyCode::Slash, ':');
         let text = caps.to_text();
         assert_eq!(KeyCaps::parse(&text), caps);
-        assert_eq!(text, "KeyA=Q KeyQ=A KeyW=Z KeyZ=W Semicolon=M Slash=:");
+        assert_eq!(
+            text,
+            "Backslash=* BracketLeft=^ BracketRight=$ Comma=; KeyA=Q \
+             KeyQ=A KeyW=Z KeyZ=W Minus=) Period=: Semicolon=M Slash=:"
+        );
         let lenient = KeyCaps::parse("nonsense KeyW=Z NoSuchKey=Q KeyA=QQ Digit1=& KeyE=");
         let mut expected = KeyCaps::default();
-        expected.0.insert(KeyCode::KeyW, 'Z');
+        expected.learned.insert(KeyCode::KeyW, 'Z');
         assert_eq!(lenient, expected);
     }
 }

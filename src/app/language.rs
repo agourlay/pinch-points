@@ -299,7 +299,7 @@ pub fn language_input(
 ) {
     let (lang, taken) = step(&keys, settings.language);
     if lang != settings.language {
-        settings.language = lang;
+        settings.set_language(lang);
     }
     if taken {
         settings.save();

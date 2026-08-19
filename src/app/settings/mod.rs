@@ -174,6 +174,17 @@ impl GameSettings {
         self.language.tr()
     }
 
+    /// Set the interface language, and with it the keyboard the game
+    /// presumes: a player reading in French is typing on AZERTY until a
+    /// press says otherwise (see [`crate::app::keycaps::Layout::of`]).
+    /// Every path that changes the language comes through here, so the
+    /// presumption can never be left behind by the words on screen.
+    pub fn set_language(&mut self, language: crate::app::i18n::Lang) {
+        self.language = language;
+        self.keycaps
+            .presume(crate::app::keycaps::Layout::of(language));
+    }
+
     /// Whether the player has moved any key off its factory binding. The
     /// on-screen key legends are written for the stock layout, so they step
     /// aside when this is true rather than teach the wrong keys.
@@ -441,6 +452,10 @@ impl GameSettings {
         if !crate::app::binds::all_distinct(&settings.binds) {
             settings.binds = default_binds();
         }
+        // After the loop, not in the `language` arm: the keycaps line may
+        // be read after the language one, and the presumption is only
+        // taken where the learned caps leave room for it.
+        settings.set_language(settings.language);
         settings
     }
 
@@ -572,6 +587,10 @@ mod tests {
             keycaps: crate::app::keycaps::KeyCaps::parse("KeyW=Z KeyA=Q"),
             ..GameSettings::default()
         };
+        // Through the setter, so the language's presumed keyboard is in
+        // place on this side too - `parse` takes it on the way back in.
+        let mut settings = settings;
+        settings.set_language(Lang::Fr);
         let reparsed = GameSettings::parse(&settings.to_text());
         assert_eq!(reparsed, settings);
     }
