@@ -47,6 +47,7 @@ mod tests {
         round_trips::<GullPressure>();
         round_trips::<RoundLength>();
         round_trips::<Lang>();
+        round_trips::<Option<crate::app::keycaps::Layout>>();
         round_trips::<BotLevel>();
     }
 }

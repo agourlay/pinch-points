@@ -161,6 +161,13 @@ pub struct GameSettings {
     /// (see [`crate::app::keycaps`]). Not a preference - nobody sets it -
     /// but per-machine state that belongs beside the bindings it labels.
     pub keycaps: crate::app::keycaps::KeyCaps,
+    /// The keyboard the player says they have, or `None` for the game
+    /// working it out (which is right almost always - see
+    /// [`crate::app::keycaps::KeyCaps::force`] for the "almost").
+    ///
+    /// A preference, unlike `keycaps` beside it, which is why it is a
+    /// row on the card and a line of its own in the file.
+    pub keyboard: Option<crate::app::keycaps::Layout>,
 }
 
 /// Longest seat name we keep. The score chips and the event feed are laid
@@ -179,6 +186,14 @@ impl GameSettings {
     /// press says otherwise (see [`crate::app::keycaps::Layout::of`]).
     /// Every path that changes the language comes through here, so the
     /// presumption can never be left behind by the words on screen.
+    /// Set the keyboard the game reads the caps off, or `None` to have
+    /// it work that out again. The one path that changes it, so the caps
+    /// table can never disagree with the row on the card.
+    pub fn set_keyboard(&mut self, keyboard: Option<crate::app::keycaps::Layout>) {
+        self.keyboard = keyboard;
+        self.keycaps.force(keyboard);
+    }
+
     pub fn set_language(&mut self, language: crate::app::i18n::Lang) {
         self.language = language;
         self.keycaps
@@ -286,6 +301,7 @@ impl Default for GameSettings {
             last_beach: String::new(),
             check_updates: true,
             keycaps: crate::app::keycaps::KeyCaps::default(),
+            keyboard: None,
         }
     }
 }
@@ -316,13 +332,14 @@ impl GameSettings {
             last_beach,
             check_updates,
             keycaps,
+            keyboard,
         } = self;
         format!(
             "commit_scheme: {}\nrepeat_delay: {:.2}\nrepeat_interval: {:.2}\n\
              music: {}\nsfx: {}\npuzzle_speed: {}\nteams: {}\nlanguage: {}\n\
              rumble: {}\npad_deadzone: {}\npalette: {}\nui_scale: {}\n\
              reduced_motion: {}\nnames: {}\nreplay_cap: {}\nbeach: {}\n\
-             updates: {}\nkeycaps: {}\n\
+             updates: {}\nkeycaps: {}\nkeyboard: {}\n\
              p1_input: {}\np2_input: {}\n{}",
             if *ijkl_commits { "ijkl" } else { "arrows" },
             repeat_delay,
@@ -342,6 +359,7 @@ impl GameSettings {
             last_beach,
             if *check_updates { "on" } else { "off" },
             keycaps.to_text(),
+            keyboard.map_or("auto", crate::app::keycaps::Layout::key),
             seat_input[0].name(),
             seat_input[1].name(),
             crate::app::binds::to_text(binds),
@@ -428,6 +446,7 @@ impl GameSettings {
                 }
                 "updates" => settings.check_updates = value != "off",
                 "keycaps" => settings.keycaps = crate::app::keycaps::KeyCaps::parse(value),
+                "keyboard" => settings.keyboard = crate::app::keycaps::Layout::from_key(value),
                 "keys_p1" | "keys_p2" => {
                     let seat = usize::from(key.trim() == "keys_p2");
                     if let Some(seat_binds) = crate::app::binds::parse_seat(value) {
@@ -452,10 +471,12 @@ impl GameSettings {
         if !crate::app::binds::all_distinct(&settings.binds) {
             settings.binds = default_binds();
         }
-        // After the loop, not in the `language` arm: the keycaps line may
-        // be read after the language one, and the presumption is only
+        // After the loop, not in the arms that read them: the keycaps
+        // line may be read after either, and the presumption is only
         // taken where the learned caps leave room for it.
-        settings.set_language(settings.language);
+        let (language, keyboard) = (settings.language, settings.keyboard);
+        settings.set_language(language);
+        settings.set_keyboard(keyboard);
         settings
     }
 
@@ -591,6 +612,7 @@ mod tests {
         // place on this side too - `parse` takes it on the way back in.
         let mut settings = settings;
         settings.set_language(Lang::Fr);
+        settings.set_keyboard(Some(crate::app::keycaps::Layout::Azerty));
         let reparsed = GameSettings::parse(&settings.to_text());
         assert_eq!(reparsed, settings);
     }

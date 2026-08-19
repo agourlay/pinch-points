@@ -392,6 +392,7 @@ struct Tr {
     pub set_speed: &'static str,
     pub set_versus_mode: &'static str,
     pub set_language: &'static str,
+    pub set_keyboard: &'static str,
     pub set_rumble: &'static str,
     pub set_deadzone: &'static str,
     pub set_palette: &'static str,
@@ -406,6 +407,8 @@ struct Tr {
     pub val_palette_classic: &'static str,
     pub val_palette_safe: &'static str,
     pub val_open: &'static str,
+    /// The keyboard row's "work it out yourself".
+    pub val_auto: &'static str,
     /// The reset row's three states: offering, awaiting the second press,
     /// and done.
     pub val_reset: &'static str,

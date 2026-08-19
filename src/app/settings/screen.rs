@@ -20,6 +20,8 @@ pub enum Row {
     InputP1,
     InputP2,
     CommitKeys,
+    /// Which keyboard the caps are read off, or Auto.
+    Keyboard,
     /// Opens the per-key rebinding screen.
     KeyBindings,
     RepeatDelay,
@@ -46,11 +48,14 @@ impl Row {
     /// Display and navigation order, which is [`SECTIONS`] flattened. The
     /// rows used to run in the order they were added, which put the pad
     /// deadzone six rows below the keys it belongs with.
-    pub const ALL: [Row; 19] = [
+    pub const ALL: [Row; 20] = [
         // Controls
         Row::InputP1,
         Row::InputP2,
         Row::CommitKeys,
+        // Before the rebinding door: it is what every key on the far side
+        // of that door is labelled with.
+        Row::Keyboard,
         Row::KeyBindings,
         Row::RepeatDelay,
         Row::RepeatRate,
@@ -113,6 +118,7 @@ pub const SECTIONS: [&[(Group, &[Row])]; 2] = [
                 Row::InputP1,
                 Row::InputP2,
                 Row::CommitKeys,
+                Row::Keyboard,
                 Row::KeyBindings,
                 Row::RepeatDelay,
                 Row::RepeatRate,
@@ -377,6 +383,7 @@ pub fn settings_input(
             Row::InputP1
             | Row::InputP2
             | Row::CommitKeys
+            | Row::Keyboard
             | Row::RepeatDelay
             | Row::RepeatRate
             | Row::Music
@@ -462,6 +469,10 @@ pub fn settings_input(
             let next = settings.language.cycled(right);
             settings.set_language(next);
         }
+        Row::Keyboard => {
+            let next = settings.keyboard.cycled(right);
+            settings.set_keyboard(next);
+        }
         Row::UpdateCheck => settings.check_updates = !settings.check_updates,
     }
 }
@@ -539,6 +550,13 @@ pub(super) fn row_text(
         Row::ReducedMotion => (tr.set_reduced_motion, on_off(settings.reduced_motion)),
         Row::ReplayCap => (tr.set_replay_cap, settings.replay_cap.to_string()),
         Row::Language => (tr.set_language, settings.language.native_name().to_string()),
+        Row::Keyboard => (
+            tr.set_keyboard,
+            settings
+                .keyboard
+                .map_or(tr.val_auto, crate::app::keycaps::Layout::name)
+                .to_string(),
+        ),
         Row::UpdateCheck => (tr.set_update_check, on_off(settings.check_updates)),
         // Doors, not dials: no `< value >` decoration.
         Row::KeyBindings => {
@@ -683,37 +701,43 @@ mod tests {
             for row in Row::ALL {
                 for reset in [ResetPrompt::Idle, ResetPrompt::Armed, ResetPrompt::Done] {
                     for team_mode in crate::app::teams::TeamMode::ALL {
-                        let settings = GameSettings {
-                            team_mode,
-                            ..settings.clone()
-                        };
-                        let (label, value) = row_text(tr, &settings, row, reset);
-                        let label_w = text_px(&label, ROW_FONT);
-                        assert!(
-                            label_w <= LABEL_W,
-                            "{row:?} in {lang:?}: label {label:?} is {label_w:.1}px, \
-                             and the cell holds {LABEL_W}"
-                        );
-                        // The cursor's row wears the arrows, so the widest
-                        // this value ever draws is with them on - on the
-                        // rows that have them. The language row also gives
-                        // up the head of its cell to the flag chip.
-                        let decorated = if has_arrows(row) {
-                            format!("< {value} >")
-                        } else {
-                            value
-                        };
-                        let chip = if row == Row::Language {
-                            FLAG_W + FLAG_GAP
-                        } else {
-                            0.0
-                        };
-                        let value_w = text_px(&decorated, ROW_FONT) + chip;
-                        assert!(
-                            value_w <= VALUE_W,
-                            "{row:?} in {lang:?}: value {decorated:?} is {value_w:.1}px, \
-                             and the cell holds {VALUE_W}"
-                        );
+                        // Every layout by name, since "Auto" is
+                        // the short one and nobody leaves a dial
+                        // on its default because it was there.
+                        for keyboard in <Option<crate::app::keycaps::Layout> as Cycle>::VARIANTS {
+                            let settings = GameSettings {
+                                team_mode,
+                                keyboard: *keyboard,
+                                ..settings.clone()
+                            };
+                            let (label, value) = row_text(tr, &settings, row, reset);
+                            let label_w = text_px(&label, ROW_FONT);
+                            assert!(
+                                label_w <= LABEL_W,
+                                "{row:?} in {lang:?}: label {label:?} is {label_w:.1}px, \
+                                 and the cell holds {LABEL_W}"
+                            );
+                            // The cursor's row wears the arrows, so the widest
+                            // this value ever draws is with them on - on the
+                            // rows that have them. The language row also gives
+                            // up the head of its cell to the flag chip.
+                            let decorated = if has_arrows(row) {
+                                format!("< {value} >")
+                            } else {
+                                value
+                            };
+                            let chip = if row == Row::Language {
+                                FLAG_W + FLAG_GAP
+                            } else {
+                                0.0
+                            };
+                            let value_w = text_px(&decorated, ROW_FONT) + chip;
+                            assert!(
+                                value_w <= VALUE_W,
+                                "{row:?} in {lang:?}: value {decorated:?} is {value_w:.1}px, \
+                                 and the cell holds {VALUE_W}"
+                            );
+                        }
                     }
                 }
             }

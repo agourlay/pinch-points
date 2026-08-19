@@ -56,14 +56,57 @@ use crate::app::settings::GameSettings;
 /// would read wrong.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Layout {
+    /// The one every other table here is written against, and so the one
+    /// with nothing of its own to say. Worth naming all the same: a
+    /// player has to be able to point at it on the settings card and stop
+    /// the game guessing.
+    Qwerty,
     /// France and Belgium.
     Azerty,
     /// Germany, Austria and Switzerland.
     Qwertz,
 }
 
+/// What the keyboard row steps through: `None` is the game working it
+/// out, and each layout after that is the player saying so outright.
+impl crate::app::cycle::Cycle for Option<Layout> {
+    const VARIANTS: &'static [Self] = &[
+        None,
+        Some(Layout::Qwerty),
+        Some(Layout::Azerty),
+        Some(Layout::Qwertz),
+    ];
+}
+
 impl Layout {
-    pub const ALL: [Layout; 2] = [Layout::Azerty, Layout::Qwertz];
+    pub const ALL: [Layout; 3] = [Layout::Qwerty, Layout::Azerty, Layout::Qwertz];
+
+    /// The name it goes by, spelled off its own top row. The same in
+    /// every language, so it is not in the string tables.
+    pub fn name(self) -> &'static str {
+        match self {
+            Layout::Qwerty => "QWERTY",
+            Layout::Azerty => "AZERTY",
+            Layout::Qwertz => "QWERTZ",
+        }
+    }
+
+    /// Stable settings-file key.
+    pub fn key(self) -> &'static str {
+        match self {
+            Layout::Qwerty => "qwerty",
+            Layout::Azerty => "azerty",
+            Layout::Qwertz => "qwertz",
+        }
+    }
+
+    /// What `key` names, or `None` for "work it out" - which is also
+    /// where "auto" and anything unreadable land, since a hand-edited
+    /// file naming no layout is asking for the default rather than for a
+    /// broken start-up.
+    pub fn from_key(key: &str) -> Option<Layout> {
+        Layout::ALL.into_iter().find(|layout| layout.key() == key)
+    }
 
     /// The layout the country behind a language types on, where it is not
     /// QWERTY. This is the whole of what the language tells us about the
@@ -84,6 +127,11 @@ impl Layout {
     /// presumed for a guessed one.
     pub fn caps(self) -> &'static [(KeyCode, char)] {
         match self {
+            // Nothing. Every cap here is a difference from QWERTY, so
+            // QWERTY differs from itself in no place at all - which is
+            // exactly what makes it worth naming: choosing it clears
+            // every cap the game thought it knew.
+            Layout::Qwerty => &[],
             // ² & é " ' ( - è _ ç à ) =  /  a z e r t y u i o p ^ $
             // q s d f g h j k l m ù *    /  w x c v b n , ; : !
             // (the "," at QWERTY's M is left out: `learnable` refuses the
@@ -123,6 +171,9 @@ impl Layout {
     /// QWERTZ does, so that one names no layout. The letters do.
     pub fn tells(self) -> &'static [(KeyCode, char)] {
         match self {
+            // Nothing gives QWERTY away, because QWERTY is what a board
+            // is when nothing has given anything away.
+            Layout::Qwerty => &[],
             Layout::Azerty => &[
                 (KeyCode::KeyA, 'Q'),
                 (KeyCode::KeyQ, 'A'),
@@ -158,6 +209,16 @@ pub struct KeyCaps {
     /// While this is `Some`, `learned` never contradicts it: the press
     /// that would have is the press that clears it.
     presumed: Option<Layout>,
+    /// The layout the player named on the settings card, which is the
+    /// whole answer for as long as it is set - not a cap over the top of
+    /// the others but instead of them, because "this is an AZERTY board"
+    /// is a statement about the whole board.
+    ///
+    /// Saved as its own setting rather than in the caps text, since it is
+    /// a preference and the rest is evidence. The evidence goes on being
+    /// collected underneath: switch back to Auto and it is all still
+    /// there, up to date.
+    forced: Option<Layout>,
 }
 
 /// The key groups the legends name by their QWERTY caps, and the physical
@@ -187,6 +248,9 @@ const BLOCKS: &[(&str, &[KeyCode])] = &[
 impl KeyCaps {
     /// What the cap says, if it differs from the QWERTY spelling.
     pub fn cap(&self, key: KeyCode) -> Option<char> {
+        if let Some(forced) = self.forced {
+            return forced.cap(key);
+        }
         self.learned
             .get(&key)
             .copied()
@@ -207,11 +271,17 @@ impl KeyCaps {
     /// across layouts.
     pub fn key_for(&self, letter: char) -> KeyCode {
         let letter = letter.to_ascii_uppercase();
-        self.learned
-            .iter()
-            .find(|(_, c)| **c == letter)
-            .map(|(k, _)| *k)
-            .or_else(|| self.presumed.and_then(|layout| layout.key_for(letter)))
+        self.forced
+            .map_or_else(
+                || {
+                    self.learned
+                        .iter()
+                        .find(|(_, c)| **c == letter)
+                        .map(|(k, _)| *k)
+                        .or_else(|| self.presumed.and_then(|layout| layout.key_for(letter)))
+                },
+                |forced| forced.key_for(letter),
+            )
             .or_else(|| binds::key_from_name(&format!("Key{letter}")))
             .or_else(|| binds::global_key_from_name(&format!("Key{letter}")))
             .unwrap_or_else(|| panic!("no key spells {letter}"))
@@ -275,6 +345,19 @@ impl KeyCaps {
             changed |= self.learn(key, cap);
         }
         changed
+    }
+
+    /// Read the whole board as `layout`, whatever the keyboard, the
+    /// presses and the language say - or, with `None`, go back to working
+    /// it out from all three.
+    ///
+    /// The escape hatch every game ships, and the reason it is worth
+    /// shipping: detection is right almost always, and "almost" covers
+    /// remote desktops, KVMs, a borrowed machine and the odd locale
+    /// nobody thought of. A player who can see the wrong letters on the
+    /// card must be able to say so.
+    pub fn force(&mut self, layout: Option<Layout>) {
+        self.forced = layout;
     }
 
     /// Take `layout` as this keyboard, until a press says otherwise.
@@ -759,6 +842,39 @@ mod tests {
             "WASD move | W/S: choose"
         );
         assert_eq!(caps.key_for('M'), KeyCode::KeyM);
+    }
+
+    /// The row on the card outranks everything the game worked out, and
+    /// hands it all straight back when it goes to Auto.
+    #[test]
+    fn a_named_keyboard_outranks_what_the_game_worked_out() {
+        // A board the platform read as AZERTY, in a French-speaking game.
+        let mut caps = KeyCaps::default();
+        caps.presume(Some(Layout::Azerty));
+        caps.adopt(&[(KeyCode::KeyW, 'z'), (KeyCode::Semicolon, 'm')]);
+        assert_eq!(caps.legend("WASD | W/S"), "ZQSD | Z/S");
+
+        // The player says it is QWERTY after all - a remote desktop, a
+        // borrowed machine - and every cap goes back, including the ones
+        // no press touched.
+        caps.force(Some(Layout::Qwerty));
+        assert_eq!(caps.legend("WASD | W/S"), "WASD | W/S");
+        assert_eq!(caps.label(KeyCode::Semicolon), ";");
+        assert_eq!(caps.key_for('M'), KeyCode::KeyM);
+        assert!(!caps.is_global(KeyCode::Semicolon));
+
+        // Naming a layout works the other way just as well, on a board
+        // that never said a word.
+        let mut fresh = KeyCaps::default();
+        fresh.force(Some(Layout::Qwertz));
+        assert_eq!(fresh.label(KeyCode::KeyY), "Z");
+        assert_eq!(fresh.legend("WASD"), "WASD");
+
+        // Back to Auto: the evidence was kept underneath the whole time,
+        // so nothing has to be learned twice.
+        caps.force(None);
+        assert_eq!(caps.legend("WASD | W/S"), "ZQSD | Z/S");
+        assert_eq!(caps.key_for('M'), KeyCode::Semicolon);
     }
 
     #[test]
