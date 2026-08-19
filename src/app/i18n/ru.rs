@@ -232,6 +232,7 @@ pub static RU: Tr = Tr {
     haul: "крабов дошло домой за раунд: {n}",
     highlight_saved: "лучшие моменты: {path}",
     all_safe: "ВСЕ КРАБЫ ДОМА!",
+    crabs_lost: "НЕ ВСЕ КРАБЫ ДОШЛИ",
     last_level: "Это был последний. Enter: назад в меню",
     campaign_done: "ПЛЯЖ В БЕЗОПАСНОСТИ!",
     set_group_controls: "УПРАВЛЕНИЕ",

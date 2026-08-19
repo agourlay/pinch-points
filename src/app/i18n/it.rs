@@ -225,6 +225,7 @@ pub static IT: Tr = Tr {
     haul: "{n} granchi sono tornati a casa in questo round",
     highlight_saved: "momenti salienti: {path}",
     all_safe: "TUTTI I GRANCHI SONO SALVI!",
+    crabs_lost: "QUALCHE GRANCHIO NON CE L'HA FATTA",
     last_level: "Era l'ultimo. Invio: torna al menu",
     campaign_done: "LA SPIAGGIA È SALVA!",
     set_group_controls: "COMANDI",

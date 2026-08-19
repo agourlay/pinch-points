@@ -225,6 +225,7 @@ pub static EN: Tr = Tr {
     haul: "{n} crabs made it home this round",
     highlight_saved: "highlight reel: {path}",
     all_safe: "ALL CRABS SAFE!",
+    crabs_lost: "SOME CRABS NEVER MADE IT",
     last_level: "That was the last one. Enter: back to the menu",
     campaign_done: "THE BEACH IS SAFE!",
     set_group_controls: "CONTROLS",

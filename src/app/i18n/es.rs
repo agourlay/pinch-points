@@ -225,6 +225,7 @@ pub static ES: Tr = Tr {
     haul: "{n} cangrejos llegaron a casa esta ronda",
     highlight_saved: "resumen animado: {path}",
     all_safe: "¡TODOS LOS CANGREJOS A SALVO!",
+    crabs_lost: "ALGUNOS CANGREJOS NO LLEGARON",
     last_level: "Ese era el último. Intro: volver al menú",
     campaign_done: "¡LA PLAYA ESTÁ A SALVO!",
     set_group_controls: "CONTROLES",

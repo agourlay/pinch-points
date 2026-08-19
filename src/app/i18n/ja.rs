@@ -225,6 +225,7 @@ pub static JA: Tr = Tr {
     haul: "この試合で家に着いたカニは {n}匹",
     highlight_saved: "名場面: {path}",
     all_safe: "カニはみんな無事!",
+    crabs_lost: "たどり着けなかったカニがいる",
     last_level: "これで最後。Enter: メニューへ",
     campaign_done: "浜辺は安全になった!",
     set_group_controls: "そうさ",

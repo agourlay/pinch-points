@@ -225,6 +225,7 @@ pub static FR: Tr = Tr {
     haul: "{n} crabes sont rentrés à la maison",
     highlight_saved: "résumé animé : {path}",
     all_safe: "TOUS LES CRABES SAUVÉS !",
+    crabs_lost: "DES CRABES SE SONT PERDUS",
     last_level: "C'était la dernière. Entrée : retour au menu",
     campaign_done: "LA PLAGE EST SAUVÉE !",
     set_group_controls: "COMMANDES",

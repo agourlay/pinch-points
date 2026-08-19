@@ -341,10 +341,100 @@ pub fn spawn_puzzle_won(
     });
 }
 
+/// The puzzle loss card: which level, and Enter to try again.
+///
+/// A loss stops the sim on the tick the crab was lost, and the board holds
+/// still under whatever it was doing - a gull mid-tile with its meal. With
+/// no card that stop read as the game hanging; the prompt pill along the
+/// bottom was the only word of it. Now the loss is said where the win is.
+pub fn spawn_puzzle_lost(
+    mut commands: Commands,
+    campaign: Res<Campaign>,
+    settings: Res<GameSettings>,
+) {
+    let tr = settings.tr();
+    let name = settings
+        .language
+        .level_name(&campaign.current().name)
+        .to_string();
+    let card = results_card(&mut commands);
+    commands.entity(card).with_children(|wrap| {
+        wrap.spawn(menu_ui::screen_card()).with_children(|card| {
+            let head = card_text(30.0, palette::INK_RAID);
+            card.spawn((Text::new(tr.crabs_lost), head.0, head.1));
+            let sub = card_text(21.0, CARD_TEXT);
+            card.spawn((
+                Text::new(format!(
+                    "{} / {}  -  {name}",
+                    campaign.index + 1,
+                    campaign.levels.len()
+                )),
+                sub.0,
+                sub.1,
+            ));
+            let foot = card_text(17.0, CARD_TEXT.darker(0.15));
+            card.spawn((Text::new(tr.prompt_lost), foot.0, foot.1));
+        });
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::i18n::EN;
+
+    /// Losing a puzzle raises a card over the held board, and leaving the
+    /// phase takes it down again: the stop is said, not left to be guessed.
+    #[test]
+    fn a_lost_puzzle_says_so_on_a_card() {
+        use crate::app::{CampaignKind, Phase, Screen};
+        use crate::sim::campaign_levels;
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        let levels = campaign_levels();
+        let builtins = levels.len();
+        app.insert_resource(Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 3,
+            builtins,
+        });
+        app.insert_resource(GameSettings::default());
+        app.insert_state(Screen::Puzzle);
+        app.init_state::<Phase>();
+        app.add_systems(
+            OnEnter(Phase::Lost),
+            spawn_puzzle_lost.run_if(in_state(Screen::Puzzle)),
+        );
+        app.add_systems(OnExit(Phase::Lost), menu_ui::despawn_marked::<ResultsPanel>);
+        let cards = |app: &mut App| {
+            app.world_mut()
+                .query_filtered::<Entity, With<ResultsPanel>>()
+                .iter(app.world())
+                .count()
+        };
+        app.update();
+        assert_eq!(cards(&mut app), 0, "no card while the round runs");
+        app.world_mut()
+            .resource_mut::<NextState<Phase>>()
+            .set(Phase::Lost);
+        app.update();
+        assert_eq!(cards(&mut app), 1, "one card on the loss");
+        let said: Vec<String> = app
+            .world_mut()
+            .query::<&Text>()
+            .iter(app.world())
+            .map(|t| t.0.clone())
+            .collect();
+        assert!(said.iter().any(|t| t == EN.crabs_lost), "{said:?}");
+        assert!(said.iter().any(|t| t == EN.prompt_lost), "{said:?}");
+        assert!(said.iter().any(|t| t.starts_with("4 / ")), "{said:?}");
+        app.world_mut()
+            .resource_mut::<NextState<Phase>>()
+            .set(Phase::Setup);
+        app.update();
+        assert_eq!(cards(&mut app), 0, "and gone again on retry");
+    }
 
     /// The standings run best-first, carry each seat's marker, and in 2v2
     /// collapse to the two team totals.

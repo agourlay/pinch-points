@@ -232,6 +232,7 @@ pub static DE: Tr = Tr {
     haul: "{n} Krabben haben es nach Hause geschafft",
     highlight_saved: "Highlight-Clip: {path}",
     all_safe: "ALLE KRABBEN IN SICHERHEIT!",
+    crabs_lost: "NICHT ALLE KRABBEN KAMEN AN",
     last_level: "Das war das letzte. Enter: zurück zum Menü",
     campaign_done: "DER STRAND IST GERETTET!",
     set_group_controls: "STEUERUNG",

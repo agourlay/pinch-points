@@ -225,6 +225,7 @@ pub static NL: Tr = Tr {
     haul: "{n} krabben kwamen deze ronde thuis",
     highlight_saved: "hoogtepunten: {path}",
     all_safe: "ALLE KRABBEN VEILIG!",
+    crabs_lost: "NIET ALLE KRABBEN HAALDEN HET",
     last_level: "Dat was de laatste. Enter: terug naar het menu",
     campaign_done: "HET STRAND IS VEILIG!",
     set_group_controls: "BESTURING",

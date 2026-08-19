@@ -336,8 +336,13 @@ fn add_phase_transitions(app: &mut App) {
         OnEnter(Phase::Lost),
         (
             audio::play_lose,
+            results::spawn_puzzle_lost.run_if(in_state(Screen::Puzzle)),
             hint::record_loss.run_if(in_state(Screen::Puzzle)),
         ),
+    );
+    app.add_systems(
+        OnExit(Phase::Lost),
+        menu_ui::despawn_marked::<results::ResultsPanel>,
     );
     // A banner raised in the last second of a round would otherwise sit on
     // top of the results card; the round is over, the news can go.
