@@ -5,18 +5,18 @@
 //! integer-only, and deterministic, so it can be unit-tested, replayed, and
 //! driven over the wire. See `docs/pinch-points-spec.md`.
 //!
-//! There is no `unsafe` here and there is not going to be: the game is a
-//! grid of integers, and the one thing it does with bytes a stranger wrote,
-//! decoding them, is the last place to want manual memory handling.
-//! Forbidden rather than merely denied, so it cannot be turned back on
-//! locally without saying so here.
+//! There is almost no `unsafe` here and there is not going to be more: the
+//! game is a grid of integers, and the one thing it does with bytes a
+//! stranger wrote, decoding them, is the last place to want manual memory
+//! handling.
 //!
-//! The one thing that genuinely needs it lives next door instead: asking
-//! Windows and macOS what the keys say means calling their keyboard
-//! APIs, so that lives in `pinch-keymap`, a crate of its own, where the
-//! unsafe is a dozen lines with a reason written over each of them. See
-//! [`app::keymap`].
-#![forbid(unsafe_code)]
+//! The one exception is [`app::keymap`], where asking Windows and macOS
+//! what the keys say means calling their keyboard APIs: a dozen lines of
+//! FFI with a reason written over each of them. That module allows itself
+//! what this line denies, which is the only way in - `deny` rather than
+//! `forbid` for exactly that reason, and a `#[allow(unsafe_code)]`
+//! anywhere else is a change to argue with, not to wave through.
+#![deny(unsafe_code)]
 
 pub mod app;
 pub mod gif;

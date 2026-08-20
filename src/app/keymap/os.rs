@@ -9,31 +9,24 @@
 //!
 //! Every platform knows. X11 has had `GetKeyboardMapping` since the
 //! beginning, Windows answers `MapVirtualKeyEx`, and macOS will run a key
-//! through `UCKeyTranslate` against the current input source. This crate
-//! asks all three the same question and answers in one vocabulary.
+//! through `UCKeyTranslate` against the current input source. This module
+//! asks all three the same question and answers in one vocabulary: the
+//! W3C UI Events `code`, `"KeyW"` and `"Semicolon"`, which is the
+//! spelling winit and Bevy use for their own key types. That is what
+//! lets [`super::ask`] translate an answer by its name alone.
 //!
-//! ```no_run
-//! for (key, cap) in pinch_keymap::query() {
-//!     println!("{key} says {cap}");   // "KeyW says z" on AZERTY
-//! }
-//! ```
+//! # The unsafe
 //!
-//! Keys are named by their W3C UI Events `code`: `"KeyW"`, `"Semicolon"`.
-//! That is the same vocabulary as a DOM `KeyboardEvent.code`, as winit's
-//! `KeyCode` and as Bevy's, so the answer maps onto a toolkit's own key
-//! type by its name alone.
-//!
-//! # Why this crate exists
-//!
-//! It carries the `unsafe` that two of those three answers need, so that
-//! the program asking the question does not have to. Its sibling
-//! [`pinch-points`] forbids unsafe code outright and calls in here
-//! instead.
-//!
-//! [`pinch-points`]: https://crates.io/crates/pinch-points
+//! This is the only module in the game that has any, and the reason
+//! [`crate`] denies unsafe code rather than forbidding it outright: two
+//! of those three platforms answer through FFI and nothing else. It is a
+//! dozen calls, none of them on the path Linux takes, each one a plain
+//! integer or a reference released on every path out - and every block
+//! below says why it is sound, which the lint under this paragraph is
+//! what enforces.
 
-#![deny(missing_docs)]
-// The whole point of the crate: every unsafe block says why it is sound.
+// The exception, granted here and nowhere else in the game.
+#![allow(unsafe_code)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 
 /// Every key whose cap can move between layouts, and the number each
@@ -90,7 +83,7 @@ const KEYS: [(&str, u8, u8); 37] = [
     ("Backquote", 41, 0x32),
 ];
 
-/// What the keyboard prints, unshifted, for every key this crate knows
+/// What the keyboard prints, unshifted, for every key this module knows
 /// and the platform will answer for.
 ///
 /// Each pair is a W3C `code` and the single printable ASCII character on

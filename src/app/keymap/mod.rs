@@ -8,9 +8,9 @@
 //! start-up, before a key is touched and including the punctuation no
 //! player ever presses.
 //!
-//! The asking lives in [`pinch_keymap`], which is a crate of its own
-//! because two of the three platforms answer only through FFI and this
-//! one forbids unsafe code. It answers in W3C `code` names - "KeyW",
+//! The asking lives in [`os`], kept a module of its own because two of
+//! the three platforms answer only through FFI and the rest of the game
+//! has no unsafe in it. It answers in W3C `code` names - "KeyW",
 //! "Semicolon" - which is the vocabulary Bevy's [`KeyCode`] is spelled
 //! in, so [`binds::key_from_name`] is the whole of the translation.
 //!
@@ -23,6 +23,8 @@
 //! press on a moved key is, and corrects the table itself.
 
 use bevy::prelude::*;
+
+mod os;
 
 use crate::app::binds;
 use crate::app::settings::GameSettings;
@@ -58,10 +60,10 @@ pub fn read_keymap(world: &mut World) {
 }
 
 /// The platform's answer, in this game's key type. A name it does not
-/// know is dropped rather than fussed over: the crate reports the whole
+/// know is dropped rather than fussed over: [`os`] reports the whole
 /// keyboard, and the game binds a part of it.
 fn ask() -> Vec<(KeyCode, char)> {
-    pinch_keymap::query()
+    os::query()
         .into_iter()
         .filter_map(|(name, cap)| {
             let key = binds::key_from_name(name).or_else(|| binds::global_key_from_name(name))?;
@@ -74,13 +76,13 @@ fn ask() -> Vec<(KeyCode, char)> {
 mod tests {
     use super::*;
 
-    /// The two crates agree on the spelling of a key, or every answer is
+    /// The two halves agree on the spelling of a key, or every answer is
     /// silently dropped and the query does nothing at all. Bevy spells
     /// its [`KeyCode`]s the same way the W3C does, and this is what says
     /// so out loud.
     #[test]
     fn every_key_the_platform_names_is_one_the_game_knows() {
-        let named = pinch_keymap::query();
+        let named = os::query();
         for (name, _) in &named {
             assert!(
                 binds::key_from_name(name).is_some() || binds::global_key_from_name(name).is_some(),

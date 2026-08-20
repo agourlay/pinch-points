@@ -1,5 +1,6 @@
+# A workspace of one: nothing else lives here, but `[workspace.lints]`
+# below is where this crate's lint table is kept.
 [workspace]
-members = ["crates/pinch-keymap"]
 
 [package]
 name = "pinch-points"
@@ -38,13 +39,19 @@ parlance = "0.1"
 # than from the first press. A crate of its own because two of the three
 # platforms answer only through FFI, and this one forbids unsafe code:
 # see the note on that in `lib.rs`.
-pinch-keymap = { version = "0.1", path = "crates/pinch-keymap" }
 # Not called from here: this turns on the one feature that makes the text
 # stack's data layer report through `log` rather than straight to stderr.
 # Japanese line breaking wants a CJK dictionary the baked data does not
 # carry, and says so once per line per frame; routed through `log` it can
 # be filtered, which `app::schedule` does.
 icu_provider = { version = "2", features = ["logging"] }
+
+# What `app::keymap` asks on Linux. The pure-Rust connection: the core
+# X11 protocol answers without libxkbcommon to link, a dev package to
+# install, or a line of unsafe. Windows and macOS are answered by FFI
+# into libraries that are always there, so they need nothing here.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 # A progress bar for `examples/verify_levels`, the campaign minimality
