@@ -171,14 +171,10 @@ pub(super) fn puzzle_text(
             ),
         ],
     );
-    let status = match level.goal {
-        Goal::AllCrabs => format!(
-            "{} | {saved}",
-            fill(
-                tr.signposts_count,
-                &[("a", &used.to_string()), ("b", &level.posts.to_string())]
-            )
-        ),
+    // What the level asks for. The default goal has nothing to state beyond
+    // the tally of crabs already home; the rest name their own target.
+    let goal = match level.goal {
+        Goal::AllCrabs => saved,
         Goal::Bank(n) => fill(
             tr.goal_bank,
             &[
@@ -189,6 +185,21 @@ pub(super) fn puzzle_text(
         ),
         Goal::Survive => fill(tr.goal_survive, &[("t", "")]),
         Goal::Golden => fill(tr.goal_golden, &[("t", "")]),
+    };
+    // The inventory goes in front of it, on every goal. It used to be
+    // printed only under `AllCrabs`, so nine campaign levels and all eight
+    // Beach Day stages named a target and never said how many signposts
+    // paid for it - and players read a missing number as "as many as I
+    // like". A level that hands out none says so in the prompt instead.
+    let status = match level.posts {
+        0 => goal,
+        posts => format!(
+            "{} | {goal}",
+            fill(
+                tr.signposts_count,
+                &[("a", &used.to_string()), ("b", &posts.to_string())]
+            )
+        ),
     };
     let prompt = match phase.get() {
         Phase::Setup if level.posts == 0 => tr.prompt_setup_no_posts.to_string(),
