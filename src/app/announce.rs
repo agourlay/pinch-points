@@ -144,6 +144,7 @@ pub fn collect_announcements(
             | SimEvent::GullTookOff
             | SimEvent::GullLanded { .. }
             | SimEvent::SignpostsChanged { .. }
+            | SimEvent::SignpostEvicted { .. }
             | SimEvent::TierUp { .. }
             | SimEvent::RoundEnded => {}
         }

@@ -121,6 +121,7 @@ pub fn collect_log(
             | SimEvent::GullTookOff
             | SimEvent::GullLanded { .. }
             | SimEvent::SignpostsChanged { .. }
+            | SimEvent::SignpostEvicted { .. }
             | SimEvent::RoundEnded => None,
         };
         if let Some((text, color)) = line {

@@ -189,6 +189,9 @@ pub fn play_events(
                     gain,
                 );
             }
+            SimEvent::SignpostEvicted { pos, .. } => {
+                play_at(&mut commands, &sounds.denied, gain, pan(pos));
+            }
             SimEvent::TierUp { .. } => play(&mut commands, &sounds.tier, gain),
             SimEvent::TideEventFired { .. } => play(&mut commands, &sounds.event, gain),
             SimEvent::SurgeStarted => {

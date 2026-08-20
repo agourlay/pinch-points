@@ -38,6 +38,19 @@ pub enum SimEvent {
     GullLanded { pos: Vec2 },
     /// Net signpost count change (positive: placed, negative: removed).
     SignpostsChanged { delta: i32 },
+    /// A signpost was pushed off the board to make room for a newer one:
+    /// `owner` was at the cap under [`crate::sim::CapPolicy::Evict`] and
+    /// placed anyway, so their oldest went. `pos` is where it stood.
+    ///
+    /// The versus and Beach Day rule, never the campaign's, which refuses
+    /// the placement instead. It is the one way a player loses a signpost
+    /// by their own hand without asking to, and until this event existed
+    /// it happened in total silence.
+    SignpostEvicted {
+        owner: PlayerId,
+        pos: Vec2,
+        dir: Direction,
+    },
     /// `owner`'s castle rose a tier.
     TierUp { owner: PlayerId },
     /// The tide roulette fired this event.
@@ -92,6 +105,15 @@ pub struct Watch {
     scores: [u32; MAX_PLAYERS],
     tiers: [u8; MAX_PLAYERS],
     posts: usize,
+    /// Per seat, not just the total: an eviction leaves the count where it
+    /// was, so the sum alone cannot see one.
+    posts_by: [usize; MAX_PLAYERS],
+    /// Which seat holds the signpost on each occupied tile, and which way
+    /// it points. Only the seat decides whether a tile lost its post -
+    /// re-pointing one in place keeps the seat and changes the direction,
+    /// and that is not an eviction - but the direction has to be kept to
+    /// draw the ghost of a post that is already off the board.
+    posts_at: HashMap<(u8, u8), (PlayerId, Direction)>,
     gulls: usize,
     flying: usize,
     event_at: Option<u64>,
@@ -118,6 +140,14 @@ impl Watch {
             posts: (0..MAX_PLAYERS as u8)
                 .map(|p| board.signpost_count(p))
                 .sum(),
+            posts_by: std::array::from_fn(|p| board.signpost_count(p as PlayerId)),
+            posts_at: board
+                .tiles()
+                .filter_map(|(x, y, _)| {
+                    let sp = board.signpost_at(x, y)?;
+                    Some(((x, y), (sp.owner, sp.dir)))
+                })
+                .collect(),
             gulls: board.gulls().len(),
             flying: board
                 .gulls()
@@ -274,6 +304,24 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
             delta: next.posts as i32 - prev.posts as i32,
         });
     }
+    // An eviction is a signpost leaving a tile while its owner's count
+    // holds: they were at the cap and placed a fourth, so the board took
+    // their oldest in trade. Every other way a signpost goes - expiry, the
+    // player pulling it, a gull finishing it off - takes the count down
+    // with it, which is what tells them apart. Placing on a frame where one
+    // of yours also expired reads as an eviction; the cue is "one of yours
+    // just went, here", which is true either way.
+    for (&(x, y), &(owner, dir)) in &prev.posts_at {
+        let still_theirs = next.posts_at.get(&(x, y)).is_some_and(|&(o, _)| o == owner);
+        if still_theirs || next.posts_by[owner as usize] < prev.posts_by[owner as usize] {
+            continue;
+        }
+        events.push(SimEvent::SignpostEvicted {
+            owner,
+            pos: layout::tile_center(board, x, y),
+            dir,
+        });
+    }
     for (seat, (&now, &before)) in next.tiers.iter().zip(prev.tiers.iter()).enumerate() {
         if now > before {
             events.push(SimEvent::TierUp {
@@ -381,6 +429,70 @@ mod tests {
         assert!(
             diff(&fresh, &mut watch).is_empty(),
             "a board swap must not fire stale events"
+        );
+    }
+
+    /// Losing your oldest signpost to the cap fires; every other way one
+    /// leaves the board does not.
+    ///
+    /// The versus rule takes a post in trade for the fourth you place, and
+    /// it used to do so in silence - the count on the header does not even
+    /// move, since one went for one. Pulling a post yourself, or letting
+    /// one expire, is a count going *down*, and neither is news.
+    #[test]
+    fn a_signpost_traded_away_at_the_cap_says_so() {
+        let mut board = Board::new(6, 4, 5);
+        board.set_signpost_rule(3, crate::sim::CapPolicy::Evict);
+        for x in 0..3u8 {
+            assert!(board.place_signpost(0, x, 0, Direction::Up));
+        }
+        let mut watch = synced(&board);
+
+        // The fourth: the oldest, at (0,0), is traded for it.
+        assert!(board.place_signpost(0, 5, 3, Direction::Down));
+        let events = diff(&board, &mut watch);
+        let evicted: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                SimEvent::SignpostEvicted { owner, dir, .. } => Some((*owner, *dir)),
+                SimEvent::CrabBanked { .. }
+                | SimEvent::CrabEaten { .. }
+                | SimEvent::CrabSpawned { .. }
+                | SimEvent::CastleRaided { .. }
+                | SimEvent::GullArrived
+                | SimEvent::GullTookOff
+                | SimEvent::GullLanded { .. }
+                | SimEvent::SignpostsChanged { .. }
+                | SimEvent::TierUp { .. }
+                | SimEvent::TideEventFired { .. }
+                | SimEvent::SurgeStarted
+                | SimEvent::RoundEnded => None,
+            })
+            .collect();
+        assert_eq!(
+            evicted,
+            vec![(0, Direction::Up)],
+            "the traded post and the way it pointed: {events:?}"
+        );
+
+        // Pulling one yourself is not a trade.
+        assert!(board.remove_signpost(0, 1, 0));
+        let events = diff(&board, &mut watch);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, SimEvent::SignpostEvicted { .. })),
+            "removing your own post is not an eviction: {events:?}"
+        );
+
+        // Nor is re-pointing one in place, which keeps the tile and the seat.
+        assert!(board.place_signpost(0, 2, 0, Direction::Left));
+        let events = diff(&board, &mut watch);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, SimEvent::SignpostEvicted { .. })),
+            "re-pointing is not an eviction: {events:?}"
         );
     }
 

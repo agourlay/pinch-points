@@ -81,6 +81,7 @@ pub fn track_events(
             | SimEvent::GullTookOff
             | SimEvent::GullLanded { .. }
             | SimEvent::SignpostsChanged { .. }
+            | SimEvent::SignpostEvicted { .. }
             | SimEvent::TierUp { .. }
             | SimEvent::SurgeStarted
             | SimEvent::RoundEnded => {}

@@ -5,6 +5,7 @@
 
 use crate::app::art::Art;
 use crate::app::layout::{self, TILE};
+use crate::app::palette;
 use crate::app::sim_events::SimEvent;
 use bevy::prelude::*;
 
@@ -289,6 +290,30 @@ pub fn moment_effects(
                 12.0,
                 55.0,
             ),
+            // The ghost of the signpost that just got traded away, still
+            // pointing where it pointed, swelling as it fades. Under the
+            // versus cap a fourth placement takes your oldest, and it used
+            // to vanish in silence somewhere else on the beach: the player
+            // sees the arrow they lost, and where they lost it.
+            SimEvent::SignpostEvicted { owner, pos, dir } => {
+                commands.spawn((
+                    Particle {
+                        velocity: Vec2::ZERO,
+                        spin: 0.0,
+                        grow: 1.1,
+                        age: 0.0,
+                        life: 0.5,
+                    },
+                    Sprite {
+                        image: art.arrow.clone(),
+                        color: palette::player_color(*owner).lighter(0.12),
+                        custom_size: Some(Vec2::splat(layout::TILE * 0.88)),
+                        ..default()
+                    },
+                    Transform::from_translation(pos.extend(layout::z::PARTICLE))
+                        .with_rotation(layout::dir_rotation(*dir)),
+                ));
+            }
             SimEvent::CrabSpawned { pos } => burst(
                 &mut commands,
                 &mut rng,
