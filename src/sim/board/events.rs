@@ -167,11 +167,7 @@ impl Board {
             }
             TideEvent::SpeedUp => self.tempo = Some((Tempo::Fast, EVENT_TICKS)),
             TideEvent::SlowDown => self.tempo = Some((Tempo::Slow, EVENT_TICKS)),
-            TideEvent::FreshSand => {
-                for slot in &mut self.signposts {
-                    *slot = None;
-                }
-            }
+            TideEvent::FreshSand => self.signposts.fill(None),
             TideEvent::CastleSwap => {
                 // Rockets swap places: every castle passes to the next
                 // participating owner, in a fixed rotation.
