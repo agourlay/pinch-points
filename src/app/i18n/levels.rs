@@ -66,7 +66,7 @@ pub(super) static LEVEL_HINTS: [[&str; 9]; 13] = [
         "Into the Weeds",
         "Gulls cannot walk through kelp. Crabs can!",
         "Les mouettes ne passent pas dans les algues. Les crabes, si !",
-        "Möwen kommen nicht durchs Seegras. Krabben schon!",
+        "Möwen kommen nicht durch den Tang. Krabben schon!",
         "Las gaviotas no pasan por las algas. ¡Los cangrejos sí!",
         "I gabbiani non passano tra le alghe. I granchi sì!",
         "Meeuwen komen niet door het wier. Krabben wel!",
@@ -76,7 +76,7 @@ pub(super) static LEVEL_HINTS: [[&str; 9]; 13] = [
     [
         "Dry Feet",
         "Wading through pools is slow. Find the dry road!",
-        "Patauger dans les mares, c'est lent. Trouve le chemin sec !",
+        "Patauger dans les flaques, c'est lent. Trouve le chemin sec !",
         "Durch Tümpel waten ist langsam. Finde den trockenen Weg!",
         "Cruzar las charcas es lento. ¡Busca el camino seco!",
         "Guadare le pozze è lento. Trova la strada asciutta!",
@@ -87,8 +87,8 @@ pub(super) static LEVEL_HINTS: [[&str; 9]; 13] = [
     [
         "The Old Mill",
         "The log splits the stream: kelp lane up, pool road down.",
-        "Le rondin partage le flot : algues en haut, mares en bas.",
-        "Der Stamm teilt den Strom: Seegras oben, Tümpel unten.",
+        "Le rondin partage le flot : algues en haut, flaques en bas.",
+        "Der Stamm teilt den Strom: Tang oben, Tümpel unten.",
         "El tronco parte el flujo: algas arriba, charcas abajo.",
         "Il tronco divide il flusso: alghe in alto, pozze in basso.",
         "De boomstam splitst de stroom: wier boven, poelen onder.",
@@ -458,7 +458,7 @@ pub(super) static LEVEL_NAMES: [[&str; 8]; 90] = [
     [
         "Into the Weeds",
         "Dans les algues",
-        "Ins Seegras",
+        "In den Tang",
         "Entre las algas",
         "Tra le alghe",
         "Het wier in",
