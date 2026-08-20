@@ -19,8 +19,10 @@ Pick whichever suits you:
   Unpack the archive and run `pinch-points`.
 - **From crates.io** with a Rust toolchain installed:
   ```sh
-  cargo install pinch-points
+  cargo install --locked pinch-points
   ```
+  (`--locked` builds against the dependency versions this game was tested
+  and released with, rather than re-resolving to whatever is newest.)
   ([crates.io/crates/pinch-points](https://crates.io/crates/pinch-points))
 - **From source**, in release mode:
   ```sh

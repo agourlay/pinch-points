@@ -42,14 +42,19 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+      # `--locked` on every step that resolves: build from the committed
+      # Cargo.lock or fail, never quietly pick up a newer dependency. On
+      # 2026-08-20 `arrayref` 0.3.10 was published with a hard dependency on
+      # a crate whose build script downloads and runs a binary, and a
+      # re-resolve is the whole of how that reaches a machine.
       - name: Build
-        run: cargo build
+        run: cargo build --locked
       - name: Check code formatting
         run: cargo fmt --all -- --check
       - name: Check cargo clippy warnings
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings  
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings  
       - name: Run tests
-        run: cargo nextest run
+        run: cargo nextest run --locked
       # The campaign minimality proof - no level grants a post it does not
       # need - is an exhaustive-per-level solver search, a minute even in
       # release across every core, and too expensive to spend on every push.
