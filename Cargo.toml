@@ -51,7 +51,7 @@ icu_provider = { version = "2", features = ["logging"] }
 # proof: a release run of it is minutes of otherwise-silent solving, and a
 # bar is how you tell "still working" from "wedged". Examples build against
 # dev-dependencies, and nothing the game ships links this.
-indicatif = "0.17"
+indicatif = "0.18"
 
 [lints]
 workspace = true
