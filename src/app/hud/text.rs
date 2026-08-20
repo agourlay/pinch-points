@@ -24,18 +24,48 @@ pub(crate) fn clock_text(ticks: u64) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
 
-/// The clock colour ramp: calm, red inside 30 s, blinking half-seconds
-/// for the last 10. `blink` is off under reduced motion, where the final
-/// ten seconds simply hold the bright red instead of flashing.
-pub(crate) fn clock_color(ticks: u64, elapsed: f32, blink: bool) -> Color {
-    let secs = ticks / u64::from(crate::sim::TICKS_PER_SECOND);
-    if secs <= 10 {
+/// How much of a round the screen draws as its closing emergency.
+///
+/// `band` is what that stretch is worth on a round with a middle to it: 30 s
+/// of red, the last 10 s of it blinking. A round shorter than the band has
+/// no middle, and the fixed figure then covers the whole of it - which is
+/// how every timed level in the game came to be drawn as one long panic.
+/// The longest round any level file asks for is 900 ticks, exactly
+/// [`crate::sim::SURGE_TICKS`], so *no* shipped level ever left the red.
+/// Dry Feet, at 240 ticks, ran all eight of its seconds under a blinking
+/// clock and heaving water, on a level about walking round a puddle.
+///
+/// Below the band the last third stands in for it. Versus rounds are two
+/// minutes and up and keep the fixed 30 s exactly as before.
+///
+/// This is the *drawn* scramble only. [`crate::sim::Board::in_surge`] is
+/// the sim's own 30 s rule - it doubles the gull spawn rate and gates tide
+/// events - and it stays where it is: moving it would move every replay.
+pub(crate) fn urgency_band(round: Option<u32>, band: u32) -> u64 {
+    match round {
+        Some(round) if round <= band => u64::from(round) / 3,
+        _ => u64::from(band),
+    }
+}
+
+/// The clock colour ramp: calm, red inside the closing band, blinking
+/// half-seconds for the last third of that. `blink` is off under reduced
+/// motion, where the final stretch simply holds the bright red instead of
+/// flashing. `round` is the board's round length, absent on an untimed
+/// puzzle counting down the campaign tick limit.
+pub(crate) fn clock_color(ticks: u64, round: Option<u32>, elapsed: f32, blink: bool) -> Color {
+    const BLINK_TICKS: u64 = 10 * crate::sim::TICKS_PER_SECOND as u64;
+    let red = urgency_band(round, crate::sim::SURGE_TICKS);
+    // The blink is the last third of the red, and never more than the ten
+    // seconds it is worth on a long round: the two have to stay in that
+    // order, or a short round starts blinking the instant it turns red.
+    if ticks <= BLINK_TICKS.min(red / 3) {
         if !blink || ((elapsed * 2.0) as u32).is_multiple_of(2) {
             CLOCK_RED
         } else {
             CLOCK_RED_BRIGHT
         }
-    } else if secs <= 30 {
+    } else if ticks <= red {
         CLOCK_RED
     } else {
         CLOCK_CALM
@@ -693,15 +723,62 @@ mod tests {
 
     /// The clock reddens inside the last 30 seconds and blinks for the
     /// last 10, unless the player asked for less motion, where it holds.
+    /// A long round - versus, or the untimed puzzle backstop - is what
+    /// those flat figures are for, and they are unchanged on one.
     #[test]
     fn the_clock_reddens_then_blinks() {
         let tps = u64::from(crate::sim::TICKS_PER_SECOND);
-        assert_eq!(clock_color(60 * tps, 0.0, true), CLOCK_CALM);
-        assert_eq!(clock_color(20 * tps, 0.0, true), CLOCK_RED);
-        // Inside ten seconds the colour alternates with the wall clock.
-        assert_eq!(clock_color(5 * tps, 0.0, true), CLOCK_RED);
-        assert_eq!(clock_color(5 * tps, 0.5, true), CLOCK_RED_BRIGHT);
-        // Reduced motion: red, but steady.
-        assert_eq!(clock_color(5 * tps, 0.5, false), CLOCK_RED);
+        let long = Some(3 * 60 * crate::sim::TICKS_PER_SECOND);
+        for round in [None, long] {
+            assert_eq!(clock_color(60 * tps, round, 0.0, true), CLOCK_CALM);
+            assert_eq!(clock_color(20 * tps, round, 0.0, true), CLOCK_RED);
+            // Inside ten seconds the colour alternates with the wall clock.
+            assert_eq!(clock_color(5 * tps, round, 0.0, true), CLOCK_RED);
+            assert_eq!(clock_color(5 * tps, round, 0.5, true), CLOCK_RED_BRIGHT);
+            // Reduced motion: red, but steady.
+            assert_eq!(clock_color(5 * tps, round, 0.5, false), CLOCK_RED);
+        }
+    }
+
+    /// A round shorter than the flat band still has a calm stretch.
+    ///
+    /// Every timed level in the game is shorter than [`SURGE_TICKS`] - the
+    /// longest `round:` any file asks for is 900, which is that figure
+    /// exactly - so under the old flat rule not one of them ever showed a
+    /// calm clock. Dry Feet is 240 ticks and was red and blinking from its
+    /// first frame to its last.
+    #[test]
+    fn a_short_round_is_not_one_long_emergency() {
+        let dry_feet = Some(240);
+        // Two thirds of the way in, still calm; the last third reddens and
+        // the very end of that blinks.
+        assert_eq!(clock_color(200, dry_feet, 0.0, true), CLOCK_CALM);
+        assert_eq!(clock_color(100, dry_feet, 0.0, true), CLOCK_CALM);
+        assert_eq!(clock_color(60, dry_feet, 0.0, true), CLOCK_RED);
+        assert_eq!(clock_color(20, dry_feet, 0.5, true), CLOCK_RED_BRIGHT);
+        // The red always arrives before the blink, on any round length.
+        for round in [240u32, 300, 900, 1800, 3600] {
+            let red = urgency_band(Some(round), crate::sim::SURGE_TICKS);
+            let blink = (0..=round)
+                .rev()
+                .map(u64::from)
+                .find(|&t| clock_color(t, Some(round), 0.5, true) == CLOCK_RED_BRIGHT);
+            assert!(
+                blink.is_some_and(|blink| blink < red),
+                "round {round}: reddens at {red}, blinks at {blink:?}"
+            );
+        }
+    }
+
+    /// The flat band is what a round long enough to have a middle gets;
+    /// a shorter one gets its last third instead.
+    #[test]
+    fn the_urgency_band_shrinks_only_for_short_rounds() {
+        assert_eq!(urgency_band(None, 900), 900);
+        assert_eq!(urgency_band(Some(3600), 900), 900);
+        assert_eq!(urgency_band(Some(901), 900), 900);
+        // At and below the band, the last third of the round.
+        assert_eq!(urgency_band(Some(900), 900), 300);
+        assert_eq!(urgency_band(Some(240), 900), 80);
     }
 }

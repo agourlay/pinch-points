@@ -1,10 +1,14 @@
 # The long way is dry and the short way is wet. A crab wading a pool walks
 # at half speed, and there are four of them between here and the castle.
-# There is one gap in the wall above, and every crab in the lane has to be
-# turned through it.
+# Two gaps break the wall above: the one at x=3 is the door you turn them
+# through, and the one over the castle is how the dry lane comes back down.
+#
+# The tide is what makes the wet lane lose - unposted the crabs do reach
+# the castle, on tick 256, sixteen ticks after the water. That margin is
+# thin on purpose but it is thin: re-run examples/author after any change
+# to pool speed, crab speed or this map.
 name: Dry Feet
 posts: 1
-goal: bank 3
 round: 240
 crab: 0,1 R R common
 crab: 1,1 R R common
@@ -15,6 +19,4 @@ map:
 |. . . . . . . . .|
 +-+-+-+ +-+-+-+-+ +
 |. . . . ~ ~ ~ ~ 0|
-+-+-+-+-+-+-+-+-+-+
-|. . . . . . . . .|
 +-+-+-+-+-+-+-+-+-+

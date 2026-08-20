@@ -13,6 +13,20 @@ use crate::app::layout::TILE;
 use crate::sim::TideEvent;
 use bevy::prelude::*;
 
+/// Whether the water should be heaving: the closing stretch of the round,
+/// measured the way the clock measures it.
+///
+/// Not [`crate::sim::Board::in_surge`], which is a flat 30 s. No level file
+/// asks for a round longer than that, so every timed board heaved from its
+/// first frame and the swell stopped meaning anything - Dry Feet is eight
+/// seconds long and spent all of them in a storm. The sim's own surge is
+/// left alone: it drives gull spawns and tide events, and moving it would
+/// move every recorded round.
+fn heaving(board: &crate::sim::Board, remaining: u64) -> bool {
+    !board.round_over()
+        && remaining <= crate::app::hud::urgency_band(board.round_length(), crate::sim::SURGE_TICKS)
+}
+
 /// The tide's ambient clock (spec §3.6): four water bars around the board
 /// that widen outward from the sand's edge over the round. `0..4` = top,
 /// bottom, left, right.
@@ -47,7 +61,7 @@ pub fn update_waterline(
     let total = board.ticks() + remaining;
     let elapsed = 1.0 - remaining as f32 / total.max(1) as f32;
     let mut depth = 6.0 + elapsed * WATER_MAX;
-    if board.in_surge() && !board.round_over() {
+    if heaving(board, remaining) {
         depth += (time.elapsed_secs() * 6.0).sin() * 3.0;
     }
     let w = f32::from(board.width()) * TILE;
@@ -120,7 +134,7 @@ pub fn update_water_foam(
     let total = board.ticks() + remaining;
     let elapsed = 1.0 - remaining as f32 / total.max(1) as f32;
     let mut depth = 6.0 + elapsed * WATER_MAX;
-    if board.in_surge() && !board.round_over() {
+    if heaving(board, remaining) {
         depth += (time.elapsed_secs() * 6.0).sin() * 3.0;
     }
     let lap = (time.elapsed_secs() * 1.8).sin() * 1.5;

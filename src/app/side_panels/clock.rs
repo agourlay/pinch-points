@@ -12,8 +12,9 @@ pub struct SideClock;
 
 const CLOCK_TOP: f32 = 10.0;
 
-/// Drive the sidebar clock: mm:ss, red for the last 30 seconds, pulsing
-/// for the final 10.
+/// Drive the sidebar clock: mm:ss, red for the closing stretch of the
+/// round and pulsing for the last of it. Versus rounds are two minutes and
+/// up, so that stretch is the flat 30 s it has always been.
 pub fn update_side_clock(
     sim: Res<Sim>,
     time: Res<Time>,
@@ -24,7 +25,12 @@ pub fn update_side_clock(
         return;
     };
     let value = crate::app::hud::clock_text(ticks);
-    let target = crate::app::hud::clock_color(ticks, time.elapsed_secs(), !settings.reduced_motion);
+    let target = crate::app::hud::clock_color(
+        ticks,
+        sim.0.round_length(),
+        time.elapsed_secs(),
+        !settings.reduced_motion,
+    );
     for (mut text, mut color) in &mut clocks {
         crate::app::menu_ui::set_text(&mut text, &value);
         crate::app::menu_ui::set_color(&mut color, target);

@@ -14,7 +14,7 @@ use bevy::prelude::*;
 mod text;
 
 use text::CLOCK_CALM;
-pub(crate) use text::{clock_color, clock_text, event_name};
+pub(crate) use text::{clock_color, clock_text, event_name, urgency_band};
 
 #[derive(Component)]
 pub struct LevelLabel;
@@ -213,6 +213,13 @@ pub fn update_tide_clock(
         Screen::Puzzle if *phase.get() == Phase::Running => sim.0.remaining_ticks().or(Some(
             crate::sim::PUZZLE_TICK_LIMIT.saturating_sub(sim.0.ticks()),
         )),
+        // A timed level shows its deadline while the signposts are still
+        // going down. Dry Feet is decided in eight seconds and the player
+        // was choosing where to spend their one post with nothing on screen
+        // saying so. Only levels that carry a round: the campaign tick
+        // limit is a backstop, not a deadline, and counting it down over an
+        // untimed puzzle would invent a pressure that is not there.
+        Screen::Puzzle if *phase.get() == Phase::Setup => sim.0.remaining_ticks(),
         Screen::Puzzle
         | Screen::Menu
         | Screen::Editor
@@ -235,7 +242,12 @@ pub fn update_tide_clock(
             continue;
         };
         menu_ui::set_text(&mut text, &clock_text(ticks));
-        let target = clock_color(ticks, time.elapsed_secs(), !settings.reduced_motion);
+        let target = clock_color(
+            ticks,
+            sim.0.round_length(),
+            time.elapsed_secs(),
+            !settings.reduced_motion,
+        );
         menu_ui::set_color(&mut color, target);
     }
 }
