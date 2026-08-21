@@ -5,6 +5,7 @@
 //! form stay readable without the UI wrapped around them.
 
 use super::*;
+use crate::app::company;
 use crate::app::i18n::fill;
 use crate::app::menu_ui;
 use crate::app::settings::GameSettings;
@@ -39,9 +40,21 @@ pub struct MatchPadInfo(pub bool);
 #[derive(Component)]
 pub struct MatchBeachNote;
 
+/// The company this card keeps: hung wide, because the match card is more
+/// than twice the width of the language picker's and its shoulders reach
+/// out further again. Gulls in the sky above, crabs on the sand below,
+/// none of them over the card.
+pub(super) const FLOCK: [company::Perch; 4] = [
+    (0.025, 0.06, 60.0, true),
+    (0.885, 0.10, 54.0, true),
+    (0.02, 0.72, 64.0, false),
+    (0.89, 0.78, 58.0, false),
+];
+
 pub fn enter_match_setup(
     mut commands: Commands,
     settings: Res<GameSettings>,
+    art: Res<crate::app::art::Art>,
     mut menu: ResMut<MatchMenu>,
     mut config: ResMut<MatchConfig>,
     beaches: Res<CustomBeaches>,
@@ -56,6 +69,8 @@ pub fn enter_match_setup(
     commands
         .spawn((MatchUi, menu_ui::between_bars()))
         .with_children(|wrap| {
+            // The flock first, so it sits behind the card rather than on it.
+            company::flock(wrap, &art, &FLOCK);
             // A fixed height, because the rows that come and go fold away
             // rather than blanking: four AI-level rows in the middle of the
             // card would be four holes if they merely emptied, and a card
@@ -68,24 +83,35 @@ pub fn enter_match_setup(
                     + ROWS as f32 * (menu_ui::ROW_H + menu_ui::ROW_GAP),
             );
             node.justify_content = JustifyContent::FlexStart;
-            wrap.spawn((node, fill, edge, shadow))
-                .with_children(|card| {
-                    card.spawn(menu_ui::heading(tr.match_heading, true));
-                    for row in 0..ROWS {
-                        card.spawn((MatchRow(row), menu_ui::card_row()))
-                            .with_children(|line| {
-                                for (half, width) in [
-                                    (menu_ui::Half::Label, LABEL_W),
-                                    (menu_ui::Half::Value, VALUE_W),
-                                ] {
-                                    line.spawn((
-                                        MatchCell(row, Row::ALL[row], half),
-                                        menu_ui::cell(width, ROW_FONT),
-                                    ));
-                                }
-                            });
-                    }
-                });
+            // The card between the crab and the gull, so it stays centred
+            // on its own rows rather than on the crab.
+            wrap.spawn(Node {
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(company::CRITTER_GAP),
+                ..default()
+            })
+            .with_children(|line| {
+                company::shoulder(line, &art, false, 0.0);
+                line.spawn((node, fill, edge, shadow))
+                    .with_children(|card| {
+                        card.spawn(menu_ui::heading(tr.match_heading, true));
+                        for row in 0..ROWS {
+                            card.spawn((MatchRow(row), menu_ui::card_row()))
+                                .with_children(|line| {
+                                    for (half, width) in [
+                                        (menu_ui::Half::Label, LABEL_W),
+                                        (menu_ui::Half::Value, VALUE_W),
+                                    ] {
+                                        line.spawn((
+                                            MatchCell(row, Row::ALL[row], half),
+                                            menu_ui::cell(width, ROW_FONT),
+                                        ));
+                                    }
+                                });
+                        }
+                    });
+                company::shoulder(line, &art, true, 1.7);
+            });
             // The beach note sits first, right under the card and so under
             // the map row it is about, and in the parchment the rows use
             // rather than the controller footer's grey: it is about the

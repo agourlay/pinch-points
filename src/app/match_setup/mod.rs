@@ -651,11 +651,26 @@ mod tests {
     #[test]
     fn the_card_fits_the_window_it_was_drawn_for() {
         let card = LABEL_W + VALUE_W + 2.0 * 10.0 + 2.0 * 22.0;
+        // The crab and the gull stand in the same row as the card and do
+        // not shrink, so the width they take is the card's to spare. Left
+        // out, the card would be the one squeezed on a narrow window.
+        let across = card + crate::app::company::SHOULDERS;
         assert!(
-            card <= crate::app::settings::DESIGN_W,
-            "the match card is {card}px of the {}px it is allowed",
+            across <= crate::app::settings::DESIGN_W,
+            "the match card and its company are {across}px of the {}px they \
+             are allowed ({card}px of it the card)",
             crate::app::settings::DESIGN_W
         );
+    }
+
+    /// The flock is hung on the frame by hand, and a hand can hang one over
+    /// the card, where its near-solid fill shows the critter through as a
+    /// smudge under a row.
+    #[test]
+    fn the_flock_leaves_the_card_alone() {
+        use crate::app::company;
+        let card = LABEL_W + VALUE_W + 2.0 * 10.0 + 2.0 * 22.0;
+        company::flock_is_hung_clear(&screen::FLOCK, company::keep_clear(card), (0.0, 0.88));
     }
 
     /// The point of sending the beach at all: a level the joiner has never

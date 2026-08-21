@@ -18,6 +18,7 @@
 //! what is being started here in the one language every player reads.
 
 use crate::app::art::Art;
+use crate::app::company::{self, Perch};
 use crate::app::cycle::Cycle;
 use crate::app::i18n::{ALL_LANGS, Lang};
 use crate::app::settings::GameSettings;
@@ -37,27 +38,6 @@ pub struct LanguageRow(pub usize);
 #[derive(Component)]
 pub struct LanguageNote;
 
-/// One of the crabs or gulls keeping the card company: two of them full
-/// size at its shoulders, the rest a pale scatter behind it.
-///
-/// The first screen of a first run is a form, and a form is a poor first
-/// impression of a game about crabs and the birds that chase them. These
-/// say what the game is about before a word of it has been read - and they
-/// are the game's own sprites, not decoration drawn for this screen.
-#[derive(Component)]
-pub struct LanguageCritter {
-    /// The gulls flap; the crabs scuttle.
-    gull: bool,
-    /// Radians per second of the bob, and how far it carries.
-    rate: f32,
-    travel: f32,
-    /// Where in the bob this one starts, so a flock does not rise and fall
-    /// as one body.
-    phase: f32,
-    /// Seconds per animation frame: the flap, and the scuttle.
-    frame: f32,
-}
-
 /// Bigger than the chip on the settings dial: here the flag is the thing
 /// being chosen rather than a decoration beside it.
 const FLAG_W: f32 = 33.0;
@@ -67,30 +47,27 @@ const ROW_FONT: f32 = 22.0;
 /// at ten characters - so every name starts at the same x.
 const NAME_W: f32 = 190.0;
 
-/// How big the crab and the gull are, and how much air they keep between
-/// themselves and the card: enough that neither crowds the list, close
-/// enough that they read as keeping it company.
-const CRITTER: f32 = 84.0;
-const CRITTER_GAP: f32 = 40.0;
+/// The card's own width: a flag, the gap after it, the widest name, and
+/// the card's padding on both sides. Only the test reads it, to work out
+/// where the flock may hang.
+#[cfg(test)]
+const CARD_W: f32 = FLAG_W + 12.0 + NAME_W + 2.0 * 22.0;
 
 pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: Res<Art>) {
     commands
         .spawn((LanguageUi, menu_ui::between_bars()))
         .with_children(|wrap| {
-            // The flock first, and pinned rather than laid out, so it sits
-            // behind the card without moving it off centre.
-            for (index, (x, y, size, gull)) in FLOCK.into_iter().enumerate() {
-                spawn_critter(wrap, &art, gull, size, index as f32 * 0.9, Some((x, y)));
-            }
+            // The flock first, so it sits behind the card.
+            company::flock(wrap, &art, &FLOCK);
             // The card between the two big ones, so the row centres on the
             // list rather than on the crab.
             wrap.spawn(Node {
                 align_items: AlignItems::Center,
-                column_gap: Val::Px(CRITTER_GAP),
+                column_gap: Val::Px(company::CRITTER_GAP),
                 ..default()
             })
             .with_children(|line| {
-                spawn_critter(line, &art, false, CRITTER, 0.0, None);
+                company::shoulder(line, &art, false, 0.0);
                 line.spawn(menu_ui::screen_card()).with_children(|card| {
                     for (index, lang) in ALL_LANGS.iter().enumerate() {
                         card.spawn((LanguageRow(index), menu_ui::card_row()))
@@ -121,7 +98,7 @@ pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: 
                             });
                     }
                 });
-                spawn_critter(line, &art, true, CRITTER, 1.7, None);
+                company::shoulder(line, &art, true, 1.7);
             });
             wrap.spawn((
                 LanguageNote,
@@ -142,7 +119,7 @@ pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: 
 /// Placed by hand rather than scattered at random. This screen is looked
 /// at once, on one run, and the one look it gets should be the composed
 /// one: nothing overlapping the card, nothing bunched in a corner.
-const FLOCK: [(f32, f32, f32, bool); 7] = [
+const FLOCK: [Perch; 7] = [
     (0.09, 0.13, 46.0, true),
     (0.25, 0.04, 30.0, true),
     (0.88, 0.09, 40.0, true),
@@ -151,109 +128,6 @@ const FLOCK: [(f32, f32, f32, bool); 7] = [
     (0.35, 0.92, 28.0, false),
     (0.86, 0.84, 48.0, false),
 ];
-
-/// How far the flock is faded back. Company, not a crowd: at full strength
-/// the flock would compete with the rows that matter, one per language.
-const FLOCK_ALPHA: f32 = 0.30;
-
-/// One crab or gull. `size` is its side in pixels, `at` the fraction of
-/// the frame it is pinned to (the flock) or `None` for the two that sit in
-/// the row with the card.
-///
-/// The crabs keep a common crab's colour and the gulls the white they are
-/// drawn in, so both read as the creatures they are on the board rather
-/// than as shapes chosen to fill the margins.
-fn spawn_critter(
-    parent: &mut ChildSpawnerCommands,
-    art: &Art,
-    gull: bool,
-    size: f32,
-    phase: f32,
-    at: Option<(f32, f32)>,
-) {
-    let (image, tint) = if gull {
-        (art.gull.clone(), Color::WHITE)
-    } else {
-        (
-            art.crab.clone(),
-            crate::app::creatures::body_color(crate::sim::CrabKind::Common),
-        )
-    };
-    let node = match at {
-        Some((x, y)) => Node {
-            position_type: PositionType::Absolute,
-            left: Val::Percent(x * 100.0),
-            top: Val::Percent(y * 100.0),
-            width: Val::Px(size),
-            height: Val::Px(size),
-            ..default()
-        },
-        None => Node {
-            width: Val::Px(size),
-            height: Val::Px(size),
-            flex_shrink: 0.0,
-            ..default()
-        },
-    };
-    parent.spawn((
-        LanguageCritter {
-            gull,
-            // The gulls ride a long slow hover; the crabs a shorter,
-            // busier bob, which is what a crab looks like standing still.
-            rate: if gull { 1.5 } else { 3.4 },
-            travel: if gull { 7.0 } else { 3.0 },
-            phase,
-            frame: if gull { 0.30 } else { 0.16 },
-        },
-        ImageNode {
-            image,
-            color: tint.with_alpha(if at.is_some() { FLOCK_ALPHA } else { 1.0 }),
-            // Every sprite is drawn facing right, so the ones standing to
-            // the right of the card are turned round: the whole company
-            // looks inward, at the list, rather than half of it off the
-            // edge of the screen.
-            flip_x: at.map_or(gull, |(x, _)| x > 0.5),
-            ..default()
-        },
-        node,
-    ));
-}
-
-/// All of them, moving: the crabs scuttling on the spot, the gulls
-/// hovering with a slow flap.
-///
-/// The picker is the one screen with nothing else happening on it - no
-/// board behind it, no attract round - and a still picture on a first run
-/// looks like a game that has not finished loading.
-pub fn animate_language_art(
-    time: Res<Time>,
-    art: Res<Art>,
-    mut critters: Query<(&LanguageCritter, &mut Node, &mut ImageNode)>,
-) {
-    let now = time.elapsed_secs();
-    for (critter, mut node, mut image) in &mut critters {
-        // The flock is pinned by a percentage top, so the bob is added as
-        // a margin: writing `top` would tear each of them off the place it
-        // was hung.
-        let bob = Val::Px((now * critter.rate + critter.phase).sin() * critter.travel);
-        if node.margin.top != bob {
-            node.margin.top = bob;
-        }
-        // Two frames each, alternating: the crab's two-step, and the gull
-        // beating a wing to hold its place. Off its own phase, so seven
-        // wings do not beat on the same tick.
-        let beat = ((now + critter.phase) / critter.frame) as u32 % 2 == 1;
-        let want = match (critter.gull, beat) {
-            (true, true) => &art.gull_fly,
-            (true, false) => &art.gull,
-            (false, true) => &art.crab_b,
-            (false, false) => &art.crab,
-        };
-        if image.image != *want {
-            image.image = want.clone();
-        }
-    }
-}
 
 /// The screen a boot opens on: the picker until a settings file exists to
 /// say the question has already been answered.
@@ -423,23 +297,12 @@ mod tests {
     }
 
     /// The flock is hung on the frame by hand, and a hand can hang one
-    /// behind the card - where it would show through nothing and be seen
-    /// as a smudge under a language name. The card is centred and no wider
-    /// than the middle third, so keeping the flock out of that block keeps
-    /// it clear of the list. Gulls fly and crabs do not, so they belong on
-    /// their own halves of the sky and the sand.
+    /// behind the card - where the card's near-solid fill shows it through
+    /// as a smudge under a language name. Gulls fly and crabs do not, so
+    /// they belong on their own halves of the sky and the sand.
     #[test]
     fn the_flock_leaves_the_card_alone() {
-        for (x, y, size, gull) in FLOCK {
-            assert!((0.0..=0.95).contains(&x), "{x} is off the frame");
-            assert!((0.0..=0.95).contains(&y), "{y} is off the frame");
-            assert!(size > 0.0, "a critter with no size is not drawn");
-            assert_eq!(gull, y < 0.5, "a gull on the sand, or a crab in the air");
-            assert!(
-                !((0.30..0.70).contains(&x) && (0.15..0.80).contains(&y)),
-                "the critter at {x},{y} sits over the card"
-            );
-        }
+        company::flock_is_hung_clear(&FLOCK, company::keep_clear(CARD_W), (0.15, 0.80));
     }
 
     /// The picker opens on whatever `Lang::default()` is, and that has to

@@ -244,11 +244,30 @@ pub fn caption(
     )
 }
 
+/// The company this card keeps. The grid is the widest card in the game
+/// at a full ten columns of full-size tiles, so the flock hangs right out
+/// at the margins: gulls in the sky above, crabs on the sand below.
+const FLOCK: [crate::app::company::Perch; 4] = [
+    (0.04, 0.07, 62.0, true),
+    (0.87, 0.09, 56.0, true),
+    (0.03, 0.74, 66.0, false),
+    (0.88, 0.79, 58.0, false),
+];
+
+/// The widest the grid can be: ten columns of the biggest tile the art was
+/// drawn for, the gaps between them, and the card's padding. A short
+/// campaign gets exactly this; a long one shrinks its tiles and gets less.
+/// The bound the flock is hung against, since it has to clear the card on
+/// every machine rather than on this one's level count.
+#[cfg(test)]
+const WIDEST_CARD: f32 = COLS as f32 * 52.0 + (COLS - 1) as f32 * GAP + 2.0 * 28.0;
+
 pub fn enter_stage_select(
     mut commands: Commands,
     campaign: Res<Campaign>,
     progress: Res<Progress>,
     settings: Res<GameSettings>,
+    art: Res<crate::app::art::Art>,
     mut list: ResMut<StageList>,
 ) {
     // Land the cursor where the player left off, not back at stage one.
@@ -274,143 +293,156 @@ pub fn enter_stage_select(
             },
         ))
         .with_children(|wrap| {
-            wrap.spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: Val::Px(12.0),
-                    padding: UiRect::axes(Val::Px(28.0), Val::Px(20.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    border_radius: BorderRadius::all(Val::Px(16.0)),
-                    ..default()
-                },
-                BackgroundColor(palette::CARD_FILL),
-                BorderColor::all(palette::CARD_EDGE),
-            ))
-            .with_children(|column| {
-                // The count and its bar are the shipped campaign's, which is
-                // the thing that can be finished. Levels the player keeps
-                // adding would make the denominator a moving target, and
-                // "82 of 93" would read as an unfinished campaign forever.
-                let shipped = 0..campaign.builtins;
-                let total = shipped.len();
-                let done = progress.cleared_in(&campaign, shipped);
-                column.spawn((
-                    Text::new(fill(
-                        tr.stage_progress,
-                        &[("a", &done.to_string()), ("b", &total.to_string())],
-                    )),
-                    TextFont {
-                        font_size: FontSize::Px(18.0),
-                        ..default()
-                    },
-                    TextColor(palette::PARCHMENT.with_alpha(0.75)),
-                ));
-                // The same count as a bar. Eighty-two gold tiles scattered
-                // through a grid do not add up to a feeling of progress on
-                // their own; one line across the top does.
-                let filled = if total == 0 {
-                    0.0
-                } else {
-                    done as f32 / total as f32 * 100.0
-                };
-                column.spawn((
+            // The flock first, so it sits behind the card rather than on it.
+            crate::app::company::flock(wrap, &art, &FLOCK);
+            // The grid between the crab and the gull, so it stays centred
+            // on its own tiles rather than on the crab.
+            wrap.spawn(Node {
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(crate::app::company::CRITTER_GAP),
+                ..default()
+            })
+            .with_children(|line| {
+                crate::app::company::shoulder(line, &art, false, 0.0);
+                line.spawn((
                     Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Px(4.0),
-                        border_radius: BorderRadius::all(Val::Px(2.0)),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(12.0),
+                        padding: UiRect::axes(Val::Px(28.0), Val::Px(20.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        border_radius: BorderRadius::all(Val::Px(16.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.08)),
-                    children![(
+                    BackgroundColor(palette::CARD_FILL),
+                    BorderColor::all(palette::CARD_EDGE),
+                ))
+                .with_children(|column| {
+                    // The count and its bar are the shipped campaign's, which is
+                    // the thing that can be finished. Levels the player keeps
+                    // adding would make the denominator a moving target, and
+                    // "82 of 93" would read as an unfinished campaign forever.
+                    let shipped = 0..campaign.builtins;
+                    let total = shipped.len();
+                    let done = progress.cleared_in(&campaign, shipped);
+                    column.spawn((
+                        Text::new(fill(
+                            tr.stage_progress,
+                            &[("a", &done.to_string()), ("b", &total.to_string())],
+                        )),
+                        TextFont {
+                            font_size: FontSize::Px(18.0),
+                            ..default()
+                        },
+                        TextColor(palette::PARCHMENT.with_alpha(0.75)),
+                    ));
+                    // The same count as a bar. Eighty-two gold tiles scattered
+                    // through a grid do not add up to a feeling of progress on
+                    // their own; one line across the top does.
+                    let filled = if total == 0 {
+                        0.0
+                    } else {
+                        done as f32 / total as f32 * 100.0
+                    };
+                    column.spawn((
                         Node {
-                            width: Val::Percent(filled),
-                            height: Val::Percent(100.0),
+                            width: Val::Percent(100.0),
+                            height: Val::Px(4.0),
                             border_radius: BorderRadius::all(Val::Px(2.0)),
                             ..default()
                         },
-                        BackgroundColor(palette::GOLD),
-                    )],
-                ));
-                // The same rows the cursor will walk, drawn from the one
-                // layout the screen agreed on above.
-                let layout = &list.rows;
-                // The player's own levels are a shelf under the campaign,
-                // with a label of their own: they are not stage eighty-three.
-                let has_custom = campaign.builtins < campaign.levels.len();
-                let heading = if has_custom { HEADING_ROOM } else { 0.0 };
-                let edge = tile(layout.len(), heading);
-                column
-                    .spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        row_gap: Val::Px(GAP),
-                        ..default()
-                    })
-                    .with_children(|grid| {
-                        for row in layout {
-                            if has_custom && row.start == campaign.builtins {
-                                spawn_shelf_heading(grid, tr, &campaign, &progress);
-                            }
-                            grid.spawn(Node {
-                                column_gap: Val::Px(GAP),
-                                ..default()
-                            })
-                            .with_children(|line| {
-                                for index in row.clone() {
-                                    spawn_tile(line, &campaign, &progress, index, edge);
-                                }
-                            });
-                        }
-                    });
-                // The key to the edges. Colours nobody can decode are just
-                // noise, and the number under each swatch is the whole
-                // rule: that many signposts, no more.
-                column
-                    .spawn(Node {
-                        column_gap: Val::Px(14.0),
-                        align_items: AlignItems::Center,
-                        margin: UiRect::top(Val::Px(4.0)),
-                        ..default()
-                    })
-                    .with_children(|key| {
-                        key.spawn((
-                            Text::new(tr.stage_key.to_string()),
-                            TextFont {
-                                font_size: FontSize::Px(13.0),
+                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.08)),
+                        children![(
+                            Node {
+                                width: Val::Percent(filled),
+                                height: Val::Percent(100.0),
+                                border_radius: BorderRadius::all(Val::Px(2.0)),
                                 ..default()
                             },
-                            TextColor(palette::PARCHMENT.with_alpha(0.45)),
-                        ));
-                        for posts in 1..=4u8 {
-                            key.spawn(Node {
-                                column_gap: Val::Px(5.0),
-                                align_items: AlignItems::Center,
-                                ..default()
-                            })
-                            .with_children(|item| {
-                                item.spawn((
-                                    Node {
-                                        width: Val::Px(10.0),
-                                        height: Val::Px(10.0),
-                                        border: UiRect::all(Val::Px(2.0)),
-                                        border_radius: BorderRadius::all(Val::Px(3.0)),
-                                        ..default()
-                                    },
-                                    BackgroundColor(Color::NONE),
-                                    BorderColor::all(difficulty_ink(posts)),
-                                ));
-                                item.spawn((
-                                    Text::new(posts.to_string()),
-                                    TextFont {
-                                        font_size: FontSize::Px(13.0),
-                                        ..default()
-                                    },
-                                    TextColor(palette::PARCHMENT.with_alpha(0.60)),
-                                ));
-                            });
-                        }
-                    });
+                            BackgroundColor(palette::GOLD),
+                        )],
+                    ));
+                    // The same rows the cursor will walk, drawn from the one
+                    // layout the screen agreed on above.
+                    let layout = &list.rows;
+                    // The player's own levels are a shelf under the campaign,
+                    // with a label of their own: they are not stage eighty-three.
+                    let has_custom = campaign.builtins < campaign.levels.len();
+                    let heading = if has_custom { HEADING_ROOM } else { 0.0 };
+                    let edge = tile(layout.len(), heading);
+                    column
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            row_gap: Val::Px(GAP),
+                            ..default()
+                        })
+                        .with_children(|grid| {
+                            for row in layout {
+                                if has_custom && row.start == campaign.builtins {
+                                    spawn_shelf_heading(grid, tr, &campaign, &progress);
+                                }
+                                grid.spawn(Node {
+                                    column_gap: Val::Px(GAP),
+                                    ..default()
+                                })
+                                .with_children(|line| {
+                                    for index in row.clone() {
+                                        spawn_tile(line, &campaign, &progress, index, edge);
+                                    }
+                                });
+                            }
+                        });
+                    // The key to the edges. Colours nobody can decode are just
+                    // noise, and the number under each swatch is the whole
+                    // rule: that many signposts, no more.
+                    column
+                        .spawn(Node {
+                            column_gap: Val::Px(14.0),
+                            align_items: AlignItems::Center,
+                            margin: UiRect::top(Val::Px(4.0)),
+                            ..default()
+                        })
+                        .with_children(|key| {
+                            key.spawn((
+                                Text::new(tr.stage_key.to_string()),
+                                TextFont {
+                                    font_size: FontSize::Px(13.0),
+                                    ..default()
+                                },
+                                TextColor(palette::PARCHMENT.with_alpha(0.45)),
+                            ));
+                            for posts in 1..=4u8 {
+                                key.spawn(Node {
+                                    column_gap: Val::Px(5.0),
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                })
+                                .with_children(|item| {
+                                    item.spawn((
+                                        Node {
+                                            width: Val::Px(10.0),
+                                            height: Val::Px(10.0),
+                                            border: UiRect::all(Val::Px(2.0)),
+                                            border_radius: BorderRadius::all(Val::Px(3.0)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::NONE),
+                                        BorderColor::all(difficulty_ink(posts)),
+                                    ));
+                                    item.spawn((
+                                        Text::new(posts.to_string()),
+                                        TextFont {
+                                            font_size: FontSize::Px(13.0),
+                                            ..default()
+                                        },
+                                        TextColor(palette::PARCHMENT.with_alpha(0.60)),
+                                    ));
+                                });
+                            }
+                        });
+                });
+                crate::app::company::shoulder(line, &art, true, 1.7);
             });
             // Both lines sit under the card, not in it. They change with
             // every cursor move, and inside the card they would size it:
@@ -869,5 +901,16 @@ mod tests {
         assert_eq!(TileState::of(&progress, &campaign, 2), TileState::Locked);
         let cleared = caption(&EN, i18n::Lang::En, &campaign, state, 0);
         assert!(cleared.ends_with(EN.stage_cleared), "{cleared}");
+    }
+
+    /// The flock is hung on the frame by hand, and a hand can hang one
+    /// over the grid, where the card's near-solid fill shows it through as
+    /// a smudge under a stage number. Checked against the *widest* the
+    /// grid can be, not this machine's level count: a player with fewer
+    /// levels gets bigger tiles and a wider card.
+    #[test]
+    fn the_flock_leaves_the_grid_alone() {
+        use crate::app::company;
+        company::flock_is_hung_clear(&FLOCK, company::keep_clear(WIDEST_CARD), (0.0, 0.94));
     }
 }

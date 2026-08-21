@@ -14,6 +14,7 @@ mod boot;
 mod campaign;
 mod clock;
 mod codes;
+mod company;
 mod controls;
 mod creatures;
 mod cursor;
