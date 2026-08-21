@@ -184,7 +184,13 @@ wins.
   Discovery is a UDP broadcast to `255.255.255.255` on ports 47700-47707,
   so every machine has to share a broadcast domain: a router between two
   subnets, or the client isolation most guest wireless turns on, will hide
-  hosts from each other. When the network will not cooperate, a direct
+  hosts from each other. So will a firewall on the joining machine: a
+  beacon is unsolicited inbound UDP, which a default-deny firewall drops
+  before the game can hear it. The tell is a direct pair working while the
+  list stays empty, because the joiner starts that exchange and the replies
+  count as solicited. Allow UDP 47700-47707 in (e.g.
+  `sudo ufw allow 47700:47707/udp`) and the list fills.
+  When the network will not cooperate, a direct
   pair skips discovery entirely: `PINCH_HOST=<port>` on one machine and
   `PINCH_JOIN=ip:port` on the other boot both straight into the arena, with
   the host as player 0 and the joiner as player 1. There is no lobby to
