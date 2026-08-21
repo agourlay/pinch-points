@@ -158,6 +158,7 @@ pub static NL: Tr = Tr {
     goal_golden: "Vang de gouden krab{t}",
     prompt_setup: "WASD lopen | pijltjes zetten | Spatie weg | Enter start | N/P level",
     prompt_setup_full: "Alle borden gezet - Spatie haalt er een weg | Enter start | N/P level",
+    denied_no_posts: "Geen borden meer - haal er een terug met Spatie.",
     prompt_setup_no_posts: "Hier zijn geen borden nodig - dit lost zichzelf op. Enter om te starten | N/P level",
     prompt_running: "Bezig... R om opnieuw te beginnen",
     prompt_won: "Alle krabben veilig! Enter: volgend level | R: nog eens kijken",

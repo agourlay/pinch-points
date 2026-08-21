@@ -158,6 +158,7 @@ pub static JA: Tr = Tr {
     goal_golden: "金のカニをつかまえる{t}",
     prompt_setup: "WASD 移動 | 矢印キー 設置 | Space 消す | Enter 開始 | N/P ステージ",
     prompt_setup_full: "標識は置ききった - Spaceで消す | Enter 開始 | N/P ステージ",
+    denied_no_posts: "標識がもうない - Spaceで一つ戻そう。",
     prompt_setup_no_posts: "ここは標識いらず、自然に解ける。Enterで開始 | N/P ステージ",
     prompt_running: "進行中... Rでやり直し",
     prompt_won: "カニはみんな無事! Enter: 次のステージ | R: もう一度見る",

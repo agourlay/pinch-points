@@ -158,6 +158,7 @@ pub static IT: Tr = Tr {
     goal_golden: "Prendi il granchio dorato{t}",
     prompt_setup: "WASD muovi | frecce metti | Spazio togli | Invio avvia | N/P livello",
     prompt_setup_full: "Tutti i cartelli messi - Spazio ne toglie uno | Invio avvia | N/P livello",
+    denied_no_posts: "Cartelli finiti - riprendine uno con Spazio.",
     prompt_setup_no_posts: "Qui non servono cartelli - si risolve da solo. Invio per avviare | N/P livello",
     prompt_running: "In corso... R per ricominciare",
     prompt_won: "Tutti i granchi salvi! Invio: livello dopo | R: rivedi",

@@ -158,6 +158,7 @@ pub static FR: Tr = Tr {
     goal_golden: "Attrape le crabe doré{t}",
     prompt_setup: "WASD bouger | flèches placer | Espace retirer | Entrée lancer | N/P niveau",
     prompt_setup_full: "Tous les panneaux posés - Espace en retire un | Entrée lancer | N/P niveau",
+    denied_no_posts: "Plus de panneaux - reprends-en un avec Espace.",
     prompt_setup_no_posts: "Pas de panneau ici - ça marche tout seul. Entrée pour lancer | N/P niveau",
     prompt_running: "En cours... R pour recommencer",
     prompt_won: "Tous les crabes sauvés ! Entrée : niveau suivant | R : revoir",

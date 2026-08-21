@@ -158,6 +158,7 @@ pub static EN: Tr = Tr {
     goal_golden: "Catch the golden crab{t}",
     prompt_setup: "WASD move | arrows place | Space remove | Enter start | N/P level",
     prompt_setup_full: "All signposts placed - Space removes one | Enter start | N/P level",
+    denied_no_posts: "No signposts left - take one back with Space.",
     prompt_setup_no_posts: "No signposts here - this one solves itself. Enter to run | N/P level",
     prompt_running: "Running... R to reset",
     prompt_won: "All crabs safe! Enter: next level | R: watch again",

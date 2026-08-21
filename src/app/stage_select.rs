@@ -664,7 +664,10 @@ pub fn stage_select_input(
         campaign.index = list.selected;
         next_screen.set(Screen::Puzzle);
     } else {
-        denied.write(PlacementDenied { player: 0 });
+        denied.write(PlacementDenied {
+            player: 0,
+            out_of_signposts: false,
+        });
     }
 }
 

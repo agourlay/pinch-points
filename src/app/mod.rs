@@ -254,6 +254,12 @@ pub struct LoadLevel {
 #[derive(Message)]
 pub struct PlacementDenied {
     pub player: u8,
+    /// The inventory said no, not the tile. Worth a line of its own: every
+    /// other refusal is answered by aiming somewhere else, and this one is
+    /// answered by picking a signpost back up. They looked identical - the
+    /// same flash, the same knock - so "you have none left" read as "not
+    /// there".
+    pub out_of_signposts: bool,
 }
 
 /// The editor wrote a level to disk. A message rather than a direct call so

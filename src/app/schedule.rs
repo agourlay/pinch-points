@@ -112,6 +112,7 @@ fn insert_resources(app: &mut App) {
     app.init_resource::<menu_scene::MenuList>();
     app.init_resource::<stage_select::StageList>();
     app.init_resource::<hint::Hints>();
+    app.init_resource::<hint::DeniedNote>();
     app.init_resource::<replays::Library>();
     app.init_resource::<replays::PlaybackSpeed>();
     app.init_resource::<gamepad::PadSeats>();
@@ -558,7 +559,16 @@ fn add_play_systems(app: &mut App) {
             cursor::setup_input.run_if(puzzle_setup),
             dev::debug_autoplay.run_if(puzzle_setup),
             hint::hint_input.run_if(puzzle_setup.or_else(puzzle_done)),
-            hint::draw_hint.run_if(in_state(Screen::Puzzle)),
+            // One nested group so the tuple stays inside Bevy's arity limit
+            // of 20, which this list was already sitting on. The chain still
+            // runs them in written order, and that order matters: the note
+            // is aged before it is raised, so a denial arriving this frame
+            // survives to be drawn this frame.
+            (
+                hint::draw_hint.run_if(in_state(Screen::Puzzle)),
+                hint::tick_denied_note,
+                hint::note_denials,
+            ),
             cursor::running_input.run_if(puzzle_running),
             cursor::done_input.run_if(puzzle_done),
             check_outcome.run_if(puzzle_running),

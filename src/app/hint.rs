@@ -59,6 +59,41 @@ fn level_of(campaign: &Campaign) -> (CampaignKind, usize) {
 #[derive(Component)]
 pub struct HintGhost;
 
+/// How long "no signposts left" stays on the hint line, in seconds.
+const DENIED_SECS: f32 = 2.5;
+
+/// A refusal the player deserves a sentence about, counting down.
+///
+/// Only the spent-inventory one. Every other refusal is answered by
+/// aiming somewhere else and the flash says enough; this one is answered
+/// by picking a signpost back up, and nothing on screen said so.
+#[derive(Resource, Default)]
+pub struct DeniedNote(f32);
+
+/// Catch the denials worth explaining and start the countdown.
+pub fn note_denials(
+    mut denials: MessageReader<crate::app::PlacementDenied>,
+    mut note: ResMut<DeniedNote>,
+) {
+    if denials.read().any(|d| d.player == 0 && d.out_of_signposts) {
+        note.0 = DENIED_SECS;
+    }
+}
+
+/// Age it out. A level change clears it too: the sentence is about the
+/// board that refused, and that board is gone.
+pub fn tick_denied_note(
+    time: Res<Time>,
+    campaign: Res<crate::app::Campaign>,
+    mut note: ResMut<DeniedNote>,
+) {
+    if campaign.is_changed() {
+        note.0 = 0.0;
+        return;
+    }
+    note.0 = (note.0 - time.delta_secs()).max(0.0);
+}
+
 /// Count a failed run, and start over when the level changes.
 pub fn record_loss(campaign: Res<Campaign>, mut hints: ResMut<Hints>) {
     if hints.level != Some(level_of(&campaign)) {
@@ -142,7 +177,17 @@ pub fn clear_hint_ghosts(mut commands: Commands, ghosts: Query<Entity, With<Hint
 }
 
 /// The line under the header while the hint is available or showing.
-pub fn hint_line(tr: &crate::app::i18n::Tr, hints: &Hints, phase: &Phase) -> Option<String> {
+pub fn hint_line(
+    tr: &crate::app::i18n::Tr,
+    hints: &Hints,
+    denied: &DeniedNote,
+    phase: &Phase,
+) -> Option<String> {
+    // The denial answers the key that was just pressed, so it outranks both
+    // the stuck-hint and the level's lesson for as long as it lasts.
+    if denied.0 > 0.0 {
+        return Some(tr.denied_no_posts.to_string());
+    }
     if !hints.offered() || !matches!(phase, Phase::Setup | Phase::Lost) {
         return None;
     }
@@ -254,6 +299,72 @@ mod tests {
             app.world().resource::<Hints>().shown,
             Some(level.solution[1]),
             "the hint follows the player"
+        );
+    }
+
+    /// Running out of signposts says so, and says it differently from
+    /// every other refusal.
+    ///
+    /// Both kinds of no fire the same flash and the same knock, so until
+    /// this line existed "you have none left" and "not on that tile" were
+    /// indistinguishable - which is what players hit when a level handed
+    /// out fewer signposts than they wanted.
+    #[test]
+    fn a_spent_inventory_gets_a_sentence_of_its_own() {
+        use crate::app::i18n::EN;
+        let hints = Hints::default();
+        assert!(!hints.offered(), "not stuck: no line of its own to compete");
+
+        assert_eq!(
+            hint_line(&EN, &hints, &DeniedNote(0.0), &Phase::Setup),
+            None
+        );
+        assert_eq!(
+            hint_line(&EN, &hints, &DeniedNote(1.0), &Phase::Setup).as_deref(),
+            Some(EN.denied_no_posts),
+        );
+        // It outranks the stuck-hint, which is about the level rather than
+        // about the key just pressed.
+        let stuck = Hints {
+            losses: STUCK_AFTER,
+            ..Default::default()
+        };
+        assert_eq!(
+            hint_line(&EN, &stuck, &DeniedNote(0.0), &Phase::Setup).as_deref(),
+            Some(EN.hint_offer),
+        );
+        assert_eq!(
+            hint_line(&EN, &stuck, &DeniedNote(1.0), &Phase::Setup).as_deref(),
+            Some(EN.denied_no_posts),
+        );
+    }
+
+    /// Only the inventory refusal raises it. A tile that simply cannot take
+    /// a signpost is answered by aiming elsewhere, and the flash says so.
+    #[test]
+    fn only_the_inventory_refusal_is_worth_a_sentence() {
+        use crate::app::PlacementDenied;
+        use bevy::ecs::system::RunSystemOnce;
+
+        let mut app = App::new();
+        app.init_resource::<DeniedNote>();
+        app.add_message::<PlacementDenied>();
+
+        app.world_mut().write_message(PlacementDenied {
+            player: 0,
+            out_of_signposts: false,
+        });
+        let _ = app.world_mut().run_system_once(note_denials);
+        assert_eq!(app.world().resource::<DeniedNote>().0, 0.0, "a bad tile");
+
+        app.world_mut().write_message(PlacementDenied {
+            player: 0,
+            out_of_signposts: true,
+        });
+        let _ = app.world_mut().run_system_once(note_denials);
+        assert!(
+            app.world().resource::<DeniedNote>().0 > 0.0,
+            "a spent inventory"
         );
     }
 

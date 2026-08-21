@@ -166,6 +166,7 @@ pub fn update_hint(
     phase: Res<State<Phase>>,
     settings: Res<GameSettings>,
     stuck: Res<crate::app::hint::Hints>,
+    denied: Res<crate::app::hint::DeniedNote>,
     mut hints: Query<&mut Text, With<HintLabel>>,
 ) {
     let line = if *screen.get() != Screen::Puzzle {
@@ -173,20 +174,22 @@ pub fn update_hint(
     } else {
         // A stuck player is told about the hint instead of being told the
         // lesson again; the lesson is what they have already tried.
-        crate::app::hint::hint_line(settings.tr(), &stuck, phase.get()).unwrap_or_else(|| {
-            let name = &campaign.current().name;
-            // The first level's lesson names the stock keys; with the keys
-            // rebound or the one-hand preset on it would teach the wrong
-            // ones, and the prompt line already points at Settings.
-            let honest = name != KEY_LESSON_LEVEL || settings.stock_legend();
-            if *phase.get() == Phase::Setup && honest {
-                settings
-                    .keycaps
-                    .legend(settings.language.level_hint(name).unwrap_or(""))
-            } else {
-                String::new()
-            }
-        })
+        crate::app::hint::hint_line(settings.tr(), &stuck, &denied, phase.get()).unwrap_or_else(
+            || {
+                let name = &campaign.current().name;
+                // The first level's lesson names the stock keys; with the keys
+                // rebound or the one-hand preset on it would teach the wrong
+                // ones, and the prompt line already points at Settings.
+                let honest = name != KEY_LESSON_LEVEL || settings.stock_legend();
+                if *phase.get() == Phase::Setup && honest {
+                    settings
+                        .keycaps
+                        .legend(settings.language.level_hint(name).unwrap_or(""))
+                } else {
+                    String::new()
+                }
+            },
+        )
     };
     for mut text in &mut hints {
         menu_ui::set_text(&mut text, &line);

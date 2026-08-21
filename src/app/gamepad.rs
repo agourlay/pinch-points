@@ -213,6 +213,7 @@ pub fn pad_versus_input(
                     cursor.flash = 0.25;
                     denied.write(PlacementDenied {
                         player: cursor.player,
+                        out_of_signposts: board.out_of_signposts(cursor.player, cursor.x, cursor.y),
                     });
                     continue;
                 }
@@ -261,9 +262,15 @@ pub fn pad_setup_input(
         return;
     };
     for (button, dir) in PLACES {
-        if pad.just_pressed(button) && !sim.0.place_signpost(0, cursor.x, cursor.y, dir) {
-            cursor.flash = 0.25;
-            denied.write(PlacementDenied { player: 0 });
+        if pad.just_pressed(button) {
+            let spent = sim.0.out_of_signposts(0, cursor.x, cursor.y);
+            if !sim.0.place_signpost(0, cursor.x, cursor.y, dir) {
+                cursor.flash = 0.25;
+                denied.write(PlacementDenied {
+                    player: 0,
+                    out_of_signposts: spent,
+                });
+            }
         }
     }
     if pad.just_pressed(GamepadButton::LeftTrigger) {

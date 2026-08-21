@@ -34,6 +34,32 @@ impl Board {
         }
     }
 
+    /// Whether a refusal at `(x, y)` is the *inventory* talking rather than
+    /// the tile: the player has spent their posts and this board rejects
+    /// rather than evicts.
+    ///
+    /// The one branch of [`Board::can_place_signpost`] a player can fix by
+    /// picking up a signpost instead of by aiming somewhere else, and the
+    /// UI says so differently. Read off the same rule so the two cannot
+    /// drift: under `Evict` this is never true, because the placement
+    /// succeeds and takes the oldest in trade.
+    pub fn out_of_signposts(&self, player: PlayerId, x: u8, y: u8) -> bool {
+        if self.cap_policy != CapPolicy::Reject
+            || seat(player).is_none()
+            || !self.in_bounds(i32::from(x), i32::from(y))
+        {
+            return false;
+        }
+        let t = self.index(i32::from(x), i32::from(y)) as usize;
+        // The inventory has to be the *only* thing in the way. A rock with
+        // a spent inventory refuses for two reasons at once, and "you have
+        // none left" is the wrong one to say: a post in hand would not have
+        // gone there either.
+        self.tiles[t] == TileKind::Empty
+            && self.signposts[t].is_none()
+            && self.signpost_count(player) >= self.signpost_cap as usize
+    }
+
     pub fn place_signpost(&mut self, player: PlayerId, x: u8, y: u8, dir: Direction) -> bool {
         if !self.can_place_signpost(player, x, y) {
             return false;

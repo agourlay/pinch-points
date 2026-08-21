@@ -190,6 +190,41 @@ fn repointing_refreshes_health_and_age() {
     assert!(board.signpost_at(1, 0).is_none());
 }
 
+/// `out_of_signposts` agrees with the rule it explains, and never fires
+/// where a fourth placement would simply take the oldest.
+#[test]
+fn out_of_signposts_names_the_inventory_refusal_only() {
+    let mut board = Board::new(6, 2, 0);
+    board.set_signpost_rule(2, CapPolicy::Reject);
+    board.set_tile(5, 0, TileKind::Rock);
+    assert!(!board.out_of_signposts(0, 0, 0), "nothing placed yet");
+    assert!(board.place_signpost(0, 0, 0, Up));
+    assert!(board.place_signpost(0, 1, 0, Up));
+    // Spent: an empty tile now refuses, and that is the inventory talking.
+    assert!(!board.can_place_signpost(0, 2, 0));
+    assert!(board.out_of_signposts(0, 2, 0));
+    // A rock refuses too, but aiming elsewhere is the answer there.
+    assert!(!board.can_place_signpost(0, 5, 0));
+    assert!(
+        !board.out_of_signposts(0, 5, 0),
+        "the tile, not the inventory"
+    );
+    // Re-pointing one you already own is never refused.
+    assert!(!board.out_of_signposts(0, 0, 0));
+    assert!(board.place_signpost(0, 0, 0, Down));
+    // The other seat has its own inventory.
+    assert!(!board.out_of_signposts(1, 2, 0));
+
+    // Under the versus rule the fourth is taken in trade, so there is no
+    // refusal to explain.
+    let mut versus = Board::new(6, 2, 0);
+    for x in 0..3 {
+        assert!(versus.place_signpost(0, x, 0, Up));
+    }
+    assert!(versus.can_place_signpost(0, 4, 0));
+    assert!(!versus.out_of_signposts(0, 4, 0), "evicting, not refusing");
+}
+
 #[test]
 fn signpost_cap_is_per_player() {
     let mut board = Board::new(8, 1, 0);

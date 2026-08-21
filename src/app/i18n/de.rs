@@ -165,6 +165,7 @@ pub static DE: Tr = Tr {
     goal_golden: "Fang die Goldkrabbe{t}",
     prompt_setup: "WASD bewegen | Pfeile setzen | Leertaste entfernen | Enter start | N/P Level",
     prompt_setup_full: "Alle Schilder gesetzt - Leertaste entfernt eins | Enter start | N/P Level",
+    denied_no_posts: "Keine Schilder mehr - hol eins mit der Leertaste zurück.",
     prompt_setup_no_posts: "Keine Schilder hier - läuft von allein. Enter zum Starten | N/P Level",
     prompt_running: "Läuft... R für Neustart",
     prompt_won: "Alle Krabben in Sicherheit! Enter: nächstes Level | R: nochmal ansehen",

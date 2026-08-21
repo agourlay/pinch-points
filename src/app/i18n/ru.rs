@@ -165,6 +165,7 @@ pub static RU: Tr = Tr {
     goal_golden: "Поймай золотого краба{t}",
     prompt_setup: "WASD ходить | стрелки ставить | Space убрать | Enter старт | N/P уровень",
     prompt_setup_full: "Все знаки расставлены - Space убирает один | Enter старт | N/P уровень",
+    denied_no_posts: "Знаки кончились - забери один клавишей Space.",
     prompt_setup_no_posts: "Знаки тут не нужны - решается сам. Enter запустить | N/P уровень",
     prompt_running: "Идёт... R - сброс",
     prompt_won: "Все крабы дома! Enter: следующий уровень | R: посмотреть ещё раз",

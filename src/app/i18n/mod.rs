@@ -288,6 +288,9 @@ struct Tr {
     // Prompts
     pub prompt_setup: &'static str,
     pub prompt_setup_full: &'static str,
+    /// Shown for a moment when a placement is refused because the level's
+    /// signposts are all out, which every other refusal is not.
+    pub denied_no_posts: &'static str,
     pub prompt_setup_no_posts: &'static str,
     pub prompt_running: &'static str,
     pub prompt_won: &'static str,

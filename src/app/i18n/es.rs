@@ -158,6 +158,7 @@ pub static ES: Tr = Tr {
     goal_golden: "Atrapa el cangrejo dorado{t}",
     prompt_setup: "WASD mover | flechas poner | Espacio quitar | Intro empezar | N/P nivel",
     prompt_setup_full: "Todas las señales puestas - Espacio quita una | Intro empezar | N/P nivel",
+    denied_no_posts: "No quedan señales - recoge una con Espacio.",
     prompt_setup_no_posts: "Aquí no hacen falta señales - se resuelve solo. Intro para lanzar | N/P nivel",
     prompt_running: "En marcha... R para reiniciar",
     prompt_won: "¡Cangrejos a salvo! Intro: siguiente nivel | R: verlo otra vez",

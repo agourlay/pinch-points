@@ -254,10 +254,17 @@ pub fn setup_input(
     };
     let map = keymap(&settings, 0, settings.ijkl_commits);
     for (key, dir) in map.places {
-        if keys.just_pressed(key) && !sim.0.place_signpost(0, cursor.x, cursor.y, dir) {
-            // CapPolicy::Reject enforces the inventory; surface the no-op.
-            cursor.flash = FLASH_SECS;
-            denied.write(PlacementDenied { player: 0 });
+        if keys.just_pressed(key) {
+            // CapPolicy::Reject enforces the inventory; surface the no-op,
+            // and say which no it was.
+            let spent = sim.0.out_of_signposts(0, cursor.x, cursor.y);
+            if !sim.0.place_signpost(0, cursor.x, cursor.y, dir) {
+                cursor.flash = FLASH_SECS;
+                denied.write(PlacementDenied {
+                    player: 0,
+                    out_of_signposts: spent,
+                });
+            }
         }
     }
     if keys.just_pressed(map.remove) {
@@ -275,7 +282,10 @@ pub fn setup_input(
             load.write(LoadLevel { keep_posts: false });
         } else {
             cursor.flash = FLASH_SECS;
-            denied.write(PlacementDenied { player: 0 });
+            denied.write(PlacementDenied {
+                player: 0,
+                out_of_signposts: false,
+            });
         }
     }
     if settings.keycaps.just_pressed(&keys, 'P') {
@@ -368,7 +378,10 @@ pub fn versus_input(
             if keys.just_pressed(key) {
                 if !board.can_place_signpost(seat, cursor.x, cursor.y) {
                     cursor.flash = FLASH_SECS;
-                    denied.write(PlacementDenied { player: seat });
+                    denied.write(PlacementDenied {
+                        player: seat,
+                        out_of_signposts: board.out_of_signposts(seat, cursor.x, cursor.y),
+                    });
                     continue;
                 }
                 pending.0[p] = PlayerAction::Place {
