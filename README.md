@@ -4,7 +4,7 @@
 [![Crates.io](https://img.shields.io/crates/v/pinch-points.svg)](https://crates.io/crates/pinch-points)
 
 A fast, kid-friendly crab-routing game for 1-6 players, built in Rust with
-[Bevy](https://bevyengine.org). The tide is out: place signposts in the sand
+[Bevy](https://bevyengine.org). The tide is out: place arrows in the sand
 to route streams of crabs into your castle before the sea (and the gulls)
 take everything back.
 
@@ -46,7 +46,7 @@ Rocket!** (1999):
 | Mice (ChuChus) | Crabs |
 | Cats (KapuKapus) | Gulls |
 | Rockets | Sandcastles |
-| Arrow panels | Signposts |
+| Arrow panels | Arrows |
 | "?" roulette specials | Tide events |
 | Cat Mania / Mouse Mania | Gull Mania / Crab Mania |
 | Stage Challenge | Beach Day |
@@ -91,14 +91,14 @@ beatable before it ships.
 turn toward their claw side, then the other side, then back the way they
 came.
 
-**Signposts.** Your one verb: every creature crossing one turns that way.
+**Arrows.** Your one verb: every creature crossing one turns that way.
 In versus you may have **3** standing (a fourth replaces your oldest), each
 washes away after ~10 seconds, and two gull crossings destroy one.
 
 **Crabs** stream out of spawner holes and are banked by walking into any
 castle. By value/speed: common (1), juvenile (2, fast), giant (10, slow),
 molting (5; banking one **lures every loose crab toward your castle for
-10 s, overriding all signposts**), golden (50, rare), and sparkling
+10 s, overriding all arrows**), golden (50, rare), and sparkling
 (banking one spins the **tide event** roulette: crab/gull manias, speed
 shifts, castle swaps, fresh sand…).
 
@@ -132,9 +132,9 @@ wins.
 
 ![The landing menu: a still postcard with ambient beach critters](docs/screenshots/menu.png)
 
-- **Tide Pool**: an 82-level solo puzzle campaign with a fixed signpost
-  inventory. The test suite proves every level solvable with the posts
-  given, and every level that needs a post unsolvable without them (the
+- **Tide Pool**: an 82-level solo puzzle campaign with a fixed arrow
+  inventory. The test suite proves every level solvable with the arrows
+  given, and every level that needs an arrow unsolvable without them (the
   opening tutorial hands you one to practise with on a board that cannot
   lose).
 - **Turf War**: local versus for **2-6 players** on one keyboard plus
@@ -199,7 +199,7 @@ wins.
   with a local best.
 - **Achievements**: thirty-two trophies and lifetime stats.
 
-![The stage list: cleared stages filled gold, and every tile edged by how many signposts it grants](docs/screenshots/stages.png)
+![The stage list: cleared stages filled gold, and every tile edged by how many arrows it grants](docs/screenshots/stages.png)
 
 ## Controls
 
@@ -276,10 +276,10 @@ deliberately.
 - `cargo run --example author -- levels/<file>.txt`: the level design loop;
   reports whether a level self-solves and what the solver finds.
 - `cargo run --release --example verify_levels`: the campaign minimality
-  proof — every shipped level must need every post it grants. A parallel,
+  proof — every shipped level must need every arrow it grants. A parallel,
   exhaustive-per-level solver search (a minute in release, so run it in
   release, not in CI), with a progress bar; exits non-zero naming any level
-  with a post to spare. Run it by hand after editing a level file.
+  with an arrow to spare. Run it by hand after editing a level file.
 - `PINCH_*` env hooks skip the menus for development and testing:
   `PINCH_SKIRMISH=classic|large|xl|ocean|custom` boots a bots match
   (`PINCH_SERIES=1` for a best-of-5, `PINCH_SEATS=<n>` for the table,

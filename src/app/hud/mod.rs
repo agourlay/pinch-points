@@ -486,7 +486,10 @@ mod tests {
     /// up whatever the keyboard says.
     #[test]
     fn only_the_key_lesson_names_keys() {
-        let names_keys = |hint: &str| hint.contains("WASD") || hint.contains("arrow");
+        // "arrow key", not "arrow": the signposts are called arrows now, so
+        // the bare word is the *object* and appears in several hints. Only
+        // the keys are withheld under a rebound keyboard.
+        let names_keys = |hint: &str| hint.contains("WASD") || hint.contains("arrow key");
         assert!(names_keys(Lang::En.level_hint(KEY_LESSON_LEVEL).unwrap()));
         for level in crate::sim::campaign_levels() {
             if level.name != KEY_LESSON_LEVEL
