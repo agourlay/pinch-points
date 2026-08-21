@@ -301,6 +301,9 @@ struct Tr {
     pub prompt_setup_custom: &'static str,
     pub prompt_versus_custom: &'static str,
     pub prompt_enter_menu: &'static str,
+    /// The way off an online results card: the whole table returns to the
+    /// lobby it was formed in, still connected.
+    pub prompt_enter_lobby: &'static str,
     /// For the screens that only read out: both keys leave, and Esc is the
     /// one every other screen offers.
     pub prompt_esc_menu: &'static str,

@@ -181,6 +181,14 @@ wins.
   cannot join, but you can **queue** for the host's next round, or press
   **W** to spectate, which has to happen before launch.
 
+  When the match ends, Enter takes the **whole table back to the lobby**
+  rather than out to the menu: the sockets stay open, the host goes back on
+  the air, and the next game is one keypress away instead of a fresh
+  discovery. Mid-series Enter still means what it did - the host calls the
+  next round, a joiner leaves - since a series is not over yet. The direct
+  `PINCH_HOST` pair below has no lobby to return to, and still ends at the
+  menu.
+
   Discovery is a UDP broadcast to `255.255.255.255` on ports 47700-47707,
   so every machine has to share a broadcast domain: a router between two
   subnets, or the client isolation most guest wireless turns on, will hide

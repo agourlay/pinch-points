@@ -168,6 +168,7 @@ pub static NL: Tr = Tr {
     prompt_setup_custom: "jouw toetsen (Instellingen) | Enter start | N/P level",
     prompt_versus_custom: "jouw toetsen (Instellingen) | Esc pauze",
     prompt_enter_menu: "Enter: menu",
+    prompt_enter_lobby: "Enter: lobby",
     prompt_esc_menu: "Esc: menu",
     prompt_mute: "M: stil",
     replay_draw: "gelijkspel",

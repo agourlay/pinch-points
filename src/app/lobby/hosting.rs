@@ -303,7 +303,8 @@ fn launch_the_match(
     session.beach = beach;
     session.peer_seats = peer_seats;
     session.names = names;
-    session.announcer = Some(announcer);
+    session.stay_on_air(announcer);
+    session.from_lobby = true;
     session.game_name = state.game_name.clone();
     online.0 = Some(session);
     // The series is part of the terms, so every peer knows it is one

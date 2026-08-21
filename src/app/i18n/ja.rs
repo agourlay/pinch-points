@@ -168,6 +168,7 @@ pub static JA: Tr = Tr {
     prompt_setup_custom: "きみのキー (設定) | Enter 開始 | N/P ステージ",
     prompt_versus_custom: "きみのキー (設定) | Esc 中断",
     prompt_enter_menu: "Enter: メニュー",
+    prompt_enter_lobby: "Enter: ロビー",
     prompt_esc_menu: "Esc: メニュー",
     prompt_mute: "M: 消音",
     replay_draw: "引き分け",

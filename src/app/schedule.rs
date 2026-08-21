@@ -106,6 +106,7 @@ fn insert_resources(app: &mut App) {
     app.init_resource::<Playback>();
     app.init_resource::<net::Online>();
     app.init_resource::<lobby::LobbyState>();
+    app.init_resource::<lobby::Homecoming>();
     app.init_resource::<Seats>();
     app.init_resource::<Resuming>();
     app.init_resource::<RoundNotice>();

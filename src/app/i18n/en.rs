@@ -168,6 +168,7 @@ pub static EN: Tr = Tr {
     prompt_setup_custom: "your keys (Settings) | Enter start | N/P level",
     prompt_versus_custom: "your keys (Settings) | Esc pause",
     prompt_enter_menu: "Enter: menu",
+    prompt_enter_lobby: "Enter: lobby",
     prompt_esc_menu: "Esc: menu",
     prompt_mute: "M: mute",
     replay_draw: "draw",

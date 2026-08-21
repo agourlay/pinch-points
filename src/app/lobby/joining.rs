@@ -282,6 +282,18 @@ pub(super) struct Invitation {
     /// file it came from, so it arrives with the invitation or not at all.
     pub beach: Vec<u8>,
 }
+/// Whether a `Start` off the wire invites this lobby to a new round,
+/// rather than repeating the one it just walked out of.
+///
+/// A host still sitting on its results card re-answers every greeting
+/// with the finished round's `Start`, which is right for a latecomer who
+/// missed the launch and wrong for a table that came back here from that
+/// very round. The seed is what tells them apart: a fresh round is struck
+/// on a fresh seed, the same mark `OnlineSession::is_next_round` reads.
+pub(super) fn a_fresh_invitation(played: Option<u64>, invitation: &Invitation) -> bool {
+    played != Some(invitation.terms.seed)
+}
+
 /// Take up the host's invitation: build the session it describes, arm a
 /// series if it is one, and walk into the arena.
 pub(super) fn accept_the_invitation(
@@ -322,6 +334,9 @@ pub(super) fn accept_the_invitation(
         // machine can build it.
         session.beach = beach;
         session.names = std::array::from_fn(|i| crate::transport::name_from_wire(&names[i]));
+        // Formed here, so a finished match knows it has a lobby to walk
+        // this table back to.
+        session.from_lobby = true;
         online.0 = Some(session);
         // The host's invitation says whether this is a series, and where
         // it stands: a joiner that assumed otherwise would stop after one
@@ -464,6 +479,7 @@ pub fn join_tick(
             n => fill(tr.lobby_queued_behind, &[("n", &n.to_string())]),
         };
     }
+    let started = started.filter(|invitation| a_fresh_invitation(state.played_seed, invitation));
     accept_the_invitation(
         &mut state,
         &mut online,
@@ -822,6 +838,42 @@ mod tests {
             ),
             Pick::Nothing
         );
+    }
+
+    /// The round a table has just walked out of is not an invitation back
+    /// into it.
+    ///
+    /// A host sitting on its results card re-answers every greeting with
+    /// that round's `Start`, which is right for a latecomer and wrong for
+    /// the peers that were in it: they greet the moment they are back in
+    /// the lobby, hear the repeat, and would bounce straight back into
+    /// the finished round. The seed is what tells a fresh round from a
+    /// repeat, the same mark the session reads mid-match.
+    #[test]
+    fn the_round_just_played_is_not_an_invitation_back_into_it() {
+        let invitation = |seed| Invitation {
+            seats: 2,
+            seat: Some(1),
+            terms: MatchTerms {
+                seed,
+                ..MatchTerms::default()
+            },
+            names: [[0u8; crate::transport::WIRE_NAME]; MAX_PLAYERS],
+            round: 0,
+            wins: [0; MAX_PLAYERS],
+            beach: Vec::new(),
+        };
+        assert!(
+            !a_fresh_invitation(Some(42), &invitation(42)),
+            "the host is repeating the round we just left"
+        );
+        assert!(
+            a_fresh_invitation(Some(42), &invitation(43)),
+            "a fresh seed is a fresh round, and this table is in it"
+        );
+        // A lobby that has played nothing takes any invitation, which is
+        // every ordinary join.
+        assert!(a_fresh_invitation(None, &invitation(42)));
     }
 
     /// The dev hook joins the first beach it hears, unattended, so it is

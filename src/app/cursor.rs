@@ -408,59 +408,73 @@ pub fn versus_input(
 }
 
 /// Versus results: Enter continues a running series, otherwise back to
-/// the menu.
+/// the menu - or, for a match formed in the beach lobby, back to that
+/// lobby with the whole table still connected.
 ///
 /// Online, the host's Enter calls the next round for the whole table,
 /// admitting anyone who queued while this one played, and every peer is
-/// walked back into the arena when the invitation lands. A joiner's Enter
-/// is its own way out, since that is what leaving a match means.
+/// walked back into the arena when the invitation lands. Mid-series a
+/// joiner's Enter is its own way out, since the series plays on without
+/// it; once the match is over there is nothing left to leave, and Enter
+/// takes everyone back to the lobby they came from, ready for another.
 pub fn versus_over_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut tournament: ResMut<crate::app::tournament::Tournament>,
     mut online: ResMut<crate::app::net::Online>,
+    mut homecoming: ResMut<crate::app::lobby::Homecoming>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     let series_on = tournament.active && !tournament.finished;
-    if let Some(session) = &mut online.0 {
-        // The invitation may already have arrived, in which case nobody
-        // pressed anything here: the host decided and this peer follows.
-        if session.next_round {
-            // Left set on purpose: `end_versus` reads it as "keep me", and
-            // the interlude clears it once the session is safely through.
-            next_screen.set(Screen::Interlude);
-            return;
-        }
+    let Some(session) = &mut online.0 else {
         if keys.just_pressed(KeyCode::Enter) {
-            if session.is_host() && series_on {
-                // The host re-deals the seats for the next round and, with
-                // them, the series tally: the returned standing is the same
-                // wins moved onto the chairs their holders now sit in, which
-                // this machine adopts so its own card agrees with the table.
-                let (round, wins) = session.call_next_round(
-                    crate::app::match_setup::next_round_terms(
-                        session.terms,
-                        session.seats,
-                        crate::app::clock::fresh_seed(),
-                    ),
-                    tournament.round,
-                    tournament.wins,
-                );
-                tournament.round = round;
-                tournament.wins = wins;
-                next_screen.set(Screen::Interlude);
-            } else {
-                next_screen.set(Screen::Menu);
+            match series_on {
+                true => next_screen.set(Screen::Interlude),
+                false => next_screen.set(Screen::Menu),
             }
         }
         return;
+    };
+    // The invitation may already have arrived, in which case nobody
+    // pressed anything here: the host decided and this peer follows.
+    if session.next_round {
+        // Left set on purpose: `end_versus` reads it as "keep me", and
+        // the interlude clears it once the session is safely through.
+        next_screen.set(Screen::Interlude);
+        return;
     }
-    if keys.just_pressed(KeyCode::Enter) {
-        if series_on {
-            next_screen.set(Screen::Interlude);
-        } else {
-            next_screen.set(Screen::Menu);
-        }
+    if !keys.just_pressed(KeyCode::Enter) {
+        return;
     }
+    if session.is_host() && series_on {
+        // The host re-deals the seats for the next round and, with
+        // them, the series tally: the returned standing is the same
+        // wins moved onto the chairs their holders now sit in, which
+        // this machine adopts so its own card agrees with the table.
+        let (round, wins) = session.call_next_round(
+            crate::app::match_setup::next_round_terms(
+                session.terms,
+                session.seats,
+                crate::app::clock::fresh_seed(),
+            ),
+            tournament.round,
+            tournament.wins,
+        );
+        tournament.round = round;
+        tournament.wins = wins;
+        next_screen.set(Screen::Interlude);
+        return;
+    }
+    // Mid-series a joiner's Enter still means leaving, and a direct
+    // `PINCH_HOST` pair has no lobby to go back to.
+    if series_on || !session.from_lobby {
+        next_screen.set(Screen::Menu);
+        return;
+    }
+    // The match is over and it was formed in the lobby: the whole table
+    // goes back there together, sockets and all.
+    let session = online.0.take().expect("matched Some above");
+    homecoming.0 = Some(session.back_to_the_lobby());
+    next_screen.set(Screen::Lobby);
 }
 
 #[cfg(test)]
@@ -651,5 +665,183 @@ mod tests {
         for key in collect(1) {
             assert!(!p1.contains(&key), "{key:?} is bound for both seats");
         }
+    }
+
+    /// A finished online match with the results card up, over a real
+    /// socket: seat 0 hosts (with the beacon it carried out of the lobby),
+    /// anything else joins.
+    fn results_card(seat: u8, from_lobby: bool, series_on: bool) -> App {
+        use crate::app::net::{Online, OnlineSession};
+        use crate::app::tournament::Tournament;
+        use crate::sim::{DEFAULT_DELAY, Lockstep};
+        use crate::transport::{Announcer, MatchTerms, UdpTransport};
+
+        let mut app = beach(2);
+        app.init_resource::<Tournament>();
+        app.init_resource::<crate::app::lobby::Homecoming>();
+        app.add_systems(Update, versus_over_input);
+        let host = seat == 0;
+        let transport = match host {
+            true => UdpTransport::host(0).expect("game socket"),
+            false => UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
+        };
+        let mut session = OnlineSession::new(
+            transport,
+            Lockstep::new(seat, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        session.from_lobby = from_lobby;
+        // A host formed in the lobby always carries the beacon out of it:
+        // the two are set together at the launch.
+        if host && from_lobby {
+            session.stay_on_air(Announcer::new(0xB0A7).expect("announcer"));
+        }
+        if series_on {
+            *app.world_mut().resource_mut::<Tournament>() = Tournament::start();
+        }
+        app.world_mut().resource_mut::<Online>().0 = Some(session);
+        app
+    }
+
+    /// Where a tap on the results card actually lands, transition applied.
+    fn pressing_enter(app: &mut App) -> Screen {
+        tap(app, KeyCode::Enter);
+        // One more, to let the state transition apply.
+        app.update();
+        *app.world().resource::<State<Screen>>().get()
+    }
+
+    /// The end of a lobby match is a door back to the lobby, not out to
+    /// the menu. The table came in together and goes back together, still
+    /// connected, so the next game is a keypress rather than a
+    /// rediscovery - which is the whole reason the session is handed over
+    /// whole rather than dropped.
+    #[test]
+    fn the_end_of_a_lobby_match_walks_the_table_back_to_the_lobby() {
+        use crate::app::lobby::Homecoming;
+        use crate::app::net::Online;
+
+        for seat in [0, 1] {
+            let mut app = results_card(seat, true, false);
+            assert_eq!(pressing_enter(&mut app), Screen::Lobby, "seat {seat}");
+            let homecoming = app.world().resource::<Homecoming>();
+            let returned = homecoming.0.as_ref().expect("the table came home");
+            assert_eq!(returned.host, seat == 0);
+            assert!(
+                app.world().resource::<Online>().0.is_none(),
+                "the session was handed over whole, not left behind"
+            );
+            if seat == 0 {
+                assert!(
+                    returned.announcer.is_some(),
+                    "and the beacon came with it, to announce the beach open again"
+                );
+            }
+        }
+    }
+
+    /// The direct `PINCH_HOST`/`PINCH_JOIN` pair never went through a
+    /// lobby, so there is none to go back to: its Enter still means the
+    /// menu, and nothing is left waiting in `Homecoming` for a lobby that
+    /// is never opened.
+    #[test]
+    fn a_direct_pair_has_no_lobby_to_go_back_to() {
+        use crate::app::lobby::Homecoming;
+
+        let mut app = results_card(0, false, false);
+        assert_eq!(pressing_enter(&mut app), Screen::Menu);
+        assert!(app.world().resource::<Homecoming>().0.is_none());
+    }
+
+    /// Mid-series the card is a doorway between rounds, and Enter keeps
+    /// its old meanings: the host calls the next round, and a joiner's
+    /// Enter is still its way out, since the series plays on without it.
+    /// Only once the series is over does the table walk home together.
+    #[test]
+    fn a_running_series_still_owns_enter() {
+        use crate::app::lobby::Homecoming;
+
+        let mut app = results_card(1, true, true);
+        assert_eq!(
+            pressing_enter(&mut app),
+            Screen::Menu,
+            "leaving a series is leaving"
+        );
+        assert!(app.world().resource::<Homecoming>().0.is_none());
+
+        let mut app = results_card(0, true, true);
+        assert_eq!(
+            pressing_enter(&mut app),
+            Screen::Interlude,
+            "the host calls the next round instead"
+        );
+        assert!(app.world().resource::<Homecoming>().0.is_none());
+    }
+
+    /// The Enter that ends the match must not also start the next one.
+    ///
+    /// A host lands back in the lobby with its peers still aboard, and
+    /// there Enter is the launch key: one press that both left the
+    /// results card and reached `host_tick` would deal a fresh round
+    /// before anybody had read the scores. Nothing in this file prevents
+    /// that - what does is the order the engine runs in, so that is what
+    /// this checks, with the real input plugin rather than a hand-set
+    /// resource: a press is cleared in `PreUpdate`, the state transition
+    /// lands after it, and the screen a keypress arrives on is therefore
+    /// the only screen that ever sees it.
+    #[test]
+    fn one_press_is_only_ever_read_by_one_screen() {
+        use bevy::input::ButtonState;
+        use bevy::input::keyboard::{Key, KeyboardInput};
+
+        #[derive(Resource, Default)]
+        struct SeenInTheLobby(bool);
+
+        let mut app = App::new();
+        app.add_plugins((bevy::state::app::StatesPlugin, bevy::input::InputPlugin));
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.init_resource::<SeenInTheLobby>();
+        app.add_systems(
+            Update,
+            (
+                // Standing in for the results card: Enter leaves for the
+                // lobby, exactly as `versus_over_input` does.
+                (|keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<Screen>>| {
+                    if keys.just_pressed(KeyCode::Enter) {
+                        next.set(Screen::Lobby);
+                    }
+                })
+                .run_if(in_state(Screen::Versus)),
+                // Standing in for `host_tick`, where Enter launches.
+                (|keys: Res<ButtonInput<KeyCode>>, mut seen: ResMut<SeenInTheLobby>| {
+                    seen.0 |= keys.just_pressed(KeyCode::Enter);
+                })
+                .run_if(in_state(Screen::Lobby)),
+            ),
+        );
+
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::Enter,
+            logical_key: Key::Enter,
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+        app.update();
+        // The key is never released: a player's finger is still on it as
+        // the lobby comes up, which is the whole worry.
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Lobby
+        );
+        assert!(
+            !app.world().resource::<SeenInTheLobby>().0,
+            "the lobby read the Enter that was meant for the results card"
+        );
     }
 }

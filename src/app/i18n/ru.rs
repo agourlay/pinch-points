@@ -175,6 +175,7 @@ pub static RU: Tr = Tr {
     prompt_setup_custom: "твои клавиши (Настройки) | Enter старт | N/P уровень",
     prompt_versus_custom: "твои клавиши (Настройки) | Esc пауза",
     prompt_enter_menu: "Enter: меню",
+    prompt_enter_lobby: "Enter: лобби",
     prompt_esc_menu: "Esc: меню",
     prompt_mute: "M: тишина",
     replay_draw: "ничья",

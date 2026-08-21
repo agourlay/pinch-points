@@ -168,6 +168,7 @@ pub static ES: Tr = Tr {
     prompt_setup_custom: "tus teclas (Ajustes) | Intro empezar | N/P nivel",
     prompt_versus_custom: "tus teclas (Ajustes) | Esc pausa",
     prompt_enter_menu: "Intro: menú",
+    prompt_enter_lobby: "Intro: sala",
     prompt_esc_menu: "Esc: menú",
     prompt_mute: "M: silencio",
     replay_draw: "empate",

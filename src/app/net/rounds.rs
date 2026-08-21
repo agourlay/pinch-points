@@ -147,7 +147,7 @@ impl OnlineSession {
 
     /// The name a peer index goes by, from its greeting: its seat's name if
     /// it holds one, else what it greeted with while queued.
-    fn peer_name(&self, peer: usize) -> Option<&str> {
+    pub(super) fn peer_name(&self, peer: usize) -> Option<&str> {
         if let Some(Some(seat)) = self.peer_seats.get(peer)
             && let Some(name) = self.names.get(usize::from(*seat))
             && !name.is_empty()

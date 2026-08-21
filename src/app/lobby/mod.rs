@@ -4,7 +4,9 @@
 //! every lobby on the network lists discovered hosts and joins one with a
 //! number key. Pairing completes through the normal online handshake, then
 //! both sides drop into versus. Direct-IP play (`PINCH_JOIN`) still works
-//! for beyond-the-LAN matches.
+//! for beyond-the-LAN matches. When the match ends, the whole table walks
+//! back in through [`Homecoming`], sockets still connected, so the next
+//! game is a keypress rather than a rediscovery.
 //!
 //! A beach comes off the list two ways. Normally it says so, on leaving
 //! the lobby or on starting the match, since neither leaves anything
@@ -33,7 +35,7 @@ pub use ui::*;
 use crate::app::cycle::Cycle;
 use crate::app::i18n::fill;
 use crate::app::match_setup::MatchConfig;
-use crate::app::net::{Online, OnlineSession};
+use crate::app::net::{LobbyReturn, Online, OnlineSession};
 use crate::app::palette;
 use crate::app::settings::GameSettings;
 use crate::app::{Screen, VersusPhase};
@@ -171,6 +173,13 @@ pub struct LobbyState {
     /// round yet. These two are how the difference gets onto the screen.
     host_silence: f32,
     host_answered: bool,
+    /// Joiner side: the seed of the round just played, set when a
+    /// finished match walks back into this lobby still connected. The
+    /// host may still be on its results card, where it re-answers every
+    /// greeting with that round's `Start`; without this the lobby would
+    /// read the repeat as an invitation and walk straight back into the
+    /// finished round.
+    played_seed: Option<u64>,
     pub feedback: String,
     auto_done: bool,
 }
@@ -342,20 +351,96 @@ impl LobbyState {
     }
 }
 
+/// A finished match walking its table back into the lobby, still
+/// connected: the results card's Enter fills this, the screen switches,
+/// and [`enter_lobby`] - which otherwise starts from nothing - stands the
+/// beach back up from it.
+#[derive(Resource, Default)]
+pub struct Homecoming(pub Option<LobbyReturn>);
+
+/// Stand the beach back up from what the match handed back: the host goes
+/// straight back on the air as open, a joiner back to its chair (or the
+/// rail), both on the sockets the round was played over.
+fn settle_back_in(
+    state: &mut LobbyState,
+    returned: LobbyReturn,
+    tr: &'static crate::app::i18n::Tr,
+) {
+    let LobbyReturn {
+        announcer,
+        transport,
+        game_name,
+        peer_names,
+        watchers,
+        watching,
+        host,
+        played_seed,
+    } = returned;
+    if host {
+        // A host that never announced (the direct pair) has no beach to
+        // stand back up, and `from_lobby` keeps it from coming this way.
+        let Some(announcer) = announcer else { return };
+        let peers = transport.peer_count();
+        state.joined_peers = peers;
+        state.peer_silence = vec![0.0; peers];
+        state.peer_names = peer_names;
+        // The invariant `forget_peer` checks: names at least as long as
+        // the silences kept beside them.
+        if state.peer_names.len() < peers {
+            state.peer_names.resize(peers, String::new());
+        }
+        state.watchers = watchers.into_iter().filter(|w| *w < peers.max(1)).collect();
+        state.game_name = game_name;
+        state.hosting = Some((announcer, transport));
+        // Back on the air this frame, as open: the round the beacon was
+        // calling "running" is over.
+        state.announce_in = 0.0;
+    } else {
+        state.watching = watching;
+        state.played_seed = Some(played_seed);
+        state.joining = Some(transport);
+        state.hello_in = 0.0;
+        // The host was talking moments ago: this is a beach, not an
+        // unanswered address, until the silence rule says otherwise.
+        state.host_answered = true;
+        state.host_silence = 0.0;
+        state.feedback = match watching {
+            true => tr.lobby_watching,
+            false => tr.lobby_aboard,
+        }
+        .to_string();
+    }
+}
+
 pub fn enter_lobby(
     mut commands: Commands,
     mut state: ResMut<LobbyState>,
+    mut homecoming: ResMut<Homecoming>,
     settings: Res<GameSettings>,
     art: Res<crate::app::art::Art>,
 ) {
     *state = LobbyState::default();
     spawn_lobby_ui(&mut commands, settings.tr(), &LobbyArt::from_art(&art));
+    if let Some(returned) = homecoming.0.take() {
+        settle_back_in(&mut state, returned, settings.tr());
+    }
+    // A host does not listen while it hosts (see the module doc), which a
+    // table walking back in together arrives already doing.
+    if state.hosting() {
+        return;
+    }
     match Discovery::bind() {
         Ok(discovery) => {
             state.discovery = Some(discovery);
-            state.feedback = settings.tr().lobby_listening.into();
+            if state.feedback.is_empty() {
+                state.feedback = settings.tr().lobby_listening.into();
+            }
         }
-        Err(e) => state.feedback = format!("discovery unavailable: {e}"),
+        Err(e) => {
+            if state.feedback.is_empty() {
+                state.feedback = format!("discovery unavailable: {e}");
+            }
+        }
     }
 }
 
@@ -659,6 +744,141 @@ mod tests {
         refresh_hosts(&mut hosts, &[open(1)], 0.2);
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].addr, addr(1));
+    }
+}
+
+#[cfg(test)]
+mod homecoming_tests {
+    use super::*;
+    use crate::app::i18n::EN;
+
+    /// A hosting socket with `peers` joiners registered on it, as the one
+    /// coming back from a match really is: the count is the socket's own,
+    /// so a table walking home has to arrive with its peers still on it.
+    /// The joiner sockets are handed back to be kept alive; dropping them
+    /// would close the far end mid-test.
+    fn with_peers(peers: usize) -> (UdpTransport, Vec<UdpTransport>) {
+        let mut transport = UdpTransport::host(0).expect("game socket");
+        let port = transport.local_addr().expect("addr").port();
+        let mut joiners = Vec::new();
+        for want in 1..=peers {
+            let joiner = UdpTransport::join(("127.0.0.1", port)).expect("join");
+            joiner.send(NetMsg::hello("someone"));
+            for _ in 0..40 {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                let _ = transport.recv_all();
+                if transport.peer_count() >= want {
+                    break;
+                }
+            }
+            assert_eq!(transport.peer_count(), want, "peer {want} registered");
+            joiners.push(joiner);
+        }
+        (transport, joiners)
+    }
+
+    /// A host walks back in still on the air: the same socket, the same
+    /// beach name, the peers still counted, and the list it does not read
+    /// while hosting left unbound.
+    #[test]
+    fn a_host_comes_home_still_hosting() {
+        let (transport, _joiners) = with_peers(2);
+        let port = transport.local_addr().expect("addr").port();
+        let mut state = LobbyState::default();
+        settle_back_in(
+            &mut state,
+            LobbyReturn {
+                announcer: Some(Announcer::new(0xB0A7).expect("announcer")),
+                transport,
+                game_name: "Room 3".into(),
+                peer_names: vec!["Bo".into(), "Cy".into()],
+                watchers: vec![1],
+                watching: false,
+                host: true,
+                played_seed: 42,
+            },
+            &EN,
+        );
+        assert_eq!(state.standing(), Standing::Hosting);
+        assert_eq!(state.game_name, "Room 3");
+        assert_eq!(
+            state
+                .hosting
+                .as_ref()
+                .map(|(_, t)| t.local_addr().expect("addr").port()),
+            Some(port),
+            "the socket the table is still talking to"
+        );
+        assert_eq!(state.announce_in, 0.0, "back on the air this frame");
+        assert_eq!(
+            state.roster(&EN, "Anna"),
+            ["Anna", "Bo"],
+            "the table as it stood, minus the one at the rail"
+        );
+    }
+
+    /// The lists a host is handed back have to be the same length as the
+    /// peers they index, or `forget_peer` shifts them out of step with
+    /// each other the first time somebody leaves.
+    #[test]
+    fn a_short_name_list_is_padded_to_the_peers_it_indexes() {
+        let (transport, _joiners) = with_peers(2);
+        let mut state = LobbyState::default();
+        settle_back_in(
+            &mut state,
+            LobbyReturn {
+                announcer: Some(Announcer::new(1).expect("announcer")),
+                transport,
+                game_name: String::new(),
+                // Fewer names than the socket knows peers, and a watcher
+                // pointing past the end of both.
+                peer_names: vec!["Bo".into()],
+                watchers: vec![0, 9],
+                watching: false,
+                host: true,
+                played_seed: 0,
+            },
+            &EN,
+        );
+        let peers = state.joined_peers;
+        assert!(
+            state.peer_names.len() >= peers && state.peer_silence.len() == peers,
+            "{} names, {} silences, {peers} peers",
+            state.peer_names.len(),
+            state.peer_silence.len()
+        );
+        assert!(
+            state.watchers.iter().all(|w| *w < peers.max(1)),
+            "a watcher points past the peers it indexes: {:?}",
+            state.watchers
+        );
+    }
+
+    /// A joiner walks back in already aboard: the socket it played over,
+    /// the seed it played on, and no "calling..." for a host that was
+    /// talking to it a moment ago.
+    #[test]
+    fn a_joiner_comes_home_aboard() {
+        let mut state = LobbyState::default();
+        settle_back_in(
+            &mut state,
+            LobbyReturn {
+                announcer: None,
+                transport: UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
+                game_name: String::new(),
+                peer_names: Vec::new(),
+                watchers: Vec::new(),
+                watching: true,
+                host: false,
+                played_seed: 42,
+            },
+            &EN,
+        );
+        assert_eq!(state.standing(), Standing::Joining);
+        assert!(state.watching, "still at the rail");
+        assert_eq!(state.played_seed, Some(42));
+        assert!(state.host_answered, "the host was talking a moment ago");
+        assert_eq!(state.feedback, EN.lobby_watching);
     }
 }
 

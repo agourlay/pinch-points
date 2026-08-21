@@ -93,9 +93,13 @@ pub struct OnlineSession {
     pub abandoned: Vec<(u8, u32)>,
     /// Host side: the beacon, carried out of the lobby so the beach stays
     /// on the air while the round runs, listed as in progress with its
-    /// occupancy, for anyone who wants the next one. `None` on a joiner,
+    /// occupancy, for anyone who wants the next one. Silent on a joiner,
     /// and on a direct `PINCH_HOST` pair, which never announced at all.
-    pub announcer: Option<Announcer>,
+    announcer: Farewell,
+    /// Whether this session was formed in the beach lobby, which is the
+    /// only place a finished match has to walk its table back to: the
+    /// direct `PINCH_HOST` pair was never anywhere else to begin with.
+    pub from_lobby: bool,
     /// What the beach is called, for the beacon it keeps up while the round
     /// runs. Not a player's name: the list is choosing between games.
     pub game_name: String,
@@ -131,19 +135,77 @@ pub struct OnlineSession {
     peer_hashes: VecDeque<(u32, u64)>,
 }
 
+/// The goodbye a hosted beach owes the network when its session ends.
+///
 /// A hosted beach stops being announced when its session goes, whichever
 /// way that happens: the match ending, the player quitting to the menu, a
-/// desync giving up. Putting it here rather than at each of those exits is
-/// what keeps the promise: there is no path that drops a session and
-/// forgets to take the beach off the network with it.
-impl Drop for OnlineSession {
-    fn drop(&mut self) {
-        if let Some(announcer) = &self.announcer
-            && let Ok(addr) = self.transport.local_addr()
-        {
-            announcer.closing(addr.port());
+/// desync giving up. Holding the duty here, beside the announcer itself,
+/// rather than at each of those exits is what keeps the promise: there is
+/// no path that drops an announcing session without either saying goodbye
+/// or deliberately taking the announcer back out through
+/// [`OnlineSession::back_to_the_lobby`], the one exit where the beach is
+/// not going anywhere.
+struct Farewell {
+    /// `None` on a joiner and on the direct pair, which never announced,
+    /// and in the shell a session leaves behind when its beach goes home.
+    announcer: Option<Announcer>,
+    /// The game port the beacons named, taken when the announcer came
+    /// aboard: the port never changes after the bind, and it has to be
+    /// readable at drop time.
+    port: u16,
+}
+
+impl Farewell {
+    /// A session with nothing to announce and so nothing to owe.
+    fn silent() -> Farewell {
+        Farewell {
+            announcer: None,
+            port: 0,
         }
     }
+
+    /// The announcer, while one is aboard.
+    fn aboard(&self) -> Option<&Announcer> {
+        self.announcer.as_ref()
+    }
+
+    /// Take the announcer back out, disarming the goodbye: the beach is
+    /// going back on the air, not away.
+    fn disarm(mut self) -> Option<Announcer> {
+        self.announcer.take()
+    }
+}
+
+impl Drop for Farewell {
+    fn drop(&mut self) {
+        if let Some(announcer) = &self.announcer {
+            announcer.closing(self.port);
+        }
+    }
+}
+
+/// What survives of a session when its table walks back to the lobby
+/// together at the end of a match: the sockets, still connected, and the
+/// bookkeeping the lobby needs to stand the beach back up.
+pub struct LobbyReturn {
+    /// Host side: the beacon, going back on the air as open. `None` for a
+    /// joiner.
+    pub announcer: Option<Announcer>,
+    pub transport: UdpTransport,
+    pub game_name: String,
+    /// Host side: what each registered peer calls itself, by peer index.
+    pub peer_names: Vec<String>,
+    /// Host side: the peers that watch rather than play, by the same rule
+    /// the next round would have seated them.
+    pub watchers: Vec<usize>,
+    /// Joiner side: this peer was at the rail, and greets with `Watch`.
+    pub watching: bool,
+    pub host: bool,
+    /// The seed of the round just played. A host still on its results
+    /// card re-answers every greeting with that round's `Start`, and a
+    /// lobby that has just walked out of it must read the repeat as
+    /// stale rather than as an invitation straight back in.
+    pub played_seed: u64,
 }
 
 #[derive(Resource, Default)]
@@ -185,7 +247,8 @@ impl OnlineSession {
             waiting_hold: 0.0,
             peer_silence: Vec::new(),
             abandoned: Vec::new(),
-            announcer: None,
+            announcer: Farewell::silent(),
+            from_lobby: false,
             game_name: String::new(),
             announce_in: 0.0,
             greet_in: 0.0,
@@ -207,7 +270,7 @@ impl OnlineSession {
     /// player who wants it, the same way the lobby fills bots in behind
     /// whoever turned up.
     pub fn keep_announcing(&mut self, delta: f32) {
-        if self.announcer.is_none() {
+        if self.announcer.aboard().is_none() {
             return;
         }
         self.announce_in -= delta;
@@ -216,7 +279,8 @@ impl OnlineSession {
         }
         self.announce_in = crate::app::lobby::ANNOUNCE_EVERY;
         let taken = self.session.player_count() as u8;
-        let (Some(announcer), Ok(addr)) = (&self.announcer, self.transport.local_addr()) else {
+        let (Some(announcer), Ok(addr)) = (self.announcer.aboard(), self.transport.local_addr())
+        else {
             return;
         };
         announcer.running(
@@ -230,6 +294,81 @@ impl OnlineSession {
                 seats: MAX_PLAYERS as u8,
             },
         );
+    }
+
+    /// Host: carry the beacon out of the lobby, and with it the goodbye
+    /// owed to the network from now on.
+    pub fn stay_on_air(&mut self, announcer: Announcer) {
+        // Port 0 if the socket will not say: the goodbye is matched by
+        // the announcer's id first, so it still clears the right row.
+        let port = self
+            .transport
+            .local_addr()
+            .map(|addr| addr.port())
+            .unwrap_or(0);
+        self.announcer = Farewell {
+            announcer: Some(announcer),
+            port,
+        };
+    }
+
+    /// Dismantle a finished match into what the lobby needs to stand the
+    /// beach back up, goodbye disarmed: this table is going back to the
+    /// lobby together, not away.
+    pub fn back_to_the_lobby(self) -> LobbyReturn {
+        let host = self.is_host();
+        let watching = self.watching();
+        let peers = self.transport.peer_count();
+        // Who watches, by the same rule `next_plan` would have seated
+        // them: a spectator's `None` in the launch plan, or a watch wish
+        // greeted mid-round.
+        let watchers = (0..peers)
+            .filter(|&peer| {
+                matches!(self.peer_seats.get(peer), Some(None))
+                    || self.peer_watch.get(peer).copied().unwrap_or(false)
+            })
+            .collect();
+        let peer_names = (0..peers)
+            .map(|peer| self.peer_name(peer).unwrap_or_default().to_string())
+            .collect();
+        let Self {
+            transport,
+            session: _,
+            seats: _,
+            terms,
+            beach: _,
+            peer_seats: _,
+            peer_names: _,
+            peer_watch: _,
+            names: _,
+            desync_at: _,
+            stalled_for: _,
+            stalled_on: _,
+            waiting_on: _,
+            waiting_hold: _,
+            peer_silence: _,
+            abandoned: _,
+            announcer,
+            from_lobby: _,
+            game_name,
+            announce_in: _,
+            greet_in: _,
+            next_round: _,
+            series_standing: _,
+            resume_echo: _,
+            own_hashes: _,
+            peer_hashes: _,
+        } = self;
+        LobbyReturn {
+            announcer: announcer.disarm(),
+            transport,
+            game_name,
+            peer_names,
+            watchers,
+            watching,
+            host,
+            played_seed: terms.seed,
+        }
     }
 
     /// Call a pause, and tell the peers which frame it lands on.
@@ -560,4 +699,168 @@ pub fn session_from_env() -> Option<OnlineSession> {
         return Some(session);
     }
     None
+}
+
+#[cfg(test)]
+mod homecoming_tests {
+    use super::*;
+    use crate::sim::DEFAULT_DELAY;
+    use crate::transport::{Beacon, Discovery};
+
+    fn hosting_session(seed: u64) -> OnlineSession {
+        OnlineSession::new(
+            UdpTransport::host(0).expect("game socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms {
+                seed,
+                ..MatchTerms::default()
+            },
+        )
+    }
+
+    /// Beacons from other tests share the machine, so every packet is
+    /// judged by whether it names our game port.
+    fn heard_for(discovery: &mut Discovery, port: u16) -> Vec<Beacon> {
+        let mut heard = Vec::new();
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            heard.extend(
+                discovery
+                    .poll()
+                    .into_iter()
+                    .filter(|(addr, _)| addr.port() == port)
+                    .map(|(_, beacon)| beacon),
+            );
+            if !heard.is_empty() {
+                break;
+            }
+        }
+        heard
+    }
+
+    /// The goodbye still fires on every ordinary way out - quitting to the
+    /// menu, a desync giving up, the process letting go - which is the
+    /// promise the [`Farewell`] guard carries for the whole session.
+    #[test]
+    fn a_dropped_session_still_says_goodbye() {
+        let mut discovery = Discovery::bind().expect("lobby port");
+        let mut session = hosting_session(0);
+        let port = session.transport.local_addr().expect("addr").port();
+        session.stay_on_air(Announcer::new(0xD00D).expect("announcer"));
+        drop(session);
+        let heard = heard_for(&mut discovery, port);
+        let beacon = heard.first().expect("the goodbye went out");
+        assert!(matches!(beacon, Beacon::Closing { .. }), "{beacon:?}");
+    }
+
+    /// The one exit where the beach is not going anywhere: walking the
+    /// table back to the lobby keeps the socket, keeps the beacon, and
+    /// says no goodbye, because the same beach is about to announce
+    /// itself open again.
+    #[test]
+    fn the_way_back_to_the_lobby_says_no_goodbye() {
+        let mut discovery = Discovery::bind().expect("lobby port");
+        let mut session = hosting_session(42);
+        let port = session.transport.local_addr().expect("addr").port();
+        session.stay_on_air(Announcer::new(0xB0A7).expect("announcer"));
+        session.game_name = "Room 3".into();
+        session.from_lobby = true;
+        let returned = session.back_to_the_lobby();
+        assert!(returned.host);
+        assert!(!returned.watching);
+        assert_eq!(returned.played_seed, 42, "the round it walked out of");
+        assert_eq!(returned.game_name, "Room 3");
+        assert_eq!(
+            returned.transport.local_addr().expect("addr").port(),
+            port,
+            "the same socket every peer is still talking to"
+        );
+        assert!(
+            returned.announcer.is_some(),
+            "the beacon rides home to announce again"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        assert!(
+            discovery
+                .poll()
+                .into_iter()
+                .all(|(addr, _)| addr.port() != port),
+            "no goodbye for a beach that is coming home"
+        );
+    }
+
+    /// What the lobby gets back to seat people with: each peer's name as
+    /// its greeting carried it, and the watchers by the same rule the next
+    /// round would have used - a spectator's `None` in the launch plan, or
+    /// a watch wish greeted mid-round.
+    #[test]
+    fn the_table_walks_back_with_its_names_and_watchers() {
+        let mut session = hosting_session(0);
+        let port = session.transport.local_addr().expect("addr").port();
+        // Two peers, registered one at a time so their indices are known:
+        // Bo plays, and somebody nameless watches from the rail.
+        let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        bo.send(NetMsg::hello("Bo"));
+        let rail = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        for want in [1, 2] {
+            if want == 2 {
+                rail.send(NetMsg::Watch);
+            }
+            for _ in 0..40 {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                for (msg, from) in session.transport.recv_all() {
+                    match msg {
+                        NetMsg::Hello { name } => {
+                            let told = name_from_wire(&name);
+                            session.remember_peer_name(from, &told);
+                        }
+                        NetMsg::Watch => session.note_watch_wish(from),
+                        NetMsg::Input(_)
+                        | NetMsg::Hash { .. }
+                        | NetMsg::Start { .. }
+                        | NetMsg::Pause { .. }
+                        | NetMsg::Resume { .. }
+                        | NetMsg::Queued { .. }
+                        | NetMsg::Chat { .. }
+                        | NetMsg::Roster { .. }
+                        | NetMsg::Abandoned { .. }
+                        | NetMsg::Incompatible { .. } => {}
+                    }
+                }
+                if session.transport.peer_count() >= want {
+                    break;
+                }
+            }
+            assert_eq!(session.transport.peer_count(), want, "peer registered");
+        }
+        session.peer_seats = vec![Some(1), None];
+        let returned = session.back_to_the_lobby();
+        assert_eq!(
+            returned.peer_names,
+            vec!["Bo".to_string(), String::new()],
+            "each chair keeps the name its greeting carried"
+        );
+        assert_eq!(returned.watchers, vec![1], "and the rail stays the rail");
+    }
+
+    /// A joiner's way back: no beacon to carry, but the socket, the seed
+    /// it played on, and whether it was watching all come home with it.
+    #[test]
+    fn a_watching_joiner_comes_home_to_the_rail() {
+        let session = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
+            Lockstep::observer(vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms {
+                seed: 7,
+                ..MatchTerms::default()
+            },
+        );
+        let returned = session.back_to_the_lobby();
+        assert!(!returned.host);
+        assert!(returned.watching, "the rail is remembered");
+        assert!(returned.announcer.is_none(), "a joiner has no beacon");
+        assert_eq!(returned.played_seed, 7);
+    }
 }

@@ -262,6 +262,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         online,
         bots,
         vphase,
+        tournament,
         speed,
         ..
     } = *r;
@@ -349,6 +350,15 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         }
         VersusPhase::Running if settings.custom_binds() => tr.prompt_versus_custom.to_string(),
         VersusPhase::Running => tr.prompt_versus_local.to_string(),
+        // A finished lobby match goes back to the lobby, together; the
+        // prompt must not promise the menu it will not reach. Mid-series
+        // the card's own "Enter: next round" hint speaks instead.
+        VersusPhase::Over
+            if online.0.as_ref().is_some_and(|session| session.from_lobby)
+                && !(tournament.active && !tournament.finished) =>
+        {
+            tr.prompt_enter_lobby.to_string()
+        }
         VersusPhase::Over => tr.prompt_enter_menu.to_string(),
     };
     HudText::new(mode, status, prompt)
@@ -372,6 +382,9 @@ pub(super) struct Readout<'a> {
     pub online: &'a Online,
     pub playback: &'a Playback,
     pub lobby: &'a LobbyState,
+    /// Whether a series is mid-flight, which changes what the results
+    /// card's Enter does and so what the prompt may promise.
+    pub tournament: &'a crate::app::tournament::Tournament,
     pub seats: &'a Seats,
     pub settings: &'a GameSettings,
     pub names: &'a crate::app::SeatNames,
@@ -525,6 +538,7 @@ mod tests {
             online: &Online::default(),
             playback: &Playback::default(),
             lobby: &LobbyState::default(),
+            tournament: &crate::app::tournament::Tournament::default(),
             seats: &Seats(2),
             settings: &settings,
             names: &crate::app::SeatNames::default(),

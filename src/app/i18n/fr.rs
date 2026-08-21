@@ -168,6 +168,7 @@ pub static FR: Tr = Tr {
     prompt_setup_custom: "tes touches (Réglages) | Entrée démarrer | N/P niveau",
     prompt_versus_custom: "tes touches (Réglages) | Échap pause",
     prompt_enter_menu: "Entrée : menu",
+    prompt_enter_lobby: "Entrée : salon",
     prompt_esc_menu: "Échap : menu",
     prompt_mute: "M : muet",
     replay_draw: "égalité",
