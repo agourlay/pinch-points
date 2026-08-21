@@ -130,6 +130,11 @@ impl Level {
         let mut board = self.board.clone();
         if !self.explicit_rule && self.kind == LevelKind::Puzzle {
             board.set_signpost_rule(self.posts, CapPolicy::Reject);
+            // A campaign puzzle's castle is the finish line, not a bank to
+            // be robbed: see `Board::castle_raids`. Beach Day states `rule:`
+            // and keeps its raids - there the goal is a number banked and a
+            // robbery is drama, not a target that moves.
+            board.set_castle_raids(false);
         }
         board
     }

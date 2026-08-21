@@ -141,7 +141,9 @@ impl Board {
     fn gull_arrival(&mut self, gull: &mut Gull) -> bool {
         let t = gull.tile as usize;
         if let TileKind::Castle(owner) = self.tiles[t] {
-            self.damage_castle(owner, gull.tile);
+            if self.castle_raids {
+                self.damage_castle(owner, gull.tile);
+            }
             return true;
         }
         if self.turnstile_deflect(gull.tile, &mut gull.dir, gull.handed, Walker::Gull) {
@@ -202,7 +204,9 @@ impl Board {
                     // A gull that lands on a castle raids it on the spot and
                     // departs with the loot, like a walking raid.
                     if let TileKind::Castle(owner) = self.tiles[gull.tile as usize] {
-                        self.damage_castle(owner, gull.tile);
+                        if self.castle_raids {
+                            self.damage_castle(owner, gull.tile);
+                        }
                         return true;
                     }
                     break;

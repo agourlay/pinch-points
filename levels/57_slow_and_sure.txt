@@ -1,12 +1,20 @@
 # A giant on the bottom lane and a common above it, with a gull waiting
 # at the end of each. The giant needs longer, so it needs turning first.
+#
+# Two posts, not the three it shipped with. The third was never the
+# board's doing: with castle raids on, a gull reaching the castle spilled
+# banked crabs back onto the sand and the level had to fetch them home
+# again - eight crabs banked on a two-crab beach. Puzzles stopped raiding
+# (see Board::castle_raids) and what is left is what the walls always
+# asked for. Cheapest solution under DEFAULT_NODE_BUDGET; verify_levels
+# proves no one post beats it.
 name: Slow And Sure
-posts: 3
+posts: 2
 crab: 0,3 R L common
 crab: 0,6 R L giant
 gull: 6,3 L
 gull: 6,6 L
-solution: 3,2 D; 3,5 U; 1,6 U
+solution: 1,6 U; 3,5 U
 map:
 +-+-+-+-+-+-+-+
 |. . . . . . .|

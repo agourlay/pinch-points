@@ -46,6 +46,51 @@ fn every_campaign_level_is_solvable_with_its_solution() {
     }
 }
 
+/// A campaign level's target must hold still while it is played.
+///
+/// The puzzle header counts "Saved a/b", and `b` is `crabs_spawned` - so
+/// anything that spawns a crab mid-run moves the finish line. A gull
+/// reaching a castle used to do exactly that: the raid spilled banked crabs
+/// back onto the sand as *new* ones, and nine shipped levels grew their own
+/// target while the player watched, on the authored solution. It read as
+/// the gull being counted, which is how it was reported.
+///
+/// Campaign puzzles now play with `castle_raids` off (see `Level::board`).
+/// Levels that spawn on purpose, through a `spawner:`, are exempt: there
+/// the rising total is the point.
+#[test]
+fn no_campaign_level_moves_its_own_target() {
+    use pinch_points::sim::TileKind;
+    for (i, level) in campaign_levels().iter().enumerate() {
+        let mut board = level.board();
+        if board
+            .tiles()
+            .any(|(_, _, kind)| matches!(kind, TileKind::Spawner(_)))
+        {
+            continue;
+        }
+        let started = board.crabs_spawned();
+        for &(x, y, dir) in &level.solution {
+            assert!(board.place_signpost(0, x, y, dir));
+        }
+        loop {
+            board.tick_idle();
+            match level.outcome(&board) {
+                PuzzleOutcome::Running => {}
+                PuzzleOutcome::Won | PuzzleOutcome::Lost => break,
+            }
+        }
+        assert_eq!(
+            board.crabs_spawned(),
+            started,
+            "level {} {:?}: the target moved from {started} to {} mid-run",
+            i + 1,
+            level.name,
+            board.crabs_spawned(),
+        );
+    }
+}
+
 /// Levels that grant signposts must actually need them: a level whose crabs
 /// bank by themselves teaches a false lesson about its own solution.
 #[test]

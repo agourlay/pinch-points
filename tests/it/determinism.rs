@@ -98,7 +98,14 @@ const TICKS: u64 = 10_000;
 /// Anchor value for cross-platform comparison. If a deliberate rule change
 /// shifts it, rerun and update; an unexplained shift is a determinism bug.
 ///
-/// Last re-derived 2026-08-16, when gulls started catching crabs they had
+/// Last re-derived 2026-08-21, when castle raids became a board switch so
+/// puzzles could turn them off. `castle_raids` joined the fingerprint
+/// because it decides whether a gull reaching a castle takes anything, and
+/// two boards that disagreed on it would report the same hash and then
+/// play apart. The board here is an arena, with raids on as ever, so the
+/// round it plays is unchanged - only the hash's reach grew.
+///
+/// Before that, 2026-08-16, when gulls started catching crabs they had
 /// been walking through. Contact was tested tile by tile, and two creatures
 /// approaching head-on cross between two tile centres while still filed
 /// under different tiles, so the collision was never looked at. Every gull
@@ -115,7 +122,7 @@ const TICKS: u64 = 10_000;
 /// did not. (The rules moved that day too: the lure stopped stacking, the
 /// roulette stopped rolling gull events into the surge, and the spawners
 /// took a crab cap.)
-const EXPECTED_HASH: u64 = 0xee2a_a50b_9649_bf96;
+const EXPECTED_HASH: u64 = 0x897d_fa31_1809_e62f;
 
 #[test]
 fn ten_thousand_ticks_reproduce_exactly() {

@@ -58,6 +58,9 @@ impl Board {
         if self.wrap {
             let _ = writeln!(out, "wrap: on");
         }
+        if !self.castle_raids {
+            let _ = writeln!(out, "raids: off");
+        }
         if self.events_enabled {
             let _ = writeln!(out, "events: on");
         }
@@ -184,6 +187,13 @@ struct Fields {
     gull_period: Option<u32>,
     round_length: Option<u32>,
     wrap: bool,
+    /// Stored the way the wire stores it - the exception, not the rule -
+    /// because `Default` here has to mean "the line was absent". Castle
+    /// raids are the one board switch that is *on* by default, so a
+    /// `castle_raids: bool` deriving `false` would quietly turn them off
+    /// in every snapshot that omitted the line, which is every versus
+    /// round there is.
+    no_castle_raids: bool,
     events_enabled: bool,
     lure: Option<(PlayerId, u32)>,
     lure_cooldown: u32,
@@ -243,6 +253,7 @@ impl Fields {
             "gull_period" => self.gull_period = Some(next_num(&mut words, "gull_period")?),
             "round" => self.round_length = Some(next_num(&mut words, "round")?),
             "wrap" => self.wrap = value == "on",
+            "raids" => self.no_castle_raids = value == "off",
             "events" => self.events_enabled = value == "on",
             "lure" => {
                 let owner = next_num::<PlayerId>(&mut words, "lure owner")?;
@@ -362,6 +373,7 @@ impl Fields {
             lure_cooldown: self.lure_cooldown,
             crabs_banked,
             golden_banked,
+            castle_raids: !self.no_castle_raids,
             events_enabled: self.events_enabled,
             mania: self.mania,
             tempo: self.tempo,
@@ -588,6 +600,7 @@ mod tests {
         );
         board.set_wrap(true);
         board.set_wall(1, 1, Direction::Up, true);
+        board.set_castle_raids(false);
         board.set_events_enabled(true);
         board.set_round_length(Some(1234));
         board.set_gull_period(97);
@@ -659,11 +672,27 @@ mod tests {
             "tempo: slow 44",
             "last_event: 6 3000",
             "wrap: on",
+            "raids: off",
             "events: on",
             "rule: reject 2",
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
+        // And the default direction, which is the one a missing line has to
+        // mean: raids on writes nothing and must come back on.
+        let mut raiding = awkward_board();
+        raiding.set_castle_raids(true);
+        let text = raiding.to_snapshot();
+        assert!(
+            !text.contains("raids:"),
+            "a default is not written:\n{text}"
+        );
+        assert!(
+            Board::parse_snapshot(&text)
+                .expect("its own output")
+                .castle_raids(),
+            "an absent raids line must read as raids on:\n{text}"
+        );
         assert!(text.contains(" worn "), "the worn signpost:\n{text}");
         assert!(text.contains(" fly 3 "), "the gull mid-flight:\n{text}");
     }
@@ -697,6 +726,7 @@ mod tests {
             let optional = [
                 "round:",
                 "wrap:",
+                "raids:",
                 "events:",
                 "lure:",
                 "cooldown:",

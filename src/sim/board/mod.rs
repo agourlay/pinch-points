@@ -231,6 +231,24 @@ pub struct Board {
     crabs_banked: u32,
     /// Golden crabs banked (challenge goals).
     golden_banked: u32,
+    /// Whether a gull reaching a castle carries off half its bank
+    /// (spec §3.4). True on a versus beach, where robbing a rival is the
+    /// point.
+    ///
+    /// False in a puzzle, where a raid has nothing to take and one bad
+    /// side effect. The score it halves is never shown - the puzzle header
+    /// counts crabs saved, not points - while the spill puts banked crabs
+    /// back on the sand, and each of those counts as newly spawned. That
+    /// is the denominator of "Saved a/b", so the level's own target grew
+    /// every time a gull touched the castle. Nine shipped campaign levels
+    /// did it while playing their authored solution.
+    ///
+    /// The gull still walks in and still leaves the beach with the flock.
+    /// That departure is load-bearing and was nobody's plan: a castle is
+    /// the one tile that takes a gull off the sand, and the levels were
+    /// tuned around it. Shutting the door instead left Two Giants with no
+    /// two-post solution at all.
+    castle_raids: bool,
     /// Tide events fire only where enabled (versus arenas, the attract
     /// beach), never in puzzles or goal-checked challenges.
     events_enabled: bool,
@@ -280,6 +298,7 @@ impl Board {
             lure_cooldown: 0,
             crabs_banked: 0,
             golden_banked: 0,
+            castle_raids: true,
             events_enabled: false,
             mania: None,
             tempo: None,
@@ -325,6 +344,15 @@ impl Board {
 
     /// Change the signpost cap and what happens at it. Versus keeps the
     /// default (3, evict-oldest); puzzle mode sets (inventory, reject).
+    /// Let gulls into the castles, or keep them out. See `castle_raids`.
+    pub fn set_castle_raids(&mut self, raids: bool) {
+        self.castle_raids = raids;
+    }
+
+    pub fn castle_raids(&self) -> bool {
+        self.castle_raids
+    }
+
     pub fn set_signpost_rule(&mut self, cap: u8, policy: CapPolicy) {
         self.signpost_cap = cap;
         self.cap_policy = policy;

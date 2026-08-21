@@ -40,6 +40,7 @@ impl Board {
             lure_cooldown: _,
             crabs_banked: _,
             golden_banked: _,
+            castle_raids: _,
             events_enabled: _,
             mania: _,
             tempo: _,
@@ -171,6 +172,7 @@ impl Board {
             }
         }
         h.u32(self.golden_banked);
+        h.bool(self.castle_raids);
         h.bool(self.events_enabled);
         h.bool(self.wrap);
         match self.mania {
@@ -260,6 +262,7 @@ mod tests {
                 "set_events_enabled",
                 Box::new(|b| b.set_events_enabled(true)),
             ),
+            ("set_castle_raids", Box::new(|b| b.set_castle_raids(false))),
             (
                 "set_signpost_rule",
                 Box::new(|b| b.set_signpost_rule(5, CapPolicy::Reject)),

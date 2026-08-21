@@ -588,6 +588,51 @@ fn gull_raid_halves_the_castle() {
     );
 }
 
+/// With raids off a gull still walks into the castle and still leaves the
+/// beach - it just takes nothing with it.
+///
+/// The puzzle rule. A raid halves a score the puzzle header never shows and
+/// spills banked crabs back onto the sand, and each spilled crab counts as
+/// newly spawned - so the "Saved a/b" denominator climbed every time a gull
+/// touched the castle, and the level's own target ran away from the player.
+/// Nine shipped campaign levels did it while playing the authored solution.
+///
+/// The departure has to survive: a castle is the one tile that takes a gull
+/// off the sand, and the levels lean on it whether or not anyone meant them
+/// to. Sealing the castle instead left Two Giants unsolvable.
+#[test]
+fn a_raid_with_raids_off_takes_nothing_and_still_ends_the_visit() {
+    let mut board = Board::new(7, 5, 0);
+    board.set_tile(4, 2, TileKind::Castle(1));
+    board.set_castle_raids(false);
+    board.scores[1] = 30;
+    board.spawn_gull(0, 2, Right);
+    let spawned_before = board.crabs_spawned();
+    for _ in 0..ticks_to_cross(4, 8) {
+        board.tick_idle();
+    }
+    assert_eq!(board.scores()[1], 30, "the bank is not robbed");
+    assert_eq!(
+        board.crabs_spawned(),
+        spawned_before,
+        "nothing spills, so the level's target stays where it was"
+    );
+    assert!(
+        board.gulls().is_empty(),
+        "the visitor still leaves the beach, which is what the levels rely on"
+    );
+
+    // A crab walks the same lane straight in and banks, as ever.
+    let mut board = Board::new(7, 5, 0);
+    board.set_tile(4, 2, TileKind::Castle(1));
+    board.set_castle_raids(false);
+    board.spawn_crab(0, 2, Right, Handedness::Left, CrabKind::Common);
+    for _ in 0..ticks_to_cross(4, 12) {
+        board.tick_idle();
+    }
+    assert_eq!(board.crabs_banked(), 1, "the castle is still the goal");
+}
+
 #[test]
 fn empty_castle_hit_is_harmless() {
     let mut board = Board::new(7, 5, 0);
