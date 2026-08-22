@@ -213,9 +213,15 @@ pub struct MatchTerms {
     /// what tells a fresh `Start` from the stale one a host re-answers a
     /// stray greeting with: a new seed is a new round.
     pub seed: u64,
-    /// Best-of-5 rather than a single round. Every peer keeps its own
-    /// tally, and they agree because they are counting the same
-    /// deterministic boards, but only if they all know it is a series.
+    /// How long the series runs, as a `SeriesLength` index: one round,
+    /// best of three, best of five. Every peer keeps its own tally, and
+    /// they agree because they are counting the same deterministic boards,
+    /// but only if they all know how many rounds take it.
+    ///
+    /// An index rather than a flag since 2026-08-22, when best-of-three
+    /// joined the dial - which is why the protocol version moved with it:
+    /// a build that read this as a flag would take a 2 for "not a series"
+    /// and stop after one round while the rest of the table played on.
     pub series: u8,
 }
 

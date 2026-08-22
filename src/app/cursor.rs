@@ -698,7 +698,8 @@ mod tests {
             session.stay_on_air(Announcer::new(0xB0A7).expect("announcer"));
         }
         if series_on {
-            *app.world_mut().resource_mut::<Tournament>() = Tournament::start();
+            *app.world_mut().resource_mut::<Tournament>() =
+                Tournament::start(crate::app::tournament::SeriesLength::BestOfFive);
         }
         app.world_mut().resource_mut::<Online>().0 = Some(session);
         app

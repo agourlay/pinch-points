@@ -123,6 +123,9 @@ impl crate::app::cycle::Cycle for RoundLength {
 impl crate::app::cycle::Cycle for crate::sim::BotLevel {
     const VARIANTS: &'static [Self] = &BOT_LEVELS;
 }
+impl crate::app::cycle::Cycle for crate::app::tournament::SeriesLength {
+    const VARIANTS: &'static [Self] = &crate::app::tournament::SeriesLength::ALL;
+}
 
 /// One match-setup row; input and render both match on this. The AI-level
 /// rows are per seat, one for each seat the AI can take, and the ones
@@ -195,8 +198,8 @@ pub struct MatchConfig {
     pub custom: usize,
     pub gulls: GullPressure,
     pub round: RoundLength,
-    /// Best-of-5 series instead of a single round.
-    pub series: bool,
+    /// One round, best of three, or best of five.
+    pub series: crate::app::tournament::SeriesLength,
     /// True when the next versus round should be built from this config.
     pub armed: bool,
 }
@@ -211,7 +214,7 @@ impl Default for MatchConfig {
             custom: 0,
             gulls: GullPressure::Normal,
             round: RoundLength::Standard,
-            series: false,
+            series: crate::app::tournament::SeriesLength::Single,
             armed: false,
         }
     }
@@ -233,7 +236,7 @@ pub fn terms(config: &MatchConfig, teams: crate::app::teams::TeamMode, seed: u64
         round: config.round.index() as u8,
         teams: teams.index() as u8,
         seed,
-        series: u8::from(config.series),
+        series: config.series.index() as u8,
     }
 }
 
@@ -254,7 +257,7 @@ pub fn config_from_terms(terms: &MatchTerms) -> (MatchConfig, crate::app::teams:
         custom: 0,
         gulls: GullPressure::from_index(usize::from(terms.gulls)),
         round: RoundLength::from_index(usize::from(terms.round)),
-        series: terms.series == 1,
+        series: crate::app::tournament::SeriesLength::from_index(usize::from(terms.series)),
         armed: false,
     };
     (
@@ -594,7 +597,9 @@ mod tests {
             let tr = settings.tr();
             for seats in 2..=MAX_PLAYERS as u8 {
                 for bots in 0..seats {
-                    for map in MapChoice::ALL {
+                    for (map, series) in MapChoice::ALL.into_iter().flat_map(|map| {
+                        crate::app::tournament::SeriesLength::ALL.map(move |s| (map, s))
+                    }) {
                         // A handmade beach's name is the player's, up to
                         // twenty-eight characters of it, and no cell on
                         // any screen is built to hold that. It clips, the
@@ -609,7 +614,11 @@ mod tests {
                             map,
                             gulls: GullPressure::Frenzy,
                             round: RoundLength::Long,
-                            series: true,
+                            // Every position of the mode dial, not the
+                            // longest guessed at: "best of 3" and "best of
+                            // 5" are the same width in English and are not
+                            // in every language this ships in.
+                            series,
                             ..MatchConfig::default()
                         };
                         for row in Row::ALL {

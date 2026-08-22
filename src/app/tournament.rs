@@ -1,4 +1,5 @@
-//! Best-of-5 tournament: a local series of versus rounds on rotating maps.
+//! Best-of-three and best-of-five tournaments: a local series of versus
+//! rounds on rotating maps.
 //! Round wins accumulate here; the interlude screen bridges the rounds and
 //! the results card grows a series block (and a champion headline once the
 //! series is decided).
@@ -14,9 +15,50 @@ use crate::app::{Screen, Seats, Sim};
 use crate::sim::MAX_PLAYERS;
 use bevy::prelude::*;
 
-/// Rounds in a full series; first to [`SERIES_TARGET`] ends it early.
-pub const SERIES_ROUNDS: u8 = 5;
-pub const SERIES_TARGET: u8 = 3;
+/// How long a series runs: the three positions of the match screen's mode
+/// dial.
+///
+/// One dial rather than a flag and a length, because the lengths differ in
+/// nothing else: a match is one round, three, or five, and everything that
+/// follows from that is arithmetic on [`SeriesLength::rounds`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SeriesLength {
+    #[default]
+    Single,
+    BestOfThree,
+    BestOfFive,
+}
+
+impl SeriesLength {
+    pub const ALL: [SeriesLength; 3] = [
+        SeriesLength::Single,
+        SeriesLength::BestOfThree,
+        SeriesLength::BestOfFive,
+    ];
+
+    /// Whether a series is being played at all. A single round is on the
+    /// same dial because that is how the screen offers it, but it starts no
+    /// tournament and shows no standings.
+    pub fn is_series(self) -> bool {
+        self != SeriesLength::Single
+    }
+
+    /// Rounds in a full series: the most that will be played.
+    pub fn rounds(self) -> u8 {
+        match self {
+            SeriesLength::Single => 1,
+            SeriesLength::BestOfThree => 3,
+            SeriesLength::BestOfFive => 5,
+        }
+    }
+
+    /// Rounds that take it, ending the series early: a majority, which is
+    /// what "best of" means. Derived rather than written down twice, so a
+    /// length added to the dial cannot disagree with itself.
+    pub fn target(self) -> u8 {
+        self.rounds() / 2 + 1
+    }
+}
 
 #[derive(Resource, Default)]
 pub struct Tournament {
@@ -26,6 +68,10 @@ pub struct Tournament {
     /// 1-based current round.
     pub round: u8,
     pub wins: [u8; MAX_PLAYERS],
+    /// How long this one runs. Read only while `active`: a table that is
+    /// not in a series has no length to speak of, and the default sits at
+    /// [`SeriesLength::Single`] to say so.
+    pub length: SeriesLength,
 }
 
 /// Who a series belongs to. Rounds are awarded per *seat*, because that is
@@ -50,12 +96,13 @@ impl Champion {
 }
 
 impl Tournament {
-    pub fn start() -> Self {
+    pub fn start(length: SeriesLength) -> Self {
         Tournament {
             active: true,
             finished: false,
             round: 1,
             wins: [0; MAX_PLAYERS],
+            length,
         }
     }
 
@@ -111,7 +158,7 @@ pub fn record_series_round(
         }
     }
     let best = *tournament.wins.iter().max().unwrap_or(&0);
-    if best >= SERIES_TARGET || tournament.round >= SERIES_ROUNDS {
+    if best >= tournament.length.target() || tournament.round >= tournament.length.rounds() {
         tournament.finished = true;
     }
 }
@@ -268,7 +315,7 @@ mod tests {
     /// search sees a tie and only the team search finds the winner.
     #[test]
     fn a_team_series_is_won_by_the_team() {
-        let mut t = Tournament::start();
+        let mut t = Tournament::start(SeriesLength::BestOfFive);
         // Two rounds to the pair {0,1}, one to the pair {2,3}.
         t.wins = [2, 2, 1, 1, 0, 0];
         assert_eq!(t.champion(), None, "the seats are tied, and always will be");
@@ -294,7 +341,7 @@ mod tests {
         app.insert_resource(Seats(4));
         app.insert_resource(GameSettings::default());
         app.init_resource::<crate::app::net::Online>();
-        app.insert_resource(Tournament::start());
+        app.insert_resource(Tournament::start(SeriesLength::BestOfFive));
         app.add_systems(Update, record_series_round);
 
         // Seat 1 banks the most, three rounds running.
@@ -318,7 +365,7 @@ mod tests {
         assert_eq!(app.world().resource::<Tournament>().wins[1], 3);
 
         // In pairs the round goes to both members of the leading pair.
-        app.insert_resource(Tournament::start());
+        app.insert_resource(Tournament::start(SeriesLength::BestOfFive));
         app.world_mut().resource_mut::<GameSettings>().team_mode = TeamMode::Pairs;
         app.update();
         assert_eq!(
@@ -329,9 +376,49 @@ mod tests {
         );
     }
 
+    /// The two lengths are one dial and one piece of arithmetic: a best of
+    /// n is taken by a majority of n, and a single round is neither.
+    #[test]
+    fn best_of_n_is_taken_by_a_majority_of_n() {
+        assert_eq!(SeriesLength::BestOfThree.rounds(), 3);
+        assert_eq!(SeriesLength::BestOfThree.target(), 2, "two of three");
+        assert_eq!(SeriesLength::BestOfFive.rounds(), 5);
+        assert_eq!(SeriesLength::BestOfFive.target(), 3, "three of five");
+        assert!(!SeriesLength::Single.is_series());
+        assert!(SeriesLength::BestOfThree.is_series());
+        assert!(SeriesLength::BestOfFive.is_series());
+    }
+
+    /// A short series is over a round sooner than a long one, on the same
+    /// tally. The long series ran through `three_rounds_take_the_series`
+    /// above; this is the one the new dial position adds.
+    #[test]
+    fn two_rounds_take_a_best_of_three() {
+        let decided = |length: SeriesLength, wins: [u8; MAX_PLAYERS], round: u8| {
+            let mut t = Tournament::start(length);
+            t.wins = wins;
+            t.round = round;
+            let best = *t.wins.iter().max().unwrap_or(&0);
+            best >= t.length.target() || t.round >= t.length.rounds()
+        };
+        assert!(
+            decided(SeriesLength::BestOfThree, [2, 0, 0, 0, 0, 0], 2),
+            "two rounds take a best of three"
+        );
+        assert!(
+            !decided(SeriesLength::BestOfFive, [2, 0, 0, 0, 0, 0], 2),
+            "and leave a best of five still running"
+        );
+        // A tally that never reaches the target still ends at the last round.
+        assert!(
+            decided(SeriesLength::BestOfThree, [1, 1, 1, 0, 0, 0], 3),
+            "the third round ends it however it stands"
+        );
+    }
+
     #[test]
     fn champion_needs_a_unique_top() {
-        let mut t = Tournament::start();
+        let mut t = Tournament::start(SeriesLength::BestOfFive);
         assert_eq!(t.champion(), None, "no wins yet");
         t.wins = [2, 1, 0, 0, 0, 0];
         assert_eq!(t.champion(), Some(0));

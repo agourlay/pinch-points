@@ -266,8 +266,8 @@ pub fn match_setup_input(
     }
     if keys.just_pressed(KeyCode::Enter) {
         config.armed = true;
-        *tournament = if config.series {
-            crate::app::tournament::Tournament::start()
+        *tournament = if config.series.is_series() {
+            crate::app::tournament::Tournament::start(config.series)
         } else {
             crate::app::tournament::Tournament::default()
         };
@@ -304,7 +304,7 @@ pub fn match_setup_input(
         }
         Row::Gulls => config.gulls = config.gulls.cycled(right),
         Row::Round => config.round = config.round.cycled(right),
-        Row::Mode => config.series = !config.series,
+        Row::Mode => config.series = config.series.cycled(right),
         // A name is typed, not stepped through.
         Row::Name(_) => {}
     }
@@ -409,7 +409,7 @@ pub(super) fn row_text(
         ),
         Row::Mode => (
             tr.match_mode.to_string(),
-            dial(tr.mode_names[usize::from(config.series)]),
+            dial(tr.mode_names[config.series.index()]),
         ),
         Row::Name(seat) => {
             let who = crate::app::seat_label(tr, seat);

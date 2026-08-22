@@ -36,7 +36,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// Without it two peers on different builds decode each other's messages and
 /// silently disagree about the round, which looks like a desync or like
 /// nothing at all.
-pub const PROTOCOL_VERSION: u8 = 8;
+pub const PROTOCOL_VERSION: u8 = 9;
 
 /// Connections a host accepts: five rivals (a six-seat table) and a few
 /// onlookers. How many of them get a seat is the lobby's business, not the

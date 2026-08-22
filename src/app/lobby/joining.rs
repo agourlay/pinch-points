@@ -342,12 +342,14 @@ pub(super) fn accept_the_invitation(
         // it stands: a joiner that assumed otherwise would stop after one
         // round, and one admitted mid-series would start its own tally at
         // zero and disagree with the table for the rest of the match.
-        *tournament = match terms.series == 1 {
+        let length = crate::app::tournament::SeriesLength::from_index(usize::from(terms.series));
+        *tournament = match length.is_series() {
             true => crate::app::tournament::Tournament {
                 active: true,
                 finished: false,
                 round: round.max(1),
                 wins,
+                length,
             },
             false => crate::app::tournament::Tournament::default(),
         };

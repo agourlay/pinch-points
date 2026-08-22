@@ -98,7 +98,7 @@ pub(super) struct RoundOutcome {
     pub won: bool,
     /// The round was played against a live opponent over the wire.
     pub online: bool,
-    /// This round also decided a best-of-five, and the local seat took it.
+    /// This round also decided a series, and the local seat took it.
     pub series: bool,
 }
 

@@ -59,7 +59,7 @@ impl Dial {
             Dial::Teams => (tr.set_versus_mode, tr.team_modes[teams.index()].to_string()),
             Dial::Series => (
                 tr.match_mode,
-                tr.mode_names[usize::from(config.series)].to_string(),
+                tr.mode_names[config.series.index()].to_string(),
             ),
         }
     }
@@ -86,7 +86,7 @@ impl Dial {
                 config.bots = step.clamp(0, i32::from(room)) as u8;
             }
             Dial::Teams => *teams = teams.cycled(right),
-            Dial::Series => config.series = !config.series,
+            Dial::Series => config.series = config.series.cycled(right),
         }
     }
 }
@@ -292,7 +292,7 @@ mod dial_tests {
         assert_eq!(terms.round, config.round.index() as u8);
         assert_eq!(terms.bots, config.bots);
         assert_eq!(terms.teams, teams.index() as u8);
-        assert_eq!(terms.series, u8::from(config.series));
+        assert_eq!(terms.series, config.series.index() as u8);
         assert_eq!(terms.seed, 7);
     }
 }

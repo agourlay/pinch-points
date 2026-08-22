@@ -142,8 +142,8 @@ wins.
   generated arenas up to 20×13 and an edgeless **open ocean** (five and
   six seats need one of the wide beaches, 16 tiles across or more), plus
   any beach you built yourself that has a castle for every seat. Dials for gull
-  pressure and round length, **team play**, a **best of 5** series with
-  rotating maps, nameable seats, and rounds you can **put down mid-play**
+  pressure and round length, **team play**, a **best of 3 or 5** series
+  with rotating maps, nameable seats, and rounds you can **put down mid-play**
   and pick up later exactly where they stood. AI comes at three levels:
   easy fumbles, fierce reads the terrain and shoves gulls at the leader,
   and every AI walks a cursor at a capped speed rather than reaching
@@ -296,7 +296,7 @@ deliberately.
   with an arrow to spare. Run it by hand after editing a level file.
 - `PINCH_*` env hooks skip the menus for development and testing:
   `PINCH_SKIRMISH=classic|large|xl|ocean|custom` boots a bots match
-  (`PINCH_SERIES=1` for a best-of-5, `PINCH_SEATS=<n>` for the table,
+  (`PINCH_SERIES=3` or `=5` for a series, `PINCH_SEATS=<n>` for the table,
   `PINCH_BOTS=<n>` for AI seats), and `PINCH_SANDBOX`,
   `PINCH_AUTOPLAY=<level>`, `PINCH_EDITOR`, `PINCH_MATCH`, `PINCH_REPLAY`,
   `PINCH_LIBRARY`, `PINCH_RESUME`, `PINCH_ACHIEVEMENTS`, `PINCH_SETTINGS`,

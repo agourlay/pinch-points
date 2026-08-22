@@ -110,12 +110,12 @@ pub(super) enum DevHook {
     StageSelect {
         beach: bool,
     },
-    /// `PINCH_SKIRMISH=classic|large|xl|ocean|custom`, plus `PINCH_SERIES`
-    /// for a best-of-five: four seats, three of them AI. Any unrecognised
+    /// `PINCH_SKIRMISH=classic|large|xl|ocean|custom`, plus `PINCH_SERIES=3|5`
+    /// for a series: four seats, three of them AI. Any unrecognised
     /// value is the classic beach.
     Skirmish {
         map: match_setup::MapChoice,
-        series: bool,
+        series: crate::app::tournament::SeriesLength,
     },
     /// `PINCH_MATCH`: the match-setup screen.
     MatchSetup,
@@ -174,7 +174,13 @@ impl DevHook {
                     "custom" => match_setup::MapChoice::Custom,
                     _ => match_setup::MapChoice::GenClassic,
                 },
-                series: set("PINCH_SERIES"),
+                // Bare `PINCH_SERIES=1` still means the long series it
+                // always meant; `=3` asks for the short one.
+                series: match var("PINCH_SERIES").as_deref() {
+                    None => crate::app::tournament::SeriesLength::Single,
+                    Some("3") => crate::app::tournament::SeriesLength::BestOfThree,
+                    Some(_) => crate::app::tournament::SeriesLength::BestOfFive,
+                },
             });
         }
         if set("PINCH_MATCH") {
@@ -249,8 +255,8 @@ pub(super) fn kickoff(
             // more bots than seats underflows `seats - bots` everywhere it
             // is used to count humans.
             config.bots = bots().unwrap_or(config.seats - 1).min(config.seats - 1);
-            if series {
-                *tournament = crate::app::tournament::Tournament::start();
+            if series.is_series() {
+                *tournament = crate::app::tournament::Tournament::start(series);
             }
             config.armed = true;
             next_screen.set(Screen::Versus);
@@ -516,25 +522,34 @@ mod tests {
     fn skirmish_reads_its_size_and_series_flag() {
         use match_setup::MapChoice;
         let skirmish = |vars: &[(&str, &str)]| DevHook::from_env(env(vars));
+        use crate::app::tournament::SeriesLength;
         assert_eq!(
             skirmish(&[("PINCH_SKIRMISH", "large")]),
             Some(DevHook::Skirmish {
                 map: MapChoice::GenLarge,
-                series: false
+                series: SeriesLength::Single
             })
         );
         assert_eq!(
             skirmish(&[("PINCH_SKIRMISH", "xl"), ("PINCH_SERIES", "1")]),
             Some(DevHook::Skirmish {
                 map: MapChoice::GenXl,
-                series: true
+                series: SeriesLength::BestOfFive
+            }),
+            "the historical bare flag still means the long series"
+        );
+        assert_eq!(
+            skirmish(&[("PINCH_SKIRMISH", "xl"), ("PINCH_SERIES", "3")]),
+            Some(DevHook::Skirmish {
+                map: MapChoice::GenXl,
+                series: SeriesLength::BestOfThree
             })
         );
         assert_eq!(
             skirmish(&[("PINCH_SKIRMISH", "wibble")]),
             Some(DevHook::Skirmish {
                 map: MapChoice::GenClassic,
-                series: false
+                series: SeriesLength::Single
             })
         );
         // Autoplay carries the level to start on; the historical `=1`
@@ -588,7 +603,7 @@ mod tests {
             DevHook::from_env(env(&[("PINCH_SKIRMISH", "xl"), ("PINCH_REPLAY", "1")])),
             Some(DevHook::Skirmish {
                 map: match_setup::MapChoice::GenXl,
-                series: false
+                series: crate::app::tournament::SeriesLength::Single
             })
         );
     }

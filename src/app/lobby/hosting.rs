@@ -310,8 +310,9 @@ fn launch_the_match(
     // The series is part of the terms, so every peer knows it is one
     // and tallies the same rounds. Without that the host alone would
     // count, and only the host would see a champion.
-    *tournament = match terms.series == 1 {
-        true => crate::app::tournament::Tournament::start(),
+    let length = crate::app::tournament::SeriesLength::from_index(usize::from(terms.series));
+    *tournament = match length.is_series() {
+        true => crate::app::tournament::Tournament::start(length),
         false => crate::app::tournament::Tournament::default(),
     };
     next_vphase.set(VersusPhase::Running);

@@ -466,7 +466,7 @@ struct Tr {
     pub match_name: &'static str,
     pub match_name_empty: &'static str,
     pub match_name_typing: &'static str,
-    pub mode_names: [&'static str; 2],
+    pub mode_names: [&'static str; 3],
     pub tour_round: &'static str,
     pub tour_champion: &'static str,
     pub tour_next: &'static str,

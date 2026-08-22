@@ -37,7 +37,7 @@ pub struct Stats {
     pub events_seen: u8,
     /// Most crabs banked in a single round.
     pub best_round: u32,
-    /// Best-of-five series taken.
+    /// Series taken, of either length.
     pub series_wins: u32,
     /// Rounds won against a live opponent over the wire.
     pub online_wins: u32,

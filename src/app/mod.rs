@@ -132,7 +132,7 @@ pub enum Screen {
     StageSelect,
     /// The kept rounds, and which one to watch.
     Replays,
-    /// Between-rounds breather in a best-of-5 series.
+    /// Between-rounds breather in a series.
     Interlude,
     /// The very first screen of the very first run: which language the
     /// game should speak. Never reached again once a settings file
