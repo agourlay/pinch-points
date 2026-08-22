@@ -299,8 +299,13 @@ pub fn surge_tempo(
     }
 }
 
-/// M toggles the background music anywhere: the cap that says M, on
-/// whatever keyboard this is.
+/// M toggles the background music anywhere the round is running: the cap
+/// that says M, on whatever keyboard this is.
+///
+/// Held off while the pause card is open, where the music is already down
+/// and M would only fight [`hush_while_paused`] over the same sink. That
+/// also keeps the toggle honest: whatever the music was doing when the
+/// round was paused is what it goes back to.
 pub fn toggle_music(
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<crate::app::settings::GameSettings>,
@@ -313,9 +318,76 @@ pub fn toggle_music(
     }
 }
 
+/// Whether the pause card is what silenced the music, so resuming lifts
+/// only what pausing put down.
+///
+/// Not the same question as "is the music stopped": M stops it too, and a
+/// player who muted the theme and then paused must not be handed it back
+/// on the way out.
+#[derive(Resource, Default)]
+pub struct HushedByPause(bool);
+
+/// Put the music down while the pause card is up, and pick it up again on
+/// the way out.
+///
+/// The card is the signal rather than [`crate::app::Paused`], because that
+/// flag is an offline one: an online pause deliberately leaves the ticker
+/// running so the network pump can carry the resume, and the beach there is
+/// held still by the lockstep instead. The card is open in both.
+pub fn hush_while_paused(
+    menu: Res<crate::app::pause::PauseMenu>,
+    mut hushed: ResMut<HushedByPause>,
+    sinks: Query<&AudioSink, With<Music>>,
+) {
+    let mut still_ours = false;
+    for sink in &sinks {
+        match hush_step(menu.open, hushed.0, sink.is_paused()) {
+            Some(true) => {
+                sink.pause();
+                still_ours = true;
+            }
+            Some(false) => sink.play(),
+            None => still_ours |= hushed.0 && menu.open,
+        }
+    }
+    hushed.0 = still_ours;
+}
+
+/// What the card asks of one track this frame: `Some(true)` to put it down,
+/// `Some(false)` to pick it up, `None` to leave it where it is.
+///
+/// The third arm is the one worth having: a track already stopped when the
+/// card opens was stopped by the player (M), so the card neither claims it
+/// nor hands it back, and a muted round resumes muted.
+fn hush_step(card_open: bool, hushed: bool, stopped: bool) -> Option<bool> {
+    match (card_open, hushed, stopped) {
+        (true, _, false) => Some(true),
+        (false, true, _) => Some(false),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pause card takes the music down and gives back exactly what it
+    /// took: a theme the player had already muted with M is not handed
+    /// back on the way out, which is the whole reason the flag exists.
+    #[test]
+    fn the_card_returns_only_the_music_it_silenced() {
+        // Playing when the card opens: put it down, and keep it down.
+        assert_eq!(hush_step(true, false, false), Some(true), "down it goes");
+        assert_eq!(hush_step(true, true, true), None, "and stays down");
+        // Closing gives it back, once.
+        assert_eq!(hush_step(false, true, true), Some(false), "and comes back");
+        assert_eq!(hush_step(false, false, false), None, "nothing left owing");
+
+        // Muted with M *before* the pause: the card never claimed it, so
+        // closing the card leaves it muted.
+        assert_eq!(hush_step(true, false, true), None, "not ours to take");
+        assert_eq!(hush_step(false, false, true), None, "nor ours to return");
+    }
 
     /// The stereo field mirrors the board (rodio boosts the far ear), tops
     /// out at the edges, and never reaches far enough from the listener for
