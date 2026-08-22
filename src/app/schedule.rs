@@ -119,7 +119,7 @@ fn insert_resources(app: &mut App) {
     app.init_resource::<gamepad::PadSeats>();
     app.init_resource::<effects::VisualRng>();
     app.init_resource::<pause::PauseMenu>();
-    app.init_resource::<audio::HushedByPause>();
+    app.init_resource::<audio::Muted>();
     app.init_resource::<Daily>();
     app.init_resource::<SeatNames>();
     app.init_resource::<tournament::Tournament>();
@@ -748,8 +748,8 @@ fn add_finish_systems(app: &mut App) {
             // run once.
             boot::teach_the_kanji_fallback,
             boot::fit_camera,
-            audio::toggle_music.run_if(not(pause_card_open)),
-            audio::hush_while_paused,
+            audio::toggle_mute.run_if(not(text_entry_open)),
+            audio::drive_music,
             audio::rotate_music,
             audio::surge_tempo,
             dev::debug_screenshot,
@@ -762,10 +762,6 @@ fn add_finish_systems(app: &mut App) {
 // Named run conditions: the schedule reads as prose instead of nested
 // state combinators.
 /// The pause card is up, on any screen that can raise one.
-fn pause_card_open(menu: Res<pause::PauseMenu>) -> bool {
-    menu.open
-}
-
 fn versus_running(screen: Res<State<Screen>>, phase: Res<State<VersusPhase>>) -> bool {
     *screen.get() == Screen::Versus && *phase.get() == VersusPhase::Running
 }

@@ -120,7 +120,8 @@ pub fn collect_log(
             | SimEvent::CrabSpawned { .. }
             | SimEvent::GullTookOff
             | SimEvent::GullLanded { .. }
-            | SimEvent::SignpostsChanged { .. }
+            | SimEvent::SignpostPlaced { .. }
+            | SimEvent::SignpostRemoved { .. }
             | SimEvent::SignpostEvicted { .. }
             | SimEvent::RoundEnded => None,
         };

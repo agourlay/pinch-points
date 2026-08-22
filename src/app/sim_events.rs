@@ -36,8 +36,19 @@ pub enum SimEvent {
     GullTookOff,
     /// A flying gull touched down here.
     GullLanded { pos: Vec2 },
-    /// Net signpost count change (positive: placed, negative: removed).
-    SignpostsChanged { delta: i32 },
+    /// A signpost went up here.
+    ///
+    /// One per tile, never a headcount. A board-wide count is the wrong
+    /// thing to listen to: one seat placing while another pulls nets to
+    /// zero, and the beach falls silent for both of them. Whose post it is
+    /// still decides *which* event this becomes, through the differ's
+    /// per-seat counts, but the seat does not survive into the message: a
+    /// placement sounds and looks the same whoever made it.
+    SignpostPlaced { pos: Vec2 },
+    /// A signpost left this tile and took its owner's count down with it:
+    /// they pulled it, or it wore out. [`SimEvent::SignpostEvicted`] is the
+    /// one departure that does not.
+    SignpostRemoved { pos: Vec2 },
     /// A signpost was pushed off the board to make room for a newer one:
     /// `owner` was at the cap under [`crate::sim::CapPolicy::Evict`] and
     /// placed anyway, so their oldest went. `pos` is where it stood.
@@ -104,9 +115,8 @@ pub struct Watch {
     origin: Option<Origin>,
     scores: [u32; MAX_PLAYERS],
     tiers: [u8; MAX_PLAYERS],
-    posts: usize,
-    /// Per seat, not just the total: an eviction leaves the count where it
-    /// was, so the sum alone cannot see one.
+    /// Per seat, never a board-wide sum: an eviction leaves its owner's
+    /// count where it was, and a sum cannot even see whose post moved.
     posts_by: [usize; MAX_PLAYERS],
     /// Which seat holds the signpost on each occupied tile, and which way
     /// it points. Only the seat decides whether a tile lost its post -
@@ -137,9 +147,6 @@ impl Watch {
             origin: Origin::of(board),
             scores: *board.scores(),
             tiers,
-            posts: (0..MAX_PLAYERS as u8)
-                .map(|p| board.signpost_count(p))
-                .sum(),
             posts_by: std::array::from_fn(|p| board.signpost_count(p as PlayerId)),
             posts_at: board
                 .tiles()
@@ -299,28 +306,37 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
         }
     }
 
-    if next.posts != prev.posts {
-        events.push(SimEvent::SignpostsChanged {
-            delta: next.posts as i32 - prev.posts as i32,
+    // Signposts tile by tile, in both directions. A tile whose seat is the
+    // same on both sides has not changed hands: re-pointing a post in place
+    // keeps the seat and swings the direction, and that is neither a
+    // placement nor a departure.
+    for (&(x, y), &(owner, _)) in &next.posts_at {
+        if prev.posts_at.get(&(x, y)).is_some_and(|&(o, _)| o == owner) {
+            continue;
+        }
+        events.push(SimEvent::SignpostPlaced {
+            pos: layout::tile_center(board, x, y),
         });
     }
     // An eviction is a signpost leaving a tile while its owner's count
     // holds: they were at the cap and placed a fourth, so the board took
     // their oldest in trade. Every other way a signpost goes - expiry, the
     // player pulling it, a gull finishing it off - takes the count down
-    // with it, which is what tells them apart. Placing on a frame where one
-    // of yours also expired reads as an eviction; the cue is "one of yours
-    // just went, here", which is true either way.
+    // with it, which is what tells the two apart. Placing on a frame where
+    // one of yours also expired reads as an eviction; the cue is "one of
+    // yours just went, here", which is true either way.
     for (&(x, y), &(owner, dir)) in &prev.posts_at {
-        let still_theirs = next.posts_at.get(&(x, y)).is_some_and(|&(o, _)| o == owner);
-        if still_theirs || next.posts_by[owner as usize] < prev.posts_by[owner as usize] {
+        if next.posts_at.get(&(x, y)).is_some_and(|&(o, _)| o == owner) {
             continue;
         }
-        events.push(SimEvent::SignpostEvicted {
-            owner,
-            pos: layout::tile_center(board, x, y),
-            dir,
-        });
+        let pos = layout::tile_center(board, x, y);
+        events.push(
+            if next.posts_by[owner as usize] < prev.posts_by[owner as usize] {
+                SimEvent::SignpostRemoved { pos }
+            } else {
+                SimEvent::SignpostEvicted { owner, pos, dir }
+            },
+        );
     }
     for (seat, (&now, &before)) in next.tiers.iter().zip(prev.tiers.iter()).enumerate() {
         if now > before {
@@ -462,7 +478,8 @@ mod tests {
                 | SimEvent::GullArrived
                 | SimEvent::GullTookOff
                 | SimEvent::GullLanded { .. }
-                | SimEvent::SignpostsChanged { .. }
+                | SimEvent::SignpostPlaced { .. }
+                | SimEvent::SignpostRemoved { .. }
                 | SimEvent::TierUp { .. }
                 | SimEvent::TideEventFired { .. }
                 | SimEvent::SurgeStarted
@@ -474,8 +491,19 @@ mod tests {
             vec![(0, Direction::Up)],
             "the traded post and the way it pointed: {events:?}"
         );
+        // And the placement that paid for it sounds too, from the tile it
+        // landed on. The trade used to reach the player as the eviction
+        // alone, because the board-wide count did not move - so a fourth
+        // post went down in versus and nothing said it had.
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SimEvent::SignpostPlaced { pos } if *pos == layout::tile_center(&board, 5, 3)
+            )),
+            "the fourth post went down at (5,3): {events:?}"
+        );
 
-        // Pulling one yourself is not a trade.
+        // Pulling one yourself is a removal, not a trade.
         assert!(board.remove_signpost(0, 1, 0));
         let events = diff(&board, &mut watch);
         assert!(
@@ -484,15 +512,60 @@ mod tests {
                 .any(|e| matches!(e, SimEvent::SignpostEvicted { .. })),
             "removing your own post is not an eviction: {events:?}"
         );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SimEvent::SignpostRemoved { pos } if *pos == layout::tile_center(&board, 1, 0)
+            )),
+            "but it is a removal, at its tile: {events:?}"
+        );
 
-        // Nor is re-pointing one in place, which keeps the tile and the seat.
+        // Re-pointing one in place keeps the tile and the seat, so it is
+        // none of the three: not a trade, and not a post coming or going.
         assert!(board.place_signpost(0, 2, 0, Direction::Left));
         let events = diff(&board, &mut watch);
         assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, SimEvent::SignpostEvicted { .. })),
-            "re-pointing is not an eviction: {events:?}"
+            !events.iter().any(|e| matches!(
+                e,
+                SimEvent::SignpostEvicted { .. }
+                    | SimEvent::SignpostPlaced { .. }
+                    | SimEvent::SignpostRemoved { .. }
+            )),
+            "re-pointing is not a post changing hands: {events:?}"
+        );
+    }
+
+    /// Two seats acting between one frame and the next each get their own
+    /// cue, from their own tile.
+    ///
+    /// These events were once a single board-wide count, and a count is
+    /// deaf to who moved: a placement and a removal in the same frame
+    /// cancelled to a net zero and *neither* player heard anything. On a
+    /// busy versus beach that is the common case, not the corner one.
+    #[test]
+    fn one_seat_placing_while_another_pulls_sounds_for_both() {
+        let mut board = Board::new(6, 4, 11);
+        assert!(board.place_signpost(1, 4, 2, Direction::Left));
+        let mut watch = synced(&board);
+
+        // The same frame: seat 1 pulls theirs, seat 0 puts one down.
+        assert!(board.remove_signpost(1, 4, 2));
+        assert!(board.place_signpost(0, 1, 1, Direction::Up));
+        let events = diff(&board, &mut watch);
+
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SimEvent::SignpostPlaced { pos } if *pos == layout::tile_center(&board, 1, 1)
+            )),
+            "seat 0's placement, at its tile: {events:?}"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SimEvent::SignpostRemoved { pos } if *pos == layout::tile_center(&board, 4, 2)
+            )),
+            "seat 1's removal, at its tile: {events:?}"
         );
     }
 
@@ -533,7 +606,7 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|e| matches!(e, SimEvent::SignpostsChanged { delta: 1 })),
+                .any(|e| matches!(e, SimEvent::SignpostPlaced { .. })),
             "setup-phase signposts must still fire, got {events:?}"
         );
     }

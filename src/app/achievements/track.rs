@@ -5,7 +5,7 @@ use super::save::save;
 use super::ui::spawn_toast;
 use super::{ACHIEVEMENTS, Stats, Unlocked};
 use crate::app::Bots;
-use crate::app::audio::{Sounds, play_chime};
+use crate::app::audio::{Muted, Sounds, play_chime, sfx_gain};
 use crate::app::net::Online;
 use crate::app::settings::GameSettings;
 use crate::app::sim_events::SimEvent;
@@ -36,6 +36,7 @@ pub fn track_events(
     bots: Res<Bots>,
     settings: Res<GameSettings>,
     sounds: Option<Res<Sounds>>,
+    muted: Res<Muted>,
     mut stats: ResMut<Stats>,
     mut unlocked: ResMut<Unlocked>,
 ) {
@@ -80,7 +81,8 @@ pub fn track_events(
             | SimEvent::GullArrived
             | SimEvent::GullTookOff
             | SimEvent::GullLanded { .. }
-            | SimEvent::SignpostsChanged { .. }
+            | SimEvent::SignpostPlaced { .. }
+            | SimEvent::SignpostRemoved { .. }
             | SimEvent::SignpostEvicted { .. }
             | SimEvent::TierUp { .. }
             | SimEvent::SurgeStarted
@@ -88,7 +90,14 @@ pub fn track_events(
         }
     }
     if changed {
-        unlock_new(&mut commands, &stats, &mut unlocked, &settings, &sounds);
+        unlock_new(
+            &mut commands,
+            &stats,
+            &mut unlocked,
+            &settings,
+            &muted,
+            &sounds,
+        );
     }
 }
 
@@ -138,6 +147,7 @@ pub fn record_round(
     tournament: Res<crate::app::tournament::Tournament>,
     settings: Res<GameSettings>,
     sounds: Option<Res<Sounds>>,
+    muted: Res<Muted>,
     mut stats: ResMut<Stats>,
     mut unlocked: ResMut<Unlocked>,
 ) {
@@ -173,7 +183,14 @@ pub fn record_round(
                     .is_some_and(|champion| champion.claims(seat, mode)),
         },
     );
-    unlock_new(&mut commands, &stats, &mut unlocked, &settings, &sounds);
+    unlock_new(
+        &mut commands,
+        &stats,
+        &mut unlocked,
+        &settings,
+        &muted,
+        &sounds,
+    );
     save(&stats, &unlocked);
 }
 
@@ -190,6 +207,7 @@ pub fn record_level_built(
     mut saved: MessageReader<crate::app::LevelSaved>,
     settings: Res<GameSettings>,
     sounds: Option<Res<Sounds>>,
+    muted: Res<Muted>,
     mut stats: ResMut<Stats>,
     mut unlocked: ResMut<Unlocked>,
 ) {
@@ -198,7 +216,14 @@ pub fn record_level_built(
         return;
     }
     stats.levels_built += built;
-    unlock_new(&mut commands, &stats, &mut unlocked, &settings, &sounds);
+    unlock_new(
+        &mut commands,
+        &stats,
+        &mut unlocked,
+        &settings,
+        &muted,
+        &sounds,
+    );
     save(&stats, &unlocked);
 }
 
@@ -215,10 +240,12 @@ pub fn reset_round_scratch(mut stats: ResMut<Stats>) {
 /// would otherwise miss, and it is the one the trophy is for. Only the
 /// built-in stages count, so a player who saved a level in the editor has
 /// not thereby unfinished the campaign.
+#[allow(clippy::too_many_arguments)]
 pub fn record_puzzle(
     mut commands: Commands,
     settings: Res<GameSettings>,
     sounds: Option<Res<Sounds>>,
+    muted: Res<Muted>,
     progress: Res<crate::app::progress::Progress>,
     campaign: Res<crate::app::Campaign>,
     mut stats: ResMut<Stats>,
@@ -236,7 +263,14 @@ pub fn record_puzzle(
             crate::app::CampaignKind::BeachDay => stats.beach_done = 1,
         }
     }
-    unlock_new(&mut commands, &stats, &mut unlocked, &settings, &sounds);
+    unlock_new(
+        &mut commands,
+        &stats,
+        &mut unlocked,
+        &settings,
+        &muted,
+        &sounds,
+    );
     save(&stats, &unlocked);
 }
 
@@ -245,6 +279,7 @@ fn unlock_new(
     stats: &Stats,
     unlocked: &mut Unlocked,
     settings: &GameSettings,
+    muted: &Muted,
     sounds: &Option<Res<Sounds>>,
 ) {
     let tr = settings.tr();
@@ -255,7 +290,7 @@ fn unlock_new(
         unlocked.0.insert(achievement.id);
         spawn_toast(commands, tr.ach_names[index], tr.ach_descs[index]);
         if let Some(sounds) = sounds {
-            play_chime(commands, sounds, settings.sfx_gain());
+            play_chime(commands, sounds, sfx_gain(settings, muted));
         }
         save(stats, unlocked);
     }

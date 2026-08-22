@@ -364,6 +364,22 @@ pub(super) fn play_screens(screen: Res<State<Screen>>) -> bool {
     matches!(screen.get(), Screen::Puzzle | Screen::Versus)
 }
 
+/// Whether a player is typing words rather than pressing keys: a seat's
+/// name, a beach's name, an address, a line of chat.
+///
+/// The global letter keys are mnemonics, and a mnemonic has to stand down
+/// when the letter is one the player meant to write - M is in "Emma" and
+/// in most sentences worth sending. It only started to matter when M
+/// became the master mute: silencing the whole game halfway through
+/// typing a name is a good deal louder than the theme stopping.
+pub(super) fn text_entry_open(
+    lobby: Res<lobby::LobbyState>,
+    setup: Res<match_setup::MatchMenu>,
+    editor: Res<editor::EditorState>,
+) -> bool {
+    lobby.typing.is_some() || setup.naming.is_some() || editor.naming
+}
+
 /// Whether the round on screen is being played rather than watched: a
 /// replay rewatched is not a round won again, so nothing that counts
 /// deeds (stats, trophies) runs while a recording is being fed.

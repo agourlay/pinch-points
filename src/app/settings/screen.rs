@@ -26,7 +26,11 @@ pub enum Row {
     KeyBindings,
     RepeatDelay,
     RepeatRate,
+    /// Music and effects each switch off on their own, above the slider
+    /// that says how loud they are when they are on.
+    MusicOn,
     Music,
+    SfxOn,
     Sfx,
     Speed,
     VersusMode,
@@ -48,7 +52,7 @@ impl Row {
     /// Display and navigation order, which is [`SECTIONS`] flattened. The
     /// rows used to run in the order they were added, which put the pad
     /// deadzone six rows below the keys it belongs with.
-    pub const ALL: [Row; 20] = [
+    pub const ALL: [Row; 22] = [
         // Controls
         Row::InputP1,
         Row::InputP2,
@@ -62,7 +66,9 @@ impl Row {
         Row::Rumble,
         Row::Deadzone,
         // Sound
+        Row::MusicOn,
         Row::Music,
+        Row::SfxOn,
         Row::Sfx,
         // The round
         Row::Speed,
@@ -126,7 +132,10 @@ pub const SECTIONS: [&[(Group, &[Row])]; 2] = [
                 Row::Deadzone,
             ],
         ),
-        (Group::Sound, &[Row::Music, Row::Sfx]),
+        (
+            Group::Sound,
+            &[Row::MusicOn, Row::Music, Row::SfxOn, Row::Sfx],
+        ),
     ],
     &[
         (Group::Round, &[Row::Speed, Row::VersusMode, Row::ReplayCap]),
@@ -386,7 +395,9 @@ pub fn settings_input(
             | Row::Keyboard
             | Row::RepeatDelay
             | Row::RepeatRate
+            | Row::MusicOn
             | Row::Music
+            | Row::SfxOn
             | Row::Sfx
             | Row::Speed
             | Row::VersusMode
@@ -428,6 +439,8 @@ pub fn settings_input(
             settings.repeat_interval =
                 f32::clamp(settings.repeat_interval + step * 0.02, 0.03, 0.2);
         }
+        Row::MusicOn => settings.music_on = !settings.music_on,
+        Row::SfxOn => settings.sfx_on = !settings.sfx_on,
         Row::Music => {
             let volume = i32::from(settings.music_volume) + if right { 10 } else { -10 };
             settings.music_volume = volume.clamp(0, 100) as u8;
@@ -528,7 +541,9 @@ pub(super) fn row_text(
             tr.set_repeat_rate,
             format!("{:.2}s", settings.repeat_interval),
         ),
+        Row::MusicOn => (tr.set_music_on, on_off(settings.music_on)),
         Row::Music => (tr.set_music, format!("{}%", settings.music_volume)),
+        Row::SfxOn => (tr.set_sfx_on, on_off(settings.sfx_on)),
         Row::Sfx => (tr.set_sfx, format!("{}%", settings.sfx_volume)),
         Row::Speed => (tr.set_speed, format!("{}%", settings.puzzle_speed)),
         Row::VersusMode => (

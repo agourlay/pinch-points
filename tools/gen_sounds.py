@@ -148,6 +148,15 @@ write("horn", mix(
     tone((196, 130), 0.7, triangle, vol=0.3),
 ))
 
+# Signpost evicted at the cap: a soft descending scuff, the oldest post
+# pulled out of the sand to make room for the fourth. Deliberately quiet
+# and short - the placement it paid for sounds in the same frame, from the
+# other end of the beach, and this one sits underneath it.
+write("evict", mix(
+    noise(0.20, vol=0.15, lowpass=0.30),
+    tone((660, 300), 0.20, triangle, vol=0.22),
+))
+
 # Placement denied: a short dull double-knock.
 write("denied", (
     tone(140, 0.06, square, vol=0.30)

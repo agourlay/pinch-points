@@ -108,8 +108,14 @@ pub struct GameSettings {
     /// Cursor hold-to-repeat: initial delay and repeat interval, seconds.
     pub repeat_delay: f32,
     pub repeat_interval: f32,
+    /// Whether the background music plays at all. Separate from the
+    /// volume so switching it off and back on returns the player to the
+    /// level they had set, rather than to whatever 0% was hiding.
+    pub music_on: bool,
     /// Background music volume, 0–100.
     pub music_volume: u8,
+    /// Whether sound effects play at all; the companion to `music_on`.
+    pub sfx_on: bool,
     /// Sound-effect volume, 0–100 (0 is the old "off").
     pub sfx_volume: u8,
     /// Puzzle-mode simulation speed percent (100/75/50), the §8.4
@@ -216,15 +222,26 @@ impl GameSettings {
         !self.custom_binds() && !self.ijkl_commits
     }
 
-    /// Sound-effect gain, 0.0–1.0. Zero means silence, so callers can test
-    /// it instead of a separate on/off flag.
+    /// Sound-effect gain, 0.0–1.0, with the on/off switch folded in. Zero
+    /// means silence, so callers test the gain rather than asking about
+    /// the switch and the slider separately - and a one-shot at zero gain
+    /// is never spawned at all.
     pub fn sfx_gain(&self) -> f32 {
-        f32::from(self.sfx_volume) / 100.0
+        if self.sfx_on {
+            f32::from(self.sfx_volume) / 100.0
+        } else {
+            0.0
+        }
     }
 
-    /// Music gain, 0.0–1.0: the sink volume, wherever it is set.
+    /// Music gain, 0.0–1.0: the sink volume, wherever it is set. Switched
+    /// off reads as zero, the same as the slider at the bottom.
     pub fn music_gain(&self) -> f32 {
-        f32::from(self.music_volume) / 100.0
+        if self.music_on {
+            f32::from(self.music_volume) / 100.0
+        } else {
+            0.0
+        }
     }
 
     /// UI scale as the ratio Bevy wants (1.0 is 100%).
@@ -285,7 +302,9 @@ impl Default for GameSettings {
             seat_input: [SeatInput::Auto; crate::app::binds::BOUND_SEATS],
             repeat_delay: 0.28,
             repeat_interval: 0.09,
+            music_on: true,
             music_volume: 45,
+            sfx_on: true,
             sfx_volume: 80,
             puzzle_speed: 100,
             team_mode: TeamMode::default(),
@@ -316,7 +335,9 @@ impl GameSettings {
             seat_input,
             repeat_delay,
             repeat_interval,
+            music_on,
             music_volume,
+            sfx_on,
             sfx_volume,
             puzzle_speed,
             team_mode,
@@ -336,7 +357,8 @@ impl GameSettings {
         } = self;
         format!(
             "commit_scheme: {}\nrepeat_delay: {:.2}\nrepeat_interval: {:.2}\n\
-             music: {}\nsfx: {}\npuzzle_speed: {}\nteams: {}\nlanguage: {}\n\
+             music_on: {}\nmusic: {}\nsfx_on: {}\nsfx: {}\n\
+             puzzle_speed: {}\nteams: {}\nlanguage: {}\n\
              rumble: {}\npad_deadzone: {}\npalette: {}\nui_scale: {}\n\
              reduced_motion: {}\nnames: {}\nreplay_cap: {}\nbeach: {}\n\
              updates: {}\nkeycaps: {}\nkeyboard: {}\n\
@@ -344,7 +366,9 @@ impl GameSettings {
             if *ijkl_commits { "ijkl" } else { "arrows" },
             repeat_delay,
             repeat_interval,
+            if *music_on { "on" } else { "off" },
             music_volume,
+            if *sfx_on { "on" } else { "off" },
             sfx_volume,
             puzzle_speed,
             team_mode.key(),
@@ -389,6 +413,8 @@ impl GameSettings {
                         settings.repeat_interval = f32::clamp(v, 0.03, 0.2);
                     }
                 }
+                "music_on" => settings.music_on = value != "off",
+                "sfx_on" => settings.sfx_on = value != "off",
                 "music" => {
                     if let Ok(v) = value.parse::<u8>() {
                         settings.music_volume = v.min(100);
@@ -578,7 +604,12 @@ mod tests {
         let settings = GameSettings {
             ijkl_commits: true,
             repeat_delay: 0.35,
+            // Both switches off, so the round trip is actually carrying
+            // them: left at their default they would survive a `to_text`
+            // that never wrote them and a `parse` that never read them.
+            music_on: false,
             music_volume: 80,
+            sfx_on: false,
             sfx_volume: 30,
             puzzle_speed: 75,
             team_mode: TeamMode::Trios,
@@ -715,6 +746,27 @@ mod tests {
         assert_eq!(settings.pad_deadzone, 80);
         assert!(settings.repeat_delay <= 0.5);
         assert_eq!(settings.language, Lang::En);
+    }
+
+    /// A settings.txt from before the switches existed comes up with the
+    /// sound on. Silence is the one wrong answer here: a file that predates
+    /// a feature must not read as a player having turned it off, and this
+    /// is a lenient parse, where a missing line is simply a default.
+    #[test]
+    fn a_file_without_the_switches_still_has_sound() {
+        let old = "music: 60\nsfx: 40\n";
+        let settings = GameSettings::parse(old);
+        assert!(settings.music_on, "no music_on line means music");
+        assert!(settings.sfx_on, "no sfx_on line means effects");
+        assert_eq!(settings.music_volume, 60);
+        assert_eq!(settings.sfx_volume, 40);
+
+        // And a switch that is off silences its half without disturbing
+        // the other, or the volume waiting underneath it.
+        let quiet = GameSettings::parse("music: 60\nsfx: 40\nmusic_on: off\n");
+        assert_eq!(quiet.music_gain(), 0.0, "the music is off");
+        assert!(quiet.sfx_gain() > 0.0, "the effects are not");
+        assert_eq!(quiet.music_volume, 60, "and the slider is where it was");
     }
 
     /// The sfx row was once an on/off toggle; a settings.txt written by that

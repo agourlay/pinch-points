@@ -379,7 +379,8 @@ pub fn moment_effects(
             ),
             SimEvent::GullArrived
             | SimEvent::GullTookOff
-            | SimEvent::SignpostsChanged { .. }
+            | SimEvent::SignpostPlaced { .. }
+            | SimEvent::SignpostRemoved { .. }
             | SimEvent::TierUp { .. }
             | SimEvent::TideEventFired { .. }
             | SimEvent::SurgeStarted

@@ -6,6 +6,14 @@
 //! Anything that happens *somewhere* on the beach is panned to that side of
 //! the stereo field ([`pan_pos`]); banners and stingers, which belong to the
 //! whole round rather than a tile, stay centred.
+//!
+//! Three things can silence the game, and they compose rather than fight:
+//! the two settings switches (music and effects, each with its own volume
+//! underneath), the master mute on M ([`Muted`]), and the pause card, which
+//! puts the music down for as long as it is up. Everything reads them
+//! through [`sfx_gain`] and [`music_audible`], so there is one answer to
+//! "should this be heard" and no sink is left holding an opinion of its
+//! own.
 
 use crate::app::sim_events::SimEvent;
 use crate::app::{PlacementDenied, Screen, Sim};
@@ -17,6 +25,40 @@ use std::time::Duration;
 /// Marker for the looping background theme entity.
 #[derive(Component)]
 pub struct Music;
+
+/// The master mute on M: everything off, now, without touching what the
+/// player has set.
+///
+/// Deliberately not a setting. The two switches on the settings card are
+/// preferences and are written to disk; this is the key you hit when
+/// somebody walks in, and the game comes back the way you left it. Which
+/// also settles what M means when the music is already switched off in
+/// settings: unmuting restores the settings, and they still say off.
+#[derive(Resource, Default)]
+pub struct Muted(pub bool);
+
+/// Effects gain right now: the settings switch and slider, with the master
+/// mute able to veto. Zero means nothing is spawned at all.
+pub(crate) fn sfx_gain(settings: &crate::app::settings::GameSettings, muted: &Muted) -> f32 {
+    if muted.0 { 0.0 } else { settings.sfx_gain() }
+}
+
+/// Whether the theme should be audible this frame. The pause card is the
+/// third voice here, and the one that is not a player preference: it holds
+/// the music down for as long as it is up and gives back exactly that.
+///
+/// Deriving the sink's state from all three every frame is what lets the
+/// answer be this short. The card used to *do* something to the sink and
+/// so had to remember whether the silence was its to lift - M could have
+/// got there first, and a muted round must not come back singing. Nothing
+/// pushes at the sink any more, so there is nothing to remember.
+fn music_audible(
+    settings: &crate::app::settings::GameSettings,
+    muted: &Muted,
+    card_open: bool,
+) -> bool {
+    settings.music_gain() > 0.0 && !muted.0 && !card_open
+}
 
 #[derive(Resource)]
 pub struct Sounds {
@@ -35,6 +77,7 @@ pub struct Sounds {
     surge: Handle<AudioSource>,
     horn: Handle<AudioSource>,
     denied: Handle<AudioSource>,
+    evict: Handle<AudioSource>,
 }
 
 /// The rotating background playlist; a track spawns, plays once, despawns,
@@ -101,6 +144,7 @@ pub fn load_sounds(mut commands: Commands, assets: Res<AssetServer>) {
         surge: assets.load("sounds/surge.wav"),
         horn: assets.load("sounds/horn.wav"),
         denied: assets.load("sounds/denied.wav"),
+        evict: assets.load("sounds/evict.wav"),
     });
 }
 
@@ -136,6 +180,28 @@ fn play_at(commands: &mut Commands, sound: &Handle<AudioSource>, gain: f32, at: 
     ));
 }
 
+/// A panned one-shot that sounds at most once a frame: `used` is the
+/// caller's "already played this one" flag, and the first call through it
+/// wins.
+///
+/// Signpost cues are per tile, so one frame can hold several of a kind -
+/// every seat may act on the same tick, and posts placed together wear out
+/// together. Sample-aligned copies of one sound do not read as several
+/// things happening; they read as one louder, dirtier version of it, and
+/// four of them at full gain clip. This is the rule the denial knock has
+/// always used, applied where the volume actually is.
+fn once(
+    commands: &mut Commands,
+    used: &mut bool,
+    sound: &Handle<AudioSource>,
+    gain: f32,
+    at: Vec3,
+) {
+    if !std::mem::replace(used, true) {
+        play_at(commands, sound, gain, at);
+    }
+}
+
 /// Map each sim event to its one-shot (and rumble where it matters).
 #[allow(clippy::too_many_arguments)]
 pub fn play_events(
@@ -145,6 +211,7 @@ pub fn play_events(
     screen: Res<State<Screen>>,
     sim: Res<Sim>,
     settings: Res<crate::app::settings::GameSettings>,
+    muted: Res<Muted>,
     pads: Query<Entity, With<Gamepad>>,
     mut rumble: MessageWriter<GamepadRumbleRequest>,
 ) {
@@ -160,9 +227,10 @@ pub fn play_events(
             });
         }
     };
-    let gain = settings.sfx_gain();
+    let gain = sfx_gain(&settings, &muted);
     let half_width = f32::from(sim.0.width()) * crate::app::layout::TILE / 2.0;
     let pan = |pos: &Vec2| pan_pos(half_width, *pos);
+    let (mut placed, mut removed, mut evicted) = (false, false, false);
     for event in events.read() {
         match event {
             SimEvent::CrabBanked { kind, pos, .. } => {
@@ -178,19 +246,18 @@ pub fn play_events(
             }
             SimEvent::GullArrived => play(&mut commands, &sounds.screech, gain),
             SimEvent::GullTookOff => play(&mut commands, &sounds.takeoff, gain),
-            SimEvent::SignpostsChanged { delta } => {
-                play(
-                    &mut commands,
-                    if *delta > 0 {
-                        &sounds.place
-                    } else {
-                        &sounds.remove
-                    },
-                    gain,
-                );
+            SimEvent::SignpostPlaced { pos } => {
+                once(&mut commands, &mut placed, &sounds.place, gain, pan(pos));
             }
+            SimEvent::SignpostRemoved { pos } => {
+                once(&mut commands, &mut removed, &sounds.remove, gain, pan(pos));
+            }
+            // Its own sample, not the denial knock: a fourth post at the
+            // cap is a placement that *worked*, and answering it with the
+            // sound of a refusal told the player the opposite of what
+            // happened. The placement sounds too, from the new tile.
             SimEvent::SignpostEvicted { pos, .. } => {
-                play_at(&mut commands, &sounds.denied, gain, pan(pos));
+                once(&mut commands, &mut evicted, &sounds.evict, gain, pan(pos));
             }
             SimEvent::TierUp { .. } => play(&mut commands, &sounds.tier, gain),
             SimEvent::TideEventFired { .. } => play(&mut commands, &sounds.event, gain),
@@ -216,9 +283,10 @@ pub fn play_win(
     sounds: Res<Sounds>,
     screen: Res<State<Screen>>,
     settings: Res<crate::app::settings::GameSettings>,
+    muted: Res<Muted>,
 ) {
     if *screen.get() == Screen::Puzzle {
-        play(&mut commands, &sounds.win, settings.sfx_gain());
+        play(&mut commands, &sounds.win, sfx_gain(&settings, &muted));
     }
 }
 
@@ -227,9 +295,10 @@ pub fn play_lose(
     sounds: Res<Sounds>,
     screen: Res<State<Screen>>,
     settings: Res<crate::app::settings::GameSettings>,
+    muted: Res<Muted>,
 ) {
     if *screen.get() == Screen::Puzzle {
-        play(&mut commands, &sounds.lose, settings.sfx_gain());
+        play(&mut commands, &sounds.lose, sfx_gain(&settings, &muted));
     }
 }
 
@@ -239,11 +308,12 @@ pub fn play_denied(
     mut denials: MessageReader<PlacementDenied>,
     sounds: Option<Res<Sounds>>,
     settings: Res<crate::app::settings::GameSettings>,
+    muted: Res<Muted>,
 ) {
     let any = denials.read().next().is_some();
     denials.clear();
     if any && let Some(sounds) = sounds {
-        play(&mut commands, &sounds.denied, settings.sfx_gain());
+        play(&mut commands, &sounds.denied, sfx_gain(&settings, &muted));
     }
 }
 
@@ -252,16 +322,23 @@ pub fn play_chime(commands: &mut Commands, sounds: &Sounds, gain: f32) {
     play(commands, &sounds.tier, gain);
 }
 
-/// Keep the playlist rolling: whenever no track entity is alive, start the
-/// next one. Tracks despawn when they finish; a paused track (M) persists,
-/// so the toggle keeps working mid-song.
+/// Keep the playlist rolling: whenever no track entity is alive and the
+/// music can be heard, start the next one.
+///
+/// A track that is merely down - muted, paused, switched off - is still
+/// alive and still here, so it is the same song that comes back, from
+/// where it left off. Nothing new is started while none of it would be
+/// audible, which is what keeps a silenced game from decoding a playlist
+/// nobody is listening to.
 pub fn rotate_music(
     mut commands: Commands,
     mut playlist: ResMut<MusicPlaylist>,
     settings: Res<crate::app::settings::GameSettings>,
+    muted: Res<Muted>,
+    menu: Res<crate::app::pause::PauseMenu>,
     playing: Query<(), With<Music>>,
 ) {
-    if !playing.is_empty() {
+    if !playing.is_empty() || !music_audible(&settings, &muted, menu.open) {
         return;
     }
     let track = playlist.tracks[playlist.next].clone();
@@ -299,94 +376,105 @@ pub fn surge_tempo(
     }
 }
 
-/// M toggles the background music anywhere the round is running: the cap
-/// that says M, on whatever keyboard this is.
+/// M mutes the game: the cap that says M, on whatever keyboard this is.
 ///
-/// Held off while the pause card is open, where the music is already down
-/// and M would only fight [`hush_while_paused`] over the same sink. That
-/// also keeps the toggle honest: whatever the music was doing when the
-/// round was paused is what it goes back to.
-pub fn toggle_music(
+/// It used to stop the music alone, which was never what a player reaching
+/// for it wants - the beach is noisier than the theme is. Now it is the
+/// master mute, and the effects go quiet with it.
+///
+/// Works while the pause card is up, which the music-only toggle could
+/// not: the two no longer touch the same sink, so there is nothing to
+/// fight over. Held off only while a name or a chat line is being typed,
+/// where the M is a letter the player meant to write.
+pub fn toggle_mute(
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<crate::app::settings::GameSettings>,
-    sinks: Query<&AudioSink, With<Music>>,
+    mut muted: ResMut<Muted>,
 ) {
     if settings.keycaps.just_pressed(&keys, 'M') {
-        for sink in &sinks {
-            sink.toggle_playback();
-        }
+        muted.0 = !muted.0;
     }
 }
 
-/// Whether the pause card is what silenced the music, so resuming lifts
-/// only what pausing put down.
+/// Hold the theme's sink to whatever [`music_audible`] says this frame.
 ///
-/// Not the same question as "is the music stopped": M stops it too, and a
-/// player who muted the theme and then paused must not be handed it back
-/// on the way out.
-#[derive(Resource, Default)]
-pub struct HushedByPause(bool);
-
-/// Put the music down while the pause card is up, and pick it up again on
-/// the way out.
-///
-/// The card is the signal rather than [`crate::app::Paused`], because that
-/// flag is an offline one: an online pause deliberately leaves the ticker
-/// running so the network pump can carry the resume, and the beach there is
-/// held still by the lockstep instead. The card is open in both.
-pub fn hush_while_paused(
+/// The pause card is one of the three voices in that answer, rather than
+/// something that reaches in and pauses on its own. It is also the signal
+/// rather than [`crate::app::Paused`], because that flag is an offline
+/// one: an online pause deliberately leaves the ticker running so the
+/// network pump can carry the resume, and the beach there is held still by
+/// the lockstep instead. The card is open in both.
+pub fn drive_music(
+    settings: Res<crate::app::settings::GameSettings>,
+    muted: Res<Muted>,
     menu: Res<crate::app::pause::PauseMenu>,
-    mut hushed: ResMut<HushedByPause>,
     sinks: Query<&AudioSink, With<Music>>,
 ) {
-    let mut still_ours = false;
+    let audible = music_audible(&settings, &muted, menu.open);
     for sink in &sinks {
-        match hush_step(menu.open, hushed.0, sink.is_paused()) {
-            Some(true) => {
-                sink.pause();
-                still_ours = true;
-            }
-            Some(false) => sink.play(),
-            None => still_ours |= hushed.0 && menu.open,
+        // Only when the sink disagrees with the answer: this runs every
+        // frame, and the theme is the one sound that is always there.
+        if audible && sink.is_paused() {
+            sink.play();
+        } else if !audible && !sink.is_paused() {
+            sink.pause();
         }
-    }
-    hushed.0 = still_ours;
-}
-
-/// What the card asks of one track this frame: `Some(true)` to put it down,
-/// `Some(false)` to pick it up, `None` to leave it where it is.
-///
-/// The third arm is the one worth having: a track already stopped when the
-/// card opens was stopped by the player (M), so the card neither claims it
-/// nor hands it back, and a muted round resumes muted.
-fn hush_step(card_open: bool, hushed: bool, stopped: bool) -> Option<bool> {
-    match (card_open, hushed, stopped) {
-        (true, _, false) => Some(true),
-        (false, true, _) => Some(false),
-        _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::settings::GameSettings;
 
-    /// The pause card takes the music down and gives back exactly what it
-    /// took: a theme the player had already muted with M is not handed
-    /// back on the way out, which is the whole reason the flag exists.
+    /// The three ways to silence the theme, and how they compose. Each one
+    /// is a veto, so the card gives back exactly what it took and no more:
+    /// a game muted with M before the pause is still muted after it.
     #[test]
-    fn the_card_returns_only_the_music_it_silenced() {
-        // Playing when the card opens: put it down, and keep it down.
-        assert_eq!(hush_step(true, false, false), Some(true), "down it goes");
-        assert_eq!(hush_step(true, true, true), None, "and stays down");
-        // Closing gives it back, once.
-        assert_eq!(hush_step(false, true, true), Some(false), "and comes back");
-        assert_eq!(hush_step(false, false, false), None, "nothing left owing");
+    fn every_silence_is_a_veto_and_none_of_them_lifts_another() {
+        let settings = |on: bool, volume: u8| GameSettings {
+            music_on: on,
+            music_volume: volume,
+            ..GameSettings::default()
+        };
+        let audible =
+            |on, volume, mute, card| music_audible(&settings(on, volume), &Muted(mute), card);
 
-        // Muted with M *before* the pause: the card never claimed it, so
-        // closing the card leaves it muted.
-        assert_eq!(hush_step(true, false, true), None, "not ours to take");
-        assert_eq!(hush_step(false, false, true), None, "nor ours to return");
+        assert!(audible(true, 45, false, false), "on, up, unmuted, playing");
+        assert!(!audible(false, 45, false, false), "the settings switch");
+        assert!(!audible(true, 0, false, false), "the slider at the bottom");
+        assert!(!audible(true, 45, true, false), "the master mute");
+        assert!(!audible(true, 45, false, true), "the pause card");
+
+        // Muted, then paused, then unpaused: still muted. The card is not
+        // a way to get the music back, only a way to lose it for a while.
+        assert!(!audible(true, 45, true, true), "both, on the way in");
+        assert!(!audible(true, 45, true, false), "and M still holds it");
+        // And unmuting under an open card does not play over the pause.
+        assert!(!audible(true, 45, false, true), "the card still holds it");
+    }
+
+    /// The master mute takes the effects with it, which is the whole point
+    /// of it: reaching for M because someone walked in and still hearing
+    /// every gull on the beach is the bug it was named for.
+    #[test]
+    fn the_master_mute_silences_the_effects_too() {
+        let settings = GameSettings {
+            sfx_on: true,
+            sfx_volume: 80,
+            ..GameSettings::default()
+        };
+        assert!(sfx_gain(&settings, &Muted(false)) > 0.0, "heard by default");
+        assert_eq!(sfx_gain(&settings, &Muted(true)), 0.0, "M silences them");
+
+        // The switch on the settings card does it on its own, and keeps
+        // the volume it was set to for when it comes back on.
+        let off = GameSettings {
+            sfx_on: false,
+            ..settings.clone()
+        };
+        assert_eq!(sfx_gain(&off, &Muted(false)), 0.0, "switched off");
+        assert_eq!(off.sfx_volume, 80, "the slider is where it was left");
     }
 
     /// The stereo field mirrors the board (rodio boosts the far ear), tops
