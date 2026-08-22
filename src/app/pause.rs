@@ -1,5 +1,5 @@
 //! The pause overlay: Esc (or Start on a pad) during play opens a card with
-//! Continue / Put the round down / Back to menu / Quit.
+//! Continue / Back to menu / Quit.
 //!
 //! Offline it simply freezes the sim. Online it runs the lockstep pause
 //! protocol (see `sim::net`): the peers agree on a frame, everyone's commits
@@ -7,12 +7,10 @@
 //! that pauses opens the card on the others too, or their beach would
 //! freeze with no explanation.
 
-use crate::app::i18n::fill;
 use crate::app::menu_ui;
 use crate::app::net::Online;
 use crate::app::palette;
 use crate::app::settings::GameSettings;
-use crate::app::suspend;
 use crate::app::{Paused, Phase, Screen};
 use bevy::prelude::*;
 
@@ -20,28 +18,16 @@ use bevy::prelude::*;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PauseAction {
     Continue,
-    /// Save the round mid-play and leave; the menu offers it back.
-    PutDown,
     ToMenu,
     Quit,
 }
 
 impl PauseAction {
-    pub const ALL: [PauseAction; 4] = [
+    pub const ALL: [PauseAction; 3] = [
         PauseAction::Continue,
-        PauseAction::PutDown,
         PauseAction::ToMenu,
         PauseAction::Quit,
     ];
-}
-
-/// Which rows are offered. Putting a round down is a versus, offline thing:
-/// a puzzle is a fixed level that retries instantly and has nothing worth
-/// carrying, and an online round belongs to every peer in it: one player
-/// cannot pocket it.
-fn live_rows(screen: Screen, online: &Online) -> [bool; PauseAction::ALL.len()] {
-    let can_put_down = screen == Screen::Versus && online.0.is_none();
-    std::array::from_fn(|row| PauseAction::ALL[row] != PauseAction::PutDown || can_put_down)
 }
 
 const OPTIONS: usize = PauseAction::ALL.len();
@@ -107,10 +93,6 @@ pub fn pause_input(
     mut menu: ResMut<PauseMenu>,
     mut paused: ResMut<Paused>,
     mut online: ResMut<Online>,
-    sim: Res<crate::app::Sim>,
-    seats: Res<crate::app::Seats>,
-    bots: Res<crate::app::Bots>,
-    mut notice: ResMut<crate::app::RoundNotice>,
     mut next_screen: ResMut<NextState<Screen>>,
     mut exit: MessageWriter<AppExit>,
     ui: Query<Entity, With<PauseUi>>,
@@ -155,9 +137,8 @@ pub fn pause_input(
         close(&mut commands, &mut menu, &mut paused, &ui);
         return;
     }
-    let live = live_rows(*screen.get(), &online);
-    menu.selected = menu_ui::nav_live(&keys, menu.selected, &live);
-    menu.selected = menu_ui::nav_live_steps(pad_up, pad_down, menu.selected, &live);
+    menu.selected = menu_ui::nav(&keys, menu.selected, OPTIONS);
+    menu.selected = menu_ui::step(pad_up, pad_down, menu.selected, OPTIONS);
     if keys.just_pressed(KeyCode::Enter) || pad_accept {
         match PauseAction::ALL[menu.selected] {
             PauseAction::Continue => {
@@ -165,19 +146,6 @@ pub fn pause_input(
                     session.request_resume();
                 }
                 close(&mut commands, &mut menu, &mut paused, &ui);
-            }
-            PauseAction::PutDown => {
-                let round = suspend::Suspended {
-                    seats: seats.0,
-                    bots: bots.0,
-                    board: sim.0.clone(),
-                };
-                notice.0 = match suspend::put_down(&round) {
-                    Ok(()) => settings.tr().round_put_down.to_string(),
-                    Err(e) => fill(settings.tr().round_put_down_failed, &[("e", &e)]),
-                };
-                close(&mut commands, &mut menu, &mut paused, &ui);
-                next_screen.set(Screen::Menu);
             }
             PauseAction::ToMenu => {
                 // Leaving drops the session anyway, but resume first so the
@@ -199,24 +167,12 @@ pub fn pause_input(
 pub fn update_pause_rows(
     menu: Res<PauseMenu>,
     settings: Res<GameSettings>,
-    screen: Res<State<Screen>>,
-    online: Res<Online>,
     mut rows: Query<(&PauseRow, &mut Text, &mut TextColor)>,
 ) {
     let tr = settings.tr();
-    let labels = [
-        tr.pause_continue,
-        tr.pause_put_down,
-        tr.pause_to_menu,
-        tr.pause_quit,
-    ];
-    let live = live_rows(*screen.get(), &online);
+    let labels = [tr.pause_continue, tr.pause_to_menu, tr.pause_quit];
     for (row, mut text, mut color) in &mut rows {
-        // A row that cannot be taken is left blank rather than greyed out:
-        // the card is four lines, and an option explained away is more
-        // clutter than the gap it fills.
-        let label = if live[row.0] { labels[row.0] } else { "" };
-        menu_ui::paint_row(row.0 == menu.selected, label, &mut text, &mut color);
+        menu_ui::paint_row(row.0 == menu.selected, labels[row.0], &mut text, &mut color);
     }
 }
 
@@ -249,11 +205,6 @@ mod tests {
         app.init_resource::<Paused>();
         app.init_resource::<crate::app::net::Online>();
         app.insert_resource(GameSettings::default());
-        // The card can put a round down, so it reads the round.
-        app.insert_resource(crate::app::Sim(crate::sim::Board::new(4, 4, 0)));
-        app.init_resource::<crate::app::Seats>();
-        app.init_resource::<crate::app::Bots>();
-        app.init_resource::<crate::app::RoundNotice>();
         app.add_message::<AppExit>();
         app.add_systems(Update, pause_input);
 
@@ -276,21 +227,19 @@ mod tests {
             "an offline round freezes with it"
         );
 
-        // Down three times lands on "quit", up once steps back to "back to
-        // menu". Offline in versus, every row is live, so the walk is the
-        // plain one.
+        // The card is three rows: down twice reaches the last of them.
+        let row = |app: &App| PauseAction::ALL[app.world().resource::<PauseMenu>().selected];
         tap(&mut app, KeyCode::KeyS);
         tap(&mut app, KeyCode::KeyS);
+        assert_eq!(row(&app), PauseAction::Quit);
+        // A third wraps to the top rather than falling off the end.
         tap(&mut app, KeyCode::KeyS);
-        assert_eq!(
-            PauseAction::ALL[app.world().resource::<PauseMenu>().selected],
-            PauseAction::Quit
-        );
+        assert_eq!(row(&app), PauseAction::Continue);
+        // And back the other way, onto the row this test then takes.
         tap(&mut app, KeyCode::KeyW);
-        assert_eq!(
-            PauseAction::ALL[app.world().resource::<PauseMenu>().selected],
-            PauseAction::ToMenu
-        );
+        assert_eq!(row(&app), PauseAction::Quit);
+        tap(&mut app, KeyCode::KeyW);
+        assert_eq!(row(&app), PauseAction::ToMenu);
 
         tap(&mut app, KeyCode::Enter);
         app.update(); // let the state transition apply

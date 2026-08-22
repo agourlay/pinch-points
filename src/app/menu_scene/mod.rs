@@ -46,12 +46,10 @@ pub enum MenuEntry {
     BeachDay,
     Achievements,
     DailyChallenge,
-    /// Only offered when a round is waiting to be picked up.
-    Resume,
 }
 
 impl MenuEntry {
-    pub const ALL: [MenuEntry; 10] = [
+    pub const ALL: [MenuEntry; 9] = [
         MenuEntry::TidePool,
         MenuEntry::TurfWar,
         MenuEntry::Driftwood,
@@ -61,19 +59,11 @@ impl MenuEntry {
         MenuEntry::BeachDay,
         MenuEntry::Achievements,
         MenuEntry::DailyChallenge,
-        MenuEntry::Resume,
     ];
 }
 
 /// Number of modes on the list (digit 1 launches entry 0, and so on).
 pub const MENU_ENTRY_COUNT: usize = MenuEntry::ALL.len();
-
-/// Which rows are on offer. Every mode always is; resuming is there only
-/// when there is a round to resume.
-fn live_rows() -> [bool; MENU_ENTRY_COUNT] {
-    let waiting = crate::app::suspend::waiting();
-    std::array::from_fn(|row| MenuEntry::ALL[row] != MenuEntry::Resume || waiting)
-}
 
 /// Which mode row the cursor is on. Persists across visits to the menu.
 #[derive(Resource, Default)]
@@ -286,14 +276,13 @@ pub fn update_menu_rows(
     mut rows: Query<(&MenuRow, &mut BackgroundColor)>,
 ) {
     let tr = settings.tr();
-    let live = live_rows();
     for (cell, mut text, mut color) in &mut cells {
         let picked = cell.0 == list.selected;
-        let line = if live[cell.0] {
+        let line = {
             match cell.1 {
-                // Rows are keyed 1-9 then 0, which keeps every hotkey one
-                // character wide and the name column straight.
-                MenuCol::Key => if cell.0 + 1 < 10 { cell.0 + 1 } else { 0 }.to_string(),
+                // Rows are keyed 1-9, one character wide apiece, which
+                // keeps the name column straight.
+                MenuCol::Key => (cell.0 + 1).to_string(),
                 MenuCol::Name => tr.menu_names[cell.0].to_string(),
                 // The daily is the one row whose blurb is not the same
                 // every day, and the date is the whole point of it: you
@@ -307,8 +296,6 @@ pub fn update_menu_rows(
                 }
                 MenuCol::Blurb => tr.menu_blurbs[cell.0].to_string(),
             }
-        } else {
-            String::new()
         };
         // Three inks, and the row you are on brightens all of them: the
         // name leads, the blurb explains, the hotkey is there when you
@@ -326,9 +313,9 @@ pub fn update_menu_rows(
     }
     for (row, mut fill) in &mut rows {
         // A band behind the cursor rather than a marker beside it. The list
-        // is ten rows of two columns; a caret at the far left is a long way
+        // is nine rows of two columns; a caret at the far left is a long way
         // from the words it is pointing at.
-        let ground = if row.0 == list.selected && live[row.0] {
+        let ground = if row.0 == list.selected {
             palette::GOLD.with_alpha(0.16)
         } else {
             Color::NONE
@@ -379,10 +366,7 @@ pub fn menu_input(
         }
         return;
     }
-    // The resume row is only there when a round is waiting, and the cursor
-    // steps over it when it is not.
-    let live = live_rows();
-    list.selected = menu_ui::nav_live(&keys, list.selected, &live);
+    list.selected = menu_ui::nav(&keys, list.selected, MENU_ENTRY_COUNT);
 
     const HOTKEYS: [KeyCode; MENU_ENTRY_COUNT] = [
         KeyCode::Digit1,
@@ -394,15 +378,13 @@ pub fn menu_input(
         KeyCode::Digit7,
         KeyCode::Digit8,
         KeyCode::Digit9,
-        // The tenth row is the resume slot, and 0 follows 9 on a keyboard.
-        KeyCode::Digit0,
     ];
     let choice = if keys.just_pressed(KeyCode::Enter) {
         Some(list.selected)
     } else {
         HOTKEYS.iter().position(|&key| keys.just_pressed(key))
     };
-    let Some(choice) = choice.filter(|&row| live[row]) else {
+    let Some(choice) = choice else {
         return;
     };
     list.selected = choice;
@@ -427,16 +409,6 @@ pub fn menu_input(
             next_screen.set(Screen::StageSelect);
         }
         MenuEntry::Achievements => next_screen.set(Screen::Achievements),
-        MenuEntry::Resume => match crate::app::suspend::pick_up() {
-            Ok(round) => {
-                // The round brings its own board, seats and AI; the match
-                // config is left alone so it is not mistaken for a source.
-                notice.0.clear();
-                resuming.0 = Some(round);
-                next_screen.set(Screen::Versus);
-            }
-            Err(e) => notice.0 = e,
-        },
         MenuEntry::DailyChallenge => {
             // The daily: today's arena, three fierce bots, standard round.
             config.seats = 4;

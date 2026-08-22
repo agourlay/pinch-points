@@ -390,7 +390,7 @@ pub(super) struct Readout<'a> {
     pub names: &'a crate::app::SeatNames,
     pub bots: &'a Bots,
     pub library: &'a crate::app::replays::Library,
-    /// What the menu has to say about a round put down, copied or pasted.
+    /// What the menu has to say about a round code copied or pasted.
     pub notice: &'a crate::app::RoundNotice,
     /// Which row the match setup is on: Enter means something else on the
     /// name rows, and the prompt line has to say so.
@@ -418,8 +418,8 @@ pub(super) fn screen_text(screen: Screen, r: &Readout) -> HudText {
 
 pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
     match screen {
-        // The menu's status slot carries word of a round just put down, or
-        // of a code that would not load: the only news the menu ever has.
+        // The menu's status slot carries word of a code that would not
+        // load: the only news the menu ever has.
         Screen::Menu => HudText::new(
             String::new(),
             r.notice.0.clone(),

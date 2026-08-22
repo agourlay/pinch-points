@@ -297,14 +297,14 @@ pub fn seat_label(tr: &i18n::Tr, seat: u8) -> String {
     fill(tr.player_label, &[("p", &(seat + 1).to_string())])
 }
 
-/// A round picked back up, from the save slot or from a pasted code,
-/// waiting for [`Screen::Versus`] to seat it. Taken by `load_versus`, which
-/// is the one place that decides what board a round starts from.
+/// A round from a pasted code, waiting for [`Screen::Versus`] to seat it.
+/// Taken by `load_versus`, which is the one place that decides what board a
+/// round starts from.
 #[derive(Resource, Default)]
 pub struct Resuming(pub Option<suspend::Suspended>);
 
-/// What the menu has to say about the round you just put down, copied, or
-/// failed to. Shown in the menu's status slot; a save that fails must not
-/// disappear in silence, since what it loses is the round you were playing.
+/// What the menu has to say about the round you just copied or pasted, or
+/// failed to. Shown in the menu's status slot, so a code that will not read
+/// says so rather than doing nothing.
 #[derive(Resource, Default)]
 pub struct RoundNotice(pub String);

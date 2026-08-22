@@ -174,11 +174,11 @@ pub(super) fn load_versus(
             )
         }
     };
-    // A replay is the round from its first tick, and a round picked back
-    // up has no first tick to hand: the suspend file carries the board as
-    // it stood when it was put down, not the inputs that got it there. A
+    // A replay is the round from its first tick, and a round started from
+    // a pasted code has no first tick to hand: the code carries the board
+    // as it stood when it was copied, not the inputs that got it there. A
     // recording that opened on the mid-round board would replay as a
-    // different round from the one that was played, so a resumed round is
+    // different round from the one that was played, so a pasted round is
     // not recorded at all. Nothing downstream minds: every reader of the
     // recorder is already an `if let`.
     recorder.0 = if playback.0.is_none() && resumed.is_none() {

@@ -143,8 +143,7 @@ wins.
   six seats need one of the wide beaches, 16 tiles across or more), plus
   any beach you built yourself that has a castle for every seat. Dials for gull
   pressure and round length, **team play**, a **best of 3 or 5** series
-  with rotating maps, nameable seats, and rounds you can **put down mid-play**
-  and pick up later exactly where they stood. AI comes at three levels:
+  with rotating maps and nameable seats. AI comes at three levels:
   easy fumbles, fierce reads the terrain and shoves gulls at the leader,
   and every AI walks a cursor at a capped speed rather than reaching
   across the board for free (`cargo run --example ladder` plays them off).
@@ -299,7 +298,7 @@ deliberately.
   (`PINCH_SERIES=3` or `=5` for a series, `PINCH_SEATS=<n>` for the table,
   `PINCH_BOTS=<n>` for AI seats), and `PINCH_SANDBOX`,
   `PINCH_AUTOPLAY=<level>`, `PINCH_EDITOR`, `PINCH_MATCH`, `PINCH_REPLAY`,
-  `PINCH_LIBRARY`, `PINCH_RESUME`, `PINCH_ACHIEVEMENTS`, `PINCH_SETTINGS`,
+  `PINCH_LIBRARY`, `PINCH_ACHIEVEMENTS`, `PINCH_SETTINGS`,
   `PINCH_CONTROLS`, `PINCH_STAGES=tide|beach`, and
   `PINCH_LOBBY_HOST`/`PINCH_LOBBY_JOIN`/`PINCH_LOBBY_WATCH` open the rest.
   `PINCH_BANNER=lure|surge|<0-7>` raises an announcement and

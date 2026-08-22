@@ -199,8 +199,8 @@ string_table! {
 struct Tr {
     // Menu
     pub tagline: &'static str,
-    pub menu_names: [&'static str; 10],
-    pub menu_blurbs: [&'static str; 10],
+    pub menu_names: [&'static str; 9],
+    pub menu_blurbs: [&'static str; 9],
     /// The daily row's blurb, which names the day it is offering.
     pub menu_daily_blurb: &'static str,
     pub menu_prompt: &'static str,
@@ -316,10 +316,7 @@ struct Tr {
     pub pause_continue: &'static str,
     pub pause_to_menu: &'static str,
     pub pause_quit: &'static str,
-    pub pause_put_down: &'static str,
-    /// Said on the versus screen when a round is put down or copied.
-    pub round_put_down: &'static str,
-    pub round_put_down_failed: &'static str,
+    /// Said on the versus screen when a round is copied as a code.
     pub round_copied: &'static str,
     pub round_code_bad: &'static str,
     // The new-version page (see `app::update`)

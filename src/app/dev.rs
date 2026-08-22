@@ -123,8 +123,6 @@ pub(super) enum DevHook {
     Replay,
     /// `PINCH_LIBRARY`: the kept rounds.
     Replays,
-    /// `PINCH_RESUME`: pick up the round in the save slot.
-    Resume,
 }
 
 impl DevHook {
@@ -154,7 +152,6 @@ impl DevHook {
             ("PINCH_CONTROLS", DevHook::Controls),
             ("PINCH_ACHIEVEMENTS", DevHook::Achievements),
             ("PINCH_LIBRARY", DevHook::Replays),
-            ("PINCH_RESUME", DevHook::Resume),
         ] {
             if set(name) {
                 return Some(hook);
@@ -197,7 +194,6 @@ pub(super) fn kickoff(
     mut config: ResMut<match_setup::MatchConfig>,
     mut tournament: ResMut<crate::app::tournament::Tournament>,
     mut playback: ResMut<crate::app::Playback>,
-    mut resuming: ResMut<crate::app::Resuming>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     let Some(hook) = DevHook::from_env(|name| std::env::var(name).ok()) else {
@@ -231,13 +227,6 @@ pub(super) fn kickoff(
         DevHook::Controls => next_screen.set(Screen::Controls),
         DevHook::Achievements => next_screen.set(Screen::Achievements),
         DevHook::Replays => next_screen.set(Screen::Replays),
-        DevHook::Resume => match crate::app::suspend::pick_up() {
-            Ok(round) => {
-                resuming.0 = Some(round);
-                next_screen.set(Screen::Versus);
-            }
-            Err(e) => warn!("PINCH_RESUME: nothing to pick up: {e}"),
-        },
         DevHook::StageSelect { beach } => {
             if beach {
                 let levels = crate::sim::challenge_levels();
@@ -501,7 +490,6 @@ mod tests {
             ("PINCH_CONTROLS", DevHook::Controls),
             ("PINCH_ACHIEVEMENTS", DevHook::Achievements),
             ("PINCH_LIBRARY", DevHook::Replays),
-            ("PINCH_RESUME", DevHook::Resume),
             ("PINCH_STAGES", DevHook::StageSelect { beach: false }),
             ("PINCH_AUTOPLAY", DevHook::Autoplay { level: 0 }),
             ("PINCH_MATCH", DevHook::MatchSetup),

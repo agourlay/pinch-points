@@ -1,24 +1,18 @@
-//! A round put down mid-play, and picked up again.
+//! A round in progress, whole, as a share code: `C` copies the beach you
+//! are standing on and pasting one puts somebody else on it, mid-stride
+//! crabs and standing signposts and all.
 //!
 //! The board itself travels as a [`Board::to_snapshot`], which is exact to
 //! the last sub-tile and PRNG draw. What that cannot carry is the few things
 //! the *shell* knows and the sim does not: how many seats are in play and
-//! which of them an AI is holding. Those ride in a short header above it, and
-//! this module is the whole of what a suspended round is.
+//! which of them an AI is holding. Those ride in a short header above it.
 //!
-//! The same bytes go two ways. Written to [`save_path`] they are yesterday's
-//! round waiting on the menu; put through [`crate::share`] they are a code
-//! somebody else can pick the beach up from.
+//! The `suspended-v1` header is a name from when these bytes were also a
+//! save slot the menu offered back. The slot is gone; the name stays,
+//! because it is on every code anyone has already copied.
 
 use crate::sim::{Board, BotLevel, MAX_PLAYERS};
 use bevy::prelude::*;
-
-/// Where a put-down round waits. One slot: picking a round back up is
-/// resuming *the* round you left, not choosing from a shelf.
-/// The put-down round, under the XDG data directory.
-fn save_path() -> std::path::PathBuf {
-    crate::app::paths::data_dir().join("suspended.txt")
-}
 
 const HEADER: &str = "suspended-v1";
 
@@ -51,7 +45,7 @@ impl Suspended {
         match lines.next().map(str::trim) {
             Some(HEADER) => {}
             Some(other) => return Err(format!("not a suspended round: {other:?}")),
-            None => return Err("nothing to resume".to_string()),
+            None => return Err("nothing to read".to_string()),
         }
         // The header is this module's; everything from `snapshot-v1` on is
         // the board's own business.
@@ -112,32 +106,7 @@ fn bot_from_token(token: &str) -> Option<Option<BotLevel>> {
     }
 }
 
-/// Whether a round is waiting to be picked up.
-pub fn waiting() -> bool {
-    save_path().exists()
-}
-
-/// Put the round down. Best-effort, like the other save files.
-pub fn put_down(round: &Suspended) -> Result<(), String> {
-    crate::app::paths::write_atomic(&save_path(), round.to_text()).map_err(|e| e.to_string())
-}
-
-/// Pick it up, and take it off the shelf as we go: a resumed round is being
-/// played again, and leaving the file would offer the same stale beach after
-/// the tide has come in on it.
-pub fn pick_up() -> Result<Suspended, String> {
-    let path = save_path();
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let round = Suspended::parse(&text)?;
-    let _ = std::fs::remove_file(path);
-    Ok(round)
-}
-
 /// The round in progress, as a share code on the clipboard (`C`).
-///
-/// The same bytes the save slot holds, so a code somebody pastes puts them
-/// on the beach you were standing on: mid-stride crabs, standing signposts,
-/// the PRNG where you left it.
 pub fn copy_round_code(
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<crate::app::settings::GameSettings>,

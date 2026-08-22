@@ -26,10 +26,22 @@ pub fn nav_live(keys: &ButtonInput<KeyCode>, selected: usize, live: &[bool]) -> 
     nav_live_steps(up, down, selected, live)
 }
 
-/// The same walk from explicit up/down edges, for input that cannot ride
-/// the keyboard resource: the pause card runs during play, where bridging
-/// the d-pad into synthetic key presses would also steer the round.
-pub fn nav_live_steps(up: bool, down: bool, selected: usize, live: &[bool]) -> usize {
+/// Plain up/down over `len` rows from explicit edges, for input that cannot
+/// ride the keyboard resource: the pause card runs during play, where
+/// bridging the d-pad into synthetic key presses would also steer the round.
+pub fn step(up: bool, down: bool, selected: usize, len: usize) -> usize {
+    if up {
+        (selected + len - 1) % len
+    } else if down {
+        (selected + 1) % len
+    } else {
+        selected
+    }
+}
+
+/// The same walk as [`nav_live`], from explicit edges rather than the
+/// keyboard.
+fn nav_live_steps(up: bool, down: bool, selected: usize, live: &[bool]) -> usize {
     let len = live.len();
     let step = if up {
         len - 1 // one backwards, modulo len
