@@ -136,13 +136,30 @@ fn label_of(path: &std::path::Path) -> String {
     }
 }
 
-/// A stamp as `dd/mm hh:mm`, in UTC. No date library and no need for one:
-/// days since the epoch convert with the same arithmetic the daily challenge
-/// already uses.
+/// A stamp as `dd/mm hh:mm`, on the clock in the room. No date library and
+/// no need for one: days since the epoch convert with the same arithmetic
+/// the daily challenge already uses, and the offset to add first comes from
+/// the system zone (see [`crate::app::clock::local_offset`]).
+///
+/// The offset is taken at the stamp rather than now, so a round kept in
+/// August and one kept in January are each shown on the clock that was on
+/// the wall when they were played, not on today's.
 fn clock(stamp: u64) -> String {
-    let secs = stamp % 86_400;
+    stamp_text(stamp, crate::app::clock::local_offset(stamp))
+}
+
+/// The same, with the offset handed in: what the shelf renders is a
+/// function of the stamp and the zone, and only the zone needs a file to
+/// answer it. Split so the format can be tested on a machine in any zone,
+/// which is every machine.
+fn stamp_text(stamp: u64, offset: i64) -> String {
+    // A clock set before 1970 already reads as zero (`clock::now_secs`);
+    // west of Greenwich the offset can push such a stamp below it, and the
+    // arithmetic below is unsigned. It stays at the epoch.
+    let local = (stamp as i64 + offset).max(0) as u64;
+    let secs = local % 86_400;
     let (h, m) = (secs / 3600, (secs % 3600) / 60);
-    let (day, month) = crate::app::clock::civil_date((stamp / 86_400) as u32);
+    let (day, month) = crate::app::clock::civil_date((local / 86_400) as u32);
     format!("{day:02}/{month:02} {h:02}:{m:02}")
 }
 
@@ -465,11 +482,30 @@ mod tests {
         let label = label_of(std::path::Path::new("replays/round_1751328000_Anna.txt"));
         assert!(label.contains("Anna"), "{label}");
         assert!(label.contains('/') && label.contains(':'), "{label}");
-        // 2025-07-01 00:00:00 UTC is day 20270.
-        assert_eq!(clock(1_751_328_000), "01/07 00:00");
         // A file from somewhere else is listed under its own name.
         let odd = label_of(std::path::Path::new("replays/round_handmade.txt"));
         assert_eq!(odd, "round_handmade");
+    }
+
+    /// A stamp reads on the clock that was on the wall, which is not the
+    /// one in Greenwich. The offset is handed in here because the machine
+    /// running this is in whatever zone it is in.
+    #[test]
+    fn a_stamp_reads_on_the_local_clock() {
+        // 2025-07-01 00:00:00 UTC, day 20270.
+        const NOON_LESS_TWELVE: u64 = 1_751_328_000;
+        assert_eq!(stamp_text(NOON_LESS_TWELVE, 0), "01/07 00:00", "Greenwich");
+        assert_eq!(stamp_text(NOON_LESS_TWELVE, 7200), "01/07 02:00", "Paris");
+        // West of Greenwich the same instant is still the day before, which
+        // is the case a bare `stamp % 86_400` gets wrong.
+        assert_eq!(
+            stamp_text(NOON_LESS_TWELVE, -4 * 3600),
+            "30/06 20:00",
+            "Halifax"
+        );
+        // And a stamp so early the offset would take it below the epoch
+        // stays at the epoch rather than wrapping to the far future.
+        assert_eq!(stamp_text(60, -4 * 3600), "01/01 00:00");
     }
 
     /// A round survives being carried as a share code and comes back as the
