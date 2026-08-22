@@ -50,6 +50,15 @@ icu_provider = { version = "2", features = ["logging"] }
 # X11 protocol answers without libxkbcommon to link, a dev package to
 # install, or a line of unsafe. Windows and macOS are answered by FFI
 # into libraries that are always there, so they need nothing here.
+#
+# Held at 0.13 though 0.14 is out, and deliberately: winit and arboard both
+# still ask for 0.13, so that copy is in the tree whatever this line says,
+# and asking for 0.14 does not replace it - it adds a second. x11rb-protocol
+# is generated from the protocol description, and the pair comes to 84 MB of
+# rlibs in a debug build, so the duplicate is worth avoiding for an upgrade
+# nothing here needs: 0.14 was tried, and the keymap's `connect`, `setup`
+# and `get_keyboard_mapping` are all unchanged across it. Move when winit
+# and arboard do, and the tree keeps one copy.
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.13", default-features = false }
 
