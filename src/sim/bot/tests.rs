@@ -11,11 +11,11 @@ fn arena() -> Board {
     board
 }
 
-/// The easy hand slips on a fixed cadence rather than at random, so an
-/// online AI seat blunders the same way on every peer. A blunder only
-/// mis-aims: it never moves the post to another tile.
+/// The hand slips at its level's rate, drawn rather than scheduled, and
+/// the same way on every peer: the draw is a pure function of the tick,
+/// the seat and the board's seed, all three of which every peer holds.
 #[test]
-fn the_easy_hand_slips_predictably() {
+fn the_hand_slips_at_its_own_rate() {
     let straight = PlayerAction::Place {
         x: 3,
         y: 3,
@@ -26,40 +26,91 @@ fn the_easy_hand_slips_predictably() {
         y: 3,
         dir: Direction::Right,
     };
-    let slips = |level: BotLevel, seat: PlayerId| {
-        (0..40)
-            .filter(|tick| fumble(straight, seat, level, *tick) == slipped)
-            .count()
+    // Over a long stretch of ticks and a spread of boards, not over one
+    // short run: the draw is a hash now, so the rate is a rate.
+    let rate = |level: BotLevel, seat: PlayerId| {
+        let (mut slips, mut chances) = (0u32, 0u32);
+        for seed in 0..40u64 {
+            for tick in 0..600u64 {
+                chances += 1;
+                if fumble(straight, seat, level, tick, seed) == slipped {
+                    slips += 1;
+                }
+            }
+        }
+        f64::from(slips) / f64::from(chances)
     };
-    assert_eq!(slips(BotLevel::Easy, 0), 10, "one placement in four");
-    assert_eq!(slips(BotLevel::Normal, 0), 5, "one in eight");
-    assert_eq!(slips(BotLevel::Hard, 0), 0, "fierce does not slip");
-    // Every seat slips, and none of them in step with another - a shared
-    // rhythm would make two easy bots blunder together.
-    let counts: Vec<usize> = (0..MAX_PLAYERS as u8)
-        .map(|seat| slips(BotLevel::Easy, seat))
-        .collect();
-    assert!(counts.iter().all(|&n| n == 10), "{counts:?}");
-    let first: Vec<u64> = (0..MAX_PLAYERS as u8)
-        .map(|seat| {
-            (0..40)
-                .find(|tick| fumble(straight, seat, BotLevel::Easy, *tick) == slipped)
-                .unwrap_or(99)
-        })
-        .collect();
     assert!(
-        first
-            .iter()
-            .collect::<std::collections::BTreeSet<_>>()
-            .len()
-            > 1,
-        "seats slip on the same tick: {first:?}"
+        (rate(BotLevel::Easy, 0) - 0.25).abs() < 0.01,
+        "one placement in four, got {}",
+        rate(BotLevel::Easy, 0)
     );
-    // And nothing else is touched.
+    assert!(
+        (rate(BotLevel::Normal, 0) - 0.125).abs() < 0.01,
+        "one in eight, got {}",
+        rate(BotLevel::Normal, 0)
+    );
+    assert_eq!(rate(BotLevel::Hard, 0), 0.0, "fierce does not slip");
+    // Deterministic: the same board, seat and tick slip the same way twice.
     assert_eq!(
-        fumble(PlayerAction::None, 0, BotLevel::Easy, 0),
+        fumble(straight, 2, BotLevel::Easy, 91, 0xC0FFEE),
+        fumble(straight, 2, BotLevel::Easy, 91, 0xC0FFEE),
+    );
+    // And nothing but a placement is touched.
+    assert_eq!(
+        fumble(PlayerAction::None, 0, BotLevel::Easy, 0, 7),
         PlayerAction::None
     );
+}
+
+/// Every seat blunders at the same rate *as its own hand is offered the
+/// chance to*, which is the only rate that reaches the beach.
+///
+/// The regression this guards: the slip was keyed on `ticks ^ player`, so
+/// each seat sat on its own residue mod `every`, while a seat is only
+/// offered a placement every `cadence` ticks - and 20 and 8 share a factor,
+/// so those residues were not sampled evenly. Normal's four seats came out
+/// at 13.3%, 8.9%, 11.9% and 13.7% against an intended 12.5%, and because
+/// nothing in the draw varied with the board it was the same handicap in
+/// every round ever played. It was worth about 4 sigma of seat drift on a
+/// 3000-game fairness sweep, on a beach whose four corners are identical by
+/// construction.
+#[test]
+fn every_seat_blunders_at_the_same_rate_it_is_offered() {
+    for level in [BotLevel::Easy, BotLevel::Normal] {
+        let intended = 1.0 / level.blunder_every() as f64;
+        let straight = PlayerAction::Place {
+            x: 3,
+            y: 3,
+            dir: Direction::Up,
+        };
+        let rates: Vec<f64> = (0..MAX_PLAYERS as u8)
+            .map(|seat| {
+                // Only the ticks this seat is actually offered a placement
+                // on. Sampling every tick instead is what hid this: across
+                // all ticks the old draw was even, and it was the cadence
+                // picking them out that made it lopsided.
+                let offered: Vec<u64> = (0..5400u64).filter(|t| level.acts_on(seat, *t)).collect();
+                let mut slips = 0u32;
+                // Enough boards that the tolerance below sits at three
+                // standard errors rather than under one.
+                for seed in 0..200u64 {
+                    for &tick in &offered {
+                        if fumble(straight, seat, level, tick, seed) != straight {
+                            slips += 1;
+                        }
+                    }
+                }
+                f64::from(slips) / (200.0 * offered.len() as f64)
+            })
+            .collect();
+        for (seat, rate) in rates.iter().enumerate() {
+            assert!(
+                (rate - intended).abs() < 0.008,
+                "{level:?} seat {seat} slips at {rate:.4}, intended {intended:.4}: {rates:?}"
+            );
+        }
+    }
 }
 
 /// Only the fierce bot crosses the beach for a jackpot: a golden crab

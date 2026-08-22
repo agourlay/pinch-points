@@ -133,11 +133,10 @@ impl BotLevel {
     fn acts_on(self, player: PlayerId, ticks: u64) -> bool {
         let cadence = self.cadence();
         let window = ticks / cadence;
-        let mut z = window.wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            ^ u64::from(player).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z ^= z >> 31;
-        z = z.wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^= z >> 29;
+        let z = avalanche(
+            window.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                ^ u64::from(player).wrapping_mul(0xBF58_476D_1CE4_E5B9),
+        );
         ticks % cadence == z % cadence
     }
 }
@@ -166,7 +165,7 @@ enum Intent {
 /// every peer of an online match derives the same move for it.
 pub fn bot_action(board: &Board, player: PlayerId, level: BotLevel) -> PlayerAction {
     let (wanted, intent) = decide(board, player, level);
-    let wanted = fumble(wanted, player, level, board.ticks());
+    let wanted = fumble(wanted, player, level, board.ticks(), board.seed());
     // Only a placement has a tile to walk to, or a post to cost; nothing
     // else waits or weighs.
     if let PlayerAction::Place { x, y, .. } = wanted
@@ -178,17 +177,37 @@ pub fn bot_action(board: &Board, player: PlayerId, level: BotLevel) -> PlayerAct
     wanted
 }
 
-/// The easy bot's hand slips: one placement in four comes out pointing the
-/// wrong way. A legible difficulty knob, one you can watch happen, where
-/// "thinks less often" is invisible.
-fn fumble(action: PlayerAction, player: PlayerId, level: BotLevel, ticks: u64) -> PlayerAction {
+/// splitmix64's finaliser: the shifts and multiply that fold a struck-together
+/// key's high bits down over its low ones. Shared by the two draws this file
+/// makes from state that is not itself random.
+///
+/// It does not make every bit as good as every other - a multiply carries
+/// upwards only, so the lowest bits stay the least mixed. Whoever reads the
+/// result has to know which end to read from; see [`slips`].
+fn avalanche(mut z: u64) -> u64 {
+    z ^= z >> 31;
+    z = z.wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 29;
+    z
+}
+
+/// The bot's hand slips: one placement in [`BotLevel::blunder_every`] comes
+/// out pointing the wrong way. A legible difficulty knob, one you can watch
+/// happen, where "thinks less often" is invisible.
+fn fumble(
+    action: PlayerAction,
+    player: PlayerId,
+    level: BotLevel,
+    ticks: u64,
+    seed: u64,
+) -> PlayerAction {
     let every = level.blunder_every();
     if every == 0 {
         return action;
     }
     // Only a placement can come out crooked; the tile is still the right one.
     if let PlayerAction::Place { x, y, dir } = action
-        && (ticks ^ u64::from(player)).is_multiple_of(every)
+        && slips(ticks, player, seed, every)
     {
         return PlayerAction::Place {
             x,
@@ -197,6 +216,38 @@ fn fumble(action: PlayerAction, player: PlayerId, level: BotLevel, ticks: u64) -
         };
     }
     action
+}
+
+/// Whether the hand slips on a placement made by `player` at `ticks` on the
+/// board `seed` built: one in `every`, and the same one on every peer.
+///
+/// The board's seed is in the draw, and both of the other two are why. This
+/// was `(ticks ^ player).is_multiple_of(every)`, which put each seat on a
+/// residue of its own mod `every`, while [`BotLevel::acts_on`] only offers
+/// a seat the chance to place every `cadence` ticks - and 20 and 8 share a
+/// factor, so the residues were not sampled evenly. The rates came out
+/// 8.9% to 13.7% against an intended 12.5%: a standing handicap on three
+/// seats in four, worth about 4 sigma of seat drift on a 3000-game sweep.
+///
+/// Being a function of the tick alone, it was also the *same* handicap in
+/// every round ever played, so no amount of averaging could find it. The
+/// seed is what varies it from board to board; it is fixed for the life of
+/// a board, consumes no PRNG state, and travels in the snapshot, so peers
+/// and pasted rounds still agree to the tick.
+fn slips(ticks: u64, player: PlayerId, seed: u64, every: u64) -> bool {
+    let z = avalanche(
+        ticks.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ u64::from(player).wrapping_mul(0xBF58_476D_1CE4_E5B9)
+            ^ seed,
+    );
+    // The draw is `z` scaled into `0..every`, and a slip is the first
+    // bucket. Scaled from the top of the hash rather than taken as
+    // `z % every`, because every blunder rate here is a power of two and
+    // `%` on one of those reads the lowest bits - the bits a multiplying
+    // hash never carries into. Written that way the seat bias survived the
+    // rewrite at Easy's one-in-four: rates 23.7% to 26.3%, where reading
+    // the top bits gives 24.9% to 25.2%.
+    (u128::from(z) * u128::from(every)) >> 64 == 0
 }
 
 /// Whether this placement is worth the trip.
