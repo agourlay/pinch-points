@@ -202,7 +202,7 @@ prompts, no anti-cheat - so what follows is input and display.
   card are the only lines that speak pad today.
 
 - **B quits the game.** The bridge maps East onto Escape, and Escape on
-  the menu is `AppExit` (`menu_scene/mod.rs:363`, and the comment there
+  the menu is `AppExit` (`menu_scene::menu_input`, and the comment there
   explains why the keyboard wants it). So a Deck player pressing B
   expecting "back" leaves the game, with nothing asked. Either drop East
   from the bridge on the menu screen, or put the same two-press
@@ -272,17 +272,27 @@ prompts, no anti-cheat - so what follows is input and display.
 
 ## Infrastructure
 
-- **v0.1 release** - tag, build releases for Linux/Windows/macOS, itch.io
-  page with the README screenshots. Bump `transport::PROTOCOL_VERSION` with
-  any datagram layout change, so builds that cannot play together say so
-  rather than desyncing. A Steam build is a longer road and has a section
+- **An itch.io page**, with the README screenshots. The binaries exist to
+  put on it: `v0.1.0` is tagged and `release.yml` builds six targets across
+  Linux, Windows and macOS. A Steam build is a longer road and has a section
   of its own above; the update check is the one place the two disagree,
   since it wants to be on for a downloaded build and off for a store one.
 - **Balance harness in CI** - run `examples/balance.rs` and
   `examples/ladder.rs` nightly and track seat drift and the difficulty ladder;
-  both are cheap and both have caught real regressions (an inverted ladder,
-  for one). Standing at 2026-08-11 (`BALANCE_FULL=1`), worst seat deviation
-  per generated sweep: two seats 0.2 sigma, four 1.1 on the 12x9 beach and
-  1.6 on the 16x11, six 3.2. The 16x11 run is 200 games against the others'
-  3000, so its figure is the noisy one and not a fifth-column effect; a
-  nightly job should even the sample sizes before reading anything into it.
+  both are cheap - a minute for the pair - and both have caught real
+  regressions: an inverted ladder once, and a seat handicap in the bot's
+  blunder draw that had been in every round ever played.
+
+  That last one is the argument for the nightly. The figures here were taken
+  2026-08-11 and nobody looked again until 2026-08-22, by which time every
+  one of them had moved, one from 3.2 sigma to 5.9. Standing at 2026-08-22
+  (`BALANCE_FULL=1`), worst seat deviation per generated sweep: two seats
+  0.3 sigma, four 1.3 on the 12x9 beach and 1.2 on the 16x11, six 2.5. The
+  16x11 run is 200 games against the others' 3000, so its figure is the
+  noisy one and not a fifth-column effect; a nightly job should even the
+  sample sizes before reading anything into it.
+
+  Read the generated sweeps and not the `classic` ones: those play a single
+  handmade board a hundred times with only the warm-up offset varying, which
+  is a small and heavily correlated sample, and their sigmas swing several
+  points between runs that change nothing they measure.
