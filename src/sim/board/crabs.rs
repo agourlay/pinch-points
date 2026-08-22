@@ -72,11 +72,17 @@ impl Board {
             // Weighted kind mix so live boards show the whole population:
             // mostly commons, a scattering of juveniles, the odd giant or
             // molting crab, and once in a blue tide a golden jackpot.
+            //
+            // Molting was 4% and is 3%; the point went to the commons. It
+            // is the only kind whose effect outlives the banking, so its
+            // rate and `LURE_COOLDOWN` set lure uptime together, and one
+            // in twenty-five crabs arriving with a lure attached kept the
+            // beach under one for a third of a round.
             let kind = match self.rng.next_u32() % 100 {
-                0..=68 => CrabKind::Common,
-                69..=83 => CrabKind::Juvenile,
-                84..=91 => CrabKind::Giant,
-                92..=95 => CrabKind::Molting,
+                0..=69 => CrabKind::Common,
+                70..=84 => CrabKind::Juvenile,
+                85..=92 => CrabKind::Giant,
+                93..=95 => CrabKind::Molting,
                 96..=97 => CrabKind::Golden,
                 98.. => CrabKind::Sparkling,
             };

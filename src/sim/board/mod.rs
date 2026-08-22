@@ -15,13 +15,22 @@ pub const TIER_FLOORS: [u32; 4] = [0, 10, 25, 50];
 pub const SPILL_CAP: u32 = 8;
 /// Molting-crab lure duration: 10 s at 30 Hz (spec §3.2).
 pub const LURE_TICKS: u32 = 300;
-/// Quiet spell after a lure ends before another may start, same 10 s.
+/// Quiet spell after a lure ends before another may start: 20 s, twice the
+/// lure itself.
 ///
 /// Balance: the lure pulls *every* loose crab to one castle, and the crabs it
 /// delivers include the next molting crab, so an unguarded lure re-arms
-/// itself. Non-stacking plus a cooldown caps lure uptime at half a round and
-/// stops the first molt from deciding it.
-pub const LURE_COOLDOWN: u32 = 300;
+/// itself. Non-stacking plus a cooldown stops the first molt from deciding
+/// the round.
+///
+/// Was 10 s, matching the lure. That set the floor for one lure to the next
+/// at 20 s, and the leader kept hitting it: a measured six-player round ran
+/// lures 22.9 s, 25.8 s, 27.2 s and 23.3 s apart, one castle holding 50 of
+/// the 60 lured seconds, a third of the round. Doubling the spell puts the
+/// floor at 30 s and the uptime ceiling at a third of a round rather than
+/// half, which is enough separation for the beach to refill and the other
+/// castles to have a turn at it.
+pub const LURE_COOLDOWN: u32 = 600;
 /// Versus signposts fade away after this many ticks (10 s, the original's
 /// balance valve against stale fortifications). Puzzle-rule boards
 /// (CapPolicy::Reject) keep posts forever: a fixed inventory implies

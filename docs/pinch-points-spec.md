@@ -74,12 +74,12 @@ control. Each carries a **handedness** bit assigned at spawn.
 | **Common crab** | 1.0× | 1 | The bulk of the population |
 | **Juvenile** | 1.5× | 2 | Fast, hard to route |
 | **Giant crab** | 0.6× | 10 | Slow, valuable, a liability to protect |
-| **Molting crab** | 1.0× | 5 + effect | On banking: for 10 s all loose crabs path toward the banker's castle |
+| **Molting crab** | 1.0× | 5 + effect | On banking: for 10 s all loose crabs path toward the banker's castle. Lures do not stack, and a further 20 s must pass after one ends before another may start |
 | **Golden crab** | 1.25× | 50 | The jackpot: rare and quick |
 | **Sparkling crab** | 1.0× | 1 + effect | On banking: spins the tide-event roulette (§3.6) |
 
 Distinct values mean what is walking toward a castle reads as a score
-forecast. Spawner mix: 69% common, 15% juvenile, 8% giant, 4% molting,
+forecast. Spawner mix: 70% common, 15% juvenile, 8% giant, 3% molting,
 2% golden, 2% sparkling, deterministic per seed.
 
 ### 3.3 Signposts (the player's only verb)

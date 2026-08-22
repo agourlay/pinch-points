@@ -98,7 +98,14 @@ const TICKS: u64 = 10_000;
 /// Anchor value for cross-platform comparison. If a deliberate rule change
 /// shifts it, rerun and update; an unexplained shift is a determinism bug.
 ///
-/// Last re-derived 2026-08-21, when castle raids became a board switch so
+/// Last re-derived 2026-08-22, when the lure was given room: the quiet
+/// spell after one ends went from 10 s to 20 s and the molting crab's share
+/// of the spawn mix from 4% to 3%. Both move this round - a lure decides
+/// where every loose crab walks, and the mix bands shifted so crabs above
+/// the molting band draw a different kind, and the kinds move at different
+/// speeds.
+///
+/// Before that, 2026-08-21, when castle raids became a board switch so
 /// puzzles could turn them off. `castle_raids` joined the fingerprint
 /// because it decides whether a gull reaching a castle takes anything, and
 /// two boards that disagreed on it would report the same hash and then
@@ -122,7 +129,7 @@ const TICKS: u64 = 10_000;
 /// did not. (The rules moved that day too: the lure stopped stacking, the
 /// roulette stopped rolling gull events into the surge, and the spawners
 /// took a crab cap.)
-const EXPECTED_HASH: u64 = 0x897d_fa31_1809_e62f;
+const EXPECTED_HASH: u64 = 0x43da_9a5b_d15b_fcf5;
 
 #[test]
 fn ten_thousand_ticks_reproduce_exactly() {

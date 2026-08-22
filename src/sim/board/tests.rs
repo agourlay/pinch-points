@@ -802,19 +802,18 @@ fn the_beach_fills_to_a_cap_and_mania_to_twice_it() {
     );
 
     board.apply_tide_event(TideEvent::CrabMania, 0);
+    // Watched across the whole flood rather than read at the end of it. The
+    // mania lasts `EVENT_TICKS` and the beach drains back to the cap once it
+    // lifts, so a single count taken 600 ticks later measures the drain and
+    // not the flood: this asserted on the tail, and held only because the
+    // tail happened to land above the line.
+    let mut peak = board.crabs().len();
     for _ in 0..600 {
         board.tick_idle();
+        peak = peak.max(board.crabs().len());
     }
-    assert!(
-        board.crabs().len() > cap + 2,
-        "the mania floods past the cap, saw {}",
-        board.crabs().len()
-    );
-    assert!(
-        board.crabs().len() <= cap * 2 + 4,
-        "but not without bound, saw {}",
-        board.crabs().len()
-    );
+    assert!(peak > cap + 2, "the mania floods past the cap, saw {peak}");
+    assert!(peak <= cap * 2 + 4, "but not without bound, saw {peak}");
 }
 
 /// The surge already doubles the flock, so the roulette swaps its two gull
