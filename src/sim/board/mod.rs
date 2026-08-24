@@ -197,6 +197,40 @@ impl CapPolicy {
     }
 }
 
+/// The rules a board is built with: the signpost cap and what happens at
+/// it, the ambient gull rate, the tide, and whether gulls may raid. Set
+/// by the level or the lobby before the first tick and, apart from the
+/// surge doubling of the gull rate, untouched by play. Hashed and saved
+/// like the rest of the board: peers on different rules would desync.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Rules {
+    pub signpost_cap: u8,
+    pub cap_policy: CapPolicy,
+    /// Auto-spawn a gull at a PRNG edge tile every this many ticks; 0 = off.
+    pub gull_period: u32,
+    /// Round length in ticks (the tide, spec §3.6). None = untimed. When it
+    /// reaches zero the sim freezes: scores are locked at the wave.
+    pub round_length: Option<u32>,
+    /// Whether a gull reaching a castle carries off half its bank
+    /// (spec §3.4). True on a versus beach, where robbing a rival is the
+    /// point.
+    ///
+    /// False in a puzzle, where a raid has nothing to take and one bad
+    /// side effect. The score it halves is never shown - the puzzle header
+    /// counts crabs saved, not points - while the spill puts banked crabs
+    /// back on the sand, and each of those counts as newly spawned. That
+    /// is the denominator of "Saved a/b", so the level's own target grew
+    /// every time a gull touched the castle. Nine shipped campaign levels
+    /// did it while playing their authored solution.
+    ///
+    /// The gull still walks in and still leaves the beach with the flock.
+    /// That departure is load-bearing and was nobody's plan: a castle is
+    /// the one tile that takes a gull off the sand, and the levels were
+    /// tuned around it. Shutting the door instead left Two Giants with no
+    /// two-post solution at all.
+    pub castle_raids: bool,
+}
+
 /// The entire game state. No engine types, no floats, no hash maps: every
 /// tick is a pure function of prior state plus one action per seat, so the
 /// same seed and input list replays bit-identically on any platform.
@@ -215,21 +249,16 @@ pub struct Board {
     v_walls: Vec<bool>,
     tiles: Vec<TileKind>,
     signposts: Vec<Option<Signpost>>,
+    /// The rules this board plays by, set at construction.
+    rules: Rules,
     crabs: Vec<Crab>,
     scores: [u32; MAX_PLAYERS],
     rng: Pcg32,
     tick: u64,
     signpost_seq: u64,
     next_crab_id: u32,
-    signpost_cap: u8,
-    cap_policy: CapPolicy,
     gulls: Vec<Gull>,
     next_gull_id: u32,
-    /// Auto-spawn a gull at a PRNG edge tile every this many ticks; 0 = off.
-    gull_period: u32,
-    /// Round length in ticks (the tide, spec §3.6). None = untimed. When it
-    /// reaches zero the sim freezes: scores are locked at the wave.
-    round_length: Option<u32>,
     /// Active molting-crab lure: all loose crabs path toward this player's
     /// castle for the remaining ticks (spec §3.2).
     lure: Option<(PlayerId, u32)>,
@@ -241,24 +270,6 @@ pub struct Board {
     crabs_banked: u32,
     /// Golden crabs banked (challenge goals).
     golden_banked: u32,
-    /// Whether a gull reaching a castle carries off half its bank
-    /// (spec §3.4). True on a versus beach, where robbing a rival is the
-    /// point.
-    ///
-    /// False in a puzzle, where a raid has nothing to take and one bad
-    /// side effect. The score it halves is never shown - the puzzle header
-    /// counts crabs saved, not points - while the spill puts banked crabs
-    /// back on the sand, and each of those counts as newly spawned. That
-    /// is the denominator of "Saved a/b", so the level's own target grew
-    /// every time a gull touched the castle. Nine shipped campaign levels
-    /// did it while playing their authored solution.
-    ///
-    /// The gull still walks in and still leaves the beach with the flock.
-    /// That departure is load-bearing and was nobody's plan: a castle is
-    /// the one tile that takes a gull off the sand, and the levels were
-    /// tuned around it. Shutting the door instead left Two Giants with no
-    /// two-post solution at all.
-    castle_raids: bool,
     /// Tide events fire only where enabled (versus arenas, the attract
     /// beach), never in puzzles or goal-checked challenges.
     events_enabled: bool,
@@ -292,23 +303,25 @@ impl Board {
             v_walls: vec![false; h * (w + 1)],
             tiles: vec![TileKind::Empty; w * h],
             signposts: vec![None; w * h],
+            rules: Rules {
+                signpost_cap: MAX_SIGNPOSTS_PER_PLAYER as u8,
+                cap_policy: CapPolicy::Evict,
+                gull_period: 0,
+                round_length: None,
+                castle_raids: true,
+            },
             crabs: Vec::new(),
             scores: [0; MAX_PLAYERS],
             rng: Pcg32::new(seed, 0x0005_eaba_55ed),
             tick: 0,
             signpost_seq: 0,
             next_crab_id: 0,
-            signpost_cap: MAX_SIGNPOSTS_PER_PLAYER as u8,
-            cap_policy: CapPolicy::Evict,
             gulls: Vec::new(),
             next_gull_id: 0,
-            gull_period: 0,
-            round_length: None,
             lure: None,
             lure_cooldown: 0,
             crabs_banked: 0,
             golden_banked: 0,
-            castle_raids: true,
             events_enabled: false,
             mania: None,
             tempo: None,
@@ -356,26 +369,26 @@ impl Board {
     /// default (3, evict-oldest); puzzle mode sets (inventory, reject).
     /// Let gulls into the castles, or keep them out. See `castle_raids`.
     pub fn set_castle_raids(&mut self, raids: bool) {
-        self.castle_raids = raids;
+        self.rules.castle_raids = raids;
     }
 
     pub fn castle_raids(&self) -> bool {
-        self.castle_raids
+        self.rules.castle_raids
     }
 
     pub fn set_signpost_rule(&mut self, cap: u8, policy: CapPolicy) {
-        self.signpost_cap = cap;
-        self.cap_policy = policy;
+        self.rules.signpost_cap = cap;
+        self.rules.cap_policy = policy;
     }
 
     /// Auto-spawn a gull every `period` ticks (0 disables). Doubled during
     /// the final-scramble surge of a timed round.
     pub fn set_gull_period(&mut self, period: u32) {
-        self.gull_period = period;
+        self.rules.gull_period = period;
     }
 
     pub fn set_round_length(&mut self, ticks: Option<u32>) {
-        self.round_length = ticks;
+        self.rules.round_length = ticks;
     }
 
     /// Open (or close) the board edges. Opening removes the border walls so
@@ -506,13 +519,15 @@ impl Board {
 
     /// The tide has come in: the round is finished and the sim is frozen.
     pub fn round_over(&self) -> bool {
-        self.round_length
+        self.rules
+            .round_length
             .is_some_and(|len| self.tick >= u64::from(len))
     }
 
     /// Ticks left before the wave, if a round timer is set.
     pub fn remaining_ticks(&self) -> Option<u64> {
-        self.round_length
+        self.rules
+            .round_length
             .map(|len| u64::from(len).saturating_sub(self.tick))
     }
 
@@ -588,11 +603,11 @@ impl Board {
     }
 
     pub fn gull_period(&self) -> u32 {
-        self.gull_period
+        self.rules.gull_period
     }
 
     pub fn round_length(&self) -> Option<u32> {
-        self.round_length
+        self.rules.round_length
     }
 
     /// The seed this board was constructed with.
@@ -715,4 +730,5 @@ mod snapshot;
 mod tests;
 
 pub use events::{Mania, Tempo, TideEvent};
+
 pub(crate) use geometry::Walker;

@@ -32,15 +32,18 @@ impl Board {
             tick: _,
             signpost_seq: _,
             next_crab_id: _,
-            signpost_cap: _,
-            cap_policy: _,
-            gull_period: _,
-            round_length: _,
+            rules:
+                Rules {
+                    signpost_cap: _,
+                    cap_policy: _,
+                    gull_period: _,
+                    round_length: _,
+                    castle_raids: _,
+                },
             lure: _,
             lure_cooldown: _,
             crabs_banked: _,
             golden_banked: _,
-            castle_raids: _,
             events_enabled: _,
             mania: _,
             tempo: _,
@@ -155,8 +158,8 @@ impl Board {
     /// The round's own state: the tide, the active tide effects, and the
     /// counters that outlive a single creature.
     fn hash_round(&self, h: &mut Fnv) {
-        h.u32(self.gull_period);
-        match self.round_length {
+        h.u32(self.rules.gull_period);
+        match self.rules.round_length {
             None => h.u8(0),
             Some(len) => {
                 h.u8(1);
@@ -172,7 +175,7 @@ impl Board {
             }
         }
         h.u32(self.golden_banked);
-        h.bool(self.castle_raids);
+        h.bool(self.rules.castle_raids);
         h.bool(self.events_enabled);
         h.bool(self.wrap);
         match self.mania {
@@ -210,8 +213,8 @@ impl Board {
         h.u64(self.signpost_seq);
         h.u32(self.next_crab_id);
         h.u32(self.crabs_banked);
-        h.u8(self.signpost_cap);
-        h.u8(match self.cap_policy {
+        h.u8(self.rules.signpost_cap);
+        h.u8(match self.rules.cap_policy {
             CapPolicy::Evict => 0,
             CapPolicy::Reject => 1,
         });

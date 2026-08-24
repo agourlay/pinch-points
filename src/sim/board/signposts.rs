@@ -28,8 +28,8 @@ impl Board {
             Some(sp) => sp.owner == player,
             // Empty tile: at the cap, only the evicting rule still places.
             None => {
-                self.signpost_count(player) < self.signpost_cap as usize
-                    || self.cap_policy == CapPolicy::Evict
+                self.signpost_count(player) < self.rules.signpost_cap as usize
+                    || self.rules.cap_policy == CapPolicy::Evict
             }
         }
     }
@@ -44,7 +44,7 @@ impl Board {
     /// drift: under `Evict` this is never true, because the placement
     /// succeeds and takes the oldest in trade.
     pub fn out_of_signposts(&self, player: PlayerId, x: u8, y: u8) -> bool {
-        if self.cap_policy != CapPolicy::Reject
+        if self.rules.cap_policy != CapPolicy::Reject
             || seat(player).is_none()
             || !self.in_bounds(i32::from(x), i32::from(y))
         {
@@ -57,7 +57,7 @@ impl Board {
         // gone there either.
         self.tiles[t] == TileKind::Empty
             && self.signposts[t].is_none()
-            && self.signpost_count(player) >= self.signpost_cap as usize
+            && self.signpost_count(player) >= self.rules.signpost_cap as usize
     }
 
     pub fn place_signpost(&mut self, player: PlayerId, x: u8, y: u8, dir: Direction) -> bool {
@@ -68,7 +68,8 @@ impl Board {
         // Re-pointing your own signpost refreshes it to Full and makes it
         // your newest for cap eviction; the count is unchanged so the cap
         // never triggers.
-        if self.signposts[t].is_none() && self.signpost_count(player) >= self.signpost_cap as usize
+        if self.signposts[t].is_none()
+            && self.signpost_count(player) >= self.rules.signpost_cap as usize
         {
             // CapPolicy::Evict (Reject was filtered above): drop the oldest.
             let oldest = self
@@ -101,7 +102,7 @@ impl Board {
     /// Remaining life of a signpost as a 0..=1 fraction (always 1 under
     /// puzzle rules, where posts are permanent).
     pub fn signpost_fade(&self, sp: &Signpost) -> f32 {
-        match self.cap_policy {
+        match self.rules.cap_policy {
             CapPolicy::Reject => 1.0,
             CapPolicy::Evict => {
                 let age = self.tick.saturating_sub(sp.placed) as f32;
@@ -111,7 +112,7 @@ impl Board {
     }
 
     pub(super) fn expire_signposts(&mut self) {
-        if self.cap_policy != CapPolicy::Evict {
+        if self.rules.cap_policy != CapPolicy::Evict {
             return;
         }
         let now = self.tick;
@@ -178,6 +179,6 @@ impl Board {
 
     /// The current signpost cap rule, for serialization.
     pub fn signpost_rule(&self) -> (u8, CapPolicy) {
-        (self.signpost_cap, self.cap_policy)
+        (self.rules.signpost_cap, self.rules.cap_policy)
     }
 }

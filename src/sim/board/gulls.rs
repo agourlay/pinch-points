@@ -42,13 +42,13 @@ impl Board {
     /// during the final-scramble surge), at a PRNG perimeter tile, facing
     /// into the board.
     pub(super) fn run_gull_spawner(&mut self) {
-        if self.gull_period == 0 {
+        if self.rules.gull_period == 0 {
             return;
         }
         let period = if self.in_surge() {
-            (self.gull_period / 2).max(1)
+            (self.rules.gull_period / 2).max(1)
         } else {
-            self.gull_period
+            self.rules.gull_period
         };
         if !self.tick.is_multiple_of(u64::from(period)) {
             return;
@@ -141,7 +141,7 @@ impl Board {
     fn gull_arrival(&mut self, gull: &mut Gull) -> bool {
         let t = gull.tile as usize;
         if let TileKind::Castle(owner) = self.tiles[t] {
-            if self.castle_raids {
+            if self.rules.castle_raids {
                 self.damage_castle(owner, gull.tile);
             }
             return true;
@@ -204,7 +204,7 @@ impl Board {
                     // A gull that lands on a castle raids it on the spot and
                     // departs with the loot, like a walking raid.
                     if let TileKind::Castle(owner) = self.tiles[gull.tile as usize] {
-                        if self.castle_raids {
+                        if self.rules.castle_raids {
                             self.damage_castle(owner, gull.tile);
                         }
                         return true;

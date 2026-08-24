@@ -35,8 +35,8 @@ impl Board {
         let _ = writeln!(
             out,
             "rule: {} {}",
-            self.cap_policy.token(),
-            self.signpost_cap
+            self.rules.cap_policy.token(),
+            self.rules.signpost_cap
         );
         let _ = writeln!(
             out,
@@ -49,16 +49,16 @@ impl Board {
         );
         let scores: Vec<String> = self.scores.iter().map(u32::to_string).collect();
         let _ = writeln!(out, "scores: {}", scores.join(" "));
-        let _ = writeln!(out, "gull_period: {}", self.gull_period);
+        let _ = writeln!(out, "gull_period: {}", self.rules.gull_period);
         // Everything below is omitted at its default, as a board between
         // rounds mostly is.
-        if let Some(len) = self.round_length {
+        if let Some(len) = self.rules.round_length {
             let _ = writeln!(out, "round: {len}");
         }
         if self.wrap {
             let _ = writeln!(out, "wrap: on");
         }
-        if !self.castle_raids {
+        if !self.rules.castle_raids {
             let _ = writeln!(out, "raids: off");
         }
         if self.events_enabled {
@@ -357,23 +357,25 @@ impl Fields {
             v_walls,
             tiles,
             signposts,
+            rules: Rules {
+                signpost_cap,
+                cap_policy,
+                gull_period,
+                round_length: self.round_length,
+                castle_raids: !self.no_castle_raids,
+            },
             crabs: self.crabs,
             scores,
             rng: Pcg32::from_state(rng_state, rng_inc),
             tick,
             signpost_seq,
             next_crab_id,
-            signpost_cap,
-            cap_policy,
             gulls: self.gulls,
             next_gull_id,
-            gull_period,
-            round_length: self.round_length,
             lure: self.lure,
             lure_cooldown: self.lure_cooldown,
             crabs_banked,
             golden_banked,
-            castle_raids: !self.no_castle_raids,
             events_enabled: self.events_enabled,
             mania: self.mania,
             tempo: self.tempo,
