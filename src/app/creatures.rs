@@ -356,3 +356,47 @@ pub fn interpolate_gulls(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 30 Hz fixed clock with `overstep` of a period already accumulated,
+    /// so the "between ticks" answer is a fraction the "frozen" answer
+    /// cannot be mistaken for.
+    fn fixed_clock(overstep: f32) -> Time<Fixed> {
+        let mut fixed = Time::<Fixed>::from_hz(30.0);
+        fixed.accumulate_overstep(fixed.timestep().mul_f32(overstep));
+        fixed
+    }
+
+    /// The 1.5-period threshold is the load-bearing part: a render frame
+    /// that falls between ticks at 60+ fps is not a frozen sim, and calling
+    /// it one snaps sprites forward on alternating frames. So a sim that
+    /// has not ticked for 1.2 periods still interpolates, 1.6 periods holds
+    /// at the final position, and the first new tick starts the count over.
+    #[test]
+    fn the_sim_counts_as_frozen_only_past_one_and_a_half_periods() {
+        let fixed = fixed_clock(0.4);
+        let period = fixed.timestep().as_secs_f32();
+        let between = fixed.overstep_fraction();
+        assert!((0.0..1.0).contains(&between), "a fraction, got {between}");
+        let mut watch = (5u64, 0.0f32);
+        // Three frames of 0.4 periods: 1.2 periods without a tick.
+        let mut alpha = 0.0;
+        for _ in 0..3 {
+            alpha = smoothing_alpha(5, &mut watch, period * 0.4, &fixed);
+        }
+        assert_eq!(
+            alpha, between,
+            "1.2 periods without a tick still interpolates"
+        );
+        // One more frame makes 1.6 periods: frozen, hold the final position.
+        let alpha = smoothing_alpha(5, &mut watch, period * 0.4, &fixed);
+        assert_eq!(alpha, 1.0, "1.6 periods without a tick holds still");
+        // The sim ticks: the frozen count resets and interpolation resumes.
+        let alpha = smoothing_alpha(6, &mut watch, period * 0.4, &fixed);
+        assert_eq!(alpha, between, "a fresh tick resets the frozen count");
+        assert_eq!(watch, (6, 0.0), "the watch follows the new tick");
+    }
+}

@@ -320,4 +320,18 @@ mod tests {
         bogus.extend(block(&[SPRING_FORWARD], &[9], &types, false));
         assert!(parse_tzif(&bogus).is_none(), "a type index off the end");
     }
+
+    /// The calendar, at the corners a hand-rolled one gets wrong: a leap
+    /// day, the day after it, the last day of a year, and the leap day of
+    /// a century year that the 400-year rule keeps (2000, unlike 1900).
+    /// Day counts are days since 1970-01-01, the `now_secs() / 86_400`
+    /// every caller feeds in.
+    #[test]
+    fn the_civil_date_lands_on_leap_days_and_year_ends() {
+        assert_eq!(civil_date(19_782), (29, 2), "2024-02-29");
+        assert_eq!(civil_date(19_783), (1, 3), "2024-03-01");
+        assert_eq!(civil_date(20_088), (31, 12), "2024-12-31");
+        assert_eq!(civil_date(11_016), (29, 2), "2000-02-29");
+        assert_eq!(civil_date(0), (1, 1), "the epoch itself");
+    }
 }

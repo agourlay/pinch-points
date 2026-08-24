@@ -545,3 +545,42 @@ fn tile_from_glyph(c: char) -> Option<TileKind> {
 fn parse_dir(s: &str) -> Result<Direction, String> {
     Direction::from_letter(s).ok_or_else(|| format!("bad direction {s:?}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 2x2 board, sand except for a rock at (1,1), with the given header
+    /// lines in front of it.
+    fn level_with(header: &str) -> Result<Level, String> {
+        let text =
+            format!("name: T\nposts: 1\n{header}\nmap:\n+-+-+\n|.|.|\n+-+-+\n|.|#|\n+-+-+\n");
+        Level::parse(&text)
+    }
+
+    /// Placement is the last thing `parse` checks, and each refusal has to
+    /// name its reason: these files are hand-edited and pasted as codes,
+    /// and "invalid level" tells the author nothing. A spawner with period
+    /// 0 would divide the sim's tick by zero; a crab on a rock is standing
+    /// where nothing walks; an entity off the board would index past the
+    /// tile vector, which `spawn_crab` meets with a panic.
+    #[test]
+    fn placing_an_entity_where_it_cannot_go_is_refused_with_the_reason() {
+        let err = level_with("spawner: 0,0 R 0").unwrap_err();
+        assert!(err.contains("period must be at least 1"), "{err}");
+        let err = level_with("crab: 1,1 R L common").unwrap_err();
+        assert!(err.contains("standing on a rock"), "{err}");
+        let err = level_with("gull: 1,1 R").unwrap_err();
+        assert!(err.contains("standing on a rock"), "{err}");
+        for line in ["spawner: 2,0 R 4", "crab: 0,2 R L common", "gull: 5,5 D"] {
+            let err = level_with(line).unwrap_err();
+            assert!(err.contains("off the 2x2 board"), "{line}: {err}");
+        }
+        // And the same lines with their coordinates fixed are placed.
+        let level = level_with("spawner: 0,0 R 4\ncrab: 1,0 R L common\ngull: 0,1 R")
+            .expect("a valid placement");
+        assert_eq!(level.board.crabs().len(), 1);
+        assert_eq!(level.board.gulls().len(), 1);
+        assert!(matches!(level.board.tile_at(0, 0), TileKind::Spawner(_)));
+    }
+}

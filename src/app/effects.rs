@@ -388,3 +388,37 @@ pub fn moment_effects(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `range` feeds particle lifetimes, sizes and spins straight into
+    /// sprite maths, and a draw that lands on or past `hi` (a 24-bit
+    /// mantissa scaled a hair too far) is a zero-length life or a
+    /// negative size nobody will trace back here. Ten thousand draws stay
+    /// in the half-open interval, for a plain range and a negative one.
+    #[test]
+    fn a_visual_draw_never_leaves_the_half_open_range() {
+        let mut rng = VisualRng::default();
+        for (lo, hi) in [(0.35f32, 0.6f32), (-4.0, 4.0), (0.0, std::f32::consts::TAU)] {
+            let (mut min, mut max) = (f32::MAX, f32::MIN);
+            for _ in 0..10_000 {
+                let draw = rng.range(lo, hi);
+                assert!((lo..hi).contains(&draw), "{draw} is outside {lo}..{hi}");
+                min = min.min(draw);
+                max = max.max(draw);
+            }
+            // And it actually spreads across the range rather than sitting
+            // on one end of it.
+            assert!(
+                min < lo + (hi - lo) * 0.05,
+                "min {min} never came near {lo}"
+            );
+            assert!(
+                max > hi - (hi - lo) * 0.05,
+                "max {max} never came near {hi}"
+            );
+        }
+    }
+}

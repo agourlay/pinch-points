@@ -378,10 +378,15 @@ mod tests {
             |ip: &str| subnet_broadcast(ip.parse().expect("addr")).map(|addr| addr.to_string());
         assert_eq!(broadcast("192.168.1.8"), Some("192.168.1.255".into()));
         assert_eq!(broadcast("10.0.0.1"), Some("10.0.0.255".into()));
+        // Only the last octet moves, whatever the first three are.
+        assert_eq!(broadcast("10.1.2.3"), Some("10.1.2.255".into()));
         // Already a broadcast address: shouting at it is still right.
         assert_eq!(broadcast("192.168.1.255"), Some("192.168.1.255".into()));
-        // There is no broadcast in IPv6, and discovery has never spoken it.
+        // There is no broadcast in IPv6, and discovery has never spoken it:
+        // loopback, a global address and a v4-mapped one all decline.
         assert_eq!(broadcast("::1"), None);
+        assert_eq!(broadcast("2001:db8::8"), None);
+        assert_eq!(broadcast("::ffff:10.1.2.3"), None);
     }
 
     /// Hear a beacon, and hear what it said. The port comes from the

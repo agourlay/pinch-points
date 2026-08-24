@@ -100,6 +100,57 @@ pub fn name_from_wire(bytes: &WireName) -> String {
 }
 
 #[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    /// A name goes onto the wire in 24 bytes and comes back off it from a
+    /// stranger. Wide scripts are cut at a character boundary so what
+    /// comes back is always valid UTF-8; a name that fills all 24 bytes
+    /// has no NUL terminator and still reads back whole; the save-file
+    /// separators are stripped *before* the 12-character cap so a name
+    /// padded with them cannot smuggle an empty one past it; and a name
+    /// with nothing left after trimming is the empty string, which every
+    /// caller treats as "no name given" (the roster stops at it, a table
+    /// slot keeps what it had). The default name is the caller's business,
+    /// not this layer's.
+    #[test]
+    fn a_wide_name_is_cut_at_a_character_and_read_back() {
+        // Twelve three-byte characters is 36 bytes: only eight fit.
+        let wide = "あ".repeat(12);
+        let bytes = wire_name(&wide);
+        assert!(!bytes.contains(&0), "eight fill the 24 bytes exactly");
+        assert_eq!(name_from_wire(&bytes), "あ".repeat(8));
+        // A two-byte character straddling the end is dropped whole.
+        let bytes = wire_name(&format!("{}é", "a".repeat(23)));
+        assert_eq!(bytes[23], 0, "no half of an 'é' on the wire");
+        assert_eq!(name_from_wire(&bytes), "a".repeat(12), "then capped");
+    }
+
+    #[test]
+    fn a_name_that_fills_the_wire_has_no_terminator_and_still_reads_back() {
+        let full = "abcdefghijklmnopqrstuvwx";
+        let bytes = wire_name(full);
+        assert!(bytes.iter().all(|&b| b != 0), "every byte is a letter");
+        assert_eq!(name_from_wire(&bytes), &full[..NAME_CHARS]);
+    }
+
+    #[test]
+    fn separators_are_stripped_before_the_cap_and_nothing_left_is_empty() {
+        assert_eq!(name_from_wire(&wire_name("|||||||||||||Alice")), "Alice");
+        assert_eq!(name_from_wire(&wire_name("a:b|c")), "abc");
+        assert_eq!(name_from_wire(&wire_name("  Bob  ")), "Bob");
+        assert_eq!(name_from_wire(&wire_name("Bob\n\u{1b}")), "Bob");
+        for blank in ["", "   ", "|||", ":::", "\t\n", " | : "] {
+            assert_eq!(name_from_wire(&wire_name(blank)), "", "{blank:?}");
+        }
+        // Nonsense bytes are declined rather than replaced.
+        let mut junk = [0xFFu8; WIRE_NAME];
+        junk[WIRE_NAME - 1] = 0;
+        assert_eq!(name_from_wire(&junk), "");
+    }
+}
+
+#[cfg(test)]
 mod chat_tests {
     use super::*;
 

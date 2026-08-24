@@ -1198,3 +1198,225 @@ fn gull_mania_ignores_the_flock_cap() {
         board.gulls().len()
     );
 }
+
+/// Spec §3.4 says a raid halves the score "rounding the loss up": the
+/// castle keeps `score / 2` and the odd crab goes with the gull. A score of
+/// 7 keeps 3 and loses 4, all four spilling back onto the sand (under the
+/// spill cap); 3 keeps 1 and spills 2. Pinned so a later "round to nearest"
+/// cannot creep in and quietly change how devastating a raid on a small
+/// castle is.
+#[test]
+fn a_raid_on_an_odd_score_rounds_the_loss_up_and_spills_it() {
+    for (score, kept, spilled) in [(7, 3, 4), (3, 1, 2)] {
+        let mut board = Board::new(7, 5, 0);
+        board.set_tile(3, 2, TileKind::Castle(0));
+        let castle = board.index_of(3, 2);
+        board.scores[0] = score;
+        board.damage_castle(0, castle);
+        assert_eq!(board.scores()[0], kept, "{score} halves to {kept}");
+        assert_eq!(
+            board.crabs().len(),
+            spilled,
+            "{score}: the lost crabs spill"
+        );
+    }
+}
+
+/// A castle in a corner with a rock on its diagonal has only two open ring
+/// tiles, fewer than the crabs a raid wants to spill. The spill takes what
+/// sand there is and the flock carries the rest off: nothing spawns off the
+/// board or on the rock, and the score still drops by the full half.
+#[test]
+fn a_spill_into_a_cramped_corner_lands_only_on_the_open_sand() {
+    let mut board = Board::new(3, 3, 0);
+    board.set_tile(0, 0, TileKind::Castle(0));
+    board.set_tile(1, 1, TileKind::Rock);
+    let castle = board.index_of(0, 0);
+    board.scores[0] = 7;
+    board.damage_castle(0, castle);
+    assert_eq!(board.scores()[0], 3, "the loss is the full half regardless");
+    let landed: Vec<(u8, u8)> = board
+        .crabs()
+        .iter()
+        .map(|c| board.coords_u8(c.tile))
+        .collect();
+    assert_eq!(
+        landed.len(),
+        2,
+        "only two ring tiles are open sand: {landed:?}"
+    );
+    for &(x, y) in &landed {
+        assert!(x < 3 && y < 3, "spilled crab off the board at ({x},{y})");
+        assert!(
+            matches!((x, y), (1, 0) | (0, 1)),
+            "spilled crab on the castle or the rock at ({x},{y})"
+        );
+    }
+}
+
+/// Where the ambient flock comes from: every spawn is on the edge of the
+/// board and walks inward, and over enough rolls every edge tile gets its
+/// turn. The perimeter arithmetic has four branches (top, bottom, left,
+/// right) and an off-by-one in any of them either skips tiles or, worse,
+/// indexes past the board.
+#[test]
+fn the_gull_spawner_covers_the_whole_perimeter_and_faces_inward() {
+    let mut board = Board::new(4, 3, 7);
+    board.set_gull_period(1);
+    let mut hit = std::collections::BTreeSet::new();
+    for _ in 0..400 {
+        board.run_gull_spawner();
+        let gull = board.gulls()[0];
+        let (x, y) = board.coords(gull.tile);
+        assert!(
+            x == 0 || y == 0 || x == 3 || y == 2,
+            "spawned inside the board at ({x},{y})"
+        );
+        let (dx, dy) = gull.dir.offset();
+        assert!(
+            board.in_bounds(x + dx, y + dy),
+            "spawned at ({x},{y}) facing {:?}, off the board",
+            gull.dir
+        );
+        hit.insert((x, y));
+        board.gulls.clear();
+    }
+    assert_eq!(
+        hit.len(),
+        10,
+        "every perimeter tile of a 4x3 board: {hit:?}"
+    );
+}
+
+/// A one-wide or one-tall board is all perimeter, and the spawner's
+/// `w * h` branch has to say so: every tile gets a gull eventually, and
+/// none of the four edge branches names a tile the strip does not have.
+/// There is no "inward" on a strip; the spawn's wall resolution turns the
+/// gull along it, and that is asserted as "facing a tile that exists".
+#[test]
+fn the_gull_spawner_walks_the_length_of_a_strip() {
+    for (w, h) in [(1u8, 5u8), (5, 1)] {
+        let mut board = Board::new(w, h, 3);
+        board.set_gull_period(1);
+        let mut hit = std::collections::BTreeSet::new();
+        for _ in 0..200 {
+            board.run_gull_spawner();
+            let gull = board.gulls()[0];
+            let (x, y) = board.coords(gull.tile);
+            let (dx, dy) = gull.dir.offset();
+            assert!(
+                board.in_bounds(x + dx, y + dy),
+                "{w}x{h}: spawned at ({x},{y}) facing {:?}, off the board",
+                gull.dir
+            );
+            hit.insert((x, y));
+            board.gulls.clear();
+        }
+        assert_eq!(hit.len(), 5, "{w}x{h}: every tile of the strip: {hit:?}");
+    }
+}
+
+/// A gull in flight, with its `remaining` hops given.
+fn flying(board: &Board, x: u8, y: u8, dir: Direction, remaining: u8) -> Gull {
+    let tile = board.index_of(x, y);
+    Gull {
+        id: 99,
+        tile,
+        dir,
+        progress: 0,
+        prev_tile: tile,
+        prev_progress: 0,
+        prev_dir: dir,
+        handed: Handedness::Left,
+        state: GullState::Flying { remaining },
+        takeoff_in: 0,
+    }
+}
+
+/// Spec §3.5: a flying gull bounces off the board edge and lands only on a
+/// tile a creature can stand on. On a 4x1 strip with rocks on the far two
+/// tiles, a gull flying right with two hops left runs out over the rocks,
+/// glides one more tile, hits the edge, turns back and puts down on the
+/// first sand it finds. It has to end walking, on sand, in a bounded number
+/// of ticks: a gull that flies forever is a gull that eats nothing all
+/// round.
+#[test]
+fn a_flying_gull_bounces_off_the_edge_and_lands_on_sand() {
+    let mut board = Board::new(4, 1, 0);
+    board.set_tile(2, 0, TileKind::Rock);
+    board.set_tile(3, 0, TileKind::Rock);
+    let gull = flying(&board, 0, 0, Right, 2);
+    board.gulls.push(gull);
+    // Five hops (1, 2, 3, back to 2, back to 1) at one tile per 16 ticks.
+    let hops = 5 * ticks_to_cross(1, u32::from(GULL_FLY_SPEED));
+    for _ in 0..hops {
+        board.tick_idle();
+        if board.gulls()[0].state == GullState::Walking {
+            break;
+        }
+    }
+    let gull = board.gulls()[0];
+    assert_eq!(
+        gull.state,
+        GullState::Walking,
+        "still airborne after {hops} ticks"
+    );
+    let (x, y) = board.coords_u8(gull.tile);
+    assert_eq!(board.tile_at(x, y), TileKind::Empty, "landed on a rock");
+    assert_eq!((x, y), (1, 0), "the first sand on the way back");
+    assert!(gull.takeoff_in > 0, "a fresh takeoff timer on landing");
+}
+
+/// The one-tile board: a gull that takes off has nowhere to fly, forward
+/// or back, and has to land where it stands rather than hop off the edge
+/// into a tile that does not exist.
+#[test]
+fn a_gull_on_a_one_tile_board_has_nowhere_to_fly_and_lands_where_it_is() {
+    let mut board = Board::new(1, 1, 0);
+    let gull = flying(&board, 0, 0, Right, 3);
+    board.gulls.push(gull);
+    for _ in 0..ticks_to_cross(1, u32::from(GULL_FLY_SPEED)) {
+        board.tick_idle();
+    }
+    let gull = board.gulls()[0];
+    assert_eq!(gull.state, GullState::Walking, "landed on the only tile");
+    assert_eq!(gull.tile, 0);
+    assert!(gull.takeoff_in > 0, "a fresh takeoff timer on landing");
+}
+
+/// The bot's cursor anchor: a player's newest post is the one with the
+/// highest sequence number, and re-pointing a post in place takes a fresh
+/// number. Evicting the oldest at the cap and a rival's posts must both
+/// leave the answer alone, or a bot pays for a walk it never made.
+#[test]
+fn the_newest_signpost_is_by_sequence_and_ignores_rivals_and_evictions() {
+    let mut board = Board::new(6, 6, 0);
+    assert_eq!(board.newest_signpost_of(0), None, "nothing placed yet");
+    assert!(board.place_signpost(0, 1, 1, Right));
+    board.tick_idle();
+    assert!(board.place_signpost(0, 2, 2, Right));
+    assert_eq!(board.newest_signpost_of(0), Some((2, 2, 1)));
+    // Re-pointing the first post makes it the newest again, stamped now.
+    board.tick_idle();
+    assert!(board.place_signpost(0, 1, 1, Down));
+    assert_eq!(board.newest_signpost_of(0), Some((1, 1, 2)));
+    // A rival's post, however fresh, is not this player's.
+    board.tick_idle();
+    assert!(board.place_signpost(1, 4, 4, Left));
+    assert_eq!(board.newest_signpost_of(0), Some((1, 1, 2)));
+    assert_eq!(board.newest_signpost_of(1), Some((4, 4, 3)));
+    // A third fills the cap; a fourth evicts the oldest, which is (2, 2)
+    // now that (1, 1) was re-pointed, and the fourth is the newest.
+    assert!(board.place_signpost(0, 3, 3, Up));
+    assert!(board.place_signpost(0, 5, 5, Up));
+    assert!(board.signpost_at(2, 2).is_none(), "the oldest was evicted");
+    assert!(
+        board.signpost_at(1, 1).is_some(),
+        "the re-pointed post survived"
+    );
+    assert_eq!(board.newest_signpost_of(0), Some((5, 5, 3)));
+    // Losing a rival's post changes nothing for this player.
+    assert!(board.remove_signpost(1, 4, 4));
+    assert_eq!(board.newest_signpost_of(0), Some((5, 5, 3)));
+    assert_eq!(board.newest_signpost_of(1), None);
+}
