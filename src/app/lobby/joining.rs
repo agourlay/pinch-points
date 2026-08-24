@@ -137,7 +137,7 @@ pub(super) fn take_a_beach(
             auto_join,
             busy: state.standing().at_a_beach(),
             named: !settings.names[0].trim().is_empty(),
-            to_watch: state.watching,
+            to_watch: state.watching(),
         },
         &state.hosts,
     );
@@ -199,35 +199,38 @@ fn answer_the_silence(
     heard: bool,
     delta: f32,
 ) -> bool {
+    let Some(joined) = state.joined_mut() else {
+        return false;
+    };
     if heard {
         // The first word is the moment this becomes a beach rather than an
         // address. Later ones only keep the patience topped up.
-        if !state.host_answered {
-            state.host_answered = true;
-            state.feedback = match state.watching {
+        let first_word = !joined.host_answered;
+        joined.host_answered = true;
+        joined.host_silence = 0.0;
+        let watching = joined.watching;
+        if first_word {
+            state.feedback = match watching {
                 true => tr.lobby_watching.to_string(),
                 false => tr.lobby_aboard.to_string(),
             };
         }
-        state.host_silence = 0.0;
         return false;
     }
-    state.host_silence += delta;
-    if state.host_silence < NO_ANSWER_AFTER {
+    joined.host_silence += delta;
+    if joined.host_silence < NO_ANSWER_AFTER {
         return false;
     }
     // Let the socket go rather than call forever. The address is still in
     // settings, so J offers it back pre-filled and a typo costs one
     // character rather than the whole line.
-    let called = state
-        .joining
-        .as_ref()
-        .and_then(|transport| transport.peer_addr())
+    let called = joined
+        .transport
+        .peer_addr()
         .map(|addr| addr.to_string())
         .unwrap_or_default();
-    state.joining = None;
+    state.let_go();
     state.table.clear();
-    state.joined_terms = None;
     state.feedback = fill(tr.lobby_no_answer, &[("a", &called)]);
     true
 }
@@ -245,13 +248,11 @@ pub(super) fn dial_at(
 ) {
     match UdpTransport::join(addr) {
         Ok(transport) => {
-            transport.send(greeting(state.watching, &settings.names[0]));
-            state.joining = Some(transport);
-            state.hello_in = ANNOUNCE_EVERY;
+            let watching = state.watching();
+            transport.send(greeting(watching, &settings.names[0]));
             // Calling, not aboard: nothing has answered yet, and on UDP
             // an open socket is no evidence that anything will.
-            state.host_answered = false;
-            state.host_silence = 0.0;
+            state.standing = Standing::Joining(Joined::dialled(transport, watching));
             state.feedback = fill(tr.lobby_calling, &[("a", &addr.to_string())]);
         }
         Err(e) => state.feedback = fill(tr.lobby_could_not_join, &[("e", &e.to_string())]),
@@ -280,7 +281,10 @@ pub(super) fn accept_the_invitation(
     started: Option<Invitation>,
 ) {
     if let Some(invitation) = started {
-        let transport = state.joining.take().expect("checked above");
+        let Standing::Joining(joined) = std::mem::take(&mut state.standing) else {
+            unreachable!("an invitation for a lobby that greeted nobody");
+        };
+        let transport = joined.transport;
         // The host's invitation says whether this is a series, and where
         // it stands: a joiner that assumed otherwise would stop after one
         // round, and one admitted mid-series would start its own tally at
@@ -307,10 +311,10 @@ pub fn join_tick(
     mut next_screen: ResMut<NextState<Screen>>,
     mut next_vphase: ResMut<NextState<VersusPhase>>,
 ) {
-    if state.joining.is_none() {
+    let Some(joined) = state.joined_mut() else {
         return;
-    }
-    let say_hello = once_a_second(&mut state.hello_in, time.delta_secs());
+    };
+    let say_hello = once_a_second(&mut joined.hello_in, time.delta_secs());
     let mut started = None;
     let mut mismatch = None;
     let mut queued = None;
@@ -318,10 +322,10 @@ pub fn join_tick(
     let mut table: Option<Vec<String>> = None;
     let mut host_terms: Option<MatchTerms> = None;
     let mut heard = false;
-    let watching = state.watching;
-    if let Some(transport) = &mut state.joining {
+    let transport = &mut joined.transport;
+    {
         if say_hello {
-            transport.send(greeting(watching, &settings.names[0]));
+            transport.send(greeting(joined.watching, &settings.names[0]));
         }
         for (msg, _) in transport.recv_all() {
             // Anything at all, even a message this screen throws away, is
@@ -383,7 +387,7 @@ pub fn join_tick(
     // socket: greeting it again would only be ignored again, and a joiner
     // left saying hello forever looks exactly like a network fault.
     if let Some(version) = mismatch {
-        state.joining = None;
+        state.let_go();
         state.feedback = fill(
             settings.tr().lobby_version_clash,
             &[
@@ -396,8 +400,10 @@ pub fn join_tick(
     if let Some(table) = table {
         state.table = table;
     }
-    if let Some(terms) = host_terms {
-        state.joined_terms = Some(terms);
+    if let Some(terms) = host_terms
+        && let Some(joined) = state.joined_mut()
+    {
+        joined.terms = Some(terms);
     }
     for (name, text) in said {
         state.hear(&name, &text);
@@ -409,7 +415,8 @@ pub fn join_tick(
             n => fill(tr.lobby_queued_behind, &[("n", &n.to_string())]),
         };
     }
-    let started = started.filter(|invitation| a_fresh_invitation(state.played_seed, invitation));
+    let played = state.joined().and_then(Joined::played_seed);
+    let started = started.filter(|invitation| a_fresh_invitation(played, invitation));
     accept_the_invitation(
         &mut state,
         &mut online,
@@ -475,7 +482,7 @@ mod tests {
         settings.names[0] = "Cy".into();
         let there: SocketAddr = format!("127.0.0.1:{port}").parse().expect("addr");
         dial_at(&mut state, &settings, &crate::app::i18n::EN, there);
-        assert!(state.joining.is_some(), "the socket is open and greeting");
+        assert!(state.joined().is_some(), "the socket is open and greeting");
         let mut greeted = None;
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -688,17 +695,20 @@ mod tests {
     fn a_beach_that_never_answers_is_given_up_on() {
         // Nothing is listening at this address; that is the point.
         let mut state = LobbyState {
-            joining: Some(UdpTransport::join(("127.0.0.1", 47999)).expect("join")),
+            standing: Standing::Joining(Joined::dialled(
+                UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
+                false,
+            )),
             ..LobbyState::default()
         };
 
         let quiet = answer_the_silence(&mut state, &crate::app::i18n::EN, false, 1.0);
         assert!(!quiet, "one second is a lost packet, not an empty address");
-        assert!(state.joining.is_some(), "still calling");
+        assert!(state.joined().is_some(), "still calling");
 
         let quiet = answer_the_silence(&mut state, &crate::app::i18n::EN, false, NO_ANSWER_AFTER);
         assert!(quiet, "and then it stops calling");
-        assert!(state.joining.is_none(), "the socket is let go");
+        assert!(state.joined().is_none(), "the socket is let go");
         assert!(
             state.feedback.contains("127.0.0.1:47999"),
             "and says which address went unanswered: {:?}",
@@ -714,14 +724,17 @@ mod tests {
     #[test]
     fn the_first_word_is_what_makes_it_a_beach() {
         let mut state = LobbyState {
-            joining: Some(UdpTransport::join(("127.0.0.1", 47999)).expect("join")),
+            standing: Standing::Joining(Joined::dialled(
+                UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
+                false,
+            )),
             feedback: "calling...".into(),
             ..LobbyState::default()
         };
 
         answer_the_silence(&mut state, &crate::app::i18n::EN, true, 0.1);
         assert_eq!(state.feedback, crate::app::i18n::EN.lobby_aboard);
-        assert!(state.host_answered);
+        assert!(state.joined().is_some_and(|joined| joined.host_answered));
 
         // And the patience is topped up by every word after it, so a long
         // wait in a lobby is never mistaken for an empty address.
@@ -734,7 +747,7 @@ mod tests {
         answer_the_silence(&mut state, &crate::app::i18n::EN, true, 0.1);
         let quiet = answer_the_silence(&mut state, &crate::app::i18n::EN, false, 1.0);
         assert!(!quiet, "the clock restarted when the host spoke");
-        assert!(state.joining.is_some());
+        assert!(state.joined().is_some());
     }
 
     /// Nor is a dialled address. It names no row of this list, which is

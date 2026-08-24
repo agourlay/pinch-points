@@ -188,11 +188,8 @@ pub(super) fn drive_typing(
             Answered::Chat(line) if line.is_empty() => {}
             Answered::Chat(line) => {
                 let me = settings.names[0].clone();
-                let msg = NetMsg::chat(&me, &line);
-                if let Some((_, transport)) = &state.hosting {
-                    transport.send(msg);
-                } else if let Some(transport) = &state.joining {
-                    transport.send(msg);
+                if let Some(transport) = state.transport() {
+                    transport.send(NetMsg::chat(&me, &line));
                 }
                 state.say(&me, &line);
             }
@@ -553,7 +550,10 @@ mod door_tests {
             Some(Entry::GameName),
             "the next question is up"
         );
-        assert!(!state.joining(), "and nothing was dialled behind it");
+        assert!(
+            state.joined().is_none(),
+            "and nothing was dialled behind it"
+        );
 
         // And the same walk on the road that has no list behind it at all.
         app.world_mut().resource_mut::<LobbyState>().typing =
@@ -565,6 +565,9 @@ mod door_tests {
             Some(Entry::PlayerName),
             "who is dialling is asked next"
         );
-        assert!(!state.joining(), "and the cursor's beach is not taken");
+        assert!(
+            state.joined().is_none(),
+            "and the cursor's beach is not taken"
+        );
     }
 }

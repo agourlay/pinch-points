@@ -110,11 +110,13 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
     let prompt = match lobby.standing() {
         // W armed is the one bit of lobby state a player has to be told
         // about, since it changes what picking a beach does.
-        Standing::ChoosingToWatch => tr.lobby_watch_armed.to_string(),
-        Standing::Joining => tr.lobby_aboard_prompt.to_string(),
-        Standing::Hosting => tr.lobby_broadcasting.to_string(),
-        Standing::Choosing if lobby.hosts.is_empty() => tr.lobby_none_yet.to_string(),
-        Standing::Choosing => {
+        Standing::Choosing { watching: true } => tr.lobby_watch_armed.to_string(),
+        Standing::Joining(_) => tr.lobby_aboard_prompt.to_string(),
+        Standing::Hosting(_) => tr.lobby_broadcasting.to_string(),
+        Standing::Choosing { watching: false } if lobby.hosts.is_empty() => {
+            tr.lobby_none_yet.to_string()
+        }
+        Standing::Choosing { watching: false } => {
             // The beaches themselves are a list of their own now, spawned by
             // the lobby: this line says what to do with it, and how many there
             // are, which the visible rows may not show all of.

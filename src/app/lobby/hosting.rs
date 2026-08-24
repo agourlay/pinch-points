@@ -52,6 +52,19 @@ pub(super) fn idle() -> HostAsk {
     }
 }
 
+/// Peers as they stand on a socket: named, with the given ones watching.
+#[cfg(test)]
+pub(super) fn peers_named(names: &[&str], watchers: &[usize]) -> crate::app::net::PeerBook {
+    let mut peers = crate::app::net::PeerBook::default();
+    for (i, name) in names.iter().enumerate() {
+        peers.row(i).name = name.to_string();
+    }
+    for watcher in watchers {
+        peers.row(*watcher).watch = true;
+    }
+    peers
+}
+
 /// Where this beach is, written the way somebody else would have to type
 /// it: `ip:port`.
 ///
@@ -95,80 +108,64 @@ pub fn host_tick(
     mut next_screen: ResMut<NextState<Screen>>,
     mut next_vphase: ResMut<NextState<VersusPhase>>,
 ) {
-    if state.hosting.is_none() {
-        return;
-    }
     let tr = settings.tr();
-    let do_announce = once_a_second(&mut state.announce_in, time.delta_secs());
-    // Read before the watcher list is taken below, and a frame stale by
-    // the time it goes out, which costs nothing at one beacon a second.
-    let taken = 1 + state.players_aboard() as u8;
     let game_name = state.game_name.clone();
-    let mut watchers = std::mem::take(&mut state.watchers);
-    let mut picked = Picked::default();
-    let mut silence = std::mem::take(&mut state.peer_silence);
-    let delta = time.delta_secs();
-    for since in silence.iter_mut() {
-        *since += delta;
-    }
-    // The host holds a seat too, so the table is never empty. Seats are the
-    // hard limit rather than the configured count: an AI seat gives way to a
-    // player who turns up for it.
+    let Some(hosted) = state.hosted_mut() else {
+        return;
+    };
+    // The occupancy is a frame stale by the time the beacon goes out,
+    // which costs nothing at one beacon a second. The host holds a seat
+    // too, so the table is never empty; seats are the hard limit rather
+    // than the configured count, since an AI seat gives way to a player
+    // who turns up for it.
+    let taken = 1 + hosted.players_aboard() as u8;
     let on_air = crate::transport::OnAir {
         name: &game_name,
         host: &settings.names[0],
         taken,
         seats: MAX_PLAYERS as u8,
     };
-    work_the_socket(
-        &mut state,
-        do_announce,
-        on_air,
-        &mut watchers,
-        &mut silence,
-        &mut picked,
-    );
+    let picked = work_the_socket(hosted, time.delta_secs(), on_air);
+    let do_announce = picked.announced;
     for (_, name, text) in picked.said {
         state.hear(&name, &text);
     }
-    note_arrivals_and_departures(&mut state, tr, picked.greeted, silence);
+    note_arrivals_and_departures(&mut state, tr, picked.greeted);
     // Counted after the departures, so a table that just lost somebody is
     // not announced as still holding them.
-    let joined = match &state.hosting {
-        Some((_, transport)) => transport.peer_count(),
-        None => 0,
-    };
-    state.watchers = watchers;
-    state.joined_peers = joined;
+    let joined = state.hosted().map_or(0, |hosted| hosted.peers.len());
     // The host's own view of the table, and the peers': the same list,
     // sent on every beacon tick so a lost one costs a second, not a screen
     // that stays wrong until somebody joins or leaves.
     state.table = state.roster(tr, &settings.names[0]);
-    if do_announce && let Some((_, transport)) = &state.hosting {
+    if do_announce && let Some(hosted) = state.hosted() {
         let names = crate::transport::wire_table(&state.table);
         // The dials travel with the roster so a joiner's terms card shows
         // the match it is joining. The seed is not one of them yet - it is
         // struck fresh at launch - so a placeholder rides along and the
         // card ignores it.
         let terms = crate::app::match_setup::terms(&config, settings.team_mode, 0);
-        transport.send(NetMsg::Roster {
+        hosted.transport.send(NetMsg::Roster {
             seats: state.table.len().min(MAX_PLAYERS) as u8,
             names,
             terms,
         });
     }
-    let players_aboard = state.players_aboard();
+    let (players_aboard, watchers_aboard, port) = state.hosted().map_or((0, 0, None), |hosted| {
+        (
+            hosted.players_aboard(),
+            hosted.watchers_aboard(),
+            hosted.transport.local_addr().ok().map(|addr| addr.port()),
+        )
+    });
     if joined > 0 {
-        state.feedback = gathering_feedback(tr, &config, players_aboard, state.watchers.len());
+        state.feedback = gathering_feedback(tr, &config, players_aboard, watchers_aboard);
     } else {
         // The last peer timed out: without this the line kept saying "1
         // rival aboard" over an empty table until somebody else turned up,
         // and Enter did nothing. Back to the waiting message it started on.
-        state.feedback = match &state.hosting {
-            Some((_, transport)) => match transport.local_addr() {
-                Ok(addr) => fill(tr.lobby_hosting, &[("p", &addr.port().to_string())]),
-                Err(_) => tr.lobby_hosting_noport.to_string(),
-            },
+        state.feedback = match port {
+            Some(port) => fill(tr.lobby_hosting, &[("p", &port.to_string())]),
             None => tr.lobby_hosting_noport.to_string(),
         };
     }
@@ -212,13 +209,22 @@ fn launch_the_match(
     next_screen: &mut NextState<Screen>,
     next_vphase: &mut NextState<VersusPhase>,
 ) {
-    let watchers = state.watchers.clone();
     // The beacon does not stop at launch, it changes what it says: a
     // running beach cannot be joined, since lockstep has nothing to
     // catch a latecomer up with, but it can be queued for. The
-    // announcer rides along into the session to keep saying so.
-    let (announcer, transport) = state.hosting.take().expect("checked above");
-    let plan = seat_plan(joined, &watchers);
+    // announcer rides along into the session to keep saying so, and the
+    // peers ride along to be dealt their chairs.
+    let Standing::Hosting(Hosted {
+        announcer,
+        transport,
+        peers,
+        announce_in: _,
+    }) = std::mem::take(&mut state.standing)
+    else {
+        unreachable!("launching a match from a lobby that is not hosting");
+    };
+    debug_assert_eq!(joined, peers.len());
+    let plan = seat_plan(&peers);
     let humans = 1 + plan.iter().filter(|seat| seat.is_some()).count() as u8;
     // AI seats come from the host's match setup, and sit behind the
     // humans. The host's dials and its team-scoring setting travel with
@@ -252,9 +258,9 @@ fn launch_the_match(
     names[0].clone_from(&settings.names[0]);
     for (peer, slot) in plan.iter().enumerate() {
         if let Some(seat) = slot
-            && let Some(name) = state.peer_names.get(peer)
+            && let Some(peer) = peers.get(peer)
         {
-            names[usize::from(*seat)] = name.clone();
+            names[usize::from(*seat)].clone_from(&peer.name);
         }
     }
     let wire_names = crate::transport::wire_table(&names);
@@ -289,6 +295,7 @@ fn launch_the_match(
     // file: if the two ever disagreed, the hash check would find it and
     // nobody could say which of them was right.
     session.beach = beach;
+    session.peers = peers;
     session.peers.deal(&plan);
     session.names = names;
     session.stay_on_air(announcer);
@@ -313,41 +320,44 @@ fn note_arrivals_and_departures(
     state: &mut LobbyState,
     tr: &'static crate::app::i18n::Tr,
     greeted: Vec<(usize, String)>,
-    silence: Vec<f32>,
 ) {
     for (from, told) in greeted {
-        if state.peer_names.len() <= from {
-            state.peer_names.resize(from + 1, String::new());
-        }
+        let Some(hosted) = state.hosted_mut() else {
+            return;
+        };
         // A greeting arrives every second; only the first one, or a change
         // of mind about the name, is news worth putting in the feed.
-        let arrived = state.peer_names[from] != told;
-        state.peer_names[from].clone_from(&told);
+        let row = hosted.peers.row(from);
+        let arrived = row.name != told;
+        row.name.clone_from(&told);
         if arrived {
             let notice = fill(tr.lobby_joined, &[("p", &told)]);
             state.say("", &notice);
             announce_to_table(state, "", &notice);
         }
     }
-    state.peer_silence = silence;
-    // Kept as long as the silence list it is shifted beside, so a watcher
-    // at the top of the table - which greets with `Watch`, never `Hello`,
-    // and so is never named here - does not leave the two lists different
-    // lengths for `forget_peer` to trip over.
-    if state.peer_names.len() < state.peer_silence.len() {
-        state
-            .peer_names
-            .resize(state.peer_silence.len(), String::new());
-    }
     // Anyone unheard for too long has walked away: UDP will not say so, and
     // a table that keeps counting them never has room again.
-    let gone: Vec<usize> = (0..state.peer_silence.len())
-        .rev()
-        .filter(|peer| state.peer_silence[*peer] > PEER_TTL)
-        .collect();
+    let gone: Vec<usize> = state.hosted().map_or(Vec::new(), |hosted| {
+        (0..hosted.peers.len())
+            .rev()
+            .filter(|peer| {
+                hosted
+                    .peers
+                    .get(*peer)
+                    .is_some_and(|p| p.silence > PEER_TTL)
+            })
+            .collect()
+    });
     for peer in gone {
-        let who = state.peer_names.get(peer).cloned().unwrap_or_default();
-        state.forget_peer(peer);
+        let Some(hosted) = state.hosted_mut() else {
+            return;
+        };
+        let who = hosted
+            .peers
+            .get(peer)
+            .map_or_else(String::new, |p| p.name.clone());
+        hosted.forget_peer(peer);
         if !who.is_empty() {
             let notice = fill(tr.lobby_left, &[("p", &who)]);
             state.say("", &notice);
@@ -356,11 +366,14 @@ fn note_arrivals_and_departures(
     }
 }
 
-/// What one tick on the socket picked up: who named themselves, and what
-/// was said. Bundled because they travel together and a function with
-/// eight arguments is a function asking to be given a noun.
+/// What one tick on the socket picked up: whether the beacon went out,
+/// who named themselves, and what was said. Bundled because they travel
+/// together and a function with eight arguments is a function asking to
+/// be given a noun.
 #[derive(Default)]
 struct Picked {
+    /// The once-a-second tick fell this frame, so the roster goes out too.
+    announced: bool,
     greeted: Vec<(usize, String)>,
     said: Vec<(
         usize,
@@ -369,81 +382,70 @@ struct Picked {
     )>,
 }
 
-/// One tick on the host's own socket: put the beacon up, take in what the
-/// peers sent, and pass the chat along to the rest of the table.
+/// One tick on the host's own socket: age the table, put the beacon up,
+/// take in what the peers sent, and pass the chat along to the rest of
+/// the table.
 ///
-/// Kept whole because the borrow of `hosting` runs the length of it; what
-/// it learns goes back to the caller to be folded into the lobby, which
-/// needs the rest of the state that borrow is holding.
-#[cfg_attr(debug_assertions, track_caller)]
-fn work_the_socket(
-    state: &mut LobbyState,
-    do_announce: bool,
-    on_air: crate::transport::OnAir<'_>,
-    watchers: &mut Vec<usize>,
-    silence: &mut Vec<f32>,
-    picked: &mut Picked,
-) {
-    let Picked { greeted, said } = picked;
-    debug_assert!(
-        state.hosting.is_some(),
-        "working a socket that is not being hosted"
-    );
-    let mut heard_from: Vec<usize> = Vec::new();
-    if let Some((announcer, transport)) = &mut state.hosting {
-        if do_announce && let Ok(addr) = transport.local_addr() {
-            announcer.announce(addr.port(), on_air);
-        }
-        // recv_all registers joiners from their greetings; a Watch tells us
-        // that peer is here to look, not to play, and a Hello says what to
-        // call whoever sent it.
-        for (msg, from) in transport.recv_all() {
-            heard_from.push(from);
-            // A peer the socket has only just registered has no slot in
-            // any of the lists kept alongside it.
-            while silence.len() < transport.peer_count() {
-                silence.push(0.0);
-            }
-            match msg {
-                NetMsg::Watch if !watchers.contains(&from) => watchers.push(from),
-                NetMsg::Hello { name } => {
-                    let told = crate::transport::name_from_wire(&name);
-                    if !told.is_empty() {
-                        greeted.push((from, told));
-                    }
+/// What it learns goes back to the caller to be folded into the lobby,
+/// which needs the rest of the state this borrow of the beach is holding.
+fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::OnAir<'_>) -> Picked {
+    let Hosted {
+        announcer,
+        transport,
+        peers,
+        announce_in,
+    } = hosted;
+    let mut picked = Picked {
+        announced: once_a_second(announce_in, delta),
+        ..Picked::default()
+    };
+    peers.age(delta);
+    if picked.announced
+        && let Ok(addr) = transport.local_addr()
+    {
+        announcer.announce(addr.port(), on_air);
+    }
+    // recv_all registers joiners from their greetings; a Watch tells us
+    // that peer is here to look, not to play, and a Hello says what to
+    // call whoever sent it.
+    for (msg, from) in transport.recv_all() {
+        // A peer the socket has only just registered has no row yet, and
+        // anything at all from a peer is proof it is still there.
+        peers.reach(transport.peer_count());
+        peers.heard(from);
+        match msg {
+            NetMsg::Watch => peers.row(from).watch = true,
+            NetMsg::Hello { name } => {
+                let told = crate::transport::name_from_wire(&name);
+                if !told.is_empty() {
+                    picked.greeted.push((from, told));
                 }
-                // The spokes of the star cannot hear each other, so the
-                // hub repeats what it is told before showing it.
-                NetMsg::Chat { name, text } => said.push((from, name, text)),
-                NetMsg::Watch
-                | NetMsg::Input(_)
-                | NetMsg::Hash { .. }
-                | NetMsg::Start { .. }
-                | NetMsg::Pause { .. }
-                | NetMsg::Resume { .. }
-                | NetMsg::Queued { .. }
-                | NetMsg::Roster { .. }
-                | NetMsg::Abandoned { .. }
-                | NetMsg::Incompatible { .. } => {}
             }
-        }
-        // Anything at all from a peer is proof it is still there.
-        for heard in &heard_from {
-            if let Some(silence) = silence.get_mut(*heard) {
-                *silence = 0.0;
-            }
-        }
-        for (from, name, text) in said.iter() {
-            crate::app::net::relay(
-                transport,
-                *from,
-                NetMsg::Chat {
-                    name: *name,
-                    text: *text,
-                },
-            );
+            // The spokes of the star cannot hear each other, so the
+            // hub repeats what it is told before showing it.
+            NetMsg::Chat { name, text } => picked.said.push((from, name, text)),
+            NetMsg::Input(_)
+            | NetMsg::Hash { .. }
+            | NetMsg::Start { .. }
+            | NetMsg::Pause { .. }
+            | NetMsg::Resume { .. }
+            | NetMsg::Queued { .. }
+            | NetMsg::Roster { .. }
+            | NetMsg::Abandoned { .. }
+            | NetMsg::Incompatible { .. } => {}
         }
     }
+    for (from, name, text) in picked.said.iter() {
+        crate::app::net::relay(
+            transport,
+            *from,
+            NetMsg::Chat {
+                name: *name,
+                text: *text,
+            },
+        );
+    }
+    picked
 }
 
 /// The line under the title while gathering: who is aboard, who is only
@@ -502,8 +504,8 @@ pub(super) fn should_launch(
 /// Say something to every peer at the table, as the host. An empty `who`
 /// is the lobby speaking rather than a player.
 pub(super) fn announce_to_table(state: &LobbyState, who: &str, line: &str) {
-    if let Some((_, transport)) = &state.hosting {
-        transport.send(NetMsg::chat(who, line));
+    if let Some(hosted) = state.hosted() {
+        hosted.transport.send(NetMsg::chat(who, line));
     }
 }
 
@@ -512,15 +514,12 @@ pub(super) fn announce_to_table(state: &LobbyState, who: &str, line: &str) {
 /// Seats run out before connections do: the socket takes nine peers and the
 /// table has six chairs. The surplus is seated as onlookers rather than
 /// handed a seat number the sim has no slot for.
-pub(super) fn seat_plan(peers: usize, watchers: &[usize]) -> Vec<Option<u8>> {
-    debug_assert!(
-        watchers.iter().all(|w| *w < peers.max(1)),
-        "a watcher at {watchers:?} among {peers} peers"
-    );
+pub(super) fn seat_plan(peers: &crate::app::net::PeerBook) -> Vec<Option<u8>> {
     let mut next = 1u8; // seat 0 is the host's
-    (0..peers)
+    peers
+        .iter()
         .map(|peer| {
-            if watchers.contains(&peer) || usize::from(next) >= MAX_PLAYERS {
+            if peer.watch || usize::from(next) >= MAX_PLAYERS {
                 return None;
             }
             let seat = next;
@@ -534,10 +533,10 @@ pub(super) fn seat_plan(peers: usize, watchers: &[usize]) -> Vec<Option<u8>> {
 /// one. Both ways out of hosting come through here: leaving the screen, and
 /// starting the match.
 pub(super) fn say_goodbye(state: &LobbyState) {
-    if let Some((announcer, transport)) = &state.hosting
-        && let Ok(addr) = transport.local_addr()
+    if let Some(hosted) = state.hosted()
+        && let Ok(addr) = hosted.transport.local_addr()
     {
-        announcer.closing(addr.port());
+        hosted.announcer.closing(addr.port());
     }
 }
 
@@ -545,22 +544,32 @@ pub(super) fn say_goodbye(state: &LobbyState) {
 mod tests {
     use super::*;
 
+    /// `n` nameless peers, the given ones watching.
+    fn table(n: usize, watchers: &[usize]) -> crate::app::net::PeerBook {
+        let names = vec![""; n];
+        peers_named(&names, watchers)
+    }
+
     /// Seats go to the peers that came to play, in the order they arrived,
     /// with the host holding seat zero throughout.
     #[test]
     fn the_table_is_dealt_in_arrival_order_behind_the_host() {
-        assert_eq!(seat_plan(0, &[]), Vec::<Option<u8>>::new());
-        assert_eq!(seat_plan(1, &[]), vec![Some(1)], "the host keeps zero");
-        assert_eq!(seat_plan(3, &[]), vec![Some(1), Some(2), Some(3)]);
+        assert_eq!(seat_plan(&table(0, &[])), Vec::<Option<u8>>::new());
+        assert_eq!(
+            seat_plan(&table(1, &[])),
+            vec![Some(1)],
+            "the host keeps zero"
+        );
+        assert_eq!(seat_plan(&table(3, &[])), vec![Some(1), Some(2), Some(3)]);
     }
 
     /// An onlooker takes no chair, and the players behind it close up
     /// rather than inheriting a gap.
     #[test]
     fn watchers_are_stepped_over_and_the_seats_close_up() {
-        assert_eq!(seat_plan(3, &[0]), vec![None, Some(1), Some(2)]);
-        assert_eq!(seat_plan(3, &[1]), vec![Some(1), None, Some(2)]);
-        assert_eq!(seat_plan(3, &[0, 1, 2]), vec![None, None, None]);
+        assert_eq!(seat_plan(&table(3, &[0])), vec![None, Some(1), Some(2)]);
+        assert_eq!(seat_plan(&table(3, &[1])), vec![Some(1), None, Some(2)]);
+        assert_eq!(seat_plan(&table(3, &[0, 1, 2])), vec![None, None, None]);
     }
 
     /// Every answer `host_step` can give. It asks who is asking before
@@ -627,11 +636,17 @@ mod tests {
         use crate::sim::MAX_PLAYERS;
 
         // Four rivals on a six-seat table: seats 1-4 behind the host's 0.
-        assert_eq!(seat_plan(4, &[]), vec![Some(1), Some(2), Some(3), Some(4)]);
+        assert_eq!(
+            seat_plan(&table(4, &[])),
+            vec![Some(1), Some(2), Some(3), Some(4)]
+        );
         // Peers 1 and 3 came to watch, so the seats close up behind them.
-        assert_eq!(seat_plan(4, &[1, 3]), vec![Some(1), None, Some(2), None]);
+        assert_eq!(
+            seat_plan(&table(4, &[1, 3])),
+            vec![Some(1), None, Some(2), None]
+        );
         // Every connection the socket will take, all of them here to play.
-        let full = seat_plan(crate::transport::MAX_PEERS, &[]);
+        let full = seat_plan(&table(crate::transport::MAX_PEERS, &[]));
         assert_eq!(
             full.iter().filter(|seat| seat.is_some()).count(),
             MAX_PLAYERS - 1,

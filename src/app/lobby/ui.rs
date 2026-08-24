@@ -523,14 +523,15 @@ pub fn update_lobby_terms(
     mut values: Query<(&DialValue, &mut Text, &mut TextColor), Without<DialName>>,
 ) {
     let tr = settings.tr();
-    let host = state.standing() == Standing::Hosting;
+    let host = state.hosting();
     // A joiner reads the host's dials, off the roster, not its own setup
     // screen's: the card is meant to show the match being joined. The host,
     // and a chooser not yet at any beach, read their own config.
     let joined = (!host)
         .then(|| {
             state
-                .joined_terms
+                .joined()
+                .and_then(|joined| joined.terms)
                 .map(|t| crate::app::match_setup::config_from_terms(&t))
         })
         .flatten();

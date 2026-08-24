@@ -117,7 +117,7 @@ pub(super) fn turn_the_dials(
     state: &mut LobbyState,
     beaches: &crate::app::match_setup::CustomBeaches,
 ) {
-    if state.standing() == Standing::Hosting {
+    if state.hosting() {
         if keys.just_pressed(KeyCode::ArrowUp) {
             state.dial = (state.dial + Dial::ALL.len() - 1) % Dial::ALL.len();
         }
@@ -136,7 +136,7 @@ pub(super) fn turn_the_dials(
             && let Some(dial) = Dial::ALL.get(state.dial).copied()
         {
             // The people already here are what the AI has to fit behind.
-            let humans = 1 + state.players_aboard() as u8;
+            let humans = 1 + state.hosted().map_or(0, Hosted::players_aboard) as u8;
             let mut teams = settings.team_mode;
             dial.turn(right, config, &mut teams, humans, beaches);
             if teams != settings.team_mode {

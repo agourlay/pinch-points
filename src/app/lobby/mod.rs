@@ -35,7 +35,7 @@ pub use ui::*;
 use crate::app::cycle::Cycle;
 use crate::app::i18n::fill;
 use crate::app::match_setup::MatchConfig;
-use crate::app::net::{Invitation, LobbyReturn, Online, OnlineSession, Peer};
+use crate::app::net::{Invitation, LobbyReturn, Online, OnlineSession, PeerBook};
 use crate::app::palette;
 use crate::app::settings::GameSettings;
 use crate::app::{Screen, VersusPhase};
@@ -73,32 +73,155 @@ pub(crate) fn greeting(watching: bool, name: &str) -> NetMsg {
     }
 }
 
-/// Where the player stands in the lobby.
+/// Where the player stands in the lobby, and everything that goes with
+/// standing there.
 ///
-/// Four fields between them say this: `hosting`, `joining`, `watching`,
-/// and whether anything has been heard. Before this enum four different
-/// pieces of the lobby each worked it out for themselves, each
-/// spelling the same question differently: `can_chat()`, `!hosting() &&
-/// !joining()`, `aboard`, `listing`. A combination nobody names is a
-/// combination that drifts.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// Before this enum four separate fields said it (`hosting`, `joining`,
+/// `watching`, and whether anything had been heard) and four different
+/// pieces of the lobby each worked it out for themselves, each spelling
+/// the same question differently. A combination nobody names is a
+/// combination that drifts, and a field that only means anything in one
+/// standing (the host's peers, the joiner's patience with a silent host)
+/// is a field that can be read in the wrong one.
 pub enum Standing {
-    /// Choosing a beach, with W armed so the next pick watches rather
-    /// than plays.
-    ChoosingToWatch,
-    /// Choosing a beach.
-    Choosing,
+    /// Choosing a beach, with W armed or not: armed, the next pick
+    /// watches rather than plays.
+    Choosing { watching: bool },
     /// Greeting a host, waiting to be given a seat.
-    Joining,
+    Joining(Joined),
     /// On the air, gathering a table.
-    Hosting,
+    Hosting(Hosted),
+}
+
+impl Default for Standing {
+    fn default() -> Self {
+        Standing::Choosing { watching: false }
+    }
 }
 
 impl Standing {
     /// Whether there is anybody at the other end: somebody to talk to, a
     /// table to show, and no list worth reading.
-    pub fn at_a_beach(self) -> bool {
-        matches!(self, Standing::Joining | Standing::Hosting)
+    pub fn at_a_beach(&self) -> bool {
+        matches!(self, Standing::Joining(_) | Standing::Hosting(_))
+    }
+
+    /// A beach going on the air this frame.
+    pub fn hosting(announcer: Announcer, transport: UdpTransport) -> Standing {
+        Standing::Hosting(Hosted {
+            announcer,
+            transport,
+            peers: PeerBook::default(),
+            announce_in: 0.0,
+        })
+    }
+}
+
+/// A beach on the air: its beacon, the game socket gathering the table,
+/// and everyone who has turned up on it.
+pub struct Hosted {
+    pub announcer: Announcer,
+    pub transport: UdpTransport,
+    /// Everyone on the socket, by its index there: the name its greeting
+    /// carried, whether it asked to watch, and how long since it was last
+    /// heard from. A joiner re-greets every second for as long as it sits
+    /// in the lobby, so silence is the only evidence of leaving there is:
+    /// UDP will never say so. Nobody holds a chair here; the plan is dealt
+    /// at the launch.
+    pub peers: PeerBook,
+    announce_in: f32,
+}
+
+impl Hosted {
+    /// Drop a peer from the socket and from the table, so whoever came
+    /// after it moves up one in both.
+    fn forget_peer(&mut self, peer: usize) {
+        self.transport.forget(peer);
+        self.peers.forget(peer);
+    }
+
+    /// Peers here to play, the ones who fill the seats. Capped at the five
+    /// chairs beside the host's: seats run out before the socket does (it
+    /// takes nine), and `seat_plan` turns the surplus into onlookers, so a
+    /// table of eight would-be rivals is "5 aboard", not "8 aboard - Enter
+    /// to start (up to 5)", and the beacon never reads "9/6".
+    pub fn players_aboard(&self) -> usize {
+        let seatable = MAX_PLAYERS - 1;
+        self.peers
+            .iter()
+            .filter(|peer| !peer.watch)
+            .count()
+            .min(seatable)
+    }
+
+    /// Peers here to look rather than play.
+    fn watchers_aboard(&self) -> usize {
+        self.peers.iter().filter(|peer| peer.watch).count()
+    }
+}
+
+/// A beach being greeted: the socket greeting it, and what has come back.
+pub struct Joined {
+    pub transport: UdpTransport,
+    /// We asked to watch, so we greet with `Watch` and expect no seat back.
+    pub watching: bool,
+    hello_in: f32,
+    /// Seconds since the host last said anything, and whether it has ever
+    /// said anything at all.
+    ///
+    /// Dialling opens a socket, which on UDP proves nothing: there may be
+    /// no machine at that address, or no game on it, or a firewall in the
+    /// way, and all three look just like a host who has not started the
+    /// round yet. These two are how the difference gets onto the screen.
+    host_silence: f32,
+    host_answered: bool,
+    /// The seed of the round just played, set when a finished match walks
+    /// back into this lobby still connected. The host may still be on its
+    /// results card, where it re-answers every greeting with that round's
+    /// `Start`; without this the lobby would read the repeat as an
+    /// invitation and walk straight back into the finished round.
+    played_seed: Option<u64>,
+    /// The host's dials, from its [`NetMsg::Roster`]. The terms card
+    /// paints these rather than this machine's own [`MatchConfig`], which
+    /// is nothing to do with the match being joined; `None` until the
+    /// first roster lands.
+    pub terms: Option<MatchTerms>,
+}
+
+impl Joined {
+    /// A beach dialled this frame: calling, not aboard, since nothing has
+    /// answered yet and on UDP an open socket is no evidence that anything
+    /// will.
+    pub fn dialled(transport: UdpTransport, watching: bool) -> Joined {
+        Joined {
+            transport,
+            watching,
+            hello_in: ANNOUNCE_EVERY,
+            host_silence: 0.0,
+            host_answered: false,
+            played_seed: None,
+            terms: None,
+        }
+    }
+
+    /// A beach walked back into from a finished round: the host was
+    /// talking moments ago, so this is a beach, not an unanswered address,
+    /// until the silence rule says otherwise, and it greets again at once.
+    pub fn returned(transport: UdpTransport, watching: bool, played_seed: u64) -> Joined {
+        Joined {
+            transport,
+            watching,
+            hello_in: 0.0,
+            host_silence: 0.0,
+            host_answered: true,
+            played_seed: Some(played_seed),
+            terms: None,
+        }
+    }
+
+    /// The seed of the round this table walked out of, if it did.
+    pub fn played_seed(&self) -> Option<u64> {
+        self.played_seed
     }
 }
 
@@ -140,25 +263,9 @@ impl Said {
 #[derive(Resource, Default)]
 pub struct LobbyState {
     discovery: Option<Discovery>,
-    /// Set while hosting: the announcer and the gathering game socket.
-    hosting: Option<(Announcer, UdpTransport)>,
-    /// Set after joining: the socket greeting the host until a seat arrives.
-    joining: Option<UdpTransport>,
+    /// Where the player stands, and everything that goes with it.
+    pub standing: Standing,
     pub hosts: Vec<HostEntry>,
-    pub joined_peers: usize,
-    /// Host side: which peer indices asked to watch rather than play.
-    watchers: Vec<usize>,
-    /// Host side: what each peer index calls itself, from its greeting.
-    peer_names: Vec<String>,
-    /// Host side: seconds since each peer index was last heard from.
-    ///
-    /// A joiner re-greets every second for as long as it sits in the
-    /// lobby, so silence is the only evidence of leaving there is: UDP
-    /// will never say so. Kept alongside `peers` and shifted with it.
-    peer_silence: Vec<f32>,
-    /// Joiner side: we asked to watch, so we greet with `Watch` and expect
-    /// no seat back.
-    watching: bool,
     /// The beach under the cursor, remembered by address rather than by
     /// position. The list re-sorts as beaches come and go and as they fill
     /// up, so an index would silently point at a different game between the
@@ -178,79 +285,17 @@ pub struct LobbyState {
     /// and told to a joiner by [`NetMsg::Roster`], since a joiner has only
     /// ever spoken to the host and would otherwise think itself alone.
     pub table: Vec<String>,
-    /// Joiner side: the host's dials, from its [`NetMsg::Roster`]. The
-    /// terms card paints these rather than this machine's own
-    /// [`MatchConfig`], which is nothing to do with the match being
-    /// joined; `None` until the first roster lands.
-    pub joined_terms: Option<MatchTerms>,
     /// What this beach is called, once its host has said. Announced in
     /// place of the host's own name: the list is choosing between games.
+    /// Beside the standing rather than inside [`Hosted`] because it is
+    /// asked for before the beach goes on the air, and kept after it comes
+    /// off so the next one is pre-filled.
     pub game_name: String,
-    announce_in: f32,
-    hello_in: f32,
-    /// Joiner side: seconds since the host last said anything, and whether
-    /// it has ever said anything at all.
-    ///
-    /// Dialling opens a socket, which on UDP proves nothing: there may be
-    /// no machine at that address, or no game on it, or a firewall in the
-    /// way, and all three look just like a host who has not started the
-    /// round yet. These two are how the difference gets onto the screen.
-    host_silence: f32,
-    host_answered: bool,
-    /// Joiner side: the seed of the round just played, set when a
-    /// finished match walks back into this lobby still connected. The
-    /// host may still be on its results card, where it re-answers every
-    /// greeting with that round's `Start`; without this the lobby would
-    /// read the repeat as an invitation and walk straight back into the
-    /// finished round.
-    played_seed: Option<u64>,
     pub feedback: String,
     auto_done: bool,
 }
 
 impl LobbyState {
-    /// Drop a peer and close the gap in everything kept beside it.
-    ///
-    /// The socket's peer list is indexed into by three others, so removing
-    /// from one and not the rest would silently re-label whoever came
-    /// after: `watchers` would point at a player, `peer_names` would hand
-    /// somebody else's name to the wrong seat.
-    fn forget_peer(&mut self, peer: usize) {
-        // The lists have to be the same length going in, or the shifting
-        // below moves them out of step with each other rather than into
-        // step. That is the failure this function exists to avoid, and the
-        // one that would show up as somebody wearing another player's name.
-        debug_assert!(
-            self.peer_names.len() >= self.peer_silence.len() || self.peer_silence.is_empty(),
-            "peer lists adrift: {} names, {} silences",
-            self.peer_names.len(),
-            self.peer_silence.len()
-        );
-        if let Some((_, transport)) = &mut self.hosting {
-            transport.forget(peer);
-        }
-        if peer < self.peer_names.len() {
-            self.peer_names.remove(peer);
-        }
-        if peer < self.peer_silence.len() {
-            self.peer_silence.remove(peer);
-        }
-        self.watchers.retain(|watcher| *watcher != peer);
-        for watcher in self.watchers.iter_mut() {
-            if *watcher > peer {
-                *watcher -= 1;
-            }
-        }
-        self.joined_peers = self.joined_peers.saturating_sub(1);
-        debug_assert!(
-            self.watchers
-                .iter()
-                .all(|w| *w < self.peer_names.len().max(1)),
-            "a watcher points past the peers it was indexing: {:?}",
-            self.watchers
-        );
-    }
-
     /// A line of chat as it came off the wire, into the feed: both halves
     /// tidied on the way, since a stranger on the LAN wrote them.
     pub fn hear(&mut self, name: &crate::transport::WireName, text: &crate::transport::WireChat) {
@@ -275,63 +320,91 @@ impl LobbyState {
 
     /// Where the player stands, the question most of the lobby is really
     /// asking.
-    pub fn standing(&self) -> Standing {
-        debug_assert!(
-            !(self.hosting.is_some() && self.joining.is_some()),
-            "hosting and joining at once, which no path should reach"
-        );
-        match (self.hosting.is_some(), self.joining.is_some()) {
-            (true, _) => Standing::Hosting,
-            (_, true) => Standing::Joining,
-            _ if self.watching => Standing::ChoosingToWatch,
-            _ => Standing::Choosing,
-        }
+    pub fn standing(&self) -> &Standing {
+        &self.standing
     }
 
     /// Whether this lobby has anyone to say anything to.
     pub fn can_chat(&self) -> bool {
-        self.standing().at_a_beach()
+        self.standing.at_a_beach()
     }
 
     pub fn hosting(&self) -> bool {
-        self.hosting.is_some()
+        self.hosted().is_some()
     }
 
-    pub fn joining(&self) -> bool {
-        self.joining.is_some()
+    /// The beach this lobby has on the air, if it is hosting one.
+    pub fn hosted(&self) -> Option<&Hosted> {
+        match &self.standing {
+            Standing::Hosting(hosted) => Some(hosted),
+            Standing::Choosing { .. } | Standing::Joining(_) => None,
+        }
+    }
+
+    fn hosted_mut(&mut self) -> Option<&mut Hosted> {
+        match &mut self.standing {
+            Standing::Hosting(hosted) => Some(hosted),
+            Standing::Choosing { .. } | Standing::Joining(_) => None,
+        }
+    }
+
+    /// The beach this lobby is greeting, if it is greeting one.
+    pub fn joined(&self) -> Option<&Joined> {
+        match &self.standing {
+            Standing::Joining(joined) => Some(joined),
+            Standing::Choosing { .. } | Standing::Hosting(_) => None,
+        }
+    }
+
+    fn joined_mut(&mut self) -> Option<&mut Joined> {
+        match &mut self.standing {
+            Standing::Joining(joined) => Some(joined),
+            Standing::Choosing { .. } | Standing::Hosting(_) => None,
+        }
+    }
+
+    /// Whoever is at the other end, host or table, to say something to.
+    fn transport(&self) -> Option<&UdpTransport> {
+        match &self.standing {
+            Standing::Hosting(hosted) => Some(&hosted.transport),
+            Standing::Joining(joined) => Some(&joined.transport),
+            Standing::Choosing { .. } => None,
+        }
+    }
+
+    /// Whether this player means to watch rather than play: W armed while
+    /// choosing, or a beach greeted with `Watch`. A host plays.
+    pub fn watching(&self) -> bool {
+        match &self.standing {
+            Standing::Choosing { watching } => *watching,
+            Standing::Joining(joined) => joined.watching,
+            Standing::Hosting(_) => false,
+        }
+    }
+
+    /// Arm or disarm watching, wherever it can still be changed: while
+    /// choosing, and on a greeting already in flight, which the dev hook
+    /// sets the moment it joins.
+    fn set_watching(&mut self, on: bool) {
+        match &mut self.standing {
+            Standing::Choosing { watching } => *watching = on,
+            Standing::Joining(joined) => joined.watching = on,
+            Standing::Hosting(_) => {}
+        }
+    }
+
+    /// Back to choosing, keeping W armed as it was.
+    fn let_go(&mut self) {
+        let watching = self.watching();
+        self.standing = Standing::Choosing { watching };
     }
 
     /// The table as the lobby knows it: the host first, then every peer
     /// that came to play, by the name its greeting carried.
     pub fn roster(&self, tr: &crate::app::i18n::Tr, me: &str) -> Vec<String> {
-        let mine = match me.trim().is_empty() {
-            true => crate::app::seat_label(tr, 0),
-            false => me.to_string(),
-        };
-        let mut table = vec![mine];
-        for peer in 0..self.joined_peers {
-            if self.watchers.contains(&peer) {
-                continue;
-            }
-            let name = self.peer_names.get(peer).cloned().unwrap_or_default();
-            table.push(match name.is_empty() {
-                true => crate::app::seat_label(tr, table.len() as u8),
-                false => name,
-            });
-        }
-        table
-    }
-
-    /// Peers here to play, the ones who fill the seats. Capped at the five
-    /// chairs beside the host's: seats run out before the socket does (it
-    /// takes nine), and `seat_plan` turns the surplus into onlookers, so a
-    /// table of eight would-be rivals is "5 aboard", not "8 aboard - Enter
-    /// to start (up to 5)", and the beacon never reads "9/6".
-    fn players_aboard(&self) -> usize {
-        let seatable = MAX_PLAYERS - 1;
-        self.joined_peers
-            .saturating_sub(self.watchers.len())
-            .min(seatable)
+        let nobody = PeerBook::default();
+        let peers = self.hosted().map_or(&nobody, |hosted| &hosted.peers);
+        table_of(peers, tr, me)
     }
 
     /// Where the cursor sits in the current list, if the beach it names is
@@ -383,6 +456,25 @@ impl LobbyState {
     }
 }
 
+/// The table as a host knows it: the host first, then every peer that
+/// came to play, by the name its greeting carried. Onlookers are not at
+/// it, and a peer that has not said what to call it yet still holds its
+/// chair, under a seat label rather than a blank.
+pub(super) fn table_of(peers: &PeerBook, tr: &crate::app::i18n::Tr, me: &str) -> Vec<String> {
+    let mine = match me.trim().is_empty() {
+        true => crate::app::seat_label(tr, 0),
+        false => me.to_string(),
+    };
+    let mut table = vec![mine];
+    for peer in peers.iter().filter(|peer| !peer.watch) {
+        table.push(match peer.name.is_empty() {
+            true => crate::app::seat_label(tr, table.len() as u8),
+            false => peer.name.clone(),
+        });
+    }
+    table
+}
+
 /// A finished match walking its table back into the lobby, still
 /// connected: the results card's Enter fills this, the screen switches,
 /// and [`enter_lobby`] - which otherwise starts from nothing - stands the
@@ -412,29 +504,20 @@ fn settle_back_in(
         // stand back up, and `from_lobby` keeps it from coming this way.
         let Some(announcer) = announcer else { return };
         // One row per peer the socket still has, no more and no fewer:
-        // the lists kept here are indexed by the socket's own.
+        // the rows are indexed by the socket's own list.
         peers.fit(transport.peer_count());
         peers.hush();
-        state.joined_peers = peers.len();
-        state.peer_silence = vec![0.0; peers.len()];
-        state.peer_names = peers.iter().map(|peer| peer.name.clone()).collect();
-        state.watchers = (0..peers.len())
-            .filter(|peer| peers.get(*peer).is_some_and(Peer::watches))
-            .collect();
         state.game_name = game_name;
-        state.hosting = Some((announcer, transport));
         // Back on the air this frame, as open: the round the beacon was
         // calling "running" is over.
-        state.announce_in = 0.0;
+        state.standing = Standing::Hosting(Hosted {
+            announcer,
+            transport,
+            peers,
+            announce_in: 0.0,
+        });
     } else {
-        state.watching = watching;
-        state.played_seed = Some(played_seed);
-        state.joining = Some(transport);
-        state.hello_in = 0.0;
-        // The host was talking moments ago: this is a beach, not an
-        // unanswered address, until the silence rule says otherwise.
-        state.host_answered = true;
-        state.host_silence = 0.0;
+        state.standing = Standing::Joining(Joined::returned(transport, watching, played_seed));
         state.feedback = match watching {
             true => tr.lobby_watching,
             false => tr.lobby_aboard,
@@ -534,7 +617,7 @@ pub fn lobby_input(
     let auto_join =
         (crate::app::dev::auto_join() || auto_watch) && !state.auto_done && !state.hosts.is_empty();
     if auto_watch {
-        state.watching = true;
+        state.set_watching(true);
     }
     let step = host_step(HostAsk {
         answered: intent == Some(Intent::Host),
@@ -548,7 +631,7 @@ pub fn lobby_input(
         state.typing = Some(Typing::player_name(Intent::Host, &settings.names[0]));
         return;
     }
-    if step == HostStep::Go && state.hosting.is_none() && state.joining.is_none() {
+    if step == HostStep::Go && !state.standing.at_a_beach() {
         state.auto_done = auto_host;
         match (
             Announcer::new(crate::app::clock::fresh_seed()),
@@ -568,8 +651,7 @@ pub fn lobby_input(
                     let notice = fill(tr.lobby_hosting_at, &[("a", &here)]);
                     state.say("", &notice);
                 }
-                state.hosting = Some((announcer, transport));
-                state.announce_in = 0.0;
+                state.standing = Standing::hosting(announcer, transport);
                 // Stop listening. A host cannot join anyone, so the list is
                 // no use to it, and holding a lobby port it will never read
                 // would deny one to another instance on the same machine,
@@ -587,12 +669,14 @@ pub fn lobby_input(
     if state.hosting() {
         turn_the_dials(&keys, &mut settings, &mut config, &mut state, &beaches);
     }
-    if !state.hosting() && !state.joining() {
+    if !state.standing.at_a_beach() {
         walk_the_list(&keys, &mut state);
     }
     take_a_beach(&keys, &settings, &mut state, tr, intent, auto_join);
-    if keys.just_pressed(KeyCode::KeyW) && state.hosting.is_none() && state.joining.is_none() {
-        state.watching = !state.watching;
+    if keys.just_pressed(KeyCode::KeyW)
+        && let Standing::Choosing { watching } = &mut state.standing
+    {
+        *watching = !*watching;
     }
     if keys.just_pressed(KeyCode::Escape) {
         next_screen.set(Screen::Menu);
@@ -749,7 +833,7 @@ mod tests {
             "a joiner has no beach to close"
         );
 
-        state.hosting = Some((Announcer::new(0xB0A7).expect("announcer"), transport));
+        state.standing = Standing::hosting(Announcer::new(0xB0A7).expect("announcer"), transport);
         say_goodbye(&state);
         let mut heard = Vec::new();
         for _ in 0..20 {
@@ -784,18 +868,7 @@ mod homecoming_tests {
     use crate::app::i18n::EN;
     use crate::app::net::PeerBook;
 
-    /// Peers as a match hands them back: named, with the given ones
-    /// watching.
-    fn peers_named(names: &[&str], watchers: &[usize]) -> PeerBook {
-        let mut peers = PeerBook::default();
-        for (i, name) in names.iter().enumerate() {
-            peers.row(i).name = name.to_string();
-        }
-        for watcher in watchers {
-            peers.row(*watcher).watch = true;
-        }
-        peers
-    }
+    use crate::app::lobby::hosting::peers_named;
 
     /// A hosting socket with `peers` joiners registered on it, as the one
     /// coming back from a match really is: the count is the socket's own,
@@ -843,17 +916,15 @@ mod homecoming_tests {
             },
             &EN,
         );
-        assert_eq!(state.standing(), Standing::Hosting);
+        assert!(state.hosting());
         assert_eq!(state.game_name, "Room 3");
+        let hosted = state.hosted().expect("hosting");
         assert_eq!(
-            state
-                .hosting
-                .as_ref()
-                .map(|(_, t)| t.local_addr().expect("addr").port()),
-            Some(port),
+            hosted.transport.local_addr().expect("addr").port(),
+            port,
             "the socket the table is still talking to"
         );
-        assert_eq!(state.announce_in, 0.0, "back on the air this frame");
+        assert_eq!(hosted.announce_in, 0.0, "back on the air this frame");
         assert_eq!(
             state.roster(&EN, "Anna"),
             ["Anna", "Bo"],
@@ -861,9 +932,9 @@ mod homecoming_tests {
         );
     }
 
-    /// The lists a host is handed back have to be the same length as the
-    /// peers they index, or `forget_peer` shifts them out of step with
-    /// each other the first time somebody leaves.
+    /// The rows a host is handed back have to be one per peer the socket
+    /// still has, or a row and the peer it was kept for come apart the
+    /// first time somebody leaves.
     #[test]
     fn a_short_name_list_is_padded_to_the_peers_it_indexes() {
         let (transport, _joiners) = with_peers(2);
@@ -882,17 +953,11 @@ mod homecoming_tests {
             },
             &EN,
         );
-        let peers = state.joined_peers;
-        assert!(
-            state.peer_names.len() >= peers && state.peer_silence.len() == peers,
-            "{} names, {} silences, {peers} peers",
-            state.peer_names.len(),
-            state.peer_silence.len()
-        );
-        assert!(
-            state.watchers.iter().all(|w| *w < peers.max(1)),
-            "a watcher points past the peers it indexes: {:?}",
-            state.watchers
+        let hosted = state.hosted().expect("hosting");
+        assert_eq!(
+            hosted.peers.len(),
+            hosted.transport.peer_count(),
+            "one row per peer the socket knows"
         );
     }
 
@@ -915,10 +980,10 @@ mod homecoming_tests {
             },
             &EN,
         );
-        assert_eq!(state.standing(), Standing::Joining);
-        assert!(state.watching, "still at the rail");
-        assert_eq!(state.played_seed, Some(42));
-        assert!(state.host_answered, "the host was talking a moment ago");
+        let joined = state.joined().expect("joining");
+        assert!(joined.watching, "still at the rail");
+        assert_eq!(joined.played_seed(), Some(42));
+        assert!(joined.host_answered, "the host was talking a moment ago");
         assert_eq!(state.feedback, EN.lobby_watching);
     }
 }
@@ -964,13 +1029,15 @@ mod chat_tests {
     fn there_is_nobody_to_talk_to_until_there_is() {
         let mut state = LobbyState::default();
         assert!(!state.can_chat(), "browsing the list is not a conversation");
-        state.hosting = Some((
+        state.standing = Standing::hosting(
             Announcer::new(0xB0A7).expect("announcer"),
             UdpTransport::host(0).expect("socket"),
-        ));
+        );
         assert!(state.can_chat(), "a host has a table to address");
-        state.hosting = None;
-        state.joining = Some(UdpTransport::join(("127.0.0.1", 47999)).expect("join"));
+        state.standing = Standing::Joining(Joined::dialled(
+            UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
+            false,
+        ));
         assert!(state.can_chat(), "and a joiner has a host");
     }
 }
@@ -979,15 +1046,19 @@ mod chat_tests {
 mod table_tests {
     use super::*;
     use crate::app::i18n::EN;
+    use crate::app::lobby::hosting::peers_named;
 
-    fn seated(names: &[&str], watchers: Vec<usize>) -> LobbyState {
-        LobbyState {
-            joined_peers: names.len(),
-            peer_names: names.iter().map(|n| n.to_string()).collect(),
-            peer_silence: vec![0.0; names.len()],
-            watchers,
+    /// A hosting lobby with these peers on it, as greeted.
+    fn seated(names: &[&str], watchers: &[usize]) -> LobbyState {
+        let mut state = LobbyState {
+            standing: Standing::hosting(
+                Announcer::new(0xB0A7).expect("announcer"),
+                UdpTransport::host(0).expect("socket"),
+            ),
             ..LobbyState::default()
-        }
+        };
+        state.hosted_mut().expect("hosting").peers = peers_named(names, watchers);
+        state
     }
 
     /// The table is the host and everyone who came to play, in peer order.
@@ -995,29 +1066,33 @@ mod table_tests {
     /// not said what to call it yet still holds its chair.
     #[test]
     fn the_table_is_the_host_and_the_players() {
-        let state = seated(&["Bo", "Cy"], Vec::new());
+        let state = seated(&["Bo", "Cy"], &[]);
         assert_eq!(state.roster(&EN, "Anna"), ["Anna", "Bo", "Cy"]);
 
         // Peer 0 came to watch, so the table is the host and Cy.
-        let state = seated(&["Bo", "Cy"], vec![0]);
+        let state = seated(&["Bo", "Cy"], &[0]);
         assert_eq!(state.roster(&EN, "Anna"), ["Anna", "Cy"]);
 
         // A nameless host, and a nameless peer, fall back to seat labels
         // rather than to blanks: a row that says nothing is worse than a
         // row that says "P2".
-        let state = seated(&[""], Vec::new());
+        let state = seated(&[""], &[]);
         let table = state.roster(&EN, "");
         assert_eq!(table.len(), 2);
         assert!(table.iter().all(|who| !who.is_empty()), "{table:?}");
+
+        // And a lobby that is not hosting seats nobody but its owner.
+        let state = LobbyState::default();
+        assert_eq!(state.roster(&EN, "Anna"), ["Anna"]);
     }
 
-    /// Dropping a peer has to move everything kept beside the socket's own
-    /// list, or the row after it silently takes its name and its watcher
-    /// flag. This is the failure that would be invisible until somebody
-    /// found themselves labelled as somebody else.
+    /// Dropping a peer has to move the rows behind it with the socket's
+    /// own list, or the row after it silently takes its name and its
+    /// wish to watch. This is the failure that would be invisible until
+    /// somebody found themselves labelled as somebody else.
     #[test]
     fn forgetting_a_peer_moves_everything_that_indexed_it() {
-        let mut state = seated(&["Bo", "Cy", "Dee"], vec![2]);
+        let mut state = seated(&["Bo", "Cy", "Dee"], &[2]);
         assert_eq!(
             state.roster(&EN, "Anna"),
             ["Anna", "Bo", "Cy"],
@@ -1025,21 +1100,23 @@ mod table_tests {
         );
 
         // Bo leaves. Cy and Dee shift down, and Dee is still the watcher.
-        state.forget_peer(0);
-        assert_eq!(state.peer_names, ["Cy", "Dee"]);
-        assert_eq!(state.peer_silence.len(), 2);
-        assert_eq!(state.watchers, [1], "the flag followed Dee down");
-        assert_eq!(state.joined_peers, 2);
+        state.hosted_mut().expect("hosting").forget_peer(0);
+        let hosted = state.hosted().expect("hosting");
+        let names: Vec<&str> = hosted.peers.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Cy", "Dee"]);
+        assert_eq!(hosted.watchers_aboard(), 1, "the wish followed Dee down");
+        assert_eq!(hosted.players_aboard(), 1);
         assert_eq!(
             state.roster(&EN, "Anna"),
             ["Anna", "Cy"],
             "Dee still watches"
         );
 
-        // The watcher itself leaves, and takes only its own flag.
-        state.forget_peer(1);
-        assert_eq!(state.peer_names, ["Cy"]);
-        assert!(state.watchers.is_empty());
+        // The watcher itself leaves, and takes only its own wish.
+        state.hosted_mut().expect("hosting").forget_peer(1);
+        let hosted = state.hosted().expect("hosting");
+        assert_eq!(hosted.peers.len(), 1);
+        assert_eq!(hosted.watchers_aboard(), 0);
         assert_eq!(state.roster(&EN, "Anna"), ["Anna", "Cy"]);
     }
 }
@@ -1048,37 +1125,39 @@ mod table_tests {
 mod standing_tests {
     use super::*;
 
-    /// Where the player stands, from the four fields that used to be read
-    /// separately by four different pieces of the lobby. Hosting wins over
-    /// everything, because a host cannot also be joining; the watch flag
-    /// only means anything while still choosing.
+    /// Where the player stands is one value, and the wish to watch rides
+    /// with it: armed while choosing, carried onto the greeting, and
+    /// meaningless to a host, who plays.
     #[test]
-    fn the_standing_is_read_from_the_sockets_that_are_open() {
+    fn the_standing_carries_the_wish_to_watch_with_it() {
         let mut state = LobbyState::default();
-        assert_eq!(state.standing(), Standing::Choosing);
         assert!(!state.standing().at_a_beach(), "nobody to talk to yet");
+        assert!(!state.watching());
 
-        state.watching = true;
-        assert_eq!(state.standing(), Standing::ChoosingToWatch);
+        state.set_watching(true);
+        assert!(state.watching());
         assert!(!state.standing().at_a_beach());
 
-        state.joining = Some(UdpTransport::join(("127.0.0.1", 47999)).expect("join"));
-        assert_eq!(
-            state.standing(),
-            Standing::Joining,
-            "a socket in flight outranks the flag that armed it"
-        );
+        let watching = state.watching();
+        state.standing = Standing::Joining(Joined::dialled(
+            UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
+            watching,
+        ));
+        assert!(state.joined().is_some());
+        assert!(state.watching(), "the wish went with the greeting");
         assert!(state.standing().at_a_beach());
 
-        // Hosting and joining are mutually exclusive (each is gated on the
-        // other being absent, and a debug assertion in `standing` says so),
-        // so the socket has to be given up before the beach is put on.
-        state.joining = None;
-        state.hosting = Some((
+        // Letting the beach go keeps W armed as it was.
+        state.let_go();
+        assert!(state.joined().is_none());
+        assert!(state.watching());
+
+        state.standing = Standing::hosting(
             Announcer::new(1).expect("announcer"),
             UdpTransport::host(0).expect("socket"),
-        ));
-        assert_eq!(state.standing(), Standing::Hosting);
+        );
+        assert!(state.hosting());
+        assert!(!state.watching(), "a host plays");
         assert!(state.standing().at_a_beach());
     }
 
@@ -1088,10 +1167,13 @@ mod standing_tests {
     fn everything_that_asks_gets_the_same_answer() {
         let mut state = LobbyState::default();
         for watching in [false, true] {
-            state.watching = watching;
+            state.set_watching(watching);
             assert_eq!(state.can_chat(), state.standing().at_a_beach());
         }
-        state.joining = Some(UdpTransport::join(("127.0.0.1", 47998)).expect("join"));
+        state.standing = Standing::Joining(Joined::dialled(
+            UdpTransport::join(("127.0.0.1", 47998)).expect("join"),
+            false,
+        ));
         assert_eq!(state.can_chat(), state.standing().at_a_beach());
     }
 }
