@@ -27,7 +27,8 @@
 //! in one `println` on the bar, so two lanes cannot interleave halfway
 //! through a level and the bar is never left corrupted by a stray line.
 
-use indicatif::{ProgressBar, ProgressStyle};
+mod common;
+
 use pinch_points::sim::{
     DEFAULT_NODE_BUDGET, Effort, Level, PuzzleOutcome, SolveOutcome, solve_with,
 };
@@ -42,39 +43,11 @@ fn main() {
         true => Effort::Exhaustive,
         false => Effort::Budget(DEFAULT_NODE_BUDGET),
     };
-    // `--lanes` takes its number either glued on with `=` or as the next
-    // argument; in the second form that argument is the lane count and not
-    // a level file, so it is spoken for before the paths are gathered.
-    let mut asked: Option<usize> = None;
-    let mut paths: Vec<&String> = Vec::new();
-    let mut rest = args.iter();
-    while let Some(arg) = rest.next() {
-        if let Some(n) = arg.strip_prefix("--lanes=") {
-            asked = n.parse().ok();
-        } else if arg == "--lanes" {
-            asked = rest.next().and_then(|n| n.parse().ok());
-        } else if !arg.starts_with("--") {
-            paths.push(arg);
-        }
-    }
-    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
-    let lanes = match asked {
-        Some(0) => cores,
-        Some(n) => n.min(cores),
-        None => (cores / 2).max(1),
-    };
-    eprintln!("{} boards on {lanes} of {cores} cores", paths.len());
-    // The bar owns the terminal's bottom line; every report goes out through
-    // `bar.println`, which lifts the bar, writes the lines, and redraws it,
-    // so the lanes cannot interleave and the bar is never scribbled over.
-    let bar = ProgressBar::new(paths.len() as u64);
-    bar.set_style(
-        ProgressStyle::with_template(
-            "{spinner} [{elapsed_precise}] {bar:40} {pos}/{len} boards  ETA {eta}",
-        )
-        .expect("progress template")
-        .progress_chars("=> "),
-    );
+    // Half the cores by default: this runs on a machine somebody is using.
+    let lanes = common::lanes(&args, |cores| cores / 2);
+    let paths = common::paths(&args);
+    eprintln!("{} boards on {lanes} lane(s)", paths.len());
+    let bar = common::bar(paths.len() as u64, "boards");
     std::thread::scope(|scope| {
         for lane in 0..lanes {
             let mine: Vec<&String> = paths.iter().copied().skip(lane).step_by(lanes).collect();

@@ -8,7 +8,9 @@
 //! thinks" and "how well it plays" are not the same number: a bot that
 //! places a fourth signpost inside ten seconds evicts its own oldest, so
 //! more decisions can mean less board control.
-use indicatif::{ProgressBar, ProgressStyle};
+mod common;
+
+use indicatif::ProgressBar;
 use pinch_points::sim::{
     BotLevel, MAX_PLAYERS, PlayerAction, bot_action, classic_arena_seeded, generate_arena,
 };
@@ -134,14 +136,7 @@ fn main() {
     // and each is a full round out; a bar over the lot is how a run at a
     // large ROUNDS shows it is still going rather than hung. Result lines
     // print above it as each pairing finishes.
-    let bar = ProgressBar::new(pairings.len() as u64 * rounds * 4);
-    bar.set_style(
-        ProgressStyle::with_template(
-            "{spinner} [{elapsed_precise}] {bar:40} {pos}/{len} rounds  ETA {eta}",
-        )
-        .expect("progress template")
-        .progress_chars("=> "),
-    );
+    let bar = common::bar(pairings.len() as u64 * rounds * 4, "rounds");
     for (a, b) in pairings {
         let (lo, hi, habits) = duel(a, b, rounds, &bar);
         let per = (rounds * 8) as f64; // seats-worth of rounds per side

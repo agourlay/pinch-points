@@ -33,7 +33,8 @@
 //! it lands. Exits non-zero, and names every offending level, if any post
 //! proves unnecessary or any level slips past the budget.
 
-use indicatif::{ProgressBar, ProgressStyle};
+mod common;
+
 use pinch_points::sim::{
     DEFAULT_NODE_BUDGET, Effort, Level, SolveOutcome, campaign_levels, solve_with,
 };
@@ -73,29 +74,10 @@ fn complaint(index: usize, level: &Level) -> Option<String> {
     }
 }
 
-fn lane_count(args: &[String]) -> usize {
-    let every = std::thread::available_parallelism().map_or(1, |n| n.get());
-    // Either `--lanes=N` glued on or `--lanes N` as the next argument; zero
-    // means every core, which is also what an absent flag asks for.
-    let mut rest = args.iter();
-    while let Some(arg) = rest.next() {
-        let asked = arg
-            .strip_prefix("--lanes=")
-            .map(str::to_string)
-            .or_else(|| (arg == "--lanes").then(|| rest.next().cloned()).flatten());
-        if let Some(n) = asked {
-            return match n.parse::<usize>() {
-                Ok(0) | Err(_) => every,
-                Ok(n) => n.min(every),
-            };
-        }
-    }
-    every
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let lanes = lane_count(&args);
+    // Every core by default: a batch job, run when the machine is spare.
+    let lanes = common::lanes(&args, |cores| cores);
     let levels = campaign_levels();
     // The tutorial is exempt (its granted post is deliberate scenery), and a
     // one-post level has nothing to prove minimal: zero posts is already
@@ -128,14 +110,7 @@ fn main() {
     // and it wanders while a slow level holds the count still. A failing
     // level prints its complaint above the bar via `println`, so the bar is
     // not corrupted by a stray line and the failures are visible as they land.
-    let bar = ProgressBar::new(total);
-    bar.set_style(
-        ProgressStyle::with_template(
-            "{spinner} [{elapsed_precise}] {bar:40} {pos}/{len} levels  ETA {eta}",
-        )
-        .expect("progress template")
-        .progress_chars("=> "),
-    );
+    let bar = common::bar(total, "levels");
 
     let complaints: Mutex<Vec<String>> = Mutex::new(Vec::new());
     std::thread::scope(|scope| {
