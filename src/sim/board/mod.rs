@@ -236,18 +236,11 @@ pub struct Rules {
 /// same seed and input list replays bit-identically on any platform.
 #[derive(Clone, Debug)]
 pub struct Board {
-    width: u8,
-    height: u8,
+    /// The beach itself: size, walls, tiles.
+    grid: Grid,
     /// Construction seed, kept for serialization (`Level::to_text`). Not
     /// hashed: the live PRNG state, which is hashed, derives from it.
     seed: u64,
-    /// Horizontal wall segments, `(height + 1)` rows × `width` columns.
-    /// `h_walls[y * width + x]` is the edge *above* tile `(x, y)`.
-    h_walls: Vec<bool>,
-    /// Vertical wall segments, `height` rows × `(width + 1)` columns.
-    /// `v_walls[y * (width + 1) + x]` is the edge *left of* tile `(x, y)`.
-    v_walls: Vec<bool>,
-    tiles: Vec<TileKind>,
     signposts: Vec<Option<Signpost>>,
     /// The rules this board plays by, set at construction.
     rules: Rules,
@@ -296,12 +289,14 @@ impl Board {
         assert!(width > 0 && height > 0, "board must be at least 1×1");
         let (w, h) = (width as usize, height as usize);
         let mut board = Board {
-            width,
-            height,
+            grid: Grid {
+                width,
+                height,
+                h_walls: vec![false; (h + 1) * w],
+                v_walls: vec![false; h * (w + 1)],
+                tiles: vec![TileKind::Empty; w * h],
+            },
             seed,
-            h_walls: vec![false; (h + 1) * w],
-            v_walls: vec![false; h * (w + 1)],
-            tiles: vec![TileKind::Empty; w * h],
             signposts: vec![None; w * h],
             rules: Rules {
                 signpost_cap: MAX_SIGNPOSTS_PER_PLAYER as u8,
@@ -360,7 +355,7 @@ impl Board {
             assert!(s.period > 0, "spawner period must be at least 1 tick");
         }
         let t = self.index(i32::from(x), i32::from(y));
-        self.tiles[t as usize] = kind;
+        self.grid.tiles[t as usize] = kind;
     }
 
     // --- the player's one verb -------------------------------------------
@@ -395,14 +390,14 @@ impl Board {
     /// creatures walk and fly off one side and re-enter on the opposite one.
     pub fn set_wrap(&mut self, wrap: bool) {
         self.wrap = wrap;
-        let (w, h) = (self.width as usize, self.height as usize);
+        let (w, h) = (self.grid.width as usize, self.grid.height as usize);
         for x in 0..w {
-            self.h_walls[x] = !wrap;
-            self.h_walls[h * w + x] = !wrap;
+            self.grid.h_walls[x] = !wrap;
+            self.grid.h_walls[h * w + x] = !wrap;
         }
         for y in 0..h {
-            self.v_walls[y * (w + 1)] = !wrap;
-            self.v_walls[y * (w + 1) + w] = !wrap;
+            self.grid.v_walls[y * (w + 1)] = !wrap;
+            self.grid.v_walls[y * (w + 1) + w] = !wrap;
         }
     }
 
@@ -560,12 +555,12 @@ impl Board {
     /// rule, for crabs and gulls both.
     fn walk_step(&self, tile: u16, base: u16) -> u16 {
         debug_assert!(
-            usize::from(tile) < self.tiles.len(),
+            usize::from(tile) < self.grid.tiles.len(),
             "walking off the board: tile {tile} of {}",
-            self.tiles.len()
+            self.grid.tiles.len()
         );
         let step = self.tempo_speed(base);
-        if self.tiles[tile as usize] == TileKind::Pool {
+        if self.grid.tiles[tile as usize] == TileKind::Pool {
             return (step / 2).max(1);
         }
         step
@@ -583,11 +578,11 @@ impl Board {
     // --- read access (render layer, modes, tests) ------------------------
 
     pub fn width(&self) -> u8 {
-        self.width
+        self.grid.width
     }
 
     pub fn height(&self) -> u8 {
-        self.height
+        self.grid.height
     }
 
     pub fn ticks(&self) -> u64 {
@@ -648,19 +643,23 @@ impl Board {
 
     pub fn tile_at(&self, x: u8, y: u8) -> TileKind {
         assert!(self.in_bounds(i32::from(x), i32::from(y)));
-        self.tiles[self.index(i32::from(x), i32::from(y)) as usize]
+        self.grid.tiles[self.index(i32::from(x), i32::from(y)) as usize]
     }
 
     /// Every tile with its coordinates, in the board's own row-major order.
     pub fn tiles(&self) -> impl Iterator<Item = (u8, u8, TileKind)> + '_ {
-        let width = self.width;
-        self.tiles.iter().enumerate().map(move |(index, &kind)| {
-            (
-                (index % width as usize) as u8,
-                (index / width as usize) as u8,
-                kind,
-            )
-        })
+        let width = self.grid.width;
+        self.grid
+            .tiles
+            .iter()
+            .enumerate()
+            .map(move |(index, &kind)| {
+                (
+                    (index % width as usize) as u8,
+                    (index / width as usize) as u8,
+                    kind,
+                )
+            })
     }
 
     /// Where a seat's castle stands, if it has one.
@@ -731,4 +730,5 @@ mod tests;
 
 pub use events::{Mania, Tempo, TideEvent};
 
+pub use geometry::Grid;
 pub(crate) use geometry::Walker;

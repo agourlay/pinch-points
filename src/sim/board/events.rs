@@ -140,6 +140,7 @@ impl Board {
             TideEvent::GullAttack => {
                 // A gull lands beside every rival castle, facing it.
                 let targets: Vec<(u16, PlayerId)> = self
+                    .grid
                     .tiles
                     .iter()
                     .enumerate()
@@ -172,7 +173,7 @@ impl Board {
                 // Rockets swap places: every castle passes to the next
                 // participating owner, in a fixed rotation.
                 let mut owners: Vec<PlayerId> = Vec::new();
-                for tile in &self.tiles {
+                for tile in &self.grid.tiles {
                     if let TileKind::Castle(owner) = tile
                         && !owners.contains(owner)
                     {
@@ -180,7 +181,7 @@ impl Board {
                     }
                 }
                 if owners.len() > 1 {
-                    for tile in &mut self.tiles {
+                    for tile in &mut self.grid.tiles {
                         if let TileKind::Castle(owner) = tile {
                             let at = owners.iter().position(|o| o == owner).unwrap_or(0);
                             *owner = owners[(at + 1) % owners.len()];

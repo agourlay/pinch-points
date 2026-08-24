@@ -13,7 +13,10 @@ impl Board {
         );
         let tile = self.index(i32::from(x), i32::from(y));
         assert!(
-            !matches!(self.tiles[tile as usize], TileKind::Rock | TileKind::Kelp),
+            !matches!(
+                self.grid.tiles[tile as usize],
+                TileKind::Rock | TileKind::Kelp
+            ),
             "gull on a rock or in kelp"
         );
         let id = self.next_gull_id;
@@ -59,7 +62,7 @@ impl Board {
         if self.gulls.len() >= GULL_CAP {
             return;
         }
-        let (w, h) = (u32::from(self.width), u32::from(self.height));
+        let (w, h) = (u32::from(self.grid.width), u32::from(self.grid.height));
         let perimeter = if w > 1 && h > 1 {
             2 * w + 2 * h - 4
         } else {
@@ -76,7 +79,10 @@ impl Board {
             (w - 1, k - 2 * w - (h - 2) + 1, Direction::Left) // right edge
         };
         let tile = self.index(x as i32, y as i32);
-        if matches!(self.tiles[tile as usize], TileKind::Rock | TileKind::Kelp) {
+        if matches!(
+            self.grid.tiles[tile as usize],
+            TileKind::Rock | TileKind::Kelp
+        ) {
             return; // unlucky roll; the flock circles and tries again later
         }
         self.spawn_gull(x as u8, y as u8, dir);
@@ -140,7 +146,7 @@ impl Board {
     /// signpost it crosses, wall-resolve.
     fn gull_arrival(&mut self, gull: &mut Gull) -> bool {
         let t = gull.tile as usize;
-        if let TileKind::Castle(owner) = self.tiles[t] {
+        if let TileKind::Castle(owner) = self.grid.tiles[t] {
             if self.rules.castle_raids {
                 self.damage_castle(owner, gull.tile);
             }
@@ -190,7 +196,7 @@ impl Board {
             remaining = remaining.saturating_sub(1);
             if remaining == 0 {
                 if matches!(
-                    self.tiles[gull.tile as usize],
+                    self.grid.tiles[gull.tile as usize],
                     TileKind::Rock | TileKind::Kelp
                 ) {
                     remaining = 1; // glide one more tile to somewhere landable
@@ -203,7 +209,7 @@ impl Board {
                     self.resolve_walls_for(gull.tile, &mut gull.dir, gull.handed, Walker::Gull);
                     // A gull that lands on a castle raids it on the spot and
                     // departs with the loot, like a walking raid.
-                    if let TileKind::Castle(owner) = self.tiles[gull.tile as usize] {
+                    if let TileKind::Castle(owner) = self.grid.tiles[gull.tile as usize] {
                         if self.rules.castle_raids {
                             self.damage_castle(owner, gull.tile);
                         }

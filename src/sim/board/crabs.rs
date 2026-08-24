@@ -14,7 +14,7 @@ impl Board {
         );
         let tile = self.index(i32::from(x), i32::from(y));
         assert!(
-            self.tiles[tile as usize] != TileKind::Rock,
+            self.grid.tiles[tile as usize] != TileKind::Rock,
             "crab on a rock"
         );
         let id = self.next_crab_id;
@@ -37,8 +37,8 @@ impl Board {
     }
 
     pub(super) fn run_spawners(&mut self) {
-        for t in 0..self.tiles.len() {
-            let TileKind::Spawner(s) = self.tiles[t] else {
+        for t in 0..self.grid.tiles.len() {
+            let TileKind::Spawner(s) = self.grid.tiles[t] else {
                 continue;
             };
             // Manias override the cadence: floods every 8 ticks.
@@ -112,7 +112,7 @@ impl Board {
     /// Proportional to the board, so an XL arena still feels busy and the
     /// smallest puzzle board is not starved.
     pub(super) fn crab_cap(&self) -> usize {
-        (self.tiles.len() / CRAB_CAP_TILES_PER_CRAB).max(8)
+        (self.grid.tiles.len() / CRAB_CAP_TILES_PER_CRAB).max(8)
     }
 
     pub(super) fn move_crabs(&mut self) {
@@ -173,7 +173,7 @@ impl Board {
     /// wall resolution still applies.
     pub(super) fn resolve_arrival(&mut self, crab: &mut Crab, lure_target: Option<u16>) -> bool {
         let t = crab.tile as usize;
-        if let TileKind::Castle(owner) = self.tiles[t] {
+        if let TileKind::Castle(owner) = self.grid.tiles[t] {
             self.scores[owner as usize] += crab.kind.value();
             self.crabs_banked += 1;
             match crab.kind {
@@ -216,7 +216,8 @@ impl Board {
     /// arrivals, so the board scan is not repeated per crab.
     pub(super) fn lure_target(&self) -> Option<u16> {
         let (owner, _) = self.lure?;
-        self.tiles
+        self.grid
+            .tiles
             .iter()
             .position(|t| *t == TileKind::Castle(owner))
             .map(|t| t as u16)

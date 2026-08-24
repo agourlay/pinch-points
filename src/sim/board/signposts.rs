@@ -20,7 +20,7 @@ impl Board {
             return false;
         }
         let t = self.index(i32::from(x), i32::from(y)) as usize;
-        if self.tiles[t] != TileKind::Empty {
+        if self.grid.tiles[t] != TileKind::Empty {
             return false;
         }
         match self.signposts[t] {
@@ -55,7 +55,7 @@ impl Board {
         // a spent inventory refuses for two reasons at once, and "you have
         // none left" is the wrong one to say: a post in hand would not have
         // gone there either.
-        self.tiles[t] == TileKind::Empty
+        self.grid.tiles[t] == TileKind::Empty
             && self.signposts[t].is_none()
             && self.signpost_count(player) >= self.rules.signpost_cap as usize
     }

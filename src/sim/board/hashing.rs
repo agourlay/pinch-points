@@ -16,11 +16,14 @@ impl Board {
         // under "outside" below have any business doing so.
         let Self {
             // hash_terrain
-            width: _,
-            height: _,
-            h_walls: _,
-            v_walls: _,
-            tiles: _,
+            grid:
+                Grid {
+                    width: _,
+                    height: _,
+                    h_walls: _,
+                    v_walls: _,
+                    tiles: _,
+                },
             signposts: _,
             // hash_creatures
             crabs: _,
@@ -67,15 +70,15 @@ impl Board {
     /// The board itself: size, walls, tiles, signposts. Field order is part
     /// of the contract: never reorder these, only append.
     fn hash_terrain(&self, h: &mut Fnv) {
-        h.u8(self.width);
-        h.u8(self.height);
-        for &wall in &self.h_walls {
+        h.u8(self.grid.width);
+        h.u8(self.grid.height);
+        for &wall in &self.grid.h_walls {
             h.bool(wall);
         }
-        for &wall in &self.v_walls {
+        for &wall in &self.grid.v_walls {
             h.bool(wall);
         }
-        for tile in &self.tiles {
+        for tile in &self.grid.tiles {
             match *tile {
                 TileKind::Empty => h.u8(0),
                 TileKind::Rock => h.u8(1),

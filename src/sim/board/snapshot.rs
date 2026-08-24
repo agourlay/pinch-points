@@ -28,7 +28,7 @@ impl Board {
         let mut out = String::new();
         let (rng_state, rng_inc) = self.rng.hash_state();
         let _ = writeln!(out, "{HEADER}");
-        let _ = writeln!(out, "size: {} {}", self.width, self.height);
+        let _ = writeln!(out, "size: {} {}", self.grid.width, self.grid.height);
         let _ = writeln!(out, "seed: {}", self.seed);
         let _ = writeln!(out, "rng: {rng_state} {rng_inc}");
         let _ = writeln!(out, "tick: {}", self.tick);
@@ -87,9 +87,14 @@ impl Board {
         if let Some((event, at)) = self.last_event {
             let _ = writeln!(out, "last_event: {} {at}", event.index());
         }
-        let _ = writeln!(out, "hwalls: {}", bits_to_hex(&self.h_walls));
-        let _ = writeln!(out, "vwalls: {}", bits_to_hex(&self.v_walls));
-        let tiles: Vec<String> = self.tiles.iter().map(|&kind| tile_token(kind)).collect();
+        let _ = writeln!(out, "hwalls: {}", bits_to_hex(&self.grid.h_walls));
+        let _ = writeln!(out, "vwalls: {}", bits_to_hex(&self.grid.v_walls));
+        let tiles: Vec<String> = self
+            .grid
+            .tiles
+            .iter()
+            .map(|&kind| tile_token(kind))
+            .collect();
         let _ = writeln!(out, "tiles: {}", tiles.join(" "));
         for (tile, slot) in self.signposts.iter().enumerate() {
             if let Some(post) = slot {
@@ -350,12 +355,14 @@ impl Fields {
         // Named in full on purpose: a new `Board` field stops compiling here
         // until it is decided how, or whether, it survives a save.
         Ok(Board {
-            width,
-            height,
+            grid: Grid {
+                width,
+                height,
+                h_walls,
+                v_walls,
+                tiles,
+            },
             seed,
-            h_walls,
-            v_walls,
-            tiles,
             signposts,
             rules: Rules {
                 signpost_cap,
