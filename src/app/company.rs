@@ -16,11 +16,20 @@
 use crate::app::art::Art;
 use bevy::prelude::*;
 
+/// Which creature keeps a card company: the two read differently on the
+/// screen and are drawn from different art, so a perch says which it
+/// holds rather than carrying a flag whose meaning is only in the name.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Company {
+    Crab,
+    Gull,
+}
+
 /// One crab or gull keeping a card company.
 #[derive(Component)]
 pub struct Critter {
     /// The gulls flap; the crabs scuttle.
-    gull: bool,
+    who: Company,
     /// Radians per second of the bob, and how far it carries.
     rate: f32,
     travel: f32,
@@ -51,28 +60,54 @@ pub const SHOULDERS: f32 = 2.0 * (CRITTER + CRITTER_GAP);
 const FLOCK_ALPHA: f32 = 0.30;
 
 /// One place in a flock: where on the frame it hangs as a fraction of each
-/// axis, how big it is drawn, and whether it is a gull.
-pub type Perch = (f32, f32, f32, bool);
+/// axis, how big it is drawn, and who sits there.
+#[derive(Clone, Copy, Debug)]
+pub struct Perch {
+    pub x: f32,
+    pub y: f32,
+    pub size: f32,
+    pub who: Company,
+}
+
+impl Perch {
+    pub const fn gull(x: f32, y: f32, size: f32) -> Perch {
+        Perch {
+            x,
+            y,
+            size,
+            who: Company::Gull,
+        }
+    }
+
+    pub const fn crab(x: f32, y: f32, size: f32) -> Perch {
+        Perch {
+            x,
+            y,
+            size,
+            who: Company::Crab,
+        }
+    }
+}
 
 /// The pair at the card's shoulders. Spawn the crab before the card and
 /// the gull after it, so the row reads crab-card-gull and the card stays
 /// centred on its own rows rather than on the crab.
-pub fn shoulder(parent: &mut ChildSpawnerCommands, art: &Art, gull: bool, phase: f32) {
-    spawn_critter(parent, art, gull, CRITTER, phase, None);
+pub fn shoulder(parent: &mut ChildSpawnerCommands, art: &Art, who: Company, phase: f32) {
+    spawn_critter(parent, art, who, CRITTER, phase, None);
 }
 
 /// The pale scatter behind the card. Pinned rather than laid out, so it
 /// sits behind without moving anything off centre, and spawned before the
 /// card so it stays behind it.
 pub fn flock(parent: &mut ChildSpawnerCommands, art: &Art, perches: &[Perch]) {
-    for (index, (x, y, size, gull)) in perches.iter().enumerate() {
+    for (index, perch) in perches.iter().enumerate() {
         spawn_critter(
             parent,
             art,
-            *gull,
-            *size,
+            perch.who,
+            perch.size,
             index as f32 * 0.9,
-            Some((*x, *y)),
+            Some((perch.x, perch.y)),
         );
     }
 }
@@ -87,18 +122,18 @@ pub fn flock(parent: &mut ChildSpawnerCommands, art: &Art, perches: &[Perch]) {
 fn spawn_critter(
     parent: &mut ChildSpawnerCommands,
     art: &Art,
-    gull: bool,
+    who: Company,
     size: f32,
     phase: f32,
     at: Option<(f32, f32)>,
 ) {
-    let (image, tint) = if gull {
-        (art.gull.clone(), Color::WHITE)
-    } else {
-        (
+    let gull = who == Company::Gull;
+    let (image, tint) = match who {
+        Company::Gull => (art.gull.clone(), Color::WHITE),
+        Company::Crab => (
             art.crab.clone(),
             crate::app::creatures::body_color(crate::sim::CrabKind::Common),
-        )
+        ),
     };
     let node = match at {
         Some((x, y)) => Node {
@@ -118,7 +153,7 @@ fn spawn_critter(
     };
     parent.spawn((
         Critter {
-            gull,
+            who,
             // The gulls ride a long slow hover; the crabs a shorter,
             // busier bob, which is what a crab looks like standing still.
             rate: if gull { 1.5 } else { 3.4 },
@@ -163,7 +198,7 @@ pub fn animate_company(
         // beating a wing to hold its place. Off its own phase, so seven
         // wings do not beat on the same tick.
         let beat = ((now + critter.phase) / critter.frame) as u32 % 2 == 1;
-        let want = match (critter.gull, beat) {
+        let want = match ((critter.who == Company::Gull), beat) {
             (true, true) => &art.gull_fly,
             (true, false) => &art.gull,
             (false, true) => &art.crab_b,
@@ -203,7 +238,7 @@ pub fn keep_clear(card_w: f32) -> std::ops::Range<f32> {
 #[cfg(test)]
 pub fn flock_is_hung_clear(perches: &[Perch], clear_x: std::ops::Range<f32>, clear_y: (f32, f32)) {
     let frame_h = crate::app::settings::DESIGN_H - 2.0 * crate::app::menu_ui::BAR_H;
-    for &(x, y, size, gull) in perches {
+    for &Perch { x, y, size, who } in perches {
         assert!(size > 0.0, "a critter with no size is not drawn");
         let (wide, tall) = (size / crate::app::settings::DESIGN_W, size / frame_h);
         assert!(
@@ -214,7 +249,11 @@ pub fn flock_is_hung_clear(perches: &[Perch], clear_x: std::ops::Range<f32>, cle
             y >= 0.0 && y + tall <= 1.0,
             "the critter at {y} runs off the frame"
         );
-        assert_eq!(gull, y < 0.5, "a gull on the sand, or a crab in the air");
+        assert_eq!(
+            who == Company::Gull,
+            y < 0.5,
+            "a gull on the sand, or a crab in the air"
+        );
         let over_x = x + wide > clear_x.start && x < clear_x.end;
         let over_y = y + tall > clear_y.0 && y < clear_y.1;
         assert!(
@@ -262,14 +301,14 @@ mod tests {
         let band = keep_clear(279.0);
         // A big gull whose corner sits left of the card and whose body
         // does not. The corner alone would pass this.
-        let reaching = [(band.start - 0.01, 0.30, 60.0, true)];
+        let reaching = [Perch::gull(band.start - 0.01, 0.30, 60.0)];
         assert!(
             std::panic::catch_unwind(|| flock_is_hung_clear(&reaching, band.clone(), (0.15, 0.80)))
                 .is_err(),
             "a critter reaching onto the card was allowed"
         );
         // The same gull, hung far enough out that its whole body clears.
-        let clear = [(band.start - 0.10, 0.30, 60.0, true)];
+        let clear = [Perch::gull(band.start - 0.10, 0.30, 60.0)];
         flock_is_hung_clear(&clear, band, (0.15, 0.80));
     }
 }

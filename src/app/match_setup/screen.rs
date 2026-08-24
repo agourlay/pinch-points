@@ -45,10 +45,10 @@ pub struct MatchBeachNote;
 /// out further again. Gulls in the sky above, crabs on the sand below,
 /// none of them over the card.
 pub(super) const FLOCK: [company::Perch; 4] = [
-    (0.025, 0.06, 60.0, true),
-    (0.885, 0.10, 54.0, true),
-    (0.02, 0.72, 64.0, false),
-    (0.89, 0.78, 58.0, false),
+    crate::app::company::Perch::gull(0.025, 0.06, 60.0),
+    crate::app::company::Perch::gull(0.885, 0.10, 54.0),
+    crate::app::company::Perch::crab(0.02, 0.72, 64.0),
+    crate::app::company::Perch::crab(0.89, 0.78, 58.0),
 ];
 
 pub fn enter_match_setup(
@@ -91,7 +91,7 @@ pub fn enter_match_setup(
                 ..default()
             })
             .with_children(|line| {
-                company::shoulder(line, &art, false, 0.0);
+                company::shoulder(line, &art, crate::app::company::Company::Crab, 0.0);
                 line.spawn((node, fill, edge, shadow))
                     .with_children(|card| {
                         card.spawn(menu_ui::heading(tr.match_heading, true));
@@ -110,7 +110,7 @@ pub fn enter_match_setup(
                                 });
                         }
                     });
-                company::shoulder(line, &art, true, 1.7);
+                company::shoulder(line, &art, crate::app::company::Company::Gull, 1.7);
             });
             // The beach note sits first, right under the card and so under
             // the map row it is about, and in the parchment the rows use
@@ -280,8 +280,7 @@ pub fn match_setup_input(
     };
     match Row::ALL[menu.selected] {
         Row::Players => {
-            let seats = i32::from(config.seats) + if right { 1 } else { -1 };
-            config.seats = seats.clamp(2, MAX_PLAYERS as i32) as u8;
+            config.seats = crate::app::cycle::dial(config.seats, right, 1, 2..=MAX_PLAYERS as u8);
             config.bots = config.bots.min(config.seats - 1);
             // Five and six castles need a beach with room for them, and a
             // handmade beach only seats as many as it has castles: the map
@@ -289,8 +288,7 @@ pub fn match_setup_input(
             crate::app::match_setup::settle_map(&mut config, &beaches);
         }
         Row::Bots => {
-            let bots = i32::from(config.bots) + if right { 1 } else { -1 };
-            config.bots = bots.clamp(0, i32::from(config.seats) - 1) as u8;
+            config.bots = crate::app::cycle::dial(config.bots, right, 1, 0..=config.seats - 1);
         }
         Row::BotLevel(slot) => cycle_ai_level(&mut config, slot, right),
         Row::Map => {

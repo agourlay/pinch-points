@@ -698,7 +698,7 @@ mod tests {
         // And so does the one-hand preset: placement is on IJKL then, not
         // the arrows the stock legend names.
         let one_hand = crate::app::settings::GameSettings {
-            ijkl_commits: true,
+            commit: crate::app::settings::CommitScheme::Ijkl,
             ..crate::app::settings::GameSettings::default()
         };
         assert!(!one_hand.stock_legend());

@@ -51,10 +51,18 @@ pub struct Stats {
     pub campaign_done: u32,
     /// 1 once every Beach Day stage has been cleared.
     pub beach_done: u32,
-    /// Raids on the local castle this round (round-scoped scratch).
-    pub raids_this_round: u32,
-    /// Crabs banked this round (round-scoped scratch, feeds `best_round`).
-    pub banked_this_round: u32,
+}
+
+/// What this round has done to the local seat so far: read when the round
+/// ends, then thrown away. Its own resource rather than two fields in
+/// [`Stats`], so that the save file is exactly `Stats` and nothing has to
+/// remember to leave these out of it, or to zero them on the way in.
+#[derive(Resource, Default, Debug)]
+pub struct RoundScratch {
+    /// Raids on the local castle this round.
+    pub raids: u32,
+    /// Crabs banked this round; feeds `best_round`.
+    pub banked: u32,
 }
 
 /// Ids of unlocked achievements.
@@ -293,9 +301,6 @@ mod tests {
             levels_built: 3,
             campaign_done: 1,
             beach_done: 0,
-            // Scratch: not persisted.
-            raids_this_round: 99,
-            banked_this_round: 77,
         };
         let mut unlocked = Unlocked::default();
         unlocked.0.insert("first_bank");
@@ -303,8 +308,6 @@ mod tests {
         let (reparsed, re_unlocked) = parse(&to_text(&stats, &unlocked));
         assert_eq!(reparsed.banked, 123);
         assert_eq!(reparsed.wins, 3);
-        assert_eq!(reparsed.raids_this_round, 0, "scratch resets");
-        assert_eq!(reparsed.banked_this_round, 0, "scratch resets");
         assert_eq!(reparsed.daily_day, 20_600);
         assert_eq!(reparsed.daily_best, 42);
         assert_eq!(

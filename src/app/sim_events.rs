@@ -131,7 +131,9 @@ pub struct Watch {
     surging: bool,
     over: bool,
     crabs: HashMap<u32, Crab>,
-    gull_flying: HashMap<u32, (bool, Vec2)>,
+    /// Where each gull was in the air, `None` while it was on the sand: a
+    /// gull that had a flight position and now has none has just landed.
+    gulls_aloft: HashMap<u32, Option<Vec2>>,
 }
 
 impl Watch {
@@ -166,12 +168,13 @@ impl Watch {
             surging: board.in_surge(),
             over: board.round_over(),
             crabs: board.crabs().iter().map(|c| (c.id, *c)).collect(),
-            gull_flying: board
+            gulls_aloft: board
                 .gulls()
                 .iter()
                 .map(|g| {
-                    let pos = layout::creature_pos(board, g.tile, g.dir, g.progress);
-                    (g.id, (matches!(g.state, GullState::Flying { .. }), pos))
+                    let aloft = matches!(g.state, GullState::Flying { .. })
+                        .then(|| layout::creature_pos(board, g.tile, g.dir, g.progress));
+                    (g.id, aloft)
                 })
                 .collect(),
         }
@@ -296,8 +299,7 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
     }
     for gull in board.gulls() {
         let now_flying = matches!(gull.state, GullState::Flying { .. });
-        if let Some((was, _)) = prev.gull_flying.get(&gull.id)
-            && *was
+        if let Some(Some(_)) = prev.gulls_aloft.get(&gull.id)
             && !now_flying
         {
             events.push(SimEvent::GullLanded {

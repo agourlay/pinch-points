@@ -259,10 +259,10 @@ pub fn caption(
 /// at a full ten columns of full-size tiles, so the flock hangs right out
 /// at the margins: gulls in the sky above, crabs on the sand below.
 const FLOCK: [crate::app::company::Perch; 4] = [
-    (0.04, 0.07, 62.0, true),
-    (0.87, 0.09, 56.0, true),
-    (0.03, 0.74, 66.0, false),
-    (0.88, 0.79, 58.0, false),
+    crate::app::company::Perch::gull(0.04, 0.07, 62.0),
+    crate::app::company::Perch::gull(0.87, 0.09, 56.0),
+    crate::app::company::Perch::crab(0.03, 0.74, 66.0),
+    crate::app::company::Perch::crab(0.88, 0.79, 58.0),
 ];
 
 /// The widest the grid can be: ten columns of the biggest tile the art was
@@ -314,7 +314,7 @@ pub fn enter_stage_select(
                 ..default()
             })
             .with_children(|line| {
-                crate::app::company::shoulder(line, &art, false, 0.0);
+                crate::app::company::shoulder(line, &art, crate::app::company::Company::Crab, 0.0);
                 line.spawn((
                     Node {
                         flex_direction: FlexDirection::Column,
@@ -453,7 +453,7 @@ pub fn enter_stage_select(
                             }
                         });
                 });
-                crate::app::company::shoulder(line, &art, true, 1.7);
+                crate::app::company::shoulder(line, &art, crate::app::company::Company::Gull, 1.7);
             });
             // Both lines sit under the card, not in it. They change with
             // every cursor move, and inside the card they would size it:

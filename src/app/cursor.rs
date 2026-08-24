@@ -9,7 +9,7 @@
 
 use crate::app::layout::{self, TILE};
 use crate::app::palette;
-use crate::app::settings::GameSettings;
+use crate::app::settings::{CommitScheme, GameSettings};
 use crate::app::{
     Campaign, LoadLevel, Paused, PendingActions, Phase, PlacementDenied, Screen, Sim,
 };
@@ -40,14 +40,15 @@ const FLASH_SECS: f32 = 0.25;
 /// Keyboard layout for a seat, as bound in settings (spec §8.2 defaults:
 /// seat 1 on WASD + arrows, seat 2 on IJKL + numpad).
 ///
-/// `ijkl_commits` is the §8.2 single-hand preset, which overrides seat 1's
-/// four commit keys with IJKL whatever they are bound to. It exists for
-/// solo play, where the second seat's keys are free.
-pub fn keymap(settings: &GameSettings, player: u8, ijkl_commits: bool) -> KeyMap {
+/// `commit` is the §8.2 scheme in force: the one-hand preset overrides
+/// seat 1's four commit keys with IJKL whatever they are bound to. It
+/// exists for solo play, where the second seat's keys are free, so a
+/// caller in versus passes [`CommitScheme::Arrows`] whatever is set.
+pub fn keymap(settings: &GameSettings, player: u8, commit: CommitScheme) -> KeyMap {
     use crate::app::binds::Action;
     let seat = usize::from(player).min(crate::app::binds::BOUND_SEATS - 1);
     let binds = &settings.binds[seat];
-    let places = if player == 0 && ijkl_commits {
+    let places = if player == 0 && commit == CommitScheme::Ijkl {
         [
             (KeyCode::KeyI, Direction::Up),
             (KeyCode::KeyK, Direction::Down),
@@ -193,14 +194,20 @@ pub fn move_cursor(
     mut cursors: Query<(&mut Cursor, &mut Transform)>,
 ) {
     let board = &sim.0;
-    let ijkl = settings.ijkl_commits && *screen.get() != Screen::Versus;
+    // Versus shares the keyboard, so IJKL belongs to the second seat there
+    // whatever the one-hand preset says.
+    let commit = if *screen.get() == Screen::Versus {
+        CommitScheme::Arrows
+    } else {
+        settings.commit
+    };
     for (mut cursor, mut transform) in &mut cursors {
         // Online: the one local cursor always answers to the primary keys.
         // Local: the keyboard has two seats; 3 and up are gamepad-only.
         let map = if online.0.is_some() {
-            keymap(&settings, 0, ijkl)
+            keymap(&settings, 0, commit)
         } else if cursor.player < 2 {
-            keymap(&settings, cursor.player, ijkl)
+            keymap(&settings, cursor.player, commit)
         } else {
             continue;
         };
@@ -252,7 +259,7 @@ pub fn setup_input(
     let Some(mut cursor) = cursors.iter_mut().find(|c| c.player == 0) else {
         return;
     };
-    let map = keymap(&settings, 0, settings.ijkl_commits);
+    let map = keymap(&settings, 0, settings.commit);
     for (key, dir) in map.places {
         if keys.just_pressed(key) {
             // CapPolicy::Reject enforces the inventory; surface the no-op,
@@ -365,9 +372,9 @@ pub fn versus_input(
         // Online: whatever your seat, your hands are on the primary layout.
         // Local: the keyboard seats two; pads drive seats 3 and up.
         let map = if online.0.is_some() {
-            keymap(&settings, 0, false)
+            keymap(&settings, 0, CommitScheme::Arrows)
         } else if cursor.player < 2 {
-            keymap(&settings, cursor.player, false)
+            keymap(&settings, cursor.player, CommitScheme::Arrows)
         } else {
             continue;
         };
@@ -654,7 +661,7 @@ mod tests {
     #[test]
     fn default_keyboard_seats_do_not_collide() {
         let collect = |player: u8| -> Vec<KeyCode> {
-            let map = keymap(&GameSettings::default(), player, false);
+            let map = keymap(&GameSettings::default(), player, CommitScheme::Arrows);
             let mut keys: Vec<KeyCode> = map.moves.iter().map(|(k, ..)| *k).collect();
             keys.extend(map.places.iter().map(|(k, _)| *k));
             keys.push(map.remove);

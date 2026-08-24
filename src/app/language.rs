@@ -67,7 +67,7 @@ pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: 
                 ..default()
             })
             .with_children(|line| {
-                company::shoulder(line, &art, false, 0.0);
+                company::shoulder(line, &art, crate::app::company::Company::Crab, 0.0);
                 line.spawn(menu_ui::screen_card()).with_children(|card| {
                     for (index, lang) in ALL_LANGS.iter().enumerate() {
                         card.spawn((LanguageRow(index), menu_ui::card_row()))
@@ -98,7 +98,7 @@ pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: 
                             });
                     }
                 });
-                company::shoulder(line, &art, true, 1.7);
+                company::shoulder(line, &art, crate::app::company::Company::Gull, 1.7);
             });
             wrap.spawn((
                 LanguageNote,
@@ -120,13 +120,13 @@ pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: 
 /// at once, on one run, and the one look it gets should be the composed
 /// one: nothing overlapping the card, nothing bunched in a corner.
 const FLOCK: [Perch; 7] = [
-    (0.09, 0.13, 46.0, true),
-    (0.25, 0.04, 30.0, true),
-    (0.88, 0.09, 40.0, true),
-    (0.70, 0.02, 26.0, true),
-    (0.12, 0.80, 42.0, false),
-    (0.35, 0.92, 28.0, false),
-    (0.86, 0.84, 48.0, false),
+    crate::app::company::Perch::gull(0.09, 0.13, 46.0),
+    crate::app::company::Perch::gull(0.25, 0.04, 30.0),
+    crate::app::company::Perch::gull(0.88, 0.09, 40.0),
+    crate::app::company::Perch::gull(0.70, 0.02, 26.0),
+    crate::app::company::Perch::crab(0.12, 0.80, 42.0),
+    crate::app::company::Perch::crab(0.35, 0.92, 28.0),
+    crate::app::company::Perch::crab(0.86, 0.84, 48.0),
 ];
 
 /// The screen a boot opens on: the picker until a settings file exists to

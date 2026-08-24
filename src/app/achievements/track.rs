@@ -3,7 +3,7 @@
 
 use super::save::save;
 use super::ui::spawn_toast;
-use super::{ACHIEVEMENTS, Stats, Unlocked};
+use super::{ACHIEVEMENTS, RoundScratch, Stats, Unlocked};
 use crate::app::Bots;
 use crate::app::audio::{Muted, Sounds, play_chime, sfx_gain};
 use crate::app::net::Online;
@@ -38,6 +38,7 @@ pub fn track_events(
     sounds: Option<Res<Sounds>>,
     muted: Res<Muted>,
     mut stats: ResMut<Stats>,
+    mut scratch: ResMut<RoundScratch>,
     mut unlocked: ResMut<Unlocked>,
 ) {
     let Some(seat) = local_seat(&online, &bots) else {
@@ -49,7 +50,7 @@ pub fn track_events(
         match event {
             SimEvent::CrabBanked { owner, kind, .. } if *owner == seat => {
                 stats.banked += 1;
-                stats.banked_this_round += 1;
+                scratch.banked += 1;
                 match kind {
                     CrabKind::Golden => stats.golden += 1,
                     CrabKind::Molting => stats.lures += 1,
@@ -72,7 +73,7 @@ pub fn track_events(
             }
             SimEvent::CastleRaided { owner, .. } if *owner == seat => {
                 stats.raids_taken += 1;
-                stats.raids_this_round += 1;
+                scratch.raids += 1;
                 changed = true;
             }
             SimEvent::CrabBanked { .. }
@@ -117,11 +118,11 @@ pub(super) struct RoundOutcome {
 /// easy to get subtly wrong, since the raid counter has to be read before
 /// it is cleared and cleared whatever the result. The round's banked count is
 /// the same shape: read for the best-round record, then reset either way.
-fn credit_round(stats: &mut Stats, outcome: RoundOutcome) {
-    stats.best_round = stats.best_round.max(stats.banked_this_round);
+fn credit_round(stats: &mut Stats, scratch: &mut RoundScratch, outcome: RoundOutcome) {
+    stats.best_round = stats.best_round.max(scratch.banked);
     if outcome.won {
         stats.wins += 1;
-        if stats.raids_this_round == 0 {
+        if scratch.raids == 0 {
             stats.dry_wins += 1;
         }
         if outcome.online {
@@ -131,8 +132,7 @@ fn credit_round(stats: &mut Stats, outcome: RoundOutcome) {
             stats.series_wins += 1;
         }
     }
-    stats.raids_this_round = 0;
-    stats.banked_this_round = 0;
+    *scratch = RoundScratch::default();
 }
 
 /// A versus round just ended: count it, the win, and the dry-castle win.
@@ -149,6 +149,7 @@ pub fn record_round(
     sounds: Option<Res<Sounds>>,
     muted: Res<Muted>,
     mut stats: ResMut<Stats>,
+    mut scratch: ResMut<RoundScratch>,
     mut unlocked: ResMut<Unlocked>,
 ) {
     let Some(seat) = local_seat(&online, &bots) else {
@@ -171,6 +172,7 @@ pub fn record_round(
     let won = winners[seat as usize];
     credit_round(
         &mut stats,
+        &mut scratch,
         RoundOutcome {
             won,
             online: online.0.is_some(),
@@ -227,10 +229,9 @@ pub fn record_level_built(
     save(&stats, &unlocked);
 }
 
-/// Fresh round: reset the round-scoped scratch.
-pub fn reset_round_scratch(mut stats: ResMut<Stats>) {
-    stats.raids_this_round = 0;
-    stats.banked_this_round = 0;
+/// Fresh round: the scratch starts over.
+pub fn reset_round_scratch(mut scratch: ResMut<RoundScratch>) {
+    *scratch = RoundScratch::default();
 }
 
 /// A puzzle was solved.
@@ -307,44 +308,45 @@ mod tests {
         }
     }
 
+    fn scratch(raids: u32, banked: u32) -> RoundScratch {
+        RoundScratch { raids, banked }
+    }
+
     /// Winning untouched earns the dry-castle trophy; winning after a raid
     /// does not; and either way the round's raid count starts over.
     #[test]
     fn a_dry_win_needs_an_unraided_castle() {
         let mut stats = Stats::default();
-        credit_round(&mut stats, win());
+        let mut round = RoundScratch::default();
+        credit_round(&mut stats, &mut round, win());
         assert_eq!((stats.wins, stats.dry_wins), (1, 1));
 
-        stats.raids_this_round = 2;
-        credit_round(&mut stats, win());
+        let mut round = scratch(2, 0);
+        credit_round(&mut stats, &mut round, win());
         assert_eq!((stats.wins, stats.dry_wins), (2, 1), "raided: no trophy");
-        assert_eq!(stats.raids_this_round, 0, "the scratch resets");
+        assert_eq!(round.raids, 0, "the scratch resets");
 
         // A loss counts neither, and still clears the scratch.
-        stats.raids_this_round = 5;
-        credit_round(&mut stats, RoundOutcome::default());
+        let mut round = scratch(5, 0);
+        credit_round(&mut stats, &mut round, RoundOutcome::default());
         assert_eq!((stats.wins, stats.dry_wins), (2, 1));
-        assert_eq!(stats.raids_this_round, 0);
+        assert_eq!(round.raids, 0);
     }
 
     /// The best-round record is the high-water mark of a scratch counter,
     /// so it has to be read before the reset and survive a losing round.
     #[test]
     fn the_best_round_is_a_high_water_mark() {
-        let mut stats = Stats {
-            banked_this_round: 30,
-            ..Stats::default()
-        };
-        credit_round(&mut stats, RoundOutcome::default());
+        let mut stats = Stats::default();
+        let mut round = scratch(0, 30);
+        credit_round(&mut stats, &mut round, RoundOutcome::default());
         assert_eq!(stats.best_round, 30, "a losing round still counts");
-        assert_eq!(stats.banked_this_round, 0);
+        assert_eq!(round.banked, 0);
 
-        stats.banked_this_round = 12;
-        credit_round(&mut stats, win());
+        credit_round(&mut stats, &mut scratch(0, 12), win());
         assert_eq!(stats.best_round, 30, "a worse round does not lower it");
 
-        stats.banked_this_round = 51;
-        credit_round(&mut stats, win());
+        credit_round(&mut stats, &mut scratch(0, 51), win());
         assert_eq!(stats.best_round, 51);
     }
 
@@ -356,6 +358,7 @@ mod tests {
         // Losing an online series decider earns nothing.
         credit_round(
             &mut stats,
+            &mut RoundScratch::default(),
             RoundOutcome {
                 won: false,
                 online: true,
@@ -366,6 +369,7 @@ mod tests {
 
         credit_round(
             &mut stats,
+            &mut RoundScratch::default(),
             RoundOutcome {
                 won: true,
                 online: true,
@@ -375,7 +379,7 @@ mod tests {
         assert_eq!((stats.online_wins, stats.series_wins), (1, 1));
 
         // A plain local win moves neither.
-        credit_round(&mut stats, win());
+        credit_round(&mut stats, &mut RoundScratch::default(), win());
         assert_eq!((stats.online_wins, stats.series_wins), (1, 1));
         assert_eq!(stats.wins, 2);
     }

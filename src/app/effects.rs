@@ -9,6 +9,39 @@ use crate::app::palette;
 use crate::app::sim_events::SimEvent;
 use bevy::prelude::*;
 
+/// Which claw a crab put down last. A print is offset to one side of the
+/// stride and the sides alternate; a `bool` called `left` in a tuple was
+/// the kind of thing that reads the other way round at the second site.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Foot {
+    Left,
+    Right,
+}
+
+impl Foot {
+    fn other(self) -> Foot {
+        match self {
+            Foot::Left => Foot::Right,
+            Foot::Right => Foot::Left,
+        }
+    }
+
+    /// How far to the side of the stride the print lands, signed.
+    fn side(self) -> f32 {
+        match self {
+            Foot::Left => 5.0,
+            Foot::Right => -5.0,
+        }
+    }
+}
+
+/// Where a crab last left a print, and with which foot.
+#[derive(Clone, Copy, Debug)]
+pub struct Footfall {
+    last: Vec2,
+    foot: Foot,
+}
+
 /// A cheap LCG for visual variety only. Never seed gameplay from this.
 #[derive(Resource)]
 pub struct VisualRng(u32);
@@ -151,7 +184,7 @@ pub fn crab_trails(
     art: Res<Art>,
     settings: Res<crate::app::settings::GameSettings>,
     mut rng: ResMut<VisualRng>,
-    mut footfalls: Local<bevy::platform::collections::HashMap<u32, (Vec2, bool)>>,
+    mut footfalls: Local<bevy::platform::collections::HashMap<u32, Footfall>>,
     mut seen: Local<Vec<u32>>,
 ) {
     use crate::sim::TileKind;
@@ -164,17 +197,23 @@ pub fn crab_trails(
     for crab in board.crabs() {
         seen.push(crab.id);
         let pos = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
-        let Some((last, left_foot)) = footfalls.get_mut(&crab.id) else {
-            footfalls.insert(crab.id, (pos, false));
+        let Some(fall) = footfalls.get_mut(&crab.id) else {
+            footfalls.insert(
+                crab.id,
+                Footfall {
+                    last: pos,
+                    foot: Foot::Right,
+                },
+            );
             continue;
         };
-        let step = pos - *last;
+        let step = pos - fall.last;
         if step.length() < STRIDE {
             continue;
         }
-        let side = step.normalize_or_zero().perp() * if *left_foot { 5.0 } else { -5.0 };
-        *last = pos;
-        *left_foot = !*left_foot;
+        let side = step.normalize_or_zero().perp() * fall.foot.side();
+        fall.last = pos;
+        fall.foot = fall.foot.other();
         let (x, y) = board.coords_u8(crab.tile);
         if board.tile_at(x, y) != TileKind::Empty {
             continue; // prints only show on dry sand

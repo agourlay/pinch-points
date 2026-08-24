@@ -35,6 +35,14 @@ pub const REPLAY_CAP_DEFAULT: u8 = 20;
 
 /// UI scale bounds, percent: small enough to fit the chrome on a short
 /// laptop screen, large enough to read across a room.
+/// Where the gamepad deadzone dial stops, percent of travel.
+pub const DEADZONE_RANGE: std::ops::RangeInclusive<u8> = 20..=80;
+/// Where the volume dials stop.
+pub const VOLUME_RANGE: std::ops::RangeInclusive<u8> = 0..=100;
+/// Hold-to-repeat bounds, seconds: the card steps inside these and the
+/// parser clamps a saved value into them, so the two cannot disagree.
+pub const REPEAT_DELAY_RANGE: std::ops::RangeInclusive<f32> = 0.1..=0.5;
+pub const REPEAT_INTERVAL_RANGE: std::ops::RangeInclusive<f32> = 0.03..=0.2;
 pub const UI_SCALE_MIN: u8 = 80;
 pub const UI_SCALE_MAX: u8 = 150;
 
@@ -62,6 +70,39 @@ pub enum SeatInput {
 /// How many controllers a seat may name. Four is what the pad ceremony can
 /// seat, so it is what the dial offers.
 pub const NAMED_PADS: u8 = 4;
+
+/// Where player 1's four commit keys live: the stock arrows, or the §8.2
+/// one-hand preset on IJKL. A dial, like the seat inputs beside it, and a
+/// token in settings.txt that an unknown word falls back from rather than
+/// silently reading as "arrows".
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CommitScheme {
+    #[default]
+    Arrows,
+    Ijkl,
+}
+
+impl CommitScheme {
+    pub fn key(self) -> &'static str {
+        match self {
+            CommitScheme::Arrows => "arrows",
+            CommitScheme::Ijkl => "ijkl",
+        }
+    }
+
+    pub fn from_key(key: &str) -> CommitScheme {
+        use crate::app::cycle::Cycle;
+        Self::VARIANTS
+            .iter()
+            .copied()
+            .find(|scheme| scheme.key() == key)
+            .unwrap_or_default()
+    }
+}
+
+impl crate::app::cycle::Cycle for CommitScheme {
+    const VARIANTS: &'static [CommitScheme] = &[CommitScheme::Arrows, CommitScheme::Ijkl];
+}
 
 impl crate::app::cycle::Cycle for SeatInput {
     const VARIANTS: &'static [SeatInput] = &[
@@ -98,10 +139,10 @@ impl SeatInput {
 
 #[derive(Resource, Clone, PartialEq, Debug)]
 pub struct GameSettings {
-    /// §8.2 single-hand preset: player 1 commits on IJKL instead of the
-    /// arrow keys (solo modes only: IJKL moves player 2 in shared-keyboard
-    /// versus).
-    pub ijkl_commits: bool,
+    /// §8.2: which keys player 1 commits a signpost on. The one-hand
+    /// preset puts them on IJKL (solo modes only: IJKL moves player 2 in
+    /// shared-keyboard versus).
+    pub commit: CommitScheme,
     /// What drives P1 and P2. Seats past the second are always `Auto`:
     /// they have no keyboard of their own to choose between.
     pub seat_input: [SeatInput; crate::app::binds::BOUND_SEATS],
@@ -219,7 +260,7 @@ impl GameSettings {
     /// whatever the bindings say. Anything that teaches keys asks this
     /// rather than [`Self::custom_binds`] alone.
     pub fn stock_legend(&self) -> bool {
-        !self.custom_binds() && !self.ijkl_commits
+        !self.custom_binds() && self.commit == CommitScheme::Arrows
     }
 
     /// Sound-effect gain, 0.0–1.0, with the on/off switch folded in. Zero
@@ -298,7 +339,7 @@ impl GameSettings {
 impl Default for GameSettings {
     fn default() -> Self {
         GameSettings {
-            ijkl_commits: false,
+            commit: CommitScheme::Arrows,
             seat_input: [SeatInput::Auto; crate::app::binds::BOUND_SEATS],
             repeat_delay: 0.28,
             repeat_interval: 0.09,
@@ -331,7 +372,7 @@ impl GameSettings {
         // here until it is written out. The lenient `parse` below would
         // never notice one going unsaved.
         let Self {
-            ijkl_commits,
+            commit,
             seat_input,
             repeat_delay,
             repeat_interval,
@@ -363,7 +404,7 @@ impl GameSettings {
              reduced_motion: {}\nnames: {}\nreplay_cap: {}\nbeach: {}\n\
              updates: {}\nkeycaps: {}\nkeyboard: {}\n\
              p1_input: {}\np2_input: {}\n{}",
-            if *ijkl_commits { "ijkl" } else { "arrows" },
+            commit.key(),
             repeat_delay,
             repeat_interval,
             if *music_on { "on" } else { "off" },
@@ -400,24 +441,29 @@ impl GameSettings {
             };
             let value = value.trim();
             match key.trim() {
-                "commit_scheme" => settings.ijkl_commits = value == "ijkl",
+                "commit_scheme" => settings.commit = CommitScheme::from_key(value),
                 "p1_input" => settings.seat_input[0] = SeatInput::from_name(value),
                 "p2_input" => settings.seat_input[1] = SeatInput::from_name(value),
                 "repeat_delay" => {
                     if let Ok(v) = value.parse() {
-                        settings.repeat_delay = f32::clamp(v, 0.1, 0.5);
+                        settings.repeat_delay =
+                            f32::clamp(v, *REPEAT_DELAY_RANGE.start(), *REPEAT_DELAY_RANGE.end());
                     }
                 }
                 "repeat_interval" => {
                     if let Ok(v) = value.parse() {
-                        settings.repeat_interval = f32::clamp(v, 0.03, 0.2);
+                        settings.repeat_interval = f32::clamp(
+                            v,
+                            *REPEAT_INTERVAL_RANGE.start(),
+                            *REPEAT_INTERVAL_RANGE.end(),
+                        );
                     }
                 }
                 "music_on" => settings.music_on = value != "off",
                 "sfx_on" => settings.sfx_on = value != "off",
                 "music" => {
                     if let Ok(v) = value.parse::<u8>() {
-                        settings.music_volume = v.min(100);
+                        settings.music_volume = v.min(*VOLUME_RANGE.end());
                     }
                 }
                 // Was an on/off toggle before it became a slider; the old
@@ -428,7 +474,7 @@ impl GameSettings {
                         "on" => 100,
                         _ => value
                             .parse::<u8>()
-                            .map_or(settings.sfx_volume, |v| v.min(100)),
+                            .map_or(settings.sfx_volume, |v| v.min(*VOLUME_RANGE.end())),
                     };
                 }
                 "replay_cap" => {
@@ -441,7 +487,8 @@ impl GameSettings {
                 "rumble" => settings.rumble = value != "off",
                 "pad_deadzone" => {
                     if let Ok(v) = value.parse::<u8>() {
-                        settings.pad_deadzone = v.clamp(20, 80);
+                        settings.pad_deadzone =
+                            v.clamp(*DEADZONE_RANGE.start(), *DEADZONE_RANGE.end());
                     }
                 }
                 "palette" => settings.colorblind = value == "colorblind",
@@ -602,7 +649,7 @@ mod tests {
     #[test]
     fn settings_round_trip_through_text() {
         let settings = GameSettings {
-            ijkl_commits: true,
+            commit: CommitScheme::Ijkl,
             repeat_delay: 0.35,
             // Both switches off, so the round trip is actually carrying
             // them: left at their default they would survive a `to_text`

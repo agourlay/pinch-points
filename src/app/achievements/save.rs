@@ -31,8 +31,6 @@ pub fn to_text(stats: &Stats, unlocked: &Unlocked) -> String {
         levels_built,
         campaign_done,
         beach_done,
-        raids_this_round: _,
-        banked_this_round: _,
     } = stats;
     let mut ids: Vec<&str> = unlocked.0.iter().copied().collect();
     ids.sort_unstable();
@@ -129,6 +127,7 @@ pub fn load(mut commands: Commands) {
         .map(|text| parse(&text))
         .unwrap_or_default();
     commands.insert_resource(stats);
+    commands.init_resource::<super::RoundScratch>();
     commands.insert_resource(unlocked);
 }
 

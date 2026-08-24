@@ -22,6 +22,21 @@ pub trait Cycle: Sized + Copy + PartialEq + 'static {
     }
 }
 
+/// One notch on a numeric dial: `value` moved `step` toward `right`, held
+/// inside `range`. Eight rows once inlined this with their own casts and
+/// their own copy of the bounds, and the lenient settings parser restated
+/// the bounds a third time; the ranges now live beside the parser as named
+/// constants and the card turns them through here.
+pub fn dial(value: u8, right: bool, step: u8, range: std::ops::RangeInclusive<u8>) -> u8 {
+    let moved = i32::from(value)
+        + if right {
+            i32::from(step)
+        } else {
+            -i32::from(step)
+        };
+    moved.clamp(i32::from(*range.start()), i32::from(*range.end())) as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::Cycle;

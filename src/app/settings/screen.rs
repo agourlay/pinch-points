@@ -3,9 +3,13 @@
 //! Split from the settings *model* next door, which the whole game reads
 //! and which has no reason to depend on Bevy UI.
 
-use super::{GameSettings, SeatInput, UI_SCALE_MAX, UI_SCALE_MIN};
+use super::{
+    CommitScheme, DEADZONE_RANGE, GameSettings, REPEAT_DELAY_RANGE, REPEAT_INTERVAL_RANGE,
+    SeatInput, UI_SCALE_MAX, UI_SCALE_MIN, VOLUME_RANGE,
+};
 use crate::app::Screen;
 use crate::app::cycle::Cycle;
+use crate::app::cycle::dial;
 use crate::app::i18n::fill;
 use crate::app::menu_ui::{self, Half};
 use crate::app::palette;
@@ -431,24 +435,25 @@ pub fn settings_input(
             let seat = usize::from(Row::ALL[menu.selected] == Row::InputP2);
             settings.seat_input[seat] = settings.seat_input[seat].cycled(right);
         }
-        Row::CommitKeys => settings.ijkl_commits = !settings.ijkl_commits,
+        Row::CommitKeys => settings.commit = settings.commit.cycled(right),
         Row::RepeatDelay => {
-            settings.repeat_delay = f32::clamp(settings.repeat_delay + step * 0.05, 0.1, 0.5);
+            settings.repeat_delay = f32::clamp(
+                settings.repeat_delay + step * 0.05,
+                *REPEAT_DELAY_RANGE.start(),
+                *REPEAT_DELAY_RANGE.end(),
+            );
         }
         Row::RepeatRate => {
-            settings.repeat_interval =
-                f32::clamp(settings.repeat_interval + step * 0.02, 0.03, 0.2);
+            settings.repeat_interval = f32::clamp(
+                settings.repeat_interval + step * 0.02,
+                *REPEAT_INTERVAL_RANGE.start(),
+                *REPEAT_INTERVAL_RANGE.end(),
+            );
         }
         Row::MusicOn => settings.music_on = !settings.music_on,
         Row::SfxOn => settings.sfx_on = !settings.sfx_on,
-        Row::Music => {
-            let volume = i32::from(settings.music_volume) + if right { 10 } else { -10 };
-            settings.music_volume = volume.clamp(0, 100) as u8;
-        }
-        Row::Sfx => {
-            let volume = i32::from(settings.sfx_volume) + if right { 10 } else { -10 };
-            settings.sfx_volume = volume.clamp(0, 100) as u8;
-        }
+        Row::Music => settings.music_volume = dial(settings.music_volume, right, 10, VOLUME_RANGE),
+        Row::Sfx => settings.sfx_volume = dial(settings.sfx_volume, right, 10, VOLUME_RANGE),
         Row::VersusMode => settings.team_mode = settings.team_mode.cycled(right),
         Row::Speed => {
             settings.puzzle_speed = match (settings.puzzle_speed, right) {
@@ -460,21 +465,20 @@ pub fn settings_input(
         }
         Row::Rumble => settings.rumble = !settings.rumble,
         Row::Deadzone => {
-            let dz = i32::from(settings.pad_deadzone) + if right { 10 } else { -10 };
-            settings.pad_deadzone = dz.clamp(20, 80) as u8;
+            settings.pad_deadzone = dial(settings.pad_deadzone, right, 10, DEADZONE_RANGE);
         }
         Row::Palette => settings.colorblind = !settings.colorblind,
         Row::UiScale => {
-            let scale = i32::from(settings.ui_scale) + if right { 10 } else { -10 };
-            settings.ui_scale = scale.clamp(i32::from(UI_SCALE_MIN), i32::from(UI_SCALE_MAX)) as u8;
+            settings.ui_scale = dial(settings.ui_scale, right, 10, UI_SCALE_MIN..=UI_SCALE_MAX);
         }
         Row::ReducedMotion => settings.reduced_motion = !settings.reduced_motion,
         Row::ReplayCap => {
-            let cap = i32::from(settings.replay_cap) + if right { 5 } else { -5 };
-            settings.replay_cap = cap.clamp(
-                i32::from(crate::app::settings::REPLAY_CAP_MIN),
-                i32::from(crate::app::settings::REPLAY_CAP_MAX),
-            ) as u8;
+            settings.replay_cap = dial(
+                settings.replay_cap,
+                right,
+                5,
+                crate::app::settings::REPLAY_CAP_MIN..=crate::app::settings::REPLAY_CAP_MAX,
+            );
         }
         // Doors: worked with Enter, not adjusted with A/D.
         Row::KeyBindings | Row::ResetProgress => {}
@@ -527,10 +531,9 @@ pub(super) fn row_text(
         }
         Row::CommitKeys => (
             tr.set_commit_keys,
-            if settings.ijkl_commits {
-                settings.keycaps.legend(tr.val_ijkl)
-            } else {
-                tr.val_arrows.to_string()
+            match settings.commit {
+                CommitScheme::Ijkl => settings.keycaps.legend(tr.val_ijkl),
+                CommitScheme::Arrows => tr.val_arrows.to_string(),
             },
         ),
         Row::RepeatDelay => (
@@ -704,7 +707,7 @@ mod tests {
                 ui_scale: 150,
                 replay_cap: 99,
                 colorblind: true,
-                ijkl_commits: true,
+                commit: CommitScheme::Ijkl,
                 rumble: true,
                 reduced_motion: true,
                 check_updates: true,
