@@ -49,16 +49,18 @@ impl OnlineSession {
     pub fn poll_between_rounds(&mut self, delta: f32) {
         let host = self.is_host();
         self.age_the_silence(delta);
-        if !host {
-            self.greet_in -= delta;
-            if self.greet_in <= 0.0 {
-                self.greet_in = crate::app::lobby::ANNOUNCE_EVERY;
-                let me = self
-                    .session
-                    .seat()
-                    .map_or("", |seat| &self.names[usize::from(seat)]);
-                self.transport.send(NetMsg::hello(me));
-            }
+        if !host && crate::app::lobby::once_a_second(&mut self.greet_in, delta) {
+            // The same greeting the lobby sends, wish to watch included: a
+            // watcher on the results card used to greet as a nameless
+            // player, which the host reads the same way between rounds
+            // (a watcher's chair is in the launch plan already) but is
+            // not what the peer means.
+            let me = self
+                .session
+                .seat()
+                .map_or("", |seat| &self.names[usize::from(seat)]);
+            self.transport
+                .send(crate::app::lobby::greeting(self.watching(), me));
         }
         for (msg, from) in self.transport.recv_all() {
             self.mark_heard(from);

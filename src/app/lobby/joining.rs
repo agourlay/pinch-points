@@ -245,12 +245,7 @@ pub(super) fn dial_at(
 ) {
     match UdpTransport::join(addr) {
         Ok(transport) => {
-            let watching = state.watching;
-            transport.send(if watching {
-                NetMsg::Watch
-            } else {
-                NetMsg::hello(&settings.names[0])
-            });
+            transport.send(greeting(state.watching, &settings.names[0]));
             state.joining = Some(transport);
             state.hello_in = ANNOUNCE_EVERY;
             // Calling, not aboard: nothing has answered yet, and on UDP
@@ -358,11 +353,7 @@ pub fn join_tick(
     if state.joining.is_none() {
         return;
     }
-    state.hello_in -= time.delta_secs();
-    let say_hello = state.hello_in <= 0.0;
-    if say_hello {
-        state.hello_in = ANNOUNCE_EVERY;
-    }
+    let say_hello = once_a_second(&mut state.hello_in, time.delta_secs());
     let mut started = None;
     let mut mismatch = None;
     let mut queued = None;
@@ -373,11 +364,7 @@ pub fn join_tick(
     let watching = state.watching;
     if let Some(transport) = &mut state.joining {
         if say_hello {
-            transport.send(if watching {
-                NetMsg::Watch
-            } else {
-                NetMsg::hello(&settings.names[0])
-            });
+            transport.send(greeting(watching, &settings.names[0]));
         }
         for (msg, _) in transport.recv_all() {
             // Anything at all, even a message this screen throws away, is
@@ -456,9 +443,7 @@ pub fn join_tick(
         state.joined_terms = Some(terms);
     }
     for (name, text) in said {
-        let who = crate::transport::name_from_wire(&name);
-        let line = crate::transport::chat_from_wire(&text);
-        state.say(&who, &line);
+        state.hear(&name, &text);
     }
     if let Some(ahead) = queued {
         let tr = settings.tr();

@@ -99,11 +99,7 @@ pub fn host_tick(
         return;
     }
     let tr = settings.tr();
-    state.announce_in -= time.delta_secs();
-    let do_announce = state.announce_in <= 0.0;
-    if do_announce {
-        state.announce_in = ANNOUNCE_EVERY;
-    }
+    let do_announce = once_a_second(&mut state.announce_in, time.delta_secs());
     // Read before the watcher list is taken below, and a frame stale by
     // the time it goes out, which costs nothing at one beacon a second.
     let taken = 1 + state.players_aboard() as u8;
@@ -133,9 +129,7 @@ pub fn host_tick(
         &mut picked,
     );
     for (_, name, text) in picked.said {
-        let who = crate::transport::name_from_wire(&name);
-        let line = crate::transport::chat_from_wire(&text);
-        state.say(&who, &line);
+        state.hear(&name, &text);
     }
     note_arrivals_and_departures(&mut state, tr, picked.greeted, silence);
     // Counted after the departures, so a table that just lost somebody is
@@ -441,17 +435,14 @@ fn work_the_socket(
             }
         }
         for (from, name, text) in said.iter() {
-            for other in 0..transport.peer_count() {
-                if other != *from {
-                    transport.send_to(
-                        other,
-                        NetMsg::Chat {
-                            name: *name,
-                            text: *text,
-                        },
-                    );
-                }
-            }
+            crate::app::net::relay(
+                transport,
+                *from,
+                NetMsg::Chat {
+                    name: *name,
+                    text: *text,
+                },
+            );
         }
     }
 }
@@ -513,10 +504,7 @@ pub(super) fn should_launch(
 /// is the lobby speaking rather than a player.
 pub(super) fn announce_to_table(state: &LobbyState, who: &str, line: &str) {
     if let Some((_, transport)) = &state.hosting {
-        transport.send(NetMsg::Chat {
-            name: crate::transport::wire_name(who),
-            text: crate::transport::wire_chat(line),
-        });
+        transport.send(NetMsg::chat(who, line));
     }
 }
 

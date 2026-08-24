@@ -49,6 +49,30 @@ use std::net::SocketAddr;
 /// it is not private: see `net::OnlineSession::keep_announcing`.
 pub(crate) const ANNOUNCE_EVERY: f32 = 1.0;
 
+/// Run a once-a-second clock down by `delta` and say whether it rang; a
+/// clock that rang is wound back up to [`ANNOUNCE_EVERY`]. The beacon,
+/// the joiner's greeting, and the running match's own copies of both keep
+/// time this way, and each used to spell the three lines out for itself.
+pub(crate) fn once_a_second(clock: &mut f32, delta: f32) -> bool {
+    *clock -= delta;
+    if *clock > 0.0 {
+        return false;
+    }
+    *clock = ANNOUNCE_EVERY;
+    true
+}
+
+/// What a joiner says to a host, every second until it is answered: a
+/// `Watch` if it came to look, else a `Hello` carrying its name. The same
+/// greeting from the lobby and from a results card, so the host reads the
+/// wish to watch the same way wherever it was greeted from.
+pub(crate) fn greeting(watching: bool, name: &str) -> NetMsg {
+    match watching {
+        true => NetMsg::Watch,
+        false => NetMsg::hello(name),
+    }
+}
+
 /// Where the player stands in the lobby.
 ///
 /// Four fields between them say this: `hosting`, `joining`, `watching`,
@@ -225,6 +249,14 @@ impl LobbyState {
             "a watcher points past the peers it was indexing: {:?}",
             self.watchers
         );
+    }
+
+    /// A line of chat as it came off the wire, into the feed: both halves
+    /// tidied on the way, since a stranger on the LAN wrote them.
+    pub fn hear(&mut self, name: &crate::transport::WireName, text: &crate::transport::WireChat) {
+        let who = crate::transport::name_from_wire(name);
+        let line = crate::transport::chat_from_wire(text);
+        self.say(&who, &line);
     }
 
     /// Add a line to the feed, dropping the oldest to stay within

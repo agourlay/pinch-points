@@ -214,6 +214,18 @@ pub struct LobbyReturn {
 #[derive(Resource, Default)]
 pub struct Online(pub Option<OnlineSession>);
 
+/// Pass `msg` from peer `from` on to every other peer. Star topology: the
+/// spokes cannot hear each other, so whatever one says reaches the rest
+/// only by the hub repeating it, and inputs, pauses, resumes and chat
+/// are all repeated this same way.
+pub(crate) fn relay(transport: &UdpTransport, from: usize, msg: NetMsg) {
+    for other in 0..transport.peer_count() {
+        if other != from {
+            transport.send_to(other, msg.clone());
+        }
+    }
+}
+
 /// Drain the session while the results card is up. See
 /// [`OnlineSession::poll_between_rounds`] for why this cannot wait for the
 /// sim: the sim is exactly what has stopped.
@@ -273,14 +285,11 @@ impl OnlineSession {
     /// player who wants it, the same way the lobby fills bots in behind
     /// whoever turned up.
     pub fn keep_announcing(&mut self, delta: f32) {
-        if self.announcer.aboard().is_none() {
+        if self.announcer.aboard().is_none()
+            || !crate::app::lobby::once_a_second(&mut self.announce_in, delta)
+        {
             return;
         }
-        self.announce_in -= delta;
-        if self.announce_in > 0.0 {
-            return;
-        }
-        self.announce_in = crate::app::lobby::ANNOUNCE_EVERY;
         let taken = self.session.player_count() as u8;
         let (Some(announcer), Ok(addr)) = (self.announcer.aboard(), self.transport.local_addr())
         else {
@@ -519,13 +528,7 @@ impl OnlineSession {
                     }
                     self.session.receive(input);
                     if host {
-                        // Star topology: joiners only see the host, so the
-                        // host forwards every input to the other joiners.
-                        for other in 0..self.transport.peer_count() {
-                            if other != from {
-                                self.transport.send_to(other, NetMsg::Input(input));
-                            }
-                        }
+                        relay(&self.transport, from, NetMsg::Input(input));
                     }
                 }
                 NetMsg::Hash { frame, hash } => {
@@ -539,24 +542,14 @@ impl OnlineSession {
                 NetMsg::Pause { frame } => {
                     self.session.receive_pause(frame);
                     if host {
-                        // Star topology again: only the host hears everyone,
-                        // so it passes the pause on to the other joiners.
-                        for other in 0..self.transport.peer_count() {
-                            if other != from {
-                                self.transport.send_to(other, NetMsg::Pause { frame });
-                            }
-                        }
+                        relay(&self.transport, from, NetMsg::Pause { frame });
                     }
                 }
                 NetMsg::Resume { frame } => {
                     let frame = self.session.receive_resume(frame);
                     self.resume_echo = RESUME_ECHOES;
                     if host {
-                        for other in 0..self.transport.peer_count() {
-                            if other != from {
-                                self.transport.send_to(other, NetMsg::Resume { frame });
-                            }
-                        }
+                        relay(&self.transport, from, NetMsg::Resume { frame });
                     }
                 }
                 NetMsg::Start {

@@ -188,10 +188,7 @@ pub(super) fn drive_typing(
             Answered::Chat(line) if line.is_empty() => {}
             Answered::Chat(line) => {
                 let me = settings.names[0].clone();
-                let msg = NetMsg::Chat {
-                    name: crate::transport::wire_name(&me),
-                    text: crate::transport::wire_chat(&line),
-                };
+                let msg = NetMsg::chat(&me, &line);
                 if let Some((_, transport)) = &state.hosting {
                     transport.send(msg);
                 } else if let Some(transport) = &state.joining {
