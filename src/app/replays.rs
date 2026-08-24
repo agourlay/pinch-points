@@ -83,7 +83,13 @@ pub fn file_name(stamp: u64, winner: &str) -> String {
 /// highlight reel live in the same directory and belong to the menu, not to
 /// the shelf.
 pub fn prune(cap: u8) {
-    let kept = shelf();
+    prune_in(&library_dir(), cap);
+}
+
+/// [`prune`] on a directory named outright, so a test can hand it a
+/// scratch folder instead of the player's library.
+pub fn prune_in(dir: &std::path::Path, cap: u8) {
+    let kept = shelf_in(dir);
     for old in kept.iter().skip(usize::from(cap)) {
         if let Err(e) = std::fs::remove_file(&old.path) {
             warn!("could not drop the oldest round: {e}");
@@ -93,7 +99,14 @@ pub fn prune(cap: u8) {
 
 /// Everything on the shelf, newest first.
 pub fn shelf() -> Vec<Kept> {
-    let Ok(dir) = std::fs::read_dir(library_dir()) else {
+    shelf_in(&library_dir())
+}
+
+/// [`shelf`] on a directory named outright, for the same reason as
+/// [`prune_in`]: the data directory comes from the process environment,
+/// and a test that changes that races every other test in the binary.
+pub fn shelf_in(dir: &std::path::Path) -> Vec<Kept> {
+    let Ok(dir) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut kept: Vec<Kept> = dir

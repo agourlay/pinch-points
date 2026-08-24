@@ -90,7 +90,7 @@ pub(crate) fn disambiguate(levels: &mut [Level], builtins: usize) {
 /// that have somebody to route. A beach they built for a match is not a
 /// stage with an unusual number of castles, and putting it on the list made
 /// the campaign end on someone's versus arena.
-pub(crate) fn custom_puzzles(levels: Vec<Level>) -> Vec<Level> {
+pub fn custom_puzzles(levels: Vec<Level>) -> Vec<Level> {
     levels
         .into_iter()
         .filter(|level| level.kind == LevelKind::Puzzle && level.crab_count() > 0)
@@ -100,7 +100,7 @@ pub(crate) fn custom_puzzles(levels: Vec<Level>) -> Vec<Level> {
 /// The player's levels that are beaches to fight over. The seat count is
 /// the map dial's to check: a two-castle arena is a beach, just not one a
 /// table of four can sit at.
-pub(crate) fn custom_arenas(levels: Vec<Level>) -> Vec<Level> {
+pub fn custom_arenas(levels: Vec<Level>) -> Vec<Level> {
     levels
         .into_iter()
         .filter(|level| level.kind == LevelKind::Arena)
@@ -112,8 +112,16 @@ pub(crate) fn custom_arenas(levels: Vec<Level>) -> Vec<Level> {
 /// Unparseable files are skipped with a log line rather than breaking
 /// startup; which list a level joins is [`Level::kind`]'s to say.
 pub(crate) fn load_custom_levels() -> Vec<Level> {
-    let mut paths = vec![editor::legacy_save_path()];
-    if let Ok(dir) = std::fs::read_dir(editor::custom_dir()) {
+    load_custom_levels_in(&editor::legacy_save_path(), &editor::custom_dir())
+}
+
+/// [`load_custom_levels`] with both places named outright: the old single
+/// save slot and the shelf directory. The real ones hang off the data
+/// directory, which is read from the process environment, and a test that
+/// changed that would race every other test in the binary.
+pub fn load_custom_levels_in(legacy: &std::path::Path, custom: &std::path::Path) -> Vec<Level> {
+    let mut paths = vec![legacy.to_path_buf()];
+    if let Ok(dir) = std::fs::read_dir(custom) {
         let mut extra: Vec<_> = dir
             .filter_map(Result::ok)
             .map(|e| e.path())

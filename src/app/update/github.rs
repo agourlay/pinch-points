@@ -18,9 +18,9 @@ use std::time::Duration;
 ///
 /// Both are built from the manifest's repository so a fork asks about
 /// itself.
-pub(super) struct Where {
-    pub(super) api: String,
-    pub(super) page: String,
+pub struct Where {
+    pub api: String,
+    pub page: String,
 }
 
 pub(super) fn latest_release_urls() -> Option<Where> {
@@ -117,7 +117,7 @@ pub fn parse_release(json: &str) -> Option<Release> {
 /// no: offline, too slow, no release yet, or an answer that is not a
 /// release. Each is logged at a level nobody is shown, and none is the
 /// player's problem.
-pub(super) fn fetch_latest(urls: &Where) -> Option<Release> {
+pub fn fetch_latest(urls: &Where) -> Option<Release> {
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(TIMEOUT))
         .user_agent(concat!("pinch-points/", env!("CARGO_PKG_VERSION")))

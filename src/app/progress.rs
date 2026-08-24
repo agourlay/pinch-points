@@ -116,16 +116,27 @@ impl Progress {
 }
 
 pub fn load(mut commands: Commands) {
-    let progress = std::fs::read_to_string(save_path())
+    commands.insert_resource(load_in(&save_path()));
+}
+
+/// The record read back from a file named outright; a missing or
+/// unreadable one is a fresh start, as it is on a first run.
+pub fn load_in(path: &std::path::Path) -> Progress {
+    std::fs::read_to_string(path)
         .map(|text| Progress::parse(&text))
-        .unwrap_or_default();
-    commands.insert_resource(progress);
+        .unwrap_or_default()
 }
 
 /// Write the record out. Best-effort, like the other save files: a disk that
 /// will not take it is not worth interrupting play over.
 pub fn save(progress: &Progress) {
-    let _ = crate::app::paths::write_atomic(&save_path(), progress.to_text());
+    let _ = save_in(&save_path(), progress);
+}
+
+/// [`save`] to a file named outright, and with the error kept: the game
+/// shrugs it off, a test wants to see it.
+pub fn save_in(path: &std::path::Path, progress: &Progress) -> std::io::Result<()> {
+    crate::app::paths::write_atomic(path, progress.to_text())
 }
 
 /// A cleared stage, saved the moment it is cleared: the stage list is the

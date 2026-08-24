@@ -20,3 +20,5 @@ mod determinism;
 mod format;
 mod invariants;
 mod online;
+mod shelves;
+mod update_check;

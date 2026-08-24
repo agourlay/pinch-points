@@ -15,7 +15,7 @@
 //! network, or a slow one, finds that out on the check thread inside a
 //! short timeout, and the menu never hears of it.
 
-mod github;
+pub mod github;
 mod notes;
 
 pub use github::{Release, Version};
