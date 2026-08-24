@@ -37,6 +37,7 @@ mod match_setup;
 mod menu_scene;
 mod menu_ui;
 pub mod net;
+mod open;
 pub mod palette;
 mod paths;
 mod pause;
