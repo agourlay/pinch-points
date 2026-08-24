@@ -7,7 +7,10 @@
 //! arena; the match starts once the handshake completes.
 
 use crate::sim::{HASH_INTERVAL, Lockstep, MAX_PLAYERS, PlayerAction};
-use crate::transport::{Announcer, MatchTerms, NetMsg, UdpTransport, name_from_wire, wire_name};
+use crate::transport::{
+    Announcer, MatchTerms, NetMsg, SeriesStanding, UdpTransport, name_from_wire, table_from_wire,
+    wire_table,
+};
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
@@ -126,7 +129,7 @@ pub struct OnlineSession {
     /// way into the arena, so a peer admitted mid-series joins the table's
     /// standings rather than starting its own, and a survivor whose seat
     /// moved keeps the wins it earned. `None` outside a series.
-    pub series_standing: Option<(u8, [u8; MAX_PLAYERS])>,
+    pub series_standing: Option<SeriesStanding>,
     /// Ticks of `Resume` still to repeat (see [`RESUME_ECHOES`]).
     resume_echo: u8,
     own_hashes: VecDeque<(u32, u64)>,
@@ -561,8 +564,7 @@ impl OnlineSession {
                     seat,
                     terms,
                     names,
-                    round,
-                    wins,
+                    standing,
                     beach,
                 } if !host && self.is_next_round(&terms) => {
                     self.beach = beach;
@@ -571,9 +573,8 @@ impl OnlineSession {
                     // well be the same. Taking it up here only rearms the
                     // session; the board is rebuilt on the way back into
                     // the arena, by the same path a first round uses.
-                    let table = std::array::from_fn(|i| name_from_wire(&names[i]));
-                    self.begin_round(seats, seat, terms, table);
-                    self.series_standing = terms.is_series().then_some((round, wins));
+                    self.begin_round(seats, seat, terms, table_from_wire(&names));
+                    self.series_standing = standing;
                     self.next_round = true;
                 }
                 NetMsg::Start { names, .. } => {
@@ -581,8 +582,7 @@ impl OnlineSession {
                     // PINCH_HOST/PINCH_JOIN pair, which never waits in a
                     // lobby, learns the table's names from it.
                     if !host {
-                        for (slot, wire) in self.names.iter_mut().zip(&names) {
-                            let name = name_from_wire(wire);
+                        for (slot, name) in self.names.iter_mut().zip(table_from_wire(&names)) {
                             if !name.is_empty() {
                                 *slot = name;
                             }

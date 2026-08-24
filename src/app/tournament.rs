@@ -134,18 +134,31 @@ impl Tournament {
         }
     }
 
-    /// [`Tournament::taken_up`] read straight off the terms the wire
-    /// carries.
+    /// [`Tournament::taken_up`] read straight off the wire: the terms say
+    /// whether there is a series, and the standing says where it is. A
+    /// series with no standing (the host's stale re-answer to a greeting,
+    /// before the first round has been called) opens at round one.
     pub fn from_terms(
         terms: crate::transport::MatchTerms,
-        round: u8,
-        wins: [u8; MAX_PLAYERS],
+        standing: Option<crate::transport::SeriesStanding>,
     ) -> Self {
+        let crate::transport::SeriesStanding { round, wins } =
+            standing.unwrap_or_else(crate::transport::SeriesStanding::opening);
         Self::taken_up(
             SeriesLength::from_index(usize::from(terms.series)),
             round,
             wins,
         )
+    }
+
+    /// Where this series stands, in the form the wire carries it, or
+    /// `None` when there is no series to speak of.
+    pub fn standing(&self) -> Option<crate::transport::SeriesStanding> {
+        self.in_series()
+            .then_some(crate::transport::SeriesStanding {
+                round: self.round,
+                wins: self.wins,
+            })
     }
 
     /// Whether a series is on at all, running or decided: the results card
@@ -299,7 +312,9 @@ pub fn enter_interlude(
     match &mut online.0 {
         Some(session) => {
             session.next_round = false;
-            if let Some((round, wins)) = session.series_standing.take() {
+            if let Some(crate::transport::SeriesStanding { round, wins }) =
+                session.series_standing.take()
+            {
                 tournament.round = round;
                 tournament.wins = wins;
             }
@@ -499,7 +514,7 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(terms.is_series(), length.is_series(), "{length:?}");
-            let armed = Tournament::from_terms(terms, 1, [0; MAX_PLAYERS]);
+            let armed = Tournament::from_terms(terms, None);
             assert_eq!(
                 armed.in_series(),
                 length.is_series(),

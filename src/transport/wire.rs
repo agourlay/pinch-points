@@ -29,6 +29,26 @@ pub fn wire_name(name: &str) -> WireName {
     out
 }
 
+/// A table of names into its wire form: one slot per seat, the slots
+/// past the end of `names` left empty. A lobby table may be shorter than
+/// the seats it will fill, and a per-seat one is exactly as long.
+pub fn wire_table(names: &[String]) -> [WireName; crate::sim::MAX_PLAYERS] {
+    std::array::from_fn(|i| {
+        names
+            .get(i)
+            .map_or([0u8; WIRE_NAME], |name| wire_name(name))
+    })
+}
+
+/// A wire table back into text, every slot through [`name_from_wire`]:
+/// an empty slot is an empty name, which every screen reads as a seat
+/// label.
+pub fn table_from_wire(
+    names: &[WireName; crate::sim::MAX_PLAYERS],
+) -> [String; crate::sim::MAX_PLAYERS] {
+    std::array::from_fn(|i| name_from_wire(&names[i]))
+}
+
 /// A line of lobby chat on the wire, in the same fixed-size, NUL-padded
 /// form as a name and for the same reason: [`NetMsg`] stays `Copy`, which
 /// is how the host relays one by copying it. 96 bytes carries the

@@ -37,9 +37,10 @@ pub enum NetMsg {
         seat: Option<u8>,
         terms: MatchTerms,
         names: [WireName; crate::sim::MAX_PLAYERS],
-        /// Where the series stands as this round begins: its 1-based
-        /// number, and the rounds each *seat* has won so far. Zero and
-        /// empty for a single round.
+        /// Where the series stands as this round begins, or `None` for a
+        /// single round. On the wire the absence is a round number of
+        /// zero, a number no series ever reaches, the way a watcher's seat
+        /// is [`SPECTATOR_SEAT`]; in memory it is an absence.
         ///
         /// The host says, because seats move: a peer that leaves between
         /// rounds frees its chair and everyone behind it moves up one, so
@@ -48,8 +49,7 @@ pub enum NetMsg {
         /// the mapping and re-deals the tally with the chairs; a peer
         /// admitted from the queue mid-series learns the standings the
         /// same way, rather than starting a series of its own.
-        round: u8,
-        wins: [u8; crate::sim::MAX_PLAYERS],
+        standing: Option<SeriesStanding>,
         /// The beach itself, when the host picked one it built rather than
         /// one both peers already have. A generated arena travels as a
         /// seed; a handmade one has to travel as itself, because the
@@ -142,11 +142,38 @@ pub enum NetMsg {
     },
 }
 
+/// Where a series stands as a round begins: its 1-based number, and the
+/// rounds each *seat* has won so far.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SeriesStanding {
+    pub round: u8,
+    pub wins: [u8; crate::sim::MAX_PLAYERS],
+}
+
+impl SeriesStanding {
+    /// The standing at the top of a series: round one, nothing won.
+    pub fn opening() -> SeriesStanding {
+        SeriesStanding {
+            round: 1,
+            wins: [0; crate::sim::MAX_PLAYERS],
+        }
+    }
+}
+
 impl NetMsg {
     /// A greeting carrying `name` in wire form.
     pub fn hello(name: &str) -> NetMsg {
         NetMsg::Hello {
             name: wire_name(name),
+        }
+    }
+
+    /// A line of chat as `who` said it, both halves in wire form. An empty
+    /// `who` is the lobby itself speaking.
+    pub fn chat(who: &str, line: &str) -> NetMsg {
+        NetMsg::Chat {
+            name: wire_name(who),
+            text: wire_chat(line),
         }
     }
 }
@@ -234,6 +261,14 @@ impl MatchTerms {
     pub fn is_series(self) -> bool {
         self.series != 0
     }
+
+    /// The humans at a table of `seats`: the AI holds the top seats, so
+    /// the humans are the low `seats - bots` of them, and the lockstep is
+    /// built over those alone. Never fewer than one, since seat zero is
+    /// the host's whatever the dials say.
+    pub fn humans(self, seats: u8) -> u8 {
+        seats.saturating_sub(self.bots).max(1)
+    }
 }
 
 impl MatchTerms {
@@ -320,8 +355,7 @@ impl NetMsg {
                 seat,
                 terms,
                 names,
-                round,
-                wins,
+                standing,
                 beach,
             } => {
                 bytes.push(seats);
@@ -330,6 +364,12 @@ impl NetMsg {
                 for name in names {
                     bytes.extend_from_slice(&name);
                 }
+                // Round zero is "no series", as `SPECTATOR_SEAT` is "no
+                // seat": both are numbers the real thing never takes.
+                let SeriesStanding { round, wins } = standing.unwrap_or(SeriesStanding {
+                    round: 0,
+                    wins: [0; crate::sim::MAX_PLAYERS],
+                });
                 bytes.push(round);
                 bytes.extend_from_slice(&wins);
                 // Length-prefixed and last, so the fixed part above stays
@@ -384,14 +424,7 @@ impl NetMsg {
             }
             TAG_START => {
                 let terms = MatchTerms::decode(body.get(2..)?)?;
-                let mut names = [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS];
-                let table = body.get(2 + MatchTerms::BYTES..)?;
-                for (i, name) in names.iter_mut().enumerate() {
-                    *name = table
-                        .get(i * WIRE_NAME..(i + 1) * WIRE_NAME)?
-                        .try_into()
-                        .ok()?;
-                }
+                let names = read_table(body.get(2 + MatchTerms::BYTES..)?)?;
                 let (seats, seat) = (*body.first()?, *body.get(1)?);
                 // A table this build cannot sit at is refused outright
                 // rather than squeezed into range. Every per-seat array is
@@ -407,7 +440,7 @@ impl NetMsg {
                 // chair would have it play a session it is not a player of,
                 // which the lockstep refuses with a panic. Refused here
                 // instead, with the rest of the unplayable tables.
-                let humans = seats.saturating_sub(terms.bots).max(1);
+                let humans = terms.humans(seats);
                 if !(2..=crate::sim::MAX_PLAYERS as u8).contains(&seats)
                     || (seat != SPECTATOR_SEAT && seat >= humans)
                 {
@@ -421,6 +454,7 @@ impl NetMsg {
                     .get(series_at + 1..series_at + 1 + crate::sim::MAX_PLAYERS)?
                     .try_into()
                     .ok()?;
+                let standing = (round != 0).then_some(SeriesStanding { round, wins });
                 let after = series_at + 1 + crate::sim::MAX_PLAYERS;
                 let beach = match body.get(after..after + 2) {
                     Some(len) => {
@@ -434,8 +468,7 @@ impl NetMsg {
                     seat,
                     terms,
                     names,
-                    round,
-                    wins,
+                    standing,
                     beach,
                 })
             }
@@ -457,13 +490,7 @@ impl NetMsg {
             }
             TAG_ROSTER => {
                 let table = body.get(1..)?;
-                let mut names = [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS];
-                for (i, name) in names.iter_mut().enumerate() {
-                    *name = table
-                        .get(i * WIRE_NAME..(i + 1) * WIRE_NAME)?
-                        .try_into()
-                        .ok()?;
-                }
+                let names = read_table(table)?;
                 let terms = MatchTerms::decode(table.get(WIRE_NAME * crate::sim::MAX_PLAYERS..)?)?;
                 Some(NetMsg::Roster {
                     seats: *body.first()?,
@@ -481,6 +508,20 @@ impl NetMsg {
             _ => None,
         }
     }
+}
+
+/// A full table of names off the front of `bytes`, or `None` if the
+/// datagram ends before the table does. Both messages that carry one
+/// (`Start`, `Roster`) read it this way.
+fn read_table(bytes: &[u8]) -> Option<[WireName; crate::sim::MAX_PLAYERS]> {
+    let mut names = [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS];
+    for (i, name) in names.iter_mut().enumerate() {
+        *name = bytes
+            .get(i * WIRE_NAME..(i + 1) * WIRE_NAME)?
+            .try_into()
+            .ok()?;
+    }
+    Some(names)
 }
 
 #[cfg(test)]
@@ -506,8 +547,7 @@ mod tests {
                 names: [widest; crate::sim::MAX_PLAYERS],
                 // The widest a Start gets: a full table of longest names
                 // and the largest beach the sender will hand it.
-                round: 0,
-                wins: [0; crate::sim::MAX_PLAYERS],
+                standing: None,
                 beach: vec![0xAB; super::MAX_BEACH_BYTES],
             },
             super::NetMsg::Hash {
@@ -532,8 +572,7 @@ mod tests {
             seat: Some(5),
             terms: super::MatchTerms::default(),
             names: [widest; crate::sim::MAX_PLAYERS],
-            round: 0,
-            wins: [0; crate::sim::MAX_PLAYERS],
+            standing: None,
             beach: vec![0xAB; super::MAX_BEACH_BYTES],
         }
         .encode()
@@ -595,9 +634,24 @@ mod tests {
                     ..MatchTerms::default()
                 },
                 names: std::array::from_fn(|i| wire_name(&format!("Seat {i}"))),
-                round: 0,
-                wins: [0; crate::sim::MAX_PLAYERS],
+                standing: None,
                 beach: b"a handmade beach".to_vec(),
+            },
+            // Mid-series: the round and the tally come back as they went,
+            // and as a presence rather than as the zero that means none.
+            NetMsg::Start {
+                seats: 4,
+                seat: Some(2),
+                terms: MatchTerms {
+                    series: 2,
+                    ..MatchTerms::default()
+                },
+                names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
+                standing: Some(SeriesStanding {
+                    round: 3,
+                    wins: [1, 0, 1, 0, 0, 0],
+                }),
+                beach: Vec::new(),
             },
             NetMsg::Incompatible { version: 9 },
             NetMsg::Queued { ahead: 0 },
@@ -637,8 +691,7 @@ mod tests {
             seat: Some(5),
             terms: MatchTerms::default(),
             names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
-            round: 0,
-            wins: [0; crate::sim::MAX_PLAYERS],
+            standing: None,
             beach: Vec::new(),
         };
         assert_eq!(NetMsg::decode(&good.clone().encode()), Some(good.clone()));
@@ -672,8 +725,7 @@ mod tests {
                         ..MatchTerms::default()
                     },
                     names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
-                    round: 0,
-                    wins: [0; crate::sim::MAX_PLAYERS],
+                    standing: None,
                     beach: Vec::new(),
                 }
                 .encode(),
@@ -738,8 +790,7 @@ mod wire_fuzz_probe {
                 seat: Some(2),
                 terms: MatchTerms::default(),
                 names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
-                round: 0,
-                wins: [0; crate::sim::MAX_PLAYERS],
+                standing: None,
                 beach: Vec::new(),
             }
             .encode(),

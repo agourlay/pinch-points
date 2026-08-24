@@ -273,11 +273,10 @@ pub(super) struct Invitation {
     pub seat: Option<u8>,
     pub terms: MatchTerms,
     pub names: [crate::transport::WireName; MAX_PLAYERS],
-    /// Where the series stands, as the host says: round number and wins by
-    /// seat. A peer that greeted mid-series is seated with the table's own
-    /// tally rather than starting a fresh one. Round zero means no series.
-    pub round: u8,
-    pub wins: [u8; MAX_PLAYERS],
+    /// Where the series stands, as the host says. A peer that greeted
+    /// mid-series is seated with the table's own tally rather than
+    /// starting a fresh one. `None` for a single round.
+    pub standing: Option<crate::transport::SeriesStanding>,
     /// The host's own beach, when it sent one. A joiner has never seen the
     /// file it came from, so it arrives with the invitation or not at all.
     pub beach: Vec<u8>,
@@ -309,8 +308,7 @@ pub(super) fn accept_the_invitation(
         seat,
         terms,
         names,
-        round,
-        wins,
+        standing,
         beach,
     }) = started
     {
@@ -323,8 +321,7 @@ pub(super) fn accept_the_invitation(
             "seated at {seat:?} of {seats}"
         );
         let transport = state.joining.take().expect("checked above");
-        let humans = seats.saturating_sub(terms.bots).max(1);
-        let players: Vec<u8> = (0..humans).collect();
+        let players: Vec<u8> = (0..terms.humans(seats)).collect();
         let session = match seat {
             None => Lockstep::observer(players, DEFAULT_DELAY),
             Some(seat) => Lockstep::new(seat, players, DEFAULT_DELAY),
@@ -333,7 +330,7 @@ pub(super) fn accept_the_invitation(
         // The host's own beach, if it sent one: nothing else on this
         // machine can build it.
         session.beach = beach;
-        session.names = std::array::from_fn(|i| crate::transport::name_from_wire(&names[i]));
+        session.names = crate::transport::table_from_wire(&names);
         // Formed here, so a finished match knows it has a lobby to walk
         // this table back to.
         session.from_lobby = true;
@@ -342,7 +339,7 @@ pub(super) fn accept_the_invitation(
         // it stands: a joiner that assumed otherwise would stop after one
         // round, and one admitted mid-series would start its own tally at
         // zero and disagree with the table for the rest of the match.
-        *tournament = crate::app::tournament::Tournament::from_terms(terms, round, wins);
+        *tournament = crate::app::tournament::Tournament::from_terms(terms, standing);
         next_vphase.set(VersusPhase::Running);
         next_screen.set(Screen::Versus);
     }
@@ -393,8 +390,7 @@ pub fn join_tick(
                     seat,
                     terms,
                     names,
-                    round,
-                    wins,
+                    standing,
                     beach,
                 } => {
                     started = Some(Invitation {
@@ -402,8 +398,7 @@ pub fn join_tick(
                         seat,
                         terms,
                         names,
-                        round,
-                        wins,
+                        standing,
                         beach,
                     })
                 }
@@ -417,10 +412,11 @@ pub fn join_tick(
                 // Who else is here. A joiner has spoken to nobody but the
                 // host and would otherwise sit at an apparently empty beach.
                 NetMsg::Roster { names, terms, .. } => {
+                    // The table is the leading run of named seats: the
+                    // host sends it in seat order and pads the rest.
                     table = Some(
-                        names
-                            .iter()
-                            .map(crate::transport::name_from_wire)
+                        crate::transport::table_from_wire(&names)
+                            .into_iter()
                             .take_while(|name| !name.is_empty())
                             .collect(),
                     );
@@ -851,8 +847,7 @@ mod tests {
                 ..MatchTerms::default()
             },
             names: [[0u8; crate::transport::WIRE_NAME]; MAX_PLAYERS],
-            round: 0,
-            wins: [0; MAX_PLAYERS],
+            standing: None,
             beach: Vec::new(),
         };
         assert!(

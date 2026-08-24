@@ -818,8 +818,7 @@ mod tests {
                 seed: 42,
                 ..MatchTerms::default()
             },
-            0,
-            [0; MAX_PLAYERS],
+            None,
         );
         assert_eq!(host.session.player_count(), 1, "still waiting on a ghost");
         assert_eq!(host.seats, 2, "a beach needs two castles");

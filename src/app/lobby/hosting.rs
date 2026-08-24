@@ -151,10 +151,7 @@ pub fn host_tick(
     // that stays wrong until somebody joins or leaves.
     state.table = state.roster(tr, &settings.names[0]);
     if do_announce && let Some((_, transport)) = &state.hosting {
-        let mut names = [[0u8; crate::transport::WIRE_NAME]; MAX_PLAYERS];
-        for (slot, who) in names.iter_mut().zip(&state.table) {
-            *slot = crate::transport::wire_name(who);
-        }
+        let names = crate::transport::wire_table(&state.table);
         // The dials travel with the roster so a joiner's terms card shows
         // the match it is joining. The seed is not one of them yet - it is
         // struck fresh at launch - so a placeholder rides along and the
@@ -266,16 +263,15 @@ fn launch_the_match(
             names[usize::from(*seat)] = name.clone();
         }
     }
-    let wire_names = std::array::from_fn(|i| crate::transport::wire_name(&names[i]));
+    let wire_names = crate::transport::wire_table(&names);
     // Seats go to the peers that came to play, in peer order; the
     // onlookers - and anyone the table ran out of chairs for - are told
     // they are watching.
     // A series begins at round one with an empty tally; a single round
-    // carries a zero round the joiner reads as "no series".
-    let (round, wins) = match terms.is_series() {
-        true => (1u8, [0u8; MAX_PLAYERS]),
-        false => (0, [0; MAX_PLAYERS]),
-    };
+    // carries no standing at all.
+    let standing = terms
+        .is_series()
+        .then(crate::transport::SeriesStanding::opening);
     for (peer, slot) in plan.iter().enumerate() {
         transport.send_to(
             peer,
@@ -284,8 +280,7 @@ fn launch_the_match(
                 seat: *slot,
                 terms,
                 names: wire_names,
-                round,
-                wins,
+                standing,
                 beach: beach.clone(),
             },
         );
@@ -310,7 +305,7 @@ fn launch_the_match(
     // The series is part of the terms, so every peer knows it is one
     // and tallies the same rounds. Without that the host alone would
     // count, and only the host would see a champion.
-    *tournament = crate::app::tournament::Tournament::from_terms(terms, round, wins);
+    *tournament = crate::app::tournament::Tournament::from_terms(terms, standing);
     next_vphase.set(VersusPhase::Running);
     next_screen.set(Screen::Versus);
 }

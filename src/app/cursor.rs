@@ -457,17 +457,18 @@ pub fn versus_over_input(
         // them, the series tally: the returned standing is the same
         // wins moved onto the chairs their holders now sit in, which
         // this machine adopts so its own card agrees with the table.
-        let (round, wins) = session.call_next_round(
+        let standing = session.call_next_round(
             crate::app::match_setup::next_round_terms(
                 session.terms,
                 session.seats,
                 crate::app::clock::fresh_seed(),
             ),
-            tournament.round,
-            tournament.wins,
+            tournament.standing(),
         );
-        tournament.round = round;
-        tournament.wins = wins;
+        if let Some(crate::transport::SeriesStanding { round, wins }) = standing {
+            tournament.round = round;
+            tournament.wins = wins;
+        }
         next_screen.set(Screen::Interlude);
         return;
     }

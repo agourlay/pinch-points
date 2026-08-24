@@ -76,15 +76,13 @@ impl OnlineSession {
                     seat,
                     terms,
                     names,
-                    round,
-                    wins,
+                    standing,
                     beach,
                 } => {
                     if !host && self.is_next_round(&terms) {
                         self.beach = beach;
-                        let table = std::array::from_fn(|i| name_from_wire(&names[i]));
-                        self.begin_round(seats, seat, terms, table);
-                        self.series_standing = terms.is_series().then_some((round, wins));
+                        self.begin_round(seats, seat, terms, table_from_wire(&names));
+                        self.series_standing = standing;
                         self.next_round = true;
                     }
                 }
@@ -164,38 +162,41 @@ impl OnlineSession {
     /// every peer which seat it now holds. Arms this session too, so host
     /// and joiners take the same path back into the arena.
     ///
-    /// `round`/`wins` are the series standing as it is now, by *this*
-    /// round's seats; the return value is the same standing re-dealt to the
-    /// seats the next round hands out, which the caller folds back into its
-    /// `Tournament`. Seats are re-dealt in peer order every round (they have
-    /// to stay the contiguous `0..humans` the sim fills the top of with AI),
-    /// so a peer that leaves shifts everyone behind it up a chair; carrying
-    /// the wins across by hand is what keeps a survivor's rounds its own
-    /// rather than the next player's. Outside a series `round` is 0 and the
-    /// wins are ignored.
+    /// `standing` is the series as it is now, by *this* round's seats, or
+    /// `None` outside a series; the return value is the same standing
+    /// re-dealt to the seats the next round hands out, which the caller
+    /// folds back into its `Tournament`. Seats are re-dealt in peer order
+    /// every round (they have to stay the contiguous `0..humans` the sim
+    /// fills the top of with AI), so a peer that leaves shifts everyone
+    /// behind it up a chair; carrying the wins across by hand is what
+    /// keeps a survivor's rounds its own rather than the next player's.
     pub fn call_next_round(
         &mut self,
         mut terms: MatchTerms,
-        round: u8,
-        wins: [u8; MAX_PLAYERS],
-    ) -> (u8, [u8; MAX_PLAYERS]) {
+        standing: Option<SeriesStanding>,
+    ) -> Option<SeriesStanding> {
         let peers = self.transport.peer_count();
         let plan = self.next_plan(peers);
-        // The wins follow the chairs: seat 0 is always the host's, and each
-        // peer's new seat inherits what its old seat had won.
-        let mut new_wins = [0u8; MAX_PLAYERS];
-        new_wins[0] = wins[0];
-        for (peer, slot) in plan.iter().enumerate() {
-            if let Some(new_seat) = slot
-                && let Some(Some(old_seat)) = self.peer_seats.get(peer)
-            {
-                new_wins[usize::from(*new_seat)] = wins[usize::from(*old_seat)];
+        let standing = standing.map(|SeriesStanding { round, wins }| {
+            // The wins follow the chairs: seat 0 is always the host's, and
+            // each peer's new seat inherits what its old seat had won.
+            let mut new_wins = [0u8; MAX_PLAYERS];
+            new_wins[0] = wins[0];
+            for (peer, slot) in plan.iter().enumerate() {
+                if let Some(new_seat) = slot
+                    && let Some(Some(old_seat)) = self.peer_seats.get(peer)
+                {
+                    new_wins[usize::from(*new_seat)] = wins[usize::from(*old_seat)];
+                }
             }
-        }
-        // The number of the round about to begin: the caller passes the one
-        // just played, and every peer shows the same next number without
-        // each counting for itself.
-        let round = round.saturating_add(u8::from(round > 0));
+            // The number of the round about to begin: the caller passes
+            // the one just played, and every peer shows the same next
+            // number without each counting for itself.
+            SeriesStanding {
+                round: round.saturating_add(1),
+                wins: new_wins,
+            }
+        });
         let humans = 1 + plan.iter().flatten().count() as u8;
         // A beach needs two castles, and a host whose table has emptied is
         // still entitled to another round, against the AI, since playing
@@ -217,7 +218,7 @@ impl OnlineSession {
                 names[usize::from(*seat)] = name.to_string();
             }
         }
-        let wire: [_; MAX_PLAYERS] = std::array::from_fn(|i| wire_name(&names[i]));
+        let wire = wire_table(&names);
         for (peer, slot) in plan.iter().enumerate() {
             self.transport.send_to(
                 peer,
@@ -226,17 +227,16 @@ impl OnlineSession {
                     seat: *slot,
                     terms,
                     names: wire,
-                    round,
-                    wins: new_wins,
+                    standing,
                     beach: self.beach.clone(),
                 },
             );
         }
         self.peer_seats = plan;
         self.begin_round(seats, Some(0), terms, names);
-        self.series_standing = (round > 0).then_some((round, new_wins));
+        self.series_standing = standing;
         self.next_round = true;
-        (round, new_wins)
+        standing
     }
 
     /// Take up the terms of a new round: a fresh board, a lockstep back at
@@ -299,23 +299,17 @@ impl OnlineSession {
     /// the current name table, so a joiner that missed the launch still
     /// learns what everyone is called.
     pub(super) fn start_msg(&self, seat: Option<u8>) -> NetMsg {
-        let mut names = [[0u8; crate::transport::WIRE_NAME]; MAX_PLAYERS];
-        for (slot, name) in names.iter_mut().zip(&self.names) {
-            *slot = wire_name(name);
-        }
         // The stale `Start` a greeting is re-answered with carries the same
         // seed as the round in play, so a joiner reads it for the names and
         // does not mistake it for a fresh round; the series standing rides
         // along all the same, in case this is the message that seats a
         // latecomer next round.
-        let (round, wins) = self.series_standing.unwrap_or((0, [0; MAX_PLAYERS]));
         NetMsg::Start {
             seats: self.seats,
             seat,
             terms: self.terms,
-            names,
-            round,
-            wins,
+            names: wire_table(&self.names),
+            standing: self.series_standing,
             beach: self.beach.clone(),
         }
     }
@@ -432,7 +426,7 @@ mod next_round_tests {
         host.names[0] = "Anna".into();
         host.names[1] = "Bo".into();
 
-        host.call_next_round(terms(222), 0, [0; MAX_PLAYERS]);
+        host.call_next_round(terms(222), None);
         assert!(host.next_round, "the host arms itself along with the table");
         assert_eq!(host.terms.seed, 222);
 
@@ -496,7 +490,7 @@ mod next_round_tests {
         // actually plans is the host alone, five chairs for the AI.
         let mut greedy = terms(2);
         greedy.bots = 5;
-        host.call_next_round(greedy, 0, [0; MAX_PLAYERS]);
+        host.call_next_round(greedy, None);
         assert_eq!(host.seats, MAX_PLAYERS as u8);
         assert_eq!(host.terms.bots, MAX_PLAYERS as u8 - 1);
         // And the plan is drawn from who is actually connected, not from
