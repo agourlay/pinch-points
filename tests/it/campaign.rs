@@ -9,9 +9,9 @@ fn every_campaign_level_is_solvable_with_its_solution() {
     let levels = campaign_levels();
     assert_eq!(
         levels.len(),
-        90,
+        100,
         "20 spec, 5 terrain, 5 advanced-rule, 20 advanced, 20 with the gulls in, \
-         20 that want four signposts"
+         20 that want four signposts, 10 that want five"
     );
     for (i, level) in levels.iter().enumerate() {
         let n = i + 1;

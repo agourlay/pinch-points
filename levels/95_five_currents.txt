@@ -1,0 +1,25 @@
+# Three lanes above the flooded row and two below it, on opposite
+# shores. The pairs want opposite arrows in opposite columns, and the
+# water takes both sets to the castle.
+name: Five Currents
+posts: 5
+crab: 0,0 R R common
+crab: 0,1 R R common
+crab: 0,2 R R common
+crab: 8,4 L L common
+crab: 8,5 L L common
+solution: 1,0 D; 1,1 D; 1,2 D; 7,4 U; 7,5 U
+map:
++-+-+-+-+-+-+-+-+-+
+|K . K|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|K . K|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|K . K|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|~ ~ ~ ~ 0 ~ ~ ~ ~|
++-+-+-+-+-+-+-+ +-+
+|. . . . . .|K . K|
++-+-+-+-+-+-+-+ +-+
+|. . . . . .|K . K|
++-+-+-+-+-+-+-+-+-+

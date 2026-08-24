@@ -1,0 +1,23 @@
+# Five lanes standing on end, three on the left and two on the right,
+# with the castle in the flooded row between them. Every door opens
+# sideways, and the two sides open opposite ways.
+name: Five On Their Side
+posts: 5
+crab: 0,0 D L common
+crab: 1,0 D L common
+crab: 2,0 D L common
+crab: 7,0 D L common
+crab: 8,0 D L common
+solution: 0,1 R; 1,1 R; 2,1 R; 7,1 L; 8,1 L
+map:
++-+-+-+-+-+-+-+-+-+
+|K|K|K|.|.|.|.|K|K|
++ + + +-+-+-+-+ + +
+|. . . ~ 0 ~ ~ . .|
++ + + +-+-+-+-+ + +
+|K|K|K|.|.|.|.|K|K|
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

@@ -1,0 +1,23 @@
+# Three lanes run along the top of the beach and two run down its side.
+# The crabs on the right walk downward, so their door is in the wall
+# beside them and a downward arrow does nothing at all.
+name: Five Round The Corner
+posts: 5
+crab: 0,0 R R common
+crab: 0,1 R R common
+crab: 0,2 R R common
+crab: 7,0 D L common
+crab: 8,0 D L common
+solution: 1,0 D; 1,1 D; 1,2 D; 7,1 L; 8,1 L
+map:
++-+-+-+-+-+-+-+-+-+
+|K . K|. . .|K|K|K|
++-+ +-+-+-+-+ + + +
+|K . K|. . .|~ . .|
++-+ +-+-+-+-+ + + +
+|K . K|. . .|~|K|K|
++-+ +-+-+-+-+ +-+-+
+|~ ~ ~ ~ 0 ~ ~|. .|
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

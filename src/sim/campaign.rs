@@ -97,6 +97,16 @@ pub const CAMPAIGN: &[&str] = &[
     include_str!("../../levels/88_cross_currents.txt"),
     include_str!("../../levels/89_on_its_side.txt"),
     include_str!("../../levels/90_the_pen.txt"),
+    include_str!("../../levels/91_five_both_ways.txt"),
+    include_str!("../../levels/92_the_fifth_column.txt"),
+    include_str!("../../levels/93_five_steps.txt"),
+    include_str!("../../levels/94_five_on_two_shores.txt"),
+    include_str!("../../levels/95_five_currents.txt"),
+    include_str!("../../levels/96_five_round_the_corner.txt"),
+    include_str!("../../levels/97_five_on_their_side.txt"),
+    include_str!("../../levels/98_both_shoulders.txt"),
+    include_str!("../../levels/99_the_pen_and_the_sidecar.txt"),
+    include_str!("../../levels/100_all_at_once.txt"),
 ];
 
 /// Beach Day (spec §5.2): goal-based 30-second challenge stages, the

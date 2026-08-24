@@ -1,0 +1,23 @@
+# The pen again, with a fifth crab in a lane of its own beside it. That
+# one has to be sent into the right-hand lane first, and only then does
+# the pen's own arrow bring it round to the castle.
+name: The Pen And The Sidecar
+posts: 5
+crab: 3,0 R R common
+crab: 2,1 D L common
+crab: 6,3 U L common
+crab: 5,4 L R common
+crab: 7,2 U L common
+solution: 4,0 D; 7,1 L; 2,2 R; 6,2 L; 4,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|.|.|.|K . K|.|K|.|
++-+-+-+-+ +-+-+ +-+
+|.|.|K|.|K|.|K .|.|
++-+-+ +-+ +-+ + +-+
+|.|.|. K 0 K .|K|.|
++-+-+ +-+ +-+ +-+-+
+|.|.|K|.|K|.|K|.|.|
++-+-+-+-+ +-+-+-+-+
+|.|.|.|K . K|.|.|.|
++-+-+-+-+-+-+-+-+-+

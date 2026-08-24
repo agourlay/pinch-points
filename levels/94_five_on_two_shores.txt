@@ -1,0 +1,23 @@
+# Three lanes on the left shore, two on the right, and a flooded row
+# between them with the castle in it. Every crab has its own door down;
+# the water carries them the rest of the way.
+name: Five On Two Shores
+posts: 5
+crab: 0,0 R R common
+crab: 0,1 R R common
+crab: 0,2 R R common
+crab: 8,0 L L common
+crab: 8,1 L L common
+solution: 1,0 D; 7,0 D; 1,1 D; 7,1 D; 1,2 D
+map:
++-+-+-+-+-+-+-+-+-+
+|K . K|. . .|K . K|
++-+ +-+-+-+-+-+ +-+
+|K . K|. . .|K . K|
++-+ +-+-+-+-+-+ +-+
+|K . K|. . .|K K K|
++-+ +-+-+-+-+-+ +-+
+|~ ~ ~ ~ 0 ~ ~ ~ ~|
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

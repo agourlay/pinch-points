@@ -1,0 +1,25 @@
+# A staircase of five lanes, each a step longer and each door a step
+# further along. The pools mark the tiles that cannot take a signpost;
+# the free ones are where the thinking happens.
+name: Five Steps
+posts: 5
+crab: 0,0 R R common
+crab: 0,1 R R common
+crab: 0,2 R R common
+crab: 0,3 R R common
+crab: 0,4 R R common
+solution: 1,0 D; 2,1 D; 3,2 D; 4,3 D; 5,4 D
+map:
++-+-+-+-+-+-+-+-+-+
+|K . K|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|K . . K|. . . . .|
++-+-+ +-+-+-+-+-+-+
+|K ~ ~ . K|. . . .|
++-+-+-+ +-+-+-+-+-+
+|K ~ ~ . . K|. . .|
++-+-+-+-+ +-+-+-+-+
+|K ~ ~ ~ ~ . K|. .|
++-+-+-+-+-+ +-+-+-+
+|K K K K K 0 K|. .|
++-+-+-+-+-+-+-+-+-+

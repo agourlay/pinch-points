@@ -1,0 +1,25 @@
+# The hundredth level. Two lanes on each shore, a flooded row with the
+# castle in it, and a fifth crab climbing up from below with a door in
+# its wall. Everything the beach has taught, on one board.
+name: All At Once
+posts: 5
+crab: 0,0 R R common
+crab: 0,1 R R common
+crab: 8,0 L L common
+crab: 8,1 L L common
+crab: 3,5 U R common
+solution: 1,0 D; 7,0 D; 1,1 D; 7,1 D; 3,4 R
+map:
++-+-+-+-+-+-+-+-+-+
+|K . K|. . .|K . K|
++-+ +-+-+-+-+-+ +-+
+|K . K|. . .|K . K|
++-+ +-+-+-+-+-+ +-+
+|~ ~ ~ ~ 0 ~ ~ ~ ~|
++-+-+-+-+ +-+-+-+-+
+|. . .|K|~|. . . .|
++-+-+-+ + +-+-+-+-+
+|. . .|. ~|. . . .|
++-+-+-+ +-+-+-+-+-+
+|. . .|K|. . . . .|
++-+-+-+-+-+-+-+-+-+

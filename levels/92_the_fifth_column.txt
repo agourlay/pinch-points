@@ -1,0 +1,25 @@
+# Five lanes with their doors staggered between two columns, and the
+# weed and the pools leave a different pair of tiles free in each. Read
+# the wall under every lane before you place anything.
+name: The Fifth Column
+posts: 5
+crab: 0,0 R R common
+crab: 0,1 R R common
+crab: 0,2 R R common
+crab: 0,3 R R common
+crab: 0,4 R R common
+solution: 1,0 D; 2,1 D; 2,2 D; 1,3 D; 1,4 D
+map:
++-+-+-+-+-+-+-+-+-+
+|K . . K|. . . . .|
++-+ +-+-+-+-+-+-+-+
+|K . . K|. . . . .|
++-+-+ +-+-+-+-+-+-+
+|K ~ . K|. . . . .|
++-+-+ +-+-+-+-+-+-+
+|K . . K|. . . . .|
++-+ +-+-+-+-+-+-+-+
+|K . ~ K|. . . . .|
++-+ +-+-+-+-+-+-+-+
+|K 0 K K|. . . . .|
++-+-+-+-+-+-+-+-+-+
