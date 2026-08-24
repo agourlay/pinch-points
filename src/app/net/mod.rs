@@ -371,15 +371,14 @@ impl OnlineSession {
         }
     }
 
-    /// Call a pause, and tell the peers which frame it lands on.
+    /// Call a pause, and tell the peers which frame it lands on. A
+    /// spectator's Escape opens their own menu; the match plays on behind
+    /// it, and they are still in step when they close it, so the lockstep
+    /// names no frame and nothing is sent.
     pub fn request_pause(&mut self) {
-        if self.watching() {
-            // A spectator's Escape opens their own menu; the match plays on
-            // behind it, and they are still in step when they close it.
-            return;
+        if let Some(frame) = self.session.request_pause() {
+            self.transport.send(NetMsg::Pause { frame });
         }
-        let frame = self.session.request_pause();
-        self.transport.send(NetMsg::Pause { frame });
     }
 
     /// Play on, and keep saying so for a moment (see `RESUME_ECHOES`).

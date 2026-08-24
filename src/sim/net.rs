@@ -210,11 +210,13 @@ impl Lockstep {
 
     /// Call a pause. Returns the frame the session will freeze on, to be
     /// broadcast to the peers; a pause already in flight wins if it lands
-    /// earlier, so two players hitting Escape together agree.
-    pub fn request_pause(&mut self) -> u32 {
+    /// earlier, so two players hitting Escape together agree. `None` for a
+    /// spectator, who does not get to stop everyone else's match and has
+    /// nothing to broadcast: it used to answer `u32::MAX` there, a frame
+    /// number a caller could mistake for one to send.
+    pub fn request_pause(&mut self) -> Option<u32> {
         if self.watching() {
-            // A spectator does not get to stop everyone else's match.
-            return self.pause_at.unwrap_or(u32::MAX);
+            return None;
         }
         // Past every pause already lifted, or the proposal would be read as
         // an echo of one of them (see `lifted`) by every peer, this one
@@ -228,7 +230,7 @@ impl Lockstep {
             frame = frame.max(lifted + 1);
         }
         self.receive_pause(frame);
-        self.pause_at.unwrap_or(frame)
+        Some(self.pause_at.unwrap_or(frame))
     }
 
     /// A peer called a pause at `frame`. The earliest proposal wins, so
@@ -535,7 +537,7 @@ mod tests {
         for step in 0..80 {
             if step == 20 {
                 // Peer A hits Escape; the pause frame rides the wire.
-                let frame = a.request_pause();
+                let frame = a.request_pause().expect("a player may pause");
                 b.receive_pause(frame);
                 pause_at = Some(frame);
             }
@@ -621,7 +623,7 @@ mod tests {
             "and the placement among them"
         );
         // It cannot stop the match, either.
-        watcher.request_pause();
+        assert_eq!(watcher.request_pause(), None, "nothing to broadcast");
         assert!(watcher.pause_frame().is_none(), "a watcher cannot pause");
     }
 
@@ -630,7 +632,7 @@ mod tests {
     #[test]
     fn simultaneous_pauses_settle_on_the_earlier_frame() {
         let mut session = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
-        let mine = session.request_pause();
+        let mine = session.request_pause().expect("a player may pause");
         session.receive_pause(mine + 4);
         assert_eq!(session.pause_frame(), Some(mine), "later proposal ignored");
         session.receive_pause(mine - 4);
@@ -958,7 +960,7 @@ mod pause_echo_tests {
     #[test]
     fn a_stale_pause_echo_after_the_resume_is_ignored() {
         let mut a = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
-        let at = a.request_pause();
+        let at = a.request_pause().expect("a player may pause");
         // Frozen on it, as a peer that heard the pause in time would be.
         while a.frame() < at {
             a.commit_local(PlayerAction::None);
@@ -980,7 +982,7 @@ mod pause_echo_tests {
         a.receive_pause(at.saturating_sub(1));
         assert!(!a.paused());
         // A fresh pause is a fresh pause.
-        let again = a.request_pause();
+        let again = a.request_pause().expect("a player may pause");
         assert!(again > at);
         assert!(a.paused());
     }
@@ -1008,7 +1010,7 @@ mod pause_echo_tests {
     fn a_new_pause_is_always_past_the_lifted_one() {
         let mut a = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
         a.receive_resume(1000);
-        let at = a.request_pause();
+        let at = a.request_pause().expect("a player may pause");
         assert!(at > 1000, "{at}");
         assert_eq!(a.pause_frame(), Some(at));
     }
