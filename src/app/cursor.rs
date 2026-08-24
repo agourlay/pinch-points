@@ -431,7 +431,7 @@ pub fn versus_over_input(
     mut homecoming: ResMut<crate::app::lobby::Homecoming>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
-    let series_on = tournament.active && !tournament.finished;
+    let series_on = tournament.is_running();
     let Some(session) = &mut online.0 else {
         if keys.just_pressed(KeyCode::Enter) {
             match series_on {

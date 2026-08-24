@@ -179,7 +179,7 @@ pub fn record_round(
             // `record_series_round` runs first, so the series verdict is in.
             // Asked by mode, because a series won in teams is won by every
             // seat on the team - and a per-seat search would find nobody.
-            series: tournament.finished
+            series: tournament.is_decided()
                 && tournament
                     .winner(mode, seats.0)
                     .is_some_and(|champion| champion.claims(seat, mode)),

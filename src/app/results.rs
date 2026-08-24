@@ -223,7 +223,7 @@ pub fn spawn_versus_results(
                     best.1,
                 ));
             }
-            if tournament.active {
+            if tournament.in_series() {
                 card.spawn(Node {
                     height: Val::Px(6.0),
                     ..default()
@@ -241,7 +241,7 @@ pub fn spawn_versus_results(
                         .collect();
                 let score = card_text(23.0, palette::GOLD);
                 card.spawn((Text::new(series.join("  ·  ")), score.0, score.1));
-                if tournament.finished {
+                if tournament.is_decided() {
                     if let Some(champ) = tournament.winner(mode, count) {
                         let (who, seat) = crate::app::tournament::champion_name(
                             &settings, &names, mode, champ, count,

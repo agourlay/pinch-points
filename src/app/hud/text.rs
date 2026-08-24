@@ -355,7 +355,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         // the card's own "Enter: next round" hint speaks instead.
         VersusPhase::Over
             if online.0.as_ref().is_some_and(|session| session.from_lobby)
-                && !(tournament.active && !tournament.finished) =>
+                && !tournament.is_running() =>
         {
             tr.prompt_enter_lobby.to_string()
         }

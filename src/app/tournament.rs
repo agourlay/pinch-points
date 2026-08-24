@@ -61,15 +61,30 @@ impl SeriesLength {
     }
 }
 
+/// Where a series stands, if there is one.
+///
+/// One value rather than the `active` and `finished` flags it replaces:
+/// four readers each re-derived "running" as `active && !finished`, and a
+/// pair of flags admits a fourth state (finished but not active) that
+/// nothing means.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SeriesState {
+    /// A single round, or no match at all: nothing to tally.
+    #[default]
+    Off,
+    /// Rounds still to play.
+    Running,
+    /// Decided; the next Enter leaves for the menu.
+    Decided,
+}
+
 #[derive(Resource, Default)]
 pub struct Tournament {
-    pub active: bool,
-    /// The series is decided; the next Enter leaves for the menu.
-    pub finished: bool,
+    pub state: SeriesState,
     /// 1-based current round.
     pub round: u8,
     pub wins: [u8; MAX_PLAYERS],
-    /// How long this one runs. Read only while `active`: a table that is
+    /// How long this one runs. Read only while `state` is not `Off`: a table that is
     /// not in a series has no length to speak of, and the default sits at
     /// [`SeriesLength::Single`] to say so.
     pub length: SeriesLength,
@@ -110,8 +125,7 @@ impl Tournament {
     pub fn taken_up(length: SeriesLength, round: u8, wins: [u8; MAX_PLAYERS]) -> Self {
         match length.is_series() {
             true => Tournament {
-                active: true,
-                finished: false,
+                state: SeriesState::Running,
                 round: round.max(1),
                 wins,
                 length,
@@ -132,6 +146,22 @@ impl Tournament {
             round,
             wins,
         )
+    }
+
+    /// Whether a series is on at all, running or decided: the results card
+    /// shows the standings either way.
+    pub fn in_series(&self) -> bool {
+        self.state != SeriesState::Off
+    }
+
+    /// Whether there are rounds still to play.
+    pub fn is_running(&self) -> bool {
+        self.state == SeriesState::Running
+    }
+
+    /// Whether the series has been decided.
+    pub fn is_decided(&self) -> bool {
+        self.state == SeriesState::Decided
     }
 
     /// The unique holder of the most round wins, if there is one. Only
@@ -168,7 +198,7 @@ pub fn record_series_round(
     online: Res<crate::app::net::Online>,
     mut tournament: ResMut<Tournament>,
 ) {
-    if !tournament.active || tournament.finished {
+    if !tournament.is_running() {
         return;
     }
     // Every peer counts the round it just watched, so its results card is
@@ -187,7 +217,7 @@ pub fn record_series_round(
     }
     let best = *tournament.wins.iter().max().unwrap_or(&0);
     if best >= tournament.length.target() || tournament.round >= tournament.length.rounds() {
-        tournament.finished = true;
+        tournament.state = SeriesState::Decided;
     }
 }
 
@@ -385,7 +415,10 @@ mod tests {
         }
         let tour = app.world().resource::<Tournament>();
         assert_eq!(tour.wins, [0, 3, 0, 0, 0, 0]);
-        assert!(tour.finished, "first to three ends it before round five");
+        assert!(
+            tour.is_decided(),
+            "first to three ends it before round five"
+        );
         assert_eq!(tour.winner(TeamMode::Solo, 4), Some(Champion::Seat(1)));
 
         // A finished series stops counting, however many more rounds run.
@@ -468,7 +501,7 @@ mod tests {
             assert_eq!(terms.is_series(), length.is_series(), "{length:?}");
             let armed = Tournament::from_terms(terms, 1, [0; MAX_PLAYERS]);
             assert_eq!(
-                armed.active,
+                armed.in_series(),
                 length.is_series(),
                 "{length:?} arms a tournament"
             );
@@ -479,6 +512,6 @@ mod tests {
         wins[2] = 2;
         let late = Tournament::taken_up(SeriesLength::BestOfFive, 4, wins);
         assert_eq!((late.round, late.wins[2]), (4, 2));
-        assert!(!Tournament::taken_up(SeriesLength::Single, 4, wins).active);
+        assert!(!Tournament::taken_up(SeriesLength::Single, 4, wins).in_series());
     }
 }
