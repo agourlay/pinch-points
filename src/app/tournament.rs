@@ -4,6 +4,7 @@
 //! the results card grows a series block (and a champion headline once the
 //! series is decided).
 
+use crate::app::cycle::Cycle;
 use crate::app::i18n::fill;
 use crate::app::match_setup::MatchConfig;
 use crate::app::menu_ui;
@@ -97,13 +98,40 @@ impl Champion {
 
 impl Tournament {
     pub fn start(length: SeriesLength) -> Self {
-        Tournament {
-            active: true,
-            finished: false,
-            round: 1,
-            wins: [0; MAX_PLAYERS],
-            length,
+        Self::taken_up(length, 1, [0; MAX_PLAYERS])
+    }
+
+    /// The tournament a peer arms from the host's invitation: the series
+    /// length the terms carry, at the round and tally the wire says. A
+    /// single round arms nothing, so the host and every joiner run this
+    /// same function and cannot disagree about whether there is a series;
+    /// a peer admitted mid-series takes up the standing rather than
+    /// starting its own tally at zero.
+    pub fn taken_up(length: SeriesLength, round: u8, wins: [u8; MAX_PLAYERS]) -> Self {
+        match length.is_series() {
+            true => Tournament {
+                active: true,
+                finished: false,
+                round: round.max(1),
+                wins,
+                length,
+            },
+            false => Tournament::default(),
         }
+    }
+
+    /// [`Tournament::taken_up`] read straight off the terms the wire
+    /// carries.
+    pub fn from_terms(
+        terms: crate::transport::MatchTerms,
+        round: u8,
+        wins: [u8; MAX_PLAYERS],
+    ) -> Self {
+        Self::taken_up(
+            SeriesLength::from_index(usize::from(terms.series)),
+            round,
+            wins,
+        )
     }
 
     /// The unique holder of the most round wins, if there is one. Only
@@ -424,5 +452,33 @@ mod tests {
         assert_eq!(t.champion(), Some(0));
         t.wins = [2, 2, 0, 0, 0, 0];
         assert_eq!(t.champion(), None, "tied series has no champion");
+    }
+
+    /// The wire carries the series as a dial index, and the app reads it
+    /// through [`MatchTerms::is_series`]. The two must agree for every
+    /// position of the dial: they did not, once, and a best-of-five went
+    /// out to every joiner as a single round.
+    #[test]
+    fn the_wire_flag_agrees_with_the_dial() {
+        for (index, length) in SeriesLength::ALL.iter().enumerate() {
+            let terms = crate::transport::MatchTerms {
+                series: index as u8,
+                ..Default::default()
+            };
+            assert_eq!(terms.is_series(), length.is_series(), "{length:?}");
+            let armed = Tournament::from_terms(terms, 1, [0; MAX_PLAYERS]);
+            assert_eq!(
+                armed.active,
+                length.is_series(),
+                "{length:?} arms a tournament"
+            );
+            assert_eq!(armed.length, *length);
+        }
+        // Taken up mid-series, the standing is the host's, not a fresh one.
+        let mut wins = [0; MAX_PLAYERS];
+        wins[2] = 2;
+        let late = Tournament::taken_up(SeriesLength::BestOfFive, 4, wins);
+        assert_eq!((late.round, late.wins[2]), (4, 2));
+        assert!(!Tournament::taken_up(SeriesLength::Single, 4, wins).active);
     }
 }

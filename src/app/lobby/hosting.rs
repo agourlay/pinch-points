@@ -272,7 +272,7 @@ fn launch_the_match(
     // they are watching.
     // A series begins at round one with an empty tally; a single round
     // carries a zero round the joiner reads as "no series".
-    let (round, wins) = match terms.series == 1 {
+    let (round, wins) = match terms.is_series() {
         true => (1u8, [0u8; MAX_PLAYERS]),
         false => (0, [0; MAX_PLAYERS]),
     };
@@ -310,11 +310,7 @@ fn launch_the_match(
     // The series is part of the terms, so every peer knows it is one
     // and tallies the same rounds. Without that the host alone would
     // count, and only the host would see a champion.
-    let length = crate::app::tournament::SeriesLength::from_index(usize::from(terms.series));
-    *tournament = match length.is_series() {
-        true => crate::app::tournament::Tournament::start(length),
-        false => crate::app::tournament::Tournament::default(),
-    };
+    *tournament = crate::app::tournament::Tournament::from_terms(terms, round, wins);
     next_vphase.set(VersusPhase::Running);
     next_screen.set(Screen::Versus);
 }

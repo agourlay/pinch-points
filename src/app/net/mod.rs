@@ -574,7 +574,7 @@ impl OnlineSession {
                     // the arena, by the same path a first round uses.
                     let table = std::array::from_fn(|i| name_from_wire(&names[i]));
                     self.begin_round(seats, seat, terms, table);
-                    self.series_standing = (terms.series == 1).then_some((round, wins));
+                    self.series_standing = terms.is_series().then_some((round, wins));
                     self.next_round = true;
                 }
                 NetMsg::Start { names, .. } => {

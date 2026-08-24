@@ -84,7 +84,7 @@ impl OnlineSession {
                         self.beach = beach;
                         let table = std::array::from_fn(|i| name_from_wire(&names[i]));
                         self.begin_round(seats, seat, terms, table);
-                        self.series_standing = (terms.series == 1).then_some((round, wins));
+                        self.series_standing = terms.is_series().then_some((round, wins));
                         self.next_round = true;
                     }
                 }

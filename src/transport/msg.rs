@@ -226,6 +226,17 @@ pub struct MatchTerms {
 }
 
 impl MatchTerms {
+    /// Whether these terms call for a series at all. Index 0 is the dial's
+    /// "single round"; every other index is some best-of. This is the only
+    /// reading of the byte the app should make: comparing it against a
+    /// particular index once left best-of-five launching as a single round
+    /// on every joiner, because `== 1` is best-of-three and nothing else.
+    pub fn is_series(self) -> bool {
+        self.series != 0
+    }
+}
+
+impl MatchTerms {
     const BYTES: usize = 15;
 
     fn encode(self) -> [u8; Self::BYTES] {
