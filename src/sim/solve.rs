@@ -185,14 +185,7 @@ impl<'a> Search<'a> {
             return false;
         }
         let mut sim = board.clone();
-        loop {
-            sim.tick_idle();
-            match self.level.outcome(&sim) {
-                PuzzleOutcome::Running => {}
-                PuzzleOutcome::Won => return true,
-                PuzzleOutcome::Lost => return false,
-            }
-        }
+        self.level.play_out(&mut sim).0 == PuzzleOutcome::Won
     }
 
     /// Tiles any creature arrives at during a run of the current board: the
@@ -321,16 +314,12 @@ mod tests {
         for &(x, y, dir) in &solution {
             assert!(board.place_signpost(0, x, y, dir));
         }
-        let won = loop {
-            board.tick_idle();
-            match level.outcome(&board) {
-                PuzzleOutcome::Running => {}
-                done @ (PuzzleOutcome::Won | PuzzleOutcome::Lost) => {
-                    break done == PuzzleOutcome::Won;
-                }
-            }
-        };
-        assert!(won, "solver's answer must actually win");
+        let (outcome, _) = level.play_out(&mut board);
+        assert_eq!(
+            outcome,
+            PuzzleOutcome::Won,
+            "solver's answer must actually win"
+        );
     }
 
     #[test]

@@ -161,6 +161,42 @@ impl Level {
     /// level's goal. All goals use banked-count accounting (spec §5.1: a
     /// crab a gull ate is a loss for AllCrabs/Survive, never a quiet
     /// disappearance).
+    /// Run `board` idle until the goal is decided, and say when it was.
+    ///
+    /// Every caller that wants to know how a board ends wants exactly this
+    /// loop, and ten of them once carried their own copy. [`Level::outcome`]
+    /// is what makes it terminate: every goal loses or wins by
+    /// `PUZZLE_TICK_LIMIT`, so the loop needs no guard of its own, and if
+    /// that ever moves there is one place to put it.
+    pub fn play_out(&self, board: &mut Board) -> (PuzzleOutcome, u64) {
+        loop {
+            board.tick_idle();
+            match self.outcome(board) {
+                PuzzleOutcome::Running => {}
+                done @ (PuzzleOutcome::Won | PuzzleOutcome::Lost) => return (done, board.ticks()),
+            }
+        }
+    }
+
+    /// Place the authored solution on `board` for seat 0. `Err` names the
+    /// first placement the board refused, which on a shipped level is a
+    /// broken level file and never something to shrug off.
+    pub fn place_solution(&self, board: &mut Board) -> Result<(), Placement> {
+        for &(x, y, dir) in &self.solution {
+            if !board.place_signpost(0, x, y, dir) {
+                return Err((x, y, dir));
+            }
+        }
+        Ok(())
+    }
+
+    /// A fresh board with the authored solution standing on it.
+    pub fn solved_board(&self) -> Result<Board, Placement> {
+        let mut board = self.board();
+        self.place_solution(&mut board)?;
+        Ok(board)
+    }
+
     pub fn outcome(&self, board: &Board) -> PuzzleOutcome {
         let alive = board.crabs().len() as u32;
         let eaten = board.crabs_banked() + alive < board.crabs_spawned();
@@ -332,18 +368,8 @@ map:
     #[test]
     fn solution_wins_the_puzzle() {
         let level = Level::parse(TINY).expect("parses");
-        let mut board = level.board();
-        for &(x, y, dir) in &level.solution {
-            assert!(board.place_signpost(0, x, y, dir), "placement ({x},{y})");
-        }
-        let outcome = loop {
-            board.tick_idle();
-            match level.outcome(&board) {
-                PuzzleOutcome::Running => {}
-                done @ (PuzzleOutcome::Won | PuzzleOutcome::Lost) => break done,
-            }
-        };
-        assert_eq!(outcome, PuzzleOutcome::Won);
+        let mut board = level.solved_board().expect("every placement lands");
+        assert_eq!(level.play_out(&mut board).0, PuzzleOutcome::Won);
     }
 
     #[test]

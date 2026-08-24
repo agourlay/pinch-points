@@ -419,8 +419,11 @@ pub(super) fn debug_autoplay(
         return;
     }
     let level = campaign.current();
-    for &(x, y, dir) in &level.solution {
-        let _ = sim.0.place_signpost(0, x, y, dir);
+    if let Err((x, y, _)) = level.place_solution(&mut sim.0) {
+        warn!(
+            "PINCH_AUTOPLAY: {:?} refused its own solution at ({x},{y})",
+            level.name
+        );
     }
     next_phase.set(Phase::Running);
 }

@@ -20,28 +20,19 @@ fn every_campaign_level_is_solvable_with_its_solution() {
             "level {n} {:?}: solution uses more posts than the inventory",
             level.name
         );
-        let mut board = level.board();
-        for &(x, y, dir) in &level.solution {
-            assert!(
-                board.place_signpost(0, x, y, dir),
+        let mut board = level.solved_board().unwrap_or_else(|(x, y, _)| {
+            panic!(
                 "level {n} {:?}: solution placement at ({x},{y}) rejected",
                 level.name
-            );
-        }
-        let outcome = loop {
-            board.tick_idle();
-            match level.outcome(&board) {
-                PuzzleOutcome::Running => {}
-                done @ (PuzzleOutcome::Won | PuzzleOutcome::Lost) => break done,
-            }
-        };
+            )
+        });
+        let (outcome, ticks) = level.play_out(&mut board);
         assert_eq!(
             outcome,
             PuzzleOutcome::Won,
-            "level {n} {:?}: solution did not bank all crabs ({} left after {} ticks)",
+            "level {n} {:?}: solution did not bank all crabs ({} left after {ticks} ticks)",
             level.name,
             board.crabs().len(),
-            board.ticks(),
         );
     }
 }
@@ -70,16 +61,10 @@ fn no_campaign_level_moves_its_own_target() {
             continue;
         }
         let started = board.crabs_spawned();
-        for &(x, y, dir) in &level.solution {
-            assert!(board.place_signpost(0, x, y, dir));
-        }
-        loop {
-            board.tick_idle();
-            match level.outcome(&board) {
-                PuzzleOutcome::Running => {}
-                PuzzleOutcome::Won | PuzzleOutcome::Lost => break,
-            }
-        }
+        level
+            .place_solution(&mut board)
+            .expect("the authored solution lands");
+        level.play_out(&mut board);
         assert_eq!(
             board.crabs_spawned(),
             started,
@@ -99,14 +84,7 @@ fn granted_signposts_are_necessary() {
         if level.posts == 0 || level.solution.is_empty() {
             continue; // watch-levels solve themselves by design
         }
-        let mut board = level.board();
-        let outcome = loop {
-            board.tick_idle();
-            match level.outcome(&board) {
-                PuzzleOutcome::Running => {}
-                done @ (PuzzleOutcome::Won | PuzzleOutcome::Lost) => break done,
-            }
-        };
+        let (outcome, _) = level.play_out(&mut level.board());
         assert_ne!(
             outcome,
             PuzzleOutcome::Won,
@@ -188,13 +166,7 @@ fn no_level_is_beaten_by_a_pair_of_signposts_facing_each_other() {
 fn every_challenge_stage_asks_something_of_the_player() {
     for (i, stage) in challenge_levels().iter().enumerate() {
         let mut board = stage.board();
-        let outcome = loop {
-            board.tick_idle();
-            match stage.outcome(&board) {
-                PuzzleOutcome::Running => {}
-                done @ (PuzzleOutcome::Won | PuzzleOutcome::Lost) => break done,
-            }
-        };
+        let (outcome, _) = stage.play_out(&mut board);
         assert_ne!(
             outcome,
             PuzzleOutcome::Won,
@@ -214,31 +186,22 @@ fn every_challenge_stage_is_beatable() {
     assert!(stages.len() >= 8, "Beach Day ships at least 8 stages");
     for (i, stage) in stages.iter().enumerate() {
         let n = i + 1;
-        let mut board = stage.board();
-        for &(x, y, dir) in &stage.solution {
-            assert!(
-                board.place_signpost(0, x, y, dir),
+        let mut board = stage.solved_board().unwrap_or_else(|(x, y, _)| {
+            panic!(
                 "stage {n} {:?}: solution placement at ({x},{y}) rejected",
                 stage.name
-            );
-        }
-        let outcome = loop {
-            board.tick_idle();
-            match stage.outcome(&board) {
-                PuzzleOutcome::Running => {}
-                done @ (PuzzleOutcome::Won | PuzzleOutcome::Lost) => break done,
-            }
-        };
+            )
+        });
+        let (outcome, ticks) = stage.play_out(&mut board);
         assert_eq!(
             outcome,
             PuzzleOutcome::Won,
-            "stage {n} {:?} not beaten: banked {} of spawned {}, golden {}, alive {}, tick {}",
+            "stage {n} {:?} not beaten: banked {} of spawned {}, golden {}, alive {}, tick {ticks}",
             stage.name,
             board.crabs_banked(),
             board.crabs_spawned(),
             board.golden_banked(),
             board.crabs().len(),
-            board.ticks(),
         );
     }
 }

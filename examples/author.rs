@@ -33,14 +33,7 @@ use pinch_points::sim::{
 };
 
 fn unposted_outcome(level: &Level) -> (PuzzleOutcome, u64) {
-    let mut board = level.board();
-    loop {
-        board.tick_idle();
-        match level.outcome(&board) {
-            PuzzleOutcome::Running => {}
-            done @ (PuzzleOutcome::Won | PuzzleOutcome::Lost) => return (done, board.ticks()),
-        }
-    }
+    level.play_out(&mut level.board())
 }
 
 fn main() {
