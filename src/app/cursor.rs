@@ -474,7 +474,7 @@ pub fn versus_over_input(
     }
     // Mid-series a joiner's Enter still means leaving, and a direct
     // `PINCH_HOST` pair has no lobby to go back to.
-    if series_on || !session.from_lobby {
+    if series_on || !session.home.from_lobby {
         next_screen.set(Screen::Menu);
         return;
     }
@@ -699,7 +699,7 @@ mod tests {
             2,
             MatchTerms::default(),
         );
-        session.from_lobby = from_lobby;
+        session.home.from_lobby = from_lobby;
         // A host formed in the lobby always carries the beacon out of it:
         // the two are set together at the launch.
         if host && from_lobby {

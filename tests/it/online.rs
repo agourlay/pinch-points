@@ -269,7 +269,7 @@ fn a_pause_stops_both_peers_on_the_same_frame() {
         host.session.frame()
     );
     assert!(
-        host.desync_at.is_none() && join.desync_at.is_none(),
+        host.desync_at().is_none() && join.desync_at().is_none(),
         "pausing never desynced the peers"
     );
 }
@@ -357,7 +357,7 @@ fn four_player_star_relay_stays_bit_identical() {
         "all four sessions progressed ({min_frame})"
     );
     assert!(
-        host.desync_at.is_none() && joiners.iter().all(|j| j.desync_at.is_none()),
+        host.desync_at().is_none() && joiners.iter().all(|j| j.desync_at().is_none()),
         "no session flagged a desync"
     );
     // Every pair of peers must agree at every common hash frame.
@@ -469,7 +469,7 @@ fn a_spectator_sees_the_same_round_without_holding_it_up() {
         watcher.session.frame()
     );
     assert!(
-        host.desync_at.is_none() && join.desync_at.is_none() && watcher.desync_at.is_none(),
+        host.desync_at().is_none() && join.desync_at().is_none() && watcher.desync_at().is_none(),
         "no session flagged a desync"
     );
     // The watcher's board is the players' board at every frame all three

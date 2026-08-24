@@ -81,17 +81,17 @@ impl OnlineSession {
     /// `None` for one that was at the table when the round began.
     ///
     /// Membership is the launch plan, not the seat: a peer seated as a
-    /// spectator in the lobby has an entry in `peer_seats` (a `None` one),
-    /// while a stranger who greeted mid-round has no entry at all. Both
-    /// answer `None` to `seat_of`, so the plan is the only thing that tells
-    /// them apart. Admitting the second as a spectator was how a latecomer
-    /// used to end up staring at frame zero forever.
+    /// spectator in the lobby is `Watching` in the plan, while a stranger
+    /// who greeted mid-round is `Queued`. Both answer `None` to `seat_of`,
+    /// so the plan is the only thing that tells them apart. Admitting the
+    /// second as a spectator was how a latecomer used to end up staring at
+    /// frame zero forever.
     pub(super) fn queue_place(&self, peer: usize) -> Option<NetMsg> {
         debug_assert!(
-            self.is_host() || self.peer_seats.is_empty(),
+            self.is_host() || self.peers.planned() == 0,
             "a joiner keeps no launch plan and must never answer with one"
         );
-        let seated = self.peer_seats.len();
+        let seated = self.peers.planned();
         // Peers are registered in arrival order, so everyone between the
         // plan and this one is already waiting.
         let ahead = peer.checked_sub(seated)?;
@@ -117,7 +117,7 @@ impl OnlineSession {
     pub fn poll_between_rounds(&mut self, delta: f32) {
         let host = self.is_host();
         self.age_the_silence(delta);
-        if !host && crate::app::lobby::once_a_second(&mut self.greet_in, delta) {
+        if !host && crate::app::lobby::once_a_second(&mut self.home.greet_in, delta) {
             // The same greeting the lobby sends, wish to watch included: a
             // watcher on the results card used to greet as a nameless
             // player, which the host reads the same way between rounds
@@ -186,11 +186,10 @@ impl OnlineSession {
         let mut next = 1u8; // the host keeps seat 0
         (0..peers)
             .map(|peer| {
-                // A watcher, whether it sat out the launch (a `None` in the
-                // plan) or queued mid-round with W armed (a remembered wish),
-                // keeps no chair.
-                let watches = matches!(self.peer_seats.get(peer), Some(None))
-                    || self.peer_watch.get(peer).copied().unwrap_or(false);
+                // A watcher, whether it sat out the launch (at the rail in
+                // the plan) or queued mid-round with W armed (a remembered
+                // wish), keeps no chair.
+                let watches = self.peers.get(peer).is_some_and(Peer::watches);
                 if watches || usize::from(next) >= MAX_PLAYERS {
                     return None;
                 }
@@ -204,32 +203,26 @@ impl OnlineSession {
     /// Host: write down a peer's name against its socket index, growing the
     /// row to reach it. Kept for peers the seat table does not cover yet.
     pub(super) fn remember_peer_name(&mut self, peer: usize, name: &str) {
-        if self.peer_names.len() <= peer {
-            self.peer_names.resize(peer + 1, String::new());
-        }
-        self.peer_names[peer] = name.to_string();
+        self.peers.row(peer).name = name.to_string();
     }
 
     /// Host: note that a peer asked to watch rather than play.
     pub(super) fn note_watch_wish(&mut self, peer: usize) {
-        if self.peer_watch.len() <= peer {
-            self.peer_watch.resize(peer + 1, false);
-        }
-        self.peer_watch[peer] = true;
+        self.peers.row(peer).watch = true;
     }
 
     /// The name a peer index goes by, from its greeting: its seat's name if
     /// it holds one, else what it greeted with while queued.
     pub(super) fn peer_name(&self, peer: usize) -> Option<&str> {
-        if let Some(Some(seat)) = self.peer_seats.get(peer)
-            && let Some(name) = self.names.get(usize::from(*seat))
+        if let Some(seat) = self.peers.seat_of(peer)
+            && let Some(name) = self.names.get(usize::from(seat))
             && !name.is_empty()
         {
             return Some(name);
         }
-        self.peer_names
+        self.peers
             .get(peer)
-            .map(String::as_str)
+            .map(|peer| peer.name.as_str())
             .filter(|name| !name.is_empty())
     }
 
@@ -259,9 +252,9 @@ impl OnlineSession {
             new_wins[0] = wins[0];
             for (peer, slot) in plan.iter().enumerate() {
                 if let Some(new_seat) = slot
-                    && let Some(Some(old_seat)) = self.peer_seats.get(peer)
+                    && let Some(old_seat) = self.peers.seat_of(peer)
                 {
-                    new_wins[usize::from(*new_seat)] = wins[usize::from(*old_seat)];
+                    new_wins[usize::from(*new_seat)] = wins[usize::from(old_seat)];
                 }
             }
             // The number of the round about to begin: the caller passes
@@ -307,7 +300,7 @@ impl OnlineSession {
                 },
             );
         }
-        self.peer_seats = plan;
+        self.peers.deal(&plan);
         self.begin_round(seats, Some(0), terms, names);
         self.series_standing = standing;
         self.next_round = true;
@@ -340,23 +333,14 @@ impl OnlineSession {
         self.seats = seats;
         self.terms = terms;
         self.names = names;
-        // Last round's disagreement is last round's; a new board starts
-        // level, and the hashes that proved it are gone with it.
-        self.desync_at = None;
-        self.own_hashes.clear();
-        self.peer_hashes.clear();
+        self.hashes.reset();
         self.resume_echo = 0;
         // And nobody is late for a round that has not begun. The results
         // card is a place a table sits for a while, and carrying that
         // silence into the new round would call the host gone on its first
         // frame.
-        self.stalled_for = 0.0;
-        self.stalled_on = self.session.frame();
-        self.waiting_hold = 0.0;
-        self.waiting_on = None;
-        for silence in self.peer_silence.iter_mut() {
-            *silence = 0.0;
-        }
+        self.stall.reset(self.session.frame());
+        self.peers.hush();
     }
 
     /// Whether a `Start` off the wire is the next round rather than the
@@ -389,7 +373,7 @@ impl OnlineSession {
     /// lobby handed out, so a late `Hello` is answered with the seat that
     /// peer already has.
     pub(super) fn seat_of(&self, peer: usize) -> Option<u8> {
-        self.peer_seats.get(peer).copied().flatten()
+        self.peers.seat_of(peer)
     }
 }
 
@@ -410,7 +394,7 @@ mod tests {
             2,
             MatchTerms::default(),
         );
-        session.peer_seats = plan;
+        session.peers.deal(&plan);
         session
     }
 
@@ -442,7 +426,7 @@ mod tests {
     #[test]
     fn a_joiner_queues_nobody() {
         let session = hosting(Vec::new());
-        assert!(!session.is_host() || session.peer_seats.is_empty());
+        assert!(!session.is_host() || session.peers.planned() == 0);
         // With an empty plan every peer index looks late, which is only ever
         // consulted on the host; the guard that matters is `if host`.
         assert_eq!(session.queue_place(0), Some(NetMsg::Queued { ahead: 0 }));
@@ -492,7 +476,7 @@ mod next_round_tests {
             }
         }
         assert_eq!(host.transport.peer_count(), 1, "the joiner is at the table");
-        host.peer_seats = vec![Some(1)];
+        host.peers.deal(&[Some(1)]);
         host.names[0] = "Anna".into();
         host.names[1] = "Bo".into();
 
@@ -547,7 +531,7 @@ mod next_round_tests {
             terms(1),
         );
         // One peer played, one watched, two turned up while they played.
-        host.peer_seats = vec![Some(1), None];
+        host.peers.deal(&[Some(1), None]);
         let plan = host.next_plan(4);
         assert_eq!(
             plan,
@@ -565,6 +549,6 @@ mod next_round_tests {
         assert_eq!(host.terms.bots, MAX_PLAYERS as u8 - 1);
         // And the plan is drawn from who is actually connected, not from
         // last round's list: a peer that left does not hold a chair.
-        assert!(host.peer_seats.is_empty(), "nobody is connected any more");
+        assert!(host.peers.is_empty(), "nobody is connected any more");
     }
 }

@@ -324,7 +324,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         // Whose fault the still picture is, in the order the answer is
         // worth having: a desync is the round being wrong, an empty socket
         // is nobody there yet, and a stall is somebody in particular.
-        if let Some(frame) = session.desync_at {
+        if let Some(frame) = session.desync_at() {
             status = fill(tr.desync, &[("f", &frame.to_string())]);
         } else if !session.transport.connected() {
             status = tr.waiting_peer.to_string();
@@ -354,7 +354,10 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         // prompt must not promise the menu it will not reach. Mid-series
         // the card's own "Enter: next round" hint speaks instead.
         VersusPhase::Over
-            if online.0.as_ref().is_some_and(|session| session.from_lobby)
+            if online
+                .0
+                .as_ref()
+                .is_some_and(|session| session.home.from_lobby)
                 && !tournament.is_running() =>
         {
             tr.prompt_enter_lobby.to_string()

@@ -12,6 +12,7 @@ use crate::transport::{
     wire_table,
 };
 use bevy::prelude::*;
+pub use peers::{Peer, PeerBook, Place};
 use std::collections::VecDeque;
 
 /// How many ticks a resume is repeated after the local session unpauses.
@@ -34,91 +35,34 @@ pub struct OnlineSession {
     /// level somebody built has to travel as itself, because no peer but
     /// the host has the file. Empty for the built-in maps.
     pub beach: Vec<u8>,
-    /// Host side: the seat each peer index was given, `None` for the
-    /// watchers among them. Empty on a joiner, which answers nobody.
-    pub peer_seats: Vec<Option<u8>>,
-    /// Host side: what each peer index calls itself, from its greeting,
-    /// and whether it asked to watch rather than play. Kept for the peers
-    /// the launch plan does not cover: someone who queued mid-round holds
-    /// no seat yet, so its name and its wish to watch have nowhere else to
-    /// live until [`Self::call_next_round`] seats it. Grown as peers appear
-    /// and shifted with the socket's own list by [`Self::forget_peer_row`].
-    peer_names: Vec<String>,
-    peer_watch: Vec<bool>,
+    /// The peers on the socket, one row each: the chair the launch plan
+    /// gave it (`Queued` for one that turned up mid-round, and for every
+    /// peer a joiner knows, since a joiner keeps no plan and answers
+    /// nobody), what it calls itself, whether it asked to watch, and how
+    /// long since it last said anything.
+    ///
+    /// The silence is the difference between a player who has *gone* and
+    /// one who is merely behind: a machine that is still talking to us has
+    /// not left the room, however far its inputs have fallen back, and
+    /// giving its castle away because a burst of loss held one frame up is
+    /// how you lose a friend's round for them. A joiner keeps the one row
+    /// it has, the host, and calls the round off when that goes quiet.
+    pub(crate) peers: PeerBook,
     /// What each seat is called, agreed at the handshake so every peer
     /// shows the same table. Empty entries fall back to seat labels; local
     /// couch names never apply to an online round.
     pub names: [String; MAX_PLAYERS],
-    /// First frame where the peers' state hashes disagreed, if ever: a
-    /// determinism bug surfaced loudly rather than played through.
-    pub desync_at: Option<u32>,
-    /// Seconds the round has been unable to move, and the frame it has been
-    /// unable to move off.
-    ///
-    /// Measured by the frame number rather than by whether the next frame's
-    /// inputs happen to be in, because the second question is asked at a
-    /// moment where the answer is always no. The sim runs on the fixed step
-    /// and advances until it *cannot*; the tick that watches for stalls runs
-    /// after it, in `Update`. So it always found the next frame's slots
-    /// empty and always called a healthy round stalled. That put "waiting
-    /// for Bob" on both screens of a round that was running perfectly, and
-    /// made the socket-silence rule necessary to stop the host handing out
-    /// its friends' castles five seconds into every match.
-    ///
-    /// "The picture has not moved" is the thing both readers actually want,
-    /// and it is not a matter of timing within a frame.
-    stalled_for: f32,
-    stalled_on: u32,
-    /// Who the status line is naming, and how long it has left to keep
-    /// naming them.
-    ///
-    /// A latch rather than a reading of `stalled_for`, because that number
-    /// snaps back to zero the moment one frame gets through, and a round
-    /// that is limping gets a frame through all the time. Reading it
-    /// directly put the line on and off once a second: a strobe in the
-    /// corner of the eye, which is worse than saying nothing at all.
-    waiting_on: Option<u8>,
-    waiting_hold: f32,
-    /// Seconds since each peer index was last heard from: anything at all,
-    /// an input, a hash, a stray greeting.
-    ///
-    /// Kept beside the transport's own peer list and shifted with it. This
-    /// is the difference between a player who has *gone* and one who is
-    /// merely behind: a machine that is still talking to us has not left
-    /// the room, however far its inputs have fallen back, and giving its
-    /// castle away because a burst of loss held one frame up is how you
-    /// lose a friend's round for them. A joiner keeps the one entry it has,
-    /// the host, and calls the round off when that goes quiet.
-    peer_silence: Vec<f32>,
+    /// The peers' state hashes against our own, and the first frame they
+    /// disagreed on, if ever.
+    hashes: HashCheck,
+    /// Whether the picture has stopped moving, and on whom.
+    stall: StallWatch,
     /// Seats given up on this round, each with the frame it was emptied
     /// from, so the shell can put an AI in each and say so once rather
     /// than every frame, and the host can keep telling the table.
     pub abandoned: Vec<(u8, u32)>,
-    /// Host side: the beacon, carried out of the lobby so the beach stays
-    /// on the air while the round runs, listed as in progress with its
-    /// occupancy, for anyone who wants the next one. Silent on a joiner,
-    /// and on a direct `PINCH_HOST` pair, which never announced at all.
-    announcer: Farewell,
-    /// Whether this session was formed in the beach lobby, which is the
-    /// only place a finished match has to walk its table back to: the
-    /// direct `PINCH_HOST` pair was never anywhere else to begin with.
-    pub from_lobby: bool,
-    /// What the beach is called, for the beacon it keeps up while the round
-    /// runs. Not a player's name: the list is choosing between games.
-    pub game_name: String,
-    announce_in: f32,
-    /// Joiner side: seconds until the next greeting while the results card
-    /// is up.
-    ///
-    /// An established session says nothing at all between rounds. Inputs
-    /// and hashes belong to the round that ended, and the host has nothing
-    /// to send until somebody calls the next one, so both ends fall silent
-    /// on purpose. That is fine until silence is being read as evidence,
-    /// and then it is a joiner walking out of a perfectly good table
-    /// twenty seconds into a results card. So a joiner keeps saying hello,
-    /// on the same cadence the lobby uses, and the host's reply is what
-    /// tells it the host is still there.
-    greet_in: f32,
+    /// The beach this session came from, and what it owes it.
+    pub home: Home,
     /// A next round has been agreed and the session is armed for it; the
     /// shell reads this and walks everyone back into the arena. Cleared by
     /// whoever acts on it.
@@ -132,10 +76,149 @@ pub struct OnlineSession {
     pub series_standing: Option<SeriesStanding>,
     /// Ticks of `Resume` still to repeat (see [`RESUME_ECHOES`]).
     resume_echo: u8,
-    own_hashes: VecDeque<(u32, u64)>,
-    /// Peer hashes for frames we may not have simulated yet; compared (and
-    /// drained) as our own hashes appear, so no exchanged check is skipped.
-    peer_hashes: VecDeque<(u32, u64)>,
+}
+
+/// The beach a session came from: its beacon, what it is called, and
+/// whether there is a lobby to walk the table back to.
+pub struct Home {
+    /// Host side: the beacon, carried out of the lobby so the beach stays
+    /// on the air while the round runs, listed as in progress with its
+    /// occupancy, for anyone who wants the next one. Silent on a joiner,
+    /// and on a direct `PINCH_HOST` pair, which never announced at all.
+    announcer: Farewell,
+    /// What the beach is called, for the beacon it keeps up while the round
+    /// runs. Not a player's name: the list is choosing between games.
+    pub game_name: String,
+    announce_in: f32,
+    /// Whether this session was formed in the beach lobby, which is the
+    /// only place a finished match has to walk its table back to: the
+    /// direct `PINCH_HOST` pair was never anywhere else to begin with.
+    pub from_lobby: bool,
+    /// Joiner side: seconds until the next greeting while the results card
+    /// is up.
+    ///
+    /// An established session says nothing at all between rounds. Inputs
+    /// and hashes belong to the round that ended, and the host has nothing
+    /// to send until somebody calls the next one, so both ends fall silent
+    /// on purpose. That is fine until silence is being read as evidence,
+    /// and then it is a joiner walking out of a perfectly good table
+    /// twenty seconds into a results card. So a joiner keeps saying hello,
+    /// on the same cadence the lobby uses, and the host's reply is what
+    /// tells it the host is still there.
+    greet_in: f32,
+}
+
+impl Home {
+    /// Nowhere in particular: the direct pair, which never announced and
+    /// has no lobby behind it.
+    fn nowhere() -> Home {
+        Home {
+            announcer: Farewell::silent(),
+            game_name: String::new(),
+            announce_in: 0.0,
+            from_lobby: false,
+            greet_in: 0.0,
+        }
+    }
+}
+
+/// Whether the round has stopped moving, for how long, and who the status
+/// line is naming for it.
+///
+/// Measured by the frame number rather than by whether the next frame's
+/// inputs happen to be in, because the second question is asked at a
+/// moment where the answer is always no. The sim runs on the fixed step
+/// and advances until it *cannot*; the tick that watches for stalls runs
+/// after it, in `Update`. So it always found the next frame's slots
+/// empty and always called a healthy round stalled. That put "waiting
+/// for Bob" on both screens of a round that was running perfectly, and
+/// made the socket-silence rule necessary to stop the host handing out
+/// its friends' castles five seconds into every match.
+///
+/// "The picture has not moved" is the thing both readers actually want,
+/// and it is not a matter of timing within a frame.
+#[derive(Default)]
+struct StallWatch {
+    /// Seconds the round has been unable to move, and the frame it has
+    /// been unable to move off.
+    stalled_for: f32,
+    stalled_on: u32,
+    /// Who the status line is naming, and how long it has left to keep
+    /// naming them.
+    ///
+    /// A latch rather than a reading of `stalled_for`, because that number
+    /// snaps back to zero the moment one frame gets through, and a round
+    /// that is limping gets a frame through all the time. Reading it
+    /// directly put the line on and off once a second: a strobe in the
+    /// corner of the eye, which is worse than saying nothing at all.
+    waiting_on: Option<u8>,
+    waiting_hold: f32,
+}
+
+impl StallWatch {
+    /// Nothing is stuck and nobody is being waited for, as of `frame`: a
+    /// new round, or a round holding still on purpose.
+    fn reset(&mut self, frame: u32) {
+        let Self {
+            stalled_for,
+            stalled_on,
+            waiting_on,
+            waiting_hold,
+        } = self;
+        *stalled_for = 0.0;
+        *stalled_on = frame;
+        *waiting_hold = 0.0;
+        *waiting_on = None;
+    }
+}
+
+/// The peers' state hashes against our own.
+#[derive(Default)]
+struct HashCheck {
+    /// First frame where the peers' state hashes disagreed, if ever: a
+    /// determinism bug surfaced loudly rather than played through.
+    desync_at: Option<u32>,
+    own: VecDeque<(u32, u64)>,
+    /// Peer hashes for frames we may not have simulated yet; compared as
+    /// our own hashes appear, so no exchanged check is skipped.
+    peers: VecDeque<(u32, u64)>,
+}
+
+impl HashCheck {
+    /// Our own hash for `frame`. A short window: the peers are at most a
+    /// commit lead behind.
+    fn record_own(&mut self, frame: u32, hash: u64) {
+        self.own.push_back((frame, hash));
+        while self.own.len() > 16 {
+            self.own.pop_front();
+        }
+    }
+
+    /// A peer's hash for `frame`, which we may not have simulated yet.
+    fn record_peer(&mut self, frame: u32, hash: u64) {
+        self.peers.push_back((frame, hash));
+        while self.peers.len() > 64 {
+            self.peers.pop_front();
+        }
+    }
+
+    /// Compare what has been exchanged, and remember the first frame that
+    /// disagreed.
+    fn compare(&mut self) {
+        for &(frame, peer) in &self.peers {
+            if let Some(&(_, own)) = self.own.iter().find(|(f, _)| *f == frame)
+                && own != peer
+            {
+                self.desync_at.get_or_insert(frame);
+            }
+        }
+    }
+
+    /// Last round's disagreement is last round's; a new board starts
+    /// level, and the hashes that proved it are gone with it.
+    fn reset(&mut self) {
+        *self = HashCheck::default();
+    }
 }
 
 /// The goodbye a hosted beach owes the network when its session ends.
@@ -196,11 +279,11 @@ pub struct LobbyReturn {
     pub announcer: Option<Announcer>,
     pub transport: UdpTransport,
     pub game_name: String,
-    /// Host side: what each registered peer calls itself, by peer index.
-    pub peer_names: Vec<String>,
-    /// Host side: the peers that watch rather than play, by the same rule
-    /// the next round would have seated them.
-    pub watchers: Vec<usize>,
+    /// Host side: every registered peer by its socket index, with the
+    /// name its greeting carried and whether it watches, by the same rule
+    /// the next round would have seated it. Nobody holds a chair any
+    /// more: the lobby deals them again at the launch.
+    pub peers: PeerBook,
     /// Joiner side: this peer was at the rail, and greets with `Watch`.
     pub watching: bool,
     pub host: bool,
@@ -235,6 +318,7 @@ pub fn poll_between_rounds(time: Res<Time>, mut online: ResMut<Online>) {
     }
 }
 
+mod peers;
 mod presence;
 mod rounds;
 pub(crate) use presence::{abandon_the_departed, leave_a_hostless_round};
@@ -254,27 +338,15 @@ impl OnlineSession {
             seats,
             terms,
             beach: Vec::new(),
-            peer_seats: Vec::new(),
-            peer_names: Vec::new(),
-            peer_watch: Vec::new(),
+            peers: PeerBook::default(),
             names: Default::default(),
-            stalled_for: 0.0,
-            stalled_on: 0,
-            waiting_on: None,
-            waiting_hold: 0.0,
-            peer_silence: Vec::new(),
+            hashes: HashCheck::default(),
+            stall: StallWatch::default(),
             abandoned: Vec::new(),
-            announcer: Farewell::silent(),
-            from_lobby: false,
-            game_name: String::new(),
-            announce_in: 0.0,
-            greet_in: 0.0,
+            home: Home::nowhere(),
             next_round: false,
             series_standing: None,
-            desync_at: None,
             resume_echo: 0,
-            own_hashes: VecDeque::new(),
-            peer_hashes: VecDeque::new(),
         }
     }
 
@@ -287,20 +359,21 @@ impl OnlineSession {
     /// player who wants it, the same way the lobby fills bots in behind
     /// whoever turned up.
     pub fn keep_announcing(&mut self, delta: f32) {
-        if self.announcer.aboard().is_none()
-            || !crate::app::lobby::once_a_second(&mut self.announce_in, delta)
+        if self.home.announcer.aboard().is_none()
+            || !crate::app::lobby::once_a_second(&mut self.home.announce_in, delta)
         {
             return;
         }
         let taken = self.session.player_count() as u8;
-        let (Some(announcer), Ok(addr)) = (self.announcer.aboard(), self.transport.local_addr())
+        let (Some(announcer), Ok(addr)) =
+            (self.home.announcer.aboard(), self.transport.local_addr())
         else {
             return;
         };
         announcer.running(
             addr.port(),
             crate::transport::OnAir {
-                name: &self.game_name,
+                name: &self.home.game_name,
                 // Seat zero is the host's, and the host is the only one that
                 // announces.
                 host: &self.names[0],
@@ -320,7 +393,7 @@ impl OnlineSession {
             .local_addr()
             .map(|addr| addr.port())
             .unwrap_or(0);
-        self.announcer = Farewell {
+        self.home.announcer = Farewell {
             announcer: Some(announcer),
             port,
         };
@@ -329,60 +402,56 @@ impl OnlineSession {
     /// Dismantle a finished match into what the lobby needs to stand the
     /// beach back up, goodbye disarmed: this table is going back to the
     /// lobby together, not away.
-    pub fn back_to_the_lobby(self) -> LobbyReturn {
+    pub fn back_to_the_lobby(mut self) -> LobbyReturn {
         let host = self.is_host();
         let watching = self.watching();
-        let peers = self.transport.peer_count();
-        // Who watches, by the same rule `next_plan` would have seated
-        // them: a spectator's `None` in the launch plan, or a watch wish
-        // greeted mid-round.
-        let watchers = (0..peers)
-            .filter(|&peer| {
-                matches!(self.peer_seats.get(peer), Some(None))
-                    || self.peer_watch.get(peer).copied().unwrap_or(false)
-            })
-            .collect();
-        let peer_names = (0..peers)
-            .map(|peer| self.peer_name(peer).unwrap_or_default().to_string())
-            .collect();
+        // Each peer under the name its chair carried, which is the one
+        // every screen showed, and the plan's chairs given up: back in the
+        // lobby the plan is dealt again, and only who watches survives it.
+        for peer in 0..self.peers.len() {
+            if let Some(name) = self.peer_name(peer) {
+                let name = name.to_string();
+                self.peers.row(peer).name = name;
+            }
+        }
+        self.peers.unseat();
         let Self {
             transport,
             session: _,
             seats: _,
             terms,
             beach: _,
-            peer_seats: _,
-            peer_names: _,
-            peer_watch: _,
+            peers,
             names: _,
-            desync_at: _,
-            stalled_for: _,
-            stalled_on: _,
-            waiting_on: _,
-            waiting_hold: _,
-            peer_silence: _,
+            hashes: _,
+            stall: _,
             abandoned: _,
-            announcer,
-            from_lobby: _,
-            game_name,
-            announce_in: _,
-            greet_in: _,
+            home,
             next_round: _,
             series_standing: _,
             resume_echo: _,
-            own_hashes: _,
-            peer_hashes: _,
         } = self;
+        let Home {
+            announcer,
+            game_name,
+            announce_in: _,
+            from_lobby: _,
+            greet_in: _,
+        } = home;
         LobbyReturn {
             announcer: announcer.disarm(),
             transport,
             game_name,
-            peer_names,
-            watchers,
+            peers,
             watching,
             host,
             played_seed: terms.seed,
         }
+    }
+
+    /// The first frame the peers' state hashes disagreed on, if ever.
+    pub fn desync_at(&self) -> Option<u32> {
+        self.hashes.desync_at
     }
 
     /// Call a pause, and tell the peers which frame it lands on. A
@@ -519,7 +588,7 @@ impl OnlineSession {
                     // been through a lobby; with nothing to check against
                     // it takes any seat but its own, as it always did.
                     if host {
-                        let allowed = if self.peer_seats.is_empty() {
+                        let allowed = if self.peers.planned() == 0 {
                             Some(input.player) != self.session.seat()
                         } else {
                             self.seat_of(from) == Some(input.player)
@@ -536,10 +605,7 @@ impl OnlineSession {
                 NetMsg::Hash { frame, hash } => {
                     // The peer may be ahead of us; buffer until we simulate
                     // that frame ourselves.
-                    self.peer_hashes.push_back((frame, hash));
-                    while self.peer_hashes.len() > 64 {
-                        self.peer_hashes.pop_front();
-                    }
+                    self.hashes.record_peer(frame, hash);
                 }
                 NetMsg::Pause { frame } => {
                     self.session.receive_pause(frame);
@@ -612,24 +678,14 @@ impl OnlineSession {
                 NetMsg::Roster { .. } => {}
             }
         }
-        self.compare_hashes();
+        self.hashes.compare();
         // At most a couple of frames per fixed tick: a lagging peer catches
         // up gradually instead of spiralling.
         for _ in 0..2 {
             tick(self);
         }
-        self.compare_hashes();
+        self.hashes.compare();
         committed
-    }
-
-    fn compare_hashes(&mut self) {
-        for &(frame, peer) in &self.peer_hashes {
-            if let Some(&(_, own)) = self.own_hashes.iter().find(|(f, _)| *f == frame)
-                && own != peer
-            {
-                self.desync_at.get_or_insert(frame);
-            }
-        }
     }
 
     /// Called by the tick closure after simulating a frame, with the fresh
@@ -637,10 +693,7 @@ impl OnlineSession {
     pub fn after_frame(&mut self, hash: u64) {
         let frame = self.session.frame();
         if frame.is_multiple_of(HASH_INTERVAL) {
-            self.own_hashes.push_back((frame, hash));
-            while self.own_hashes.len() > 16 {
-                self.own_hashes.pop_front();
-            }
+            self.hashes.record_own(frame, hash);
             self.transport.send(NetMsg::Hash { frame, hash });
         }
     }
@@ -763,8 +816,8 @@ mod homecoming_tests {
         let mut session = hosting_session(42);
         let port = session.transport.local_addr().expect("addr").port();
         session.stay_on_air(Announcer::new(0xB0A7).expect("announcer"));
-        session.game_name = "Room 3".into();
-        session.from_lobby = true;
+        session.home.game_name = "Room 3".into();
+        session.home.from_lobby = true;
         let returned = session.back_to_the_lobby();
         assert!(returned.host);
         assert!(!returned.watching);
@@ -833,14 +886,16 @@ mod homecoming_tests {
             }
             assert_eq!(session.transport.peer_count(), want, "peer registered");
         }
-        session.peer_seats = vec![Some(1), None];
+        session.peers.deal(&[Some(1), None]);
         let returned = session.back_to_the_lobby();
+        let names: Vec<&str> = returned.peers.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(
-            returned.peer_names,
-            vec!["Bo".to_string(), String::new()],
+            names,
+            ["Bo", ""],
             "each chair keeps the name its greeting carried"
         );
-        assert_eq!(returned.watchers, vec![1], "and the rail stays the rail");
+        let watching: Vec<bool> = returned.peers.iter().map(Peer::watches).collect();
+        assert_eq!(watching, [false, true], "and the rail stays the rail");
     }
 
     /// A joiner's way back: no beacon to carry, but the socket, the seed

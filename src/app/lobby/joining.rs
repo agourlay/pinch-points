@@ -290,7 +290,7 @@ pub(super) fn accept_the_invitation(
         let mut session = OnlineSession::invited(transport, invitation);
         // Formed here, so a finished match knows it has a lobby to walk
         // this table back to.
-        session.from_lobby = true;
+        session.home.from_lobby = true;
         online.0 = Some(session);
         next_vphase.set(VersusPhase::Running);
         next_screen.set(Screen::Versus);

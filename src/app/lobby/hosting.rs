@@ -279,7 +279,6 @@ fn launch_the_match(
             },
         );
     }
-    let peer_seats = plan;
     let mut session = OnlineSession::new(
         transport,
         crate::app::net::lockstep_for(Some(0), humans),
@@ -290,11 +289,11 @@ fn launch_the_match(
     // file: if the two ever disagreed, the hash check would find it and
     // nobody could say which of them was right.
     session.beach = beach;
-    session.peer_seats = peer_seats;
+    session.peers.deal(&plan);
     session.names = names;
     session.stay_on_air(announcer);
-    session.from_lobby = true;
-    session.game_name = state.game_name.clone();
+    session.home.from_lobby = true;
+    session.home.game_name = state.game_name.clone();
     online.0 = Some(session);
     // The series is part of the terms, so every peer knows it is one
     // and tallies the same rounds. Without that the host alone would

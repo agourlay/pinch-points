@@ -35,7 +35,7 @@ pub use ui::*;
 use crate::app::cycle::Cycle;
 use crate::app::i18n::fill;
 use crate::app::match_setup::MatchConfig;
-use crate::app::net::{Invitation, LobbyReturn, Online, OnlineSession};
+use crate::app::net::{Invitation, LobbyReturn, Online, OnlineSession, Peer};
 use crate::app::palette;
 use crate::app::settings::GameSettings;
 use crate::app::{Screen, VersusPhase};
@@ -402,8 +402,7 @@ fn settle_back_in(
         announcer,
         transport,
         game_name,
-        peer_names,
-        watchers,
+        mut peers,
         watching,
         host,
         played_seed,
@@ -412,16 +411,16 @@ fn settle_back_in(
         // A host that never announced (the direct pair) has no beach to
         // stand back up, and `from_lobby` keeps it from coming this way.
         let Some(announcer) = announcer else { return };
-        let peers = transport.peer_count();
-        state.joined_peers = peers;
-        state.peer_silence = vec![0.0; peers];
-        state.peer_names = peer_names;
-        // The invariant `forget_peer` checks: names at least as long as
-        // the silences kept beside them.
-        if state.peer_names.len() < peers {
-            state.peer_names.resize(peers, String::new());
-        }
-        state.watchers = watchers.into_iter().filter(|w| *w < peers.max(1)).collect();
+        // One row per peer the socket still has, no more and no fewer:
+        // the lists kept here are indexed by the socket's own.
+        peers.fit(transport.peer_count());
+        peers.hush();
+        state.joined_peers = peers.len();
+        state.peer_silence = vec![0.0; peers.len()];
+        state.peer_names = peers.iter().map(|peer| peer.name.clone()).collect();
+        state.watchers = (0..peers.len())
+            .filter(|peer| peers.get(*peer).is_some_and(Peer::watches))
+            .collect();
         state.game_name = game_name;
         state.hosting = Some((announcer, transport));
         // Back on the air this frame, as open: the round the beacon was
@@ -783,6 +782,20 @@ mod tests {
 mod homecoming_tests {
     use super::*;
     use crate::app::i18n::EN;
+    use crate::app::net::PeerBook;
+
+    /// Peers as a match hands them back: named, with the given ones
+    /// watching.
+    fn peers_named(names: &[&str], watchers: &[usize]) -> PeerBook {
+        let mut peers = PeerBook::default();
+        for (i, name) in names.iter().enumerate() {
+            peers.row(i).name = name.to_string();
+        }
+        for watcher in watchers {
+            peers.row(*watcher).watch = true;
+        }
+        peers
+    }
 
     /// A hosting socket with `peers` joiners registered on it, as the one
     /// coming back from a match really is: the count is the socket's own,
@@ -823,8 +836,7 @@ mod homecoming_tests {
                 announcer: Some(Announcer::new(0xB0A7).expect("announcer")),
                 transport,
                 game_name: "Room 3".into(),
-                peer_names: vec!["Bo".into(), "Cy".into()],
-                watchers: vec![1],
+                peers: peers_named(&["Bo", "Cy"], &[1]),
                 watching: false,
                 host: true,
                 played_seed: 42,
@@ -862,10 +874,8 @@ mod homecoming_tests {
                 announcer: Some(Announcer::new(1).expect("announcer")),
                 transport,
                 game_name: String::new(),
-                // Fewer names than the socket knows peers, and a watcher
-                // pointing past the end of both.
-                peer_names: vec!["Bo".into()],
-                watchers: vec![0, 9],
+                // Fewer names than the socket knows peers.
+                peers: peers_named(&["Bo"], &[0]),
                 watching: false,
                 host: true,
                 played_seed: 0,
@@ -898,8 +908,7 @@ mod homecoming_tests {
                 announcer: None,
                 transport: UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
                 game_name: String::new(),
-                peer_names: Vec::new(),
-                watchers: Vec::new(),
+                peers: PeerBook::default(),
                 watching: true,
                 host: false,
                 played_seed: 42,

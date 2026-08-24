@@ -61,38 +61,26 @@ impl OnlineSession {
     /// A peer said something, which is all this needs to know: whatever it
     /// said, it is still there.
     pub(super) fn mark_heard(&mut self, peer: usize) {
-        while self.peer_silence.len() <= peer {
-            self.peer_silence.push(0.0);
-        }
-        self.peer_silence[peer] = 0.0;
+        self.peers.heard(peer);
     }
 
     /// Age every peer's silence by a frame, taking in any the socket has
     /// picked up since the last one.
     pub(super) fn age_the_silence(&mut self, delta: f32) {
-        // As long as the longer of the two lists it sits beside. A peer the
-        // socket has registered has a silence from its first datagram, and
-        // a seat in the launch plan has one whether or not its peer is
-        // still on the socket. A plan entry with no silence to read is a
-        // seat that could never be given up on, and a round that stalls on
-        // a ghost forever.
-        let peers = self.transport.peer_count().max(self.peer_seats.len());
-        while self.peer_silence.len() < peers {
-            self.peer_silence.push(0.0);
-        }
-        for silence in self.peer_silence.iter_mut() {
-            *silence += delta;
-        }
+        // A peer the socket has registered has a row from its first
+        // datagram, and a seat in the launch plan has one whether or not
+        // its peer is still on the socket. A plan entry with no silence to
+        // read would be a seat that could never be given up on, and a
+        // round that stalls on a ghost forever.
+        self.peers.reach(self.transport.peer_count());
+        self.peers.age(delta);
     }
 
     /// How long the peer holding `seat` has said nothing at all. `None`
     /// for a seat no peer holds: the host's own, and the AI's.
     fn seat_silence(&self, seat: u8) -> Option<f32> {
-        let peer = self
-            .peer_seats
-            .iter()
-            .position(|held| *held == Some(seat))?;
-        self.peer_silence.get(peer).copied()
+        let peer = self.peers.holder_of(seat)?;
+        self.peers.get(peer).map(|peer| peer.silence)
     }
 
     /// Whether the host has gone: a joiner's own verdict on the one peer it
@@ -110,9 +98,9 @@ impl OnlineSession {
     pub fn host_gone(&self) -> bool {
         !self.is_host()
             && self
-                .peer_silence
-                .first()
-                .is_some_and(|since| *since >= HOST_GONE_AFTER)
+                .peers
+                .get(0)
+                .is_some_and(|host| host.silence >= HOST_GONE_AFTER)
     }
 
     /// Watch for a player who has stopped sending, and give up on them.
@@ -146,13 +134,10 @@ impl OnlineSession {
         // only the first, opening the pause card cost every rival their
         // castle five seconds later.
         if paused || self.session.paused() {
-            self.stalled_for = 0.0;
-            self.stalled_on = self.session.frame();
             // And a round holding still on purpose is not waiting on
             // anybody, so the line goes at once rather than lingering over
             // the pause card.
-            self.waiting_hold = 0.0;
-            self.waiting_on = None;
+            self.stall.reset(self.session.frame());
             return Vec::new();
         }
         // Never itself. The local slot is empty whenever this peer has not
@@ -170,31 +155,32 @@ impl OnlineSession {
         // stuck, whatever the next frame's slots look like at this instant.
         // That is the question that cannot be asked from here.
         let at = self.session.frame();
-        if at != self.stalled_on || waiting.is_empty() {
-            self.stalled_on = at;
-            self.stalled_for = 0.0;
+        let stall = &mut self.stall;
+        if at != stall.stalled_on || waiting.is_empty() {
+            stall.stalled_on = at;
+            stall.stalled_for = 0.0;
             // The line is let down gently. One frame getting through is
             // not the round recovering: a limping round gets one through
             // every other tick. The clock only runs while the picture is
             // actually moving, so a wait that keeps coming back reads as one
             // steady line rather than a dozen.
-            self.waiting_hold = (self.waiting_hold - delta).max(0.0);
-            if self.waiting_hold == 0.0 {
-                self.waiting_on = None;
+            stall.waiting_hold = (stall.waiting_hold - delta).max(0.0);
+            if stall.waiting_hold == 0.0 {
+                stall.waiting_on = None;
             }
             return Vec::new();
         }
         // Every peer keeps the clock, host or not: a joiner does not decide
         // anything with it, but it is what puts "waiting for Anna" on a
         // screen that has otherwise simply stopped moving.
-        self.stalled_for += delta;
-        if self.stalled_for > SAY_WAITING_AFTER {
-            self.waiting_hold = SAY_WAITING_FOR;
+        stall.stalled_for += delta;
+        if stall.stalled_for > SAY_WAITING_AFTER {
+            stall.waiting_hold = SAY_WAITING_FOR;
             // The first seat holding the frame up, and never this one: a
             // player is not told the round is waiting for themselves.
-            self.waiting_on = waiting.first().copied();
+            stall.waiting_on = waiting.first().copied();
         }
-        if !self.is_host() || self.stalled_for < ABANDON_AFTER {
+        if !self.is_host() || self.stall.stalled_for < ABANDON_AFTER {
             return Vec::new();
         }
         let gone: Vec<u8> = waiting
@@ -215,7 +201,7 @@ impl OnlineSession {
             // do go quiet, the wait is already served.
             return Vec::new();
         }
-        self.stalled_for = 0.0;
+        self.stall.stalled_for = 0.0;
         // Emptied from the frame the round is held up on, and that frame
         // travels with the word so every peer empties from the same one
         // (see `Lockstep::abandon`). The notice is repeated every tick from
@@ -243,31 +229,16 @@ impl OnlineSession {
     /// round, until somebody goes back to the lobby.
     fn forget_seat(&mut self, seat: u8) {
         debug_assert!(usize::from(seat) < MAX_PLAYERS, "no such seat: {seat}");
-        let Some(peer) = self.peer_seats.iter().position(|held| *held == Some(seat)) else {
+        let Some(peer) = self.peers.holder_of(seat) else {
             return;
         };
         self.transport.forget(peer);
-        self.peer_seats.remove(peer);
-        // Everything indexed by peer shifts together or not at all: a
-        // silence left behind would be read against whoever moved up into
-        // that index, and the next player to fall quiet would be the one
-        // after them.
-        if peer < self.peer_silence.len() {
-            self.peer_silence.remove(peer);
-        }
-        if peer < self.peer_names.len() {
-            self.peer_names.remove(peer);
-        }
-        if peer < self.peer_watch.len() {
-            self.peer_watch.remove(peer);
-        }
+        // The row goes with the socket's entry, so nothing kept about the
+        // departed is read against whoever moved up into its index.
+        self.peers.forget(peer);
         debug_assert!(
-            self.peer_seats.len() <= self.transport.peer_count(),
-            "the launch plan outlived the peers it names"
-        );
-        debug_assert!(
-            self.peer_silence.len() <= self.transport.peer_count(),
-            "a silence outlived the peer it was kept for"
+            self.peers.len() <= self.transport.peer_count(),
+            "a peer's row outlived the peer it was kept for"
         );
     }
 
@@ -278,7 +249,9 @@ impl OnlineSession {
     /// This lets the screen say whose, instead of leaving a table
     /// of people asking each other whether it has crashed.
     pub fn waiting_on(&self) -> Option<u8> {
-        self.waiting_on.filter(|_| self.waiting_hold > 0.0)
+        self.stall
+            .waiting_on
+            .filter(|_| self.stall.waiting_hold > 0.0)
     }
 }
 
@@ -376,7 +349,7 @@ mod tests {
             2,
             MatchTerms::default(),
         );
-        session.peer_seats = vec![Some(1)];
+        session.peers.deal(&[Some(1)]);
 
         // Somebody hit Escape. Every peer stops on one frame, and stays
         // there for as long as the card is up.
@@ -412,7 +385,7 @@ mod tests {
             2,
             MatchTerms::default(),
         );
-        session.peer_seats = vec![Some(1)];
+        session.peers.deal(&[Some(1)]);
 
         // Held up on seat 1 for four times the patience, a frame at a time,
         // but its machine keeps talking through every one of them.
@@ -471,7 +444,7 @@ mod tests {
             2,
             MatchTerms::default(),
         );
-        host.peer_seats = vec![Some(1)];
+        host.peers.deal(&[Some(1)]);
         host.abandon_stalled(HOST_GONE_AFTER * 2.0, false);
         assert!(!host.host_gone(), "the host is the host");
     }
@@ -554,7 +527,7 @@ mod tests {
             2,
             MatchTerms::default(),
         );
-        session.peer_seats = vec![Some(1)];
+        session.peers.deal(&[Some(1)]);
         let frame = 1.0 / 60.0;
 
         // Ten seconds of an ordinary round: every input arrives, every
@@ -601,7 +574,7 @@ mod tests {
             2,
             MatchTerms::default(),
         );
-        session.peer_seats = vec![Some(1)];
+        session.peers.deal(&[Some(1)]);
         let frame = 1.0 / 60.0;
 
         /// A frame of a round that is moving, in the order the app runs it:
@@ -802,13 +775,13 @@ mod tests {
             }
         }
         assert_eq!(host.transport.peer_count(), 1);
-        host.peer_seats = vec![Some(1)];
+        host.peers.deal(&[Some(1)]);
         drop(joiner);
 
         run_into_the_stall(&mut host);
         assert_eq!(host.abandon_stalled(ABANDON_AFTER * 2.0, false), vec![1]);
         assert_eq!(host.transport.peer_count(), 0, "and gone from the socket");
-        assert!(host.peer_seats.is_empty(), "and from the launch plan");
+        assert!(host.peers.is_empty(), "and from the launch plan");
 
         // The round after is the host's alone, and waits on nobody. It is
         // still a two-castle beach: a host left by itself plays the AI
