@@ -8,7 +8,75 @@
 
 use super::*;
 
+/// What a host's `Start` invites this peer to: the size of the table, the
+/// chair (or none, for a watcher), the terms, who else is at it, where
+/// the series stands, and the host's own beach when it sent one.
+///
+/// Named rather than left the tuple it was, because a tuple is read by
+/// counting: `(seats, seat, ..)` is a count and an index next to each
+/// other, and the only thing keeping them apart was their order. Taken up
+/// by [`OnlineSession::take_up`] whether it arrives in the lobby, mid-round
+/// or on the results card, so there is one way to begin a round.
+pub struct Invitation {
+    pub seats: u8,
+    pub seat: Option<u8>,
+    pub terms: MatchTerms,
+    pub names: [crate::transport::WireName; MAX_PLAYERS],
+    /// Where the series stands, as the host says. A peer that greeted
+    /// mid-series is seated with the table's own tally rather than
+    /// starting a fresh one. `None` for a single round.
+    pub standing: Option<SeriesStanding>,
+    /// The host's own beach, when it sent one. A joiner has never seen the
+    /// file it came from, so it arrives with the invitation or not at all.
+    pub beach: Vec<u8>,
+}
+
+/// The lockstep a peer plays a round over: the `humans` low seats, from
+/// the given chair, or from the rail for a watcher.
+pub(crate) fn lockstep_for(seat: Option<u8>, humans: u8) -> Lockstep {
+    let players: Vec<u8> = (0..humans).collect();
+    match seat {
+        None => Lockstep::observer(players, crate::sim::DEFAULT_DELAY),
+        Some(seat) => Lockstep::new(seat, players, crate::sim::DEFAULT_DELAY),
+    }
+}
+
 impl OnlineSession {
+    /// A session formed on a host's invitation, as a joiner's is from the
+    /// lobby: the socket it greeted over, and everything the `Start` said.
+    pub fn invited(transport: UdpTransport, invitation: Invitation) -> OnlineSession {
+        let Invitation {
+            seats, seat, terms, ..
+        } = &invitation;
+        let mut session = OnlineSession::new(
+            transport,
+            lockstep_for(*seat, terms.humans(*seats)),
+            *seats,
+            *terms,
+        );
+        session.take_up(invitation);
+        session
+    }
+
+    /// Take up an invitation: the host's beach, the table's names, and a
+    /// round begun afresh on its terms (see [`Self::begin_round`] for
+    /// everything that resets). Does not arm `next_round`, which is the
+    /// caller's to say: a session formed on its first invitation is
+    /// walking into the arena, not back into it.
+    pub fn take_up(&mut self, invitation: Invitation) {
+        let Invitation {
+            seats,
+            seat,
+            terms,
+            names,
+            standing,
+            beach,
+        } = invitation;
+        self.beach = beach;
+        self.begin_round(seats, seat, terms, table_from_wire(&names));
+        self.series_standing = standing;
+    }
+
     /// The answer for a peer the socket picked up *after* the launch, or
     /// `None` for one that was at the table when the round began.
     ///
@@ -82,9 +150,14 @@ impl OnlineSession {
                     beach,
                 } => {
                     if !host && self.is_next_round(&terms) {
-                        self.beach = beach;
-                        self.begin_round(seats, seat, terms, table_from_wire(&names));
-                        self.series_standing = standing;
+                        self.take_up(Invitation {
+                            seats,
+                            seat,
+                            terms,
+                            names,
+                            standing,
+                            beach,
+                        });
                         self.next_round = true;
                     }
                 }
@@ -263,12 +336,7 @@ impl OnlineSession {
             seat.is_none_or(|seat| seat < seats),
             "seated at {seat:?} of {seats}"
         );
-        let humans = seats.saturating_sub(terms.bots).max(1);
-        let players: Vec<u8> = (0..humans).collect();
-        self.session = match seat {
-            None => Lockstep::observer(players, crate::sim::DEFAULT_DELAY),
-            Some(seat) => Lockstep::new(seat, players, crate::sim::DEFAULT_DELAY),
-        };
+        self.session = lockstep_for(seat, terms.humans(seats));
         self.seats = seats;
         self.terms = terms;
         self.names = names;

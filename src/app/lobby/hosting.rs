@@ -282,7 +282,7 @@ fn launch_the_match(
     let peer_seats = plan;
     let mut session = OnlineSession::new(
         transport,
-        Lockstep::new(0, (0..humans).collect(), DEFAULT_DELAY),
+        crate::app::net::lockstep_for(Some(0), humans),
         seats,
         terms,
     );

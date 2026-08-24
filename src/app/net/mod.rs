@@ -238,6 +238,8 @@ pub fn poll_between_rounds(time: Res<Time>, mut online: ResMut<Online>) {
 mod presence;
 mod rounds;
 pub(crate) use presence::{abandon_the_departed, leave_a_hostless_round};
+pub use rounds::Invitation;
+pub(crate) use rounds::lockstep_for;
 
 impl OnlineSession {
     pub fn new(
@@ -560,14 +562,19 @@ impl OnlineSession {
                     standing,
                     beach,
                 } if !host && self.is_next_round(&terms) => {
-                    self.beach = beach;
                     // The host has called the next round. A fresh seed is
                     // what says so; everything else about the round may
                     // well be the same. Taking it up here only rearms the
                     // session; the board is rebuilt on the way back into
                     // the arena, by the same path a first round uses.
-                    self.begin_round(seats, seat, terms, table_from_wire(&names));
-                    self.series_standing = standing;
+                    self.take_up(Invitation {
+                        seats,
+                        seat,
+                        terms,
+                        names,
+                        standing,
+                        beach,
+                    });
                     self.next_round = true;
                 }
                 NetMsg::Start { names, .. } => {

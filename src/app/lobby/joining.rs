@@ -257,25 +257,6 @@ pub(super) fn dial_at(
         Err(e) => state.feedback = fill(tr.lobby_could_not_join, &[("e", &e.to_string())]),
     }
 }
-/// What a host's `Start` invites this peer to: the size of the table, the
-/// chair (or none, for a watcher), the terms, and who else is at it.
-///
-/// Named rather than left the four-tuple it was, because a tuple is read
-/// by counting: `(seats, seat, ..)` is a count and an index next to each
-/// other, and the only thing keeping them apart was their order.
-pub(super) struct Invitation {
-    pub seats: u8,
-    pub seat: Option<u8>,
-    pub terms: MatchTerms,
-    pub names: [crate::transport::WireName; MAX_PLAYERS],
-    /// Where the series stands, as the host says. A peer that greeted
-    /// mid-series is seated with the table's own tally rather than
-    /// starting a fresh one. `None` for a single round.
-    pub standing: Option<crate::transport::SeriesStanding>,
-    /// The host's own beach, when it sent one. A joiner has never seen the
-    /// file it came from, so it arrives with the invitation or not at all.
-    pub beach: Vec<u8>,
-}
 /// Whether a `Start` off the wire invites this lobby to a new round,
 /// rather than repeating the one it just walked out of.
 ///
@@ -298,43 +279,19 @@ pub(super) fn accept_the_invitation(
     next_vphase: &mut NextState<VersusPhase>,
     started: Option<Invitation>,
 ) {
-    if let Some(Invitation {
-        seats,
-        seat,
-        terms,
-        names,
-        standing,
-        beach,
-    }) = started
-    {
-        debug_assert!(
-            (2..=MAX_PLAYERS as u8).contains(&seats),
-            "invited to a {seats}-seat beach, which decode should have refused"
-        );
-        debug_assert!(
-            seat.is_none_or(|seat| seat < seats),
-            "seated at {seat:?} of {seats}"
-        );
+    if let Some(invitation) = started {
         let transport = state.joining.take().expect("checked above");
-        let players: Vec<u8> = (0..terms.humans(seats)).collect();
-        let session = match seat {
-            None => Lockstep::observer(players, DEFAULT_DELAY),
-            Some(seat) => Lockstep::new(seat, players, DEFAULT_DELAY),
-        };
-        let mut session = OnlineSession::new(transport, session, seats, terms);
-        // The host's own beach, if it sent one: nothing else on this
-        // machine can build it.
-        session.beach = beach;
-        session.names = crate::transport::table_from_wire(&names);
-        // Formed here, so a finished match knows it has a lobby to walk
-        // this table back to.
-        session.from_lobby = true;
-        online.0 = Some(session);
         // The host's invitation says whether this is a series, and where
         // it stands: a joiner that assumed otherwise would stop after one
         // round, and one admitted mid-series would start its own tally at
         // zero and disagree with the table for the rest of the match.
-        *tournament = crate::app::tournament::Tournament::from_terms(terms, standing);
+        *tournament =
+            crate::app::tournament::Tournament::from_terms(invitation.terms, invitation.standing);
+        let mut session = OnlineSession::invited(transport, invitation);
+        // Formed here, so a finished match knows it has a lobby to walk
+        // this table back to.
+        session.from_lobby = true;
+        online.0 = Some(session);
         next_vphase.set(VersusPhase::Running);
         next_screen.set(Screen::Versus);
     }
