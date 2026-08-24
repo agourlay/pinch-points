@@ -1,0 +1,22 @@
+# Four lanes a tile wider than before, and the doors no longer line up.
+# Two of them sit one tile further along than the habit says, and the
+# crab that walks past its door will not come back for it.
+name: The Second Column
+posts: 4
+crab: 3,0 L L common
+crab: 3,1 L L common
+crab: 3,2 L L common
+crab: 3,3 L L common
+solution: 1,0 D; 2,1 D; 1,2 D; 2,3 D
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . .|. . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . . .|. . . . .|
++-+-+ +-+-+-+-+-+-+
+|. . . .|. . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . . .|. . . . .|
++-+-+ +-+-+-+-+-+-+
+|0 . . .|. . . . .|
++-+-+-+-+-+-+-+-+-+

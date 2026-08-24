@@ -1,0 +1,22 @@
+# The whole construction turned through a right angle. The lanes run up
+# and down now, the doors open sideways, and every arrow that used to
+# point at the castle points along the row it stands in.
+name: On Its Side
+posts: 4
+crab: 0,0 D L common
+crab: 1,0 D L common
+crab: 2,0 D L common
+crab: 3,0 D L common
+solution: 0,1 R; 1,1 R; 2,1 R; 3,1 R
+map:
++-+-+-+-+-+-+-+-+-+
+|.|.|.|.|.|. . . .|
++ + + + + +-+-+-+-+
+|. . . . .|. . . .|
++ + + + + +-+-+-+-+
+|.|.|.|.|0|. . . .|
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

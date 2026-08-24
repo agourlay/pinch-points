@@ -1,0 +1,22 @@
+# Lanes on both sides of the beach for the first time, and a castle in
+# the open water between them. Each crab has its own door down into
+# the middle row; the row does the rest.
+name: Two Shores
+posts: 4
+crab: 0,0 R R common
+crab: 0,1 R R common
+crab: 8,0 L L common
+crab: 8,1 L L common
+solution: 1,0 D; 7,0 D; 1,1 D; 7,1 D
+map:
++-+-+-+-+-+-+-+-+-+
+|. . .|. . .|. . .|
++-+ +-+-+-+-+-+ +-+
+|. . .|. . .|. . .|
++-+ +-+-+-+-+-+ +-+
+|. . . . 0 . . . .|
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+-+-+-+-+

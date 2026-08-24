@@ -1,0 +1,22 @@
+# The same staggered doors with the castle overhead. Every arrow turns
+# the other way, and the door pattern is offset by a row from the one
+# you just learned, so the column that was right is now wrong.
+name: Second Column, Going Up
+posts: 4
+crab: 0,1 R R common
+crab: 0,2 R R common
+crab: 0,3 R R common
+crab: 0,4 R R common
+solution: 2,1 U; 1,2 U; 2,3 U; 1,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|. . . 0|. . . . .|
++-+-+ +-+-+-+-+-+-+
+|. . . .|. . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . . .|. . . . .|
++-+-+ +-+-+-+-+-+-+
+|. . . .|. . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . . .|. . . . .|
++-+-+-+-+-+-+-+-+-+

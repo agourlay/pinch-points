@@ -1,0 +1,22 @@
+# Each lane is a tile longer than the one above it, and each door is a
+# tile further along. Four arrows on a diagonal, and the lane you can
+# see the whole of is not the one to start with.
+name: The Staircase
+posts: 4
+crab: 0,0 R R common
+crab: 0,1 R R common
+crab: 0,2 R R common
+crab: 0,3 R R common
+solution: 1,0 D; 2,1 D; 3,2 D; 4,3 D
+map:
++-+-+-+-+-+-+-+-+-+
+|. . .|. . . . . .|
++-+ +-+-+-+-+-+-+-+
+|. . . .|. . . . .|
++-+-+ +-+-+-+-+-+-+
+|. . . . .|. . . .|
++-+-+-+ +-+-+-+-+-+
+|. . . . . .|. . .|
++-+-+-+-+ +-+-+-+-+
+|. . . . 0 .|. . .|
++-+-+-+-+-+-+-+-+-+

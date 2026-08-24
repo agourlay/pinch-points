@@ -1,0 +1,23 @@
+# The castle in the middle of a pen and a crab coming at it from every
+# side. Four lanes, four doors, and for the first time four different
+# arrows: down, right, left and up, each in the one tile that faces the
+# castle across its wall.
+name: The Pen
+posts: 4
+crab: 3,0 R R common
+crab: 2,1 D L common
+crab: 6,3 U L common
+crab: 5,4 L R common
+solution: 4,0 D; 2,2 R; 6,2 L; 4,4 U
+map:
++-+-+-+-+-+-+-+-+-+
+|.|.|.|. . .|.|.|.|
++-+-+-+-+ +-+-+-+-+
+|.|.|.|.|.|.|.|.|.|
++-+-+ +-+ +-+ +-+-+
+|.|.|. . 0 . .|.|.|
++-+-+ +-+ +-+ +-+-+
+|.|.|.|.|.|.|.|.|.|
++-+-+-+-+ +-+-+-+-+
+|.|.|.|. . .|.|.|.|
++-+-+-+-+-+-+-+-+-+
