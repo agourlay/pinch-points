@@ -120,18 +120,29 @@ pub enum TileState {
 }
 
 /// How hard a stage is, read off the one number the author already had to
-/// choose: how many signposts it grants. One is a lesson, four is a proof.
-/// A no-signpost stage is a watch-it-happen stage and gets its own colour
-/// rather than being lumped in with the easiest.
+/// choose: how many signposts it grants. One is a lesson, four is a proof,
+/// five is the top of the campaign. A no-signpost stage is a
+/// watch-it-happen stage and gets its own colour rather than being lumped
+/// in with the easiest.
+///
+/// The key under the grid draws one swatch per value in [`KEY_POSTS`];
+/// `the_key_reaches_the_hardest_stage` keeps that range and this match in
+/// step with the campaign, because the fallback arm is silent: the first
+/// five-post levels shipped drawn in the four-post red, and nobody could
+/// have told from the grid.
 pub fn difficulty_ink(posts: u8) -> Color {
     match posts {
         0 => palette::INK_TIDE,
         1 => Color::srgb(0.52, 0.82, 0.55),
         2 => palette::GOLD,
         3 => Color::srgb(0.96, 0.62, 0.30),
-        _ => palette::INK_RAID,
+        4 => palette::INK_RAID,
+        _ => palette::INK_LURE,
     }
 }
+
+/// The signpost counts the key under the grid explains, lowest first.
+pub const KEY_POSTS: std::ops::RangeInclusive<u8> = 1..=5;
 
 impl TileState {
     fn of(progress: &Progress, campaign: &Campaign, index: usize) -> TileState {
@@ -412,7 +423,7 @@ pub fn enter_stage_select(
                                 },
                                 TextColor(palette::PARCHMENT.with_alpha(0.45)),
                             ));
-                            for posts in 1..=4u8 {
+                            for posts in KEY_POSTS {
                                 key.spawn(Node {
                                     column_gap: Val::Px(5.0),
                                     align_items: AlignItems::Center,
@@ -912,5 +923,28 @@ mod tests {
     fn the_flock_leaves_the_grid_alone() {
         use crate::app::company;
         company::flock_is_hung_clear(&FLOCK, company::keep_clear(WIDEST_CARD), (0.0, 0.94));
+    }
+
+    /// The key under the grid must explain every edge the grid can draw.
+    /// `difficulty_ink` falls through to one colour for anything above its
+    /// last named arm, so a harder tier than the key knows about ships in
+    /// the colour of the tier below it, silently: that is how the first
+    /// five-signpost levels appeared tagged as four.
+    #[test]
+    fn the_key_reaches_the_hardest_stage() {
+        let hardest = campaign().levels.iter().map(|l| l.posts).max().unwrap();
+        assert!(
+            KEY_POSTS.contains(&hardest),
+            "the campaign grants {hardest} signposts but the key stops at {}",
+            KEY_POSTS.end()
+        );
+        // Every step of the key is its own colour, or two rows of the key
+        // are the same swatch with different numbers under it.
+        let inks: Vec<_> = KEY_POSTS.map(|p| difficulty_ink(p).to_srgba()).collect();
+        for (i, a) in inks.iter().enumerate() {
+            for b in &inks[i + 1..] {
+                assert_ne!(a, b, "two signpost counts share a colour");
+            }
+        }
     }
 }
