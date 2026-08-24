@@ -5,6 +5,7 @@ use crate::sim::gull::{
     TAKEOFF_MAX, TAKEOFF_MIN,
 };
 use crate::sim::hash::Fnv;
+use crate::sim::pose::Pose;
 use crate::sim::rng::Pcg32;
 
 /// Castle tier thresholds by banked score (spec §3.4).

@@ -10,6 +10,7 @@ mod hash;
 mod level;
 mod map_gen;
 mod net;
+mod pose;
 mod replay;
 mod rng;
 mod solve;
@@ -29,6 +30,7 @@ pub use map_gen::{castle_spots, classic_arena, classic_arena_seeded, generate_ar
 pub use net::{
     DEFAULT_DELAY, HASH_INTERVAL, INPUT_BYTES, InputMsg, Lockstep, decode_action, encode_action,
 };
+pub use pose::Pose;
 pub use replay::Replay;
 pub use rng::Pcg32;
 pub use solve::{

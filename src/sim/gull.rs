@@ -1,5 +1,6 @@
 use crate::sim::crab::Handedness;
 use crate::sim::direction::Direction;
+use crate::sim::pose::Pose;
 
 /// Gull behaviour state (spec §3.5). Walking is the default and the whole
 /// offensive layer: a walking gull is steerable with signposts. Flight is a
@@ -23,13 +24,24 @@ pub struct Gull {
     pub tile: u16,
     pub dir: Direction,
     pub progress: u16,
-    pub prev_tile: u16,
-    pub prev_progress: u16,
-    pub prev_dir: Direction,
+    /// Last tick's position, for the render layer's interpolation only.
+    pub prev: Pose,
     pub handed: Handedness,
     pub state: GullState,
     /// Ticks of walking left until the next takeoff.
     pub takeoff_in: u32,
+}
+
+impl Gull {
+    /// The current position as one value, so a tick can save it into
+    /// `prev` in a single assignment.
+    pub fn pose(&self) -> Pose {
+        Pose {
+            tile: self.tile,
+            dir: self.dir,
+            progress: self.progress,
+        }
+    }
 }
 
 /// Walking speed in subunits per tick (spec §4.2: slower than a common crab).

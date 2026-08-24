@@ -184,8 +184,8 @@ pub fn interpolate_crabs(
             Some(tint) => base.mix(&tint, 0.55),
             None => base,
         };
-        let prev = layout::creature_pos(board, crab.prev_tile, crab.prev_dir, crab.prev_progress);
-        let curr = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
+        let prev = layout::pose_pos(board, crab.prev);
+        let curr = layout::pose_pos(board, crab.pose());
         // A wrap-around crossing is a teleport, not a walk: snap, don't slide.
         let pos = if prev.distance(curr) > TILE * 2.0 {
             curr
@@ -312,8 +312,8 @@ pub fn interpolate_gulls(
         let Some(gull) = by_id.get(&sprite.0) else {
             continue;
         };
-        let prev = layout::creature_pos(board, gull.prev_tile, gull.prev_dir, gull.prev_progress);
-        let curr = layout::creature_pos(board, gull.tile, gull.dir, gull.progress);
+        let prev = layout::pose_pos(board, gull.prev);
+        let curr = layout::pose_pos(board, gull.pose());
         let pos = if prev.distance(curr) > TILE * 2.0 {
             curr
         } else {

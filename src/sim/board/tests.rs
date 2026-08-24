@@ -34,10 +34,10 @@ fn prev_fields_track_last_tick() {
     common(&mut board, 0, 0, Right, Handedness::Left);
     board.tick_idle();
     let crab = board.crabs()[0];
-    assert_eq!(crab.prev_progress, 0);
+    assert_eq!(crab.prev.progress, 0);
     assert_eq!(crab.progress, 12);
     board.tick_idle();
-    assert_eq!(board.crabs()[0].prev_progress, 12);
+    assert_eq!(board.crabs()[0].prev.progress, 12);
 }
 
 #[test]

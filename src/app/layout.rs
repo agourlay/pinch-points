@@ -1,7 +1,7 @@
 //! Grid → world-space mapping. The board is centred on the origin; sim `y`
 //! grows downward (row 0 on top) while Bevy's world `y` grows upward.
 
-use crate::sim::{Board, Direction};
+use crate::sim::{Board, Direction, Pose};
 use bevy::prelude::*;
 
 pub const TILE: f32 = 64.0;
@@ -58,6 +58,12 @@ pub fn creature_pos(board: &Board, tile: u16, dir: Direction, progress: u16) -> 
     let t = f32::from(progress) / f32::from(crate::sim::SUBUNITS_PER_TILE) * TILE;
     // Flip dy: sim y-down, world y-up.
     tile_center(board, x, y) + Vec2::new(dx as f32 * t, -dy as f32 * t)
+}
+
+/// World position of a creature at `pose`: the one path both the crab and
+/// the gull interpolation take for last tick's and this tick's position.
+pub fn pose_pos(board: &Board, pose: Pose) -> Vec2 {
+    creature_pos(board, pose.tile, pose.dir, pose.progress)
 }
 
 /// Rotation aligning a sprite authored facing +X with a sim direction.

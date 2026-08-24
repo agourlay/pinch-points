@@ -119,9 +119,9 @@ impl Board {
             h.u16(crab.tile);
             h.u8(crab.dir.id());
             h.u16(crab.progress);
-            h.u16(crab.prev_tile);
-            h.u16(crab.prev_progress);
-            h.u8(crab.prev_dir.id());
+            h.u16(crab.prev.tile);
+            h.u16(crab.prev.progress);
+            h.u8(crab.prev.dir.id());
             h.u8(crab.handed.id());
             h.u8(crab.kind.id());
         }
@@ -136,9 +136,9 @@ impl Board {
             h.u16(gull.tile);
             h.u8(gull.dir.id());
             h.u16(gull.progress);
-            h.u16(gull.prev_tile);
-            h.u16(gull.prev_progress);
-            h.u8(gull.prev_dir.id());
+            h.u16(gull.prev.tile);
+            h.u16(gull.prev.progress);
+            h.u8(gull.prev.dir.id());
             h.u8(gull.handed.id());
             match gull.state {
                 GullState::Walking => h.u8(0),

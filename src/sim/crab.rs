@@ -1,4 +1,5 @@
 use crate::sim::direction::Direction;
+use crate::sim::pose::Pose;
 
 /// Which claw is oversized, i.e. which side this crab tries first when its
 /// forward path is blocked. The one-bit divergence from ChuChu Rocket that
@@ -90,8 +91,8 @@ impl CrabKind {
 
 /// One crab. Position is integer-only: the crab is `progress` subunits past the
 /// centre of `tile`, moving toward the centre of the next tile in `dir`.
-/// `prev_*` hold last tick's position for render-side interpolation (spec §7.4)
-/// and are never read by the simulation itself.
+/// `prev` holds last tick's position for render-side interpolation (spec §7.4)
+/// and is never read by the simulation itself.
 #[derive(Clone, Copy, Debug)]
 pub struct Crab {
     /// Stable identity for the render layer's sprite mapping; unique within a
@@ -100,11 +101,21 @@ pub struct Crab {
     pub tile: u16,
     pub dir: Direction,
     pub progress: u16,
-    pub prev_tile: u16,
-    pub prev_progress: u16,
-    pub prev_dir: Direction,
+    pub prev: Pose,
     pub handed: Handedness,
     pub kind: CrabKind,
+}
+
+impl Crab {
+    /// The current position as one value, so a tick can save it into
+    /// `prev` in a single assignment.
+    pub fn pose(&self) -> Pose {
+        Pose {
+            tile: self.tile,
+            dir: self.dir,
+            progress: self.progress,
+        }
+    }
 }
 
 impl Handedness {

@@ -24,9 +24,11 @@ impl Board {
             tile,
             dir,
             progress: 0,
-            prev_tile: tile,
-            prev_progress: 0,
-            prev_dir: dir,
+            prev: Pose {
+                tile,
+                dir,
+                progress: 0,
+            },
             handed,
             kind,
         };
@@ -93,9 +95,11 @@ impl Board {
                 tile: t as u16,
                 dir: s.dir,
                 progress: 0,
-                prev_tile: t as u16,
-                prev_progress: 0,
-                prev_dir: s.dir,
+                prev: Pose {
+                    tile: t as u16,
+                    dir: s.dir,
+                    progress: 0,
+                },
                 handed,
                 kind,
             };
@@ -118,9 +122,7 @@ impl Board {
         let mut banked: Vec<usize> = Vec::new();
         for i in 0..self.crabs.len() {
             let mut crab = self.crabs[i];
-            crab.prev_tile = crab.tile;
-            crab.prev_progress = crab.progress;
-            crab.prev_dir = crab.dir;
+            crab.prev = crab.pose();
             // Arrival resolution guarantees the exit direction is passable
             // except for a crab sealed in on all four sides; that crab waits.
             if !self.passable(crab.tile, crab.dir) {

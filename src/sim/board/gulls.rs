@@ -25,9 +25,11 @@ impl Board {
             tile,
             dir,
             progress: 0,
-            prev_tile: tile,
-            prev_progress: 0,
-            prev_dir: dir,
+            prev: Pose {
+                tile,
+                dir,
+                progress: 0,
+            },
             handed,
             state: GullState::Walking,
             takeoff_in,
@@ -88,9 +90,7 @@ impl Board {
         let mut departed: Vec<usize> = Vec::new();
         for i in 0..self.gulls.len() {
             let mut gull = self.gulls[i];
-            gull.prev_tile = gull.tile;
-            gull.prev_progress = gull.progress;
-            gull.prev_dir = gull.dir;
+            gull.prev = gull.pose();
             let raided = match gull.state {
                 GullState::Walking => self.walk_gull(&mut gull),
                 GullState::Flying { .. } => self.fly_gull(&mut gull),

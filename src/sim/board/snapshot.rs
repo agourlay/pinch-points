@@ -115,9 +115,9 @@ impl Board {
                 crab.tile,
                 crab.dir.letter(),
                 crab.progress,
-                crab.prev_tile,
-                crab.prev_progress,
-                crab.prev_dir.letter(),
+                crab.prev.tile,
+                crab.prev.progress,
+                crab.prev.dir.letter(),
                 crab.handed.token(),
                 crab.kind.token()
             );
@@ -136,9 +136,9 @@ impl Board {
                 gull.tile,
                 gull.dir.letter(),
                 gull.progress,
-                gull.prev_tile,
-                gull.prev_progress,
-                gull.prev_dir.letter(),
+                gull.prev.tile,
+                gull.prev.progress,
+                gull.prev.dir.letter(),
                 gull.handed.token(),
                 gull.takeoff_in
             );
@@ -433,14 +433,25 @@ fn parse_post(words: &mut std::str::SplitWhitespace) -> Result<(usize, Signpost)
     ))
 }
 
+/// The three `prev` words of a creature line, in the order they are
+/// written: tile, progress, direction.
+fn parse_pose(words: &mut std::str::SplitWhitespace, who: &str) -> Result<Pose, String> {
+    let tile = next_num(words, &format!("{who} prev_tile"))?;
+    let progress = next_num(words, &format!("{who} prev_progress"))?;
+    let dir = next_dir(words, &format!("{who} prev_dir"))?;
+    Ok(Pose {
+        tile,
+        dir,
+        progress,
+    })
+}
+
 fn parse_crab(words: &mut std::str::SplitWhitespace) -> Result<Crab, String> {
     let id = next_num(words, "crab id")?;
     let tile = next_num(words, "crab tile")?;
     let dir = next_dir(words, "crab direction")?;
     let progress = next_num(words, "crab progress")?;
-    let prev_tile = next_num(words, "crab prev_tile")?;
-    let prev_progress = next_num(words, "crab prev_progress")?;
-    let prev_dir = next_dir(words, "crab prev_dir")?;
+    let prev = parse_pose(words, "crab")?;
     let word = words.next().ok_or("crab handedness: missing")?;
     let handed =
         Handedness::from_token(word).ok_or_else(|| format!("crab: bad handedness {word:?}"))?;
@@ -451,9 +462,7 @@ fn parse_crab(words: &mut std::str::SplitWhitespace) -> Result<Crab, String> {
         tile,
         dir,
         progress,
-        prev_tile,
-        prev_progress,
-        prev_dir,
+        prev,
         handed,
         kind,
     })
@@ -464,9 +473,7 @@ fn parse_gull(words: &mut std::str::SplitWhitespace) -> Result<Gull, String> {
     let tile = next_num(words, "gull tile")?;
     let dir = next_dir(words, "gull direction")?;
     let progress = next_num(words, "gull progress")?;
-    let prev_tile = next_num(words, "gull prev_tile")?;
-    let prev_progress = next_num(words, "gull prev_progress")?;
-    let prev_dir = next_dir(words, "gull prev_dir")?;
+    let prev = parse_pose(words, "gull")?;
     let word = words.next().ok_or("gull handedness: missing")?;
     let handed =
         Handedness::from_token(word).ok_or_else(|| format!("gull: bad handedness {word:?}"))?;
@@ -483,9 +490,7 @@ fn parse_gull(words: &mut std::str::SplitWhitespace) -> Result<Gull, String> {
         tile,
         dir,
         progress,
-        prev_tile,
-        prev_progress,
-        prev_dir,
+        prev,
         handed,
         state,
         takeoff_in,
@@ -632,9 +637,11 @@ mod tests {
             tile: 8,
             dir: Direction::Down,
             progress: 133,
-            prev_tile: 3,
-            prev_progress: 200,
-            prev_dir: Direction::Right,
+            prev: Pose {
+                tile: 3,
+                dir: Direction::Right,
+                progress: 200,
+            },
             handed: Handedness::Right,
             kind: CrabKind::Golden,
         });
@@ -643,9 +650,11 @@ mod tests {
             tile: 9,
             dir: Direction::Up,
             progress: 77,
-            prev_tile: 14,
-            prev_progress: 12,
-            prev_dir: Direction::Left,
+            prev: Pose {
+                tile: 14,
+                dir: Direction::Left,
+                progress: 12,
+            },
             handed: Handedness::Left,
             state: GullState::Flying { remaining: 3 },
             takeoff_in: 222,
