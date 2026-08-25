@@ -649,7 +649,7 @@ pub use ru::RU;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::cycle::Cycle;
+    use crate::app::cycle::{Cycle, Turn};
 
     /// Every parameterized template must carry the same `{markers}` in
     /// every language: a translation that drops one silently loses data
@@ -746,10 +746,10 @@ mod tests {
     fn cycling_visits_every_language() {
         let mut lang = Lang::En;
         for _ in 0..ALL_LANGS.len() {
-            lang = lang.cycled(true);
+            lang = lang.cycled(Turn::Right);
         }
         assert_eq!(lang, Lang::En);
-        assert_eq!(Lang::En.cycled(false), *ALL_LANGS.last().unwrap());
+        assert_eq!(Lang::En.cycled(Turn::Left), *ALL_LANGS.last().unwrap());
     }
 
     #[test]

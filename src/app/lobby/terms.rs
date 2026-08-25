@@ -69,7 +69,7 @@ impl Dial {
     /// host can fill with a bot.
     pub fn turn(
         self,
-        right: bool,
+        turn: Turn,
         config: &mut MatchConfig,
         teams: &mut crate::app::teams::TeamMode,
         humans: u8,
@@ -78,15 +78,15 @@ impl Dial {
         use crate::app::cycle::Cycle;
         let room = (MAX_PLAYERS as u8).saturating_sub(humans);
         match self {
-            Dial::Map => crate::app::match_setup::cycle_map(config, right, beaches),
-            Dial::Gulls => config.gulls = config.gulls.cycled(right),
-            Dial::Round => config.round = config.round.cycled(right),
+            Dial::Map => crate::app::match_setup::cycle_map(config, turn, beaches),
+            Dial::Gulls => config.gulls = config.gulls.cycled(turn),
+            Dial::Round => config.round = config.round.cycled(turn),
             Dial::Bots => {
-                let step = i32::from(config.bots) + if right { 1 } else { -1 };
+                let step = i32::from(config.bots) + turn.signum();
                 config.bots = step.clamp(0, i32::from(room)) as u8;
             }
-            Dial::Teams => *teams = teams.cycled(right),
-            Dial::Series => config.series = config.series.cycled(right),
+            Dial::Teams => *teams = teams.cycled(turn),
+            Dial::Series => config.series = config.series.cycled(turn),
         }
     }
 }
@@ -129,17 +129,17 @@ pub(super) fn turn_the_dials(
             keys.just_pressed(KeyCode::ArrowRight),
             keys.just_pressed(KeyCode::ArrowLeft),
         ) {
-            (true, false) => Some(true),
-            (false, true) => Some(false),
+            (true, false) => Some(Turn::Right),
+            (false, true) => Some(Turn::Left),
             _ => None,
         };
-        if let Some(right) = turn
+        if let Some(turn) = turn
             && let Some(dial) = Dial::ALL.get(state.dial).copied()
         {
             // The people already here are what the AI has to fit behind.
             let humans = 1 + state.hosted().map_or(0, Hosted::players_aboard) as u8;
             let mut teams = settings.team_mode;
-            dial.turn(right, config, &mut teams, humans, beaches);
+            dial.turn(turn, config, &mut teams, humans, beaches);
             if teams != settings.team_mode {
                 settings.team_mode = teams;
                 settings.save(caps);
@@ -175,7 +175,7 @@ mod dial_tests {
     #[test]
     fn every_dial_turns_and_only_itself() {
         for dial in Dial::ALL {
-            for right in [true, false] {
+            for turn in [Turn::Right, Turn::Left] {
                 // Off the floor, or turning the AI down is correctly a
                 // no-op and the assertion below would be testing the
                 // clamp rather than the dial.
@@ -192,7 +192,7 @@ mod dial_tests {
                     teams,
                     config.series,
                 );
-                dial.turn(right, &mut config, &mut teams, 2, &Default::default());
+                dial.turn(turn, &mut config, &mut teams, 2, &Default::default());
                 let after = (
                     config.map,
                     config.gulls,
@@ -201,7 +201,7 @@ mod dial_tests {
                     teams,
                     config.series,
                 );
-                assert_ne!(before, after, "{dial:?} turned {right} and did nothing");
+                assert_ne!(before, after, "{dial:?} turned {turn:?} and did nothing");
                 // Exactly one of the six moved.
                 let moved = [
                     before.0 != after.0,
@@ -229,17 +229,17 @@ mod dial_tests {
         let mut teams = TeamMode::Solo;
         // Four humans at the table: two chairs left, and no more.
         for _ in 0..10 {
-            Dial::Bots.turn(true, &mut config, &mut teams, 4, &Default::default());
+            Dial::Bots.turn(Turn::Right, &mut config, &mut teams, 4, &Default::default());
         }
         assert_eq!(config.bots, MAX_PLAYERS as u8 - 4);
         // And back down to none, not below it.
         for _ in 0..10 {
-            Dial::Bots.turn(false, &mut config, &mut teams, 4, &Default::default());
+            Dial::Bots.turn(Turn::Left, &mut config, &mut teams, 4, &Default::default());
         }
         assert_eq!(config.bots, 0);
         // A full table leaves the AI nothing at all.
         Dial::Bots.turn(
-            true,
+            Turn::Right,
             &mut config,
             &mut teams,
             MAX_PLAYERS as u8,
@@ -285,7 +285,7 @@ mod dial_tests {
         let mut config = MatchConfig::default();
         let mut teams = TeamMode::Solo;
         for dial in Dial::ALL {
-            dial.turn(true, &mut config, &mut teams, 2, &Default::default());
+            dial.turn(Turn::Right, &mut config, &mut teams, 2, &Default::default());
         }
         let terms = crate::app::match_setup::terms(&config, teams, 7);
         assert_eq!(terms.map, config.map.index() as u8);

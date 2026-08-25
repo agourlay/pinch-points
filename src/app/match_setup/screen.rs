@@ -215,9 +215,9 @@ pub(super) fn ai_seat(config: &MatchConfig, slot: u8) -> Option<u8> {
 
 /// Step the difficulty of the AI seat behind `slot`. A dead slot (the row
 /// is hidden) changes nothing.
-pub(super) fn cycle_ai_level(config: &mut MatchConfig, slot: u8, right: bool) {
+pub(super) fn cycle_ai_level(config: &mut MatchConfig, slot: u8, turn: Turn) {
     if let Some(seat) = ai_seat(config, slot) {
-        config.bot_levels[seat as usize] = config.bot_levels[seat as usize].cycled(right);
+        config.bot_levels[seat as usize] = config.bot_levels[seat as usize].cycled(turn);
     }
 }
 
@@ -275,12 +275,12 @@ pub fn match_setup_input(
         return;
     }
     menu.selected = menu_ui::nav_live(&keys, menu.selected, &live_rows(&config));
-    let Some(right) = menu_ui::left_right(&keys) else {
+    let Some(turn) = menu_ui::left_right(&keys) else {
         return;
     };
     match Row::ALL[menu.selected] {
         Row::Players => {
-            config.seats = crate::app::cycle::dial(config.seats, right, 1, 2..=MAX_PLAYERS as u8);
+            config.seats = crate::app::cycle::dial(config.seats, turn, 1, 2..=MAX_PLAYERS as u8);
             config.bots = config.bots.min(config.seats - 1);
             // Five and six castles need a beach with room for them, and a
             // handmade beach only seats as many as it has castles: the map
@@ -288,11 +288,11 @@ pub fn match_setup_input(
             crate::app::match_setup::settle_map(&mut config, &beaches);
         }
         Row::Bots => {
-            config.bots = crate::app::cycle::dial(config.bots, right, 1, 0..=config.seats - 1);
+            config.bots = crate::app::cycle::dial(config.bots, turn, 1, 0..=config.seats - 1);
         }
-        Row::BotLevel(slot) => cycle_ai_level(&mut config, slot, right),
+        Row::BotLevel(slot) => cycle_ai_level(&mut config, slot, turn),
         Row::Map => {
-            crate::app::match_setup::cycle_map(&mut config, right, &beaches);
+            crate::app::match_setup::cycle_map(&mut config, turn, &beaches);
             // Stepping down to a small beach drops the seats it cannot hold
             // rather than starting a match six players cannot all sit at.
             if config.map.size().0 < WIDE_ENOUGH {
@@ -300,9 +300,9 @@ pub fn match_setup_input(
                 config.bots = config.bots.min(config.seats - 1);
             }
         }
-        Row::Gulls => config.gulls = config.gulls.cycled(right),
-        Row::Round => config.round = config.round.cycled(right),
-        Row::Mode => config.series = config.series.cycled(right),
+        Row::Gulls => config.gulls = config.gulls.cycled(turn),
+        Row::Round => config.round = config.round.cycled(turn),
+        Row::Mode => config.series = config.series.cycled(turn),
         // A name is typed, not stepped through.
         Row::Name(_) => {}
     }

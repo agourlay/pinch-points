@@ -11,6 +11,7 @@
 
 use crate::app::Screen;
 use crate::app::binds::{self, Action, BOUND_SEATS, SeatBinds};
+use crate::app::cycle::Turn;
 use crate::app::i18n::fill;
 use crate::app::menu_ui::{self, Half};
 use crate::app::palette;
@@ -190,10 +191,14 @@ pub fn controls_input(
         return;
     }
     menu.selected = menu_ui::nav(&keys, menu.selected, ROWS);
-    if let Some(right) = menu_ui::left_right(&keys)
+    if let Some(turn) = menu_ui::left_right(&keys)
         && menu.selected == SEAT_ROW
     {
-        menu.seat = (menu.seat + if right { 1 } else { BOUND_SEATS - 1 }) % BOUND_SEATS;
+        let step = match turn {
+            Turn::Right => 1,
+            Turn::Left => BOUND_SEATS - 1, // one backwards, modulo the seats
+        };
+        menu.seat = (menu.seat + step) % BOUND_SEATS;
     }
 }
 

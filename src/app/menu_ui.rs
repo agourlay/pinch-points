@@ -2,6 +2,7 @@
 //! left/right detection, row spawning, and selected-row painting for the
 //! landing menu, settings, match setup, and the pause card.
 
+use crate::app::cycle::Turn;
 use crate::app::palette;
 use bevy::prelude::*;
 
@@ -68,12 +69,12 @@ fn first_live(from: usize, live: &[bool]) -> Option<usize> {
         .find(|&row| live[row])
 }
 
-/// A/D (or arrow) adjustment; `Some(true)` is rightward.
-pub fn left_right(keys: &ButtonInput<KeyCode>) -> Option<bool> {
+/// A/D (or arrow) adjustment, as the turn of a dial.
+pub fn left_right(keys: &ButtonInput<KeyCode>) -> Option<Turn> {
     if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {
-        Some(true)
+        Some(Turn::Right)
     } else if keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) {
-        Some(false)
+        Some(Turn::Left)
     } else {
         None
     }

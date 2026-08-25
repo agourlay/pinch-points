@@ -32,7 +32,7 @@ pub use joining::*;
 pub use terms::*;
 pub use ui::*;
 
-use crate::app::cycle::Cycle;
+use crate::app::cycle::{Cycle, Turn};
 use crate::app::i18n::fill;
 use crate::app::match_setup::MatchConfig;
 use crate::app::net::{Invitation, LobbyReturn, Online, OnlineSession, PeerBook};

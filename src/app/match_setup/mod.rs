@@ -3,7 +3,7 @@
 //! pressure, and round length; Enter starts the match.
 
 use crate::app::Screen;
-use crate::app::cycle::Cycle;
+use crate::app::cycle::{Cycle, Turn};
 use crate::app::i18n::fill;
 use crate::app::palette;
 use crate::sim::BotLevel;
@@ -317,7 +317,7 @@ pub fn next_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
     // every table, so this returns well before the bound, but a loop over
     // a dial should not be able to spin.
     for _ in 0..MapChoice::ALL.len() + beaches.0.len() {
-        cycle_map(config, true, beaches);
+        cycle_map(config, Turn::Right, beaches);
         if holds(config.map, config.seats) {
             return;
         }
@@ -334,7 +334,7 @@ pub fn next_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
 pub fn settle_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
     if config.map == MapChoice::Custom {
         match beaches.fitting(config.seats).len() {
-            0 => config.map = MapChoice::Custom.cycled(true),
+            0 => config.map = MapChoice::Custom.cycled(Turn::Right),
             fitting => config.custom = config.custom.min(fitting - 1),
         }
     }
@@ -422,22 +422,25 @@ pub fn beaches_note(
 /// on it while there are more beaches to walk through, and steps off when
 /// it runs out. With nothing saved it is skipped entirely: an empty stop
 /// on a dial is a dead press.
-pub fn cycle_map(config: &mut MatchConfig, right: bool, beaches: &CustomBeaches) {
+pub fn cycle_map(config: &mut MatchConfig, turn: Turn, beaches: &CustomBeaches) {
     let beaches = beaches.fitting(config.seats).len();
     if config.map == MapChoice::Custom {
-        let next = config.custom as i64 + if right { 1 } else { -1 };
+        let next = config.custom as i64 + i64::from(turn.signum());
         if (0..beaches as i64).contains(&next) {
             config.custom = next as usize;
             return;
         }
     }
-    config.map = config.map.cycled(right);
+    config.map = config.map.cycled(turn);
     if config.map == MapChoice::Custom {
         if beaches == 0 {
-            config.map = config.map.cycled(right);
+            config.map = config.map.cycled(turn);
         } else {
             // Entering the run from the far side lands on its far end.
-            config.custom = if right { 0 } else { beaches - 1 };
+            config.custom = match turn {
+                Turn::Right => 0,
+                Turn::Left => beaches - 1,
+            };
         }
     }
 }
@@ -881,7 +884,7 @@ mod tests {
         // An empty shelf is the case that matters: the dial must not stop
         // on a beach that is not there.
         let shelf = CustomBeaches::default();
-        cycle_map(&mut config, true, &shelf);
+        cycle_map(&mut config, Turn::Right, &shelf);
         assert_ne!(config.map, MapChoice::Custom, "an empty stop is skipped");
     }
 
@@ -1149,8 +1152,8 @@ mod tests {
             bots: 3,
             ..MatchConfig::default()
         };
-        cycle_ai_level(&mut config, 0, true); // seat 4: normal -> fierce
-        cycle_ai_level(&mut config, 2, false); // seat 2: normal -> easy
+        cycle_ai_level(&mut config, 0, Turn::Right); // seat 4: normal -> fierce
+        cycle_ai_level(&mut config, 2, Turn::Left); // seat 2: normal -> easy
         assert_eq!(config.bot_levels, {
             let mut want = [BotLevel::Normal; MAX_PLAYERS];
             want[1] = BotLevel::Easy; // seat 2, stepped down
@@ -1159,7 +1162,7 @@ mod tests {
         });
         // A slot with no AI behind it is inert.
         config.bots = 1;
-        cycle_ai_level(&mut config, 2, true);
+        cycle_ai_level(&mut config, 2, Turn::Right);
         assert_eq!(config.bot_levels[1], BotLevel::Easy);
     }
 }

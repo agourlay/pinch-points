@@ -8,8 +8,7 @@ use super::{
     SeatInput, UI_SCALE_MAX, UI_SCALE_MIN, VOLUME_RANGE,
 };
 use crate::app::Screen;
-use crate::app::cycle::Cycle;
-use crate::app::cycle::dial;
+use crate::app::cycle::{Cycle, Turn, dial};
 use crate::app::i18n::fill;
 use crate::app::menu_ui::{self, Half};
 use crate::app::palette;
@@ -427,16 +426,16 @@ pub fn settings_input(
         // Stepping off the row takes the offer back with you.
         menu.reset = ResetPrompt::Idle;
     }
-    let Some(right) = menu_ui::left_right(&keys) else {
+    let Some(turn) = menu_ui::left_right(&keys) else {
         return;
     };
-    let step = if right { 1.0 } else { -1.0 };
+    let step = turn.signum() as f32;
     match Row::ALL[menu.selected] {
         Row::InputP1 | Row::InputP2 => {
             let seat = usize::from(Row::ALL[menu.selected] == Row::InputP2);
-            settings.seat_input[seat] = settings.seat_input[seat].cycled(right);
+            settings.seat_input[seat] = settings.seat_input[seat].cycled(turn);
         }
-        Row::CommitKeys => settings.commit = settings.commit.cycled(right),
+        Row::CommitKeys => settings.commit = settings.commit.cycled(turn),
         Row::RepeatDelay => {
             settings.repeat_delay = f32::clamp(
                 settings.repeat_delay + step * 0.05,
@@ -453,30 +452,30 @@ pub fn settings_input(
         }
         Row::MusicOn => settings.music_on = !settings.music_on,
         Row::SfxOn => settings.sfx_on = !settings.sfx_on,
-        Row::Music => settings.music_volume = dial(settings.music_volume, right, 10, VOLUME_RANGE),
-        Row::Sfx => settings.sfx_volume = dial(settings.sfx_volume, right, 10, VOLUME_RANGE),
-        Row::VersusMode => settings.team_mode = settings.team_mode.cycled(right),
+        Row::Music => settings.music_volume = dial(settings.music_volume, turn, 10, VOLUME_RANGE),
+        Row::Sfx => settings.sfx_volume = dial(settings.sfx_volume, turn, 10, VOLUME_RANGE),
+        Row::VersusMode => settings.team_mode = settings.team_mode.cycled(turn),
         Row::Speed => {
-            settings.puzzle_speed = match (settings.puzzle_speed, right) {
-                (100, false) | (50, true) => 75,
-                (75, false) => 50,
-                (75, true) => 100,
+            settings.puzzle_speed = match (settings.puzzle_speed, turn) {
+                (100, Turn::Left) | (50, Turn::Right) => 75,
+                (75, Turn::Left) => 50,
+                (75, Turn::Right) => 100,
                 (other, _) => other,
             };
         }
         Row::Rumble => settings.rumble = !settings.rumble,
         Row::Deadzone => {
-            settings.pad_deadzone = dial(settings.pad_deadzone, right, 10, DEADZONE_RANGE);
+            settings.pad_deadzone = dial(settings.pad_deadzone, turn, 10, DEADZONE_RANGE);
         }
         Row::Palette => settings.colorblind = !settings.colorblind,
         Row::UiScale => {
-            settings.ui_scale = dial(settings.ui_scale, right, 10, UI_SCALE_MIN..=UI_SCALE_MAX);
+            settings.ui_scale = dial(settings.ui_scale, turn, 10, UI_SCALE_MIN..=UI_SCALE_MAX);
         }
         Row::ReducedMotion => settings.reduced_motion = !settings.reduced_motion,
         Row::ReplayCap => {
             settings.replay_cap = dial(
                 settings.replay_cap,
-                right,
+                turn,
                 5,
                 crate::app::settings::REPLAY_CAP_MIN..=crate::app::settings::REPLAY_CAP_MAX,
             );
@@ -484,11 +483,11 @@ pub fn settings_input(
         // Doors: worked with Enter, not adjusted with A/D.
         Row::KeyBindings | Row::ResetProgress => {}
         Row::Language => {
-            let next = settings.language.cycled(right);
+            let next = settings.language.cycled(turn);
             settings.set_language(next, &mut caps);
         }
         Row::Keyboard => {
-            let next = settings.keyboard.cycled(right);
+            let next = settings.keyboard.cycled(turn);
             settings.set_keyboard(next, &mut caps);
         }
         Row::UpdateCheck => settings.check_updates = !settings.check_updates,
