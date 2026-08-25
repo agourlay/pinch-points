@@ -6,6 +6,25 @@ use crate::app::cycle::Turn;
 use crate::app::palette;
 use bevy::prelude::*;
 
+/// The UI's type scale, largest to smallest: the wordmark, screen titles,
+/// section headings, list rows, body copy, and the fine print. Sizes that
+/// answer to something else (per-seat score arrays, row constants tied to a
+/// width budget, computed fits) stay where they are.
+pub mod type_scale {
+    /// The menu wordmark.
+    pub const TITLE: f32 = 54.0;
+    /// Screen titles: the HUD clock line, the tournament header.
+    pub const DISPLAY: f32 = 34.0;
+    /// Section headings.
+    pub const HEADING: f32 = 24.0;
+    /// List rows and prompts.
+    pub const ROW: f32 = 19.0;
+    /// Body copy on cards.
+    pub const BODY: f32 = 15.0;
+    /// The fine print: blurbs, keys, footnotes.
+    pub const FINE: f32 = 13.0;
+}
+
 /// W/S (or arrow) navigation over `len` rows, wrapping at the ends.
 pub fn nav(keys: &ButtonInput<KeyCode>, selected: usize, len: usize) -> usize {
     let mut at = selected;
@@ -165,7 +184,7 @@ pub fn heading(text: &str, first: bool) -> impl Bundle {
     (
         Text::new(text.to_string()),
         TextFont {
-            font_size: FontSize::Px(14.0),
+            font_size: FontSize::Px(type_scale::BODY),
             ..default()
         },
         TextColor(palette::GOLD.with_alpha(0.55)),

@@ -251,7 +251,7 @@ fn spawn_banner(
                     },
                     Text::new(blurb),
                     TextFont {
-                        font_size: FontSize::Px(19.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::ROW),
                         ..default()
                     },
                     TextColor(palette::PARCHMENT.with_alpha(0.0)),

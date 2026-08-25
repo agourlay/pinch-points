@@ -196,7 +196,7 @@ pub fn enter_new_version(
                         &[("v", &Version::current().to_string())],
                     )),
                     TextFont {
-                        font_size: FontSize::Px(14.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::BODY),
                         ..default()
                     },
                     TextColor(palette::PARCHMENT.with_alpha(0.55)),
@@ -221,7 +221,7 @@ pub fn enter_new_version(
                         notes.spawn((
                             Text::new(line),
                             TextFont {
-                                font_size: FontSize::Px(14.0),
+                                font_size: FontSize::Px(menu_ui::type_scale::BODY),
                                 ..default()
                             },
                             TextLayout::no_wrap(),
@@ -232,7 +232,7 @@ pub fn enter_new_version(
                 card.spawn((
                     Text::new(tr.update_question),
                     TextFont {
-                        font_size: FontSize::Px(20.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::ROW),
                         ..default()
                     },
                     TextColor(palette::PARCHMENT),
@@ -242,7 +242,7 @@ pub fn enter_new_version(
             wrap.spawn((
                 Text::new(tr.update_note),
                 TextFont {
-                    font_size: FontSize::Px(15.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
                     ..default()
                 },
                 TextLayout::no_wrap(),

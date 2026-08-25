@@ -104,7 +104,7 @@ pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: 
                 LanguageNote,
                 Text::new(settings.tr().pick_language_later),
                 TextFont {
-                    font_size: FontSize::Px(15.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
                     ..default()
                 },
                 TextLayout::no_wrap(),

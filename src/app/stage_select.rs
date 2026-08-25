@@ -340,7 +340,7 @@ pub fn enter_stage_select(
                             &[("a", &done.to_string()), ("b", &total.to_string())],
                         )),
                         TextFont {
-                            font_size: FontSize::Px(18.0),
+                            font_size: FontSize::Px(menu_ui::type_scale::ROW),
                             ..default()
                         },
                         TextColor(palette::PARCHMENT.with_alpha(0.75)),
@@ -416,7 +416,7 @@ pub fn enter_stage_select(
                             key.spawn((
                                 Text::new(tr.stage_key.to_string()),
                                 TextFont {
-                                    font_size: FontSize::Px(13.0),
+                                    font_size: FontSize::Px(menu_ui::type_scale::FINE),
                                     ..default()
                                 },
                                 TextColor(palette::PARCHMENT.with_alpha(0.45)),
@@ -442,7 +442,7 @@ pub fn enter_stage_select(
                                     item.spawn((
                                         Text::new(posts.to_string()),
                                         TextFont {
-                                            font_size: FontSize::Px(13.0),
+                                            font_size: FontSize::Px(menu_ui::type_scale::FINE),
                                             ..default()
                                         },
                                         TextColor(palette::PARCHMENT.with_alpha(0.60)),
@@ -550,7 +550,7 @@ fn spawn_shelf_heading(
                 line.spawn((
                     Text::new(tr.stage_custom.to_string()),
                     TextFont {
-                        font_size: FontSize::Px(13.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::FINE),
                         ..default()
                     },
                     TextColor(palette::PARCHMENT.with_alpha(0.60)),
@@ -558,7 +558,7 @@ fn spawn_shelf_heading(
                 line.spawn((
                     Text::new(count),
                     TextFont {
-                        font_size: FontSize::Px(13.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::FINE),
                         ..default()
                     },
                     TextColor(palette::PARCHMENT.with_alpha(0.40)),

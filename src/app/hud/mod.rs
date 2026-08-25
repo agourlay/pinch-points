@@ -110,7 +110,7 @@ pub fn spawn_hud(
                 HintLabel,
                 Text::new(""),
                 TextFont {
-                    font_size: FontSize::Px(19.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::ROW),
                     ..default()
                 },
                 TextColor(palette::SELECTED_ROW.with_alpha(0.85)),
@@ -138,7 +138,7 @@ pub fn spawn_hud(
                 TideClock,
                 Text::new(""),
                 TextFont {
-                    font_size: FontSize::Px(34.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::DISPLAY),
                     ..default()
                 },
                 TextColor(CLOCK_CALM),
@@ -437,7 +437,7 @@ fn spawn_field_guide(
                         FieldGuideNote(i),
                         Text::new(field_guide_note(tr, i)),
                         TextFont {
-                            font_size: FontSize::Px(13.0),
+                            font_size: FontSize::Px(menu_ui::type_scale::FINE),
                             ..default()
                         },
                         TextLayout::no_wrap(),

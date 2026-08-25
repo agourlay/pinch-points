@@ -6,6 +6,7 @@ use super::brush::{Brush, standing_on};
 use crate::app::Sim;
 use crate::app::cursor::Cursor;
 use crate::app::i18n::fill;
+use crate::app::menu_ui;
 use crate::app::settings::GameSettings;
 use crate::sim::LevelKind;
 use bevy::prelude::*;
@@ -67,7 +68,7 @@ pub fn spawn_editor_ui(
             panel.spawn((
                 Text::new(tr.ed_kind_row.to_string()),
                 TextFont {
-                    font_size: FontSize::Px(13.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::FINE),
                     ..default()
                 },
                 TextColor(crate::app::palette::PARCHMENT.with_alpha(0.55)),
@@ -91,7 +92,7 @@ pub fn spawn_editor_ui(
                                 LevelKind::Arena => tr.ed_kind_arena.to_string(),
                             }),
                             TextFont {
-                                font_size: FontSize::Px(15.0),
+                                font_size: FontSize::Px(menu_ui::type_scale::BODY),
                                 ..default()
                             },
                             TextColor(crate::app::palette::PARCHMENT),
@@ -133,7 +134,7 @@ pub fn spawn_editor_ui(
                             PaletteLabel(i),
                             Text::new(format!("{}  {}", brush.letter(), brush.label(tr))),
                             TextFont {
-                                font_size: FontSize::Px(16.0),
+                                font_size: FontSize::Px(menu_ui::type_scale::BODY),
                                 ..default()
                             },
                             TextColor(crate::app::palette::PARCHMENT),
@@ -144,7 +145,7 @@ pub fn spawn_editor_ui(
                 UnderCursor,
                 Text::new(String::new()),
                 TextFont {
-                    font_size: FontSize::Px(15.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
                     ..default()
                 },
                 TextColor(crate::app::palette::IDLE_ROW),

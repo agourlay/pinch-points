@@ -213,7 +213,7 @@ pub fn enter_library(
                     EmptyShelfNote,
                     Text::new(""),
                     TextFont {
-                        font_size: FontSize::Px(19.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::ROW),
                         ..default()
                     },
                     TextColor(crate::app::palette::PARCHMENT.with_alpha(0.6)),

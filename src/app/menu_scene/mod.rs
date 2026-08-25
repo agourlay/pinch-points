@@ -125,7 +125,7 @@ fn spawn_title(commands: &mut Commands, settings: &GameSettings) {
                 card.spawn((
                     Text::new(TITLE),
                     TextFont {
-                        font_size: FontSize::Px(54.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::TITLE),
                         ..default()
                     },
                     TextColor(palette::TITLE_INK),
@@ -137,7 +137,7 @@ fn spawn_title(commands: &mut Commands, settings: &GameSettings) {
                 card.spawn((
                     Text::new(settings.tr().tagline),
                     TextFont {
-                        font_size: FontSize::Px(18.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::ROW),
                         ..default()
                     },
                     TextColor(palette::PARCHMENT),
@@ -242,7 +242,7 @@ fn spawn_version(commands: &mut Commands) {
         MenuArt,
         Text::new(crate::app::update::Version::current().to_string()),
         TextFont {
-            font_size: FontSize::Px(15.0),
+            font_size: FontSize::Px(menu_ui::type_scale::BODY),
             ..default()
         },
         TextLayout::no_wrap(),

@@ -6,6 +6,7 @@
 
 use super::{LOG_TOP, card};
 use crate::app::i18n::fill;
+use crate::app::menu_ui;
 use crate::app::palette;
 use crate::app::settings::GameSettings;
 use crate::app::sim_events::SimEvent;
@@ -165,7 +166,7 @@ pub(super) fn spawn_feed(root: &mut ChildSpawnerCommands) {
                 LogLine(index),
                 Text::new(""),
                 TextFont {
-                    font_size: FontSize::Px(14.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
                     ..default()
                 },
                 TextColor(Color::NONE),

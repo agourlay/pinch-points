@@ -277,7 +277,7 @@ pub fn enter_settings(
                             side.spawn((
                                 Text::new(group.label(tr)),
                                 TextFont {
-                                    font_size: FontSize::Px(14.0),
+                                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
                                     ..default()
                                 },
                                 TextColor(palette::GOLD.with_alpha(0.55)),
@@ -307,7 +307,7 @@ pub fn enter_settings(
                 wrap.spawn((
                     Text::new(line),
                     TextFont {
-                        font_size: FontSize::Px(15.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::BODY),
                         ..default()
                     },
                     TextLayout::no_wrap(),

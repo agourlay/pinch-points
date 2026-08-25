@@ -128,7 +128,7 @@ pub fn enter_match_setup(
                 },
                 Text::new(""),
                 TextFont {
-                    font_size: FontSize::Px(15.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
                     ..default()
                 },
                 TextLayout::no_wrap(),
@@ -139,7 +139,7 @@ pub fn enter_match_setup(
                     MatchPadInfo(is_list),
                     Text::new(""),
                     TextFont {
-                        font_size: FontSize::Px(15.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::BODY),
                         ..default()
                     },
                     TextLayout::no_wrap(),

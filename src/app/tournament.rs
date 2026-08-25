@@ -344,7 +344,7 @@ pub fn enter_interlude(
                 card.spawn((
                     Text::new(fill(tr.tour_round, &[("n", &tournament.round.to_string())])),
                     TextFont {
-                        font_size: FontSize::Px(34.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::DISPLAY),
                         ..default()
                     },
                     TextColor(palette::GOLD),
@@ -354,7 +354,7 @@ pub fn enter_interlude(
                     card.spawn((
                         Text::new(line),
                         TextFont {
-                            font_size: FontSize::Px(24.0),
+                            font_size: FontSize::Px(menu_ui::type_scale::HEADING),
                             ..default()
                         },
                         TextColor(color),

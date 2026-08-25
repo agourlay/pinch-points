@@ -2,6 +2,7 @@
 
 use super::{ACHIEVEMENTS, Stats, Unlocked};
 use crate::app::i18n::fill;
+use crate::app::menu_ui;
 use crate::app::palette;
 use crate::app::settings::GameSettings;
 use bevy::prelude::*;
@@ -44,7 +45,7 @@ pub(super) fn spawn_toast(commands: &mut Commands, name: &str, desc: &str) {
             toast.spawn((
                 Text::new(format!("* {name}")),
                 TextFont {
-                    font_size: FontSize::Px(19.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::ROW),
                     ..default()
                 },
                 TextColor(palette::GOLD),
@@ -52,7 +53,7 @@ pub(super) fn spawn_toast(commands: &mut Commands, name: &str, desc: &str) {
             toast.spawn((
                 Text::new(desc.to_string()),
                 TextFont {
-                    font_size: FontSize::Px(15.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
                     ..default()
                 },
                 TextColor(palette::PARCHMENT.with_alpha(0.9)),
@@ -200,7 +201,7 @@ fn spawn_trophy(
                     children![(
                         Text::new(tr.ach_names[index].to_string()),
                         TextFont {
-                            font_size: FontSize::Px(15.0),
+                            font_size: FontSize::Px(menu_ui::type_scale::BODY),
                             ..default()
                         },
                         TextLayout::no_wrap(),
@@ -222,7 +223,7 @@ fn spawn_trophy(
                     children![(
                         Text::new(tr.ach_descs[index].to_string()),
                         TextFont {
-                            font_size: FontSize::Px(12.5),
+                            font_size: FontSize::Px(menu_ui::type_scale::FINE),
                             ..default()
                         },
                         TextLayout::no_wrap(),
@@ -237,7 +238,7 @@ fn spawn_trophy(
                     children![(
                         Text::new(format!("{now}/{goal}")),
                         TextFont {
-                            font_size: FontSize::Px(12.5),
+                            font_size: FontSize::Px(menu_ui::type_scale::FINE),
                             ..default()
                         },
                         TextLayout::no_wrap(),
@@ -332,7 +333,7 @@ pub fn enter_achievements(
                         ],
                     )),
                     TextFont {
-                        font_size: FontSize::Px(18.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::ROW),
                         ..default()
                     },
                     TextColor(palette::PARCHMENT.with_alpha(0.75)),
@@ -374,7 +375,7 @@ pub fn enter_achievements(
                 card.spawn((
                     Text::new(footer),
                     TextFont {
-                        font_size: FontSize::Px(15.0),
+                        font_size: FontSize::Px(menu_ui::type_scale::BODY),
                         ..default()
                     },
                     TextColor(palette::PARCHMENT.with_alpha(0.6)),

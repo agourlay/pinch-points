@@ -177,7 +177,7 @@ fn spawn_score_chip(
                 RankDigit(seat),
                 Text::new(""),
                 TextFont {
-                    font_size: FontSize::Px(15.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
                     ..default()
                 },
                 TextColor(palette::MEDAL_DIGIT),
@@ -194,7 +194,7 @@ fn spawn_score_chip(
             mid.spawn((
                 Text::new(label),
                 TextFont {
-                    font_size: FontSize::Px(14.0),
+                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
                     ..default()
                 },
                 TextColor(palette::CHIP_NAME),
