@@ -138,7 +138,15 @@ pub fn pause_input(
         return;
     }
     menu.selected = menu_ui::nav(&keys, menu.selected, OPTIONS);
-    menu.selected = menu_ui::step(pad_up, pad_down, menu.selected, OPTIONS);
+    // Up wins over a same-frame down, as it always has.
+    let pad_nav = if pad_up {
+        menu_ui::Nav::Up
+    } else if pad_down {
+        menu_ui::Nav::Down
+    } else {
+        menu_ui::Nav::Stay
+    };
+    menu.selected = menu_ui::step(pad_nav, menu.selected, OPTIONS);
     if keys.just_pressed(KeyCode::Enter) || pad_accept {
         match PauseAction::ALL[menu.selected] {
             PauseAction::Continue => {

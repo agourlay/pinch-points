@@ -18,39 +18,50 @@ pub fn nav(keys: &ButtonInput<KeyCode>, selected: usize, len: usize) -> usize {
     at
 }
 
+/// One frame's worth of vertical menu movement. Its own type rather than
+/// the `up: bool, down: bool` pair it replaces: two bools claim four states
+/// where a cursor has three, and every caller had to know that up wins.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Nav {
+    Up,
+    Down,
+    Stay,
+}
+
 /// Navigation over a list where some rows are hidden (a setting that does
 /// not apply right now): the cursor steps over them instead of landing on
 /// a blank line. With nothing live it stays put.
 pub fn nav_live(keys: &ButtonInput<KeyCode>, selected: usize, live: &[bool]) -> usize {
-    let up = keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp);
-    let down = keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown);
-    nav_live_steps(up, down, selected, live)
+    let nav = if keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) {
+        Nav::Up
+    } else if keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown) {
+        Nav::Down
+    } else {
+        Nav::Stay
+    };
+    nav_live_steps(nav, selected, live)
 }
 
-/// Plain up/down over `len` rows from explicit edges, for input that cannot
-/// ride the keyboard resource: the pause card runs during play, where
+/// Plain movement over `len` rows from an explicit [`Nav`], for input that
+/// cannot ride the keyboard resource: the pause card runs during play, where
 /// bridging the d-pad into synthetic key presses would also steer the round.
-pub fn step(up: bool, down: bool, selected: usize, len: usize) -> usize {
-    if up {
-        (selected + len - 1) % len
-    } else if down {
-        (selected + 1) % len
-    } else {
-        selected
+pub fn step(nav: Nav, selected: usize, len: usize) -> usize {
+    match nav {
+        Nav::Up => (selected + len - 1) % len,
+        Nav::Down => (selected + 1) % len,
+        Nav::Stay => selected,
     }
 }
 
-/// The same walk as [`nav_live`], from explicit edges rather than the
+/// The same walk as [`nav_live`], from an explicit [`Nav`] rather than the
 /// keyboard.
-fn nav_live_steps(up: bool, down: bool, selected: usize, live: &[bool]) -> usize {
+fn nav_live_steps(nav: Nav, selected: usize, live: &[bool]) -> usize {
     let len = live.len();
-    let step = if up {
-        len - 1 // one backwards, modulo len
-    } else if down {
-        1
-    } else {
+    let step = match nav {
+        Nav::Up => len - 1, // one backwards, modulo len
+        Nav::Down => 1,
         // Not moving, but the row under the cursor may have just gone dark.
-        return first_live(selected, live).unwrap_or(selected);
+        Nav::Stay => return first_live(selected, live).unwrap_or(selected),
     };
     let mut at = selected;
     for _ in 0..len {

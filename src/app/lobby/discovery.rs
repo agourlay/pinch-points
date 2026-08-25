@@ -224,10 +224,10 @@ pub fn discover(time: Res<Time>, mut state: ResMut<LobbyState>) {
 pub(super) fn walk_the_list(keys: &ButtonInput<KeyCode>, state: &mut LobbyState) {
     if !state.standing().at_a_beach() {
         if keys.just_pressed(KeyCode::ArrowUp) {
-            state.step_cursor(false);
+            state.step_cursor(Nav::Up);
         }
         if keys.just_pressed(KeyCode::ArrowDown) {
-            state.step_cursor(true);
+            state.step_cursor(Nav::Down);
         }
     }
 }
@@ -357,7 +357,7 @@ mod list_tests {
         state.hosts.clear();
         state.settle_cursor();
         assert_eq!(state.selected_index(), None);
-        state.step_cursor(true);
+        state.step_cursor(Nav::Down);
         assert_eq!(state.selected_index(), None);
     }
 
@@ -429,7 +429,7 @@ mod list_tests {
         // Walk to the far end; the window follows and never runs past it.
         state.settle_cursor();
         for _ in 0..40 {
-            state.step_cursor(true);
+            state.step_cursor(Nav::Down);
         }
         let at = state.selected_index().expect("still on something real");
         assert_eq!(at, 40);

@@ -35,6 +35,7 @@ pub use ui::*;
 use crate::app::cycle::{Cycle, Turn};
 use crate::app::i18n::fill;
 use crate::app::match_setup::MatchConfig;
+use crate::app::menu_ui::Nav;
 use crate::app::net::{Invitation, LobbyReturn, Online, OnlineSession, PeerBook};
 use crate::app::palette;
 use crate::app::settings::GameSettings;
@@ -440,17 +441,14 @@ impl LobbyState {
         self.scroll = self.scroll.min(self.hosts.len().saturating_sub(1));
     }
 
-    /// Step the cursor by one, wrapping, and follow it with the window.
-    fn step_cursor(&mut self, down: bool) {
+    /// Step the cursor, wrapping, and follow it with the window.
+    fn step_cursor(&mut self, nav: Nav) {
         if self.hosts.is_empty() {
             return;
         }
         let len = self.hosts.len();
         let at = self.selected_index().unwrap_or(0);
-        let next = match down {
-            true => (at + 1) % len,
-            false => (at + len - 1) % len,
-        };
+        let next = crate::app::menu_ui::step(nav, at, len);
         self.selected = Some(self.hosts[next].addr);
         self.settle_cursor();
     }
