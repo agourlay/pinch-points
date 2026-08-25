@@ -491,3 +491,164 @@ fn a_spectator_sees_the_same_round_without_holding_it_up() {
         }
     }
 }
+
+/// Peers whose boards genuinely differ must both be told so, loudly. The
+/// check is symmetric by design: each side sends its own state hash every
+/// `HASH_INTERVAL` frames and compares every one it receives, so neither
+/// player plays on believing the round is fine while the other's screen
+/// shows a different beach.
+#[test]
+fn a_peer_that_diverges_is_flagged_by_both_ends() {
+    use pinch_points::app::net::OnlineSession;
+    use pinch_points::sim::HASH_INTERVAL;
+
+    let host_transport = UdpTransport::host(0).expect("bind host");
+    let port = host_transport.local_addr().expect("local addr").port();
+    let join_transport = UdpTransport::join(("127.0.0.1", port)).expect("join");
+    join_transport.send(NetMsg::hello("Joiner"));
+    let players = vec![0u8, 1u8];
+    let terms = MatchTerms::default();
+    let mut host = OnlineSession::new(
+        host_transport,
+        Lockstep::new(0, players.clone(), DEFAULT_DELAY),
+        2,
+        terms,
+    );
+    let mut join = OnlineSession::new(
+        join_transport,
+        Lockstep::new(1, players, DEFAULT_DELAY),
+        2,
+        terms,
+    );
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    // The divergence, there from frame zero: one rock the host's board
+    // does not have, as if a level edit had failed to travel.
+    let mut boards: Vec<Board> = (0..2).map(|_| arena(0xD1FF)).collect();
+    boards[1].set_tile(4, 4, TileKind::Rock);
+
+    for step in 0u32..150 {
+        for (index, session) in [&mut host, &mut join].into_iter().enumerate() {
+            let board = &mut boards[index];
+            session.pump(PlayerAction::None, |net| {
+                while let Some(actions) = net.session.advance() {
+                    board.tick(&actions);
+                    net.after_frame(board.state_hash());
+                }
+            });
+        }
+        if step % 8 == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    assert!(
+        host.session.frame() > 2 * HASH_INTERVAL,
+        "the match got far enough to exchange hashes ({})",
+        host.session.frame()
+    );
+    let host_saw = host.desync_at().expect("the host flagged the desync");
+    let join_saw = join.desync_at().expect("the joiner flagged it too");
+    // Flagged on an exchanged hash frame at or after the divergence, which
+    // sits at frame zero here, so the first exchange is the earliest frame
+    // either side can prove anything about.
+    for (who, flagged) in [("host", host_saw), ("joiner", join_saw)] {
+        assert!(
+            flagged.is_multiple_of(HASH_INTERVAL) && flagged >= HASH_INTERVAL,
+            "the {who} flagged frame {flagged}, not an exchanged hash frame"
+        );
+    }
+}
+
+/// One launch, one board: the invitation (the terms and, for a handmade
+/// beach, the level itself riding in the `Start`) must build every peer
+/// the identical board, or the round desyncs on its first exchanged hash.
+/// Built through the real datagram and the real builders, because the two
+/// agreeing is the whole contract.
+#[test]
+fn a_launched_round_seats_every_peer_on_the_same_beach() {
+    use pinch_points::app::match_setup::{self, MapChoice};
+    use pinch_points::sim::MAX_PLAYERS;
+    use pinch_points::transport::wire_name;
+
+    // A two-castle beach somebody built: only the host has this text, so
+    // it travels in the invitation, compressed the way the lobby packs it.
+    let text = "name: Reef\nposts: 2\nkind: arena\ncrab: 1,1 R R common\nmap:\n\
+                +-+-+-+-+-+\n|0 . . . .|\n+ + + + + +\n|. . . . 1|\n\
+                + + + + + +\n|. . . . .|\n+-+-+-+-+-+\n";
+    let level = pinch_points::sim::Level::parse(text).expect("a level");
+    let packed = pinch_points::lzw::compress(level.to_text().as_bytes(), 8);
+    let custom = MapChoice::ALL
+        .iter()
+        .position(|&map| map == MapChoice::Custom)
+        .expect("on the dial") as u8;
+    let terms = MatchTerms {
+        map: custom,
+        gulls: 2,
+        round: 0,
+        seed: 0xBEAC4,
+        ..MatchTerms::default()
+    };
+
+    let invitation = NetMsg::Start {
+        seats: 2,
+        seat: Some(1),
+        terms,
+        names: std::array::from_fn(|i| wire_name(&format!("Seat {i}"))),
+        standing: None,
+        beach: packed.clone(),
+    };
+    let Some(NetMsg::Start {
+        terms: heard,
+        beach: sent,
+        ..
+    }) = NetMsg::decode(&invitation.encode())
+    else {
+        panic!("the invitation did not survive the wire");
+    };
+    assert_eq!(heard, terms, "the terms rode along unchanged");
+
+    // The host builds from its own copy, the joiner from the datagram's.
+    let mut table = [
+        match_setup::board_from(&terms, 2, &packed),
+        match_setup::board_from(&heard, 2, &sent),
+    ];
+    assert_eq!(table[0].width(), 5, "the handmade beach, not a fallback");
+    assert_eq!(
+        table[0].state_hash(),
+        table[1].state_hash(),
+        "the same board at frame zero"
+    );
+    for _ in 0..100 {
+        for board in &mut table {
+            board.tick(&[PlayerAction::None; MAX_PLAYERS]);
+        }
+    }
+    assert_eq!(
+        table[0].state_hash(),
+        table[1].state_hash(),
+        "and still the same after a hundred idle ticks"
+    );
+
+    // With no beach riding along, the two builders must be one builder:
+    // `board_from` falls back to `board_for`, and hashing them against
+    // each other on every map stop is what keeps an option one of them
+    // sets (wrap, say, which only the open ocean turns on) from ever
+    // drifting out of the other.
+    for map in 0..MapChoice::ALL.len() as u8 {
+        for seats in [2u8, 5] {
+            let terms = MatchTerms {
+                map,
+                gulls: 2,
+                round: 0,
+                seed: 0x5EED + u64::from(map),
+                ..MatchTerms::default()
+            };
+            assert_eq!(
+                match_setup::board_from(&terms, seats, &[]).state_hash(),
+                match_setup::board_for(&terms, seats).state_hash(),
+                "map {map} for {seats} seats built differently with no beach"
+            );
+        }
+    }
+}
