@@ -73,10 +73,14 @@ pub fn encode(kind: Kind, payload: &[u8]) -> String {
 /// what was typed.
 ///
 /// Deliberately forgiving about everything that does not change the
-/// meaning (case, spaces, hyphens, and the four letters the alphabet leaves
-/// out) because a code is something a person retypes from another screen.
+/// meaning (case, spaces, hyphens, line breaks, and the four letters the
+/// alphabet leaves out) because a code is something a person retypes from
+/// another screen, or pastes off a clipboard that carries whatever the
+/// textarea or the mail client wrapped it in.
 pub fn decode(code: &str) -> Option<(Kind, Vec<u8>)> {
-    let mut chars = code.chars().filter(|ch| !matches!(ch, '-' | ' ' | '\t'));
+    let mut chars = code
+        .chars()
+        .filter(|ch| !matches!(ch, '-' | ' ' | '\t' | '\r' | '\n'));
     let (p, q) = (chars.next()?, chars.next()?);
     if !p.eq_ignore_ascii_case(&'P') || !q.eq_ignore_ascii_case(&'P') {
         return None;
@@ -216,6 +220,26 @@ mod tests {
             })
             .collect();
         assert_eq!(decode(&muddled), Some(expected), "{muddled}");
+    }
+
+    /// A code more often arrives on the clipboard than through the
+    /// keyboard, and a clipboard carries whatever wrapped it: the trailing
+    /// newline of a copied line, the CRLF of a Windows mail client, the
+    /// break a textarea folded it at. None of those change what the code
+    /// says, so none of them may refuse it.
+    #[test]
+    fn a_pasted_code_still_reads() {
+        let code = encode(Kind::Level, b"a small beach");
+        let expected = decode(&code).expect("the code as written");
+        for variant in [
+            format!("{code}\n"),
+            format!("{code}\r\n"),
+            format!("\n{code}\n"),
+            code.replace('-', "\n"),
+            code.replace('-', "\r\n"),
+        ] {
+            assert_eq!(decode(&variant), Some(expected.clone()), "{variant:?}");
+        }
     }
 
     /// The checksum earns its character: a typo is refused, not half-loaded.

@@ -672,8 +672,12 @@ impl Board {
     /// The highest seat number with a castle on the board: the seat count
     /// a recorded board implies.
     pub fn castle_owners(&self) -> impl Iterator<Item = PlayerId> + '_ {
-        self.tiles().filter_map(|(_, _, kind)| match kind {
-            TileKind::Castle(owner) => Some(owner),
+        // Over the tiles themselves rather than `tiles()`, which pays a
+        // divide and a remainder per tile to name coordinates this throws
+        // away. `seats_in_play` runs this on every tick, and the solver
+        // ticks a board up to `PUZZLE_TICK_LIMIT` times per node.
+        self.grid.tiles.iter().filter_map(|kind| match kind {
+            TileKind::Castle(owner) => Some(*owner),
             TileKind::Empty
             | TileKind::Rock
             | TileKind::Spawner(_)
