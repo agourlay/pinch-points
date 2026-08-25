@@ -567,7 +567,7 @@ fn add_play_systems(app: &mut App) {
             hint::reset_on_level.run_if(on_message::<LoadLevel>),
             cursor::move_cursor
                 .run_if(not(in_state(Screen::Menu)).and_then(not(editor::editor_naming))),
-            cursor::setup_input.run_if(puzzle_setup),
+            play_input::setup_input.run_if(puzzle_setup),
             dev::debug_autoplay.run_if(puzzle_setup),
             hint::hint_input.run_if(puzzle_setup.or_else(puzzle_done)),
             // One nested group so the tuple stays inside Bevy's arity limit
@@ -580,10 +580,10 @@ fn add_play_systems(app: &mut App) {
                 hint::tick_denied_note,
                 hint::note_denials,
             ),
-            cursor::running_input.run_if(puzzle_running),
-            cursor::done_input.run_if(puzzle_done),
+            play_input::running_input.run_if(puzzle_running),
+            play_input::done_input.run_if(puzzle_done),
             check_outcome.run_if(puzzle_running),
-            cursor::versus_input.run_if(versus_running),
+            play_input::versus_input.run_if(versus_running),
             suspend::copy_round_code.run_if(versus_running),
             dev::debug_net_probe.run_if(versus_running),
             dev::debug_banner.run_if(versus_running.or_else(puzzle_running)),
@@ -615,7 +615,7 @@ fn add_play_systems(app: &mut App) {
             // where the player was pressing Enter anyway.
             (
                 net::poll_between_rounds,
-                cursor::versus_over_input,
+                play_input::versus_over_input,
                 net::leave_a_hostless_round,
             )
                 .chain()

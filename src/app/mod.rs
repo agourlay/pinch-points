@@ -34,6 +34,7 @@ mod keymap;
 mod language;
 pub mod layout;
 mod lobby;
+mod play_input;
 // Public for the integration tests: a launched round's board is built
 // here, and the wire tests have to build it the way the game does.
 pub mod match_setup;
