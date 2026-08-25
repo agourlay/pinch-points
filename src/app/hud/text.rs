@@ -128,7 +128,7 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
 }
 
 pub(super) fn editor_text(tr: &Tr, editor: &EditorState, sim: &Sim) -> HudText {
-    let testing = editor.testing.is_some();
+    let testing = editor.is_testing();
     // The title carries the level's name, because the name is now the file
     // it saves to and the caption the stage list will show: it has to be
     // somewhere a player can see it before pressing F2.
@@ -149,7 +149,7 @@ pub(super) fn editor_text(tr: &Tr, editor: &EditorState, sim: &Sim) -> HudText {
             "{} [{kind}] - {}{}",
             tr.title_editor,
             editor.name,
-            if editor.naming { "_" } else { "" }
+            if editor.is_naming() { "_" } else { "" }
         )
     };
     // A beach is not played with a granted inventory, so the number beside
@@ -600,12 +600,12 @@ mod tests {
 
         // Typing shows a caret, so it is obvious the keyboard is spelling a
         // name rather than picking brushes.
-        editor.naming = true;
+        editor.mode = crate::app::editor::Mode::Naming;
         let typing = editor_text(&EN, &editor, &sim).title;
         assert!(typing.ends_with('_'), "{typing}");
-        editor.naming = false;
+        editor.mode = crate::app::editor::Mode::Painting;
 
-        editor.testing = Some(Board::new(4, 4, 0));
+        editor.mode = crate::app::editor::Mode::Testing(Box::new(Board::new(4, 4, 0)));
         let HudText { title, prompt, .. } = editor_text(&EN, &editor, &sim);
         assert_eq!(title, EN.title_playtest);
         assert_eq!(prompt, EN.ed_playtest_prompt);

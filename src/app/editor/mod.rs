@@ -68,24 +68,48 @@ pub struct EditorState {
     /// stage list shows and what progress is filed under, so two levels
     /// wanting their own gold star need two names.
     pub name: String,
-    /// True while the name is being typed rather than the board edited.
-    pub naming: bool,
-    /// True for the one frame after the name is committed. The Enter or
-    /// Escape that ended it is still just-pressed when [`editor_commands`]
-    /// runs later that frame, where it reads as "playtest" or "leave"; the
-    /// schedule's naming gate cannot see this, since `naming` is already
-    /// false by then, so the commands sit that frame out on this instead.
-    pub named: bool,
+    /// What the keys mean right now: see [`Mode`].
+    pub mode: Mode,
     /// What the brush is loaded with. Painting is now a thing you choose
     /// and then do, rather than nine separate verbs.
     pub brush: Brush,
     pub gull_period_idx: usize,
-    /// Pre-playtest snapshot to restore when the test ends.
-    pub testing: Option<Board>,
     pub feedback: String,
     pub(super) solver: Option<SolverSlot>,
     /// Statics need a rebuild after a tile/wall edit.
     dirty: bool,
+}
+
+/// What the editor is doing, which is what its keys mean. One state
+/// rather than a `naming` flag, a `named` flag and a `testing` snapshot,
+/// three of which could once be set at the same time and none of which
+/// were meant to be.
+#[derive(Default, Debug)]
+pub enum Mode {
+    /// The board is being edited; keys are brushes and commands.
+    #[default]
+    Painting,
+    /// The name is being typed; every letter is a letter, not a brush.
+    Naming,
+    /// The one frame after the name is committed. The Enter or Escape that
+    /// ended it is still just-pressed when [`editor_commands`] runs later
+    /// that frame, where it reads as "playtest" or "leave"; the schedule's
+    /// naming gate cannot see this, since the mode is no longer `Naming`
+    /// by then, so the commands sit that frame out on this instead.
+    JustNamed,
+    /// A playtest is running, on a copy; the board to restore when it ends.
+    /// Boxed: a board is most of a kilobyte and the other modes are nothing.
+    Testing(Box<Board>),
+}
+
+impl EditorState {
+    pub fn is_naming(&self) -> bool {
+        matches!(self.mode, Mode::Naming)
+    }
+
+    pub fn is_testing(&self) -> bool {
+        matches!(self.mode, Mode::Testing(_))
+    }
 }
 
 /// Type the level's name. Reads the text a keystroke produces rather than
@@ -127,8 +151,7 @@ fn type_a_name(
         } else {
             tidy
         };
-        state.naming = false;
-        state.named = true;
+        state.mode = Mode::JustNamed;
         state.feedback.clear();
     }
 }
@@ -141,7 +164,7 @@ const NAME_MAX: usize = 28;
 /// the cursor is walked by a system of its own: without this, typing
 /// "Wade" walked the cursor up and then left across the beach.
 pub fn editor_naming(state: Res<EditorState>) -> bool {
-    state.naming
+    state.is_naming()
 }
 
 pub fn enter_editor(
@@ -165,7 +188,7 @@ pub fn exit_editor(mut state: ResMut<EditorState>) {
 
 /// Is the editor currently playtesting? (Run-condition helper.)
 pub fn editor_testing(state: Res<EditorState>) -> bool {
-    state.testing.is_some()
+    state.is_testing()
 }
 
 /// Put a different board on the sand: a resize or a pasted level.
@@ -207,7 +230,7 @@ pub fn editor_input(
     mut cursors: Query<(&mut Cursor, &mut Transform)>,
 ) {
     // Naming swallows the keyboard: every letter is a letter, not a brush.
-    if state.naming {
+    if state.is_naming() {
         type_a_name(&mut typed, &keys, &mut state, settings.tr());
         return;
     }
@@ -244,7 +267,7 @@ pub fn editor_input(
         }
     }
     if keys.just_pressed(KeyCode::F1) {
-        state.naming = true;
+        state.mode = Mode::Naming;
         state.feedback = settings.tr().ed_naming.to_string();
         return;
     }
@@ -350,7 +373,8 @@ pub fn editor_commands(
     sprites: BoardSprites,
     mut cursors: Query<(&mut Cursor, &mut Transform)>,
 ) {
-    if std::mem::take(&mut state.named) {
+    if matches!(state.mode, Mode::JustNamed) {
+        state.mode = Mode::Painting;
         return;
     }
     let tr = settings.tr();
@@ -481,7 +505,7 @@ pub fn editor_commands(
         if state.kind == LevelKind::Puzzle {
             board.set_signpost_rule(state.posts, crate::sim::CapPolicy::Reject);
         }
-        state.testing = Some(snapshot);
+        state.mode = Mode::Testing(Box::new(snapshot));
         state.feedback = tr.ed_playtest_prompt.into();
     }
     if keys.just_pressed(KeyCode::Escape) {
@@ -517,9 +541,9 @@ pub fn editor_test_input(
     // Only Escape ends the test: Enter started it this very frame, and both
     // systems see the same just_pressed set.
     if keys.just_pressed(KeyCode::Escape)
-        && let Some(snapshot) = state.testing.take()
+        && let Mode::Testing(snapshot) = std::mem::take(&mut state.mode)
     {
-        sim.0 = snapshot;
+        sim.0 = *snapshot;
         state.dirty = true;
         state.feedback = settings.tr().ed_back.into();
     }
@@ -661,7 +685,7 @@ mod tests {
         app.init_resource::<Clipboard>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.add_systems(Update, editor_commands);
-        app.world_mut().resource_mut::<EditorState>().named = true;
+        app.world_mut().resource_mut::<EditorState>().mode = Mode::JustNamed;
 
         let press = |app: &mut App| {
             let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
@@ -671,11 +695,14 @@ mod tests {
         };
         press(&mut app);
         let state = app.world().resource::<EditorState>();
-        assert!(state.testing.is_none(), "the naming Enter began a playtest");
-        assert!(!state.named, "the flag is for one frame");
+        assert!(!state.is_testing(), "the naming Enter began a playtest");
+        assert!(
+            matches!(state.mode, Mode::Painting),
+            "the latch is for one frame"
+        );
         press(&mut app);
         assert!(
-            app.world().resource::<EditorState>().testing.is_some(),
+            app.world().resource::<EditorState>().is_testing(),
             "the next Enter is a real one"
         );
     }

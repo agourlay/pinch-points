@@ -759,27 +759,5 @@ fn add_finish_systems(app: &mut App) {
     );
 }
 
-// Named run conditions: the schedule reads as prose instead of nested
-// state combinators.
-/// The pause card is up, on any screen that can raise one.
-fn versus_running(screen: Res<State<Screen>>, phase: Res<State<VersusPhase>>) -> bool {
-    *screen.get() == Screen::Versus && *phase.get() == VersusPhase::Running
-}
-
-fn versus_over(screen: Res<State<Screen>>, phase: Res<State<VersusPhase>>) -> bool {
-    *screen.get() == Screen::Versus && *phase.get() == VersusPhase::Over
-}
-
-fn puzzle_setup(screen: Res<State<Screen>>, phase: Res<State<Phase>>) -> bool {
-    *screen.get() == Screen::Puzzle && *phase.get() == Phase::Setup
-}
-
-fn puzzle_running(screen: Res<State<Screen>>, phase: Res<State<Phase>>) -> bool {
-    *screen.get() == Screen::Puzzle && *phase.get() == Phase::Running
-}
-
-fn puzzle_done(screen: Res<State<Screen>>, phase: Res<State<Phase>>) -> bool {
-    *screen.get() == Screen::Puzzle && matches!(*phase.get(), Phase::Won | Phase::Lost)
-}
-
+use conditions::*;
 use session::*;
