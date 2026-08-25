@@ -392,6 +392,9 @@ pub(super) struct Readout<'a> {
     pub tournament: &'a crate::app::tournament::Tournament,
     pub seats: &'a Seats,
     pub settings: &'a GameSettings,
+    /// What this keyboard's caps say: a resource of its own, since it is
+    /// learned state rather than a preference.
+    pub keycaps: &'a crate::app::keycaps::KeyCaps,
     pub names: &'a crate::app::SeatNames,
     pub bots: &'a Bots,
     pub library: &'a crate::app::replays::Library,
@@ -417,7 +420,7 @@ pub(super) fn screen_text(screen: Screen, r: &Readout) -> HudText {
     }
     // Spelled in this keyboard's caps here, once, rather than in each of
     // the legends that name the move keys.
-    said.prompt = r.settings.keycaps.legend(&said.prompt);
+    said.prompt = r.keycaps.legend(&said.prompt);
     said
 }
 
@@ -532,6 +535,7 @@ mod tests {
             builtins,
         };
         let settings = GameSettings::default();
+        let keycaps = crate::app::keycaps::KeyCaps::default();
         let readout = Readout {
             tr: &EN,
             lang: Lang::En,
@@ -546,6 +550,7 @@ mod tests {
             tournament: &crate::app::tournament::Tournament::default(),
             seats: &Seats(2),
             settings: &settings,
+            keycaps: &keycaps,
             names: &crate::app::SeatNames::default(),
             bots: &Bots::default(),
             library: &crate::app::replays::Library::default(),

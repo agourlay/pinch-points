@@ -256,9 +256,10 @@ pub fn despawn_marked<M: Component>(mut commands: Commands, ui: Query<Entity, Wi
 pub fn save_and_despawn<M: Component>(
     mut commands: Commands,
     settings: Res<crate::app::settings::GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     ui: Query<Entity, With<M>>,
 ) {
-    settings.save();
+    settings.save(&caps);
     for entity in &ui {
         commands.entity(entity).despawn();
     }

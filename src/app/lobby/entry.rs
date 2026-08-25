@@ -161,6 +161,7 @@ pub(super) fn drive_typing(
     keys: &ButtonInput<KeyCode>,
     typed: &mut MessageReader<bevy::input::keyboard::KeyboardInput>,
     settings: &mut GameSettings,
+    caps: &crate::app::keycaps::KeyCaps,
     state: &mut LobbyState,
     tr: &'static crate::app::i18n::Tr,
 ) -> Typed {
@@ -194,12 +195,12 @@ pub(super) fn drive_typing(
                 state.say(&me, &line);
             }
             Answered::PlayerThenGame(name) => {
-                name_myself(settings, name);
+                name_myself(settings, caps, name);
                 let was = state.game_name.clone();
                 state.typing = Some(Typing::game_name(&was));
             }
             Answered::PlayerThen(name, then) => {
-                name_myself(settings, name);
+                name_myself(settings, caps, name);
                 intent = then;
             }
             Answered::GameNamed(name) => {
@@ -211,7 +212,7 @@ pub(super) fn drive_typing(
             // back in the box on the next try.
             Answered::AddressGiven(addr) => {
                 settings.last_beach = addr.to_string();
-                settings.save();
+                settings.save(caps);
                 state.typing = Some(Typing::player_name(Intent::Dial(addr), &settings.names[0]));
             }
             Answered::BadAddress(text) => {
@@ -241,10 +242,14 @@ pub(super) fn drive_typing(
 
 /// Keep the name the player gave, tidied and on disk. Their own name is
 /// the one thing about them every other screen in the hall will read.
-pub(super) fn name_myself(settings: &mut GameSettings, name: String) {
+pub(super) fn name_myself(
+    settings: &mut GameSettings,
+    caps: &crate::app::keycaps::KeyCaps,
+    name: String,
+) {
     settings.names[0] = name;
     settings.tidy_name(0);
-    settings.save();
+    settings.save(caps);
 }
 
 /// The keyboard belongs to the line being typed: characters land in it,
@@ -497,6 +502,7 @@ mod door_tests {
         app.init_resource::<MatchConfig>();
         app.init_resource::<crate::app::match_setup::CustomBeaches>();
         app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.add_message::<KeyboardInput>();
         app.add_systems(Update, lobby_input);
 

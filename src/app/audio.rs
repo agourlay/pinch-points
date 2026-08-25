@@ -388,10 +388,10 @@ pub fn surge_tempo(
 /// where the M is a letter the player meant to write.
 pub fn toggle_mute(
     keys: Res<ButtonInput<KeyCode>>,
-    settings: Res<crate::app::settings::GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     mut muted: ResMut<Muted>,
 ) {
-    if settings.keycaps.just_pressed(&keys, 'M') {
+    if caps.just_pressed(&keys, 'M') {
         muted.0 = !muted.0;
     }
 }

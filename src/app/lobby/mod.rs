@@ -564,11 +564,13 @@ pub fn exit_lobby(mut state: ResMut<LobbyState>) {
 }
 
 /// Lobby input: host, join by number, leave, and say something.
+#[allow(clippy::too_many_arguments)]
 pub fn lobby_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
     beaches: Res<crate::app::match_setup::CustomBeaches>,
     mut settings: ResMut<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     mut config: ResMut<MatchConfig>,
     mut state: ResMut<LobbyState>,
     mut next_screen: ResMut<NextState<Screen>>,
@@ -581,7 +583,7 @@ pub fn lobby_input(
     // While anything is being typed the keyboard is text and nothing else:
     // H would host, W would arm watching, and a digit would join a beach,
     // none of which anyone means halfway through "wait for me".
-    match drive_typing(&keys, &mut typed, &mut settings, &mut state, tr) {
+    match drive_typing(&keys, &mut typed, &mut settings, &caps, &mut state, tr) {
         // The keyboard is busy: every other key in this lobby is text.
         Typed::Taken => return,
         // An answer finished and freed something to happen this frame.
@@ -592,7 +594,7 @@ pub fn lobby_input(
     // first line composed picks up every keystroke since the lobby opened.
     typed.clear();
     // T for talk, once there is anyone to talk to.
-    if intent.is_none() && settings.keycaps.just_pressed(&keys, 'T') && state.can_chat() {
+    if intent.is_none() && caps.just_pressed(&keys, 'T') && state.can_chat() {
         state.typing = Some(Typing::chat());
         return;
     }
@@ -621,7 +623,7 @@ pub fn lobby_input(
     }
     let step = host_step(HostAsk {
         answered: intent == Some(Intent::Host),
-        pressed_h: settings.keycaps.just_pressed(&keys, 'H'),
+        pressed_h: caps.just_pressed(&keys, 'H'),
         busy: state.standing().at_a_beach(),
         auto: auto_host,
     });
@@ -667,7 +669,14 @@ pub fn lobby_input(
         }
     }
     if state.hosting() {
-        turn_the_dials(&keys, &mut settings, &mut config, &mut state, &beaches);
+        turn_the_dials(
+            &keys,
+            &mut settings,
+            &caps,
+            &mut config,
+            &mut state,
+            &beaches,
+        );
     }
     if !state.standing.at_a_beach() {
         walk_the_list(&keys, &mut state);

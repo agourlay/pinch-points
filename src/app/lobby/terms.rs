@@ -113,6 +113,7 @@ pub fn map_for(config: &MatchConfig, seats: u8) -> crate::app::match_setup::MapC
 pub(super) fn turn_the_dials(
     keys: &ButtonInput<KeyCode>,
     settings: &mut GameSettings,
+    caps: &crate::app::keycaps::KeyCaps,
     config: &mut MatchConfig,
     state: &mut LobbyState,
     beaches: &crate::app::match_setup::CustomBeaches,
@@ -141,7 +142,7 @@ pub(super) fn turn_the_dials(
             dial.turn(right, config, &mut teams, humans, beaches);
             if teams != settings.team_mode {
                 settings.team_mode = teams;
-                settings.save();
+                settings.save(caps);
             }
         }
     }

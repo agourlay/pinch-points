@@ -160,11 +160,13 @@ pub struct TideClock;
 pub(crate) const KEY_LESSON_LEVEL: &str = "Welcome Ashore";
 
 /// Show a level's teaching hint while its signposts are being placed.
+#[allow(clippy::too_many_arguments)]
 pub fn update_hint(
     campaign: Res<Campaign>,
     screen: Res<State<Screen>>,
     phase: Res<State<Phase>>,
     settings: Res<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     stuck: Res<crate::app::hint::Hints>,
     denied: Res<crate::app::hint::DeniedNote>,
     mut hints: Query<&mut Text, With<HintLabel>>,
@@ -182,9 +184,7 @@ pub fn update_hint(
                 // ones, and the prompt line already points at Settings.
                 let honest = name != KEY_LESSON_LEVEL || settings.stock_legend();
                 if *phase.get() == Phase::Setup && honest {
-                    settings
-                        .keycaps
-                        .legend(settings.language.level_hint(name).unwrap_or(""))
+                    caps.legend(settings.language.level_hint(name).unwrap_or(""))
                 } else {
                     String::new()
                 }
@@ -269,7 +269,11 @@ pub fn update_hud(
     seats: Res<Seats>,
     // Tupled: a system takes at most sixteen parameters, and this one was
     // already there before the seat names arrived.
-    (settings, names): (Res<GameSettings>, Res<crate::app::SeatNames>),
+    (settings, keycaps, names): (
+        Res<GameSettings>,
+        Res<crate::app::keycaps::KeyCaps>,
+        Res<crate::app::SeatNames>,
+    ),
     bots: Res<Bots>,
     library: Res<crate::app::replays::Library>,
     // Tupled for the same reason as the pair above: sixteen is the limit.
@@ -306,6 +310,7 @@ pub fn update_hud(
             tournament: &tournament,
             seats: &seats,
             settings: &settings,
+            keycaps: &keycaps,
             names: &names,
             bots: &bots,
             library: &library,

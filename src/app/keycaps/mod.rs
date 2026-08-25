@@ -49,7 +49,14 @@ use crate::app::settings::GameSettings;
 
 /// What this keyboard's caps say, where they differ from Bevy's QWERTY
 /// spelling: what presses have shown, over what the language presumes.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+///
+/// A resource of its own rather than a field of
+/// [`GameSettings`]: it is per-machine learned state, not a preference,
+/// and it changes on ordinary keypresses. Kept inside the settings it
+/// made every settings reader re-run (and re-serialise) for each learned
+/// cap. It still travels in the same settings.txt, as the `keycaps:`
+/// line; the save path takes both resources.
+#[derive(Resource, Clone, PartialEq, Eq, Debug, Default)]
 pub struct KeyCaps {
     /// Physical key -> the character on its cap, from presses. Empty on a
     /// QWERTY board that has never been guessed at. Saved.
@@ -325,7 +332,8 @@ pub fn learn_keycaps(
     mut typed: MessageReader<KeyboardInput>,
     keys: Res<ButtonInput<KeyCode>>,
     screen: Res<State<crate::app::Screen>>,
-    mut settings: ResMut<GameSettings>,
+    settings: Res<GameSettings>,
+    mut caps: ResMut<KeyCaps>,
 ) {
     const MODIFIERS: [KeyCode; 8] = [
         KeyCode::ShiftLeft,
@@ -350,17 +358,17 @@ pub fn learn_keycaps(
             continue;
         };
         // Learned into a copy first: touching the resource through
-        // `ResMut` marks it changed, and everything that reapplies
-        // settings on a change would run for every keypress.
-        let mut caps = settings.keycaps.clone();
-        if caps.learn(input.key_code, cap) {
-            settings.keycaps = caps;
+        // `ResMut` marks it changed, and everything that re-reads the
+        // caps on a change would run for every keypress.
+        let mut learned = caps.clone();
+        if learned.learn(input.key_code, cap) {
+            *caps = learned;
             changed = true;
         }
     }
     // Not on the picker: see [`crate::app::language::may_save`].
     if changed && crate::app::language::may_save(screen.get()) {
-        settings.save();
+        settings.save(&caps);
     }
 }
 

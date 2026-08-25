@@ -247,6 +247,7 @@ pub fn move_cursor(
 pub fn setup_input(
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     progress: Res<crate::app::progress::Progress>,
     mut sim: ResMut<Sim>,
     mut campaign: ResMut<Campaign>,
@@ -280,7 +281,7 @@ pub fn setup_input(
     if keys.just_pressed(KeyCode::Enter) {
         next_phase.set(Phase::Running);
     }
-    if settings.keycaps.just_pressed(&keys, 'N') {
+    if caps.just_pressed(&keys, 'N') {
         // Browsing forward stops at the ladder: the stage list is the only
         // way past a stage you have not cleared.
         let next = (campaign.index + 1) % campaign.levels.len();
@@ -295,7 +296,7 @@ pub fn setup_input(
             });
         }
     }
-    if settings.keycaps.just_pressed(&keys, 'P') {
+    if caps.just_pressed(&keys, 'P') {
         campaign.index = (campaign.index + campaign.levels.len() - 1) % campaign.levels.len();
         load.write(LoadLevel { keep_posts: false });
     }
@@ -304,14 +305,14 @@ pub fn setup_input(
 /// Puzzle running phase: R resets to setup (keeping placed posts), Esc pauses.
 pub fn running_input(
     keys: Res<ButtonInput<KeyCode>>,
-    settings: Res<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     mut paused: ResMut<Paused>,
     mut load: MessageWriter<LoadLevel>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         paused.0 = !paused.0;
     }
-    if settings.keycaps.just_pressed(&keys, 'R') {
+    if caps.just_pressed(&keys, 'R') {
         load.write(LoadLevel { keep_posts: true });
     }
 }
@@ -319,7 +320,7 @@ pub fn running_input(
 /// Puzzle won/lost phase: Enter advances (or retries after a loss), R replays.
 pub fn done_input(
     keys: Res<ButtonInput<KeyCode>>,
-    settings: Res<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     phase: Res<State<Phase>>,
     mut campaign: ResMut<Campaign>,
     mut next_screen: ResMut<NextState<Screen>>,
@@ -346,7 +347,7 @@ pub fn done_input(
         campaign.index += 1;
         load.write(LoadLevel { keep_posts: false });
     }
-    if settings.keycaps.just_pressed(&keys, 'R') {
+    if caps.just_pressed(&keys, 'R') {
         load.write(LoadLevel { keep_posts: true });
     }
 }

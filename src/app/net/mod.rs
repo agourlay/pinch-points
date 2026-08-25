@@ -723,7 +723,7 @@ pub fn session_from_env() -> Option<OnlineSession> {
     // The name this player goes by online: their P1 name from settings,
     // read straight off disk because the dev hooks run before the app's
     // resources are wired up.
-    let own = crate::app::settings::GameSettings::load().names[0].clone();
+    let own = crate::app::settings::GameSettings::load().0.names[0].clone();
     if let Some(port) = crate::app::dev::direct_host() {
         let port: u16 = port.parse().ok()?;
         let transport = UdpTransport::host(port).ok()?;

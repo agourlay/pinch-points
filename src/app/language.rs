@@ -185,14 +185,15 @@ fn step(keys: &ButtonInput<KeyCode>, current: Lang) -> (Lang, bool) {
 pub fn language_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<GameSettings>,
+    mut caps: ResMut<crate::app::keycaps::KeyCaps>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     let (lang, taken) = step(&keys, settings.language);
     if lang != settings.language {
-        settings.set_language(lang);
+        settings.set_language(lang, &mut caps);
     }
     if taken {
-        settings.save();
+        settings.save(&caps);
         next_screen.set(Screen::Menu);
     }
 }

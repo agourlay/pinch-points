@@ -616,6 +616,7 @@ pub fn update_stage_tiles(
     campaign: Res<Campaign>,
     progress: Res<Progress>,
     settings: Res<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     mut tiles: Query<(&StageTile, &mut BorderColor, &mut BackgroundColor)>,
     mut numbers: Query<(&StageNumber, &mut TextColor)>,
     mut captions: Query<&mut Text, With<StageCaption>>,
@@ -672,7 +673,7 @@ pub fn update_stage_tiles(
     if let Ok(mut text) = hints.single_mut() {
         let hint = match state {
             TileState::Locked => String::new(),
-            TileState::Cleared | TileState::Open => settings.keycaps.legend(
+            TileState::Cleared | TileState::Open => caps.legend(
                 settings
                     .language
                     .level_hint(&campaign.levels[list.selected].name)

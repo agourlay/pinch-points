@@ -133,7 +133,11 @@ fn insert_resources(app: &mut App) {
     // Startup, which lands before the first state transition.
     let saved = settings::GameSettings::load_saved();
     let opens_on = language::opening_screen(saved.is_some());
-    app.insert_resource(saved.unwrap_or_default());
+    // Two resources off one read: the preferences, and the learned caps
+    // table that shares their file (see [`keycaps::KeyCaps`]).
+    let (settings, caps) = saved.unwrap_or_default();
+    app.insert_resource(settings);
+    app.insert_resource(caps);
     app.init_resource::<settings::screen::SettingsMenu>();
     app.init_resource::<controls::ControlsMenu>();
     app.insert_state(opens_on);

@@ -134,6 +134,7 @@ pub fn controls_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<ControlsMenu>,
     mut settings: ResMut<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     let tr = settings.tr();
@@ -147,7 +148,7 @@ pub fn controls_input(
         }
         let Some(&key) = keys
             .get_just_pressed()
-            .find(|&&k| binds::bindable(k) && !settings.keycaps.is_global(k))
+            .find(|&&k| binds::bindable(k) && !caps.is_global(k))
         else {
             return;
         };
@@ -157,7 +158,7 @@ pub fn controls_input(
             Err((_, taken_by)) => fill(
                 tr.ctl_taken,
                 &[
-                    ("k", &settings.keycaps.label(key)),
+                    ("k", &caps.label(key)),
                     ("a", tr.bind_actions[taken_by.index()]),
                 ],
             ),
@@ -198,6 +199,7 @@ pub fn controls_input(
 
 pub fn update_controls_ui(
     settings: Res<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     menu: Res<ControlsMenu>,
     mut cells: Query<(&ControlsCell, &mut Text, &mut TextColor)>,
     mut rows: Query<(&ControlsRow, &mut BackgroundColor)>,
@@ -225,7 +227,7 @@ pub fn update_controls_ui(
                 let value = if menu.capturing == Some(action) {
                     tr.ctl_listening.to_string()
                 } else {
-                    settings.keycaps.label(key)
+                    caps.label(key)
                 };
                 (tr.bind_actions[action.index()].to_string(), value)
             }

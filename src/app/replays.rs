@@ -294,6 +294,7 @@ pub fn update_library(
 pub fn library_input(
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     mut clipboard: ResMut<Clipboard>,
     mut library: ResMut<Library>,
     mut playback: ResMut<Playback>,
@@ -311,10 +312,10 @@ pub fn library_input(
         library.selected = menu_ui::nav(&keys, library.selected, shown);
         library.settle();
     }
-    if settings.keycaps.just_pressed(&keys, 'C') {
+    if caps.just_pressed(&keys, 'C') {
         library.feedback = copy_selected(&mut clipboard, tr, &library);
     }
-    if settings.keycaps.just_pressed(&keys, 'V') {
+    if caps.just_pressed(&keys, 'V') {
         library.feedback = keep_pasted(&mut clipboard, tr);
         // Whatever happened, the shelf may have grown; re-read it so the new
         // round is there to pick rather than waiting for the screen to be

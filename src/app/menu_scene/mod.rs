@@ -334,6 +334,7 @@ pub fn menu_input(
     mut exit: MessageWriter<AppExit>,
     mut list: ResMut<MenuList>,
     settings: Res<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     mut campaign: ResMut<Campaign>,
     mut config: ResMut<crate::app::match_setup::MatchConfig>,
     mut daily: ResMut<crate::app::Daily>,
@@ -352,7 +353,7 @@ pub fn menu_input(
     }
     // A pasted round is the other way onto a beach mid-play, and it does not
     // belong to any one row: V works wherever the cursor is.
-    if settings.keycaps.just_pressed(&keys, 'V') {
+    if caps.just_pressed(&keys, 'V') {
         match crate::app::suspend::round_from(
             crate::app::codes::paste(&mut clipboard),
             settings.tr(),

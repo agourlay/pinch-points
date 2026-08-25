@@ -44,17 +44,18 @@ pub fn read_keymap(world: &mut World) {
     if caps.is_empty() {
         return;
     }
-    // Read before the settings are borrowed, and false when there is no
+    // Read before the caps are borrowed, and false when there is no
     // screen at all: not writing is always the safe answer.
     let may_save = world
         .get_resource::<State<crate::app::Screen>>()
         .is_some_and(|screen| crate::app::language::may_save(screen.get()));
-    let mut settings = world.resource_mut::<GameSettings>();
-    let mut keycaps = settings.keycaps.clone();
-    if keycaps.adopt(&caps) {
-        settings.keycaps = keycaps;
+    // Adopted into a copy first, so the resource is only marked changed
+    // when the platform actually moved a cap.
+    let mut adopted = world.resource::<crate::app::keycaps::KeyCaps>().clone();
+    if adopted.adopt(&caps) {
+        *world.resource_mut::<crate::app::keycaps::KeyCaps>() = adopted.clone();
         if may_save {
-            settings.save();
+            world.resource::<GameSettings>().save(&adopted);
         }
     }
 }

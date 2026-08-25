@@ -204,16 +204,15 @@ pub struct GameSettings {
     /// the game says to the wider internet, so it is the player's to
     /// switch off.
     pub check_updates: bool,
-    /// What the letter keys say on this keyboard, learned from presses
-    /// (see [`crate::app::keycaps`]). Not a preference - nobody sets it -
-    /// but per-machine state that belongs beside the bindings it labels.
-    pub keycaps: crate::app::keycaps::KeyCaps,
     /// The keyboard the player says they have, or `None` for the game
     /// working it out (which is right almost always - see
     /// [`crate::app::keycaps::KeyCaps::force`] for the "almost").
     ///
-    /// A preference, unlike `keycaps` beside it, which is why it is a
-    /// row on the card and a line of its own in the file.
+    /// A preference, unlike the learned caps table, which is not one -
+    /// nobody sets it - and so lives as its own resource,
+    /// [`crate::app::keycaps::KeyCaps`]. The two still share the file:
+    /// the save path takes both and writes the `keycaps:` line beside
+    /// this one.
     pub keyboard: Option<crate::app::keycaps::Layout>,
 }
 
@@ -228,23 +227,32 @@ impl GameSettings {
         self.language.tr()
     }
 
+    /// Set the keyboard the game reads the caps off, or `None` to have
+    /// it work that out again. The one path that changes it, and it asks
+    /// for the caps table outright - a separate resource now - so the
+    /// table can never disagree with the row on the card.
+    pub fn set_keyboard(
+        &mut self,
+        keyboard: Option<crate::app::keycaps::Layout>,
+        caps: &mut crate::app::keycaps::KeyCaps,
+    ) {
+        self.keyboard = keyboard;
+        caps.force(keyboard);
+    }
+
     /// Set the interface language, and with it the keyboard the game
     /// presumes: a player reading in French is typing on AZERTY until a
     /// press says otherwise (see [`crate::app::keycaps::Layout::of`]).
-    /// Every path that changes the language comes through here, so the
-    /// presumption can never be left behind by the words on screen.
-    /// Set the keyboard the game reads the caps off, or `None` to have
-    /// it work that out again. The one path that changes it, so the caps
-    /// table can never disagree with the row on the card.
-    pub fn set_keyboard(&mut self, keyboard: Option<crate::app::keycaps::Layout>) {
-        self.keyboard = keyboard;
-        self.keycaps.force(keyboard);
-    }
-
-    pub fn set_language(&mut self, language: crate::app::i18n::Lang) {
+    /// Every path that changes the language comes through here, and has
+    /// to bring the caps table with it, so the presumption can never be
+    /// left behind by the words on screen.
+    pub fn set_language(
+        &mut self,
+        language: crate::app::i18n::Lang,
+        caps: &mut crate::app::keycaps::KeyCaps,
+    ) {
         self.language = language;
-        self.keycaps
-            .presume(crate::app::keycaps::Layout::of(language));
+        caps.presume(crate::app::keycaps::Layout::of(language));
     }
 
     /// Whether the player has moved any key off its factory binding. The
@@ -360,14 +368,17 @@ impl Default for GameSettings {
             replay_cap: REPLAY_CAP_DEFAULT,
             last_beach: String::new(),
             check_updates: true,
-            keycaps: crate::app::keycaps::KeyCaps::default(),
             keyboard: None,
         }
     }
 }
 
 impl GameSettings {
-    pub fn to_text(&self) -> String {
+    /// The caps come in as a parameter because they are a resource of
+    /// their own, not a field: forgetting them here would leave `caps`
+    /// unused, which the warning pass refuses, the same way the
+    /// destructure below refuses a field left unwritten.
+    pub fn to_text(&self, caps: &crate::app::keycaps::KeyCaps) -> String {
         // Destructured with no rest pattern: a new setting refuses to build
         // here until it is written out. The lenient `parse` below would
         // never notice one going unsaved.
@@ -393,7 +404,6 @@ impl GameSettings {
             replay_cap,
             last_beach,
             check_updates,
-            keycaps,
             keyboard,
         } = self;
         format!(
@@ -423,7 +433,7 @@ impl GameSettings {
             replay_cap,
             last_beach,
             if *check_updates { "on" } else { "off" },
-            keycaps.to_text(),
+            caps.to_text(),
             keyboard.map_or("auto", crate::app::keycaps::Layout::key),
             seat_input[0].name(),
             seat_input[1].name(),
@@ -432,9 +442,12 @@ impl GameSettings {
     }
 
     /// Lenient parse: unknown keys and bad values fall back to defaults, so
-    /// an old or hand-edited file never breaks startup.
-    pub fn parse(text: &str) -> GameSettings {
+    /// an old or hand-edited file never breaks startup. Both halves of the
+    /// file come back together: the preferences, and the learned caps
+    /// table that rides in it as the `keycaps:` line.
+    pub fn parse(text: &str) -> (GameSettings, crate::app::keycaps::KeyCaps) {
         let mut settings = GameSettings::default();
+        let mut caps = crate::app::keycaps::KeyCaps::default();
         for line in text.lines() {
             let Some((key, value)) = line.split_once(':') else {
                 continue;
@@ -518,7 +531,7 @@ impl GameSettings {
                     }
                 }
                 "updates" => settings.check_updates = value != "off",
-                "keycaps" => settings.keycaps = crate::app::keycaps::KeyCaps::parse(value),
+                "keycaps" => caps = crate::app::keycaps::KeyCaps::parse(value),
                 "keyboard" => settings.keyboard = crate::app::keycaps::Layout::from_key(value),
                 "keys_p1" | "keys_p2" => {
                     let seat = usize::from(key.trim() == "keys_p2");
@@ -548,12 +561,12 @@ impl GameSettings {
         // line may be read after either, and the presumption is only
         // taken where the learned caps leave room for it.
         let (language, keyboard) = (settings.language, settings.keyboard);
-        settings.set_language(language);
-        settings.set_keyboard(keyboard);
-        settings
+        settings.set_language(language, &mut caps);
+        settings.set_keyboard(keyboard, &mut caps);
+        (settings, caps)
     }
 
-    /// The saved settings, or `None` when there is no file to read.
+    /// The saved settings and caps, or `None` when there is no file to read.
     ///
     /// The distinction is the whole of the first-run language picker:
     /// defaults and a saved English are the same settings, and only one of
@@ -561,18 +574,20 @@ impl GameSettings {
     /// [`Path::exists`] beside a load, which could disagree with it.
     ///
     /// [`Path::exists`]: std::path::Path::exists
-    pub fn load_saved() -> Option<GameSettings> {
+    pub fn load_saved() -> Option<(GameSettings, crate::app::keycaps::KeyCaps)> {
         std::fs::read_to_string(settings_path())
             .ok()
             .map(|text| GameSettings::parse(&text))
     }
 
-    pub fn load() -> GameSettings {
+    pub fn load() -> (GameSettings, crate::app::keycaps::KeyCaps) {
         GameSettings::load_saved().unwrap_or_default()
     }
 
-    pub fn save(&self) {
-        let _ = crate::app::paths::write_atomic(&settings_path(), self.to_text());
+    /// Write the file, caps and all: one file on disk, so one write, and
+    /// a caller without the caps table has no way to call it.
+    pub fn save(&self, caps: &crate::app::keycaps::KeyCaps) {
+        let _ = crate::app::paths::write_atomic(&settings_path(), self.to_text(caps));
     }
 }
 
@@ -683,16 +698,17 @@ mod tests {
                 String::new(),
             ],
             last_beach: "10.0.0.5:47777".into(),
-            keycaps: crate::app::keycaps::KeyCaps::parse("KeyW=Z KeyA=Q"),
             ..GameSettings::default()
         };
+        let mut caps = crate::app::keycaps::KeyCaps::parse("KeyW=Z KeyA=Q");
         // Through the setter, so the language's presumed keyboard is in
         // place on this side too - `parse` takes it on the way back in.
         let mut settings = settings;
-        settings.set_language(Lang::Fr);
-        settings.set_keyboard(Some(crate::app::keycaps::Layout::Azerty));
-        let reparsed = GameSettings::parse(&settings.to_text());
+        settings.set_language(Lang::Fr, &mut caps);
+        settings.set_keyboard(Some(crate::app::keycaps::Layout::Azerty), &mut caps);
+        let (reparsed, recaps) = GameSettings::parse(&settings.to_text(&caps));
         assert_eq!(reparsed, settings);
+        assert_eq!(recaps, caps, "the caps table rides the same file");
     }
 
     /// The `beach` line is kept only while it still parses as an address.
@@ -700,16 +716,18 @@ mod tests {
     #[test]
     fn a_kept_beach_address_has_to_still_be_one() {
         assert_eq!(
-            GameSettings::parse("beach: 192.168.1.5:47777\n").last_beach,
+            GameSettings::parse("beach: 192.168.1.5:47777\n")
+                .0
+                .last_beach,
             "192.168.1.5:47777"
         );
         assert_eq!(
-            GameSettings::parse("beach: [::1]:47777\n").last_beach,
+            GameSettings::parse("beach: [::1]:47777\n").0.last_beach,
             "[::1]:47777",
             "including the six-legged sort"
         );
         for junk in ["beach: 192.168.1.5\n", "beach: over there\n", "beach:\n"] {
-            assert_eq!(GameSettings::parse(junk).last_beach, "", "{junk:?}");
+            assert_eq!(GameSettings::parse(junk).0.last_beach, "", "{junk:?}");
         }
     }
 
@@ -758,7 +776,7 @@ mod tests {
 
         // And a hand-edited file with a stray separator or an over-long name
         // is cleaned on the way in, not trusted.
-        let parsed = GameSettings::parse("names: Anna|Bo:bby|aaaaaaaaaaaaaaaaaaaa\n");
+        let parsed = GameSettings::parse("names: Anna|Bo:bby|aaaaaaaaaaaaaaaaaaaa\n").0;
         assert_eq!(parsed.names[0], "Anna");
         assert_eq!(parsed.names[1], "Bobby");
         assert_eq!(parsed.names[2].chars().count(), NAME_MAX);
@@ -775,9 +793,9 @@ mod tests {
         // across the keyboard.
         let text = "keys_p2: KeyW KeyK KeyJ KeyL Numpad8 Numpad5 Numpad4 Numpad6 \
                     Numpad0 NumpadEnter\n";
-        assert_eq!(GameSettings::parse(text).binds, stock);
+        assert_eq!(GameSettings::parse(text).0.binds, stock);
         // A line that is merely unreadable leaves that seat stock too.
-        assert_eq!(GameSettings::parse("keys_p1: nonsense\n").binds, stock);
+        assert_eq!(GameSettings::parse("keys_p1: nonsense\n").0.binds, stock);
     }
 
     #[test]
@@ -785,11 +803,12 @@ mod tests {
         // Junk lines and out-of-range values fall back to sane settings.
         let settings = GameSettings::parse(
             "garbage\nmusic: 900\npad_deadzone: 99\nrepeat_delay: 9.0\nwibble: 3\n",
-        );
+        )
+        .0;
         // 900 does not even fit a u8: unparseable values keep the default.
         assert_eq!(settings.music_volume, GameSettings::default().music_volume);
         // Parseable but out-of-range values clamp.
-        assert_eq!(GameSettings::parse("music: 101\n").music_volume, 100);
+        assert_eq!(GameSettings::parse("music: 101\n").0.music_volume, 100);
         assert_eq!(settings.pad_deadzone, 80);
         assert!(settings.repeat_delay <= 0.5);
         assert_eq!(settings.language, Lang::En);
@@ -802,7 +821,7 @@ mod tests {
     #[test]
     fn a_file_without_the_switches_still_has_sound() {
         let old = "music: 60\nsfx: 40\n";
-        let settings = GameSettings::parse(old);
+        let settings = GameSettings::parse(old).0;
         assert!(settings.music_on, "no music_on line means music");
         assert!(settings.sfx_on, "no sfx_on line means effects");
         assert_eq!(settings.music_volume, 60);
@@ -810,7 +829,7 @@ mod tests {
 
         // And a switch that is off silences its half without disturbing
         // the other, or the volume waiting underneath it.
-        let quiet = GameSettings::parse("music: 60\nsfx: 40\nmusic_on: off\n");
+        let quiet = GameSettings::parse("music: 60\nsfx: 40\nmusic_on: off\n").0;
         assert_eq!(quiet.music_gain(), 0.0, "the music is off");
         assert!(quiet.sfx_gain() > 0.0, "the effects are not");
         assert_eq!(quiet.music_volume, 60, "and the slider is where it was");
@@ -820,10 +839,10 @@ mod tests {
     /// version must still load with the volume it implied.
     #[test]
     fn old_sfx_toggle_files_still_load() {
-        assert_eq!(GameSettings::parse("sfx: off\n").sfx_volume, 0);
-        assert_eq!(GameSettings::parse("sfx: on\n").sfx_volume, 100);
-        assert_eq!(GameSettings::parse("sfx: 65\n").sfx_volume, 65);
-        assert_eq!(GameSettings::parse("sfx: 900\n").sfx_volume, 80);
-        assert_eq!(GameSettings::parse("sfx: 101\n").sfx_volume, 100);
+        assert_eq!(GameSettings::parse("sfx: off\n").0.sfx_volume, 0);
+        assert_eq!(GameSettings::parse("sfx: on\n").0.sfx_volume, 100);
+        assert_eq!(GameSettings::parse("sfx: 65\n").0.sfx_volume, 65);
+        assert_eq!(GameSettings::parse("sfx: 900\n").0.sfx_volume, 80);
+        assert_eq!(GameSettings::parse("sfx: 101\n").0.sfx_volume, 100);
     }
 }

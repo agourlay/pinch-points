@@ -378,6 +378,7 @@ pub fn settings_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<SettingsMenu>,
     mut settings: ResMut<GameSettings>,
+    mut caps: ResMut<crate::app::keycaps::KeyCaps>,
     mut progress: ResMut<crate::app::progress::Progress>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
@@ -484,11 +485,11 @@ pub fn settings_input(
         Row::KeyBindings | Row::ResetProgress => {}
         Row::Language => {
             let next = settings.language.cycled(right);
-            settings.set_language(next);
+            settings.set_language(next, &mut caps);
         }
         Row::Keyboard => {
             let next = settings.keyboard.cycled(right);
-            settings.set_keyboard(next);
+            settings.set_keyboard(next, &mut caps);
         }
         Row::UpdateCheck => settings.check_updates = !settings.check_updates,
     }
@@ -513,6 +514,7 @@ fn has_arrows(row: Row) -> bool {
 pub(super) fn row_text(
     tr: &crate::app::i18n::Tr,
     settings: &GameSettings,
+    caps: &crate::app::keycaps::KeyCaps,
     row: Row,
     reset: ResetPrompt,
 ) -> (String, String) {
@@ -532,7 +534,7 @@ pub(super) fn row_text(
         Row::CommitKeys => (
             tr.set_commit_keys,
             match settings.commit {
-                CommitScheme::Ijkl => settings.keycaps.legend(tr.val_ijkl),
+                CommitScheme::Ijkl => caps.legend(tr.val_ijkl),
                 CommitScheme::Arrows => tr.val_arrows.to_string(),
             },
         ),
@@ -594,6 +596,7 @@ pub(super) fn row_text(
 
 pub fn update_settings_ui(
     settings: Res<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     menu: Res<SettingsMenu>,
     art: Res<crate::app::art::Art>,
     mut cells: Query<(&SettingsCell, &mut Text, &mut TextColor)>,
@@ -613,7 +616,7 @@ pub fn update_settings_ui(
     for (cell, mut text, mut color) in &mut cells {
         let row = Row::ALL[cell.0];
         let picked = cell.0 == menu.selected;
-        let (label, value) = row_text(tr, &settings, row, menu.reset);
+        let (label, value) = row_text(tr, &settings, &caps, row, menu.reset);
         let line = match cell.1 {
             Half::Label => label,
             Half::Value if picked && has_arrows(row) => format!("< {value} >"),
@@ -670,7 +673,13 @@ mod tests {
                 ..GameSettings::default()
             };
             for row in Row::ALL {
-                let (label, value) = row_text(settings.tr(), &settings, row, ResetPrompt::Idle);
+                let (label, value) = row_text(
+                    settings.tr(),
+                    &settings,
+                    &crate::app::keycaps::KeyCaps::default(),
+                    row,
+                    ResetPrompt::Idle,
+                );
                 assert!(!label.trim().is_empty(), "{row:?} in {lang:?} has no name");
                 assert!(!value.trim().is_empty(), "{row:?} in {lang:?} has no value");
             }
@@ -728,7 +737,13 @@ mod tests {
                                 keyboard: *keyboard,
                                 ..settings.clone()
                             };
-                            let (label, value) = row_text(tr, &settings, row, reset);
+                            let (label, value) = row_text(
+                                tr,
+                                &settings,
+                                &crate::app::keycaps::KeyCaps::default(),
+                                row,
+                                reset,
+                            );
                             let label_w = text_px(&label, ROW_FONT);
                             assert!(
                                 label_w <= LABEL_W,
@@ -789,7 +804,8 @@ mod tests {
             music_volume: 42,
             ..GameSettings::default()
         };
-        let at = |s: &GameSettings, row| row_text(&EN, s, row, ResetPrompt::Idle).1;
+        let caps = crate::app::keycaps::KeyCaps::default();
+        let at = |s: &GameSettings, row| row_text(&EN, s, &caps, row, ResetPrompt::Idle).1;
         assert!(at(&settings, Row::Music).contains("42%"));
         settings.ui_scale = 130;
         assert!(at(&settings, Row::UiScale).contains("130%"));
@@ -810,7 +826,8 @@ mod tests {
         assert_eq!(next_reset_prompt(ResetPrompt::Done), ResetPrompt::Armed);
 
         let settings = GameSettings::default();
-        let line = |reset| row_text(&EN, &settings, Row::ResetProgress, reset).1;
+        let caps = crate::app::keycaps::KeyCaps::default();
+        let line = |reset| row_text(&EN, &settings, &caps, Row::ResetProgress, reset).1;
         assert!(line(ResetPrompt::Idle).contains(EN.val_reset));
         assert!(line(ResetPrompt::Armed).contains(EN.val_reset_confirm));
         assert!(line(ResetPrompt::Done).contains(EN.val_reset_done));
@@ -822,7 +839,7 @@ mod tests {
                 language: lang,
                 ..GameSettings::default()
             };
-            let say = |reset| row_text(tr, &settings, Row::ResetProgress, reset).1;
+            let say = |reset| row_text(tr, &settings, &caps, Row::ResetProgress, reset).1;
             assert_ne!(say(ResetPrompt::Idle), say(ResetPrompt::Armed), "{lang:?}");
             assert_ne!(say(ResetPrompt::Armed), say(ResetPrompt::Done), "{lang:?}");
         }
@@ -852,6 +869,7 @@ mod tests {
         app.init_resource::<SettingsMenu>();
         app.insert_resource(progress);
         app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.add_systems(Update, settings_input);
         app.insert_resource(State::new(Screen::Settings));
 
