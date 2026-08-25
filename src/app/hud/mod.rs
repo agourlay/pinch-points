@@ -289,7 +289,7 @@ pub fn update_hud(
     mut labels: ParamSet<(
         Query<&mut Text, With<LevelLabel>>,
         Query<&mut Text, With<PostsLabel>>,
-        Query<&mut Text, With<PromptLabel>>,
+        Query<(&mut Text, &mut Node), With<PromptLabel>>,
     )>,
 ) {
     let tr = settings.tr();
@@ -325,8 +325,11 @@ pub fn update_hud(
     if let Ok(mut text) = labels.p1().single_mut() {
         menu_ui::set_text(&mut text, &said.status);
     }
-    if let Ok(mut text) = labels.p2().single_mut() {
+    if let Ok((mut text, mut node)) = labels.p2().single_mut() {
         menu_ui::set_text(&mut text, &said.prompt);
+        // An empty prompt keeps its pill off the sand: a bare dark lozenge
+        // in the corner reads as a broken widget, not as quiet.
+        menu_ui::set_shown(&mut node, !said.prompt.is_empty());
     }
 }
 

@@ -327,6 +327,8 @@ pub fn enter_interlude(
     crate::app::match_setup::next_map(&mut config, &beaches);
     config.armed = true;
     let tr = settings.tr();
+    // A breather on the beach, not a blackout: the postcard stands behind
+    // and the tally rides the same tide-dressed card as every other screen.
     commands
         .spawn((
             InterludeUi,
@@ -336,27 +338,29 @@ pub fn enter_interlude(
                 row_gap: Val::Px(12.0),
                 ..menu_ui::centred_overlay()
             },
-            BackgroundColor(palette::CARD_BG),
         ))
-        .with_children(|card| {
-            card.spawn((
-                Text::new(fill(tr.tour_round, &[("n", &tournament.round.to_string())])),
-                TextFont {
-                    font_size: FontSize::Px(34.0),
-                    ..default()
-                },
-                TextColor(palette::GOLD),
-            ));
-            for (line, color) in standings(&settings, &names, &tournament, mode, seats.0.max(2)) {
+        .with_children(|overlay| {
+            overlay.spawn(menu_ui::screen_card()).with_children(|card| {
                 card.spawn((
-                    Text::new(line),
+                    Text::new(fill(tr.tour_round, &[("n", &tournament.round.to_string())])),
                     TextFont {
-                        font_size: FontSize::Px(24.0),
+                        font_size: FontSize::Px(34.0),
                         ..default()
                     },
-                    TextColor(color),
+                    TextColor(palette::GOLD),
                 ));
-            }
+                for (line, color) in standings(&settings, &names, &tournament, mode, seats.0.max(2))
+                {
+                    card.spawn((
+                        Text::new(line),
+                        TextFont {
+                            font_size: FontSize::Px(24.0),
+                            ..default()
+                        },
+                        TextColor(color),
+                    ));
+                }
+            });
         });
 }
 

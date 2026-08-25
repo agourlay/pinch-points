@@ -106,6 +106,8 @@ pub(super) enum DevHook {
     Settings,
     Controls,
     Achievements,
+    /// `PINCH_LANGUAGE`: the language picker.
+    Language,
     /// `PINCH_STAGES=tide|beach`: the stage list for either puzzle list.
     StageSelect {
         beach: bool,
@@ -151,6 +153,7 @@ impl DevHook {
             ("PINCH_SETTINGS", DevHook::Settings),
             ("PINCH_CONTROLS", DevHook::Controls),
             ("PINCH_ACHIEVEMENTS", DevHook::Achievements),
+            ("PINCH_LANGUAGE", DevHook::Language),
             ("PINCH_LIBRARY", DevHook::Replays),
         ] {
             if set(name) {
@@ -226,6 +229,7 @@ pub(super) fn kickoff(
         DevHook::Settings => next_screen.set(Screen::Settings),
         DevHook::Controls => next_screen.set(Screen::Controls),
         DevHook::Achievements => next_screen.set(Screen::Achievements),
+        DevHook::Language => next_screen.set(Screen::Language),
         DevHook::Replays => next_screen.set(Screen::Replays),
         DevHook::StageSelect { beach } => {
             if beach {
@@ -407,6 +411,53 @@ pub(super) fn debug_screenshot(
     }
 }
 
+/// Dev hook: mid-round moments for screenshots. `PINCH_PAUSE=1` raises the
+/// pause card a couple of seconds into a versus round; `PINCH_OVER=1` calls
+/// the round over so the results card can be shot; `PINCH_INTERLUDE=1`
+/// leaves for the series interlude with a mid-series tally on the card.
+/// All inert unless set, like every hook here.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn debug_moments(
+    sim: Res<Sim>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut tournament: ResMut<crate::app::tournament::Tournament>,
+    screen: Res<State<Screen>>,
+    mut next_screen: ResMut<NextState<Screen>>,
+    mut next_vphase: ResMut<NextState<crate::app::VersusPhase>>,
+    mut pause_hook: Local<OneShot>,
+    mut over_hook: Local<OneShot>,
+    mut interlude_hook: Local<OneShot>,
+) {
+    if *screen.get() != Screen::Versus {
+        return;
+    }
+    if pause_hook
+        .due_after("PINCH_PAUSE", sim.0.ticks(), 2)
+        .is_some()
+    {
+        // A synthetic Escape, so the real pause path opens the card: the
+        // input plugin clears the press at the next frame's start.
+        keys.press(KeyCode::Escape);
+    }
+    if over_hook
+        .due_after("PINCH_OVER", sim.0.ticks(), 2)
+        .is_some()
+    {
+        next_vphase.set(crate::app::VersusPhase::Over);
+    }
+    if interlude_hook
+        .due_after("PINCH_INTERLUDE", sim.0.ticks(), 2)
+        .is_some()
+    {
+        use crate::app::tournament::{SeriesLength, Tournament};
+        let mut wins = [0; crate::sim::MAX_PLAYERS];
+        wins[0] = 1;
+        wins[1] = 1;
+        *tournament = Tournament::taken_up(SeriesLength::BestOfFive, 3, wins);
+        next_screen.set(Screen::Interlude);
+    }
+}
+
 /// Dev hook: with `PINCH_AUTOPLAY=1`, the puzzle setup phase immediately
 /// applies the level's authored solution and starts the run.
 pub(super) fn debug_autoplay(
@@ -492,6 +543,7 @@ mod tests {
             ("PINCH_SETTINGS", DevHook::Settings),
             ("PINCH_CONTROLS", DevHook::Controls),
             ("PINCH_ACHIEVEMENTS", DevHook::Achievements),
+            ("PINCH_LANGUAGE", DevHook::Language),
             ("PINCH_LIBRARY", DevHook::Replays),
             ("PINCH_STAGES", DevHook::StageSelect { beach: false }),
             ("PINCH_AUTOPLAY", DevHook::Autoplay { level: 0 }),

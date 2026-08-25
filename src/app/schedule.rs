@@ -586,7 +586,10 @@ fn add_play_systems(app: &mut App) {
             play_input::versus_input.run_if(versus_running),
             suspend::copy_round_code.run_if(versus_running),
             dev::debug_net_probe.run_if(versus_running),
-            dev::debug_banner.run_if(versus_running.or_else(puzzle_running)),
+            (
+                dev::debug_banner.run_if(versus_running.or_else(puzzle_running)),
+                dev::debug_moments,
+            ),
             // Paired into one slot: the list is at Bevy's twenty-element
             // limit. Both only do anything with their variable set.
             (dev::debug_tide, dev::debug_lure).run_if(versus_running.or_else(puzzle_running)),

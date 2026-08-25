@@ -98,7 +98,25 @@ pub struct AchievementsUi;
 ///
 /// A disc rather than the star sprite, whose arms come out thinner than a
 /// pixel at the 22 the list row allows, and it needs no asset at all.
-fn unlock_mark(done: bool) -> (Node, BackgroundColor, BorderColor) {
+/// The medal's ink, by what the trophy is for: banking gold, versus red,
+/// puzzles green, the daily sky-blue, the editor violet, the gulls white.
+/// A wall of thirty-two gold rows read as one blur; the inks group them
+/// the way the difficulty inks group the stage grid.
+fn category_ink(id: &str) -> Color {
+    match id {
+        _ if id.starts_with("win_") || id.starts_with("series_") => palette::INK_RAID,
+        "dry_castle" | "online_1" | "rounds_100" => palette::INK_RAID,
+        _ if id.starts_with("puzzle_") => palette::INK_SURGE,
+        "campaign_done" | "beach_done" => palette::INK_SURGE,
+        _ if id.starts_with("daily_") => palette::INK_TIDE,
+        _ if id.starts_with("built_") => palette::INK_LURE,
+        "fed_25" => palette::PARCHMENT,
+        _ => palette::GOLD,
+    }
+}
+
+fn unlock_mark(done: bool, id: &str) -> (Node, BackgroundColor, BorderColor) {
+    let ink = category_ink(id);
     (
         Node {
             width: Val::Px(14.0),
@@ -108,12 +126,8 @@ fn unlock_mark(done: bool) -> (Node, BackgroundColor, BorderColor) {
             border_radius: BorderRadius::all(Val::Px(7.0)),
             ..default()
         },
-        BackgroundColor(if done { palette::GOLD } else { Color::NONE }),
-        BorderColor::all(if done {
-            palette::GOLD
-        } else {
-            Color::srgba(1.0, 1.0, 1.0, 0.22)
-        }),
+        BackgroundColor(if done { ink } else { Color::NONE }),
+        BorderColor::all(if done { ink } else { ink.with_alpha(0.35) }),
     )
 }
 
@@ -135,10 +149,12 @@ fn spawn_trophy(
     now: u32,
     goal: u32,
 ) {
+    // A locked trophy is a rumour, not a deed: it drops back further than
+    // the earned rows so the shelf reads at a glance.
     let ink = if done {
         palette::SELECTED_ROW
     } else {
-        palette::IDLE_ROW
+        palette::IDLE_ROW.with_alpha(0.55)
     };
     column
         .spawn((
@@ -166,7 +182,10 @@ fn spawn_trophy(
                 ..default()
             })
             .with_children(|line| {
-                line.spawn(unlock_mark(done));
+                line.spawn(unlock_mark(
+                    done,
+                    crate::app::achievements::ACHIEVEMENTS[index].id,
+                ));
                 // A fixed name column, so every description starts at the
                 // same x and the eye can run down the list of what to do.
                 // Wide enough for the longest name in any of the three
