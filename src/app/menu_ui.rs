@@ -388,9 +388,11 @@ pub fn dress_cards(
         if px_of(node.padding.bottom).unwrap_or(0.0) < FOAM_DEPTH {
             node.padding.bottom = dry;
         }
-        commands.entity(card).with_children(|panel| {
-            tide_line(panel, &art.foam);
-        });
+        // Prepended, not appended: UI siblings stack in the order they are
+        // added, and the foam belongs behind the rows, not over the last
+        // one, which is the promise tide_line's doc makes.
+        let tide = commands.spawn(tide_bundle(&art.foam)).id();
+        commands.entity(card).insert_children(0, &[tide]);
     }
 }
 
@@ -413,7 +415,12 @@ pub fn tide_line(
     panel: &mut bevy::ecs::relationship::RelatedSpawnerCommands<ChildOf>,
     foam: &Handle<Image>,
 ) {
-    panel.spawn((
+    panel.spawn(tide_bundle(foam));
+}
+
+/// The pieces of one tide line, for a spawner that is not a child scope.
+fn tide_bundle(foam: &Handle<Image>) -> (ImageNode, Node) {
+    (
         ImageNode {
             image: foam.clone(),
             color: palette::FOAM_LINE,
@@ -436,7 +443,7 @@ pub fn tide_line(
             border_radius: BorderRadius::bottom(Val::Px(10.0)),
             ..default()
         },
-    ));
+    )
 }
 
 /// The heading of a card: an optional sprite, its name, and a rule

@@ -304,6 +304,9 @@ pub fn enter_settings(
             });
             // Read-only controller mapping reference, under the card.
             for line in [tr.pad_help1, tr.pad_help2] {
+                // On its own pill: below the card these lines sit on open
+                // sand, and on a small window partly under the card, where
+                // bare dim text disappears.
                 wrap.spawn((
                     Text::new(line),
                     TextFont {
@@ -311,7 +314,13 @@ pub fn enter_settings(
                         ..default()
                     },
                     TextLayout::no_wrap(),
-                    TextColor(palette::PARCHMENT.with_alpha(0.40)),
+                    TextColor(palette::PARCHMENT.with_alpha(0.70)),
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(9.0)),
+                        ..default()
+                    },
+                    BackgroundColor(palette::PILL_FILL.with_alpha(0.6)),
                 ));
             }
         });
