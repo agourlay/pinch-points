@@ -517,15 +517,6 @@ fn add_ui_systems(app: &mut App) {
             (language::language_input, language::update_language_ui)
                 .chain()
                 .run_if(in_state(Screen::Language)),
-            // The company a card keeps, on each of the screens that keeps
-            // some. One system for the three of them: what a crab does
-            // standing still does not depend on what it is standing
-            // beside.
-            company::animate_company.run_if(
-                in_state(Screen::Language)
-                    .or_else(in_state(Screen::StageSelect))
-                    .or_else(in_state(Screen::MatchSetup)),
-            ),
             replays::playback_speed_input.run_if(in_state(Screen::Versus)),
             (
                 gamepad::pad_claim_seats,

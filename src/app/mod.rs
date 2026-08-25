@@ -14,7 +14,6 @@ mod boot;
 pub mod campaign;
 mod clock;
 mod codes;
-mod company;
 /// Whether `screen` stands on the shared beach postcard. One list, asked
 /// by the run condition and by the backdrop tender, so a new screen
 /// decides once where it stands.

@@ -18,7 +18,6 @@
 //! what is being started here in the one language every player reads.
 
 use crate::app::art::Art;
-use crate::app::company::{self, Perch};
 use crate::app::cycle::Cycle;
 use crate::app::i18n::{ALL_LANGS, Lang};
 use crate::app::settings::GameSettings;
@@ -47,27 +46,15 @@ const ROW_FONT: f32 = 22.0;
 /// at ten characters - so every name starts at the same x.
 const NAME_W: f32 = 190.0;
 
-/// The card's own width: a flag, the gap after it, the widest name, and
-/// the card's padding on both sides. Only the test reads it, to work out
-/// where the flock may hang.
-#[cfg(test)]
-const CARD_W: f32 = FLAG_W + 12.0 + NAME_W + 2.0 * 22.0;
-
 pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: Res<Art>) {
     commands
         .spawn((LanguageUi, menu_ui::between_bars()))
         .with_children(|wrap| {
-            // The flock first, so it sits behind the card.
-            company::flock(wrap, &art, &FLOCK);
-            // The card between the two big ones, so the row centres on the
-            // list rather than on the crab.
             wrap.spawn(Node {
                 align_items: AlignItems::Center,
-                column_gap: Val::Px(company::CRITTER_GAP),
                 ..default()
             })
             .with_children(|line| {
-                company::shoulder(line, &art, crate::app::company::Company::Crab, 0.0);
                 line.spawn(menu_ui::screen_card()).with_children(|card| {
                     for (index, lang) in ALL_LANGS.iter().enumerate() {
                         card.spawn((LanguageRow(index), menu_ui::card_row()))
@@ -98,7 +85,6 @@ pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: 
                             });
                     }
                 });
-                company::shoulder(line, &art, crate::app::company::Company::Gull, 1.7);
             });
             wrap.spawn((
                 LanguageNote,
@@ -118,22 +104,6 @@ pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: 
             ));
         });
 }
-
-/// The flock behind the card: gulls in the air above it, crabs on the sand
-/// below, each as a fraction of the frame with the size it is drawn at.
-///
-/// Placed by hand rather than scattered at random. This screen is looked
-/// at once, on one run, and the one look it gets should be the composed
-/// one: nothing overlapping the card, nothing bunched in a corner.
-const FLOCK: [Perch; 7] = [
-    crate::app::company::Perch::gull(0.09, 0.13, 46.0),
-    crate::app::company::Perch::gull(0.25, 0.04, 30.0),
-    crate::app::company::Perch::gull(0.88, 0.09, 40.0),
-    crate::app::company::Perch::gull(0.70, 0.02, 26.0),
-    crate::app::company::Perch::crab(0.12, 0.80, 42.0),
-    crate::app::company::Perch::crab(0.35, 0.92, 28.0),
-    crate::app::company::Perch::crab(0.86, 0.84, 48.0),
-];
 
 /// The screen a boot opens on: the picker until a settings file exists to
 /// say the question has already been answered.
@@ -301,15 +271,6 @@ mod tests {
         assert_eq!(opening_screen(false), Screen::Language);
         assert_eq!(opening_screen(true), Screen::default());
         assert_ne!(Screen::default(), Screen::Language);
-    }
-
-    /// The flock is hung on the frame by hand, and a hand can hang one
-    /// behind the card - where the card's near-solid fill shows it through
-    /// as a smudge under a language name. Gulls fly and crabs do not, so
-    /// they belong on their own halves of the sky and the sand.
-    #[test]
-    fn the_flock_leaves_the_card_alone() {
-        company::flock_is_hung_clear(&FLOCK, company::keep_clear(CARD_W), (0.15, 0.80));
     }
 
     /// The picker opens on whatever `Lang::default()` is, and that has to

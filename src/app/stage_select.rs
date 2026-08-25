@@ -252,30 +252,11 @@ pub fn caption(
     )
 }
 
-/// The company this card keeps. The grid is the widest card in the game
-/// at a full ten columns of full-size tiles, so the flock hangs right out
-/// at the margins: gulls in the sky above, crabs on the sand below.
-const FLOCK: [crate::app::company::Perch; 4] = [
-    crate::app::company::Perch::gull(0.04, 0.07, 62.0),
-    crate::app::company::Perch::gull(0.87, 0.09, 56.0),
-    crate::app::company::Perch::crab(0.03, 0.74, 66.0),
-    crate::app::company::Perch::crab(0.88, 0.79, 58.0),
-];
-
-/// The widest the grid can be: ten columns of the biggest tile the art was
-/// drawn for, the gaps between them, and the card's padding. A short
-/// campaign gets exactly this; a long one shrinks its tiles and gets less.
-/// The bound the flock is hung against, since it has to clear the card on
-/// every machine rather than on this one's level count.
-#[cfg(test)]
-const WIDEST_CARD: f32 = COLS as f32 * 52.0 + (COLS - 1) as f32 * GAP + 2.0 * 28.0;
-
 pub fn enter_stage_select(
     mut commands: Commands,
     campaign: Res<Campaign>,
     progress: Res<Progress>,
     settings: Res<GameSettings>,
-    art: Res<crate::app::art::Art>,
     mut list: ResMut<StageList>,
 ) {
     // Land the cursor where the player left off, not back at stage one.
@@ -301,17 +282,11 @@ pub fn enter_stage_select(
             },
         ))
         .with_children(|wrap| {
-            // The flock first, so it sits behind the card rather than on it.
-            crate::app::company::flock(wrap, &art, &FLOCK);
-            // The grid between the crab and the gull, so it stays centred
-            // on its own tiles rather than on the crab.
             wrap.spawn(Node {
                 align_items: AlignItems::Center,
-                column_gap: Val::Px(crate::app::company::CRITTER_GAP),
                 ..default()
             })
             .with_children(|line| {
-                crate::app::company::shoulder(line, &art, crate::app::company::Company::Crab, 0.0);
                 line.spawn((
                     Node {
                         flex_direction: FlexDirection::Column,
@@ -451,7 +426,6 @@ pub fn enter_stage_select(
                             }
                         });
                 });
-                crate::app::company::shoulder(line, &art, crate::app::company::Company::Gull, 1.7);
             });
             // Both lines sit under the card, not in it. They change with
             // every cursor move, and inside the card they would size it:
@@ -909,17 +883,6 @@ mod tests {
         assert_eq!(TileState::of(&progress, &campaign, 2), TileState::Locked);
         let cleared = caption(&EN, i18n::Lang::En, &campaign, state, 0);
         assert!(cleared.ends_with(EN.stage_cleared), "{cleared}");
-    }
-
-    /// The flock is hung on the frame by hand, and a hand can hang one
-    /// over the grid, where the card's near-solid fill shows it through as
-    /// a smudge under a stage number. Checked against the *widest* the
-    /// grid can be, not this machine's level count: a player with fewer
-    /// levels gets bigger tiles and a wider card.
-    #[test]
-    fn the_flock_leaves_the_grid_alone() {
-        use crate::app::company;
-        company::flock_is_hung_clear(&FLOCK, company::keep_clear(WIDEST_CARD), (0.0, 0.94));
     }
 
     /// The key under the grid must explain every edge the grid can draw.
