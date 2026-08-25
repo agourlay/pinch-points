@@ -180,17 +180,11 @@ pub fn update_lobby_view(
     mut table: Query<&mut Node, (With<TableView>, Without<BrowseView>)>,
 ) {
     let aboard = state.standing().at_a_beach();
-    let show = |node: &mut Node, on: bool| {
-        let want = if on { Display::Flex } else { Display::None };
-        if node.display != want {
-            node.display = want;
-        }
-    };
     for mut node in &mut browse {
-        show(&mut node, !aboard);
+        crate::app::menu_ui::set_shown(&mut node, !aboard);
     }
     for mut node in &mut table {
-        show(&mut node, aboard);
+        crate::app::menu_ui::set_shown(&mut node, aboard);
     }
 }
 
@@ -468,9 +462,7 @@ pub fn update_lobby_list(
     for (row, mut fill) in &mut rows {
         let picked = host_at(row.0).is_some() && Some(state.scroll + row.0) == at;
         let want = if picked { ROW_PICKED } else { Color::NONE };
-        if fill.0 != want {
-            fill.0 = want;
-        }
+        crate::app::menu_ui::set_bg(&mut fill, want);
     }
     for (cell, mut text, mut color) in &mut cells {
         let LobbyCell(row, col) = *cell;
@@ -544,9 +536,7 @@ pub fn update_lobby_terms(
             true => ROW_PICKED,
             false => Color::NONE,
         };
-        if fill.0 != want {
-            fill.0 = want;
-        }
+        crate::app::menu_ui::set_bg(&mut fill, want);
     }
     for (row, mut text, mut color) in &mut names {
         let line = Dial::ALL
@@ -604,9 +594,7 @@ pub fn update_lobby_chat(
     let box_lit = state.typing.is_some() || state.can_chat();
     for mut fill in &mut entry {
         let want = if box_lit { ROW_PICKED } else { Color::NONE };
-        if fill.0 != want {
-            fill.0 = want;
-        }
+        crate::app::menu_ui::set_bg(&mut fill, want);
     }
     for (row, mut text, mut color) in &mut rows {
         let prompt_row = row.0 == CHAT_LINES;

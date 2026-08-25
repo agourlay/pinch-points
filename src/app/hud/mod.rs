@@ -450,8 +450,10 @@ pub fn field_guide_visibility(
     screen: Res<State<Screen>>,
     mut guides: Query<&mut Node, With<FieldGuide>>,
 ) {
+    // An exhaustive match rather than a `matches!`, so a new screen has to
+    // say whether crabs are on it.
     let wanted = match screen.get() {
-        Screen::Versus | Screen::Puzzle => Display::Flex,
+        Screen::Versus | Screen::Puzzle => true,
         Screen::Menu
         | Screen::Editor
         | Screen::Lobby
@@ -463,12 +465,10 @@ pub fn field_guide_visibility(
         | Screen::Replays
         | Screen::Interlude
         | Screen::Language
-        | Screen::NewVersion => Display::None,
+        | Screen::NewVersion => false,
     };
     for mut node in &mut guides {
-        if node.display != wanted {
-            node.display = wanted;
-        }
+        menu_ui::set_shown(&mut node, wanted);
     }
 }
 

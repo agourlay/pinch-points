@@ -309,7 +309,7 @@ pub fn holds(map: MapChoice, seats: u8) -> bool {
 /// small beach by hand, drops the seats it cannot hold, because the hand
 /// on it asked for that beach. A series asked for nobody to leave the
 /// table, so it keeps the seats and skips the beach. Before this the
-/// series stepped with a plain `cycled(true)`, and a table of five went
+/// series stepped with a plain `cycled(Turn::Right)`, and a table of five went
 /// from the open ocean onto `Custom` with nothing on the shelf, then onto
 /// the classic arena with two of them castle-less.
 pub fn next_map(config: &mut MatchConfig, beaches: &CustomBeaches) {

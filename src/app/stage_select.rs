@@ -642,9 +642,7 @@ pub fn update_stage_tiles(
         } else {
             state.colors().0
         };
-        if fill.0 != ground {
-            fill.0 = ground;
-        }
+        menu_ui::set_bg(&mut fill, ground);
     }
     // The cursor lifts its number out of the row, locked or not: a greyed
     // tile you are standing on still has to be readable. Ink dark, because

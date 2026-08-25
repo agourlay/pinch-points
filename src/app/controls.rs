@@ -252,9 +252,7 @@ pub fn update_controls_ui(
     }
     for (row, mut fill) in &mut rows {
         let ground = menu_ui::band(row.0 == menu.selected);
-        if fill.0 != ground {
-            fill.0 = ground;
-        }
+        menu_ui::set_bg(&mut fill, ground);
     }
     for mut text in &mut feedback {
         menu_ui::set_text(&mut text, &menu.feedback);

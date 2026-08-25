@@ -254,10 +254,7 @@ pub fn update_library(
     let empty = library.kept.is_empty();
     for (mut note, mut node) in &mut empty_note {
         menu_ui::set_text(&mut note, if empty { tr.replays_empty } else { "" });
-        let want = if empty { Display::Flex } else { Display::None };
-        if node.display != want {
-            node.display = want;
-        }
+        menu_ui::set_shown(&mut node, empty);
     }
     // Row `r` of the card shows shelf entry `scroll + r`.
     let at = |row: usize| library.scroll + row;
@@ -283,9 +280,7 @@ pub fn update_library(
     }
     for (row, mut fill) in &mut rows {
         let ground = menu_ui::band(at(row.0) == library.selected && !library.kept.is_empty());
-        if fill.0 != ground {
-            fill.0 = ground;
-        }
+        menu_ui::set_bg(&mut fill, ground);
     }
 }
 

@@ -458,17 +458,8 @@ pub fn update_match_ui(
         // A row that does not apply leaves no trace: it folds out of the
         // column entirely. The card is a fixed height, so the ones that
         // remain do not move when it does.
-        let display = if live[row.0] {
-            Display::Flex
-        } else {
-            Display::None
-        };
-        if node.display != display {
-            node.display = display;
-        }
+        menu_ui::set_shown(&mut node, live[row.0]);
         let ground = menu_ui::band(row.0 == menu.selected && live[row.0]);
-        if fill.0 != ground {
-            fill.0 = ground;
-        }
+        menu_ui::set_bg(&mut fill, ground);
     }
 }

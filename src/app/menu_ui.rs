@@ -340,6 +340,16 @@ pub fn set_bg(bg: &mut Mut<BackgroundColor>, target: Color) {
     }
 }
 
+/// Show or hide a node, with the same only-write-on-change guard: a `Node`
+/// written blindly re-runs layout for the whole tree it sits in. Shown is
+/// `Display::Flex`, which is what every hidden-and-shown node here uses.
+pub fn set_shown(node: &mut Mut<Node>, shown: bool) {
+    let want = if shown { Display::Flex } else { Display::None };
+    if node.display != want {
+        node.display = want;
+    }
+}
+
 /// Write one row's text and colour with the shared selection style,
 /// guarding both writes so unchanged rows never re-shape.
 pub fn paint_row(selected: bool, line: &str, text: &mut Mut<Text>, color: &mut Mut<TextColor>) {

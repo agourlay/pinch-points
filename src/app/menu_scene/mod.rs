@@ -320,9 +320,7 @@ pub fn update_menu_rows(
         } else {
             Color::NONE
         };
-        if fill.0 != ground {
-            fill.0 = ground;
-        }
+        menu_ui::set_bg(&mut fill, ground);
     }
 }
 
