@@ -46,9 +46,6 @@ pub const INK_RAID: Color = Color::srgb(0.96, 0.45, 0.38);
 
 // --- shared chrome ----------------------------------------------------------
 
-/// The dark pill behind the prompt line, the menu's version tag and the
-/// in-game field guide strip.
-pub const PILL_FILL: Color = Color::srgba(0.05, 0.07, 0.11, 0.72);
 /// The HUD header bar, on every screen but the menu (where it goes clear).
 pub const HEADER_FILL: Color = Color::srgb(0.08, 0.09, 0.12);
 /// The achievement toast's backing.
@@ -113,9 +110,6 @@ pub const PICKED_WASH: Color = Color::srgba(0.96, 0.83, 0.35, 0.16);
 /// The lobby heading sprites, tinted the gold the headings and card edges
 /// already read in.
 pub const GOLD_ICON: Color = Color::srgba(0.96, 0.83, 0.35, 0.85);
-/// The foam watermark at the foot of every lobby card: pale rather than
-/// gold, it is water and the card is already edged in gold.
-pub const FOAM_LINE: Color = Color::srgba(0.62, 0.82, 0.92, 0.16);
 
 // --- the sidebars -----------------------------------------------------------
 
