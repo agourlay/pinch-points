@@ -32,9 +32,23 @@ pub fn copy_feedback(
     payload: &[u8],
     ok: &str,
 ) -> String {
+    copy_counted(clipboard, tr, kind, payload, ok).0
+}
+
+/// [`copy_feedback`], and whether the clipboard actually took it, for a
+/// caller that wants to count the gesture and not merely report it. A
+/// clipboard that refused is not a level shared, whatever the player
+/// pressed.
+pub fn copy_counted(
+    clipboard: &mut Clipboard,
+    tr: &crate::app::i18n::Tr,
+    kind: Kind,
+    payload: &[u8],
+    ok: &str,
+) -> (String, bool) {
     match copy(clipboard, kind, payload) {
-        Ok(code) => fill(ok, &[("n", &code.len().to_string())]),
-        Err(e) => fill(tr.code_copy_failed, &[("e", &e)]),
+        Ok(code) => (fill(ok, &[("n", &code.len().to_string())]), true),
+        Err(e) => (fill(tr.code_copy_failed, &[("e", &e)]), false),
     }
 }
 

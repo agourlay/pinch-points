@@ -361,6 +361,8 @@ pub fn editor_commands(
     mut clipboard: ResMut<Clipboard>,
     mut state: ResMut<EditorState>,
     mut saved: MessageWriter<crate::app::LevelSaved>,
+    mut shared: MessageWriter<crate::app::CodeShared>,
+    mut taken: MessageWriter<crate::app::CodeTaken>,
     mut next_screen: ResMut<NextState<Screen>>,
     sprites: BoardSprites,
     mut cursors: Query<(&mut Cursor, &mut Transform)>,
@@ -375,17 +377,22 @@ pub fn editor_commands(
     // "save it and send them the file" was never really sharing.
     if keys.just_pressed(KeyCode::F3) {
         let level = level_here(&state, &sim.0, &state.name);
-        state.feedback = crate::app::codes::copy_feedback(
+        let (feedback, took) = crate::app::codes::copy_counted(
             &mut clipboard,
             tr,
             crate::share::Kind::Level,
             level.to_text().as_bytes(),
             tr.code_copied,
         );
+        state.feedback = feedback;
+        if took {
+            shared.write(crate::app::CodeShared);
+        }
     }
     if keys.just_pressed(KeyCode::F4) {
         match level_from(crate::app::codes::paste(&mut clipboard), tr) {
             Ok(level) => {
+                taken.write(crate::app::CodeTaken);
                 state.posts = level.posts;
                 // A pasted level brings its own kind: opening somebody's
                 // beach and saving it back as a stage is not what either of
@@ -637,6 +644,8 @@ mod tests {
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.init_state::<Screen>();
         app.add_message::<crate::app::LevelSaved>();
+        app.add_message::<crate::app::CodeShared>();
+        app.add_message::<crate::app::CodeTaken>();
         app.insert_resource(Sim(sand()));
         app.init_resource::<EditorState>();
         app.init_resource::<GameSettings>();
@@ -671,6 +680,8 @@ mod tests {
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.init_state::<Screen>();
         app.add_message::<crate::app::LevelSaved>();
+        app.add_message::<crate::app::CodeShared>();
+        app.add_message::<crate::app::CodeTaken>();
         app.insert_resource(Sim(sand()));
         app.init_resource::<EditorState>();
         app.init_resource::<GameSettings>();
@@ -707,6 +718,8 @@ mod tests {
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.init_state::<Screen>();
         app.add_message::<crate::app::LevelSaved>();
+        app.add_message::<crate::app::CodeShared>();
+        app.add_message::<crate::app::CodeTaken>();
         app.insert_resource(Sim(sand()));
         app.init_resource::<EditorState>();
         app.init_resource::<GameSettings>();

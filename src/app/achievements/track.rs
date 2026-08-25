@@ -3,7 +3,7 @@
 
 use super::save::save;
 use super::ui::spawn_toast;
-use super::{ACHIEVEMENTS, RoundScratch, Stats, Unlocked};
+use super::{ACHIEVEMENTS, PuzzleAttempt, RoundScratch, Stats, Unlocked};
 use crate::app::Bots;
 use crate::app::audio::{Muted, Sounds, play_chime, sfx_gain};
 use crate::app::net::Online;
@@ -110,6 +110,9 @@ pub(super) struct RoundOutcome {
     pub online: bool,
     /// This round also decided a series, and the local seat took it.
     pub series: bool,
+    /// Which chair the local player sat in, for the trophy that wants the
+    /// whole table rather than four wins from the same seat.
+    pub seat: u8,
 }
 
 /// Tally a finished round for the local seat and clear the round scratch.
@@ -128,6 +131,10 @@ fn credit_round(stats: &mut Stats, scratch: &mut RoundScratch, outcome: RoundOut
         if outcome.online {
             stats.online_wins += 1;
         }
+        // One bit per chair. `checked_shl` rather than a shift: the seat
+        // comes from a session the wire agreed on, and a byte only has
+        // eight bits to give.
+        stats.seats_won |= 1u8.checked_shl(u32::from(outcome.seat)).unwrap_or(0);
         if outcome.series {
             stats.series_wins += 1;
         }
@@ -156,6 +163,16 @@ pub fn record_round(
         return;
     };
     stats.rounds += 1;
+    // The busiest table this seat has ever sat at. Seats, not peers: an AI
+    // seat still fills a chair and still has a castle to raid.
+    stats.crowd = stats.crowd.max(u32::from(seats.0));
+    if online
+        .0
+        .as_ref()
+        .is_some_and(crate::app::net::OnlineSession::is_host)
+    {
+        stats.hosted += 1;
+    }
     if daily.active {
         let today = crate::app::Daily::today();
         if stats.daily_day != today {
@@ -166,6 +183,10 @@ pub fn record_round(
             stats.daily_days += 1;
         }
         stats.daily_best = stats.daily_best.max(sim.0.scores()[seat as usize]);
+        // And the all-time mark, which is what a trophy can hang on:
+        // `daily_best` starts over at midnight and would take the trophy's
+        // progress bar back down with it.
+        stats.daily_record = stats.daily_record.max(stats.daily_best);
     }
     let mode = crate::app::teams::in_play(&settings, &online, seats.0);
     let winners = crate::app::side_panels::leading_seats(sim.0.scores(), seats.0, mode);
@@ -183,6 +204,7 @@ pub fn record_round(
                 && tournament
                     .winner(mode, seats.0)
                     .is_some_and(|champion| champion.claims(seat, mode)),
+            seat,
         },
     );
     unlock_new(
@@ -249,10 +271,24 @@ pub fn record_puzzle(
     muted: Res<Muted>,
     progress: Res<crate::app::progress::Progress>,
     campaign: Res<crate::app::Campaign>,
+    sim: Res<crate::app::Sim>,
+    attempt: Res<PuzzleAttempt>,
     mut stats: ResMut<Stats>,
     mut unlocked: ResMut<Unlocked>,
 ) {
     stats.puzzles += 1;
+    // How it was cleared, not merely that it was. Read before the campaign
+    // sweep below, which is about the whole list rather than this stage.
+    let level = campaign.current();
+    if sim.0.signpost_count(0) < usize::from(level.posts) {
+        stats.under_par += 1;
+    }
+    if level.posts >= DEEP_POSTS {
+        stats.deep_solves += 1;
+    }
+    if attempt.retries == 0 {
+        stats.clean_solves += 1;
+    }
     let builtins = &campaign.levels[..campaign.builtins.min(campaign.levels.len())];
     if !builtins.is_empty()
         && builtins
@@ -264,6 +300,72 @@ pub fn record_puzzle(
             crate::app::CampaignKind::BeachDay => stats.beach_done = 1,
         }
     }
+    unlock_new(
+        &mut commands,
+        &stats,
+        &mut unlocked,
+        &settings,
+        &muted,
+        &sounds,
+    );
+    save(&stats, &unlocked);
+}
+
+/// The signpost grant that marks the deep end of the campaign. The late
+/// stages hand out five; nothing earlier does.
+const DEEP_POSTS: u8 = 5;
+
+/// Count the reloads of the stage in play, so the first-try trophy can tell
+/// a clean solve from a solve on the ninth go.
+///
+/// The first load of a stage is not a retry, which is what the name check
+/// is for: entering a stage sends the same message that restarting it does,
+/// and only the stage it names tells them apart.
+pub fn track_puzzle_attempt(
+    mut loads: MessageReader<crate::app::LoadLevel>,
+    campaign: Res<crate::app::Campaign>,
+    mut attempt: ResMut<PuzzleAttempt>,
+) {
+    let mut loads = loads.read().count() as u32;
+    if loads == 0 {
+        return;
+    }
+    let name = &campaign.current().name;
+    if attempt.stage != *name {
+        attempt.stage = name.clone();
+        attempt.retries = 0;
+        loads -= 1;
+    }
+    attempt.retries += loads;
+}
+
+/// Entering the puzzle screen starts a fresh attempt: coming back to a
+/// stage later is a new go at it, not a continuation of the last one.
+pub fn reset_puzzle_attempt(mut attempt: ResMut<PuzzleAttempt>) {
+    *attempt = PuzzleAttempt::default();
+}
+
+/// A level went out as a share code, or came in as one. Its own system for
+/// the reason [`record_level_built`] is one: the editor writes a message
+/// and knows nothing about what reads it.
+#[allow(clippy::too_many_arguments)]
+pub fn record_codes(
+    mut commands: Commands,
+    mut shared: MessageReader<crate::app::CodeShared>,
+    mut taken: MessageReader<crate::app::CodeTaken>,
+    settings: Res<GameSettings>,
+    sounds: Option<Res<Sounds>>,
+    muted: Res<Muted>,
+    mut stats: ResMut<Stats>,
+    mut unlocked: ResMut<Unlocked>,
+) {
+    let out = shared.read().count() as u32;
+    let inn = taken.read().count() as u32;
+    if out == 0 && inn == 0 {
+        return;
+    }
+    stats.codes_shared += out;
+    stats.codes_taken += inn;
     unlock_new(
         &mut commands,
         &stats,
@@ -300,6 +402,7 @@ fn unlock_new(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::RunSystemOnce;
 
     fn win() -> RoundOutcome {
         RoundOutcome {
@@ -350,6 +453,85 @@ mod tests {
         assert_eq!(stats.best_round, 51);
     }
 
+    /// Entering a stage sends the same message that restarting it does, so
+    /// the first-try trophy hangs entirely on telling them apart. Backwards
+    /// either way it is worthless: it would go to everybody, or to nobody.
+    #[test]
+    fn the_first_load_of_a_stage_is_not_a_retry() {
+        use crate::app::{Campaign, CampaignKind, LoadLevel};
+        let mut levels = crate::sim::campaign_levels();
+        levels.truncate(2);
+        let builtins = levels.len();
+        let mut app = App::new();
+        app.add_message::<LoadLevel>();
+        app.init_resource::<PuzzleAttempt>();
+        app.insert_resource(Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        });
+        app.add_systems(Update, track_puzzle_attempt);
+        let load = |app: &mut App| {
+            app.world_mut()
+                .write_message(LoadLevel { keep_posts: false });
+            app.update();
+        };
+        let retries = |app: &App| app.world().resource::<PuzzleAttempt>().retries;
+
+        load(&mut app);
+        assert_eq!(retries(&app), 0, "arriving at a stage is not a retry");
+        load(&mut app);
+        load(&mut app);
+        assert_eq!(retries(&app), 2, "two restarts");
+
+        // The next stage is a fresh attempt, not a continuation.
+        app.world_mut().resource_mut::<Campaign>().index = 1;
+        load(&mut app);
+        assert_eq!(retries(&app), 0);
+        load(&mut app);
+        assert_eq!(retries(&app), 1);
+
+        // And coming back to a stage already played starts over, which is
+        // what entering the screen clears the name for.
+        let _ = app.world_mut().run_system_once(reset_puzzle_attempt);
+        app.world_mut().resource_mut::<Campaign>().index = 0;
+        load(&mut app);
+        assert_eq!(retries(&app), 0, "a second visit is a fresh attempt");
+    }
+
+    /// The whole-table trophy wants four different chairs, so four wins
+    /// from seat 0 light one bit and losing a seat lights none.
+    #[test]
+    fn the_seat_bitmask_counts_chairs_not_wins() {
+        let mut stats = Stats::default();
+        for _ in 0..4 {
+            credit_round(&mut stats, &mut RoundScratch::default(), win());
+        }
+        assert_eq!(stats.wins, 4);
+        assert_eq!(stats.seats_won, 0b0001, "four wins, one chair");
+
+        for seat in 1..4 {
+            credit_round(
+                &mut stats,
+                &mut RoundScratch::default(),
+                RoundOutcome { seat, ..win() },
+            );
+        }
+        assert_eq!(stats.seats_won.count_ones(), 4, "the whole table");
+
+        // A loss lights nothing, whatever chair it was in.
+        credit_round(
+            &mut stats,
+            &mut RoundScratch::default(),
+            RoundOutcome {
+                seat: 5,
+                ..RoundOutcome::default()
+            },
+        );
+        assert_eq!(stats.seats_won.count_ones(), 4);
+    }
+
     /// Online and series wins only count when the round was won, and only
     /// under the circumstances that earned them.
     #[test]
@@ -363,6 +545,7 @@ mod tests {
                 won: false,
                 online: true,
                 series: true,
+                seat: 0,
             },
         );
         assert_eq!((stats.online_wins, stats.series_wins), (0, 0));
@@ -374,6 +557,7 @@ mod tests {
                 won: true,
                 online: true,
                 series: true,
+                seat: 0,
             },
         );
         assert_eq!((stats.online_wins, stats.series_wins), (1, 1));

@@ -205,8 +205,8 @@ struct Tr {
     pub menu_daily_blurb: &'static str,
     pub menu_prompt: &'static str,
     pub title_achievements: &'static str,
-    pub ach_names: [&'static str; 32],
-    pub ach_descs: [&'static str; 32],
+    pub ach_names: [&'static str; 50],
+    pub ach_descs: [&'static str; 50],
     pub stats_footer: &'static str,
     pub daily_best: &'static str,
     /// Field-guide names for the six crab kinds, spawn-mix order.
@@ -304,9 +304,10 @@ struct Tr {
     /// The way off an online results card: the whole table returns to the
     /// lobby it was formed in, still connected.
     pub prompt_enter_lobby: &'static str,
-    /// For the screens that only read out: both keys leave, and Esc is the
-    /// one every other screen offers.
-    pub prompt_esc_menu: &'static str,
+    /// The trophy shelf: it scrolls now that it is longer than the screen,
+    /// so its prompt says so rather than only how to leave. The last reader
+    /// of the old read-out-only `prompt_esc_menu`, which went with it.
+    pub prompt_achievements: &'static str,
     /// The music toggle, added to every play screen's prompt.
     pub prompt_mute: &'static str,
     /// How a kept round with no winner reads in the library. The file name

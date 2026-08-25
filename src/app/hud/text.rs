@@ -456,7 +456,7 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
         Screen::Achievements => HudText::new(
             r.tr.title_achievements.to_string(),
             String::new(),
-            r.tr.prompt_esc_menu.to_string(),
+            r.tr.prompt_achievements.to_string(),
         ),
         Screen::Replays => HudText::new(
             r.tr.title_replays.to_string(),

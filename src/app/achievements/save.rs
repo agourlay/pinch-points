@@ -31,6 +31,15 @@ pub fn to_text(stats: &Stats, unlocked: &Unlocked) -> String {
         levels_built,
         campaign_done,
         beach_done,
+        hosted,
+        crowd,
+        seats_won,
+        under_par,
+        clean_solves,
+        deep_solves,
+        daily_record,
+        codes_shared,
+        codes_taken,
     } = stats;
     let mut ids: Vec<&str> = unlocked.0.iter().copied().collect();
     ids.sort_unstable();
@@ -39,7 +48,10 @@ pub fn to_text(stats: &Stats, unlocked: &Unlocked) -> String {
          raids_taken: {}\nrounds: {}\nwins: {}\npuzzles: {}\ndry_wins: {}\n\
          daily_day: {}\ndaily_best: {}\ngiants: {}\nevents_seen: {}\n\
          best_round: {}\nseries_wins: {}\nonline_wins: {}\ndaily_days: {}\n\
-         levels_built: {}\ncampaign_done: {}\nbeach_done: {}\nunlocked: {}\n",
+         levels_built: {}\ncampaign_done: {}\nbeach_done: {}\nhosted: {}\n\
+         crowd: {}\nseats_won: {}\nunder_par: {}\nclean_solves: {}\n\
+         deep_solves: {}\ndaily_record: {}\ncodes_shared: {}\n\
+         codes_taken: {}\nunlocked: {}\n",
         banked,
         golden,
         lures,
@@ -61,6 +73,15 @@ pub fn to_text(stats: &Stats, unlocked: &Unlocked) -> String {
         levels_built,
         campaign_done,
         beach_done,
+        hosted,
+        crowd,
+        seats_won,
+        under_par,
+        clean_solves,
+        deep_solves,
+        daily_record,
+        codes_shared,
+        codes_taken,
         ids.join(","),
     )
 }
@@ -99,6 +120,16 @@ pub fn parse(text: &str) -> (Stats, Unlocked) {
             "levels_built" => stats.levels_built = num,
             "campaign_done" => stats.campaign_done = num,
             "beach_done" => stats.beach_done = num,
+            "hosted" => stats.hosted = num,
+            "crowd" => stats.crowd = num,
+            // A bitmask, so anything past a byte is not ours.
+            "seats_won" => stats.seats_won = u8::try_from(num).unwrap_or(0),
+            "under_par" => stats.under_par = num,
+            "clean_solves" => stats.clean_solves = num,
+            "deep_solves" => stats.deep_solves = num,
+            "daily_record" => stats.daily_record = num,
+            "codes_shared" => stats.codes_shared = num,
+            "codes_taken" => stats.codes_taken = num,
             "unlocked" => {
                 for id in value.split(',') {
                     if let Some(known) = ACHIEVEMENTS.iter().find(|a| a.id == id.trim()) {
@@ -109,6 +140,11 @@ pub fn parse(text: &str) -> (Stats, Unlocked) {
             _ => {}
         }
     }
+    // Today's best is by definition part of the all-time record, and a file
+    // written before `daily_record` existed carries only the former. Without
+    // this a returning player's standing daily score reads as zero, and the
+    // backfill below would not see a trophy they had already earned.
+    stats.daily_record = stats.daily_record.max(stats.daily_best);
     // Backfill: anything the stats already satisfy is earned, whether or not
     // the file remembers it. A trophy added after a player passed its
     // threshold would otherwise sit on the shelf reading "25/25" and locked,

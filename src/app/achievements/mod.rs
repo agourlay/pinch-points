@@ -51,6 +51,31 @@ pub struct Stats {
     pub campaign_done: u32,
     /// 1 once every Beach Day stage has been cleared.
     pub beach_done: u32,
+    /// Rounds hosted on the local network, counted per round rather than
+    /// per match because that is where a round is tallied. The busy-LAN
+    /// case is the point of the game, and somebody has to be the one who
+    /// opens the beach.
+    pub hosted: u32,
+    /// The most seats a round the local player was in has ever filled.
+    pub crowd: u32,
+    /// One bit per seat the local player has won a round from, so the
+    /// trophy asks for the whole table rather than four wins from seat 0.
+    pub seats_won: u8,
+    /// Stages cleared with signposts still in hand.
+    pub under_par: u32,
+    /// Stages cleared on the first attempt, with no retry in between.
+    pub clean_solves: u32,
+    /// Stages granting five signposts that have been cleared: the deep end
+    /// of the campaign, which is a different thing from a count of solves.
+    pub deep_solves: u32,
+    /// Best daily score ever, as against `daily_best`, which is today's and
+    /// starts over at midnight. A trophy cannot hang on a number that
+    /// resets under it.
+    pub daily_record: u32,
+    /// Levels put on the clipboard as a share code.
+    pub codes_shared: u32,
+    /// Levels opened from somebody else's share code.
+    pub codes_taken: u32,
 }
 
 /// What this round has done to the local seat so far: read when the round
@@ -65,6 +90,20 @@ pub struct RoundScratch {
     pub banked: u32,
 }
 
+/// Which stage the player is on and how many times they have reloaded it.
+///
+/// The first-try trophy is the only thing that needs it, and it cannot be
+/// a stat: a retry is not a lifetime total but a fact about the attempt in
+/// progress, and it has to be forgotten on the way out of the screen.
+#[derive(Resource, Default)]
+pub struct PuzzleAttempt {
+    /// The stage the count belongs to. Cleared on entering the screen, so
+    /// coming back to a stage starts a fresh attempt rather than inheriting
+    /// the retries of the last visit.
+    stage: String,
+    pub retries: u32,
+}
+
 /// Ids of unlocked achievements.
 #[derive(Resource, Default)]
 pub struct Unlocked(pub HashSet<&'static str>);
@@ -77,7 +116,7 @@ pub struct Achievement {
     threshold: u32,
 }
 
-pub const ACHIEVEMENTS: [Achievement; 32] = [
+pub const ACHIEVEMENTS: [Achievement; 50] = [
     Achievement {
         id: "first_bank",
         stat: |s| s.banked,
@@ -242,11 +281,113 @@ pub const ACHIEVEMENTS: [Achievement; 32] = [
         threshold: 1,
     },
     Achievement {
-        // Thirty-two, so the shelf is two columns of sixteen rather than
-        // sixteen and fifteen with a gap at the bottom of one of them.
         id: "series_5",
         stat: |s| s.series_wins,
         threshold: 5,
+    },
+    // Second rungs on ladders that had only a first, and the two counters
+    // the shelf never asked anything of. Nothing here needs new tracking:
+    // every one of these numbers was already being kept.
+    Achievement {
+        id: "raids_25",
+        stat: |s| s.raids_taken,
+        threshold: 25,
+    },
+    Achievement {
+        id: "lure_50",
+        stat: |s| s.lures,
+        threshold: 50,
+    },
+    Achievement {
+        id: "event_50",
+        stat: |s| s.events,
+        threshold: 50,
+    },
+    Achievement {
+        id: "rounds_500",
+        stat: |s| s.rounds,
+        threshold: 500,
+    },
+    Achievement {
+        id: "puzzle_100",
+        stat: |s| s.puzzles,
+        threshold: 100,
+    },
+    Achievement {
+        id: "built_25",
+        stat: |s| s.levels_built,
+        threshold: 25,
+    },
+    // The table: who you played with, how many of you there were, and
+    // whether you have sat everywhere.
+    Achievement {
+        id: "online_10",
+        stat: |s| s.online_wins,
+        threshold: 10,
+    },
+    Achievement {
+        id: "hosted_1",
+        stat: |s| s.hosted,
+        threshold: 1,
+    },
+    Achievement {
+        id: "crowd_4",
+        stat: |s| s.crowd,
+        threshold: 4,
+    },
+    Achievement {
+        // Variety again, like the roulette: four bits, not four wins.
+        id: "all_seats",
+        stat: |s| s.seats_won.count_ones(),
+        threshold: 4,
+    },
+    // Craft: the campaign asks to be finished, these ask how.
+    Achievement {
+        id: "under_par_1",
+        stat: |s| s.under_par,
+        threshold: 1,
+    },
+    Achievement {
+        id: "clean_10",
+        stat: |s| s.clean_solves,
+        threshold: 10,
+    },
+    Achievement {
+        id: "deep_1",
+        stat: |s| s.deep_solves,
+        threshold: 1,
+    },
+    Achievement {
+        // Against the all-time record, not today's best: a trophy hung on
+        // `daily_best` would come and go with the date.
+        id: "daily_40",
+        stat: |s| s.daily_record,
+        threshold: 40,
+    },
+    // A level is a couple of hundred characters, which is a thing you can
+    // put in a message. Both ends of that are worth a trophy.
+    Achievement {
+        id: "shared_1",
+        stat: |s| s.codes_shared,
+        threshold: 1,
+    },
+    Achievement {
+        id: "taken_1",
+        stat: |s| s.codes_taken,
+        threshold: 1,
+    },
+    // Second rungs on the two of the new ladders that had somewhere left to
+    // go: the widest table the seat count allows, and thrift as a habit
+    // rather than a one-off.
+    Achievement {
+        id: "crowd_6",
+        stat: |s| s.crowd,
+        threshold: crate::sim::MAX_PLAYERS as u32,
+    },
+    Achievement {
+        id: "under_par_10",
+        stat: |s| s.under_par,
+        threshold: 10,
     },
 ];
 
@@ -269,9 +410,12 @@ pub use save::load;
 #[cfg(test)]
 use save::{parse, to_text};
 pub use track::{
-    record_level_built, record_puzzle, record_round, reset_round_scratch, save_now, track_events,
+    record_codes, record_level_built, record_puzzle, record_round, reset_puzzle_attempt,
+    reset_round_scratch, save_now, track_events, track_puzzle_attempt,
 };
-pub use ui::{AchievementsUi, achievements_input, enter_achievements, update_toasts};
+pub use ui::{
+    AchievementsUi, achievements_input, enter_achievements, update_shelf_scrollbar, update_toasts,
+};
 
 #[cfg(test)]
 mod tests {
@@ -301,6 +445,15 @@ mod tests {
             levels_built: 3,
             campaign_done: 1,
             beach_done: 0,
+            hosted: 2,
+            crowd: 4,
+            seats_won: 0b0000_1011,
+            under_par: 3,
+            clean_solves: 12,
+            deep_solves: 1,
+            daily_record: 41,
+            codes_shared: 5,
+            codes_taken: 6,
         };
         let mut unlocked = Unlocked::default();
         unlocked.0.insert("first_bank");
@@ -323,6 +476,24 @@ mod tests {
         assert_eq!(reparsed.online_wins, 4);
         assert_eq!(reparsed.daily_days, 7);
         assert_eq!(reparsed.levels_built, 3);
+        assert_eq!(reparsed.hosted, 2);
+        assert_eq!(reparsed.crowd, 4);
+        assert_eq!(reparsed.seats_won, 0b0000_1011, "the seats-sat-at bitmask");
+        assert_eq!(reparsed.under_par, 3);
+        assert_eq!(reparsed.clean_solves, 12);
+        assert_eq!(reparsed.deep_solves, 1);
+        // Today's best (42) is higher than the record the file carried (41),
+        // so the parse lifts it: a save written before `daily_record`
+        // existed carries no record at all, and its owner has still earned
+        // whatever they scored today.
+        assert_eq!(reparsed.daily_record, 42, "today's best counts as record");
+        let (old_save, _) = parse("daily_best: 55\n");
+        assert_eq!(
+            old_save.daily_record, 55,
+            "a save from before the record existed"
+        );
+        assert_eq!(reparsed.codes_shared, 5);
+        assert_eq!(reparsed.codes_taken, 6);
         assert!(re_unlocked.0.contains("first_bank"));
         assert!(re_unlocked.0.contains("golden_1"));
         // Unknown ids and junk are dropped, junk values zero out.
@@ -368,6 +539,92 @@ mod tests {
                 achievement.id
             );
         }
+    }
+
+    /// The description column is what is left of a 580px row once the mark,
+    /// the fixed name column, the gaps and the progress count have taken
+    /// theirs, and it clips like the name column does. Deliberately, so a
+    /// long description never pushes the count off the end of the row; but
+    /// a description clipped mid-word still reads as a bug, and nothing
+    /// short of measuring it says which ones are.
+    #[test]
+    fn every_trophy_description_fits_what_is_left_of_its_row() {
+        use crate::app::i18n::metrics::text_px;
+        // `ui::spawn_trophy`'s own numbers.
+        const ROW_PX: f32 = 580.0;
+        const PADDING_PX: f32 = 8.0 * 2.0;
+        const MARK_PX: f32 = 14.0;
+        const NAME_PX: f32 = 204.0;
+        const GAPS_PX: f32 = 8.0 * 3.0;
+        let fine = crate::app::menu_ui::type_scale::FINE;
+        let mut over = Vec::new();
+        for lang in crate::app::i18n::ALL_LANGS {
+            let tr = lang.tr();
+            for (index, achievement) in ACHIEVEMENTS.iter().enumerate() {
+                // The count column takes its natural width, so the room the
+                // description gets depends on this trophy's own numbers.
+                let (_, goal) = achievement.progress(&Stats::default());
+                let count = text_px(&format!("{goal}/{goal}"), fine);
+                let room = ROW_PX - PADDING_PX - MARK_PX - NAME_PX - GAPS_PX - count;
+                let desc = tr.ach_descs[index];
+                let width = text_px(desc, fine);
+                if width > room {
+                    over.push(format!(
+                        "{lang:?} {} {desc:?} {width:.0}px into {room:.0}px",
+                        achievement.id
+                    ));
+                }
+            }
+        }
+        assert!(over.is_empty(), "clipped:\n{}", over.join("\n"));
+    }
+
+    /// Two trophies with the same name is a shelf you cannot read: the row
+    /// says you have done a thing you have not, and the toast that pops on
+    /// unlocking names the wrong deed. Caught per language, because a
+    /// translation can collapse a distinction English keeps.
+    #[test]
+    fn no_two_trophies_share_a_name() {
+        let mut clashes = Vec::new();
+        for lang in crate::app::i18n::ALL_LANGS {
+            let tr = lang.tr();
+            let mut seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+            for (index, achievement) in ACHIEVEMENTS.iter().enumerate() {
+                let name = tr.ach_names[index];
+                if let Some(first) = seen.insert(name, achievement.id) {
+                    clashes.push(format!("{lang:?} {name:?}: {first} and {}", achievement.id));
+                }
+            }
+        }
+        assert!(clashes.is_empty(), "shared names:\n{}", clashes.join("\n"));
+    }
+
+    /// The name column is a fixed 204px with `clip_x`, so a name too long
+    /// for it loses its tail with nothing anywhere to say so. Measured in
+    /// pixels rather than characters: Japanese draws about two-thirds wider
+    /// per character than Latin, so a character count passes the very
+    /// language most likely to overrun.
+    #[test]
+    fn every_trophy_name_fits_its_column() {
+        // The row's own numbers, from `ui::spawn_trophy`.
+        const NAME_COLUMN_PX: f32 = 204.0;
+        let size = crate::app::menu_ui::type_scale::BODY;
+        let mut over = Vec::new();
+        for lang in crate::app::i18n::ALL_LANGS {
+            let tr = lang.tr();
+            for (index, achievement) in ACHIEVEMENTS.iter().enumerate() {
+                let name = tr.ach_names[index];
+                let width = crate::app::i18n::metrics::text_px(name, size);
+                if width > NAME_COLUMN_PX {
+                    over.push(format!("{lang:?} {} {name:?} {width:.0}px", achievement.id));
+                }
+            }
+        }
+        assert!(
+            over.is_empty(),
+            "past a {NAME_COLUMN_PX:.0}px column:\n{}",
+            over.join("\n")
+        );
     }
 
     #[test]

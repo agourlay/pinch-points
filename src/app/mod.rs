@@ -293,6 +293,15 @@ pub struct PlacementDenied {
 #[derive(Message)]
 pub struct LevelSaved;
 
+/// A level went out of the editor as a share code, and one came in as one.
+/// Their own messages rather than lines in the editor, for the reason
+/// [`LevelSaved`] is one: the editor stays ignorant of achievements.
+#[derive(Message)]
+pub struct CodeShared;
+
+#[derive(Message)]
+pub struct CodeTaken;
+
 /// How many players a versus round seats (2-4). Drives castles, cursors,
 /// and HUD chips.
 #[derive(Resource, Default)]

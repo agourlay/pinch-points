@@ -146,7 +146,10 @@ fn insert_resources(app: &mut App) {
     app.add_message::<LoadLevel>();
     app.add_message::<PlacementDenied>();
     app.add_message::<LevelSaved>();
+    app.add_message::<CodeShared>();
+    app.add_message::<CodeTaken>();
     app.add_message::<sim_events::SimEvent>();
+    app.init_resource::<achievements::PuzzleAttempt>();
 }
 
 /// One-time setup: camera, font, HUD, sounds, saved stats, dev hooks.
@@ -171,7 +174,14 @@ fn add_startup(app: &mut App) {
 fn add_screen_transitions(app: &mut App) {
     app.add_systems(
         OnEnter(Screen::Puzzle),
-        (cursor::spawn_puzzle_cursor, send_first_load).chain(),
+        (
+            // Before the first load, whose message this stage's retry count
+            // is about to be measured against.
+            achievements::reset_puzzle_attempt,
+            cursor::spawn_puzzle_cursor,
+            send_first_load,
+        )
+            .chain(),
     );
     app.add_systems(
         OnEnter(Screen::Achievements),
@@ -555,7 +565,13 @@ fn add_play_systems(app: &mut App) {
         Update,
         (
             handle_load_level,
-            hint::reset_on_level.run_if(on_message::<LoadLevel>),
+            // Nested: the two that a fresh level starts, and the outer
+            // tuple is at Bevy's arity limit.
+            (
+                hint::reset_on_level,
+                achievements::track_puzzle_attempt.run_if(in_state(Screen::Puzzle)),
+            )
+                .run_if(on_message::<LoadLevel>),
             cursor::move_cursor
                 .run_if(not(in_state(Screen::Menu)).and_then(not(editor::editor_naming))),
             play_input::setup_input.run_if(puzzle_setup),
@@ -699,8 +715,14 @@ fn add_event_systems(app: &mut App) {
                 .chain()
                 .run_if(play_screens),
             achievements::record_level_built.run_if(in_state(Screen::Editor)),
+            achievements::record_codes.run_if(in_state(Screen::Editor)),
             achievements::update_toasts,
-            achievements::achievements_input.run_if(in_state(Screen::Achievements)),
+            (
+                achievements::achievements_input,
+                achievements::update_shelf_scrollbar,
+            )
+                .chain()
+                .run_if(in_state(Screen::Achievements)),
             tournament::interlude_tick.run_if(in_state(Screen::Interlude)),
             menu_scene::menu_ambience.run_if(postcard_screens),
             menu_scene::refit_shore.run_if(postcard_screens),
