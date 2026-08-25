@@ -44,6 +44,91 @@ pub const INK_LURE: Color = Color::srgb(0.75, 0.6, 0.95);
 pub const INK_SURGE: Color = Color::srgb(0.5, 0.9, 0.7);
 pub const INK_RAID: Color = Color::srgb(0.96, 0.45, 0.38);
 
+// --- shared chrome ----------------------------------------------------------
+
+/// The dark pill behind the prompt line, the menu's version tag and the
+/// in-game field guide strip.
+pub const PILL_FILL: Color = Color::srgba(0.05, 0.07, 0.11, 0.72);
+/// The HUD header bar, on every screen but the menu (where it goes clear).
+pub const HEADER_FILL: Color = Color::srgb(0.08, 0.09, 0.12);
+/// The achievement toast's backing.
+pub const TOAST_FILL: Color = Color::srgb(0.1, 0.12, 0.16);
+/// The deep-water drop shadow under every card: `menu_ui::card_shadow`.
+pub const CARD_SHADOW: Color = Color::srgba(0.0, 0.05, 0.12, 0.45);
+
+// --- white-on-dark hairlines and washes -------------------------------------
+
+/// Hairline edge on the sidebar cards.
+pub const HAIRLINE: Color = Color::srgba(1.0, 1.0, 1.0, 0.14);
+/// The unlock-mark ring on a trophy not yet earned.
+pub const UNLIT_RING: Color = Color::srgba(1.0, 1.0, 1.0, 0.22);
+/// The unfilled track behind the gold progress bars (achievements screen,
+/// stage list).
+pub const BAR_TRACK: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
+/// A castle-tier pip on the score chips, lit and unlit.
+pub const PIP_ON: Color = Color::srgba(1.0, 1.0, 1.0, 0.95);
+pub const PIP_OFF: Color = Color::srgba(1.0, 1.0, 1.0, 0.25);
+/// The seat name on a score chip.
+pub const CHIP_NAME: Color = Color::srgba(1.0, 1.0, 1.0, 0.92);
+
+// --- the title sign ---------------------------------------------------------
+
+/// The wordmark's ink and the shadow it drops on the sky.
+pub const TITLE_INK: Color = Color::srgb(0.99, 0.85, 0.36);
+pub const TITLE_SHADOW: Color = Color::srgba(0.05, 0.10, 0.20, 0.55);
+/// The title sign hangs over the bright sky, where a cloud drifting behind
+/// 12% of transparency shows through as a grey smudge across the letters,
+/// so it gets a denser fill than the cards.
+pub const SIGN_FILL: Color = Color::srgba(0.05, 0.09, 0.14, 0.96);
+
+// --- the HUD clocks ---------------------------------------------------------
+
+/// The header clock, calm and in its closing emergency (steady red, and the
+/// brighter half of the final blink).
+pub const CLOCK_CALM: Color = Color::srgb(0.95, 0.93, 0.84);
+pub const CLOCK_RED: Color = Color::srgb(0.96, 0.25, 0.18);
+pub const CLOCK_RED_BRIGHT: Color = Color::srgb(1.0, 0.55, 0.25);
+/// The big clock digits on the sidebar card.
+pub const SIDE_CLOCK: Color = Color::srgb(0.96, 0.93, 0.82);
+
+// --- the stage grid ---------------------------------------------------------
+
+/// Difficulty inks for the signpost counts without a round-event colour to
+/// borrow: one post (green) and three (orange) on the stage grid and its key.
+pub const INK_ONE_POST: Color = Color::srgb(0.52, 0.82, 0.55);
+pub const INK_THREE_POSTS: Color = Color::srgb(0.96, 0.62, 0.30);
+/// A cleared stage tile's number.
+pub const TILE_CLEARED_INK: Color = Color::srgb(1.0, 0.96, 0.86);
+/// An open stage tile's fill: parchment thinned to a wash.
+pub const TILE_OPEN_FILL: Color = Color::srgba(0.95, 0.93, 0.84, 0.12);
+/// A locked stage tile: sunk fill, faded number.
+pub const TILE_LOCKED_FILL: Color = Color::srgba(0.06, 0.08, 0.11, 0.45);
+pub const TILE_LOCKED_INK: Color = Color::srgba(0.95, 0.93, 0.84, 0.22);
+
+// --- the lobby --------------------------------------------------------------
+
+/// The fill behind the lobby row or box under the cursor: [`GOLD`] at a
+/// wash's strength.
+pub const PICKED_WASH: Color = Color::srgba(0.96, 0.83, 0.35, 0.16);
+/// The lobby heading sprites, tinted the gold the headings and card edges
+/// already read in.
+pub const GOLD_ICON: Color = Color::srgba(0.96, 0.83, 0.35, 0.85);
+/// The foam watermark at the foot of every lobby card: pale rather than
+/// gold, it is water and the card is already edged in gold.
+pub const FOAM_LINE: Color = Color::srgba(0.62, 0.82, 0.92, 0.16);
+
+// --- the sidebars -----------------------------------------------------------
+
+/// Rank medal fills: gold, silver, bronze, then driftwood for the rest.
+pub const MEDAL_GOLD: Color = Color::srgb(0.95, 0.78, 0.25);
+pub const MEDAL_SILVER: Color = Color::srgb(0.76, 0.79, 0.83);
+pub const MEDAL_BRONZE: Color = Color::srgb(0.75, 0.52, 0.33);
+pub const MEDAL_DRIFTWOOD: Color = Color::srgb(0.42, 0.44, 0.5);
+/// The rank digit on a medal disc: dark, the medals are bright.
+pub const MEDAL_DIGIT: Color = Color::srgb(0.12, 0.11, 0.09);
+/// The gull's line in the event feed.
+pub const GULL_INK: Color = Color::srgba(0.85, 0.88, 0.92, 0.9);
+
 /// Which player palette is in force. Colours are read from ~20 places
 /// across the shell (castles, cursors, chips, confetti, medals) none of
 /// which have any other reason to know about settings, so the choice lives

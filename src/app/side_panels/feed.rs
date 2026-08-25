@@ -111,9 +111,7 @@ pub fn collect_log(
                 crate::app::hud::event_name(tr, *event).to_string(),
                 palette::INK_TIDE,
             )),
-            SimEvent::GullArrived => {
-                Some((tr.log_gull.to_string(), Color::srgba(0.85, 0.88, 0.92, 0.9)))
-            }
+            SimEvent::GullArrived => Some((tr.log_gull.to_string(), palette::GULL_INK)),
             SimEvent::SurgeStarted => Some((tr.log_surge.to_string(), palette::INK_SURGE)),
             SimEvent::CrabBanked { .. }
             | SimEvent::CrabEaten { .. }

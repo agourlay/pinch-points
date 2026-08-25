@@ -255,7 +255,7 @@ pub fn cell(width: f32, font_px: f32) -> (Node, Text, TextFont, TextLayout, Text
 /// float at a different height from the cards on the next.
 pub fn card_shadow() -> BoxShadow {
     BoxShadow::from(ShadowStyle {
-        color: Color::srgba(0.0, 0.05, 0.12, 0.45),
+        color: palette::CARD_SHADOW,
         x_offset: Val::Px(0.0),
         y_offset: Val::Px(6.0),
         spread_radius: Val::Px(0.0),

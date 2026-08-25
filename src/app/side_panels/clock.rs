@@ -48,7 +48,7 @@ pub(super) fn spawn_clock(root: &mut ChildSpawnerCommands) {
                     font_size: FontSize::Px(44.0),
                     ..default()
                 },
-                TextColor(Color::srgb(0.96, 0.93, 0.82)),
+                TextColor(crate::app::palette::SIDE_CLOCK),
             ));
         });
 }

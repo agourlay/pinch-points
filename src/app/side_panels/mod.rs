@@ -65,12 +65,12 @@ const SCORE_PX: [f32; MAX_PLAYERS] = [46.0, 28.0, 24.0, 21.0, 19.0, 18.0];
 
 /// Rank medal colours: gold, silver, bronze, then driftwood for the rest.
 const MEDALS: [Color; MAX_PLAYERS] = [
-    Color::srgb(0.95, 0.78, 0.25),
-    Color::srgb(0.76, 0.79, 0.83),
-    Color::srgb(0.75, 0.52, 0.33),
-    Color::srgb(0.42, 0.44, 0.5),
-    Color::srgb(0.42, 0.44, 0.5),
-    Color::srgb(0.42, 0.44, 0.5),
+    palette::MEDAL_GOLD,
+    palette::MEDAL_SILVER,
+    palette::MEDAL_BRONZE,
+    palette::MEDAL_DRIFTWOOD,
+    palette::MEDAL_DRIFTWOOD,
+    palette::MEDAL_DRIFTWOOD,
 ];
 const LEADER_BORDER: Color = palette::GOLD;
 const LOG_TOP: f32 = 88.0;
@@ -126,7 +126,7 @@ fn card(top: f32, height: Option<f32>) -> (Node, BorderColor, BackgroundColor) {
             border_radius: BorderRadius::all(Val::Px(12.0)),
             ..default()
         },
-        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.14)),
+        BorderColor::all(palette::HAIRLINE),
         BackgroundColor(palette::CARD_BG),
     )
 }
@@ -180,7 +180,7 @@ fn spawn_score_chip(
                     font_size: FontSize::Px(15.0),
                     ..default()
                 },
-                TextColor(Color::srgb(0.12, 0.11, 0.09)),
+                TextColor(palette::MEDAL_DIGIT),
             ));
         });
         // Name and castle-tier pips.
@@ -197,7 +197,7 @@ fn spawn_score_chip(
                     font_size: FontSize::Px(14.0),
                     ..default()
                 },
-                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.92)),
+                TextColor(palette::CHIP_NAME),
             ));
             mid.spawn(Node {
                 column_gap: Val::Px(4.0),
@@ -213,7 +213,7 @@ fn spawn_score_chip(
                             border_radius: BorderRadius::all(Val::Px(2.0)),
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.25)),
+                        BackgroundColor(palette::PIP_OFF),
                     ));
                 }
             });
@@ -429,9 +429,9 @@ pub fn update_side_panels(
         let tier = crate::sim::castle_tier(board_scores[pip.seat as usize]);
         let filled = pip.index < tier;
         let target = if filled {
-            Color::srgba(1.0, 1.0, 1.0, 0.95)
+            palette::PIP_ON
         } else {
-            Color::srgba(1.0, 1.0, 1.0, 0.25)
+            palette::PIP_OFF
         };
         menu_ui::set_bg(&mut bg, target);
     }

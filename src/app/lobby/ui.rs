@@ -12,7 +12,7 @@ use super::*;
 /// The fill behind the row under the cursor. A bar rather than a marker
 /// character: with a dozen beaches on screen the eye wants a block, and
 /// the number stays where it is instead of shuffling sideways.
-const ROW_PICKED: Color = Color::srgba(0.96, 0.83, 0.35, 0.16);
+const ROW_PICKED: Color = palette::PICKED_WASH;
 
 /// How many beaches the join list shows at once. A busy LAN can have more
 /// games running than this; the list scrolls to the cursor rather than

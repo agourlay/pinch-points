@@ -13,7 +13,7 @@ use bevy::prelude::*;
 
 mod text;
 
-use text::CLOCK_CALM;
+use crate::app::palette::CLOCK_CALM;
 pub(crate) use text::{clock_color, clock_text, event_name, urgency_band};
 
 #[derive(Component)]
@@ -55,7 +55,7 @@ pub fn spawn_hud(
                 column_gap: Val::Px(18.0),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.08, 0.09, 0.12)),
+            BackgroundColor(palette::HEADER_FILL),
         ))
         .with_children(|bar| {
             bar.spawn((
@@ -482,7 +482,7 @@ pub fn header_backdrop(
     let target = if *screen.get() == Screen::Menu {
         Color::NONE
     } else {
-        Color::srgb(0.08, 0.09, 0.12)
+        palette::HEADER_FILL
     };
     for mut bg in &mut bars {
         menu_ui::set_bg(&mut bg, target);

@@ -38,7 +38,7 @@ pub(super) fn spawn_toast(commands: &mut Commands, name: &str, desc: &str) {
                 padding: UiRect::axes(Val::Px(14.0), Val::Px(10.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.1, 0.12, 0.16)),
+            BackgroundColor(palette::TOAST_FILL),
         ))
         .with_children(|toast| {
             toast.spawn((
@@ -260,7 +260,7 @@ fn spawn_trophy(
                     border_radius: BorderRadius::all(Val::Px(2.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.08)),
+                BackgroundColor(palette::BAR_TRACK),
                 children![(
                     Node {
                         width: Val::Percent(filled),

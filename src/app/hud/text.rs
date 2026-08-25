@@ -14,9 +14,7 @@ use crate::app::{Bots, Campaign, CampaignKind, Phase, Playback, Screen, Seats, S
 use crate::sim::{Goal, LURE_TICKS, TideEvent};
 use bevy::prelude::*;
 
-pub(super) const CLOCK_CALM: Color = Color::srgb(0.95, 0.93, 0.84);
-pub(super) const CLOCK_RED: Color = Color::srgb(0.96, 0.25, 0.18);
-pub(super) const CLOCK_RED_BRIGHT: Color = Color::srgb(1.0, 0.55, 0.25);
+use crate::app::palette::{CLOCK_CALM, CLOCK_RED, CLOCK_RED_BRIGHT};
 
 /// mm:ss for a remaining-tick count.
 pub(crate) fn clock_text(ticks: u64) -> String {

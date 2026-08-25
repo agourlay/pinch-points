@@ -23,15 +23,6 @@ use bevy::prelude::*;
 /// so "PINCH" and "POINTS" still read as two words at that spacing.
 const TITLE: &str = "P\u{2007}I\u{2007}N\u{2007}C\u{2007}H\u{2007}\u{2007}\u{2007}\u{2007}P\u{2007}O\u{2007}I\u{2007}N\u{2007}T\u{2007}S";
 
-/// The title's ink and the shadow it drops on the sky.
-const TITLE_INK: Color = Color::srgb(0.99, 0.85, 0.36);
-const TITLE_SHADOW: Color = Color::srgba(0.05, 0.10, 0.20, 0.55);
-
-/// The title sign is the one card that hangs over the bright sky, where a
-/// white cloud drifting behind 12% of transparency shows through as a grey
-/// smudge across the letters. It gets a denser fill for that reason alone.
-const SIGN_FILL: Color = Color::srgba(0.05, 0.09, 0.14, 0.96);
-
 /// One landing-menu entry, in display order (digit 1 launches the
 /// first). The launch ladder and the i18n name/blurb tables follow this
 /// order; matching on the enum keeps them from drifting.
@@ -126,7 +117,7 @@ fn spawn_title(commands: &mut Commands, settings: &GameSettings) {
                     border_radius: BorderRadius::all(Val::Px(18.0)),
                     ..default()
                 },
-                BackgroundColor(SIGN_FILL),
+                BackgroundColor(palette::SIGN_FILL),
                 BorderColor::all(palette::CARD_EDGE),
                 card_shadow(),
             ))
@@ -137,10 +128,10 @@ fn spawn_title(commands: &mut Commands, settings: &GameSettings) {
                         font_size: FontSize::Px(54.0),
                         ..default()
                     },
-                    TextColor(TITLE_INK),
+                    TextColor(palette::TITLE_INK),
                     TextShadow {
                         offset: Vec2::new(2.0, 3.0),
-                        color: TITLE_SHADOW,
+                        color: palette::TITLE_SHADOW,
                     },
                 ));
                 card.spawn((

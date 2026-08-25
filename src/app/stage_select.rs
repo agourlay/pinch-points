@@ -133,9 +133,9 @@ pub enum TileState {
 pub fn difficulty_ink(posts: u8) -> Color {
     match posts {
         0 => palette::INK_TIDE,
-        1 => Color::srgb(0.52, 0.82, 0.55),
+        1 => palette::INK_ONE_POST,
         2 => palette::GOLD,
-        3 => Color::srgb(0.96, 0.62, 0.30),
+        3 => palette::INK_THREE_POSTS,
         4 => palette::INK_RAID,
         _ => palette::INK_LURE,
     }
@@ -160,12 +160,9 @@ impl TileState {
     /// independent. State is the fill, difficulty is the edge.
     fn colors(self) -> (Color, Color) {
         match self {
-            TileState::Cleared => (palette::GOLD.with_alpha(0.28), Color::srgb(1.0, 0.96, 0.86)),
-            TileState::Open => (Color::srgba(0.95, 0.93, 0.84, 0.12), palette::IDLE_ROW),
-            TileState::Locked => (
-                Color::srgba(0.06, 0.08, 0.11, 0.45),
-                Color::srgba(0.95, 0.93, 0.84, 0.22),
-            ),
+            TileState::Cleared => (palette::GOLD.with_alpha(0.28), palette::TILE_CLEARED_INK),
+            TileState::Open => (palette::TILE_OPEN_FILL, palette::IDLE_ROW),
+            TileState::Locked => (palette::TILE_LOCKED_FILL, palette::TILE_LOCKED_INK),
         }
     }
 
@@ -363,7 +360,7 @@ pub fn enter_stage_select(
                             border_radius: BorderRadius::all(Val::Px(2.0)),
                             ..default()
                         },
-                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.08)),
+                        BackgroundColor(palette::BAR_TRACK),
                         children![(
                             Node {
                                 width: Val::Percent(filled),
