@@ -29,6 +29,13 @@ pub(super) fn board_screens(screen: Res<State<Screen>>) -> bool {
 
 /// Screens where a round is being played, a puzzle or a versus match, as
 /// one named condition, so the schedule reads as prose.
+/// The screens that stand on the postcard beach: the menu at full
+/// daylight, every browsing screen behind the scrim. Board screens are
+/// out: a round is played over its own sand, not over a second beach.
+pub(super) fn postcard_screens(screen: Res<State<Screen>>) -> bool {
+    super::postcard_screen(*screen.get())
+}
+
 pub(super) fn play_screens(screen: Res<State<Screen>>) -> bool {
     matches!(screen.get(), Screen::Puzzle | Screen::Versus)
 }

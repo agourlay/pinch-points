@@ -6,7 +6,7 @@
 //! sim: the menu runs no board, and every animation here is decoration
 //! driven by frame time.
 
-use super::{MenuArt, VisualRng};
+use super::VisualRng;
 use crate::app::art;
 use crate::app::palette;
 use crate::sim::CrabKind;
@@ -78,6 +78,58 @@ const HORIZON: f32 = 0.62;
 #[derive(Component)]
 pub struct MenuShore;
 
+/// The dusk over the postcard everywhere but the menu: one translucent
+/// sheet between the scene and the cards, so the same beach can stand
+/// behind every screen without shouting over the rows in front of it.
+#[derive(Component)]
+pub struct Scrim;
+
+/// Keep the postcard on the screens that want it, and only there.
+///
+/// The shore itself is spawned and resized by [`refit_shore`]; this system
+/// owns the two transitions refit cannot see: leaving the postcard set for
+/// a board screen (the scene goes, so a puzzle is not played over a
+/// distracting second beach), and the menu against every other postcard
+/// screen (the menu gets the scene at full daylight, the rest behind the
+/// scrim).
+pub fn tend_backdrop(
+    mut commands: Commands,
+    screen: Res<State<crate::app::Screen>>,
+    windows: Query<&Window>,
+    shore: Query<Entity, With<MenuShore>>,
+    critters: Query<Entity, With<MenuCritter>>,
+    scrim: Query<Entity, With<Scrim>>,
+) {
+    // Reconciled every frame rather than on the transition: the window can
+    // be missing on the exact frame the state flips, and a scrim lost to
+    // that race would leave a whole screen at full daylight.
+    let on_postcard = crate::app::postcard_screen(*screen.get());
+    if !on_postcard {
+        for entity in shore.iter().chain(critters.iter()).chain(scrim.iter()) {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+    let wants_scrim = *screen.get() != crate::app::Screen::Menu;
+    if wants_scrim && scrim.is_empty() {
+        let Ok(window) = windows.single() else {
+            return;
+        };
+        commands.spawn((
+            Scrim,
+            Sprite::from_color(
+                Color::srgba(0.07, 0.09, 0.12, 0.55),
+                Vec2::new(window.width() + 80.0, window.height() + 80.0),
+            ),
+            Transform::from_translation(Vec3::new(0.0, 0.0, 5.0)),
+        ));
+    } else if !wants_scrim {
+        for entity in &scrim {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 /// The whole postcard, bottom to top: sand with shells, a wet line, the
 /// open sea up to the horizon, and sky above. World-space sprites behind
 /// the UI (the menu camera is 1:1 with the window).
@@ -87,7 +139,6 @@ fn spawn_shore(commands: &mut Commands, art: &art::Art, rng: &mut VisualRng, win
     let horizon = bottom + h * HORIZON;
     let band = |y: f32, height: f32, color: Color, z: f32| {
         (
-            MenuArt,
             MenuShore,
             Sprite::from_color(color, Vec2::new(w + 40.0, height)),
             Transform::from_translation(Vec3::new(0.0, y, z)),
@@ -140,7 +191,6 @@ fn spawn_shore(commands: &mut Commands, art: &art::Art, rng: &mut VisualRng, win
     // The foam lip where the sea meets the sand; it laps in and out.
     let foam_y = bottom + SHORE_H + 20.0;
     commands.spawn((
-        MenuArt,
         MenuShore,
         ShoreFoam { base_y: foam_y },
         Sprite {
@@ -193,7 +243,6 @@ fn spawn_swell(
             let x = -w / 2.0 - 20.0 + seg_w * (segment as f32 + 0.5);
             let base = Vec2::new(x, y);
             commands.spawn((
-                MenuArt,
                 MenuShore,
                 WaveSegment {
                     base,
@@ -332,7 +381,6 @@ fn spawn_beach_props(
         let z = 0.6 - depth * 0.25;
         if prop.shadow > 0.0 {
             commands.spawn((
-                MenuArt,
                 MenuShore,
                 Sprite {
                     image: art.shadow.clone(),
@@ -344,7 +392,6 @@ fn spawn_beach_props(
             ));
         }
         commands.spawn((
-            MenuArt,
             MenuShore,
             Sprite {
                 image: prop.image,
@@ -367,7 +414,6 @@ fn spawn_beach_props(
         };
         let size = rng.range(2.5, 7.0);
         commands.spawn((
-            MenuArt,
             MenuShore,
             Sprite::from_color(tint, Vec2::splat(size)),
             Transform::from_translation(Vec3::new(
@@ -381,7 +427,6 @@ fn spawn_beach_props(
     // only just below the waterline.
     for _ in 0..5 {
         commands.spawn((
-            MenuArt,
             MenuShore,
             Sprite {
                 image: art.foam.clone(),
@@ -505,7 +550,6 @@ fn spawn_critter(
     };
     let x = at_x.unwrap_or(-speed.signum() * (w / 2.0 + 110.0));
     commands.spawn((
-        MenuArt,
         MenuCritter {
             speed,
             frame_clock: rng.range(0.0, 3.0),

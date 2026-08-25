@@ -3,7 +3,7 @@
 
 mod scenery;
 
-pub use scenery::{menu_ambience, refit_shore};
+pub use scenery::{menu_ambience, refit_shore, tend_backdrop};
 
 use crate::app::effects::VisualRng;
 use crate::app::i18n::fill;

@@ -15,6 +15,26 @@ pub mod campaign;
 mod clock;
 mod codes;
 mod company;
+/// Whether `screen` stands on the shared beach postcard. One list, asked
+/// by the run condition and by the backdrop tender, so a new screen
+/// decides once where it stands.
+pub(crate) fn postcard_screen(screen: Screen) -> bool {
+    match screen {
+        Screen::Menu
+        | Screen::StageSelect
+        | Screen::Settings
+        | Screen::Controls
+        | Screen::MatchSetup
+        | Screen::Achievements
+        | Screen::Replays
+        | Screen::Lobby
+        | Screen::Language
+        | Screen::Interlude
+        | Screen::NewVersion => true,
+        Screen::Puzzle | Screen::Versus | Screen::Editor => false,
+    }
+}
+
 mod conditions;
 mod controls;
 mod creatures;

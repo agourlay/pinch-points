@@ -105,12 +105,69 @@ fn spawn_tile_feature(commands: &mut Commands, art: &Art, pos: Vec2, kind: TileK
 /// Everything about a board that never moves: the sand, what sits on each
 /// tile, and the driftwood fence around and through it.
 pub fn spawn_static_board(commands: &mut Commands, board: &Board, art: &Art) {
+    spawn_dusk_shore(commands, board, art);
     for (x, y, kind) in board.tiles() {
         let pos = layout::tile_center(board, x, y);
         spawn_sand(commands, art, pos, x, y);
         spawn_tile_feature(commands, art, pos, kind);
     }
     spawn_walls(commands, board, art);
+}
+
+/// The world behind the board: dusk sand to every edge of the window and
+/// the sea lying along the top, so a round is played on the same beach the
+/// menu promised instead of floating in a grey void. Sized from the board
+/// rather than the window, because the camera zooms to fit the board and
+/// world units are the only ones that hold still while it does.
+fn spawn_dusk_shore(commands: &mut Commands, board: &Board, art: &Art) {
+    // Far larger than any zoomed-out view can reach.
+    const REACH: f32 = 9000.0;
+    let top = f32::from(board.height()) * TILE / 2.0 + 26.0;
+    let plane = |size: Vec2, at: Vec2, z: f32, color: Color| {
+        (
+            BoardStatic,
+            Sprite::from_color(color, size),
+            Transform::from_translation(at.extend(z)),
+        )
+    };
+    // Sand under and around everything.
+    commands.spawn(plane(
+        Vec2::splat(REACH),
+        Vec2::ZERO,
+        z::SAND - 10.0,
+        Color::srgb(0.38, 0.34, 0.25),
+    ));
+    // The sea along the top of the beach, deepening away from the shore.
+    let shore = top + TILE * 0.55;
+    commands.spawn(plane(
+        Vec2::new(REACH, REACH / 2.0),
+        Vec2::new(0.0, shore + REACH / 4.0),
+        z::SAND - 9.8,
+        Color::srgb(0.13, 0.24, 0.33),
+    ));
+    commands.spawn(plane(
+        Vec2::new(REACH, 26.0),
+        Vec2::new(0.0, shore + 13.0),
+        z::SAND - 9.7,
+        Color::srgb(0.18, 0.32, 0.42),
+    ));
+    // The wet line where the last wave reached, and its foam lip.
+    commands.spawn(plane(
+        Vec2::new(REACH, 18.0),
+        Vec2::new(0.0, shore - 9.0),
+        z::SAND - 9.7,
+        Color::srgb(0.31, 0.29, 0.22),
+    ));
+    commands.spawn((
+        BoardStatic,
+        Sprite {
+            image: art.foam.clone(),
+            color: Color::srgba(1.0, 1.0, 1.0, 0.28),
+            custom_size: Some(Vec2::new(REACH, 12.0)),
+            ..default()
+        },
+        Transform::from_translation(Vec3::new(0.0, shore + 2.0, z::SAND - 9.6)),
+    ));
 }
 
 /// Iterates every tile's Up and Left edges plus the far borders, so each

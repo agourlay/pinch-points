@@ -708,8 +708,9 @@ fn add_event_systems(app: &mut App) {
             achievements::update_toasts,
             achievements::achievements_input.run_if(in_state(Screen::Achievements)),
             tournament::interlude_tick.run_if(in_state(Screen::Interlude)),
-            menu_scene::menu_ambience.run_if(in_state(Screen::Menu)),
-            menu_scene::refit_shore.run_if(in_state(Screen::Menu)),
+            menu_scene::menu_ambience.run_if(postcard_screens),
+            menu_scene::refit_shore.run_if(postcard_screens),
+            menu_scene::tend_backdrop,
         )
             .chain()
             .in_set(Frame::Events),

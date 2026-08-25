@@ -149,10 +149,14 @@ pub(super) fn fit_camera(
     let fit_w = (window.width() - chrome_w).max(layout::TILE);
     let fit_h = (window.height() - chrome_h).max(layout::TILE);
     // The menu has no board: its decoration is laid out 1:1 with the window.
+    // Small boards zoom in a little rather than floating in their margins:
+    // a five-row puzzle at 1:1 fills a third of the window and reads as
+    // lost. 0.8 is a quarter over life size, gentle enough that the flat
+    // sprite art stays crisp.
     let scale = if menu {
         1.0
     } else {
-        (board_w / fit_w).max(board_h / fit_h).max(1.0)
+        (board_w / fit_w).max(board_h / fit_h).max(0.8)
     };
     // Centre the board on the gap between the bars, not on the window. The
     // camera's y maps straight to screen y, so half the difference between
