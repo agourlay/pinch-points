@@ -108,7 +108,13 @@ pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: 
                     ..default()
                 },
                 TextLayout::no_wrap(),
-                TextColor(palette::PARCHMENT.with_alpha(0.40)),
+                TextColor(palette::PARCHMENT.with_alpha(0.75)),
+                Node {
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
+                    border_radius: BorderRadius::all(Val::Px(9.0)),
+                    ..default()
+                },
+                BackgroundColor(palette::PILL_FILL.with_alpha(0.6)),
             ));
         });
 }
