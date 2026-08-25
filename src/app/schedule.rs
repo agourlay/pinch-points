@@ -711,6 +711,7 @@ fn add_event_systems(app: &mut App) {
             menu_scene::menu_ambience.run_if(postcard_screens),
             menu_scene::refit_shore.run_if(postcard_screens),
             menu_scene::tend_backdrop,
+            menu_ui::dress_cards,
         )
             .chain()
             .in_set(Frame::Events),

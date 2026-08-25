@@ -92,7 +92,7 @@ pub fn spawn_hud(
             border_radius: BorderRadius::all(Val::Px(11.0)),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.05, 0.07, 0.11, 0.72)),
+        BackgroundColor(palette::PILL_FILL),
     ));
     // Teaching hint: a soft line under the header while placing signposts
     // on levels that carry one.
@@ -417,7 +417,7 @@ fn spawn_field_guide(
                     border_radius: BorderRadius::all(Val::Px(11.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.05, 0.07, 0.11, 0.72)),
+                BackgroundColor(palette::PILL_FILL),
             ))
             .with_children(|strip| {
                 for (i, kind) in KINDS.iter().enumerate() {

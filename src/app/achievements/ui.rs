@@ -296,6 +296,7 @@ pub fn enter_achievements(
                     ..default()
                 },
                 BackgroundColor(palette::CARD_FILL),
+                crate::app::menu_ui::ShoreCard,
                 BorderColor::all(palette::CARD_EDGE),
             ))
             .with_children(|card| {

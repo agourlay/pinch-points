@@ -76,7 +76,7 @@ pub fn enter_match_setup(
             // card would be four holes if they merely emptied, and a card
             // that shrinks around them jumps while you turn the dial that
             // adds them.
-            let (mut node, fill, edge, shadow) = menu_ui::screen_card();
+            let (mark, mut node, fill, edge, shadow) = menu_ui::screen_card();
             node.height = Val::Px(
                 2.0 * menu_ui::CARD_PAD_Y
                     + menu_ui::HEADING_H
@@ -92,9 +92,9 @@ pub fn enter_match_setup(
             })
             .with_children(|line| {
                 company::shoulder(line, &art, crate::app::company::Company::Crab, 0.0);
-                line.spawn((node, fill, edge, shadow))
+                line.spawn((mark, node, fill, edge, shadow))
                     .with_children(|card| {
-                        card.spawn(menu_ui::heading(tr.match_heading, true));
+                        menu_ui::heading_row(card, tr.match_heading, None);
                         for row in 0..ROWS {
                             card.spawn((MatchRow(row), menu_ui::card_row()))
                                 .with_children(|line| {

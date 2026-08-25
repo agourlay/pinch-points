@@ -9,6 +9,11 @@
 
 use super::*;
 
+/// The fill behind the row under the cursor. A bar rather than a marker
+/// character: with a dozen beaches on screen the eye wants a block, and
+/// the number stays where it is instead of shuffling sideways.
+const ROW_PICKED: Color = Color::srgba(0.96, 0.83, 0.35, 0.16);
+
 /// How many beaches the join list shows at once. A busy LAN can have more
 /// games running than this; the list scrolls to the cursor rather than
 /// pretending the rest are not there.
@@ -250,7 +255,8 @@ fn card(
                 row_gap: Val::Px(4.0),
                 // Room at the foot for the tide to come in without
                 // washing over the last row.
-                padding: UiRect::all(Val::Px(12.0)).with_bottom(Val::Px(FOAM_DEPTH + 6.0)),
+                padding: UiRect::all(Val::Px(12.0))
+                    .with_bottom(Val::Px(crate::app::menu_ui::FOAM_DEPTH + 6.0)),
                 border: UiRect::all(Val::Px(2.0)),
                 border_radius: BorderRadius::all(Val::Px(12.0)),
                 ..default()
@@ -260,86 +266,9 @@ fn card(
             crate::app::menu_ui::card_shadow(),
         ))
         .with_children(|panel| {
-            tide_line(panel, &art.foam);
-            heading_row(panel, heading, art.icon(which));
+            crate::app::menu_ui::tide_line(panel, &art.foam);
+            crate::app::menu_ui::heading_row(panel, heading, Some(art.icon(which)));
             rows(panel);
-        });
-}
-
-/// The tide at the foot of a card: the foam strip, drawn across it and
-/// turned over so it breaks upward into the panel.
-///
-/// It makes these cards stretches of beach rather than boxes, and
-/// it is spawned before anything else in the card so it stays behind the
-/// rows: UI siblings stack in the order they are added.
-fn tide_line(panel: &mut RelatedSpawnerCommands<ChildOf>, foam: &Handle<Image>) {
-    panel.spawn((
-        ImageNode {
-            image: foam.clone(),
-            color: FOAM_LINE,
-            flip_y: true,
-            // Stretched, not tiled: tiling scales the sprite down to the
-            // strip's height first, and six scallops inside twenty pixels
-            // come out as a dotted line. Pulled across the card instead,
-            // the same six read as slow, wide breakers.
-            image_mode: NodeImageMode::Stretch,
-            ..default()
-        },
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            right: Val::Px(0.0),
-            bottom: Val::Px(0.0),
-            height: Val::Px(FOAM_DEPTH),
-            // Kept off the card's rounded corners, which a square strip
-            // would otherwise fill back in.
-            border_radius: BorderRadius::bottom(Val::Px(10.0)),
-            ..default()
-        },
-    ));
-}
-
-/// The heading of a card: its sprite, its name, and a rule running off to
-/// the card's edge in the same gold hairline the card is drawn in, so a
-/// panel of empty rows still reads as a made thing rather than a gap.
-fn heading_row(panel: &mut RelatedSpawnerCommands<ChildOf>, heading: &str, icon: &Handle<Image>) {
-    panel
-        .spawn(Node {
-            flex_direction: FlexDirection::Row,
-            align_items: AlignItems::Center,
-            column_gap: Val::Px(8.0),
-            margin: UiRect::bottom(Val::Px(6.0)),
-            ..default()
-        })
-        .with_children(|head| {
-            head.spawn((
-                // 22px, the size the menu's field guide draws a crab at.
-                // The sprites are 96px of smooth edges, and below about
-                // twenty they stop being a castle and become a smudge.
-                ImageNode::new(icon.clone()).with_color(HEADING_ICON),
-                Node {
-                    width: Val::Px(22.0),
-                    height: Val::Px(22.0),
-                    ..default()
-                },
-            ));
-            head.spawn((
-                Text::new(heading),
-                TextFont {
-                    font_size: FontSize::Px(15.0),
-                    ..default()
-                },
-                TextColor(palette::IDLE_ROW),
-            ));
-            head.spawn((
-                Node {
-                    flex_grow: 1.0,
-                    height: Val::Px(1.0),
-                    margin: UiRect::left(Val::Px(2.0)),
-                    ..default()
-                },
-                BackgroundColor(palette::CARD_EDGE),
-            ));
         });
 }
 
@@ -406,26 +335,6 @@ const NAME_COL: f32 = 380.0;
 const HOST_COL: f32 = 250.0;
 const WHERE_COL: f32 = 215.0;
 const TABLE_COL: f32 = 190.0;
-
-/// The fill behind the row under the cursor. A bar rather than a marker
-/// character: with a dozen beaches on screen the eye wants a block, and
-/// the number stays where it is instead of shuffling sideways.
-const ROW_PICKED: Color = Color::srgba(0.96, 0.83, 0.35, 0.16);
-
-/// The heading sprites are tinted rather than left in their own colours:
-/// four little pictures in four palettes beside four headings is a mess,
-/// and gold is what the headings and the card edges are already drawn in.
-const HEADING_ICON: Color = Color::srgba(0.96, 0.83, 0.35, 0.85);
-
-/// The foam at the foot of every card, and how deep it runs. Pale rather
-/// than gold: it is water, and the card is already edged in gold.
-///
-/// The one sprite that survives being laid on a dark card at watermark
-/// strength. The crab and the castle carry their shape in dark outlines
-/// around a white body, so faint versions of them are a pale disc and a
-/// pale square; the foam is white all through, and thins into the fill.
-const FOAM_LINE: Color = Color::srgba(0.62, 0.82, 0.92, 0.16);
-const FOAM_DEPTH: f32 = 20.0;
 
 /// A row's two inks: the one the beach's own name reads in, and the one
 /// the smaller print beside it does.

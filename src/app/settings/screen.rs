@@ -262,6 +262,7 @@ pub fn enter_settings(
                     ..default()
                 },
                 BackgroundColor(palette::CARD_FILL),
+                menu_ui::ShoreCard,
                 BorderColor::all(palette::CARD_EDGE),
             ))
             .with_children(|card| {

@@ -27,6 +27,14 @@ pub const PARCHMENT: Color = Color::srgb(0.92, 0.89, 0.78);
 pub const CARD_FILL: Color = Color::srgba(0.04, 0.07, 0.12, 0.95);
 /// Its hairline border: [`GOLD`] at a hairline's strength (0.30 alpha),
 /// spelled out because `with_alpha` is not const.
+/// The pill behind a prompt or legend line. Nearly opaque: at 0.72 it
+/// blended into whatever stood behind it, and the same pill read dark on
+/// one screen and sandy on the next.
+pub const PILL_FILL: Color = Color::srgba(0.05, 0.07, 0.11, 0.92);
+/// The tide foam at the foot of a card.
+pub const FOAM_LINE: Color = Color::srgba(0.62, 0.82, 0.92, 0.16);
+/// A card heading's little sprite.
+pub const HEADING_ICON: Color = Color::srgba(0.96, 0.83, 0.35, 0.85);
 pub const CARD_EDGE: Color = Color::srgba(0.96, 0.83, 0.35, 0.30);
 
 /// Round-event inks, shared by the side feed and the centre-screen

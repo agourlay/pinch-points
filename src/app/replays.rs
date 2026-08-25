@@ -202,7 +202,7 @@ pub fn enter_library(
         .spawn((LibraryUi, menu_ui::between_bars()))
         .with_children(|wrap| {
             wrap.spawn(menu_ui::screen_card()).with_children(|card| {
-                card.spawn(menu_ui::heading(tr.replays_heading, true));
+                menu_ui::heading_row(card, tr.replays_heading, None);
                 // The empty-shelf line, which the rows cannot carry: a row
                 // cell is one shelf-wide column that does not wrap, and this
                 // sentence is wider than it, so squeezed in there it ran off

@@ -121,8 +121,9 @@ pub const CARD_PAD_Y: f32 = 16.0;
 /// list screen is drawn on. Menu, stage list, trophies, settings, key
 /// bindings, the shelf of kept rounds and the lobby all wear it, so a
 /// player crossing between them is looking at one game.
-pub fn screen_card() -> (Node, BackgroundColor, BorderColor, BoxShadow) {
+pub fn screen_card() -> (ShoreCard, Node, BackgroundColor, BorderColor, BoxShadow) {
     (
+        ShoreCard,
         Node {
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
@@ -348,6 +349,126 @@ pub fn set_shown(node: &mut Mut<Node>, shown: bool) {
     if node.display != want {
         node.display = want;
     }
+}
+
+/// A card the tide dresses: [`dress_cards`] gives every one of these a
+/// foam line at its foot the frame it appears, so a screen cannot forget
+/// the dressing and no screen has to carry the art handle for it.
+#[derive(Component)]
+pub struct ShoreCard;
+
+/// Give a newborn card its tide line.
+pub fn dress_cards(
+    mut commands: Commands,
+    art: Res<crate::app::art::Art>,
+    mut cards: Query<(Entity, &mut Node), Added<ShoreCard>>,
+) {
+    for (card, mut node) in &mut cards {
+        // The last row keeps its feet dry whatever padding the card chose.
+        let dry = Val::Px(FOAM_DEPTH + 4.0);
+        if px_of(node.padding.bottom).unwrap_or(0.0) < FOAM_DEPTH {
+            node.padding.bottom = dry;
+        }
+        commands.entity(card).with_children(|panel| {
+            tide_line(panel, &art.foam);
+        });
+    }
+}
+
+fn px_of(v: Val) -> Option<f32> {
+    match v {
+        Val::Px(px) => Some(px),
+        Val::Auto | Val::Percent(_) | Val::Vw(_) | Val::Vh(_) | Val::VMin(_) | Val::VMax(_) => None,
+    }
+}
+
+/// How deep the tide laps into a card's foot.
+pub const FOAM_DEPTH: f32 = 20.0;
+
+/// The tide at the foot of a card: the foam strip, drawn across it and
+/// turned over so it breaks upward into the panel. It makes a card a
+/// stretch of beach rather than a box; spawn it before the rows so UI
+/// sibling order keeps it behind them, and leave the card room at the
+/// foot ([`FOAM_DEPTH`]) so the last row stays dry.
+pub fn tide_line(
+    panel: &mut bevy::ecs::relationship::RelatedSpawnerCommands<ChildOf>,
+    foam: &Handle<Image>,
+) {
+    panel.spawn((
+        ImageNode {
+            image: foam.clone(),
+            color: palette::FOAM_LINE,
+            flip_y: true,
+            // Stretched, not tiled: tiling scales the sprite down to the
+            // strip's height first, and six scallops inside twenty pixels
+            // come out as a dotted line. Pulled across the card instead,
+            // the same six read as slow, wide breakers.
+            image_mode: NodeImageMode::Stretch,
+            ..default()
+        },
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(0.0),
+            right: Val::Px(0.0),
+            bottom: Val::Px(0.0),
+            height: Val::Px(FOAM_DEPTH),
+            // Kept off the card's rounded corners, which a square strip
+            // would otherwise fill back in.
+            border_radius: BorderRadius::bottom(Val::Px(10.0)),
+            ..default()
+        },
+    ));
+}
+
+/// The heading of a card: an optional sprite, its name, and a rule
+/// running off to the card's edge in the same gold hairline the card is
+/// drawn in, so a panel of empty rows still reads as a made thing.
+pub fn heading_row(
+    panel: &mut bevy::ecs::relationship::RelatedSpawnerCommands<ChildOf>,
+    heading: &str,
+    icon: Option<&Handle<Image>>,
+) {
+    panel
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(8.0),
+            margin: UiRect::bottom(Val::Px(6.0)),
+            width: Val::Percent(100.0),
+            ..default()
+        })
+        .with_children(|head| {
+            if let Some(icon) = icon {
+                head.spawn((
+                    // 22px, the size the field guide draws a crab at: the
+                    // sprites are 96px of smooth edges, and below about
+                    // twenty they stop being a shape and become a smudge.
+                    ImageNode::new(icon.clone()).with_color(palette::HEADING_ICON),
+                    Node {
+                        width: Val::Px(22.0),
+                        height: Val::Px(22.0),
+                        ..default()
+                    },
+                ));
+            }
+            head.spawn((
+                Text::new(heading),
+                TextFont {
+                    font_size: FontSize::Px(15.0),
+                    ..default()
+                },
+                TextColor(palette::IDLE_ROW),
+            ));
+            head.spawn((
+                Node {
+                    flex_grow: 1.0,
+                    height: Val::Px(1.0),
+                    margin: UiRect::left(Val::Px(8.0)),
+                    ..default()
+                },
+                BackgroundColor(palette::CARD_EDGE),
+            ));
+        });
 }
 
 /// Write one row's text and colour with the shared selection style,
