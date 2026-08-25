@@ -132,7 +132,7 @@ wins.
 
 ![The landing menu: a still postcard with ambient beach critters](docs/screenshots/menu.png)
 
-- **Tide Pool**: an 82-level solo puzzle campaign with a fixed arrow
+- **Tide Pool**: a 100-level solo puzzle campaign with a fixed arrow
   inventory. The test suite proves every level solvable with the arrows
   given, and every level that needs an arrow unsolvable without them (the
   opening tutorial hands you one to practise with on a board that cannot
@@ -210,7 +210,8 @@ wins.
   (`F3`/`F4`).
 - **Daily Challenge**: one date-seeded arena per day, identical worldwide,
   with a local best.
-- **Achievements**: thirty-two trophies and lifetime stats.
+- **Achievements**: fifty trophies and lifetime stats, on a shelf that
+  scrolls.
 
 ![The stage list: cleared stages filled gold, and every tile edged by how many arrows it grants](docs/screenshots/stages.png)
 
