@@ -54,6 +54,7 @@ mod stage_select;
 mod suspend;
 mod teams;
 mod tournament;
+mod typing;
 pub mod update;
 
 pub use campaign::{Campaign, CampaignKind};

@@ -257,27 +257,22 @@ pub(super) fn type_a_line(
     typed: &mut MessageReader<bevy::input::keyboard::KeyboardInput>,
     line: &mut String,
 ) -> Option<String> {
+    use crate::app::typing::{Keystroke, keystrokes};
     let mut sent = None;
     let mut dropped = false;
-    for event in typed.read() {
-        if !event.state.is_pressed() {
-            continue;
-        }
-        // A ladder rather than a match, as the name entry is and for the
-        // same reason: four keys out of a hundred and fifty are special
-        // and the rest are just text.
-        if matches!(event.key_code, KeyCode::Enter | KeyCode::NumpadEnter) {
-            sent = Some(std::mem::take(line));
-        } else if event.key_code == KeyCode::Escape {
-            dropped = true;
-        } else if matches!(event.key_code, KeyCode::Backspace | KeyCode::Delete) {
-            line.pop();
-        } else {
-            for ch in event.text.iter().flat_map(|text| text.chars()) {
-                if !ch.is_control() && line.chars().count() < crate::transport::CHAT_CHARS {
-                    line.push(ch);
-                }
+    let ends = [KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Escape];
+    for stroke in keystrokes(typed, &ends) {
+        match stroke {
+            Keystroke::Done(KeyCode::Escape) => dropped = true,
+            // Enter, on either side of the keyboard: the line goes out.
+            Keystroke::Done(_) => sent = Some(std::mem::take(line)),
+            Keystroke::Erase => {
+                line.pop();
             }
+            Keystroke::Char(ch) if line.chars().count() < crate::transport::CHAT_CHARS => {
+                line.push(ch)
+            }
+            Keystroke::Char(_) => {}
         }
     }
     if dropped {

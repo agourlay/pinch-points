@@ -319,22 +319,20 @@ fn type_a_name(
     settings: &mut GameSettings,
     menu: &mut MatchMenu,
 ) {
-    for event in typed.read() {
-        if !event.state.is_pressed() {
-            continue;
-        }
-        // Written as a ladder rather than a match: the interesting keys are
-        // three out of a hundred and fifty, and the rest are just text.
-        let done = matches!(
-            event.key_code,
-            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape | KeyCode::Tab
-        );
-        if matches!(event.key_code, KeyCode::Backspace | KeyCode::Delete) {
-            settings.pop_name_char(seat);
-        } else if !done {
-            for ch in event.text.iter().flat_map(|text| text.chars()) {
-                settings.push_name_char(seat, ch);
-            }
+    use crate::app::typing::{Keystroke, keystrokes};
+    let ends = [
+        KeyCode::Enter,
+        KeyCode::NumpadEnter,
+        KeyCode::Escape,
+        KeyCode::Tab,
+    ];
+    for stroke in keystrokes(typed, &ends) {
+        match stroke {
+            Keystroke::Erase => settings.pop_name_char(seat),
+            Keystroke::Char(ch) => settings.push_name_char(seat, ch),
+            // The finish is decided below from just_pressed, one branch
+            // for every way out.
+            Keystroke::Done(_) => {}
         }
     }
     // Every way out of the name box puts it away and nothing else: Enter

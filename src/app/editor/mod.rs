@@ -121,24 +121,19 @@ fn type_a_name(
     state: &mut EditorState,
     tr: &crate::app::i18n::Tr,
 ) {
-    for event in typed.read() {
-        if !event.state.is_pressed() {
-            continue;
-        }
-        let done = matches!(
-            event.key_code,
-            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape
-        );
-        if matches!(event.key_code, KeyCode::Backspace | KeyCode::Delete) {
-            state.name.pop();
-        } else if !done {
-            for ch in event.text.iter().flat_map(|text| text.chars()) {
-                // A name is one line and has to fit a file name and a
-                // stage caption, so it is bounded here rather than at save.
-                if !ch.is_control() && state.name.chars().count() < NAME_MAX {
-                    state.name.push(ch);
-                }
+    use crate::app::typing::{Keystroke, keystrokes};
+    let ends = [KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Escape];
+    for stroke in keystrokes(typed, &ends) {
+        match stroke {
+            Keystroke::Erase => {
+                state.name.pop();
             }
+            // A name is one line and has to fit a file name and a stage
+            // caption, so it is bounded here rather than at save.
+            Keystroke::Char(ch) if state.name.chars().count() < NAME_MAX => state.name.push(ch),
+            // The finish is decided below from just_pressed, as one branch
+            // for keyboard and pad alike.
+            Keystroke::Char(_) | Keystroke::Done(_) => {}
         }
     }
     if keys.just_pressed(KeyCode::Enter)
