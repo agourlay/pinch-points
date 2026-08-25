@@ -147,7 +147,7 @@ pub fn pause_input(
         menu_ui::Nav::Stay
     };
     menu.selected = menu_ui::step(pad_nav, menu.selected, OPTIONS);
-    if keys.just_pressed(KeyCode::Enter) || pad_accept {
+    if menu_ui::enter(&keys) || pad_accept {
         match PauseAction::ALL[menu.selected] {
             PauseAction::Continue => {
                 if let Some(session) = online.0.as_mut() {

@@ -256,7 +256,7 @@ pub fn enter_new_version(
 /// other screen.
 pub fn pick(keys: &ButtonInput<KeyCode>, selected: usize) -> (usize, Option<Choice>) {
     let selected = menu_ui::nav(keys, selected, Choice::ALL.len());
-    let choice = if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) {
+    let choice = if menu_ui::enter(keys) {
         Some(Choice::ALL[selected])
     } else if keys.just_pressed(KeyCode::Escape) {
         Some(Choice::No)

@@ -173,7 +173,7 @@ pub fn host_tick(
     let launch = should_launch(
         joined,
         state.typing.is_some(),
-        keys.just_pressed(KeyCode::Enter),
+        crate::app::menu_ui::enter(&keys),
         quota,
     );
     if launch {

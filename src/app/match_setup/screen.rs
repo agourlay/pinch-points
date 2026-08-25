@@ -264,7 +264,7 @@ pub fn match_setup_input(
         menu.naming = Some(seat);
         return;
     }
-    if keys.just_pressed(KeyCode::Enter) {
+    if menu_ui::enter(&keys) {
         config.armed = true;
         *tournament = if config.series.is_series() {
             crate::app::tournament::Tournament::start(config.series)
@@ -338,8 +338,7 @@ fn type_a_name(
     // Every way out of the name box puts it away and nothing else: Enter
     // does not also start the match here, or a player finishing a name
     // would find the round already running.
-    let done = keys.just_pressed(KeyCode::Enter)
-        || keys.just_pressed(KeyCode::NumpadEnter)
+    let done = menu_ui::enter(keys)
         || keys.just_pressed(KeyCode::Escape)
         || keys.just_pressed(KeyCode::Tab);
     if done {

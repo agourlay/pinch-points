@@ -367,7 +367,7 @@ pub fn achievements_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut next_screen: ResMut<NextState<crate::app::Screen>>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::Enter) {
+    if keys.just_pressed(KeyCode::Escape) || crate::app::menu_ui::enter(&keys) {
         next_screen.set(crate::app::Screen::Menu);
     }
 }

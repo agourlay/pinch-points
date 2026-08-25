@@ -434,7 +434,7 @@ pub fn versus_over_input(
 ) {
     let series_on = tournament.is_running();
     let Some(session) = &mut online.0 else {
-        if keys.just_pressed(KeyCode::Enter) {
+        if crate::app::menu_ui::enter(&keys) {
             match series_on {
                 true => next_screen.set(Screen::Interlude),
                 false => next_screen.set(Screen::Menu),
@@ -450,7 +450,7 @@ pub fn versus_over_input(
         next_screen.set(Screen::Interlude);
         return;
     }
-    if !keys.just_pressed(KeyCode::Enter) {
+    if !crate::app::menu_ui::enter(&keys) {
         return;
     }
     if session.is_host() && series_on {

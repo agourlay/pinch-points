@@ -136,10 +136,7 @@ fn type_a_name(
             Keystroke::Char(_) | Keystroke::Done(_) => {}
         }
     }
-    if keys.just_pressed(KeyCode::Enter)
-        || keys.just_pressed(KeyCode::NumpadEnter)
-        || keys.just_pressed(KeyCode::Escape)
-    {
+    if crate::app::menu_ui::enter(keys) || keys.just_pressed(KeyCode::Escape) {
         let tidy = state.name.trim().to_string();
         state.name = if tidy.is_empty() {
             tr.ed_default_name.to_string()
@@ -492,7 +489,7 @@ pub fn editor_commands(
             Err(e) => fill(tr.ed_save_failed, &[("e", &e.to_string())]),
         };
     }
-    if keys.just_pressed(KeyCode::Enter) {
+    if crate::app::menu_ui::enter(&keys) {
         let snapshot = board.clone();
         // Test it under the rule it will be played under: the granted
         // inventory for a stage, the versus rule the board already holds

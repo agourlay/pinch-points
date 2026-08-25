@@ -369,7 +369,7 @@ pub fn interlude_tick(
 ) {
     for mut timer in &mut timers {
         timer.0.tick(time.delta());
-        if timer.0.is_finished() || keys.just_pressed(KeyCode::Enter) {
+        if timer.0.is_finished() || menu_ui::enter(&keys) {
             next_screen.set(Screen::Versus);
         }
     }

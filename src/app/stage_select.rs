@@ -701,7 +701,7 @@ pub fn stage_select_input(
         next_screen.set(Screen::Menu);
         return;
     }
-    if !keys.just_pressed(KeyCode::Enter) {
+    if !menu_ui::enter(&keys) {
         return;
     }
     if progress.unlocked(&campaign, list.selected) {

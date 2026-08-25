@@ -80,6 +80,14 @@ fn first_live(from: usize, live: &[bool]) -> Option<usize> {
         .find(|&row| live[row])
 }
 
+/// Enter, from either key that says it: the main one or the numpad's.
+/// One question rather than a per-screen pair of `just_pressed` checks,
+/// because the screens disagreed on whether the numpad counted, and a
+/// player whose Enter is on the numpad should be heard everywhere.
+pub fn enter(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter)
+}
+
 /// A/D (or arrow) adjustment, as the turn of a dial.
 pub fn left_right(keys: &ButtonInput<KeyCode>) -> Option<Turn> {
     if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {

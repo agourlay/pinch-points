@@ -167,7 +167,7 @@ pub fn may_save(screen: &Screen) -> bool {
 /// tester's own. The rule is worth checking; the write is not.
 fn step(keys: &ButtonInput<KeyCode>, current: Lang) -> (Lang, bool) {
     let at = menu_ui::nav(keys, current.index(), ALL_LANGS.len());
-    let taken = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter);
+    let taken = menu_ui::enter(keys);
     (ALL_LANGS[at], taken)
 }
 

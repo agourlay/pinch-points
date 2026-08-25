@@ -380,7 +380,7 @@ pub fn menu_input(
         KeyCode::Digit8,
         KeyCode::Digit9,
     ];
-    let choice = if keys.just_pressed(KeyCode::Enter) {
+    let choice = if menu_ui::enter(&keys) {
         Some(list.selected)
     } else {
         HOTKEYS.iter().position(|&key| keys.just_pressed(key))

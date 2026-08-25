@@ -125,8 +125,7 @@ pub(super) fn take_a_beach(
         return;
     }
     let digit = DIGITS.iter().position(|k| keys.just_pressed(*k));
-    let enter_on = keys
-        .just_pressed(KeyCode::Enter)
+    let enter_on = crate::app::menu_ui::enter(keys)
         .then(|| state.selected_index())
         .flatten();
     let pick = which_beach(

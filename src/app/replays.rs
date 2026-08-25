@@ -323,7 +323,7 @@ pub fn library_input(
         library.kept = shelf();
         library.settle();
     }
-    if !keys.just_pressed(KeyCode::Enter) {
+    if !menu_ui::enter(&keys) {
         return;
     }
     let Some(kept) = library.kept.get(library.selected) else {

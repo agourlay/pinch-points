@@ -383,7 +383,7 @@ pub fn settings_input(
 ) {
     // Enter works the doors, the key-binding screen and the reset; on every
     // dial it means the same as Escape: done here.
-    if keys.just_pressed(KeyCode::Enter) {
+    if menu_ui::enter(&keys) {
         match Row::ALL[menu.selected] {
             Row::KeyBindings => next_screen.set(Screen::Controls),
             Row::ResetProgress => {

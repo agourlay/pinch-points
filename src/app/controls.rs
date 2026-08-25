@@ -176,7 +176,7 @@ pub fn controls_input(
         menu.feedback.clear();
         return;
     }
-    if keys.just_pressed(KeyCode::Enter) {
+    if menu_ui::enter(&keys) {
         match menu.selected {
             RESET_ROW => {
                 settings.binds = binds::default_binds();
