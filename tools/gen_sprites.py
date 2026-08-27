@@ -5,7 +5,7 @@ Draws at 4x and downsamples for smooth edges. White/light shapes are meant
 to be tinted by the engine (owner/kind colours); gulls, rocks, and holes
 bake their palette in.
 """
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 S = 4  # supersample factor
 SIZE = 96
@@ -33,9 +33,38 @@ def arrow_poly(inset):
     return [px(8 + i, 40 + i), px(52 - i//2, 40 + i), px(52 - i//2, 22 + i),
             px(90 - i, 48), px(52 - i//2, 74 - i), px(52 - i//2, 56 - i),
             px(8 + i, 56 - i)]
-d.polygon(arrow_poly(0), fill=OUTLINE)
-d.polygon(arrow_poly(4), fill=WHITE)
+# A fat dark keel under a bright face: the arrow is the player's only verb
+# and it is drawn on bright sand, so the outline carries the contrast and
+# the fill carries the owner's colour.
+# The outline is grown *outward* rather than inset. Inset, it ate the
+# shaft: the shaft is sixteen pixels tall on this canvas, so seven pixels
+# of border each side left two pixels of owner colour down the middle and
+# the arrow came out black.
+d.polygon(arrow_poly(-5), fill=OUTLINE)
+d.polygon(arrow_poly(1), fill=WHITE)
+d.polygon(arrow_poly(6), fill=LIGHT)
 save(img, "arrow")
+
+# --- arrow, worn: the same post after a round of weather ---------------------
+# Wear used to be spelled with transparency alone, which cost the arrow the
+# one thing it cannot spare: contrast against the sand. So a worn post keeps
+# its ink and loses its edges - splintered bites out of the shaft and head,
+# and two cracks across the face.
+img, d = canvas()
+d.polygon(arrow_poly(-5), fill=OUTLINE)
+d.polygon(arrow_poly(1), fill=WHITE)
+# splinter bites: wedges of nothing chewed out of the silhouette
+for pts in [
+    [(10, 38), (22, 40), (16, 50), (8, 46)],
+    [(30, 56), (44, 58), (38, 68), (28, 62)],
+    [(64, 30), (74, 36), (62, 42)],
+    [(76, 58), (86, 52), (84, 64)],
+]:
+    d.polygon([px(*pt) for pt in pts], fill=(0, 0, 0, 0))
+# cracks: dark hairlines across what is left
+d.line([px(20, 42), px(40, 54)], fill=OUTLINE, width=3 * S)
+d.line([px(46, 34), px(58, 58)], fill=OUTLINE, width=3 * S)
+save(img, "arrow_worn")
 
 # --- crab: jointed legs, stalked eyes, patterned shell; tintable ------------
 img, d = canvas()
@@ -421,3 +450,119 @@ d.polygon([px(44, 22), px(44, 58), px(20, 58)], fill=(230, 224, 206, 255))
 # tiny pennant
 d.polygon([px(46, 14), px(46, 8), px(58, 11)], fill=(214, 60, 50, 255))
 save(img, "boat")
+
+# --- keep_ring: the outer curtain wall a tier-1 castle grows, tintable -------
+# Replaces a plain coloured square. Hollow, so the keep sits inside it.
+# Three deep merlons a side rather than a row of fine notches: at 64 px on
+# the board a fine notch is a dashed border, not a battlement.
+img, d = canvas()
+# The dark keel is kept thin and the coloured band wide: the outline is
+# tinted along with everything else, and a wall that is mostly outline
+# comes out black whoever owns it.
+d.rounded_rectangle([px(2, 2), px(94, 94)], radius=10 * S, fill=OUTLINE)
+d.rounded_rectangle([px(5, 5), px(91, 91)], radius=8 * S, fill=WHITE)
+d.rounded_rectangle([px(17, 17), px(79, 79)], radius=6 * S, fill=(0, 0, 0, 0))
+for off in (20, 42, 64):
+    for box in [(off, 0, off + 12, 9), (off, 87, off + 12, 96),
+                (0, off, 9, off + 12), (87, off, 96, off + 12)]:
+        d.rectangle([px(box[0], box[1]), px(box[2], box[3])], fill=(0, 0, 0, 0))
+# a lit inner lip so the wall has a thickness to it rather than reading flat
+d.rounded_rectangle([px(17, 17), px(79, 79)], radius=6 * S,
+                    outline=LIGHT, width=2 * S)
+save(img, "keep_ring")
+
+# --- turret: a bucket-moulded corner tower seen from above, tintable ---------
+img, d = canvas()
+d.ellipse([px(6, 6), px(90, 90)], fill=OUTLINE)
+d.ellipse([px(11, 11), px(85, 85)], fill=WHITE)
+d.ellipse([px(24, 24), px(72, 72)], fill=LIGHT)
+d.ellipse([px(34, 30), px(62, 52)], fill=WHITE)
+# crenellation nicks around the rim
+for i in range(8):
+    a = i * 45
+    import math as _m
+    cx = 48 + 39 * _m.cos(_m.radians(a))
+    cy = 48 + 39 * _m.sin(_m.radians(a))
+    d.ellipse([px(cx - 6, cy - 6), px(cx + 6, cy + 6)], fill=(0, 0, 0, 0))
+save(img, "turret")
+
+# --- moat: the ring of water a tier-3 castle digs, baked ---------------------
+img, d = canvas()
+d.rounded_rectangle([px(0, 0), px(96, 96)], radius=16 * S, fill=(46, 96, 132, 255))
+d.rounded_rectangle([px(4, 4), px(92, 92)], radius=14 * S, fill=(78, 142, 180, 255))
+d.rounded_rectangle([px(7, 7), px(89, 89)], radius=12 * S, fill=(104, 172, 206, 255))
+# ripple highlights around the ring
+for inset, alpha in ((11, 150), (16, 100)):
+    d.rounded_rectangle([px(inset, inset), px(96 - inset, 96 - inset)],
+                        radius=10 * S, outline=(216, 238, 248, alpha), width=2 * S)
+# the island the keep stands on: nothing, so the sand shows through
+d.rounded_rectangle([px(21, 21), px(75, 75)], radius=8 * S, fill=(0, 0, 0, 0))
+save(img, "moat")
+
+# --- feather: what is left when a gull gets a crab, tintable -----------------
+img, d = canvas()
+# vane: a leaf pointing +X, split by the quill
+d.polygon([px(6, 48), px(38, 26), px(78, 38), px(92, 48),
+           px(78, 58), px(38, 70)], fill=(226, 230, 236, 255))
+d.polygon([px(10, 48), px(40, 32), px(76, 42), px(86, 48)],
+          fill=(250, 251, 253, 255))
+# quill
+d.line([px(8, 48), px(92, 48)], fill=(178, 184, 192, 255), width=3 * S)
+# barb notches along the trailing edge
+for i in range(5):
+    x = 30 + i * 12
+    d.line([px(x, 52), px(x - 6, 66)], fill=(0, 0, 0, 0), width=3 * S)
+# a dark tip, the way a herring gull's primaries end
+d.polygon([px(78, 38), px(92, 48), px(78, 58)], fill=(78, 84, 92, 255))
+save(img, "feather")
+
+# --- ramp: a vertical alpha ramp, opaque at the top --------------------------
+# One tintable texture for every soft gradient in the game: the sky and sea
+# bands in the menu (which used to meet in hard seams), the inner shadow
+# under the plank frame, and the wash at the end of a round.
+img = Image.new("RGBA", (SIZE * S, SIZE * S), (0, 0, 0, 0))
+d = ImageDraw.Draw(img)
+for row in range(SIZE * S):
+    a = int(255 * (1.0 - row / (SIZE * S - 1)))
+    d.line([(0, row), (SIZE * S, row)], fill=(255, 255, 255, a))
+save(img, "ramp")
+
+# --- vignette: clear in the middle, dark at the edges, baked -----------------
+# Stretched over the board to sink its corners a little; the sand is flat
+# lit and without this the beach has no centre. Built from a radial ramp
+# (black at the centre, white at the rim) used as the alpha channel, so the
+# falloff is smooth to the corners rather than stepped in rings.
+#
+# The last few pixels are then taken back down to nothing. A radial ramp is
+# at its *strongest* where the square texture stops - half strength along
+# the straight edges, full at the corners - so without this the sprite ends
+# in a hard rectangle of shadow drawn over the beach beyond the board, which
+# is exactly the seam it was added to avoid.
+mask = Image.radial_gradient("L").resize((SIZE * S, SIZE * S), Image.BILINEAR)
+mask = mask.point(lambda v: int(130 * (v / 255.0) ** 2.2))
+fade = Image.new("L", (SIZE * S, SIZE * S), 0)
+d = ImageDraw.Draw(fade)
+edge = 9 * S            # how deep the taper runs in from the border
+steps = 24
+for i in range(steps + 1):
+    # Largest and darkest first, each smaller rectangle painting over it a
+    # little brighter: the border ends at nothing and the inside is whole.
+    t = i / steps
+    inset = int(edge * t)
+    d.rectangle(
+        [inset, inset, SIZE * S - 1 - inset, SIZE * S - 1 - inset],
+        fill=int(255 * t),
+    )
+mask = ImageChops.multiply(mask, fade)
+img = Image.new("RGBA", (SIZE * S, SIZE * S), (8, 12, 20, 255))
+img.putalpha(mask)
+save(img, "vignette")
+
+# --- ring: a thin bright circle, tintable ------------------------------------
+# The shape every "something happened here" gets: a shockwave that swells
+# out of a tile and thins away. Drawn hollow so it reads as a wave rather
+# than a disc growing over the board.
+img, d = canvas()
+d.ellipse([px(6, 6), px(90, 90)], outline=WHITE, width=7 * S)
+d.ellipse([px(13, 13), px(83, 83)], outline=(255, 255, 255, 110), width=3 * S)
+save(img, "ring")
