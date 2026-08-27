@@ -6,7 +6,7 @@
 
 use crate::app::i18n::fill;
 use crate::app::settings::GameSettings;
-use crate::app::{Playback, Screen, menu_ui};
+use crate::app::{Playback, Screen, menu_ui, palette};
 use crate::sim::Replay;
 use bevy::prelude::*;
 
@@ -565,6 +565,29 @@ mod tests {
         assert!(round_from(crate::share::decode(&junk), tr).is_err());
     }
 
+    /// The transport clock reads as a clock. It is the one place a player
+    /// sees how far through a round they are, and `0:7` for seven seconds
+    /// past the minute is the kind of thing that reads as a bug.
+    #[test]
+    fn the_transport_clock_pads_its_seconds() {
+        assert_eq!(stamp(0), "0:00", "the very start");
+        assert_eq!(stamp(crate::sim::TICKS_PER_SECOND as usize * 7), "0:07");
+        assert_eq!(stamp(crate::sim::TICKS_PER_SECOND as usize * 59), "0:59");
+        assert_eq!(stamp(crate::sim::TICKS_PER_SECOND as usize * 60), "1:00");
+        // A three-minute Turf War, which is the longest round that ships.
+        assert_eq!(stamp(crate::sim::TICKS_PER_SECOND as usize * 185), "3:05");
+    }
+
+    /// It counts in ticks, not in frames: the transport is drawn every
+    /// frame and the sim advances thirty times a second, so a clock that
+    /// read the wrong one would run at whatever the display happened to do.
+    #[test]
+    fn the_transport_clock_counts_in_ticks() {
+        let one_second = crate::sim::TICKS_PER_SECOND as usize;
+        assert_eq!(stamp(one_second - 1), "0:00", "part of a second is not one");
+        assert_eq!(stamp(one_second), "0:01", "and a whole one is");
+    }
+
     #[test]
     fn the_speed_key_cycles_the_steps() {
         let mut speed = PlaybackSpeed::default();
@@ -573,5 +596,175 @@ mod tests {
             speed = PlaybackSpeed(speed.0).stepped();
             assert_eq!(speed.0, want);
         }
+    }
+}
+
+// --- the transport bar ------------------------------------------------------
+
+/// The row of controls under a replay: where the round has got to, whether
+/// it is running, and how fast.
+///
+/// A recording used to be a thing you started and then watched go past,
+/// with the speed hidden in the status slot and no way to stop it. This is
+/// the shape people already know from every video player: a track that
+/// fills, a state, and a clock.
+#[derive(Component)]
+pub struct ReplayBar;
+
+/// The filled part of the track. Its width is the round's progress.
+#[derive(Component)]
+pub struct ReplayProgress;
+
+/// The line under the track: the state, the speed, and the clock.
+#[derive(Component)]
+pub struct ReplayReadout;
+
+/// How wide the track is drawn, in pixels.
+const TRACK: f32 = 420.0;
+
+/// Keep the bar up while a recording is playing, and only then.
+///
+/// Reconciled every frame rather than hung off the screen transition: a
+/// replay is entered and left through the same versus screen a live match
+/// uses, so there is no transition of its own to hang it on.
+pub fn tend_replay_bar(
+    mut commands: Commands,
+    playback: Res<Playback>,
+    screen: Res<State<crate::app::Screen>>,
+    bar: Query<Entity, With<ReplayBar>>,
+) {
+    let watching = playback.0.is_some() && *screen.get() == crate::app::Screen::Versus;
+    if !watching {
+        for entity in &bar {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+    if !bar.is_empty() {
+        return;
+    }
+    commands
+        .spawn((
+            ReplayBar,
+            Node {
+                position_type: PositionType::Absolute,
+                // The band the chrome reserves at the foot of the board,
+                // which the field guide stands down from while a
+                // recording is playing.
+                bottom: Val::Px(56.0),
+                left: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(5.0),
+                ..default()
+            },
+        ))
+        .with_children(|column| {
+            // The track: a sunk rail with a gold fill creeping along it.
+            column
+                .spawn((
+                    Node {
+                        width: Val::Px(TRACK),
+                        height: Val::Px(6.0),
+                        border_radius: BorderRadius::all(Val::Px(3.0)),
+                        ..default()
+                    },
+                    BackgroundColor(palette::BAR_TRACK),
+                ))
+                .with_children(|rail| {
+                    rail.spawn((
+                        ReplayProgress,
+                        Node {
+                            width: Val::Percent(0.0),
+                            height: Val::Percent(100.0),
+                            border_radius: BorderRadius::all(Val::Px(3.0)),
+                            ..default()
+                        },
+                        BackgroundColor(palette::GOLD),
+                    ));
+                });
+            column
+                .spawn((
+                    Node {
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(3.0)),
+                        border_radius: BorderRadius::all(Val::Px(10.0)),
+                        ..default()
+                    },
+                    BackgroundColor(palette::PILL_FILL),
+                ))
+                .with_children(|pill| {
+                    pill.spawn((
+                        ReplayReadout,
+                        Text::new(String::new()),
+                        TextFont {
+                            font_size: FontSize::Px(menu_ui::type_scale::FINE),
+                            ..default()
+                        },
+                        TextLayout::no_wrap(),
+                        TextColor(palette::PARCHMENT),
+                    ));
+                });
+        });
+}
+
+/// Minutes and seconds of a tick count, at the sim's fixed rate.
+fn stamp(ticks: usize) -> String {
+    let seconds = ticks / crate::sim::TICKS_PER_SECOND as usize;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
+/// Write the track and the readout from where the recording has got to.
+pub fn update_replay_bar(
+    playback: Res<Playback>,
+    paused: Res<crate::app::Paused>,
+    speed: Res<PlaybackSpeed>,
+    settings: Res<crate::app::settings::GameSettings>,
+    mut track: Query<&mut Node, With<ReplayProgress>>,
+    mut readout: Query<&mut Text, With<ReplayReadout>>,
+) {
+    let Some((replay, at)) = &playback.0 else {
+        return;
+    };
+    let total = replay.inputs.len().max(1);
+    let through = (*at).min(total);
+    for mut node in &mut track {
+        node.width = Val::Percent(through as f32 / total as f32 * 100.0);
+    }
+    let tr = settings.tr();
+    let line = format!(
+        "{}  {}x   {} / {}",
+        if paused.0 {
+            tr.replay_paused
+        } else {
+            tr.replay_playing
+        },
+        speed.0,
+        stamp(through),
+        stamp(total)
+    );
+    for mut text in &mut readout {
+        menu_ui::set_text(&mut text, &line);
+    }
+}
+
+/// Space stops and starts a recording.
+///
+/// Only while one is playing: in a live match the same key pulls a
+/// signpost, and a round nobody can pause is the point of a live match.
+pub fn playback_pause_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    playback: Res<Playback>,
+    menu: Res<crate::app::pause::PauseMenu>,
+    mut paused: ResMut<crate::app::Paused>,
+) {
+    // Not behind the pause card. That card sets `Paused` once, on opening,
+    // and never re-asserts it, so a Space pressed under it would start the
+    // recording running again with the card still up saying it is stopped.
+    if menu.open || playback.0.is_none() {
+        return;
+    }
+    if keys.just_pressed(KeyCode::Space) {
+        paused.0 = !paused.0;
     }
 }

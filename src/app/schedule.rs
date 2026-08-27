@@ -535,7 +535,8 @@ fn add_ui_systems(app: &mut App) {
             (language::language_input, language::update_language_ui)
                 .chain()
                 .run_if(in_state(Screen::Language)),
-            replays::playback_speed_input.run_if(in_state(Screen::Versus)),
+            (replays::playback_speed_input, replays::playback_pause_input)
+                .run_if(in_state(Screen::Versus)),
             (
                 gamepad::pad_claim_seats,
                 match_setup::match_setup_input,
@@ -772,6 +773,7 @@ fn add_chrome_systems(app: &mut App) {
             side_panels::update_log,
             hud::update_tide_clock,
             hud::update_hint,
+            (replays::tend_replay_bar, replays::update_replay_bar).chain(),
             // The reel lands after the card is up; the card's line waits.
             (poll_reel, results::update_highlight_line)
                 .chain()

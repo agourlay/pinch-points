@@ -246,6 +246,11 @@ struct Tr {
     pub replays_heading: &'static str,
     /// Playback speed readout, e.g. "x2".
     pub replay_speed: &'static str,
+    /// The two states on the replay transport bar.
+    pub replay_playing: &'static str,
+    pub replay_paused: &'static str,
+    /// The transport line under a recording being watched.
+    pub prompt_replay_transport: &'static str,
     // The stuck-player hint
     pub hint_offer: &'static str,
     pub hint_showing: &'static str,

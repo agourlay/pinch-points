@@ -36,6 +36,13 @@ const OPTIONS: usize = PauseAction::ALL.len();
 #[derive(Resource, Default)]
 pub struct PauseMenu {
     pub open: bool,
+    /// Whether the round was already stopped when the card was raised.
+    ///
+    /// A replay can be paused from its own transport before the card is
+    /// opened, and the card used to hand the round back running whatever
+    /// it found: you stopped the recording to look at the board, checked
+    /// the menu, backed out, and it was playing again with no key pressed.
+    held: bool,
     selected: usize,
 }
 
@@ -75,7 +82,8 @@ fn close(
     ui: &Query<Entity, With<PauseUi>>,
 ) {
     menu.open = false;
-    paused.0 = false;
+    // Give the round back exactly as the card found it.
+    paused.0 = menu.held;
     for entity in ui {
         commands.entity(entity).despawn();
     }
@@ -112,6 +120,9 @@ pub fn pause_input(
         if keys.just_pressed(KeyCode::Escape) || pad_start || peer_paused {
             menu.open = true;
             menu.selected = 0;
+            // What to hand back on the way out: a replay stopped from its
+            // own transport must still be stopped when the card closes.
+            menu.held = paused.0;
             match online.0.as_mut() {
                 // Online: the peers agree on a frame to stop at, and the sim
                 // halts there by itself. Freezing the local ticker instead

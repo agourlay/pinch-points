@@ -451,6 +451,7 @@ fn spawn_field_guide(
 /// The guide belongs on the screens with crabs on them.
 pub fn field_guide_visibility(
     screen: Res<State<Screen>>,
+    playback: Res<Playback>,
     mut guides: Query<&mut Node, With<FieldGuide>>,
 ) {
     // An exhaustive match rather than a `matches!`, so a new screen has to
@@ -470,6 +471,11 @@ pub fn field_guide_visibility(
         | Screen::Language
         | Screen::NewVersion => false,
     };
+    // The band at the foot of the board holds one row, and while a
+    // recording is playing the transport belongs in it: what a crab is
+    // worth is a thing to know while routing them, and nobody watching a
+    // replay is routing anything.
+    let wanted = wanted && playback.0.is_none();
     for mut node in &mut guides {
         menu_ui::set_shown(&mut node, wanted);
     }

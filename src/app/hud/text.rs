@@ -338,11 +338,13 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         }
     }
     let prompt = match vphase.get() {
-        // A replay - or someone else's match - is watched, not played: no
-        // control legend for a seat you do not have.
-        VersusPhase::Running
-            if playback.0.is_some() || online.0.as_ref().is_some_and(|s| s.session.watching()) =>
-        {
+        // A recording is watched, not played, but it *is* driven: the
+        // transport bar at the foot of the board takes a pause and a
+        // speed, and keys nobody is told about are keys nobody presses.
+        VersusPhase::Running if playback.0.is_some() => tr.prompt_replay_transport.to_string(),
+        // Someone else's live match has no transport and no seat here:
+        // no control legend at all.
+        VersusPhase::Running if online.0.as_ref().is_some_and(|s| s.session.watching()) => {
             tr.prompt_enter_menu.to_string()
         }
         VersusPhase::Running if online.0.is_some() || bots.0.iter().any(Option::is_some) => {
@@ -569,6 +571,70 @@ mod tests {
             if screen != Screen::Interlude {
                 assert!(!prompt.is_empty(), "{screen:?} offers no keys");
             }
+        }
+    }
+
+    /// No prompt names a key twice. `screen_text` appends the mute legend
+    /// to every board prompt itself, on purpose - its own doc says a key
+    /// that works everywhere "should not be a line eight strings have to
+    /// remember to carry" - so a legend that carries one anyway reads
+    /// "M: mute | M: mute", and in two languages at once where the two
+    /// strings picked different words for it.
+    ///
+    /// Checked with a recording playing, because that arm is the one the
+    /// screen census above cannot reach: it builds its readout with
+    /// `Playback::default()`, so the transport prompt never ran there.
+    #[test]
+    fn no_prompt_names_the_mute_key_twice() {
+        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+        use crate::sim::{Replay, campaign_levels};
+
+        let levels = campaign_levels();
+        let builtins = levels.len();
+        let watching = Playback(Some((
+            Replay::new(levels.first().expect("a campaign level").clone()),
+            0,
+        )));
+        for lang in crate::app::i18n::ALL_LANGS {
+            let settings = GameSettings {
+                language: lang,
+                ..GameSettings::default()
+            };
+            let tr = settings.tr();
+            let readout = Readout {
+                tr,
+                lang,
+                sim: &Sim(Board::new(9, 7, 1)),
+                campaign: &Campaign {
+                    kind: CampaignKind::TidePool,
+                    levels: campaign_levels(),
+                    index: 0,
+                    builtins,
+                },
+                phase: &State::new(Phase::Running),
+                vphase: &State::new(VersusPhase::Running),
+                editor: &EditorState::default(),
+                online: &Online::default(),
+                playback: &watching,
+                lobby: &LobbyState::default(),
+                tournament: &crate::app::tournament::Tournament::default(),
+                seats: &Seats::default(),
+                settings: &settings,
+                keycaps: &crate::app::keycaps::KeyCaps::default(),
+                names: &crate::app::SeatNames::default(),
+                bots: &Bots::default(),
+                library: &crate::app::replays::Library::default(),
+                notice: &crate::app::RoundNotice::default(),
+                match_menu: &crate::app::match_setup::MatchMenu::default(),
+                speed: 1,
+            };
+            let prompt = screen_text(Screen::Versus, &readout).prompt;
+            let mute = tr.prompt_mute;
+            assert_eq!(
+                prompt.matches(mute).count(),
+                1,
+                "{lang:?} names the mute key more than once: {prompt}"
+            );
         }
     }
 
