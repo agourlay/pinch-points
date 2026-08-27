@@ -91,6 +91,7 @@ pub fn dir_rotation(dir: Direction) -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sim::Direction::{Down, Left, Right, Up};
 
     #[test]
     fn tile_centers_round_trip_through_nearest_tile() {
@@ -124,5 +125,79 @@ mod tests {
         let b = tile_center(&board, 4, 2);
         assert_eq!(a, -b, "opposite corners mirror through the origin");
         assert_eq!(tile_center(&board, 2, 1), Vec2::ZERO, "centre tile is 0,0");
+    }
+
+    /// cursor is clamped by this and nothing else.
+    #[test]
+    fn a_point_off_the_board_clamps_onto_it() {
+        let board = Board::new(9, 7, 1);
+        let far = 10_000.0;
+        assert_eq!(nearest_tile(&board, Vec2::new(-far, far)), (0, 0));
+        assert_eq!(nearest_tile(&board, Vec2::new(far, -far)), (8, 6));
+        assert_eq!(nearest_tile(&board, Vec2::new(far, far)), (8, 0));
+    }
+
+    /// looks plausible until a crab walks the wrong way.
+    #[test]
+    fn a_full_stride_arrives_on_the_neighbour_and_flips_the_axis() {
+        let board = Board::new(9, 7, 1);
+        let tile = board.index_of(4, 3);
+        let full = crate::sim::SUBUNITS_PER_TILE;
+        let step = |dir| creature_pos(&board, tile, dir, full);
+        assert_eq!(step(Right), tile_center(&board, 5, 3));
+        assert_eq!(step(Left), tile_center(&board, 3, 3));
+        // Sim `Down` is row 4, which is *lower* on the screen.
+        assert_eq!(step(Down), tile_center(&board, 4, 4));
+        assert!(step(Down).y < tile_center(&board, 4, 3).y, "down is down");
+        assert!(step(Up).y > tile_center(&board, 4, 3).y, "and up is up");
+    }
+
+    /// sitting a pixel off the ones of the other.
+    #[test]
+    fn a_pose_reads_the_same_as_its_parts() {
+        let board = Board::new(12, 9, 1);
+        for progress in [0, 17, 64, crate::sim::SUBUNITS_PER_TILE - 1] {
+            for dir in [Up, Down, Left, Right] {
+                let tile = board.index_of(6, 4);
+                let pose = crate::sim::Pose {
+                    tile,
+                    dir,
+                    progress,
+                };
+                assert_eq!(
+                    pose_pos(&board, pose),
+                    creature_pos(&board, tile, dir, progress)
+                );
+            }
+        }
+    }
+
+    /// the wrong way round reads as a crab walking backwards.
+    #[test]
+    fn a_heading_turns_the_art_from_facing_right() {
+        let ahead = Vec3::X;
+        let turn = |dir| (dir_rotation(dir) * ahead).truncate();
+        let close = |a: Vec2, b: Vec2| a.distance(b) < 1e-5;
+        assert!(close(turn(Right), Vec2::X), "{:?}", turn(Right));
+        assert!(close(turn(Left), -Vec2::X), "{:?}", turn(Left));
+        assert!(close(turn(Up), Vec2::Y), "{:?}", turn(Up));
+        assert!(close(turn(Down), -Vec2::Y), "{:?}", turn(Down));
+    }
+
+    /// constant was introduced to remove.
+    #[test]
+    fn the_sun_casts_down_and_to_the_right() {
+        // A `const` block rather than a plain assertion: the value is
+        // known at compile time, so this refuses to *build* with the sun
+        // in the wrong quarter rather than merely failing a run.
+        const { assert!(SUN.x > 0.0, "shadows fall to the right") };
+        const { assert!(SUN.y < 0.0, "and downward, in world space") };
+        // And the pair is a real diagonal, not a straight drop: a shadow
+        // directly under its caster is a shadow nobody ever sees, which is
+        // how the creatures' went unnoticed for the whole of their life.
+        assert!(
+            SUN.x.abs() > 1.0 && SUN.y.abs() > 1.0,
+            "{SUN:?} is too flat"
+        );
     }
 }

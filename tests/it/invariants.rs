@@ -413,3 +413,84 @@ fn lockstep_survives_any_delivery_schedule() {
         );
     }
 }
+
+/// Every board the game *ships* survives its own snapshot, not just the
+/// fuzzed ones.
+///
+/// The fuzz above plays random arenas, which is the right way to find a
+/// tile combination nobody thought of - and exactly the wrong way to
+/// catch a hand-authored board using a feature the writer forgot: the
+/// generator only ever produces what it was taught. These are the boards
+/// a player actually loads.
+#[test]
+fn every_shipped_board_survives_its_own_snapshot() {
+    for (list, what) in [
+        (pinch_points::sim::campaign_levels(), "campaign"),
+        (pinch_points::sim::challenge_levels(), "challenge"),
+    ] {
+        for (i, level) in list.iter().enumerate() {
+            let board = level.board();
+            let text = board.to_snapshot();
+            let back = Board::parse_snapshot(&text).unwrap_or_else(|e| {
+                panic!(
+                    "{what} {} {:?}: its own snapshot was refused: {e}",
+                    i + 1,
+                    level.name
+                )
+            });
+            assert_eq!(
+                board.state_hash(),
+                back.state_hash(),
+                "{what} {} {:?} came back a different board",
+                i + 1,
+                level.name
+            );
+        }
+    }
+}
+
+/// A round picked up from a mid-round snapshot plays on identically.
+///
+/// This is the whole promise of suspending a match and coming back to it,
+/// and it is a strictly harder ask than a snapshot at tick zero: crabs are
+/// mid-stride, gulls are mid-hop, signposts are part-worn and the PRNG is
+/// somewhere in the middle of its stream. Anything the format rounds off
+/// shows up not at load but as a round that slowly drifts apart.
+#[test]
+fn a_round_resumed_mid_flight_plays_on_the_same() {
+    for seed in 0..8u64 {
+        let mut straight = arena(seed);
+        let mut rng = Pcg32::new(seed ^ 0x5E5, 0x2E5);
+        let scripted: Vec<[PlayerAction; MAX_PLAYERS]> = (0..600)
+            .map(|_| {
+                let mut actions = [PlayerAction::None; MAX_PLAYERS];
+                for seat in actions.iter_mut().take(2) {
+                    *seat = action(&mut rng, &straight);
+                }
+                actions
+            })
+            .collect();
+        // Halfway through, take a copy the long way round: out to text and
+        // back, as suspending a match does.
+        for actions in scripted.iter().take(300) {
+            straight.tick(actions);
+        }
+        let text = straight.to_snapshot();
+        let mut resumed = Board::parse_snapshot(&text).expect("a suspended round reloads");
+        assert_eq!(
+            straight.state_hash(),
+            resumed.state_hash(),
+            "seed {seed}: the round came back different before a single tick"
+        );
+        // And from there the two must stay in step to the last frame.
+        for (tick, actions) in scripted.iter().enumerate().skip(300) {
+            straight.tick(actions);
+            resumed.tick(actions);
+            assert_eq!(
+                straight.state_hash(),
+                resumed.state_hash(),
+                "seed {seed}: drifted apart at tick {tick}"
+            );
+        }
+    }
+}

@@ -555,7 +555,28 @@ pub(super) fn check_versus_over(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::BotLevel;
+    use crate::sim::{BotLevel, Level, Replay};
+    use bevy::prelude::*;
+
+    /// A bystander the teardown must not touch.
+    #[derive(Component)]
+    struct Marker;
+
+    /// The smallest world `advance_sim` will run in: a board, the four
+    /// resources it reads, and nothing else.
+    fn sim_app() -> App {
+        let mut app = App::new();
+        app.insert_resource(Sim(crate::sim::classic_arena(false, 2)));
+        app.init_resource::<PendingActions>();
+        app.init_resource::<Paused>();
+        app.init_resource::<net::Online>();
+        app.init_resource::<Recorder>();
+        app.init_resource::<Playback>();
+        app.init_resource::<crate::app::replays::PlaybackSpeed>();
+        app.init_resource::<Bots>();
+        app.add_systems(Update, advance_sim);
+        app
+    }
 
     /// What a finished round is filed under. Nothing else tests this, and
     /// it names every file in the replay library: a draw and a team win
@@ -713,5 +734,143 @@ mod tests {
             here.scores()[2] > 0 || here.scores()[3] > 0,
             "no AI seat banked anything, so the fill proved nothing"
         );
+    }
+
+    /// The teardown has to sweep *every* category of board sprite.
+    ///
+    /// Its own comment records what a miss costs: a category left behind
+    /// once meant turnstile sprites surviving onto a smaller board and
+    /// panicking in `tile_at` - a crash at level load, from a sprite
+    /// nobody was looking at. The two teardown paths share this bundle so
+    /// they cannot drift apart, and this is the guard that the bundle
+    /// itself is complete.
+    #[test]
+    fn the_teardown_leaves_no_board_sprite_behind() {
+        use crate::app::{board_render, creatures};
+        let mut app = App::new();
+        // One of each marked category, plus a bystander that must survive:
+        // a teardown that simply emptied the world would pass every
+        // assertion below without it.
+        let survivor = app.world_mut().spawn(Marker).id();
+        app.world_mut().spawn(board_render::BoardStatic);
+        app.world_mut().spawn(board_render::Waterline(0));
+        app.world_mut().spawn(board_render::WaterFoam(0));
+        app.world_mut().spawn(creatures::CrabSprite {
+            id: 1,
+            kind: crate::sim::CrabKind::Common,
+            shade: 0.0,
+        });
+        app.world_mut().spawn(creatures::GullSprite(1));
+        let before = app.world().entities().len();
+        assert!(before > 5, "the fixture did not spawn");
+
+        app.add_systems(Update, despawn_board_sprites);
+        app.update();
+
+        assert_eq!(
+            app.world_mut()
+                .query_filtered::<Entity, With<board_render::BoardStatic>>()
+                .iter(app.world())
+                .count(),
+            0,
+            "the static beach survived the teardown"
+        );
+        for left in [
+            app.world_mut()
+                .query_filtered::<Entity, With<board_render::Waterline>>()
+                .iter(app.world())
+                .count(),
+            app.world_mut()
+                .query_filtered::<Entity, With<board_render::WaterFoam>>()
+                .iter(app.world())
+                .count(),
+            app.world_mut()
+                .query_filtered::<Entity, With<creatures::CrabSprite>>()
+                .iter(app.world())
+                .count(),
+            app.world_mut()
+                .query_filtered::<Entity, With<creatures::GullSprite>>()
+                .iter(app.world())
+                .count(),
+        ] {
+            assert_eq!(left, 0, "a category of board sprite survived the teardown");
+        }
+        assert!(
+            app.world().get_entity(survivor).is_ok(),
+            "the teardown took something that was not a board sprite"
+        );
+    }
+
+    /// A round nobody is watching still stops when it is paused.
+    #[test]
+    fn a_paused_round_does_not_advance() {
+        let mut app = sim_app();
+        app.world_mut().resource_mut::<Paused>().0 = true;
+        let before = app.world().resource::<Sim>().0.ticks();
+        app.update();
+        assert_eq!(
+            app.world().resource::<Sim>().0.ticks(),
+            before,
+            "a paused beach kept walking"
+        );
+        app.world_mut().resource_mut::<Paused>().0 = false;
+        app.update();
+        assert!(
+            app.world().resource::<Sim>().0.ticks() > before,
+            "and never started again"
+        );
+    }
+
+    /// A recording is fed one frame per tick, or as many as the transport
+    /// asks for. The speed is the whole of the fast-forward: there is no
+    /// separate scrubbing path, so a speed that did not multiply here
+    /// would be a transport button that did nothing.
+    #[test]
+    fn the_transport_speed_is_how_many_frames_a_replay_eats() {
+        for speed in [1u8, 2, 4] {
+            let mut app = sim_app();
+            let level = Level::from_board("Turf War", 3, crate::sim::classic_arena(false, 2));
+            let mut replay = Replay::new(level);
+            for _ in 0..40 {
+                replay.record([PlayerAction::None; MAX_PLAYERS]);
+            }
+            app.world_mut().insert_resource(Playback(Some((replay, 0))));
+            app.world_mut()
+                .insert_resource(crate::app::replays::PlaybackSpeed(speed));
+            app.update();
+            let (_, idx) = app
+                .world()
+                .resource::<Playback>()
+                .0
+                .as_ref()
+                .expect("still watching");
+            assert_eq!(
+                *idx,
+                usize::from(speed),
+                "at {speed}x the recording moved {idx} frames in one tick"
+            );
+        }
+    }
+
+    /// And it stops at the end rather than running off the tape.
+    #[test]
+    fn a_replay_stops_when_the_recording_runs_out() {
+        let mut app = sim_app();
+        let level = Level::from_board("Turf War", 3, crate::sim::classic_arena(false, 2));
+        let mut replay = Replay::new(level);
+        replay.record([PlayerAction::None; MAX_PLAYERS]);
+        app.world_mut().insert_resource(Playback(Some((replay, 0))));
+        app.world_mut()
+            .insert_resource(crate::app::replays::PlaybackSpeed(4));
+        for _ in 0..5 {
+            app.update();
+        }
+        let (replay, idx) = app
+            .world()
+            .resource::<Playback>()
+            .0
+            .as_ref()
+            .expect("still watching");
+        assert_eq!(*idx, replay.inputs.len(), "it read past the last frame");
     }
 }

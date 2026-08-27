@@ -277,3 +277,34 @@ impl Board {
         self.grid.in_bounds(x, y)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tile index and a pair of coordinates are the same thing said two
+    /// ways, and everything the sim does walks between them: a crab's
+    /// position, a signpost's tile, the wire's board, the render layer's
+    /// every sprite. An off-by-one in either direction would put the whole
+    /// board a tile out of step with itself.
+    #[test]
+    fn an_index_and_a_pair_of_coordinates_are_the_same_place() {
+        for (w, h) in [(1u8, 1u8), (2, 3), (9, 7), (21, 13)] {
+            let board = Board::new(w, h, 1);
+            for y in 0..h {
+                for x in 0..w {
+                    let tile = board.index_of(x, y);
+                    assert_eq!(
+                        board.coords(tile),
+                        (i32::from(x), i32::from(y)),
+                        "{w}x{h}: ({x},{y}) did not survive the trip through {tile}"
+                    );
+                    assert!(
+                        (tile as usize) < usize::from(w) * usize::from(h),
+                        "{w}x{h}: ({x},{y}) indexed off the end at {tile}"
+                    );
+                }
+            }
+        }
+    }
+}

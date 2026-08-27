@@ -21,4 +21,5 @@ mod format;
 mod invariants;
 mod online;
 mod shelves;
+mod tide;
 mod update_check;

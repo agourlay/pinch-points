@@ -4,7 +4,7 @@
 
 use pinch_points::sim::{
     Direction, Level, MAX_PLAYERS, PlayerAction, Replay, campaign_levels, challenge_levels,
-    classic_arena,
+    classic_arena, generate_arena,
 };
 
 /// parse(to_text(level)) must reach a fixed point (identical text and an
@@ -152,5 +152,33 @@ fn mangled_text_is_refused_rather_than_followed() {
         }
         let _ = Replay::parse(&text);
         let _ = Board::parse_snapshot(&text);
+    }
+}
+
+/// A generated beach survives the format it will be sent over.
+///
+/// Every online match sends its board to the peers as text, and the map
+/// dial can generate one at any of the shipped sizes for any seat count.
+/// The shipped levels are authored by hand and exercise what a person
+/// thought to write; the generator reaches combinations nobody typed -
+/// which is the half of the space a hand-written corpus cannot cover.
+#[test]
+fn every_generated_beach_survives_the_wire_format() {
+    for seed in 0..24u64 {
+        for seats in 2..=MAX_PLAYERS as u8 {
+            for (w, h) in [(9u8, 7u8), (12, 9), (20, 13)] {
+                let board = generate_arena(seed, seats, w, h);
+                let level = Level::from_board("Generated", 3, board.clone());
+                let text = level.to_text();
+                let back = Level::parse(&text).unwrap_or_else(|e| {
+                    panic!("seed {seed}, {seats} seats, {w}x{h}: refused its own text: {e}")
+                });
+                assert_eq!(
+                    board.state_hash(),
+                    back.board().state_hash(),
+                    "seed {seed}, {seats} seats, {w}x{h}: came back a different beach"
+                );
+            }
+        }
     }
 }

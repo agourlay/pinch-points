@@ -2,7 +2,9 @@
 //! and require a win within the puzzle tick limit (spec §5.4's validation
 //! idea, applied to the §5.1 campaign).
 
-use pinch_points::sim::{Direction, PuzzleOutcome, campaign_levels, challenge_levels};
+use pinch_points::sim::{
+    Direction, Goal, PuzzleOutcome, TileKind, campaign_levels, challenge_levels,
+};
 
 #[test]
 fn every_campaign_level_is_solvable_with_its_solution() {
@@ -213,4 +215,105 @@ fn campaign_levels_have_unique_names() {
     names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), levels.len());
+}
+
+/// Nothing starts standing where it cannot stand.
+///
+/// A crab written onto a rock, or a gull into kelp, is a level that is
+/// wrong from its first frame: the creature is inside terrain the sim
+/// will never walk it out of, and the level is unwinnable in a way the
+/// solver cannot report because the board it is handed is already broken.
+/// Authored by hand in text, so this is the guard that catches a typo in
+/// a coordinate.
+#[test]
+fn no_shipped_level_starts_a_creature_where_it_cannot_stand() {
+    // Rock and rock alone. Kelp and a tide pool are walked *through* -
+    // slowly, and a crab wading one is half the point of the later
+    // levels - so a creature standing in either is fine.
+    let blocking = |kind: TileKind| matches!(kind, TileKind::Rock);
+    for (list, what) in [
+        (campaign_levels(), "campaign"),
+        (challenge_levels(), "challenge"),
+    ] {
+        for (i, level) in list.iter().enumerate() {
+            let board = level.board();
+            for crab in board.crabs() {
+                let (x, y) = board.coords_u8(crab.tile);
+                assert!(
+                    !blocking(board.tile_at(x, y)),
+                    "{what} {} {:?}: a crab starts on {:?} at ({x},{y})",
+                    i + 1,
+                    level.name,
+                    board.tile_at(x, y)
+                );
+            }
+            for gull in board.gulls() {
+                let (x, y) = board.coords_u8(gull.tile);
+                assert!(
+                    !blocking(board.tile_at(x, y)),
+                    "{what} {} {:?}: a gull starts on {:?} at ({x},{y})",
+                    i + 1,
+                    level.name,
+                    board.tile_at(x, y)
+                );
+            }
+        }
+    }
+}
+
+/// Every level that asks for a bank has somewhere to bank.
+///
+/// Three of the four goals are counted in banked crabs, and a board with
+/// no castle cannot satisfy any of them by any play at all - it would
+/// come back from the solver as "no solution found", which reads as an
+/// authoring note rather than as a broken map.
+///
+/// `Survive` is deliberately exempt and is the reason this is not simply
+/// "every level has a castle": a level whose goal is that no crab is
+/// eaten is won by keeping them away from the gulls, and needs nowhere to
+/// put them.
+#[test]
+fn every_level_that_asks_for_a_bank_has_one() {
+    for (list, what) in [
+        (campaign_levels(), "campaign"),
+        (challenge_levels(), "challenge"),
+    ] {
+        for (i, level) in list.iter().enumerate() {
+            if level.goal == Goal::Survive {
+                continue;
+            }
+            let board = level.board();
+            let castles = board
+                .tiles()
+                .filter(|(_, _, kind)| matches!(kind, TileKind::Castle(_)))
+                .count();
+            assert!(
+                castles > 0,
+                "{what} {} {:?} wants {:?} and has no castle on it",
+                i + 1,
+                level.name,
+                level.goal
+            );
+        }
+    }
+}
+
+/// And something to route into it. A level with no crabs on the sand and
+/// no spawner feeding it is won on its first tick, which is not a puzzle;
+/// it is a level that was saved before it was finished.
+#[test]
+fn every_shipped_puzzle_has_crabs_to_route() {
+    for (i, level) in campaign_levels().iter().enumerate() {
+        let board = level.board();
+        let spawners = board
+            .tiles()
+            .filter(|(_, _, kind)| matches!(kind, TileKind::Spawner(_)))
+            .count();
+        assert!(
+            !board.crabs().is_empty() || spawners > 0,
+            "campaign {} {:?}: nothing to route - no crabs and no spawner",
+            i + 1,
+            level.name
+        );
+    }
 }

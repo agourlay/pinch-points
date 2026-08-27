@@ -179,3 +179,77 @@ fn different_seeds_diverge() {
     }
     assert_ne!(a.state_hash(), b.state_hash());
 }
+
+/// The daily challenge is the same beach for everybody, and a different
+/// one tomorrow.
+///
+/// The whole premise is in the strapline: "the same beach for everyone".
+/// Nobody can check that from inside one machine except by pinning the
+/// only thing that varies - the day - and proving the beach follows it and
+/// nothing else. A seed that drifted would hand two friends different
+/// boards and the same scoreboard.
+#[test]
+fn the_daily_beach_is_one_beach_a_day() {
+    use pinch_points::app::Daily;
+    // The same day is the same beach, however many times it is asked.
+    for day in [0u32, 1, 19_000, 20_321, u32::MAX] {
+        let seed = Daily::seed_for(day);
+        assert_eq!(seed, Daily::seed_for(day), "day {day} is not stable");
+        let a = pinch_points::sim::generate_arena(seed, 4, 12, 9);
+        let b = pinch_points::sim::generate_arena(Daily::seed_for(day), 4, 12, 9);
+        assert_eq!(
+            a.state_hash(),
+            b.state_hash(),
+            "day {day} built two different beaches from one seed"
+        );
+    }
+    // And consecutive days are different beaches: a seed that ignored the
+    // day would pass everything above and ship one board for ever.
+    let week: Vec<u64> = (19_000..19_007).map(Daily::seed_for).collect();
+    for (i, seed) in week.iter().enumerate() {
+        for (j, other) in week.iter().enumerate().skip(i + 1) {
+            assert_ne!(seed, other, "days {i} and {j} share a seed");
+        }
+    }
+}
+
+/// A recorded round survives the trip to text and back and still plays to
+/// the same last frame.
+///
+/// `replays_round_trip_through_text` proves the *file* comes back equal.
+/// This is the harder half: that the round it describes, replayed from
+/// the reloaded copy, ends on the board the original ended on. A field
+/// rounded off in the format would pass the first and fail here, days
+/// later, as a kept round that plays out differently from the one that
+/// was played.
+#[test]
+fn a_replay_reloaded_from_text_ends_on_the_same_board() {
+    use pinch_points::sim::{BotLevel, Level, Replay, bot_action, classic_arena_seeded};
+    for seed in [1u64, 2, 3] {
+        let mut board = classic_arena_seeded(seed, false, 4);
+        board.set_round_length(Some(900));
+        let mut replay = Replay::new(Level::from_board("Turf War", 3, board.clone()));
+        while !board.round_over() {
+            let mut actions = [PlayerAction::None; MAX_PLAYERS];
+            for seat in 0..4u8 {
+                actions[seat as usize] = bot_action(&board, seat, BotLevel::Normal);
+            }
+            board.tick(&actions);
+            replay.record(actions);
+        }
+        let played = board.state_hash();
+        assert_eq!(
+            replay.playback().state_hash(),
+            played,
+            "seed {seed}: the recording is wrong"
+        );
+
+        let text = replay.to_text();
+        let reloaded = Replay::parse(&text).expect("a kept round reloads");
+        assert_eq!(
+            reloaded.playback().state_hash(),
+            played,
+            "seed {seed}: the round came back off the shelf and played out differently"
+        );
+    }
+}
