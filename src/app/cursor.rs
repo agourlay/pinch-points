@@ -25,6 +25,25 @@ pub struct Cursor {
     pub flash: f32,
 }
 
+impl Cursor {
+    /// A cursor for `player`, parked at the origin until something centres
+    /// it on a board.
+    ///
+    /// A constructor because the repeat timer is private to this module
+    /// and one seat's cursor is now built from two of them: here, and the
+    /// pad code's tests, which need a seated table to decide whose
+    /// controller a raid belongs to.
+    pub(crate) fn seated(player: u8) -> Cursor {
+        Cursor {
+            player,
+            x: 0,
+            y: 0,
+            repeat: Timer::from_seconds(0.0, TimerMode::Once),
+            flash: 0.0,
+        }
+    }
+}
+
 pub struct KeyMap {
     pub moves: [(KeyCode, i16, i16); 4],
     pub places: [(KeyCode, Direction); 4],
@@ -80,15 +99,180 @@ fn bracket_color(player: u8) -> Color {
     palette::player_color(player).lighter(0.08).with_alpha(0.9)
 }
 
-/// Tint flashing (denied) cursors red and restore their colour after.
-pub fn flash_cursors(time: Res<Time>, mut cursors: Query<(&mut Cursor, &mut Sprite)>) {
+/// Whether `seat` is being played by somebody sitting at this machine.
+///
+/// A cursor is spawned for exactly the seats this keyboard, these pads and
+/// this screen answer for: seat one alone in a puzzle, every human seat in
+/// a local match, and precisely the local seat online. Bots have none, and
+/// neither do rivals down a wire.
+///
+/// So it is the question "is this one mine?", and it is the question the
+/// beach needs asked before it makes a noise: a knock for every post a bot
+/// puts down is a click track, and hearing a rival's placements online is
+/// hearing something that did not happen in this room.
+///
+/// A **replay** and a **spectated** match answer `false` for every seat,
+/// because neither spawns a cursor at all - there is no chair here to
+/// place from. That is deliberate rather than incidental: a recording of
+/// a six-seat round has exactly the density that made the knock worth
+/// removing, and it is nobody's beach to be told about. Banks, raids,
+/// gulls and the horn still sound; posts go in and out in silence, and
+/// their rings and puffs stand down with them so the picture and the
+/// sound agree about what a replay is.
+pub fn seated_here(cursors: &Query<&Cursor>, seat: u8) -> bool {
+    cursors.iter().any(|cursor| cursor.player == seat)
+}
+
+/// Tint flashing (denied) cursors red, and dim a cursor standing on a tile
+/// that will refuse it.
+///
+/// The refusal used to be told *after* the fact and only then: you pressed,
+/// the brackets went red for a quarter of a second, and you worked out
+/// why. A rock, a rival's post, or an empty inventory is knowable before
+/// the press, and a cursor that has gone quiet says so without a word.
+/// Only where placing is the verb: in the editor the cursor paints tiles,
+/// and a refusal there would mean nothing.
+pub fn flash_cursors(
+    time: Res<Time>,
+    sim: Res<Sim>,
+    screen: Res<State<Screen>>,
+    mut cursors: Query<(&mut Cursor, &mut Sprite)>,
+) {
+    let board = &sim.0;
+    let placing = matches!(screen.get(), Screen::Puzzle | Screen::Versus);
     for (mut cursor, mut sprite) in &mut cursors {
         if cursor.flash > 0.0 {
             cursor.flash -= time.delta_secs();
             sprite.color = Color::srgba(1.0, 0.25, 0.2, 0.95);
-        } else {
-            sprite.color = bracket_color(cursor.player);
+            continue;
         }
+        let color = bracket_color(cursor.player);
+        // A board can shrink under a cursor (`glide_cursors` guards the
+        // same way). Off the board both questions below answer "no" on
+        // their bounds check, which reads as "this tile refuses you" and
+        // leaves the brackets dimmed until something recentres them.
+        if cursor.x >= board.width() || cursor.y >= board.height() {
+            sprite.color = color;
+            continue;
+        }
+        // Only when it is the *tile* refusing. An empty inventory refuses
+        // every tile on the beach, and a cursor dimmed everywhere reads as
+        // a broken cursor rather than as a message - the arrow count in
+        // the header is already saying that one, and `out_of_signposts`
+        // exists to tell the two refusals apart.
+        let tile_refuses = placing
+            && !board.can_place_signpost(cursor.player, cursor.x, cursor.y)
+            && !board.out_of_signposts(cursor.player, cursor.x, cursor.y);
+        sprite.color = if tile_refuses {
+            color.with_alpha(0.34)
+        } else {
+            color
+        };
+    }
+}
+
+/// The post a seat has committed but the board has not taken yet.
+///
+/// Placing is two stages - move the cursor, commit a direction - and the
+/// commit is instant, so there is no aiming to preview. What there *is*,
+/// between the press and the post, is a queue: a placement sits in
+/// [`crate::app::PendingActions`] until the sim takes it. Locally that is
+/// at most one fixed step, which is a frame or two of confirmation. Online
+/// it is until the lockstep commits the frame, which on a stalled peer is
+/// as long as the stall - and that is exactly when a player most needs
+/// telling that their press was heard and is on its way.
+#[derive(Component)]
+pub struct PostGhost;
+
+/// Draw one faint arrow per queued placement, the way a hint draws its own
+/// ghost: the same art, the same near-transparency, under the real posts.
+pub fn ghost_pending_posts(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    art: Res<crate::app::art::Art>,
+    pending: Res<crate::app::PendingActions>,
+    ghosts: Query<Entity, With<PostGhost>>,
+) {
+    // Rebuilt rather than diffed: there are at most six of them, and
+    // `PendingActions` is taken mutably by the fixed-step driver every
+    // tick, so change detection on it says nothing useful.
+    for ghost in &ghosts {
+        commands.entity(ghost).despawn();
+    }
+    let board = &sim.0;
+    // Nothing is queued on a frozen board: `advance_sim` stops taking the
+    // queue at the wave, so a placement pressed on the round's last frames
+    // would otherwise leave its ghost on the held board for the whole of
+    // the results card, advertising a post that will never go in.
+    if board.round_over() {
+        return;
+    }
+    for (seat, action) in pending.0.iter().enumerate() {
+        let crate::sim::PlayerAction::Place { x, y, dir } = *action else {
+            continue;
+        };
+        if x >= board.width() || y >= board.height() {
+            continue;
+        }
+        commands.spawn((
+            PostGhost,
+            Sprite {
+                image: art.arrow.clone(),
+                color: palette::player_color(seat as u8)
+                    .lighter(0.2)
+                    .with_alpha(0.4),
+                custom_size: Some(Vec2::splat(TILE * 0.88)),
+                ..default()
+            },
+            Transform::from_translation(
+                layout::tile_center(board, x, y).extend(layout::z::SIGNPOST - 0.1),
+            )
+            .with_rotation(layout::dir_rotation(dir)),
+        ));
+    }
+}
+
+/// Carry each cursor to the tile it now sits on, and breathe.
+///
+/// The cursor used to be teleported by whichever input system moved it,
+/// which is correct to the tile and wrong to the eye: at the hold-repeat
+/// rate it reads as a thing being redrawn rather than a thing being
+/// steered. It is placed here instead, once, from the tile the input
+/// systems agreed on.
+///
+/// Long jumps still snap. A round starting, a level loading and a board
+/// changing size all move a cursor halfway across the beach, and sliding
+/// it there would draw a line through a board it is no longer on.
+pub fn glide_cursors(
+    time: Res<Time>,
+    sim: Res<Sim>,
+    settings: Res<GameSettings>,
+    mut cursors: Query<(&Cursor, &mut Transform)>,
+) {
+    let board = &sim.0;
+    // Frame-rate independent: the same fraction of the way there per
+    // second whatever the frame took.
+    let closed = 1.0 - (-time.delta_secs() * 26.0).exp();
+    let t = time.elapsed_secs();
+    for (cursor, mut transform) in &mut cursors {
+        if cursor.x >= board.width() || cursor.y >= board.height() {
+            continue;
+        }
+        let target = layout::tile_center(board, cursor.x, cursor.y);
+        let here = transform.translation.truncate();
+        let at = if settings.reduced_motion || here.distance(target) > TILE * 2.0 {
+            target
+        } else {
+            here.lerp(target, closed)
+        };
+        transform.translation = at.extend(layout::z::CURSOR);
+        // A slow breath, phased per seat so six cursors on one beach do
+        // not pulse as one.
+        transform.scale = Vec3::splat(if settings.reduced_motion {
+            1.0
+        } else {
+            1.0 + 0.035 * (t * 3.4 + f32::from(cursor.player)).sin()
+        });
     }
 }
 
@@ -101,13 +285,7 @@ fn cursor_sprite(commands: &mut Commands, art: &crate::app::art::Art, player: u8
         Quat::IDENTITY
     };
     commands.spawn((
-        Cursor {
-            player,
-            x: 0,
-            y: 0,
-            repeat: Timer::from_seconds(0.0, TimerMode::Once),
-            flash: 0.0,
-        },
+        Cursor::seated(player),
         Sprite {
             image: art.bracket.clone(),
             color: bracket_color(player),
@@ -189,7 +367,7 @@ pub fn move_cursor(
     settings: Res<GameSettings>,
     screen: Res<State<Screen>>,
     online: Res<crate::app::net::Online>,
-    mut cursors: Query<(&mut Cursor, &mut Transform)>,
+    mut cursors: Query<&mut Cursor>,
 ) {
     let board = &sim.0;
     // Versus shares the keyboard, so IJKL belongs to the second seat there
@@ -199,7 +377,7 @@ pub fn move_cursor(
     } else {
         settings.commit
     };
-    for (mut cursor, mut transform) in &mut cursors {
+    for mut cursor in &mut cursors {
         // Online: the one local cursor always answers to the primary keys.
         // Local: the keyboard has two seats; 3 and up are gamepad-only.
         let map = if online.0.is_some() {
@@ -234,7 +412,6 @@ pub fn move_cursor(
             let ny = (i16::from(cursor.y) + dy).clamp(0, i16::from(board.height()) - 1) as u8;
             cursor.x = nx;
             cursor.y = ny;
-            transform.translation = layout::tile_center(board, nx, ny).extend(layout::z::CURSOR);
         }
     }
 }
@@ -296,6 +473,93 @@ mod tests {
             .find(|c| c.player == player)
             .map(|c| (c.x, c.y))
             .expect("seat has a cursor")
+    }
+
+    /// `seated_here` is the rule three separate systems now ask before
+    /// they act: whether a post knocks, whether its ring is drawn, and
+    /// whose pad a raid reaches. It answers for the seats with a cursor
+    /// and no others, and the seats without one are exactly the bots, the
+    /// rivals down a wire, and a replay.
+    #[test]
+    fn only_the_seats_with_a_cursor_are_ours() {
+        #[derive(Resource, Default)]
+        struct Answers([bool; crate::sim::MAX_PLAYERS]);
+
+        let mut app = beach(2);
+        app.init_resource::<Answers>();
+        app.add_systems(
+            Update,
+            |cursors: Query<&Cursor>, mut answers: ResMut<Answers>| {
+                for seat in 0..crate::sim::MAX_PLAYERS {
+                    answers.0[seat] = seated_here(&cursors, seat as u8);
+                }
+            },
+        );
+        app.update();
+        let answers = &app.world().resource::<Answers>().0;
+        assert!(answers[0] && answers[1], "the two seated players are ours");
+        assert!(
+            answers[2..].iter().all(|here| !here),
+            "and nobody else is: {answers:?}"
+        );
+    }
+
+    /// The cursor is carried to its tile rather than teleported, but a
+    /// jump longer than two tiles still snaps: a round starting, a level
+    /// loading and a board changing size all move it halfway across the
+    /// beach, and sliding it there would draw a line through a board it is
+    /// no longer on.
+    #[test]
+    fn a_long_jump_snaps_and_a_short_one_glides() {
+        let mut app = beach(2);
+        app.add_systems(Update, glide_cursors);
+        // The board never changes under this test, so every tile centre it
+        // needs can be read once, before the borrow checker gets involved.
+        let (home, next_door, corner) = {
+            let board = &app.world().resource::<Sim>().0;
+            (
+                layout::tile_center(board, 5, 4),
+                layout::tile_center(board, 6, 4),
+                layout::tile_center(board, 0, 0),
+            )
+        };
+        // A frame has to pass for the glide to have a delta to work with.
+        app.update();
+
+        let mut place = |x: u8, y: u8| {
+            let mut seats = app.world_mut().query::<&mut Cursor>();
+            let world = app.world_mut();
+            for mut cursor in seats.iter_mut(world) {
+                if cursor.player == 0 {
+                    cursor.x = x;
+                    cursor.y = y;
+                }
+            }
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_millis(16));
+            app.update();
+            let mut at = app.world_mut().query::<(&Cursor, &Transform)>();
+            let world = app.world();
+            at.iter(world)
+                .find(|(cursor, _)| cursor.player == 0)
+                .map(|(_, t)| t.translation.truncate())
+                .expect("seat one has a cursor")
+        };
+
+        // One tile over: on its way, not there yet.
+        let stepped = place(6, 4);
+        assert!(stepped != home, "it did not move at all");
+        assert!(
+            stepped.distance(next_door) > 1.0,
+            "one tile should glide, not snap: {stepped:?}"
+        );
+        // Right across the board: there in one frame.
+        let jumped = place(0, 0);
+        assert!(
+            jumped.distance(corner) < 0.01,
+            "a long jump has to snap: {jumped:?} vs {corner:?}"
+        );
     }
 
     /// The keyboard drives two seats and only two: seats three and up wait

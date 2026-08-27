@@ -38,12 +38,15 @@ belong next to the code they explain.
   found first, so `every_campaign_level_is_solvable_with_its_solution` and
   `granted_signposts_are_necessary` are the guards to watch.
 
-- **The round-end spectacle.** The original ends a round by washing the
-  castles flat and sending the sheltered crabs scuttling home to sea. Only
-  the freeze shipped: at zero the sim stops, scores lock at the wave, and
-  the results card comes up over the held board (spec §3.7). The freeze is
-  correct and readable; what is missing is the payoff, and the round ends on
-  an accountant's note rather than a wave.
+- **The round-end spectacle, half of it.** The wave shipped
+  (`board_render::wash`): at zero the sea comes in over the whole beach,
+  holds, and drains, with everything the round built underneath it. What
+  did not ship is the other half of the original's ending, the sheltered
+  crabs scuttling home to sea. The obstacle is that the sim is frozen at
+  the wave (spec §3.7) and the crabs it is holding are the *scored* ones,
+  so sending them anywhere is a render-side fiction that has to invent
+  both a count and a route. Worth doing when someone wants it; not worth
+  unfreezing anything for.
 
 - **Rising Tide, a flag-gated round variant.** Rows flood progressively
   during the round, washing away the posts standing on them and becoming

@@ -23,8 +23,30 @@ use bevy::prelude::*;
 /// left alone: it drives gull spawns and tide events, and moving it would
 /// move every recorded round.
 fn heaving(board: &crate::sim::Board, remaining: u64) -> bool {
-    !board.round_over()
+    // A board with no clock has no closing stretch to be in. Both callers
+    // check that before they get here, so this changes nothing today - but
+    // the question this answers is "is the tide coming in", and with no
+    // tide at all the honest answer is no rather than whatever the band
+    // arithmetic happens to make of an absent round length.
+    board.round_length().is_some()
+        && !board.round_over()
         && remaining <= crate::app::hud::urgency_band(board.round_length(), crate::sim::SURGE_TICKS)
+}
+
+/// How far the water reaches out from the sand's edge, in pixels.
+///
+/// The one place the tide's width is worked out. The bars and the foam lip
+/// riding them were computing it separately from the same three inputs,
+/// which is two chances for the lip to come adrift of the water it sits on.
+fn tide_depth(board: &crate::sim::Board, remaining: u64, seconds: f32) -> f32 {
+    let total = board.ticks() + remaining;
+    let elapsed = 1.0 - remaining as f32 / total.max(1) as f32;
+    let mut depth = 6.0 + elapsed * WATER_MAX;
+    if heaving(board, remaining) {
+        // The swell, in the closing stretch only.
+        depth += (seconds * 6.0).sin() * 3.0;
+    }
+    depth
 }
 
 /// The tide's ambient clock (spec §3.6): four water bars around the board
@@ -58,12 +80,7 @@ pub fn update_waterline(
         }
         return;
     };
-    let total = board.ticks() + remaining;
-    let elapsed = 1.0 - remaining as f32 / total.max(1) as f32;
-    let mut depth = 6.0 + elapsed * WATER_MAX;
-    if heaving(board, remaining) {
-        depth += (time.elapsed_secs() * 6.0).sin() * 3.0;
-    }
+    let depth = tide_depth(board, remaining, time.elapsed_secs());
     let w = f32::from(board.width()) * TILE;
     let h = f32::from(board.height()) * TILE;
     for (bar, mut sprite, mut transform) in &mut bars {
@@ -131,12 +148,7 @@ pub fn update_water_foam(
         }
         return;
     };
-    let total = board.ticks() + remaining;
-    let elapsed = 1.0 - remaining as f32 / total.max(1) as f32;
-    let mut depth = 6.0 + elapsed * WATER_MAX;
-    if heaving(board, remaining) {
-        depth += (time.elapsed_secs() * 6.0).sin() * 3.0;
-    }
+    let depth = tide_depth(board, remaining, time.elapsed_secs());
     let lap = (time.elapsed_secs() * 1.8).sin() * 1.5;
     let w = f32::from(board.width()) * TILE;
     let h = f32::from(board.height()) * TILE;
@@ -167,5 +179,74 @@ pub fn update_water_foam(
         sprite.custom_size = Some(size);
         transform.translation = pos.extend(z::FOAM);
         transform.rotation = Quat::from_rotation_z(rot);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::Board;
+
+    fn timed(round: u32, elapsed: u32) -> Board {
+        let mut board = Board::new(9, 7, 1);
+        board.set_round_length(Some(round));
+        for _ in 0..elapsed {
+            board.tick_idle();
+        }
+        board
+    }
+
+    /// A board with no clock has no tide. Every puzzle in the campaign
+    /// without a round line is one, and water creeping in on a level with
+    /// no deadline would be promising a wave that never comes.
+    #[test]
+    fn a_board_with_no_clock_never_heaves() {
+        let board = Board::new(9, 7, 1);
+        assert_eq!(board.remaining_ticks(), None);
+        assert!(!heaving(&board, 0), "no clock, no swell");
+    }
+
+    /// The swell belongs to the closing stretch and nowhere else. It used
+    /// to be read off the sim's flat 30-second surge, which on a short
+    /// level meant a storm from the first frame.
+    #[test]
+    fn the_swell_is_only_for_the_closing_stretch() {
+        let board = timed(3600, 30);
+        let remaining = board.remaining_ticks().expect("a clock");
+        assert!(!heaving(&board, remaining), "early on it is calm");
+        assert!(heaving(&board, 1), "and heaving at the end");
+    }
+
+    /// The water widens as the round runs down, and never reaches the
+    /// sand: each bar keeps its inner edge on the board and grows away
+    /// from it, so the beach is playable until the wave itself.
+    #[test]
+    fn the_tide_widens_over_the_round_and_stays_off_the_sand() {
+        let board = timed(3600, 1);
+        let full = board.remaining_ticks().expect("a clock");
+        let early = tide_depth(&board, full, 0.0);
+        let late = tide_depth(&board, full / 8, 0.0);
+        assert!(early > 0.0, "there is water from the start: {early}");
+        assert!(late > early, "and more of it later: {early} then {late}");
+        assert!(
+            late <= WATER_MAX + 6.0,
+            "the tide never runs past its own ceiling: {late}"
+        );
+    }
+
+    /// The bars and the lip riding them read one function, so the foam can
+    /// never come adrift of the water it sits on. They used to work it out
+    /// separately from the same three inputs.
+    #[test]
+    fn the_foam_and_the_water_are_measured_once() {
+        let board = timed(3600, 900);
+        let remaining = board.remaining_ticks().expect("a clock");
+        for seconds in [0.0, 0.37, 4.2, 91.5] {
+            assert_eq!(
+                tide_depth(&board, remaining, seconds),
+                tide_depth(&board, remaining, seconds),
+                "the same moment has to give the same answer"
+            );
+        }
     }
 }

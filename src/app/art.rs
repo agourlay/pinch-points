@@ -12,6 +12,8 @@ use bevy::prelude::*;
 #[derive(Resource)]
 pub struct Art {
     pub arrow: Handle<Image>,
+    /// The same post after weather: splintered rather than merely faint.
+    pub arrow_worn: Handle<Image>,
     pub crab: Handle<Image>,
     pub claw: Handle<Image>,
     pub gull: Handle<Image>,
@@ -36,6 +38,19 @@ pub struct Art {
     pub wet: Handle<Image>,
     pub cloud: Handle<Image>,
     pub boat: Handle<Image>,
+    /// The castle's growth: a curtain wall, its corner towers, its moat.
+    pub keep_ring: Handle<Image>,
+    pub turret: Handle<Image>,
+    pub moat: Handle<Image>,
+    /// What a gull leaves behind.
+    pub feather: Handle<Image>,
+    /// A vertical alpha ramp, opaque at the top: every soft gradient in the
+    /// game is this one texture, tinted, stretched and turned.
+    pub ramp: Handle<Image>,
+    /// Clear in the middle, dark at the rim.
+    pub vignette: Handle<Image>,
+    /// A hollow circle: the shockwave shape every "here" effect swells in.
+    pub ring: Handle<Image>,
     /// One flag chip per language, in [`ALL_LANGS`] order. Read through
     /// [`Art::flag`] rather than indexed directly.
     pub flags: [Handle<Image>; ALL_LANGS.len()],
@@ -56,6 +71,7 @@ impl FromWorld for Art {
         let assets = world.resource::<AssetServer>();
         Art {
             arrow: assets.load("sprites/arrow.png"),
+            arrow_worn: assets.load("sprites/arrow_worn.png"),
             crab: assets.load("sprites/crab.png"),
             claw: assets.load("sprites/claw.png"),
             gull: assets.load("sprites/gull.png"),
@@ -80,6 +96,13 @@ impl FromWorld for Art {
             wet: assets.load("sprites/wet.png"),
             cloud: assets.load("sprites/cloud.png"),
             boat: assets.load("sprites/boat.png"),
+            keep_ring: assets.load("sprites/keep_ring.png"),
+            turret: assets.load("sprites/turret.png"),
+            moat: assets.load("sprites/moat.png"),
+            feather: assets.load("sprites/feather.png"),
+            ramp: assets.load("sprites/ramp.png"),
+            vignette: assets.load("sprites/vignette.png"),
+            ring: assets.load("sprites/ring.png"),
             // Named by the language's settings key, so the set follows
             // ALL_LANGS without a second table to keep in step.
             flags: ALL_LANGS.map(|lang| assets.load(format!("sprites/flag_{}.png", lang.key()))),

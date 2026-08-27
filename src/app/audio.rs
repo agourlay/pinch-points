@@ -60,7 +60,7 @@ fn music_audible(
     settings.music_gain() > 0.0 && !muted.0 && !card_open
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct Sounds {
     place: Handle<AudioSource>,
     remove: Handle<AudioSource>,
@@ -213,6 +213,7 @@ pub fn play_events(
     settings: Res<crate::app::settings::GameSettings>,
     muted: Res<Muted>,
     pads: Query<Entity, With<Gamepad>>,
+    cursors: Query<&crate::app::cursor::Cursor>,
     mut rumble: MessageWriter<GamepadRumbleRequest>,
 ) {
     let mut buzz = |ms: u64, strength: f32| {
@@ -240,24 +241,54 @@ pub fn play_events(
                 }
             }
             SimEvent::CrabEaten { pos } => play_at(&mut commands, &sounds.eat, gain, pan(pos)),
+            // No buzz here: a raid happens to *one* seat, and
+            // `gamepad::rumble_on_raid` puts it in that seat's own hands.
+            // Buzzing every pad in the room told five other players that
+            // something had happened to them when nothing had.
             SimEvent::CastleRaided { pos, .. } => {
                 play_at(&mut commands, &sounds.raid, gain, pan(pos));
-                buzz(400, 0.7);
             }
             SimEvent::GullArrived => play(&mut commands, &sounds.screech, gain),
             SimEvent::GullTookOff => play(&mut commands, &sounds.takeoff, gain),
-            SimEvent::SignpostPlaced { pos } => {
-                once(&mut commands, &mut placed, &sounds.place, gain, pan(pos));
+            // Only your own posts knock.
+            //
+            // The sound was right when a beach held one or two people and
+            // wrong the moment it held six: the bots place far more often
+            // than the players do, and every one of them was a click. And
+            // online it was announcing arrows that went down in somebody
+            // else's room.
+            //
+            // `seated_here` is the whole rule, and it reads correctly in
+            // all three modes without being told which one it is in: alone
+            // in a puzzle it is your seat, at a table it is every human
+            // seat sharing the speaker, and online it is your seat and
+            // nobody else's.
+            SimEvent::SignpostPlaced { owner, pos } => {
+                if crate::app::cursor::seated_here(&cursors, *owner) {
+                    once(&mut commands, &mut placed, &sounds.place, gain, pan(pos));
+                }
             }
-            SimEvent::SignpostRemoved { pos } => {
-                once(&mut commands, &mut removed, &sounds.remove, gain, pan(pos));
+            // The other end of the same rule. In versus a post wears out
+            // on its own, so leaving this ungated let every bot post knock
+            // on the way out and the beach kept its click track.
+            SimEvent::SignpostRemoved { owner, pos } => {
+                if crate::app::cursor::seated_here(&cursors, *owner) {
+                    once(&mut commands, &mut removed, &sounds.remove, gain, pan(pos));
+                }
             }
             // Its own sample, not the denial knock: a fourth post at the
             // cap is a placement that *worked*, and answering it with the
             // sound of a refusal told the player the opposite of what
             // happened. The placement sounds too, from the new tile.
-            SimEvent::SignpostEvicted { pos, .. } => {
-                once(&mut commands, &mut evicted, &sounds.evict, gain, pan(pos));
+            SimEvent::SignpostEvicted { owner, pos, .. } => {
+                // The third and last end of the same rule. `CapPolicy`
+                // defaults to `Evict` in versus, so every bot placement
+                // past the cap raises one of these: gating the placement
+                // and the removal but not this left five bots knocking
+                // almost continuously on a six-seat beach.
+                if crate::app::cursor::seated_here(&cursors, *owner) {
+                    once(&mut commands, &mut evicted, &sounds.evict, gain, pan(pos));
+                }
             }
             SimEvent::TierUp { .. } => play(&mut commands, &sounds.tier, gain),
             SimEvent::TideEventFired { .. } => play(&mut commands, &sounds.event, gain),
@@ -425,7 +456,140 @@ pub fn drive_music(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::cursor::Cursor;
     use crate::app::settings::GameSettings;
+    use crate::sim::classic_arena;
+
+    /// A beach with `humans` seats answered for at this machine. Bots and
+    /// rivals down a wire are exactly the seats with no cursor, which is
+    /// how they are spelled here: seats `humans..` have none.
+    fn table(humans: u8) -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.insert_resource(Sim(classic_arena(false, 6)));
+        app.insert_resource(GameSettings::default());
+        app.insert_resource(Muted(false));
+        app.insert_resource(Sounds::default());
+        app.add_message::<SimEvent>();
+        app.add_message::<GamepadRumbleRequest>();
+        for seat in 0..humans {
+            app.world_mut().spawn(Cursor::seated(seat));
+        }
+        app.add_systems(Update, play_events);
+        app
+    }
+
+    /// Put a post down for `owner` and count the one-shots it set off.
+    fn place(app: &mut App, owner: u8) -> usize {
+        app.world_mut().write_message(SimEvent::SignpostPlaced {
+            owner,
+            pos: Vec2::ZERO,
+        });
+        app.update();
+        let played = app
+            .world_mut()
+            .query_filtered::<Entity, With<AudioPlayer>>()
+            .iter(app.world())
+            .count();
+        let live: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<AudioPlayer>>()
+            .iter(app.world())
+            .collect();
+        for entity in live {
+            app.world_mut().entity_mut(entity).despawn();
+        }
+        played
+    }
+
+    /// The rule the whole beach turns on: a post knocks when the seat that
+    /// put it down is one this machine answers for, and stays quiet
+    /// otherwise. One human of six is the shape that matters - five bots
+    /// placing all round used to be five clicks a second.
+    #[test]
+    fn only_the_seats_at_this_machine_are_heard() {
+        let mut app = table(1);
+        assert_eq!(place(&mut app, 0), 1, "your own post knocks");
+        for bot in 1..6 {
+            assert_eq!(place(&mut app, bot), 0, "seat {bot} is not at this table");
+        }
+    }
+
+    /// Both ends of a post's life follow the same rule. A post wearing
+    /// out is the half that used to leak: in versus every one of them
+    /// expires on its own, so gating the placement and not the removal
+    /// left the click track running at nearly its old rate.
+    #[test]
+    fn a_post_leaving_is_as_quiet_as_a_post_arriving() {
+        let mut app = table(1);
+        let mut removed = |owner: u8| {
+            app.world_mut().write_message(SimEvent::SignpostRemoved {
+                owner,
+                pos: Vec2::ZERO,
+            });
+            app.update();
+            let played = app
+                .world_mut()
+                .query_filtered::<Entity, With<AudioPlayer>>()
+                .iter(app.world())
+                .count();
+            let live: Vec<Entity> = app
+                .world_mut()
+                .query_filtered::<Entity, With<AudioPlayer>>()
+                .iter(app.world())
+                .collect();
+            for entity in live {
+                app.world_mut().entity_mut(entity).despawn();
+            }
+            played
+        };
+        assert_eq!(removed(0), 1, "your own post going is worth hearing");
+        assert_eq!(removed(3), 0, "a bot's expiring is not");
+    }
+
+    /// And the third end: a post traded away at the cap. Versus defaults
+    /// to the evicting rule, so this is the one a six-seat beach raises
+    /// most of all - every bot placement past its third post.
+    #[test]
+    fn a_post_traded_away_is_as_quiet_as_the_other_two() {
+        let mut app = table(1);
+        let mut evicted = |owner: u8| {
+            app.world_mut().write_message(SimEvent::SignpostEvicted {
+                owner,
+                pos: Vec2::ZERO,
+                dir: crate::sim::Direction::Up,
+            });
+            app.update();
+            let played = app
+                .world_mut()
+                .query_filtered::<Entity, With<AudioPlayer>>()
+                .iter(app.world())
+                .count();
+            let live: Vec<Entity> = app
+                .world_mut()
+                .query_filtered::<Entity, With<AudioPlayer>>()
+                .iter(app.world())
+                .collect();
+            for entity in live {
+                app.world_mut().entity_mut(entity).despawn();
+            }
+            played
+        };
+        assert_eq!(evicted(0), 1, "losing your own oldest is worth hearing");
+        assert_eq!(evicted(4), 0, "a bot trading one of its own is not");
+    }
+
+    /// Two people on one couch share a speaker, so both are heard; the
+    /// four bots beside them are not.
+    #[test]
+    fn a_shared_couch_hears_everybody_sitting_at_it() {
+        let mut app = table(2);
+        assert_eq!(place(&mut app, 0), 1);
+        assert_eq!(place(&mut app, 1), 1, "the seat beside you is in the room");
+        assert_eq!(place(&mut app, 2), 0, "the bot is not");
+    }
 
     /// The three ways to silence the theme, and how they compose. Each one
     /// is a veto, so the card gives back exactly what it took and no more:

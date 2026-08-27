@@ -98,7 +98,8 @@ pub(super) enum DevHook {
     /// `PINCH_SANDBOX`: a local arena with preloaded castles.
     Sandbox,
     /// `PINCH_AUTOPLAY=<level>`: the puzzle campaign from that level (1 is
-    /// the first), playing its own authored solutions.
+    /// the first), playing its own authored solutions - or, with
+    /// `PINCH_NOSOLVE=1`, playing none of them, so a timed level runs out.
     Autoplay {
         level: usize,
     },
@@ -375,6 +376,17 @@ pub(super) fn debug_banner(
     });
 }
 
+/// Whether this run exists to take a picture.
+///
+/// The visual harness reads probe pixels off the result, and the camera
+/// shake (`boot::shake_camera`) moves every one of them: a raid, the
+/// surge, or the wave that ends a round all put trauma in the pool, and
+/// the wave is precisely what `PINCH_NOSOLVE` exists to photograph. A shot
+/// run holds the camera still.
+pub(super) fn screenshotting() -> bool {
+    std::env::var("PINCH_SCREENSHOT").is_ok()
+}
+
 /// Dev hook: with `PINCH_SCREENSHOT=/path/out.png`, saves a frame after
 /// `PINCH_SCREENSHOT_AT` seconds (default 2) and exits shortly after. Used to
 /// verify rendering headlessly; harmless otherwise.
@@ -460,6 +472,12 @@ pub(super) fn debug_moments(
 
 /// Dev hook: with `PINCH_AUTOPLAY=1`, the puzzle setup phase immediately
 /// applies the level's authored solution and starts the run.
+///
+/// `PINCH_NOSOLVE=1` starts the run without placing anything, so a timed
+/// level plays itself out and loses. That is the only way to reach the end
+/// of a round unattended: every other path out of a level is a win, and a
+/// win stops the clock before it can run out. It is how the wave that ends
+/// a round gets looked at (`board_render::wash`).
 pub(super) fn debug_autoplay(
     mut sim: ResMut<Sim>,
     campaign: Res<Campaign>,
@@ -469,12 +487,14 @@ pub(super) fn debug_autoplay(
     if !*enabled.get_or_insert_with(|| std::env::var("PINCH_AUTOPLAY").is_ok()) {
         return;
     }
-    let level = campaign.current();
-    if let Err((x, y, _)) = level.place_solution(&mut sim.0) {
-        warn!(
-            "PINCH_AUTOPLAY: {:?} refused its own solution at ({x},{y})",
-            level.name
-        );
+    if std::env::var("PINCH_NOSOLVE").is_err() {
+        let level = campaign.current();
+        if let Err((x, y, _)) = level.place_solution(&mut sim.0) {
+            warn!(
+                "PINCH_AUTOPLAY: {:?} refused its own solution at ({x},{y})",
+                level.name
+            );
+        }
     }
     next_phase.set(Phase::Running);
 }

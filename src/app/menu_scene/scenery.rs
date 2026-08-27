@@ -144,43 +144,70 @@ fn spawn_shore(commands: &mut Commands, art: &art::Art, rng: &mut VisualRng, win
             Transform::from_translation(Vec3::new(0.0, y, z)),
         )
     };
-    // Sky: a deeper azure up top fading to a pale band at the horizon.
+    // A band of one colour with a second washed over it, opaque at one
+    // edge and gone at the other.
+    //
+    // The postcard was four flat bands, and two of the three joins showed:
+    // a hard line across the sky a third of the way up, and another where
+    // the sea changed its mind. This is the same four colours with the
+    // steps taken out of them. `ramp` is opaque at its top, so a wash that
+    // has to be strongest at the *bottom* is turned over - which mirrors
+    // it left to right as well, and does not matter to a gradient.
+    let wash = |y: f32, height: f32, color: Color, z: f32, upward: bool| {
+        (
+            MenuShore,
+            Sprite {
+                image: art.ramp.clone(),
+                color,
+                custom_size: Some(Vec2::new(w + 40.0, height)),
+                ..default()
+            },
+            Transform::from_translation(Vec3::new(0.0, y, z)).with_rotation(if upward {
+                Quat::from_rotation_z(std::f32::consts::PI)
+            } else {
+                Quat::IDENTITY
+            }),
+        )
+    };
+    // Sky: pale at the horizon, deepening all the way up.
     let sky_h = h / 2.0 - horizon;
-    commands.spawn(band(
-        horizon + sky_h * 0.667,
-        sky_h * 0.667 * 2.0,
+    let sky_mid = horizon + sky_h / 2.0;
+    commands.spawn(band(sky_mid, sky_h, Color::srgb(0.62, 0.79, 0.90), 0.0));
+    commands.spawn(wash(
+        sky_mid,
+        sky_h,
         Color::srgb(0.42, 0.65, 0.85),
-        0.0,
-    ));
-    commands.spawn(band(
-        horizon + sky_h * 0.167,
-        sky_h * 0.334,
-        Color::srgb(0.62, 0.79, 0.90),
         0.05,
+        false,
     ));
-    // Sea: deep at the horizon, brighter toward the shore, and a hazy
-    // horizon line where they meet.
+    // Sea: deep at the horizon, brightening toward the shore, and a hazy
+    // horizon line where sea and sky meet.
     let sea_top = SHORE_H + 18.0;
     let sea_h = (horizon - bottom) - sea_top;
-    commands.spawn(band(
-        horizon - sea_h * 0.25,
-        sea_h * 0.5,
-        Color::srgb(0.16, 0.36, 0.52),
-        0.0,
-    ));
-    commands.spawn(band(
-        horizon - sea_h * 0.75,
-        sea_h * 0.5,
-        Color::srgb(0.24, 0.47, 0.60),
-        0.0,
+    let sea_mid = horizon - sea_h / 2.0;
+    commands.spawn(band(sea_mid, sea_h, Color::srgb(0.16, 0.36, 0.52), 0.0));
+    commands.spawn(wash(
+        sea_mid,
+        sea_h,
+        Color::srgb(0.27, 0.51, 0.63),
+        0.02,
+        true,
     ));
     commands.spawn(band(horizon, 3.0, Color::srgb(0.72, 0.84, 0.92), 0.1));
-    // The beach: dry sand, a wet line where the last wave reached.
+    // The beach: dry sand, damper the nearer the water gets, and a wet
+    // line where the last wave reached.
     commands.spawn(band(
         bottom + SHORE_H / 2.0,
         SHORE_H,
         Color::srgb(0.86, 0.77, 0.57),
         0.0,
+    ));
+    commands.spawn(wash(
+        bottom + SHORE_H / 2.0,
+        SHORE_H,
+        Color::srgba(0.70, 0.62, 0.45, 0.65),
+        0.02,
+        false,
     ));
     commands.spawn(band(
         bottom + SHORE_H + 9.0,

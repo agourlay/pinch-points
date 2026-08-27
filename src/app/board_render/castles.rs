@@ -78,17 +78,35 @@ pub fn sync_castles(
                 Transform::from_translation(pos.extend(z::TILE_FEATURE + 0.2)),
             ))
             .with_children(|parent| {
+                // The keep sits on the sand rather than in it.
+                parent.spawn((
+                    image_sprite(
+                        &art.shadow,
+                        Color::srgba(1.0, 1.0, 1.0, 0.7),
+                        Vec2::splat(base_size * 1.3),
+                    ),
+                    Transform::from_translation(layout::SUN.extend(-0.3)),
+                ));
                 if tier >= 1 {
-                    // Outer wall ring behind the keep.
+                    // The curtain wall the first tier throws up: a
+                    // battlemented ring, hollow, with the keep inside it.
+                    // It was a plain coloured square until the castles
+                    // started being looked at, which is a shame for the
+                    // one sprite on the board that *is* the scoreboard.
                     parent.spawn((
-                        Sprite::from_color(color.darker(0.12), Vec2::splat(TILE * 0.95)),
+                        image_sprite(&art.keep_ring, color.darker(0.12), Vec2::splat(TILE * 0.99)),
                         Transform::from_translation(Vec3::new(0.0, 0.0, -0.1)),
                     ));
                 }
                 if tier >= 2 {
+                    // Bucket-moulded corner towers on the front wall.
                     for side in [-1.0, 1.0] {
                         parent.spawn((
-                            Sprite::from_color(color.lighter(0.08), Vec2::splat(TILE * 0.22)),
+                            image_sprite(
+                                &art.turret,
+                                color.lighter(0.10),
+                                Vec2::splat(TILE * 0.28),
+                            ),
                             Transform::from_translation(Vec3::new(
                                 side * base_size * 0.42,
                                 base_size * 0.42,
@@ -98,9 +116,10 @@ pub fn sync_castles(
                     }
                 }
                 if tier >= 3 {
-                    // Moat: a blue backdrop ring outermost.
+                    // The moat, dug outermost: water with its own ripples,
+                    // open in the middle where the keep stands.
                     parent.spawn((
-                        Sprite::from_color(Color::srgb(0.35, 0.62, 0.85), Vec2::splat(TILE * 1.05)),
+                        image_sprite(&art.moat, Color::WHITE, Vec2::splat(TILE * 1.06)),
                         Transform::from_translation(Vec3::new(0.0, 0.0, -0.2)),
                     ));
                 }
@@ -391,6 +410,77 @@ pub fn kick_castles(
         // A quick squash-and-settle: overshoot then ease back.
         let wobble = 1.0 + 0.20 * kick.0 * (kick.0 * std::f32::consts::PI * 2.0).sin().abs();
         transform.scale = Vec3::splat(wobble);
+    }
+}
+
+/// A castle that just grew says so.
+///
+/// [`crate::sim::castle_tier`] is the whole scoreboard (spec §3.4), and
+/// until this existed a castle crossing a threshold changed shape between
+/// one frame and the next with nothing to mark it: the loudest good news a
+/// player gets, delivered by a sprite swap. `TierUp` was one of the events
+/// the effects layer read and threw away.
+///
+/// Runs after [`sync_castles`], and must: the sprite being cheered is the
+/// one built at the *new* tier, and the events reaching this frame are the
+/// previous frame's (see the `Frame` sets), so it is already standing.
+#[allow(clippy::too_many_arguments)]
+pub fn cheer_tier_ups(
+    mut commands: Commands,
+    mut events: MessageReader<crate::app::sim_events::SimEvent>,
+    sim: Res<Sim>,
+    art: Res<Art>,
+    settings: Res<crate::app::settings::GameSettings>,
+    mut rng: ResMut<crate::app::effects::VisualRng>,
+    mut trauma: ResMut<crate::app::effects::Trauma>,
+    mut castles: Query<(&CastleSprite, &mut CastleKick)>,
+) {
+    use crate::app::effects::{Burst, burst, ring};
+    use crate::app::sim_events::SimEvent;
+    let board = &sim.0;
+    for event in events.read() {
+        let SimEvent::TierUp { owner } = event else {
+            continue;
+        };
+        // The growth itself is the news and it survives reduced motion;
+        // only the fireworks over it stand down.
+        if settings.reduced_motion {
+            continue;
+        }
+        for (sprite, mut kick) in &mut castles {
+            if sprite.owner != *owner || !on_board(board, sprite.x, sprite.y) {
+                continue;
+            }
+            let at = layout::tile_center(board, sprite.x, sprite.y);
+            let color = palette::player_color(*owner);
+            ring(
+                &mut commands,
+                &art,
+                at,
+                color.lighter(0.25),
+                TILE * 0.8,
+                2.6,
+                0.55,
+            );
+            burst(
+                &mut commands,
+                &mut rng,
+                &Burst {
+                    image: art.puff.clone(),
+                    pos: at,
+                    color: Color::srgba(0.95, 0.9, 0.76, 0.9),
+                    count: 9,
+                    size: 15.0,
+                    speed: 62.0,
+                    gravity: 55.0,
+                },
+            );
+            for _ in 0..4 {
+                crate::app::effects::glint(&mut commands, &mut rng, &art, at, color.lighter(0.4));
+            }
+            kick.0 = 1.0;
+        }
+        trauma.add(0.2);
     }
 }
 

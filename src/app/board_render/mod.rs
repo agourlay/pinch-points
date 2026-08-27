@@ -5,6 +5,8 @@
 //! - [`castles`]: the keeps, their pennants, and the shudder a bank sets
 //!   off.
 //! - [`water`]: the tide rising around the sand, and the foam on its edge.
+//! - [`wash`]: the wave that comes in over the whole beach when the round
+//!   is over.
 //!
 //! The shared bits, the sprite helper and the wall colour, live here, and
 //! every module's public items are re-exported so the schedule and the
@@ -12,15 +14,18 @@
 
 mod castles;
 mod statics;
+mod wash;
 mod water;
 
 pub use castles::{
-    CastleFlight, CastleSprite, fly_castles, kick_castles, sync_castles, wave_pennants,
+    CastleFlight, CastleSprite, cheer_tier_ups, fly_castles, kick_castles, sync_castles,
+    wave_pennants,
 };
 pub use statics::{
-    BoardStatic, SignpostSprite, TurnstileSprite, animate_turnstiles, pulse_spawners,
-    spawn_static_board, sync_signposts, sync_turnstiles,
+    BoardStatic, SignpostSprite, TurnstileSprite, animate_turnstiles, dress_signposts,
+    drift_cloud_shadows, pulse_spawners, spawn_static_board, sync_signposts, sync_turnstiles,
 };
+pub use wash::{advance_tide_wash, start_tide_wash};
 pub use water::{
     WaterFoam, Waterline, spawn_water_foam, spawn_waterline, update_water_foam, update_waterline,
 };

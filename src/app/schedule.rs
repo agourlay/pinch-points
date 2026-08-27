@@ -118,6 +118,7 @@ fn insert_resources(app: &mut App) {
     app.init_resource::<replays::PlaybackSpeed>();
     app.init_resource::<gamepad::PadSeats>();
     app.init_resource::<effects::VisualRng>();
+    app.init_resource::<effects::Trauma>();
     app.init_resource::<pause::PauseMenu>();
     app.init_resource::<audio::Muted>();
     app.init_resource::<Daily>();
@@ -295,6 +296,9 @@ fn add_screen_transitions(app: &mut App) {
         OnExit(Screen::Editor),
         (
             menu_ui::despawn_marked::<cursor::Cursor>,
+            menu_ui::despawn_marked::<cursor::PostGhost>,
+            menu_ui::despawn_marked::<effects::Particle>,
+            menu_ui::despawn_marked::<effects::Hop>,
             menu_ui::despawn_marked::<editor::EditorUi>,
             despawn_board_sprites,
             editor::exit_editor,
@@ -304,9 +308,11 @@ fn add_screen_transitions(app: &mut App) {
         OnExit(Screen::Puzzle),
         (
             menu_ui::despawn_marked::<cursor::Cursor>,
+            menu_ui::despawn_marked::<cursor::PostGhost>,
             despawn_board_sprites,
             menu_ui::despawn_marked::<results::ResultsPanel>,
             menu_ui::despawn_marked::<effects::Particle>,
+            menu_ui::despawn_marked::<effects::Hop>,
             announce::clear_announcements,
             hint::clear_hint_ghosts,
             pause::reset_pause,
@@ -317,11 +323,13 @@ fn add_screen_transitions(app: &mut App) {
         OnExit(Screen::Versus),
         (
             menu_ui::despawn_marked::<cursor::Cursor>,
+            menu_ui::despawn_marked::<cursor::PostGhost>,
             despawn_board_sprites,
             end_versus,
             menu_ui::despawn_marked::<results::ResultsPanel>,
             menu_ui::despawn_marked::<side_panels::SidePanelRoot>,
             menu_ui::despawn_marked::<effects::Particle>,
+            menu_ui::despawn_marked::<effects::Hop>,
             announce::clear_announcements,
             pause::reset_pause,
             achievements::save_now,
@@ -676,9 +684,11 @@ fn add_render_systems(app: &mut App) {
         Update,
         (
             board_render::sync_signposts,
+            board_render::dress_signposts,
             board_render::sync_turnstiles,
             board_render::sync_castles,
             board_render::kick_castles,
+            board_render::cheer_tier_ups,
             // After the kick, which also writes scale: a bank landing in
             // the same frame as a swap must not fight the flight.
             board_render::fly_castles,
@@ -687,10 +697,22 @@ fn add_render_systems(app: &mut App) {
             creatures::sync_gull_sprites,
             creatures::interpolate_crabs,
             creatures::interpolate_gulls,
-            board_render::update_waterline,
-            board_render::update_water_foam,
+            // Grouped: the tide's two systems in one slot, because the
+            // list around them is at Bevy's twenty-element limit.
+            (
+                board_render::update_waterline,
+                board_render::update_water_foam,
+            )
+                .chain(),
             board_render::pulse_spawners,
             board_render::animate_turnstiles,
+            board_render::drift_cloud_shadows,
+            (
+                board_render::start_tide_wash,
+                board_render::advance_tide_wash,
+            )
+                .chain(),
+            (cursor::glide_cursors, cursor::ghost_pending_posts).chain(),
             effects::moment_effects,
             effects::crab_trails,
         )
@@ -765,11 +787,15 @@ fn add_finish_systems(app: &mut App) {
         Update,
         (
             effects::update_particles,
+            effects::advance_hops,
             // Until it lands: the font it names is registered by a system
             // of Bevy's own, and is not there to be named before that has
             // run once.
             boot::teach_the_kanji_fallback,
             boot::fit_camera,
+            // After the fit, which writes the camera's resting place: the
+            // shake is an offset from there.
+            boot::shake_camera,
             audio::toggle_mute.run_if(not(text_entry_open)),
             audio::drive_music,
             audio::rotate_music,

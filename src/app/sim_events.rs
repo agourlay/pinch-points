@@ -14,9 +14,22 @@ use bevy::prelude::*;
 #[derive(Message, Clone, Debug)]
 pub enum SimEvent {
     /// A crab walked into a castle. `value` is its score worth.
+    ///
+    /// `pos` is where the crab was last drawn and `keep` the middle of the
+    /// wall it stepped through. Both, because the render layer walks it
+    /// from one to the other, and the keep cannot be worked out later:
+    /// these events are read a frame after they are observed (see the
+    /// `Frame` sets), and a `CastleSwap` landing in that gap would send
+    /// the crab to whichever castle its owner holds *now* - typically on
+    /// the far side of the beach, into a keep it never touched.
+    ///
+    /// `id` is the crab's, so it can be drawn in the shell it walked in
+    /// with rather than its kind's flat colour.
     CrabBanked {
+        id: u32,
         owner: PlayerId,
         pos: Vec2,
+        keep: Vec2,
         value: u32,
         kind: CrabKind,
     },
@@ -36,19 +49,30 @@ pub enum SimEvent {
     GullTookOff,
     /// A flying gull touched down here.
     GullLanded { pos: Vec2 },
-    /// A signpost went up here.
+    /// A signpost went up here, and whose it is.
     ///
     /// One per tile, never a headcount. A board-wide count is the wrong
     /// thing to listen to: one seat placing while another pulls nets to
-    /// zero, and the beach falls silent for both of them. Whose post it is
-    /// still decides *which* event this becomes, through the differ's
-    /// per-seat counts, but the seat does not survive into the message: a
-    /// placement sounds and looks the same whoever made it.
-    SignpostPlaced { pos: Vec2 },
+    /// zero, and the beach falls silent for both of them.
+    ///
+    /// The seat used to stop at the differ, on the grounds that a
+    /// placement sounds and looks the same whoever made it. It does not:
+    /// on a six-seat beach the bots place far more often than the people
+    /// do, and a knock for every one of them is a click track running
+    /// under the whole match. It carries the owner now so a listener can
+    /// ask whether the post was one of *its* player's.
+    SignpostPlaced { owner: PlayerId, pos: Vec2 },
     /// A signpost left this tile and took its owner's count down with it:
     /// they pulled it, or it wore out. [`SimEvent::SignpostEvicted`] is the
     /// one departure that does not.
-    SignpostRemoved { pos: Vec2 },
+    ///
+    /// Carries the owner for the same reason [`SimEvent::SignpostPlaced`]
+    /// does, and it is the half that matters most: in versus every post
+    /// wears out on its own, so a bot's post whose placement was kept
+    /// quiet still knocked a few seconds later when it went. Silencing one
+    /// end and not the other leaves the click track running at very nearly
+    /// its old rate.
+    SignpostRemoved { owner: PlayerId, pos: Vec2 },
     /// A signpost was pushed off the board to make room for a newer one:
     /// `owner` was at the cap under [`crate::sim::CapPolicy::Evict`] and
     /// placed anyway, so their oldest went. `pos` is where it stood.
@@ -205,11 +229,26 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab) -> SimEvent {
         }
     };
     let here = tile_or_empty(i32::from(x), i32::from(y));
-    let entering = tile_or_empty(i32::from(x) + dx, i32::from(y) + dy);
+    let ahead = (i32::from(x) + dx, i32::from(y) + dy);
+    let entering = tile_or_empty(ahead.0, ahead.1);
+    // Which of the two tiles is the castle is also *where* it is, and this
+    // is the only moment anybody knows: the board it was read from is this
+    // frame's, and the event is consumed on the next.
+    let keep_at = |at: (i32, i32)| layout::tile_center(board, at.0 as u8, at.1 as u8);
     match (here, entering) {
-        (TileKind::Castle(owner), _) | (_, TileKind::Castle(owner)) => SimEvent::CrabBanked {
+        (TileKind::Castle(owner), _) => SimEvent::CrabBanked {
+            id: prev.id,
             owner,
             pos,
+            keep: keep_at((i32::from(x), i32::from(y))),
+            value: prev.kind.value(),
+            kind: prev.kind,
+        },
+        (_, TileKind::Castle(owner)) => SimEvent::CrabBanked {
+            id: prev.id,
+            owner,
+            pos,
+            keep: keep_at(ahead),
             value: prev.kind.value(),
             kind: prev.kind,
         },
@@ -317,6 +356,7 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
             continue;
         }
         events.push(SimEvent::SignpostPlaced {
+            owner,
             pos: layout::tile_center(board, x, y),
         });
     }
@@ -334,7 +374,7 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
         let pos = layout::tile_center(board, x, y);
         events.push(
             if next.posts_by[owner as usize] < prev.posts_by[owner as usize] {
-                SimEvent::SignpostRemoved { pos }
+                SimEvent::SignpostRemoved { owner, pos }
             } else {
                 SimEvent::SignpostEvicted { owner, pos, dir }
             },
@@ -500,7 +540,7 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(
                 e,
-                SimEvent::SignpostPlaced { pos } if *pos == layout::tile_center(&board, 5, 3)
+                SimEvent::SignpostPlaced { pos, .. } if *pos == layout::tile_center(&board, 5, 3)
             )),
             "the fourth post went down at (5,3): {events:?}"
         );
@@ -517,7 +557,7 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(
                 e,
-                SimEvent::SignpostRemoved { pos } if *pos == layout::tile_center(&board, 1, 0)
+                SimEvent::SignpostRemoved { pos, .. } if *pos == layout::tile_center(&board, 1, 0)
             )),
             "but it is a removal, at its tile: {events:?}"
         );
@@ -558,14 +598,14 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(
                 e,
-                SimEvent::SignpostPlaced { pos } if *pos == layout::tile_center(&board, 1, 1)
+                SimEvent::SignpostPlaced { pos, .. } if *pos == layout::tile_center(&board, 1, 1)
             )),
             "seat 0's placement, at its tile: {events:?}"
         );
         assert!(
             events.iter().any(|e| matches!(
                 e,
-                SimEvent::SignpostRemoved { pos } if *pos == layout::tile_center(&board, 4, 2)
+                SimEvent::SignpostRemoved { pos, .. } if *pos == layout::tile_center(&board, 4, 2)
             )),
             "seat 1's removal, at its tile: {events:?}"
         );

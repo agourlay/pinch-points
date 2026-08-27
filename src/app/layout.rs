@@ -6,6 +6,17 @@ use bevy::prelude::*;
 
 pub const TILE: f32 = 64.0;
 
+/// Where everything standing on this beach drops its shadow, in world
+/// pixels.
+///
+/// One direction for the whole board: the fence, the rocks, the kelp, the
+/// keeps, the posts and the creatures all read it. They used to carry four
+/// slightly different offsets between them - a rock at (2, -3), the fence
+/// at (2.5, -3.5), a post at (3, -3) and a castle straight down - and a
+/// rock beside a post casting at two different angles is the first thing
+/// an eye picks out of a flat-lit scene.
+pub const SUN: Vec2 = Vec2::new(2.5, -3.5);
+
 /// Z-layers, back to front.
 pub mod z {
     pub const SAND: f32 = 0.0;

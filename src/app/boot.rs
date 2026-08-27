@@ -1,5 +1,6 @@
-//! Boot-time scaffolding: the camera, the UI font, and the zoom that keeps
-//! whatever board is loaded inside the window's chrome.
+//! Boot-time scaffolding: the camera, the UI font, the zoom that keeps
+//! whatever board is loaded inside the window's chrome, and the shove that
+//! zoom takes when the beach is hit hard enough.
 
 use crate::app::{Screen, Sim, layout};
 use bevy::asset::uuid_handle;
@@ -180,5 +181,38 @@ pub(super) fn fit_camera(
             transform.translation.x = target.x;
             transform.translation.y = target.y;
         }
+    }
+}
+
+/// Shake the camera by whatever trauma is in the pool.
+///
+/// After [`fit_camera`], and it has to be: the fit writes the camera's
+/// resting place every frame, so the shake is an offset from wherever the
+/// fit just put it and nothing accumulates. The fit's own half-pixel
+/// deadband is what keeps the two from fighting - it sees the shaken
+/// camera as moved and puts it back, which is exactly the reset this
+/// wants.
+///
+/// The throw is in screen pixels, so it is multiplied by the projection's
+/// scale: a zoomed-out board would otherwise be shaken by a fraction of
+/// what a 1:1 one is.
+pub(super) fn shake_camera(
+    time: Res<Time>,
+    settings: Res<crate::app::settings::GameSettings>,
+    mut trauma: ResMut<crate::app::effects::Trauma>,
+    mut cameras: Query<(&Projection, &mut Transform), With<Camera2d>>,
+) {
+    let offset = trauma.offset(time.delta_secs(), time.elapsed_secs());
+    // Drained either way, so nothing accumulates while the shake is off.
+    if offset == Vec2::ZERO || settings.reduced_motion || crate::app::dev::screenshotting() {
+        return;
+    }
+    for (projection, mut transform) in &mut cameras {
+        let scale = match projection {
+            Projection::Orthographic(ortho) => ortho.scale,
+            Projection::Perspective(_) | Projection::Custom(_) => 1.0,
+        };
+        transform.translation.x += offset.x * scale;
+        transform.translation.y += offset.y * scale;
     }
 }
