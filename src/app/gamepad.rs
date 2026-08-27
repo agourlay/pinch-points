@@ -11,10 +11,10 @@
 //! feed the identical commit paths as §8.2.
 
 use crate::app::cursor::Cursor;
-use crate::app::layout::{self};
 use crate::app::settings::{GameSettings, SeatInput};
 use crate::app::{PendingActions, Phase, PlacementDenied, Sim};
 use crate::sim::{Direction, MAX_PLAYERS, PlayerAction};
+use bevy::input::gamepad::{GamepadRumbleIntensity, GamepadRumbleRequest};
 use bevy::prelude::*;
 
 /// Pad claims, in claim order. Pad index `i` (claimed, or connection order
@@ -25,16 +25,30 @@ use bevy::prelude::*;
 #[derive(Resource, Default)]
 pub struct PadSeats(pub Vec<Entity>);
 
+/// The pad entity at claim/connection index `index`.
+///
+/// Split from [`nth_pad`] because reading a pad wants the component and
+/// rumbling one wants the entity, and the rule for *which* pad an index
+/// means must not be written down twice.
+fn nth_pad_entity(
+    pads: &Query<(Entity, &Gamepad)>,
+    claims: &PadSeats,
+    index: usize,
+) -> Option<Entity> {
+    if claims.0.is_empty() {
+        return pads.iter().nth(index).map(|(entity, _)| entity);
+    }
+    let entity = *claims.0.get(index)?;
+    pads.contains(entity).then_some(entity)
+}
+
 /// The pad at claim/connection index `index`.
 fn nth_pad<'a>(
     pads: &'a Query<(Entity, &Gamepad)>,
     claims: &PadSeats,
     index: usize,
 ) -> Option<&'a Gamepad> {
-    if claims.0.is_empty() {
-        return pads.iter().nth(index).map(|(_, pad)| pad);
-    }
-    let entity = *claims.0.get(index)?;
+    let entity = nth_pad_entity(pads, claims, index)?;
     pads.get(entity).ok().map(|(_, pad)| pad)
 }
 
@@ -141,13 +155,13 @@ pub fn pad_move_cursor(
     sim: Res<Sim>,
     settings: Res<GameSettings>,
     mut commands: Commands,
-    mut cursors: Query<(Entity, &mut Cursor, &mut Transform, Option<&mut PadRepeat>)>,
+    mut cursors: Query<(Entity, &mut Cursor, Option<&mut PadRepeat>)>,
 ) {
     let board = &sim.0;
     let deadzone = settings.deadzone();
     let mut players: Vec<u8> = cursors.iter().map(|(_, c, ..)| c.player).collect();
     players.sort_unstable();
-    for (entity, mut cursor, mut transform, repeat) in &mut cursors {
+    for (entity, mut cursor, repeat) in &mut cursors {
         let Some(pad) = pad_index_of(&settings, &players, cursor.player)
             .and_then(|i| nth_pad(&pads, &seats, i))
         else {
@@ -182,7 +196,6 @@ pub fn pad_move_cursor(
         let ny = (i16::from(cursor.y) + dy).clamp(0, i16::from(board.height()) - 1) as u8;
         cursor.x = nx;
         cursor.y = ny;
-        transform.translation = layout::tile_center(board, nx, ny).extend(layout::z::CURSOR);
     }
 }
 
@@ -331,10 +344,85 @@ pub fn pad_claim_seats(
     }
 }
 
+/// How hard, and for how long, a raid is felt.
+///
+/// Both motors, weighted to the low-frequency one: a gull carrying off
+/// half a castle is a thump, not a buzz. Short enough that two raids in
+/// quick succession read as two knocks rather than one long shudder.
+const RAID_RUMBLE: GamepadRumbleIntensity = GamepadRumbleIntensity {
+    strong_motor: 0.85,
+    weak_motor: 0.45,
+};
+const RAID_RUMBLE_SECS: f32 = 0.32;
+
+/// A gull on your castle, in your hands.
+///
+/// The `rumble` setting has been in the menu, saved to disk and translated
+/// into eight languages since before this existed, and nothing anywhere
+/// read it: the switch turned nothing on or off. This is the first thing
+/// it does.
+///
+/// Only the seat that was raided, and only if that seat is sitting at
+/// *this* machine holding a pad. `pad_index_of` answers over the live
+/// cursor set, which is what makes that true without a special case:
+/// online there is one local cursor and the rivals have none here, and in
+/// local play the AI seats have none either, so a bot losing a castle
+/// buzzes nobody's hands.
+pub fn rumble_on_raid(
+    mut events: MessageReader<crate::app::sim_events::SimEvent>,
+    settings: Res<GameSettings>,
+    claims: Res<PadSeats>,
+    pads: Query<(Entity, &Gamepad)>,
+    cursors: Query<&Cursor>,
+    mut seated: Local<Vec<u8>>,
+    mut rumble: MessageWriter<GamepadRumbleRequest>,
+) {
+    use crate::app::sim_events::SimEvent;
+    // No need to drain the reader on the way out: a message lives two
+    // frames whoever reads it, so a raid this seat sat out has expired
+    // long before the switch can be flipped back on.
+    if !settings.rumble || events.is_empty() {
+        return;
+    }
+    // Reused buffer, rebuilt on the frames a raid actually lands: this
+    // runs on every frame of every round, and a fresh heap allocation to
+    // list at most six seats is a poor way to spend one.
+    seated.clear();
+    seated.extend(cursors.iter().map(|cursor| cursor.player));
+    seated.sort_unstable();
+    for event in events.read() {
+        let SimEvent::CastleRaided { owner, .. } = event else {
+            continue;
+        };
+        // `pad_index_of` answers for any seat when that seat named a
+        // controller outright, without ever consulting the cursor set: it
+        // short-circuits on `SeatInput::Pad(n)`. So the "is this seat here"
+        // question has to be asked first, or a player who bound P2 to a pad
+        // for couch play feels every raid on seat two for ever after -
+        // including online, where seat two is a stranger, and against AI,
+        // where seat two is a bot.
+        if seated.binary_search(owner).is_err() {
+            continue;
+        }
+        let Some(pad) = pad_index_of(&settings, &seated, *owner)
+            .and_then(|index| nth_pad_entity(&pads, &claims, index))
+        else {
+            continue;
+        };
+        rumble.write(GamepadRumbleRequest::Add {
+            duration: std::time::Duration::from_secs_f32(RAID_RUMBLE_SECS),
+            intensity: RAID_RUMBLE,
+            gamepad: pad,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::pad_index_of;
+    use super::*;
     use crate::app::settings::{GameSettings, SeatInput};
+    use crate::app::sim_events::SimEvent;
+    use crate::sim::classic_arena;
 
     fn with(choices: [SeatInput; 2]) -> GameSettings {
         GameSettings {
@@ -388,5 +476,140 @@ mod tests {
         assert_eq!(pad_index_of(&both, &[0, 1], 1), Some(1));
         // And a third seat skips the claimed one.
         assert_eq!(pad_index_of(&both, &[0, 1, 2], 2), Some(0));
+    }
+
+    /// A world with `seats` cursors and `pads` controllers plugged in.
+    /// No window, no art: this checks who gets buzzed, not what it feels
+    /// like.
+    fn table(seats: u8, pads: usize) -> App {
+        let mut app = App::new();
+        app.insert_resource(Sim(classic_arena(false, seats.max(2))));
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<PadSeats>();
+        app.add_message::<SimEvent>();
+        app.add_message::<GamepadRumbleRequest>();
+        for player in 0..seats {
+            app.world_mut().spawn(Cursor::seated(player));
+        }
+        for _ in 0..pads {
+            app.world_mut().spawn(Gamepad::default());
+        }
+        app.add_systems(Update, rumble_on_raid);
+        app
+    }
+
+    /// Every pad asked to rumble since this was last called.
+    fn buzzed(app: &mut App) -> Vec<Entity> {
+        let mut messages = app
+            .world_mut()
+            .resource_mut::<bevy::ecs::message::Messages<GamepadRumbleRequest>>();
+        let out: Vec<Entity> = messages.drain().map(|request| request.gamepad()).collect();
+        out
+    }
+
+    /// Raid `owner`'s castle and answer every rumble that came of it.
+    fn raid(app: &mut App, owner: u8) -> Vec<Entity> {
+        app.world_mut().write_message(SimEvent::CastleRaided {
+            owner,
+            pos: Vec2::ZERO,
+            lost: 4,
+        });
+        app.update();
+        buzzed(app)
+    }
+
+    /// The pad on the raided seat's own hands, and nobody else's. Pads
+    /// fill seats from the top down, so with two seats and one pad the
+    /// controller is seat two's: a raid on seat two is felt and a raid on
+    /// seat one, who is on the keyboard, is not.
+    #[test]
+    fn a_raid_is_felt_by_the_seat_that_was_raided() {
+        let mut app = table(2, 1);
+        let pad = app
+            .world_mut()
+            .query_filtered::<Entity, With<Gamepad>>()
+            .single(app.world())
+            .expect("one pad");
+        assert_eq!(raid(&mut app, 1), vec![pad], "seat two holds the pad");
+        assert!(
+            raid(&mut app, 0).is_empty(),
+            "seat one is on the keyboard and has nothing to buzz"
+        );
+    }
+
+    /// Two pads, two seats: each seat's own controller and only that one.
+    #[test]
+    fn two_pads_are_told_apart() {
+        let mut app = table(2, 2);
+        let top = raid(&mut app, 1);
+        let next = raid(&mut app, 0);
+        assert_eq!(top.len(), 1);
+        assert_eq!(next.len(), 1);
+        assert_ne!(top, next, "one raid must not buzz both hands");
+    }
+
+    /// Once the join ceremony has claimed pads, claim order decides which
+    /// controller an index means - not the order the operating system
+    /// happened to hand them over in. Reversing the claims must reverse
+    /// which hands feel the raid.
+    #[test]
+    fn a_claimed_pad_beats_the_order_it_was_plugged_in() {
+        let mut app = table(2, 2);
+        let plugged: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<Gamepad>>()
+            .iter(app.world())
+            .collect();
+        assert_eq!(plugged.len(), 2);
+        let claimed: Vec<Entity> = plugged.iter().copied().rev().collect();
+        app.world_mut().resource_mut::<PadSeats>().0 = claimed.clone();
+        assert_eq!(
+            raid(&mut app, 1),
+            vec![claimed[0]],
+            "the top seat holds whichever pad claimed first"
+        );
+    }
+
+    /// A seat that named a controller in settings still has to be *here*
+    /// to feel anything. `pad_index_of` answers for a named pad whoever
+    /// holds the seat, so this is the case the cursor set has to veto:
+    /// binding P2 to a pad on the couch must not buzz for seat two in an
+    /// online match, where seat two is somebody else entirely.
+    #[test]
+    fn a_bound_pad_still_only_answers_for_a_seat_that_is_here() {
+        // Two pads, one player. Seat two has named the first pad from some
+        // earlier couch session; it is a bot or a stranger in this one.
+        let mut app = table(1, 2);
+        app.world_mut().resource_mut::<GameSettings>().seat_input[1] = SeatInput::Pad(0);
+        assert!(
+            raid(&mut app, 1).is_empty(),
+            "seat two is bound to a pad here but is not sitting here"
+        );
+        assert_eq!(
+            raid(&mut app, 0).len(),
+            1,
+            "and seat one still feels its own, on the pad seat two did not claim"
+        );
+    }
+
+    /// A seat nobody is sitting at locally - a bot, or a rival on the
+    /// other end of a wire - has no cursor here, so its castle falling
+    /// buzzes nothing on this machine.
+    #[test]
+    fn a_seat_that_is_not_here_buzzes_nothing() {
+        let mut app = table(2, 1);
+        assert!(
+            raid(&mut app, 3).is_empty(),
+            "seat four is not at this table"
+        );
+    }
+
+    /// The switch in the menu is the switch: off is silent, and it was
+    /// wired to nothing at all before this.
+    #[test]
+    fn the_setting_turns_it_off() {
+        let mut app = table(2, 1);
+        app.world_mut().resource_mut::<GameSettings>().rumble = false;
+        assert!(raid(&mut app, 1).is_empty());
     }
 }

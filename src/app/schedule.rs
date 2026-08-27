@@ -729,6 +729,7 @@ fn add_event_systems(app: &mut App) {
         (
             sim_events::observe_sim.run_if(board_screens),
             audio::play_events,
+            gamepad::rumble_on_raid.run_if(play_screens.and_then(not_watching)),
             achievements::track_events.run_if(play_screens.and_then(not_watching)),
             (
                 announce::collect_announcements,

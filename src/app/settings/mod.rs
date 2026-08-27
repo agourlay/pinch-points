@@ -169,6 +169,12 @@ pub struct GameSettings {
     /// UI language; every player-facing string localizes through this.
     pub language: Lang,
     /// Controller rumble on raids, surges, and round end.
+    ///
+    /// The two board-wide ones buzz every pad in the room, which is right
+    /// for them: the surge and the tide coming in happen to the whole
+    /// beach (`audio::play_events`). A raid does not - it happens to one
+    /// seat - so that one is aimed, and reaches only the hands of the
+    /// player whose castle it was (`gamepad::rumble_on_raid`).
     pub rumble: bool,
     /// Left-stick deadzone percent (20-80) before it counts as a direction.
     pub pad_deadzone: u8,
