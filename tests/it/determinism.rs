@@ -98,7 +98,18 @@ const TICKS: u64 = 10_000;
 /// Anchor value for cross-platform comparison. If a deliberate rule change
 /// shifts it, rerun and update; an unexplained shift is a determinism bug.
 ///
-/// Last re-derived 2026-08-22, when the lure was given room: the quiet
+/// Last re-derived 2026-08-27, when the tide roulette was given the same
+/// kind of room the lure got. The wheel is spun by banking a Sparkling
+/// crab, and several of the faces it lands on put more crabs on the beach,
+/// so the events raised their own rate: measured across the kept rounds it
+/// ranged from nought events in three minutes to twelve, and the worst put
+/// six inside nineteen seconds. `EVENT_COOLDOWN` holds it to one event per
+/// ten seconds - one `EVENT_TICKS`, so a second cannot start on top of the
+/// first. That moves this round (the wheel is spun on it) and the new
+/// `event_cooldown` field joins the fingerprint besides, for the reason
+/// `lure_cooldown` did: it is live state that decides what happens next.
+///
+/// Before that, 2026-08-22, when the lure was given room: the quiet
 /// spell after one ends went from 10 s to 20 s and the molting crab's share
 /// of the spawn mix from 4% to 3%. Both move this round - a lure decides
 /// where every loose crab walks, and the mix bands shifted so crabs above
@@ -129,7 +140,7 @@ const TICKS: u64 = 10_000;
 /// did not. (The rules moved that day too: the lure stopped stacking, the
 /// roulette stopped rolling gull events into the surge, and the spawners
 /// took a crab cap.)
-const EXPECTED_HASH: u64 = 0x43da_9a5b_d15b_fcf5;
+const EXPECTED_HASH: u64 = 0x509a_9e6e_cf97_32c5;
 
 #[test]
 fn ten_thousand_ticks_reproduce_exactly() {

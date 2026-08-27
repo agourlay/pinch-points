@@ -376,6 +376,105 @@ fn walls_are_shared_between_neighbours() {
     assert!(!board.wall_at(1, 1, Right));
 }
 
+/// A forced event arms the cooldown too.
+///
+/// The clock is set in `apply_tide_event` rather than in the roulette on
+/// purpose: what holds the wheel is "an event is running", not "the wheel
+/// was spun". The dev hook and the tests are the only other way an event
+/// starts, and one fired that way must not leave the beach open to a
+/// second on the same tick.
+#[test]
+fn an_event_fired_by_hand_holds_the_wheel_as_well() {
+    let mut board = Board::new(9, 7, 2);
+    board.set_events_enabled(true);
+    board.force_tide_event(TideEvent::FreshSand, 0);
+    let first = board.last_event().expect("the forced event landed");
+    board.spin_tide_event(0);
+    assert_eq!(board.last_event(), Some(first), "the wheel was still held");
+}
+
+/// A refused spin must not touch the PRNG.
+///
+/// The draw that picks the face comes *after* the cooldown check, and it
+/// has to: the stream is the round. Moving the check below the draw would
+/// consume one per refused Sparkling crab, so two peers that disagreed by
+/// a single held spin would then disagree about every crab, gull and
+/// event for the rest of the match - and every kept replay would play
+/// back as a different round.
+#[test]
+fn a_held_spin_does_not_spend_a_draw() {
+    let mut board = Board::new(9, 7, 2);
+    board.set_events_enabled(true);
+    board.force_tide_event(TideEvent::SpeedUp, 0);
+    let untouched = board.state_hash();
+    for _ in 0..25 {
+        board.spin_tide_event(0);
+    }
+    assert_eq!(
+        board.state_hash(),
+        untouched,
+        "a refused spin moved the board: the draw is being spent"
+    );
+}
+
+/// The wheel comes back the moment the cooldown runs out, and not a tick
+/// before. Both ends matter: a cooldown that expired early would let two
+/// events overlap after all, and one that never expired would be a mute
+/// button on the whole mechanic.
+#[test]
+fn the_wheel_comes_back_on_the_tick_the_cooldown_ends() {
+    let mut board = Board::new(9, 7, 2);
+    board.set_events_enabled(true);
+    board.force_tide_event(TideEvent::SlowDown, 0);
+    let held = board.last_event().expect("the forced event landed");
+    // One tick short: still held.
+    for _ in 0..(EVENT_COOLDOWN - 1) {
+        board.tick_idle();
+    }
+    board.spin_tide_event(0);
+    assert_eq!(board.last_event(), Some(held), "it opened a tick early");
+    board.tick_idle();
+    board.spin_tide_event(0);
+    assert_ne!(board.last_event(), Some(held), "and never opened at all");
+}
+
+/// The roulette holds off while an event is still running.
+///
+/// It is spun by banking a Sparkling crab, and several faces of the wheel
+/// (Crab Mania, Speed Up) put more crabs on the beach - so without a valve
+/// the events raise their own rate and arrive in waves. This is the valve:
+/// one event, then nothing for `EVENT_COOLDOWN`, then the wheel is live
+/// again. The crab still banks either way; only the spin is held.
+#[test]
+fn the_roulette_will_not_spin_on_top_of_a_running_event() {
+    let mut board = Board::new(9, 7, 2);
+    board.set_events_enabled(true);
+    board.force_tide_event(TideEvent::SpeedUp, 0);
+    let first = board.last_event().expect("the forced event landed");
+    assert_eq!(first.0, TideEvent::SpeedUp);
+
+    // Every spin inside the cooldown is refused, however many crabs bank.
+    for _ in 0..40 {
+        board.spin_tide_event(0);
+        assert_eq!(
+            board.last_event(),
+            Some(first),
+            "a second event started on top of the first"
+        );
+    }
+    // And the wheel comes back once the first event has run its course.
+    for _ in 0..EVENT_COOLDOWN {
+        board.tick_idle();
+    }
+    board.spin_tide_event(0);
+    assert_ne!(
+        board.last_event(),
+        Some(first),
+        "the wheel never came back: it is a mute button, not a cooldown"
+    );
+}
+
+/// both cap policies, including the at-cap and rival-post cases.
 /// `can_place_signpost` must agree with `place_signpost` on every tile, in
 /// both cap policies, including the at-cap and rival-post cases.
 #[test]

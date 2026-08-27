@@ -32,6 +32,30 @@ pub const LURE_TICKS: u32 = 300;
 /// half, which is enough separation for the beach to refill and the other
 /// castles to have a turn at it.
 pub const LURE_COOLDOWN: u32 = 600;
+/// Ticks after any tide event before the roulette may spin again.
+///
+/// The roulette fires when a Sparkling crab banks, and Sparkling is 2% of
+/// what the *spawners* produce - so the events that raise the crab supply
+/// raise their own rate. Crab Mania floods the spawners and Speed Up banks
+/// everything faster, and both spin the wheel that rolled them. Measured
+/// over the seven kept rounds the result ranges from nought events in
+/// three minutes to twelve, and the worst of them put six inside nineteen
+/// seconds - three Crab Manias among them, two events three ticks apart -
+/// with the centre banner never off the screen.
+///
+/// One [`EVENT_TICKS`] is the value because it is the thing being fixed:
+/// an event's own effect lasts that long, so this is exactly "no second
+/// event until the first has finished". It is the same shape of valve as
+/// [`LURE_COOLDOWN`], which the other self-feeding mechanic already had.
+///
+/// Re-running the seven kept rounds through it (`cargo run --example
+/// round_events`) puts the worst of them at three events rather than
+/// eleven and the next at nine rather than twelve, and - the number that
+/// matters - **none** of them lands inside another's window, in any round,
+/// which is what it is for. The rounds diverge under the new rule, so
+/// those are the cadences that input stream produces now rather than a
+/// strict before-and-after of one round.
+pub const EVENT_COOLDOWN: u32 = EVENT_TICKS;
 /// Versus signposts fade away after this many ticks (10 s, the original's
 /// balance valve against stale fortifications). Puzzle-rule boards
 /// (CapPolicy::Reject) keep posts forever: a fixed inventory implies
@@ -257,6 +281,9 @@ pub struct Board {
     lure: Option<(PlayerId, u32)>,
     /// Ticks until another lure may start; set when one ends.
     lure_cooldown: u32,
+    /// Ticks until the tide roulette may spin again; set when any event
+    /// fires. See [`EVENT_COOLDOWN`].
+    event_cooldown: u32,
     /// Crabs banked since the start, all players combined. With
     /// `next_crab_id` (crabs ever spawned) this distinguishes "every crab is
     /// safe" from "the gulls got some" (spec §5.1 win condition).
@@ -315,6 +342,7 @@ impl Board {
             next_gull_id: 0,
             lure: None,
             lure_cooldown: 0,
+            event_cooldown: 0,
             crabs_banked: 0,
             golden_banked: 0,
             events_enabled: false,
@@ -447,6 +475,10 @@ impl Board {
         if self.round_over() {
             return;
         }
+        // Before anything that could spin the roulette, so an event
+        // firing this tick gets its whole cooldown rather than one tick
+        // less than it.
+        self.event_cooldown = self.event_cooldown.saturating_sub(1);
         for player in self.action_order() {
             self.apply_action(player, actions[player as usize]);
         }

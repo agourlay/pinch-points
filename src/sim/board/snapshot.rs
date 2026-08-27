@@ -70,6 +70,9 @@ impl Board {
         if self.lure_cooldown > 0 {
             let _ = writeln!(out, "cooldown: {}", self.lure_cooldown);
         }
+        if self.event_cooldown > 0 {
+            let _ = writeln!(out, "event_cooldown: {}", self.event_cooldown);
+        }
         if let Some((mania, ticks)) = self.mania {
             let name = match mania {
                 Mania::Crab => "crab",
@@ -202,6 +205,7 @@ struct Fields {
     events_enabled: bool,
     lure: Option<(PlayerId, u32)>,
     lure_cooldown: u32,
+    event_cooldown: u32,
     mania: Option<(Mania, u32)>,
     tempo: Option<(Tempo, u32)>,
     last_event: Option<(TideEvent, u64)>,
@@ -265,6 +269,9 @@ impl Fields {
                 self.lure = Some((owner, next_num(&mut words, "lure ticks")?));
             }
             "cooldown" => self.lure_cooldown = next_num(&mut words, "cooldown")?,
+            "event_cooldown" => {
+                self.event_cooldown = next_num(&mut words, "event_cooldown")?;
+            }
             "mania" => {
                 let which = words.next().ok_or("mania: missing kind")?;
                 let kind = match which {
@@ -381,6 +388,7 @@ impl Fields {
             next_gull_id,
             lure: self.lure,
             lure_cooldown: self.lure_cooldown,
+            event_cooldown: self.event_cooldown,
             crabs_banked,
             golden_banked,
             events_enabled: self.events_enabled,
@@ -631,6 +639,7 @@ mod tests {
         board.golden_banked = 2;
         board.lure = Some((1, 145));
         board.lure_cooldown = 60;
+        board.event_cooldown = 210;
         board.mania = Some((Mania::Gull, 88));
         board.tempo = Some((Tempo::Slow, 44));
         board.last_event = Some((TideEvent::FreshSand, 3000));
@@ -748,6 +757,7 @@ mod tests {
                 "events:",
                 "lure:",
                 "cooldown:",
+                "event_cooldown:",
                 "mania:",
                 "tempo:",
                 "last_event:",

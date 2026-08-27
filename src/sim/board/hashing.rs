@@ -45,6 +45,7 @@ impl Board {
                 },
             lure: _,
             lure_cooldown: _,
+            event_cooldown: _,
             crabs_banked: _,
             golden_banked: _,
             events_enabled: _,
@@ -225,6 +226,7 @@ impl Board {
         // in beside `lure`, where it belongs by meaning, because field
         // order is the format and only the tail is safe to grow.
         h.u32(self.lure_cooldown);
+        h.u32(self.event_cooldown);
     }
 }
 
@@ -327,5 +329,49 @@ mod tests {
         }
         assert!(quiet.lure().is_none(), "the quiet spell swallows the lure");
         assert!(ready.lure().is_some(), "a clear board starts one");
+    }
+
+    /// The same trap, one field along. `event_cooldown` decides whether
+    /// banking a Sparkling crab spins the roulette at all, so two boards
+    /// holding different ones play the round apart - and the census above
+    /// only forces a new field to be *named*, not hashed, which is exactly
+    /// how `lure_cooldown` slipped through in the first place. Removing the
+    /// `h.u32` for this field passes every other test in the suite.
+    #[test]
+    fn the_event_cooldown_is_part_of_the_fingerprint() {
+        use crate::sim::{MAX_PLAYERS, PlayerAction};
+        let armed = |cooldown: u32| {
+            let mut board = Board::new(6, 5, 1);
+            board.set_events_enabled(true);
+            board.set_tile(3, 2, TileKind::Castle(0));
+            board.event_cooldown = cooldown;
+            board.spawn_crab(
+                2,
+                2,
+                Direction::Right,
+                Handedness::Right,
+                CrabKind::Sparkling,
+            );
+            board
+        };
+        let (mut quiet, mut ready) = (armed(200), armed(0));
+        assert_ne!(
+            quiet.state_hash(),
+            ready.state_hash(),
+            "a cooldown that changes the round has to change the hash"
+        );
+        for board in [&mut quiet, &mut ready] {
+            for _ in 0..40 {
+                board.tick(&[PlayerAction::None; MAX_PLAYERS]);
+            }
+        }
+        assert!(
+            quiet.last_event().is_none(),
+            "the cooldown swallows the spin"
+        );
+        assert!(
+            ready.last_event().is_some(),
+            "a clear board spins the wheel"
+        );
     }
 }

@@ -16,9 +16,10 @@ mod rng;
 mod solve;
 
 pub use board::{
-    Board, CapPolicy, EVENT_TICKS, Grid, LURE_TICKS, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER,
-    PlayerAction, PlayerId, SIGNPOST_LIFETIME, SPILL_CAP, SUBUNITS_PER_TILE, SURGE_TICKS, Signpost,
-    SignpostHealth, Spawner, TICKS_PER_SECOND, TIER_FLOORS, TideEvent, TileKind, castle_tier,
+    Board, CapPolicy, EVENT_COOLDOWN, EVENT_TICKS, Grid, LURE_TICKS, MAX_PLAYERS,
+    MAX_SIGNPOSTS_PER_PLAYER, PlayerAction, PlayerId, SIGNPOST_LIFETIME, SPILL_CAP,
+    SUBUNITS_PER_TILE, SURGE_TICKS, Signpost, SignpostHealth, Spawner, TICKS_PER_SECOND,
+    TIER_FLOORS, TideEvent, TileKind, castle_tier,
 };
 pub use bot::{BotLevel, bot_action};
 pub use campaign::{campaign_levels, challenge_levels};

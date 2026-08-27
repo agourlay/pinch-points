@@ -69,6 +69,16 @@ impl Board {
         if !self.events_enabled {
             return;
         }
+        // Not while the last event is still running. The wheel is spun by
+        // banking a Sparkling crab, and several of the faces it lands on
+        // put more crabs on the beach, so without this the events feed
+        // themselves: three Crab Manias inside fourteen seconds was
+        // measured on a kept round. The crab still banks and still scores;
+        // what it does not do is stack a second event on the one the
+        // player is already watching.
+        if self.event_cooldown > 0 {
+            return;
+        }
         // One draw indexes ALL, so the roulette's order *is* ALL's order:
         // the same one the string tables and the snapshot use.
         let event = TideEvent::ALL[(self.rng.next_u32() % TideEvent::ALL.len() as u32) as usize];
@@ -117,6 +127,10 @@ impl Board {
 
     pub(super) fn apply_tide_event(&mut self, event: TideEvent, banker: PlayerId) {
         self.last_event = Some((event, self.tick));
+        // Set here rather than in the roulette so a forced event starts
+        // the clock too: the point is "an event is running", not "the
+        // wheel was spun".
+        self.event_cooldown = crate::sim::EVENT_COOLDOWN;
         match event {
             TideEvent::CrabMania => {
                 self.gulls.clear();
