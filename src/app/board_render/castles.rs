@@ -367,6 +367,35 @@ fn swapped(before: &[Held], now: &[Held]) -> bool {
     tiles(before) == tiles(now) && owners(before) == owners(now)
 }
 
+/// What each seat banked over one frame's events, added up.
+///
+/// The sim reports a bank per crab, and a castle can take several on one
+/// tick - eight, measured over a set of six-seat rounds, with two or three
+/// a few hundred times in sixty thousand. [`score_pip`] has no jitter in
+/// it: same place, same speed, same life. So a pip per crab put eight
+/// identical `+1`s pixel on pixel, rising as one, and the player who had
+/// just banked eight read a single `+1` drawn a little too dark.
+///
+/// Summed instead, which is not merely quieter but truer: `+8` is the
+/// number that happened, and it is the only place that number is ever
+/// shown.
+///
+/// [`score_pip`]: crate::app::effects::score_pip
+fn gains<'a>(
+    events: impl IntoIterator<Item = &'a crate::app::sim_events::SimEvent>,
+) -> [u32; crate::sim::MAX_PLAYERS] {
+    use crate::app::sim_events::SimEvent;
+    let mut gained = [0u32; crate::sim::MAX_PLAYERS];
+    for event in events {
+        if let SimEvent::CrabBanked { owner, value, .. } = event
+            && let Some(total) = gained.get_mut(usize::from(*owner))
+        {
+            *total = total.saturating_add(*value);
+        }
+    }
+    gained
+}
+
 /// Bounce the owner's castle on every bank and float the points gained
 /// over the keep, in the owner's colour.
 pub fn kick_castles(
@@ -377,29 +406,32 @@ pub fn kick_castles(
     settings: Res<crate::app::settings::GameSettings>,
     mut castles: Query<(&CastleSprite, &mut CastleKick, &mut Transform)>,
 ) {
-    use crate::app::sim_events::SimEvent;
     let board = &sim.0;
     // Reduced motion keeps the floating points and drops the bounce.
     let calm = settings.reduced_motion;
-    for event in events.read() {
-        let SimEvent::CrabBanked { owner, value, .. } = event else {
+    let gained = gains(events.read());
+    for (sprite, mut kick, _) in &mut castles {
+        // A stranded sprite (off this board) is `sync_castles`'s to
+        // remove; it has no tile to read.
+        if !on_board(board, sprite.x, sprite.y) {
+            continue;
+        }
+        let TileKind::Castle(owner) = board.tile_at(sprite.x, sprite.y) else {
             continue;
         };
-        for (sprite, mut kick, _) in &mut castles {
-            // A stranded sprite (off this board) is `sync_castles`'s to
-            // remove; it has no tile to read.
-            if on_board(board, sprite.x, sprite.y)
-                && board.tile_at(sprite.x, sprite.y) == TileKind::Castle(*owner)
-            {
-                kick.0 = if calm { 0.0 } else { 1.0 };
-                crate::app::effects::score_pip(
-                    &mut commands,
-                    format!("+{value}"),
-                    layout::tile_center(board, sprite.x, sprite.y) + Vec2::new(0.0, TILE * 0.35),
-                    palette::player_color(*owner).lighter(0.15),
-                );
-            }
+        let Some(&points) = gained.get(usize::from(owner)) else {
+            continue;
+        };
+        if points == 0 {
+            continue;
         }
+        kick.0 = if calm { 0.0 } else { 1.0 };
+        crate::app::effects::score_pip(
+            &mut commands,
+            format!("+{points}"),
+            layout::tile_center(board, sprite.x, sprite.y) + Vec2::new(0.0, TILE * 0.35),
+            palette::player_color(owner).lighter(0.15),
+        );
     }
     let dt = time.delta_secs();
     for (_, mut kick, mut transform) in &mut castles {
@@ -497,8 +529,64 @@ pub fn wave_pennants(time: Res<Time>, mut flags: Query<(Entity, &mut Transform),
 
 #[cfg(test)]
 mod tests {
-    use super::hop;
+    use super::{gains, hop};
+    use crate::app::sim_events::SimEvent;
+    use crate::sim::{CrabKind, MAX_PLAYERS};
     use bevy::prelude::*;
+
+    /// A crab of `kind` worth `value` walking into `owner`'s keep.
+    fn bank(owner: u8, value: u32) -> SimEvent {
+        SimEvent::CrabBanked {
+            id: 0,
+            owner,
+            pos: Vec2::ZERO,
+            keep: Vec2::ZERO,
+            value,
+            kind: CrabKind::Common,
+        }
+    }
+
+    /// The floating number is the only place a bank's worth is ever shown,
+    /// so on a frame that banked eight it has to say eight.
+    ///
+    /// It used to say `+1`, eight times, in the same place at the same
+    /// speed: `score_pip` has no jitter, so the copies land pixel on pixel
+    /// and rise as one. Nothing looked broken - the number was simply the
+    /// wrong number, drawn a little too dark.
+    #[test]
+    fn a_frame_of_banks_floats_one_number_and_it_is_the_total() {
+        assert_eq!(gains([]), [0; MAX_PLAYERS], "a quiet frame gains nobody");
+        assert_eq!(gains(&[bank(1, 3)])[1], 3, "one crab is worth its own");
+        let stream: Vec<SimEvent> = (0..8).map(|_| bank(1, 1)).collect();
+        assert_eq!(
+            gains(&stream)[1],
+            8,
+            "eight into one keep is eight, not eight ones"
+        );
+        // Crabs are not all worth the same, so this is a sum and not a
+        // count: a golden one is fifty walking.
+        assert_eq!(gains(&[bank(2, 50), bank(2, 1)])[2], 51);
+    }
+
+    /// Seats are added up apart. Six castles filling on one tick is six
+    /// numbers over six keeps, and each of them is that keep's own.
+    #[test]
+    fn every_seat_is_counted_over_its_own_keep() {
+        let frame: Vec<SimEvent> = vec![bank(0, 1), bank(3, 2), bank(0, 4), bank(3, 1)];
+        let gained = gains(&frame);
+        assert_eq!(gained[0], 5, "two crabs home");
+        assert_eq!(gained[3], 3);
+        assert_eq!(
+            gained[1], 0,
+            "and a seat that banked nothing floats nothing"
+        );
+        assert_eq!(gained.iter().sum::<u32>(), 8, "nothing counted twice");
+        // A seat past the end of the table is dropped rather than indexed
+        // off it: the owner rides in on an observed event, and every other
+        // reader of one is careful about that.
+        let stray = gains(&[bank(MAX_PLAYERS as u8, 9), bank(u8::MAX, 9)]);
+        assert_eq!(stray, [0; MAX_PLAYERS], "no seat, no number");
+    }
 
     /// The two ends are the point: a castle that lands a few pixels off
     /// its tile stays there until something else redraws it.
