@@ -749,6 +749,81 @@ mod tests {
         assert_eq!(off.sfx_volume, 80, "the slider is where it was left");
     }
 
+    /// The playlist walks, and it only walks when somebody could hear it.
+    ///
+    /// A track that is merely down - muted, paused, switched off - is
+    /// still alive and still the same song, so nothing new starts over the
+    /// top of it. And nothing starts at all while none of it would be
+    /// audible: a silenced game that kept the playlist rolling would sit
+    /// there decoding one theme after another for nobody.
+    #[test]
+    fn the_playlist_walks_only_while_somebody_could_hear_it() {
+        let mut app = App::new();
+        app.insert_resource(GameSettings::default());
+        app.insert_resource(Muted(false));
+        app.insert_resource(crate::app::pause::PauseMenu::default());
+        app.insert_resource(MusicPlaylist {
+            tracks: vec![Handle::default(), Handle::default(), Handle::default()],
+            next: 0,
+        });
+        app.add_systems(Update, rotate_music);
+        let playing = |app: &mut App| {
+            app.world_mut()
+                .query_filtered::<Entity, With<Music>>()
+                .iter(app.world())
+                .count()
+        };
+        let next = |app: &App| app.world().resource::<MusicPlaylist>().next;
+
+        app.update();
+        assert_eq!(playing(&mut app), 1, "a track starts");
+        assert_eq!(next(&app), 1, "and the playlist moves on");
+
+        // The one that is playing is the one that stays: a second is not
+        // stacked on top of it, however many frames go by.
+        app.update();
+        app.update();
+        assert_eq!(playing(&mut app), 1, "still the one song");
+        assert_eq!(next(&app), 1, "and the playlist did not move");
+
+        // It ends. The next one takes its place, and the list comes round
+        // to the top rather than running off the end of itself.
+        let end_it = |app: &mut App| {
+            let live: Vec<Entity> = app
+                .world_mut()
+                .query_filtered::<Entity, With<Music>>()
+                .iter(app.world())
+                .collect();
+            for entity in live {
+                app.world_mut().entity_mut(entity).despawn();
+            }
+        };
+        end_it(&mut app);
+        app.update();
+        assert_eq!(next(&app), 2);
+        end_it(&mut app);
+        app.update();
+        assert_eq!(next(&app), 0, "three tracks and back to the first");
+
+        // Silenced, nothing new is started: not by the master mute, not by
+        // the switch, not by the slider, not by the pause card.
+        for silence in 0..4 {
+            end_it(&mut app);
+            let at = next(&app);
+            {
+                let world = app.world_mut();
+                let mut settings = world.resource_mut::<GameSettings>();
+                settings.music_on = silence != 1;
+                settings.music_volume = if silence == 2 { 0 } else { 45 };
+                world.resource_mut::<Muted>().0 = silence == 0;
+                world.resource_mut::<crate::app::pause::PauseMenu>().open = silence == 3;
+            }
+            app.update();
+            assert_eq!(playing(&mut app), 0, "silence {silence} starts nothing");
+            assert_eq!(next(&app), at, "and does not walk the list either");
+        }
+    }
+
     /// The tide nudge, end to end. The theme races the round it is played
     /// under, so the curve has to start where the scramble starts and
     /// arrive at the top exactly when the wave does.
