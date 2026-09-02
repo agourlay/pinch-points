@@ -1,16 +1,22 @@
 //! Names and lines of chat, as they travel.
 //!
-//! Fixed-width and NUL-padded, because [`NetMsg`] is `Copy` (the host
-//! relays what it is told by copying it) and because a length prefix is
-//! one more thing a stranger on the LAN could lie about. Everything read
-//! back off the wire goes through here, so a name is tidied in exactly one
-//! place no matter which message carried it.
+//! Fixed-width and NUL-padded, because a length prefix is one more thing
+//! a stranger on the LAN could lie about, and because a field of known
+//! width is one the decoder reads at a fixed offset rather than off a
+//! number the sender chose. Everything read back off the wire goes
+//! through here, so a name is tidied in exactly one place no matter which
+//! message carried it.
+//!
+//! These were once `Copy` for [`NetMsg`]'s sake, which relayed by copying.
+//! It has not been `Copy` since a `Start` grew a handmade beach to carry,
+//! and the widths stayed for the reason above, which is the one that was
+//! ever load-bearing.
 
 /// A player name on the wire: UTF-8, NUL-padded, truncated to fit at a
 /// character boundary. 24 bytes carries the full 12-char name cap for
 /// every Latin-alphabet name; scripts wider than two bytes a character
-/// lose tail characters, not validity. Fixed-size so [`NetMsg`] stays
-/// `Copy`: the host relays messages by copying them.
+/// lose tail characters, not validity. Fixed-size so the decoder reads it
+/// at a known offset and no sender gets to name its own length.
 pub const WIRE_NAME: usize = 24;
 pub type WireName = [u8; WIRE_NAME];
 
@@ -50,10 +56,9 @@ pub fn table_from_wire(
 }
 
 /// A line of lobby chat on the wire, in the same fixed-size, NUL-padded
-/// form as a name and for the same reason: [`NetMsg`] stays `Copy`, which
-/// is how the host relays one by copying it. 96 bytes carries the
-/// full [`CHAT_CHARS`] cap for Latin text; wider scripts lose tail
-/// characters, not validity.
+/// form as a name and for the same reason: a width the sender does not get
+/// to choose. 96 bytes carries the full [`CHAT_CHARS`] cap for Latin text;
+/// wider scripts lose tail characters, not validity.
 pub const WIRE_CHAT: usize = 96;
 pub type WireChat = [u8; WIRE_CHAT];
 
