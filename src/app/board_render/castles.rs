@@ -277,6 +277,10 @@ pub fn fly_castles(
     settings: Res<crate::app::settings::GameSettings>,
     mut flight: ResMut<CastleFlight>,
     mut before: Local<Detector>,
+    // The reading is taken into a buffer that is swapped with the last
+    // one rather than built fresh: this runs every frame on every board,
+    // and the two readings are the same handful of castles nearly always.
+    mut now: Local<Vec<Held>>,
     mut castles: Query<(&CastleSprite, &mut Transform)>,
 ) {
     let board = &sim.0;
@@ -286,22 +290,20 @@ pub fn fly_castles(
         flight.left = 0.0;
     }
     before.ticks = board.ticks();
-    let now: Vec<Held> = board
-        .tiles()
-        .filter_map(|(x, y, kind)| match kind {
-            TileKind::Castle(owner) => Some(Held { x, y, owner }),
-            TileKind::Empty
-            | TileKind::Rock
-            | TileKind::Spawner(_)
-            | TileKind::Turnstile { .. }
-            | TileKind::Kelp
-            | TileKind::Pool => None,
-        })
-        .collect();
+    now.clear();
+    now.extend(board.tiles().filter_map(|(x, y, kind)| match kind {
+        TileKind::Castle(owner) => Some(Held { x, y, owner }),
+        TileKind::Empty
+        | TileKind::Rock
+        | TileKind::Spawner(_)
+        | TileKind::Turnstile { .. }
+        | TileKind::Kelp
+        | TileKind::Pool => None,
+    }));
     if swapped(&before.held, &now) && !settings.reduced_motion {
         flight.from.clear();
         let mut old = before.held.clone();
-        for held in &now {
+        for held in now.iter() {
             // An owner with two castles has them paired in board order,
             // which is arbitrary but consistent, and nothing crosses.
             if let Some(at) = old.iter().position(|was| was.owner == held.owner) {
@@ -314,7 +316,7 @@ pub fn fly_castles(
         }
         flight.left = FLIGHT;
     }
-    before.held = now;
+    std::mem::swap(&mut before.held, &mut now);
     if flight.left <= 0.0 {
         return;
     }

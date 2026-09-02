@@ -283,6 +283,16 @@ fn crab_events(board: &crate::sim::Board, watch: &Watch, events: &mut Vec<SimEve
 /// back or by an un-ticked board's identity changing) resyncs silently so
 /// loading never fires a burst of stale events.
 pub fn observe_sim(sim: Res<Sim>, mut watch: Local<Watch>, mut events: MessageWriter<SimEvent>) {
+    // A sim nobody has touched since this last ran is the very board the
+    // watch was read from: the diff would compare it with itself and find
+    // nothing. Reading a board is not free - every tile for the signposts,
+    // a map of the crabs, a map of the gulls, and, on a board that has
+    // never ticked, a copy of the terrain to tell it apart from the next
+    // one - and a puzzle sitting in Setup or a beach open in the editor
+    // never ticks at all, so on those screens this is the whole cost.
+    if !sim.is_changed() {
+        return;
+    }
     for event in diff(&sim.0, &mut watch) {
         events.write(event);
     }
@@ -698,6 +708,49 @@ mod tests {
             }
         }
         assert!(banked, "the system never reported the bank through the App");
+    }
+
+    /// Frames where nobody touches the sim are skipped, and skipping them
+    /// leaves the watch fit to report the next move: the board it holds is
+    /// the board that is still there.
+    #[test]
+    fn an_untouched_sim_is_not_re_read() {
+        let mut app = App::new();
+        app.add_message::<SimEvent>();
+        let mut board = Board::new(6, 4, 7);
+        board.set_tile(3, 1, crate::sim::TileKind::Castle(1));
+        board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Common);
+        app.insert_resource(crate::app::Sim(board));
+        app.add_systems(Update, observe_sim);
+        app.update(); // syncs the watch to the starting board
+
+        for _ in 0..3 {
+            app.update();
+            let mut messages = app.world_mut().resource_mut::<Messages<SimEvent>>();
+            assert_eq!(
+                messages.drain().count(),
+                0,
+                "a still board reported something happening"
+            );
+        }
+
+        let mut banked = false;
+        for _ in 0..600 {
+            app.world_mut()
+                .resource_mut::<crate::app::Sim>()
+                .0
+                .tick_idle();
+            app.update();
+            let mut messages = app.world_mut().resource_mut::<Messages<SimEvent>>();
+            if messages
+                .drain()
+                .any(|e| matches!(e, SimEvent::CrabBanked { owner: 1, .. }))
+            {
+                banked = true;
+                break;
+            }
+        }
+        assert!(banked, "the bank went unreported after the idle frames");
     }
 
     /// Tier-ups name the seat whose castle grew.

@@ -14,7 +14,7 @@ use bevy::prelude::*;
 mod text;
 
 use crate::app::palette::CLOCK_CALM;
-pub(crate) use text::{clock_color, clock_text, event_name, urgency_band};
+pub(crate) use text::{clock_color, clock_into, event_name, urgency_band};
 
 #[derive(Component)]
 pub struct LevelLabel;
@@ -206,6 +206,7 @@ pub fn update_tide_clock(
     time: Res<Time>,
     settings: Res<GameSettings>,
     mut clocks: Query<(&mut Text, &mut TextColor), With<TideClock>>,
+    mut line: Local<String>,
 ) {
     let remaining = match screen.get() {
         // Versus shows its clock in the right sidebar instead.
@@ -244,7 +245,8 @@ pub fn update_tide_clock(
             }
             continue;
         };
-        menu_ui::set_text(&mut text, &clock_text(ticks));
+        clock_into(&mut line, ticks);
+        menu_ui::set_text(&mut text, &line);
         let target = clock_color(
             ticks,
             sim.0.round_length(),

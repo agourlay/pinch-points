@@ -16,10 +16,22 @@ use bevy::prelude::*;
 
 use crate::app::palette::{CLOCK_CALM, CLOCK_RED, CLOCK_RED_BRIGHT};
 
-/// mm:ss for a remaining-tick count.
-pub(crate) fn clock_text(ticks: u64) -> String {
+/// mm:ss for a remaining-tick count, written into a buffer the caller
+/// keeps: the clocks repaint every frame and change once a second, so the
+/// line is built where it was built last time rather than on the heap.
+pub(crate) fn clock_into(out: &mut String, ticks: u64) {
+    use std::fmt::Write;
     let secs = ticks / u64::from(crate::sim::TICKS_PER_SECOND);
-    format!("{}:{:02}", secs / 60, secs % 60)
+    out.clear();
+    let _ = write!(out, "{}:{:02}", secs / 60, secs % 60);
+}
+
+/// mm:ss for a remaining-tick count.
+#[cfg(test)]
+pub(crate) fn clock_text(ticks: u64) -> String {
+    let mut out = String::new();
+    clock_into(&mut out, ticks);
+    out
 }
 
 /// How much of a round the screen draws as its closing emergency.

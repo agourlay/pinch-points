@@ -72,6 +72,9 @@ const MEDALS: [Color; MAX_PLAYERS] = [
     palette::MEDAL_DRIFTWOOD,
     palette::MEDAL_DRIFTWOOD,
 ];
+/// What a rank medal's digit reads: the place, one-based. A table rather
+/// than a `to_string`, so six chips repainting every frame format nothing.
+const PLACES: [&str; MAX_PLAYERS] = ["1", "2", "3", "4", "5", "6"];
 const LEADER_BORDER: Color = palette::GOLD;
 const LOG_TOP: f32 = 88.0;
 
@@ -354,6 +357,7 @@ pub fn update_side_panels(
     mut pips: Query<(&TierPip, &mut BackgroundColor), Without<SidePanel>>,
     mut medals: Query<(&RankMedal, &mut BackgroundColor), (Without<SidePanel>, Without<TierPip>)>,
     mut digits: Query<(&RankDigit, &mut Text), Without<SideScore>>,
+    mut value: Local<String>,
 ) {
     let board_scores = sim.0.scores();
     let mode = crate::app::teams::in_play(&settings, &online, seats.0);
@@ -389,12 +393,15 @@ pub fn update_side_panels(
         menu_ui::set_bg(&mut bg, MEDALS[rank[medal.0 as usize]]);
     }
     for (digit, mut text) in &mut digits {
-        menu_ui::set_text(&mut text, &(rank[digit.0 as usize] + 1).to_string());
+        menu_ui::set_text(&mut text, PLACES[rank[digit.0 as usize]]);
     }
     for (mut chip, mut text, mut font, mut transform) in &mut scores {
-        let value = board_scores[chip.seat as usize].to_string();
-        if text.0 != value {
-            text.0 = value;
+        use std::fmt::Write;
+        value.clear();
+        let _ = write!(&mut *value, "{}", board_scores[chip.seat as usize]);
+        if text.0 != *value {
+            text.0.clear();
+            text.0.push_str(&value);
             // Pop on change, unless the player asked for less motion, in
             // which case the number simply changes.
             chip.bump = if settings.reduced_motion { 0.0 } else { 1.0 };

@@ -28,13 +28,24 @@ pub struct LogEntry {
 }
 
 impl LogEntry {
-    /// What the line reads as, counter included once it has repeated.
-    pub fn rendered(&self) -> String {
+    /// What the line reads as, counter included once it has repeated,
+    /// written into a buffer the caller keeps: the feed repaints nine
+    /// lines every frame and changes only when something happens.
+    pub fn render_into(&self, out: &mut String) {
+        use std::fmt::Write;
+        out.clear();
+        out.push_str(&self.text);
         if self.count > 1 {
-            format!("{} ×{}", self.text, self.count)
-        } else {
-            self.text.clone()
+            let _ = write!(out, " ×{}", self.count);
         }
+    }
+
+    /// What the line reads as, counter included once it has repeated.
+    #[cfg(test)]
+    pub fn rendered(&self) -> String {
+        let mut out = String::new();
+        self.render_into(&mut out);
+        out
     }
 }
 
@@ -131,14 +142,22 @@ pub fn collect_log(
 }
 
 /// Render the log lines, newest at the top, older ones dimmer.
-pub fn update_log(log: Res<EventLog>, mut lines: Query<(&LogLine, &mut Text, &mut TextColor)>) {
+pub fn update_log(
+    log: Res<EventLog>,
+    mut lines: Query<(&LogLine, &mut Text, &mut TextColor)>,
+    mut value: Local<String>,
+) {
     for (line, mut text, mut color) in &mut lines {
-        let (value, target) = match log.0.get(line.0) {
+        let target = match log.0.get(line.0) {
             Some(entry) => {
                 let fade = 1.0 - line.0 as f32 * 0.09;
-                (entry.rendered(), entry.color.with_alpha(fade))
+                entry.render_into(&mut value);
+                entry.color.with_alpha(fade)
             }
-            None => (String::new(), Color::NONE),
+            None => {
+                value.clear();
+                Color::NONE
+            }
         };
         crate::app::menu_ui::set_text(&mut text, &value);
         crate::app::menu_ui::set_color(&mut color, target);

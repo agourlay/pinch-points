@@ -20,11 +20,12 @@ pub fn update_side_clock(
     time: Res<Time>,
     settings: Res<GameSettings>,
     mut clocks: Query<(&mut Text, &mut TextColor), With<SideClock>>,
+    mut value: Local<String>,
 ) {
     let Some(ticks) = sim.0.remaining_ticks() else {
         return;
     };
-    let value = crate::app::hud::clock_text(ticks);
+    crate::app::hud::clock_into(&mut value, ticks);
     let target = crate::app::hud::clock_color(
         ticks,
         sim.0.round_length(),
