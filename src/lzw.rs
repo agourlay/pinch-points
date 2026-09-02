@@ -285,4 +285,76 @@ mod tests {
             let _ = decompress(&junk, 8);
         }
     }
+
+    /// A few kilobytes that name megabytes are refused rather than
+    /// obeyed.
+    ///
+    /// The one stream this decoder reads that a stranger wrote: a share
+    /// code typed in from somewhere else, and the handmade beach riding in
+    /// a host's `Start`. LZW grows a dictionary entry by one symbol per
+    /// code, so a stream that walks its own tail names an entry longer
+    /// each time and a small input can ask for all the memory there is.
+    /// [`MAX_OUTPUT`] is the answer, and until now nothing checked that it
+    /// was ever consulted.
+    ///
+    /// The stream is written by hand, since `compress` cannot produce one:
+    /// its output only ever names what it was given.
+    #[test]
+    fn a_stream_that_names_more_than_it_may_is_refused() {
+        /// Codes into bytes the way [`BitWriter`] does: least significant
+        /// bit first, running across byte boundaries.
+        fn pack(codes: &[(u16, u8)]) -> Vec<u8> {
+            let (mut out, mut bits, mut count) = (Vec::new(), 0u32, 0u8);
+            for &(code, width) in codes {
+                bits |= u32::from(code) << count;
+                count += width;
+                while count >= 8 {
+                    out.push((bits & 0xFF) as u8);
+                    bits >>= 8;
+                    count -= 8;
+                }
+            }
+            if count > 0 {
+                out.push((bits & 0xFF) as u8);
+            }
+            out
+        }
+
+        // Clear, one symbol to give the run a prefix, then every code in
+        // turn - each naming the entry the one before it has just built,
+        // which is the "not yet in the table" case and one symbol longer
+        // every time. The widths follow the decoder's own growth, or it
+        // would read the stream out of step and refuse it for the wrong
+        // reason.
+        let (mut codes, mut width, mut entries) = (Vec::new(), 9u8, 258usize);
+        codes.push((1u16 << 8, width)); // the clear code
+        codes.push((0, width));
+        for code in 258..=(1u16 << MAX_CODE_BITS) - 1 {
+            codes.push((code, width));
+            entries += 1;
+            if entries >= 1 << width && width < MAX_CODE_BITS {
+                width += 1;
+            }
+        }
+        let bomb = pack(&codes);
+        assert!(
+            bomb.len() < 8 * 1024,
+            "{} bytes should be asking for megabytes",
+            bomb.len()
+        );
+        // What it asks for, if anyone were foolish enough to give it: each
+        // code names an entry one longer than the last.
+        let asked: usize = (2..=(1 << MAX_CODE_BITS) - 257).sum();
+        assert!(
+            asked > MAX_OUTPUT,
+            "{asked} bytes is not a bomb against a {MAX_OUTPUT}-byte cap"
+        );
+        assert_eq!(decompress(&bomb, 8), None, "the cap is what stops it");
+
+        // And the cap is a ceiling, not a mood: a stream that stays under
+        // it still decodes, so the guard cannot be paying for itself by
+        // refusing honest input.
+        let honest = compress(&vec![7u8; 4096], 8);
+        assert_eq!(decompress(&honest, 8), Some(vec![7u8; 4096]));
+    }
 }
