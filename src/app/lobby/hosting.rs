@@ -422,8 +422,31 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
                 }
             }
             // The spokes of the star cannot hear each other, so the
-            // hub repeats what it is told before showing it.
-            NetMsg::Chat { name, text } => picked.said.push((from, name, text)),
+            // hub repeats what it is told before showing it - under the
+            // name it knows the sender by, not the one the datagram
+            // claims. Chat is the only message that names its own sender,
+            // and the host is the only peer that can check the claim,
+            // since it alone knows which socket the line came from.
+            //
+            // Unchecked, a peer could speak under a rival's name, or under
+            // the empty one, which is worse: an empty name is the room
+            // itself talking (`Said::is_notice`), the channel that says who
+            // joined and who left. So an empty name is refused outright
+            // whoever sends it - that voice is the host's.
+            //
+            // The claim stands only where there is nothing to check it
+            // against: a watcher greets with a bare `Watch` and never says
+            // what to call it, so its own word is all the name it has.
+            NetMsg::Chat { name, text } => {
+                let known = peers.get(from).map_or("", |peer| peer.name.as_str());
+                let who = match known.is_empty() {
+                    false => crate::transport::wire_name(known),
+                    true => name,
+                };
+                if !crate::transport::name_from_wire(&who).is_empty() {
+                    picked.said.push((from, who, text));
+                }
+            }
             NetMsg::Input(_)
             | NetMsg::Hash { .. }
             | NetMsg::Start { .. }
@@ -687,5 +710,153 @@ mod tests {
         assert!(should_launch(2, false, false, Some(2)));
         assert!(should_launch(2, true, false, Some(2)));
         assert!(!should_launch(1, false, false, Some(2)), "not filled yet");
+    }
+
+    /// Chat is the one message that names its own sender, and the host is
+    /// the only peer that can check the claim. A line comes back under the
+    /// name its sender greeted with, whatever the datagram says: a peer
+    /// wearing a rival's name is put back in its own, and one wearing no
+    /// name at all - the room's own voice, which is what says who joined
+    /// and who left - is put back in its own too, so a forged notice comes
+    /// out as somebody saying something odd rather than as the room.
+    ///
+    /// Over a real socket, because the whole point is which end of it the
+    /// line arrived on.
+    #[test]
+    fn a_peer_speaks_under_the_name_it_greeted_with() {
+        let mut state = LobbyState {
+            standing: Standing::hosting(
+                Announcer::new(0xC0FFEE).expect("announcer"),
+                UdpTransport::host(0).expect("game socket"),
+            ),
+            ..LobbyState::default()
+        };
+        let port = state
+            .hosted()
+            .expect("hosting")
+            .transport
+            .local_addr()
+            .expect("addr")
+            .port();
+        let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        bo.send(NetMsg::hello("Bo"));
+
+        // Drain until the greeting has been folded into Bo's row, which is
+        // what the stamping reads.
+        let mut said = Vec::new();
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let hosted = state.hosted_mut().expect("hosting");
+            let picked = work_the_socket(hosted, 0.0, crate::transport::OnAir::default());
+            for (from, told) in picked.greeted {
+                hosted.peers.row(from).name = told;
+            }
+            said.extend(picked.said);
+            if state
+                .hosted()
+                .expect("hosting")
+                .peers
+                .get(0)
+                .is_some_and(|peer| peer.name == "Bo")
+            {
+                break;
+            }
+        }
+        assert_eq!(
+            state
+                .hosted()
+                .expect("hosting")
+                .peers
+                .get(0)
+                .map(|p| p.name.as_str()),
+            Some("Bo"),
+            "the greeting is on file"
+        );
+
+        // Bo now says three things: one under its own name, one wearing a
+        // rival's, and one wearing none.
+        bo.send(NetMsg::chat("Bo", "ready?"));
+        bo.send(NetMsg::chat("Anna", "I am Anna, honest"));
+        bo.send(NetMsg::chat("", "Anna has left the beach"));
+        said.clear();
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let hosted = state.hosted_mut().expect("hosting");
+            said.extend(work_the_socket(hosted, 0.0, crate::transport::OnAir::default()).said);
+            if said.len() >= 2 {
+                break;
+            }
+        }
+        let heard: Vec<(String, String)> = said
+            .iter()
+            .map(|(_, name, text)| {
+                (
+                    crate::transport::name_from_wire(name),
+                    crate::transport::chat_from_wire(text),
+                )
+            })
+            .collect();
+        assert_eq!(
+            heard,
+            [
+                ("Bo".to_string(), "ready?".to_string()),
+                ("Bo".to_string(), "I am Anna, honest".to_string()),
+                ("Bo".to_string(), "Anna has left the beach".to_string()),
+            ],
+            "every line under the name Bo greeted with: no rival's name to \
+             wear, and no forging the room's"
+        );
+    }
+
+    /// The one peer the host has no name for: a watcher greets with a bare
+    /// `Watch` and never says what to call it, so its own word is all there
+    /// is to go on. Its word may not be the empty one, though - that is the
+    /// room talking, and a peer is not the room, however little is known
+    /// about it.
+    #[test]
+    fn a_nameless_peer_may_name_itself_but_not_the_room() {
+        let mut state = LobbyState {
+            standing: Standing::hosting(
+                Announcer::new(0xDECAF).expect("announcer"),
+                UdpTransport::host(0).expect("game socket"),
+            ),
+            ..LobbyState::default()
+        };
+        let port = state
+            .hosted()
+            .expect("hosting")
+            .transport
+            .local_addr()
+            .expect("addr")
+            .port();
+        let rail = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        rail.send(NetMsg::Watch);
+        rail.send(NetMsg::chat("", "Anna has left the beach"));
+        rail.send(NetMsg::chat("Cy", "good luck!"));
+
+        let mut said = Vec::new();
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let hosted = state.hosted_mut().expect("hosting");
+            said.extend(work_the_socket(hosted, 0.0, crate::transport::OnAir::default()).said);
+            if !said.is_empty() {
+                break;
+            }
+        }
+        let heard: Vec<(String, String)> = said
+            .iter()
+            .map(|(_, name, text)| {
+                (
+                    crate::transport::name_from_wire(name),
+                    crate::transport::chat_from_wire(text),
+                )
+            })
+            .collect();
+        assert_eq!(
+            heard,
+            [("Cy".to_string(), "good luck!".to_string())],
+            "the watcher names itself, and the forged notice is dropped \
+             rather than carried under a name nobody has"
+        );
     }
 }
