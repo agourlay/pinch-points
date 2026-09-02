@@ -582,6 +582,55 @@ mod tests {
         assert!(spare >= 16, "only {spare} bytes of slack left");
     }
 
+    /// The series byte is an *index*, and every index but zero names some
+    /// best-of. Read any narrower and it lies: `== 1` is best-of-three and
+    /// nothing else, which once launched every best-of-five as a single
+    /// round on each joiner while the host went on counting a series.
+    ///
+    /// The whole byte, because a peer on another build picks the number and
+    /// this side has to answer the same way for all of them.
+    #[test]
+    fn every_series_index_but_zero_names_a_series() {
+        let dialled = |series| MatchTerms {
+            series,
+            ..MatchTerms::default()
+        };
+        assert!(!dialled(0).is_series(), "the dial's single round");
+        for index in 1..=u8::MAX {
+            assert!(dialled(index).is_series(), "index {index}");
+        }
+    }
+
+    /// The humans at a table: the range a joiner builds its lockstep over,
+    /// and the range this file's own decoder refuses a seat outside of.
+    ///
+    /// The AI holds the top chairs, so the humans are what is left
+    /// underneath - but never none. Seat zero is the host's whatever the
+    /// dials say, and a `bots` byte from a broken or hostile build must
+    /// come to a floor rather than wrapping the count back up under it.
+    #[test]
+    fn the_humans_are_what_the_ai_leaves_and_never_none() {
+        let with = |bots| MatchTerms {
+            bots,
+            ..MatchTerms::default()
+        };
+        assert_eq!(with(0).humans(6), 6, "no AI, every chair a player's");
+        assert_eq!(with(4).humans(6), 2, "four bots behind two people");
+        assert_eq!(with(5).humans(6), 1, "the host alone");
+        assert_eq!(with(6).humans(6), 1, "and still the host alone");
+        assert_eq!(with(u8::MAX).humans(6), 1, "however wild the byte");
+        assert_eq!(with(0).humans(0), 1, "even a table of nobody seats one");
+        // Whatever it answers is a count the per-seat arrays can hold, which
+        // is what the `Start` decoder leans on when it refuses a seat.
+        for seats in 0..=u8::MAX {
+            for bots in [0, 1, 5, 6, 7, u8::MAX] {
+                let humans = with(bots).humans(seats);
+                assert!(humans >= 1, "{seats} seats, {bots} bots");
+                assert!(humans <= seats.max(1), "{seats} seats, {bots} bots");
+            }
+        }
+    }
+
     #[test]
     fn decode_rejects_garbage() {
         assert!(super::NetMsg::decode(&[]).is_none());

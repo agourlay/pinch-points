@@ -635,6 +635,53 @@ mod tests {
         );
     }
 
+    /// Which chairs the AI holds under a set of terms.
+    ///
+    /// Host and joiner each work this out from the same wire terms rather
+    /// than being told, so it has to answer the same for both or the two
+    /// play different tables. It also indexes a per-seat array straight
+    /// off a byte a peer chose, so a `bots` count larger than the table
+    /// must fill what is there and reach no further.
+    #[test]
+    fn the_ai_holds_the_top_seats_and_reaches_no_further() {
+        let terms = |bots| MatchTerms {
+            bots,
+            ..MatchTerms::default()
+        };
+        let held = |bots, seats| {
+            bot_seats_from(&terms(bots), seats)
+                .iter()
+                .map(Option::is_some)
+                .collect::<Vec<bool>>()
+        };
+        assert_eq!(held(0, 6), [false; 6], "no AI, no chairs");
+        assert_eq!(
+            held(2, 6),
+            [false, false, false, false, true, true],
+            "the AI comes in at the top and the people keep the low seats"
+        );
+        assert_eq!(held(6, 6), [true; 6], "a table played out by itself");
+        // A table shorter than the array leaves the chairs past its end
+        // alone: those are not seats anybody is playing.
+        assert_eq!(held(2, 4), [false, false, true, true, false, false]);
+        // And a byte bigger than the table fills the table, not past it.
+        assert_eq!(held(u8::MAX, 4), [true, true, true, true, false, false]);
+        for seats in 0..=u8::MAX {
+            for bots in [0u8, 1, 6, 7, u8::MAX] {
+                let _ = bot_seats_from(&terms(bots), seats);
+            }
+        }
+        // Every AI seat plays at the level the terms name, since that is
+        // the one thing about them the table agreed on.
+        let fierce = MatchTerms {
+            bots: 2,
+            bot_level: 2,
+            ..MatchTerms::default()
+        };
+        assert_eq!(bot_seats_from(&fierce, 6)[5], Some(BotLevel::Hard));
+        assert_eq!(bot_seats_from(&fierce, 6)[0], None);
+    }
+
     /// Nonsense on the wire must not stop the round: the beach falls back
     /// to the terms, and the hash check is what says the peers disagree.
     #[test]
