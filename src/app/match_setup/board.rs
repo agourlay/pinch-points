@@ -15,6 +15,24 @@ pub fn board_from(terms: &MatchTerms, seats: u8, beach: &[u8]) -> crate::sim::Bo
     let Some(level) = beach_from(beach) else {
         return board_for(terms, seats);
     };
+    // A beach that cannot seat the table is no more use than none at all:
+    // `castle_of` answers `None` for a seat with no castle, so that player
+    // banks nothing for the whole round, quietly, with every peer agreeing
+    // because every peer built the same too-small beach.
+    //
+    // The launch already drops such a beach (`beach_bytes`), but the round
+    // after it does not: `call_next_round` re-sends the beach it played on
+    // while working out `seats` afresh, and the queue admitted between
+    // rounds makes that number bigger. Four players on a four-castle beach,
+    // two more admitted, and seats 4 and 5 spend the round unable to score.
+    //
+    // Checked here because here is the one place both ends pass through,
+    // with the same bytes and the same `seats`: host and joiner fall back
+    // to the same generated arena on the same tick, so nobody desyncs over
+    // it.
+    if level.seats() < seats {
+        return board_for(terms, seats);
+    }
     let mut board = level.board();
     board.set_gull_period(GullPressure::from_index(usize::from(terms.gulls)).period());
     board.set_round_length(Some(

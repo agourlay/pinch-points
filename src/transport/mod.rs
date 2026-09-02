@@ -26,9 +26,17 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// and the game quietly stops being the same game on both machines. Version
 /// 6 is where gulls started catching crabs they walked head-on into, 7
 /// is where a `Start` grew a tail (the host's handmade beach, when the
-/// round is played on one), and 8 is where `Resume` and `Abandoned` each
+/// round is played on one), 8 is where `Resume` and `Abandoned` each
 /// grew a frame number, and gulls started catching crabs across the seam
-/// of a wrapping board.
+/// of a wrapping board, and 10 is where a handmade beach that cannot seat
+/// the table stopped being played on and gave way to the generated arena
+/// the terms name.
+///
+/// That last one is the shape this paragraph is about, and worth reading
+/// twice: not one byte of the `Start` moved. Two builds hold the identical
+/// datagram, agree on every field in it, and lay out different beaches
+/// from it. Nothing would have complained, and the hash check would have
+/// called it a desync without ever saying why.
 ///
 /// Byte 1 of every datagram carries this number, and **that position is
 /// frozen for all time**: it is how a build tells "I cannot read this"
@@ -36,7 +44,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// Without it two peers on different builds decode each other's messages and
 /// silently disagree about the round, which looks like a desync or like
 /// nothing at all.
-pub const PROTOCOL_VERSION: u8 = 9;
+pub const PROTOCOL_VERSION: u8 = 10;
 
 /// Connections a host accepts: five rivals (a six-seat table) and a few
 /// onlookers. How many of them get a seat is the lobby's business, not the

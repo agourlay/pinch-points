@@ -589,6 +589,52 @@ mod tests {
         );
     }
 
+    /// And the same beach refused again at the far end, where the round is
+    /// actually built. The launch drops one that cannot seat the table, but
+    /// the round *after* it does not: `call_next_round` re-sends the beach
+    /// it played on and works out `seats` afresh, and the queue admitted
+    /// between rounds makes that number bigger. Without this the two
+    /// players let in sat at a beach with no castle for them and banked
+    /// nothing all round, with nothing on any screen to say why.
+    ///
+    /// Both ends run this same check on the same bytes, so they fall back
+    /// together and no peer desyncs over it.
+    #[test]
+    fn a_beach_too_small_for_the_table_is_not_played_on_either() {
+        let two = crate::sim::Level::parse(
+            "name: Two\nposts: 1\ncrab: 0,1 R R common\nmap:\n\
+             +-+-+-+\n|0 . .|\n+ + + +\n|. . 1|\n+ + + +\n|. . .|\n+-+-+-+\n",
+        )
+        .expect("a level");
+        assert_eq!(two.seats(), 2, "two castles and no more");
+        let packed = crate::lzw::compress(two.to_text().as_bytes(), 8);
+        let terms = MatchTerms {
+            map: MapChoice::Custom.index() as u8,
+            ..MatchTerms::default()
+        };
+        // The table it was picked for: the handmade beach, as drawn.
+        let played = board_from(&terms, 2, &packed);
+        assert_eq!(
+            (played.width(), played.height()),
+            (3, 3),
+            "the beach somebody built"
+        );
+        // Four admitted between rounds, and the same bytes come round
+        // again. The beach gives way rather than the two new players.
+        let grown = board_from(&terms, 4, &packed);
+        let generated = board_for(&terms, 4);
+        assert_eq!(
+            (grown.width(), grown.height()),
+            (generated.width(), generated.height()),
+            "back to a generated arena, which every peer builds alike"
+        );
+        assert_eq!(
+            grown.castle_seats(),
+            4,
+            "and it has a castle for everyone who turned up"
+        );
+    }
+
     /// Nonsense on the wire must not stop the round: the beach falls back
     /// to the terms, and the hash check is what says the peers disagree.
     #[test]
