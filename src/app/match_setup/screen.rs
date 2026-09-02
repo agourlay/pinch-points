@@ -148,7 +148,9 @@ pub fn enter_match_setup(
 /// clips, which is the same contract the settings card keeps.
 pub(super) const LABEL_W: f32 = 220.0;
 pub(super) const VALUE_W: f32 = 428.0;
-pub(super) const ROW_FONT: f32 = 19.0;
+/// The scale's row size, named rather than repeated: it happened to be
+/// the same number already, which is not the same as saying so.
+pub(super) const ROW_FONT: f32 = menu_ui::type_scale::ROW;
 
 /// Keep the controller footer current: the join hint, and who joined -
 /// and the note about beaches this table has grown too big for.

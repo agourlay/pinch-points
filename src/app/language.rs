@@ -41,7 +41,14 @@ pub struct LanguageNote;
 /// being chosen rather than a decoration beside it.
 const FLAG_W: f32 = 33.0;
 const FLAG_H: f32 = 22.0;
-const ROW_FONT: f32 = 22.0;
+/// A row here is a row: the same size the rest of the list screens set
+/// theirs at. It was three points over the scale, which on a card drawn
+/// with the same `screen_card` and the same `card_row` read as a
+/// different game.
+///
+/// The flag beside it keeps its own size, which is deliberate and said so
+/// above: the flag is the thing being chosen.
+const ROW_FONT: f32 = menu_ui::type_scale::ROW;
 /// Wide enough for the longest native name at [`ROW_FONT`] - Nederlands,
 /// at ten characters - so every name starts at the same x.
 const NAME_W: f32 = 190.0;
