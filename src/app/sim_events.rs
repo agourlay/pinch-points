@@ -213,6 +213,16 @@ impl Watch {
 /// this wrong plays the wrong sound and the wrong particle burst on the
 /// most-noticed moment in the game, so it has tests of its own.
 ///
+/// The exception is the one departure the tiles cannot explain. `Monopoly`
+/// banks half the loose crabs where they stand, so they go from open sand
+/// with no castle at either end of the step, and reading the tiles alone
+/// called every one of them a death: eighty-two of them at once, measured,
+/// answered with eighty-two death sounds, eight hundred feathers and a
+/// screen shake, while the seat that had just taken half the beach got no
+/// hop, no bounce and no floating score. The sim writes those down as it
+/// makes them ([`Board::swept_home`](crate::sim::Board::swept_home)), and
+/// they are asked after first.
+///
 /// Both tile reads are bounds-checked rather than trusting the crab's
 /// coordinates: `prev` was recorded on last frame's board, and should that
 /// board have been larger than this one (a swap the differ failed to
@@ -228,6 +238,21 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab) -> SimEvent {
             TileKind::Empty
         }
     };
+    // The tide's own doing, which no tile records. Its keep is where the
+    // crab is flown to, and a banker with no castle to fly it to is not a
+    // thing the sim makes, so the tiles have the last word if it happens.
+    if let Some(owner) = board.swept_home(prev.id)
+        && let Some((kx, ky)) = board.castle_of(owner)
+    {
+        return SimEvent::CrabBanked {
+            id: prev.id,
+            owner,
+            pos,
+            keep: layout::tile_center(board, kx, ky),
+            value: prev.kind.value(),
+            kind: prev.kind,
+        };
+    }
     let here = tile_or_empty(i32::from(x), i32::from(y));
     let ahead = (i32::from(x) + dx, i32::from(y) + dy);
     let entering = tile_or_empty(ahead.0, ahead.1);
@@ -658,6 +683,69 @@ mod tests {
                 .any(|e| matches!(e, SimEvent::SignpostPlaced { .. })),
             "setup-phase signposts must still fire, got {events:?}"
         );
+    }
+
+    /// The departure the tiles cannot explain. `Monopoly` banks half the
+    /// loose crabs where they stand, so each goes from open sand with no
+    /// castle at either end of its step - which read as a death, every
+    /// time. Eighty-two of them on one measured tick: eighty-two death
+    /// sounds, eight hundred feathers and a screen shake, while the seat
+    /// that had just taken half the beach got no hop, no castle bounce and
+    /// no floating score.
+    #[test]
+    fn a_crab_the_tide_banked_reads_as_banked_and_not_as_eaten() {
+        let mut board = Board::new(9, 7, 5);
+        board.set_tile(7, 5, crate::sim::TileKind::Castle(1));
+        // Out in the open, walking nowhere near a castle: the shape the
+        // tiles get wrong.
+        board.spawn_crab(1, 1, Direction::Right, Handedness::Left, CrabKind::Common);
+        board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Common);
+        let prev = board.crabs()[0];
+        assert!(
+            matches!(crab_departure(&board, &prev), SimEvent::CrabEaten { .. }),
+            "off open sand, and nothing yet says otherwise"
+        );
+
+        board.force_tide_event(crate::sim::TideEvent::Monopoly, 1);
+        let SimEvent::CrabBanked {
+            id, owner, keep, ..
+        } = crab_departure(&board, &prev)
+        else {
+            panic!("the tide put it in seat 1's keep");
+        };
+        assert_eq!(id, prev.id);
+        assert_eq!(owner, 1, "and the seat that got it is the banker");
+        assert_eq!(
+            keep,
+            layout::tile_center(&board, 7, 5),
+            "flown to the keep it was banked into, not to the sand it left"
+        );
+    }
+
+    /// Through the whole differ, which is what the game actually runs: the
+    /// tick a sweep lands on reports banks and not a single death.
+    #[test]
+    fn a_sweep_puts_no_deaths_on_the_stream() {
+        let mut board = Board::new(9, 7, 11);
+        board.set_tile(7, 5, crate::sim::TileKind::Castle(0));
+        for x in 1..5u8 {
+            board.spawn_crab(x, 1, Direction::Right, Handedness::Left, CrabKind::Common);
+        }
+        let mut watch = Watch::default();
+        let _ = diff(&board, &mut watch);
+        board.force_tide_event(crate::sim::TideEvent::Monopoly, 0);
+        board.tick_idle();
+        let events = diff(&board, &mut watch);
+        let banked = events
+            .iter()
+            .filter(|e| matches!(e, SimEvent::CrabBanked { owner: 0, .. }))
+            .count();
+        let eaten = events
+            .iter()
+            .filter(|e| matches!(e, SimEvent::CrabEaten { .. }))
+            .count();
+        assert_eq!(banked, 2, "half of four, every one of them a bank");
+        assert_eq!(eaten, 0, "and the gulls got nothing: {events:?}");
     }
 
     /// A crab remembered at a tile the current board does not have (a

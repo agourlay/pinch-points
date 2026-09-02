@@ -55,11 +55,16 @@ impl Board {
             wrap: _,
             // Outside the fingerprint, each for a reason of its own: the
             // construction seed is dead once the PRNG state (which *is*
-            // hashed) has been derived from it, and the event queue is
-            // filled and drained inside a single tick, so it is always
-            // empty by the time anyone hashes.
+            // hashed) has been derived from it, the event queue is filled
+            // and drained inside a single tick, so it is always empty by
+            // the time anyone hashes, and the swept-home record is written
+            // for the render layer and never read back by the sim - it
+            // cannot make two peers play differently, and hashing it would
+            // only make this build disagree with builds playing the very
+            // same round.
             seed: _,
             event_queue: _,
+            swept_home: _,
         } = self;
         let mut h = Fnv::new();
         self.hash_terrain(&mut h);

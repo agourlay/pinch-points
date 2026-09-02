@@ -307,7 +307,40 @@ pub struct Board {
     /// after the movement pass so events may safely mutate the crab list.
     /// Always drained within the same tick (never hashed).
     event_queue: Vec<PlayerId>,
+    /// Crabs the tide put straight into a keep, and who got them.
+    ///
+    /// `Monopoly` banks crabs where they stand rather than walking them
+    /// home, so afterwards nothing on the board says what became of them:
+    /// they are simply gone, from tiles that are not castles. The render
+    /// layer tells a bank from a death by reading the tile a departed crab
+    /// left, so it read every one of them as the gulls' work - which for a
+    /// sweep of eighty-two crabs is eighty-two death sounds, eight hundred
+    /// feathers, a screen shake, and no sign at all that anybody scored.
+    ///
+    /// So the sim writes down what only the sim knows. Nothing in here is
+    /// ever read back by the sim, which is why it stays out of the
+    /// fingerprint: it cannot make two peers play differently, and hashing
+    /// it would only make this build disagree with builds it is playing
+    /// identically to.
+    swept_home: Vec<Swept>,
 }
+
+/// One crab the tide banked, for the render layer to find.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Swept {
+    crab: u32,
+    owner: PlayerId,
+    /// The tick it happened on. The reader runs between frames and a frame
+    /// can span several ticks - most likely the frame straight after a
+    /// sweep, which is the busiest one the renderer ever draws - so the
+    /// record has to outlive its own tick to be read at all.
+    at: u64,
+}
+
+/// How many ticks a [`Swept`] record is kept before it is pruned: long
+/// enough that a frame running several ticks behind still finds it, short
+/// enough that the list is a handful of entries and never a round's worth.
+const SWEEP_MEMORY: u64 = 8;
 
 impl Board {
     /// An empty all-sand board with walled borders (spec §3.1; wrap-around
@@ -351,6 +384,7 @@ impl Board {
             last_event: None,
             wrap: false,
             event_queue: Vec::new(),
+            swept_home: Vec::new(),
         };
         // The border walls are the wrap rule with wrap off; the border
         // indices are stated once, in set_wrap.
@@ -479,6 +513,12 @@ impl Board {
         // firing this tick gets its whole cooldown rather than one tick
         // less than it.
         self.event_cooldown = self.event_cooldown.saturating_sub(1);
+        // And before anything that could add to it. Kept for a few ticks
+        // rather than cleared outright: the only reader runs between
+        // frames, and a frame can cover more than one tick.
+        let tick = self.tick;
+        self.swept_home
+            .retain(|swept| swept.at + SWEEP_MEMORY > tick);
         for player in self.action_order() {
             self.apply_action(player, actions[player as usize]);
         }
@@ -662,6 +702,20 @@ impl Board {
     /// Crabs banked since the start, all players combined.
     pub fn crabs_banked(&self) -> u32 {
         self.crabs_banked
+    }
+
+    /// The seat a crab was banked *for* by the tide, if it was one of
+    /// those rather than one that walked home.
+    ///
+    /// The render layer's question, and the only reason [`Board`] keeps
+    /// the record at all: a crab that vanished off open sand looks eaten
+    /// from the outside, and half the time a `Monopoly` fires it is the
+    /// opposite of eaten.
+    pub fn swept_home(&self, crab: u32) -> Option<PlayerId> {
+        self.swept_home
+            .iter()
+            .find(|swept| swept.crab == crab)
+            .map(|swept| swept.owner)
     }
 
     /// Crabs ever spawned (initial, spawner-emitted, and castle-spilled).

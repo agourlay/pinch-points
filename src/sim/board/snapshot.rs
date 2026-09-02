@@ -399,6 +399,9 @@ impl Fields {
             // Drained within the tick that fills it, so a snapshot taken
             // between ticks never has one to carry.
             event_queue: Vec::new(),
+            // News for the frame it happened on, and this is not that
+            // frame: a round picked back up has no sweep to report.
+            swept_home: Vec::new(),
         })
     }
 }

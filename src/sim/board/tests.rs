@@ -1124,6 +1124,82 @@ fn event_monopoly_banks_half_the_loose_crabs() {
     assert_eq!(board.crabs_banked(), 3);
 }
 
+/// A crab the tide banks goes from a tile that is not a castle, which
+/// from outside the sim is exactly what being eaten looks like. So the sim
+/// writes down what it did, because nothing else can work it out
+/// afterwards.
+#[test]
+fn a_swept_crab_is_written_down_against_the_seat_that_got_it() {
+    let mut board = party_board();
+    for x in 0..6 {
+        common(&mut board, x, 4, Right, Handedness::Left);
+    }
+    let taken: Vec<u32> = board.crabs()[..3].iter().map(|crab| crab.id).collect();
+    let left: Vec<u32> = board.crabs()[3..].iter().map(|crab| crab.id).collect();
+    board.apply_tide_event(TideEvent::Monopoly, 1);
+    for crab in taken {
+        assert_eq!(
+            board.swept_home(crab),
+            Some(1),
+            "crab {crab} went to seat 1"
+        );
+    }
+    for crab in left {
+        assert_eq!(board.swept_home(crab), None, "crab {crab} is still walking");
+    }
+    // And a crab nobody has ever heard of is nobody's.
+    assert_eq!(board.swept_home(9999), None);
+}
+
+/// The record is news about one tick, and it is read between frames - a
+/// frame that ran long can cover several ticks, and the frame straight
+/// after a sweep is the busiest one the renderer ever draws. So it
+/// outlives its own tick, and then it goes.
+#[test]
+fn a_swept_crab_is_remembered_a_few_ticks_and_then_forgotten() {
+    let mut board = party_board();
+    for x in 0..6 {
+        common(&mut board, x, 4, Right, Handedness::Left);
+    }
+    let crab = board.crabs()[0].id;
+    board.apply_tide_event(TideEvent::Monopoly, 1);
+    assert_eq!(board.swept_home(crab), Some(1), "the tick it happened on");
+    board.tick_idle();
+    assert_eq!(board.swept_home(crab), Some(1), "and the frame after it");
+    for _ in 0..super::SWEEP_MEMORY {
+        board.tick_idle();
+    }
+    assert_eq!(board.swept_home(crab), None, "but not for the round");
+}
+
+/// The record is written for the render layer and never read back by the
+/// sim, so it has no business in the fingerprint. Two peers playing the
+/// same round have to agree on their hashes, and a field that moved one of
+/// them would be a desync neither could see.
+///
+/// Put in by hand rather than by playing a round into it: the question is
+/// whether the fingerprint can feel it at all, and the fingerprint is the
+/// only thing being asked.
+#[test]
+fn a_sweep_leaves_the_fingerprint_alone() {
+    let mut board = party_board();
+    for x in 0..6 {
+        common(&mut board, x, 4, Right, Handedness::Left);
+    }
+    let before = board.state_hash();
+    board.swept_home.push(super::Swept {
+        crab: 7,
+        owner: 1,
+        at: 0,
+    });
+    assert_eq!(board.swept_home(7), Some(1), "the record is really there");
+    assert_eq!(
+        board.state_hash(),
+        before,
+        "and the fingerprint cannot feel it"
+    );
+}
+
 #[test]
 fn event_gull_attack_targets_rival_castles_only() {
     let mut board = party_board();

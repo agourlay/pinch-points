@@ -143,12 +143,22 @@ impl Board {
                 // Half the loose crabs (front of the line) scuttle straight
                 // into the banker's castle.
                 let take = self.crabs.len() / 2;
+                let at = self.tick;
                 for crab in self.crabs.drain(..take) {
                     self.scores[banker as usize] += crab.kind.value();
                     self.crabs_banked += 1;
                     if crab.kind == CrabKind::Golden {
                         self.golden_banked += 1;
                     }
+                    // Written down because it cannot be worked out later:
+                    // the crab is gone from a tile that is not a castle,
+                    // which from the outside is exactly what being eaten
+                    // looks like. See `Board::swept_home`.
+                    self.swept_home.push(Swept {
+                        crab: crab.id,
+                        owner: banker,
+                        at,
+                    });
                 }
             }
             TideEvent::GullAttack => {
