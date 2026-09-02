@@ -77,9 +77,7 @@ pub(crate) fn disambiguate(levels: &mut [Level], builtins: usize) {
         if taken.insert(level.name.clone()) {
             continue;
         }
-        // Claiming the name *is* the test for it: one hash per candidate,
-        // rather than a `contains` per candidate and an `insert` on top of
-        // the winner.
+        // Claiming the name is the test for it.
         let renamed = (2..)
             .find_map(|n| {
                 let candidate = format!("{} ({n})", level.name);

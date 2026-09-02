@@ -72,8 +72,8 @@ const MEDALS: [Color; MAX_PLAYERS] = [
     palette::MEDAL_DRIFTWOOD,
     palette::MEDAL_DRIFTWOOD,
 ];
-/// What a rank medal's digit reads: the place, one-based. A table rather
-/// than a `to_string`, so six chips repainting every frame format nothing.
+/// What a rank medal's digit reads: the place, one-based. A table, so the
+/// chips repaint without formatting anything.
 const PLACES: [&str; MAX_PLAYERS] = ["1", "2", "3", "4", "5", "6"];
 const LEADER_BORDER: Color = palette::GOLD;
 const LOG_TOP: f32 = 88.0;

@@ -699,10 +699,9 @@ mod tests {
     /// Both cells clip rather than wrap, so a row that overruns loses its
     /// tail with no warning anywhere - the widest of them lost the closing
     /// bracket off the paired team mode in five languages, and had done
-    /// since the mode was added. The header on [`LABEL_W`] used to say the
-    /// budget in characters and there was nothing to check it against;
-    /// characters are the wrong unit besides, since Japanese is drawn in a
-    /// face with a different advance.
+    /// since the mode was added, with a budget written in characters and
+    /// nothing to check it against ([`LABEL_W`] says why characters were
+    /// the wrong unit besides).
     ///
     /// Every dial is walked to its widest stop rather than read at its
     /// default, because the default is not what a player leaves it on.

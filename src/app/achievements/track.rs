@@ -387,11 +387,9 @@ fn unlock_new(
 ) {
     let tr = settings.tr();
     for (index, achievement) in ACHIEVEMENTS.iter().enumerate() {
-        // One hash per achievement: `insert` says whether the id was new,
-        // so the `contains` that used to guard it is gone. Meeting the
-        // threshold is a fn-pointer call and a compare, cheaper than
-        // hashing the id, so it goes first and keeps the set untouched
-        // for an achievement the player has not earned yet.
+        // `insert` says whether the id was new, so no `contains` before
+        // it. The threshold goes first: it is a compare, cheaper than
+        // hashing the id, and it keeps the set out of it entirely.
         if !achievement.met(stats) || !unlocked.0.insert(achievement.id) {
             continue;
         }

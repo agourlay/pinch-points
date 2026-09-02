@@ -74,8 +74,8 @@ pub fn compress(symbols: &[u8], min_code_bits: u8) -> Vec<u8> {
     };
     let mut prefix = u16::from(first);
     for symbol in symbols {
-        // One hash per pair: the lookup and the insert that follows a miss
-        // are the same `entry` call.
+        // One hash per pair: the miss and the insert it leads to are the
+        // same `entry`.
         match dict.entry((prefix, symbol)) {
             Entry::Occupied(known) => {
                 prefix = *known.get();

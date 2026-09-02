@@ -17,8 +17,7 @@ use bevy::prelude::*;
 use crate::app::palette::{CLOCK_CALM, CLOCK_RED, CLOCK_RED_BRIGHT};
 
 /// mm:ss for a remaining-tick count, written into a buffer the caller
-/// keeps: the clocks repaint every frame and change once a second, so the
-/// line is built where it was built last time rather than on the heap.
+/// keeps: the clocks repaint every frame and change once a second.
 pub(crate) fn clock_into(out: &mut String, ticks: u64) {
     use std::fmt::Write;
     let secs = ticks / u64::from(crate::sim::TICKS_PER_SECOND);

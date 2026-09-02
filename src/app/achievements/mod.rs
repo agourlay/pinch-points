@@ -364,8 +364,7 @@ pub const ACHIEVEMENTS: [Achievement; 50] = [
         stat: |s| s.daily_record,
         threshold: 40,
     },
-    // A level is a couple of hundred characters, which is a thing you can
-    // put in a message. Both ends of that are worth a trophy.
+    // Both ends of sharing a level are worth a trophy.
     Achievement {
         id: "shared_1",
         stat: |s| s.codes_shared,

@@ -504,11 +504,8 @@ mod tests {
         );
     }
 
-    /// The cursor is carried to its tile rather than teleported, but a
-    /// jump longer than two tiles still snaps: a round starting, a level
-    /// loading and a board changing size all move it halfway across the
-    /// beach, and sliding it there would draw a line through a board it is
-    /// no longer on.
+    /// The snap [`glide_cursors`] keeps for long jumps, and the glide it
+    /// keeps for everything else.
     #[test]
     fn a_long_jump_snaps_and_a_short_one_glides() {
         let mut app = beach(2);

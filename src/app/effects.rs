@@ -530,9 +530,8 @@ pub fn crab_trails(
     for crab in board.crabs() {
         seen.push(crab.id);
         let pos = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
-        // `entry` rather than get-then-insert: one hash per crab per frame.
-        // A crab seen for the first time lands on a zero-length step below
-        // and is skipped, exactly as the old early `continue` skipped it.
+        // A crab seen for the first time lands on a zero-length step
+        // below, which the stride check skips.
         let fall = footfalls.entry(crab.id).or_insert(Footfall {
             last: pos,
             foot: Foot::Right,

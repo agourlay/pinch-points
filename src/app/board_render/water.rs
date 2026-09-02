@@ -75,10 +75,9 @@ pub fn update_waterline(
 ) {
     let board = &sim.0;
     let Some(remaining) = board.remaining_ticks() else {
-        // Only when it is not already nothing, as the foam does below: a
-        // board with no round keeps its water put away for as long as it
-        // is up, and writing the same zero every frame hands `bevy_render`
-        // four sprites to extract again for it.
+        // Only when it is not already nothing, as the foam does below:
+        // writing the same zero every frame is four sprites for
+        // `bevy_render` to extract again.
         for (_, mut sprite, _) in &mut bars {
             if sprite.custom_size != Some(Vec2::ZERO) {
                 sprite.custom_size = Some(Vec2::ZERO);

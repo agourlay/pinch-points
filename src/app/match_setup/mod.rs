@@ -365,14 +365,9 @@ mod tests {
     /// Every row fits the two cells that hold it, in every language, on
     /// every stop of every dial.
     ///
-    /// The card used to be one cell per row with the label padded out by
-    /// `{:<15}`, and Rust counts that width in `char`s, which is not what
-    /// either shipped face draws. Four languages ran past fifteen and
-    /// pushed the dial right on those rows alone; Japanese fell short of
-    /// fifteen and still came out wider, because its face draws a full em
-    /// where DejaVu draws 0.602. Two cells of a fixed pixel width have no
-    /// opinion about any of that, and this measures in the same pixels
-    /// they are declared in.
+    /// Measured in the same pixels the two cells are declared in, which
+    /// is the whole reason they are declared that way: [`screen::LABEL_W`]
+    /// carries what a character-counted budget did to this card.
     #[test]
     fn every_row_fits_its_cell_in_every_language() {
         use crate::app::i18n::metrics::text_px;

@@ -283,13 +283,10 @@ fn crab_events(board: &crate::sim::Board, watch: &Watch, events: &mut Vec<SimEve
 /// back or by an un-ticked board's identity changing) resyncs silently so
 /// loading never fires a burst of stale events.
 pub fn observe_sim(sim: Res<Sim>, mut watch: Local<Watch>, mut events: MessageWriter<SimEvent>) {
-    // A sim nobody has touched since this last ran is the very board the
-    // watch was read from: the diff would compare it with itself and find
-    // nothing. Reading a board is not free - every tile for the signposts,
-    // a map of the crabs, a map of the gulls, and, on a board that has
-    // never ticked, a copy of the terrain to tell it apart from the next
-    // one - and a puzzle sitting in Setup or a beach open in the editor
-    // never ticks at all, so on those screens this is the whole cost.
+    // An untouched sim is the board the watch was read from, so the diff
+    // would find nothing. Reading one costs every tile, both creature
+    // maps, and on an unticked board a copy of the terrain; a puzzle in
+    // Setup and the editor never tick at all.
     if !sim.is_changed() {
         return;
     }

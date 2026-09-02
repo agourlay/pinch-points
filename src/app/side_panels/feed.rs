@@ -29,8 +29,8 @@ pub struct LogEntry {
 
 impl LogEntry {
     /// What the line reads as, counter included once it has repeated,
-    /// written into a buffer the caller keeps: the feed repaints nine
-    /// lines every frame and changes only when something happens.
+    /// written into a buffer the caller keeps: nine lines repaint every
+    /// frame and change only when something happens.
     pub fn render_into(&self, out: &mut String) {
         use std::fmt::Write;
         out.clear();

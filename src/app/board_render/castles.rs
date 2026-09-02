@@ -277,9 +277,7 @@ pub fn fly_castles(
     settings: Res<crate::app::settings::GameSettings>,
     mut flight: ResMut<CastleFlight>,
     mut before: Local<Detector>,
-    // The reading is taken into a buffer that is swapped with the last
-    // one rather than built fresh: this runs every frame on every board,
-    // and the two readings are the same handful of castles nearly always.
+    // Swapped with the last reading rather than built fresh each frame.
     mut now: Local<Vec<Held>>,
     mut castles: Query<(&CastleSprite, &mut Transform)>,
 ) {

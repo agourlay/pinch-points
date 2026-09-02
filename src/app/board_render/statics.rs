@@ -523,11 +523,9 @@ pub fn sync_signposts(
 /// Write what a post looks like *now*: how far it has settled after being
 /// planted, how worn it is, and how much life it has left.
 ///
-/// Wear used to be spelled with transparency alone - a worn, aged post
-/// came out at an eighth of full strength, on bright sand, as the one
-/// thing on the board the player is steering with. It keeps its ink now
-/// and loses its edges instead: [`crate::app::art::Art::arrow_worn`] is
-/// the same arrow with splinters bitten out of it.
+/// Wear keeps a post's ink and takes its edges instead of dimming it away
+/// (see [`post_alpha`]): [`crate::app::art::Art::arrow_worn`] is the same
+/// arrow with splinters bitten out of it.
 #[allow(clippy::type_complexity)]
 pub fn dress_signposts(
     time: Res<Time>,

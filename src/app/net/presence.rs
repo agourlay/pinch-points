@@ -119,8 +119,9 @@ impl OnlineSession {
     /// every tick it runs, resending every commit a peer could still be
     /// missing, so a machine still in the room is a machine still talking.
     ///
-    /// Returns what was given up on this call, which the tests read. The lasting record is `abandoned`, because a joiner is *told*
-    /// rather than deciding and its seats never pass through here.
+    /// Returns what was given up on this call, which the tests read. The
+    /// lasting record is `abandoned`, because a joiner is *told* rather
+    /// than deciding and its seats never pass through here.
     pub fn abandon_stalled(&mut self, delta: f32, paused: bool) -> Vec<u8> {
         self.age_the_silence(delta);
         // A paused round is stalled on purpose, and the pause is agreed:
@@ -452,12 +453,10 @@ mod tests {
     /// A table reading the scores together is not a table whose host has
     /// gone, however quiet it is.
     ///
-    /// The trap under this fix, and the worse bug of the two. Between
-    /// rounds an established session says nothing at all: inputs and hashes
-    /// belong to the round that ended, and the host has nothing to send
-    /// until somebody calls the next one. So the moment silence is read as
-    /// evidence there, every joiner walks out of a perfectly good table
-    /// twenty seconds into a results card.
+    /// The trap under this fix, and the worse bug of the two: a settled
+    /// session falls silent between rounds on purpose (see `greet_in`), so
+    /// silence read as evidence there walks every joiner out of a
+    /// perfectly good table.
     ///
     /// The greeting is what makes the silence mean something. Over real
     /// sockets, because the point is that a reply actually comes back.
@@ -736,10 +735,9 @@ mod tests {
         }
     }
 
-    /// Only the host decides. A joiner that ran its own timer would fill
-    /// the seat on whichever frame its own patience ran out, and two peers
-    /// filling it on different frames is a desync, which lockstep cannot
-    /// recover from.
+    /// Only the host decides (see [`OnlineSession::abandon_stalled`]):
+    /// two peers filling a seat on different frames is a desync lockstep
+    /// cannot recover from.
     #[test]
     fn a_joiner_never_decides_for_itself() {
         let mut joiner = OnlineSession::new(
