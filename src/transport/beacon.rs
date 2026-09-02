@@ -209,8 +209,18 @@ impl Discovery {
                             ),
                             false => 0,
                         };
-                        let beacon = match buf.get(7) {
-                            Some(&BEACON_CLOSING) if len >= 8 => Beacon::Closing { id },
+                        // The kind, and only from a packet that reached the
+                        // byte it lives in. `buf` is read into once and
+                        // reused for every datagram of the drain, so byte 7
+                        // of a beacon too short to have one is byte 7 of
+                        // whatever came before it: a pre-farewell beacon
+                        // arriving behind a running one was listed as in
+                        // progress, unjoinable, on the strength of the
+                        // previous packet. Every other field already reads
+                        // its length first; this one is the one that did not.
+                        let kind = (len >= 8).then(|| buf[7]);
+                        let beacon = match kind {
+                            Some(BEACON_CLOSING) => Beacon::Closing { id },
                             kind => {
                                 // Occupancy is the last thing appended, so a
                                 // beacon too short to carry it reads as a
@@ -226,7 +236,7 @@ impl Discovery {
                                     host: beacon_name(&buf, len, BEACON_HOST_AT),
                                     taken,
                                     seats,
-                                    running: kind == Some(&BEACON_RUNNING),
+                                    running: kind == Some(BEACON_RUNNING),
                                 }
                             }
                         };
@@ -594,6 +604,63 @@ mod tests {
         assert!(
             beacon.has_room(),
             "a table it never described is not a full one"
+        );
+    }
+
+    /// One buffer serves every datagram of a drain, so a beacon too short
+    /// to carry a field must not be read as carrying the last one's. The
+    /// kind byte is where that bit: a pre-farewell beacon arriving behind
+    /// a running one inherited its kind and was listed as a round already
+    /// under way, which is a beach nobody may join.
+    #[test]
+    fn a_short_beacon_behind_a_long_one_borrows_none_of_it() {
+        let mut discovery = Discovery::bind().expect("bind lobby port");
+        let socket = UdpSocket::bind(("0.0.0.0", 0)).expect("sender");
+        // A full beacon saying its round has begun, and behind it the
+        // seven bytes a build from before farewells sends, both on the
+        // wire before either is read.
+        let mut running = ANNOUNCE_MAGIC.to_vec();
+        running.extend_from_slice(&48126u16.to_le_bytes());
+        running.push(BEACON_RUNNING);
+        running.extend_from_slice(&wire_name("Room 3"));
+        running.push(2);
+        running.push(6);
+        running.extend_from_slice(&0x5EA5u64.to_le_bytes());
+        running.extend_from_slice(&wire_name("Anna"));
+        assert_eq!(running.len(), BEACON_BYTES);
+        let mut old = ANNOUNCE_MAGIC.to_vec();
+        old.extend_from_slice(&48127u16.to_le_bytes());
+        assert_eq!(old.len(), 7, "the packet as it was before farewells");
+
+        let mut found = Vec::new();
+        for _ in 0..20 {
+            for port in LOBBY_PORTS {
+                let _ = socket.send_to(&running, ("127.0.0.1", port));
+                let _ = socket.send_to(&old, ("127.0.0.1", port));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            found.extend(
+                discovery
+                    .poll()
+                    .into_iter()
+                    .filter(|(a, _)| a.port() == 48127),
+            );
+            if !found.is_empty() {
+                break;
+            }
+        }
+        let (_, beacon) = found.first().expect("the short beacon is heard");
+        assert_eq!(
+            *beacon,
+            Beacon::Here {
+                id: 0,
+                name: String::new(),
+                host: String::new(),
+                taken: 0,
+                seats: 0,
+                running: false,
+            },
+            "an open beach, not the kind of the packet before it"
         );
     }
 }
