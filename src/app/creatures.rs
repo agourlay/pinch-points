@@ -210,7 +210,10 @@ pub fn interpolate_crabs(
     let alpha = smoothing_alpha(board.ticks(), &mut watch, time.delta_secs(), &fixed_time);
     by_id.clear();
     by_id.extend(board.crabs().iter().map(|c| (c.id, *c)));
-    // Precious crabs glint on a shared clock (staggered per crab id).
+    // Precious crabs glint on one clock: they twinkle together, and what
+    // keeps that from reading as a metronome is the scatter `glint` puts
+    // on each star's own position. A clock apiece would be a timer per
+    // crab for a twinkle nobody is timing.
     *glint_clock += time.delta_secs();
     let glint_now = *glint_clock >= 0.22;
     if glint_now {
