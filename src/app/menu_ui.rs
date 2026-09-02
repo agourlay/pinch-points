@@ -158,9 +158,23 @@ pub fn screen_card() -> (ShoreCard, Node, BackgroundColor, BorderColor, BoxShado
     )
 }
 
-/// What [`between_bars`] keeps clear at each end: the header bar above,
-/// the prompt line below.
-pub const BAR_H: f32 = 52.0;
+/// How tall the HUD's header strip is. Lives here rather than in `hud`,
+/// beside [`BAR_H`], which is derived from it: the bar and the space kept
+/// clear for it are one measurement, and they were two numbers in two
+/// files with nothing between them. A header grown to 56 would have
+/// tucked itself under every card on every list screen, silently.
+pub const HEADER_H: f32 = 42.0;
+
+/// The air between a card and the chrome at either end of it.
+const BAR_AIR: f32 = 10.0;
+
+/// What [`between_bars`] keeps clear at each end.
+///
+/// One inset, used top and bottom, so a card sits centred in what is
+/// left. Above it that is the header exactly, plus the air; below it the
+/// prompt pill is shorter than the header, so the same number is more
+/// room than the pill needs and the card clears it comfortably.
+pub const BAR_H: f32 = HEADER_H + BAR_AIR;
 
 /// The frame a card is centred in: everything between the header bar and
 /// the prompt line, and nothing outside it.

@@ -48,7 +48,7 @@ pub fn spawn_hud(
                 top: Val::Px(0.0),
                 left: Val::Px(0.0),
                 width: Val::Percent(100.0),
-                height: Val::Px(42.0),
+                height: Val::Px(menu_ui::HEADER_H),
                 padding: UiRect::horizontal(Val::Px(12.0)),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::SpaceBetween,
@@ -62,13 +62,13 @@ pub fn spawn_hud(
                 LevelLabel,
                 Text::new(""),
                 font.clone(),
-                TextColor(Color::WHITE),
+                TextColor(palette::HUD_INK),
             ));
             bar.spawn((
                 PostsLabel,
                 Text::new(""),
                 font.clone(),
-                TextColor(Color::WHITE),
+                TextColor(palette::HUD_INK),
             ));
         });
     // The prompt rides its own dark pill. On the play screens that is

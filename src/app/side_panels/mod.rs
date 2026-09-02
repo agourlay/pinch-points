@@ -229,7 +229,7 @@ fn spawn_score_chip(
                 font_size: FontSize::Px(SCORE_PX[seat as usize]),
                 ..default()
             },
-            TextColor(Color::WHITE),
+            TextColor(palette::HUD_INK),
         ));
         // The crown perches on the card's top-right corner.
         chip.spawn((
