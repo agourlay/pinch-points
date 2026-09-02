@@ -623,7 +623,6 @@ pub fn update_particles(
         if drag > 0.0 {
             particle.velocity *= (1.0 - drag * dt).clamp(0.0, 1.0);
         }
-        let strength = particle.strength();
         transform.translation.x += particle.velocity.x * dt;
         transform.translation.y += particle.velocity.y * dt;
         transform.rotation *= Quat::from_rotation_z(particle.spin * dt);
@@ -635,7 +634,13 @@ pub fn update_particles(
             sprite.color = particle.shade(sprite.color);
         }
         if let Some(mut color) = text_color {
-            color.0 = color.0.with_alpha(strength);
+            // Through the same ceiling the sprites go through. It read the
+            // alpha straight off the strength before, so a number asked
+            // for at 60% arrived at full: the rule [`Particle::peak`]
+            // states is a rule about particles, and a floating score is
+            // one. No caller asks for less than full today, which is the
+            // only reason nobody has seen it.
+            color.0 = particle.shade(color.0);
         }
     }
 }
@@ -951,6 +956,33 @@ mod tests {
     /// A ramped particle takes its colour from the ramp and its strength
     /// from the peak, so a feather thrown white and landing grey still
     /// fades out rather than holding at the grey.
+    /// Floating text goes through the same ceiling the sprites do. It
+    /// used to take its alpha straight off the strength, so a number asked
+    /// for at 60% arrived at full - [`Particle::peak`] states a rule about
+    /// particles, and a score pip is one.
+    #[test]
+    fn floating_text_is_held_to_the_alpha_it_asked_for() {
+        let mut particle = Particle {
+            life: 1.0,
+            fade_in: 0.0,
+            ..default()
+        };
+        let asked = Color::srgba(1.0, 1.0, 1.0, 0.6);
+        // Freshly born, at the top of its arc, and it is still only 60%.
+        let opening = particle.shade(asked);
+        assert!(
+            (opening.alpha() - 0.6).abs() < 1e-5,
+            "arrived at {} rather than the 0.6 it asked for",
+            opening.alpha()
+        );
+        // And it fades from there rather than to there.
+        particle.age = 0.5;
+        let midway = particle.shade(opening);
+        assert!((midway.alpha() - 0.3).abs() < 1e-5, "{}", midway.alpha());
+        particle.age = 1.0;
+        assert!(particle.shade(midway).alpha() < 1e-5, "gone by the end");
+    }
+
     #[test]
     fn a_ramp_moves_the_colour_without_touching_the_fade() {
         let mut particle = Particle {
