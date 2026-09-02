@@ -25,17 +25,19 @@ pub const PARCHMENT: Color = Color::srgb(0.92, 0.89, 0.78);
 /// with clouds and crabs moving behind it, and at 0.88 the sea came
 /// through as a shifting wash that pale text sat on badly.
 pub const CARD_FILL: Color = Color::srgba(0.04, 0.07, 0.12, 0.95);
-/// Its hairline border: [`GOLD`] at a hairline's strength (0.30 alpha),
-/// spelled out because `with_alpha` is not const.
+/// The card's hairline border: [`GOLD`] at a hairline's strength (0.30
+/// alpha), spelled out because `with_alpha` is not const.
+pub const CARD_EDGE: Color = Color::srgba(0.96, 0.83, 0.35, 0.30);
 /// The pill behind a prompt or legend line. Nearly opaque: at 0.72 it
 /// blended into whatever stood behind it, and the same pill read dark on
 /// one screen and sandy on the next.
 pub const PILL_FILL: Color = Color::srgba(0.05, 0.07, 0.11, 0.92);
 /// The tide foam at the foot of a card.
 pub const FOAM_LINE: Color = Color::srgba(0.62, 0.82, 0.92, 0.16);
-/// A card heading's little sprite.
+/// A card heading's little sprite: [`GOLD`], a shade off full strength.
+/// Every heading in the game wears it, the lobby's included - which for a
+/// while had a second constant of its own holding the same three numbers.
 pub const HEADING_ICON: Color = Color::srgba(0.96, 0.83, 0.35, 0.85);
-pub const CARD_EDGE: Color = Color::srgba(0.96, 0.83, 0.35, 0.30);
 
 /// Round-event inks, shared by the side feed and the centre-screen
 /// announcements so one event is one colour wherever it is reported.
@@ -52,6 +54,15 @@ pub const HEADER_FILL: Color = Color::srgb(0.08, 0.09, 0.12);
 pub const TOAST_FILL: Color = Color::srgb(0.1, 0.12, 0.16);
 /// The deep-water drop shadow under every card: `menu_ui::card_shadow`.
 pub const CARD_SHADOW: Color = Color::srgba(0.0, 0.05, 0.12, 0.45);
+/// The fill behind the row or box under the cursor, on every screen that
+/// has one: [`GOLD`] at a wash's strength. `menu_ui::band` is how a screen
+/// asks for it, and it lived under a lobby heading while four other
+/// screens were quietly computing the same three numbers for themselves.
+///
+/// A bar rather than a marker character: with a dozen beaches on screen
+/// the eye wants a block, and the number stays where it is instead of
+/// shuffling sideways to make room for a caret.
+pub const PICKED_WASH: Color = Color::srgba(0.96, 0.83, 0.35, 0.16);
 
 // --- white-on-dark hairlines and washes -------------------------------------
 
@@ -101,15 +112,6 @@ pub const TILE_OPEN_FILL: Color = Color::srgba(0.95, 0.93, 0.84, 0.12);
 /// A locked stage tile: sunk fill, faded number.
 pub const TILE_LOCKED_FILL: Color = Color::srgba(0.06, 0.08, 0.11, 0.45);
 pub const TILE_LOCKED_INK: Color = Color::srgba(0.95, 0.93, 0.84, 0.22);
-
-// --- the lobby --------------------------------------------------------------
-
-/// The fill behind the lobby row or box under the cursor: [`GOLD`] at a
-/// wash's strength.
-pub const PICKED_WASH: Color = Color::srgba(0.96, 0.83, 0.35, 0.16);
-/// The lobby heading sprites, tinted the gold the headings and card edges
-/// already read in.
-pub const GOLD_ICON: Color = Color::srgba(0.96, 0.83, 0.35, 0.85);
 
 // --- the sidebars -----------------------------------------------------------
 

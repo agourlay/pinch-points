@@ -203,7 +203,7 @@ pub fn heading(text: &str, first: bool) -> impl Bundle {
 /// way from the words it points at.
 pub fn band(picked: bool) -> Color {
     if picked {
-        palette::GOLD.with_alpha(0.16)
+        palette::PICKED_WASH
     } else {
         Color::NONE
     }

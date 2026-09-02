@@ -9,11 +9,6 @@
 
 use super::*;
 
-/// The fill behind the row under the cursor. A bar rather than a marker
-/// character: with a dozen beaches on screen the eye wants a block, and
-/// the number stays where it is instead of shuffling sideways.
-const ROW_PICKED: Color = palette::PICKED_WASH;
-
 /// How many beaches the join list shows at once. A busy LAN can have more
 /// games running than this; the list scrolls to the cursor rather than
 /// pretending the rest are not there.
@@ -370,7 +365,7 @@ pub fn update_lobby_list(
     };
     for (row, mut fill) in &mut rows {
         let picked = host_at(row.0).is_some() && Some(state.scroll + row.0) == at;
-        let want = if picked { ROW_PICKED } else { Color::NONE };
+        let want = crate::app::menu_ui::band(picked);
         crate::app::menu_ui::set_bg(&mut fill, want);
     }
     for (cell, mut text, mut color) in &mut cells {
@@ -441,10 +436,7 @@ pub fn update_lobby_terms(
         None => (&config, settings.team_mode),
     };
     for (row, mut fill) in &mut rows {
-        let want = match host && row.0 == state.dial {
-            true => ROW_PICKED,
-            false => Color::NONE,
-        };
+        let want = crate::app::menu_ui::band(host && row.0 == state.dial);
         crate::app::menu_ui::set_bg(&mut fill, want);
     }
     for (row, mut text, mut color) in &mut names {
@@ -502,7 +494,7 @@ pub fn update_lobby_chat(
     // type into, and a lit box with nothing in it looks like a fault.
     let box_lit = state.typing.is_some() || state.can_chat();
     for mut fill in &mut entry {
-        let want = if box_lit { ROW_PICKED } else { Color::NONE };
+        let want = crate::app::menu_ui::band(box_lit);
         crate::app::menu_ui::set_bg(&mut fill, want);
     }
     for (row, mut text, mut color) in &mut rows {
