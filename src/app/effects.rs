@@ -519,7 +519,7 @@ pub fn crab_trails(
     settings: Res<crate::app::settings::GameSettings>,
     mut rng: ResMut<VisualRng>,
     mut footfalls: Local<bevy::platform::collections::HashMap<u32, Footfall>>,
-    mut seen: Local<Vec<u32>>,
+    mut seen: Local<bevy::platform::collections::HashSet<u32>>,
 ) {
     if settings.reduced_motion {
         return;
@@ -528,7 +528,7 @@ pub fn crab_trails(
     let board = &sim.0;
     seen.clear();
     for crab in board.crabs() {
-        seen.push(crab.id);
+        seen.insert(crab.id);
         let pos = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
         // A crab seen for the first time lands on a zero-length step
         // below, which the stride check skips.
@@ -589,6 +589,10 @@ pub fn crab_trails(
             ));
         }
     }
+    // A set, not a list. This sweeps one entry per crab and asks after
+    // each, so a linear scan makes it quadratic on the busiest boards -
+    // and a busy six-seat beach carries well over a hundred crabs, every
+    // frame, purely to take out the ones that have gone.
     footfalls.retain(|id, _| seen.contains(id));
 }
 
