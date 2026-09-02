@@ -167,19 +167,20 @@ pub fn update_log(
 /// Spawn the feed card, filling the sidebar below the clock.
 pub(super) fn spawn_feed(root: &mut ChildSpawnerCommands) {
     // Its rows stack from the top, so it drops the clock card's centring.
-    let (mut node, edge, _) = card(LOG_TOP, None);
+    let (mut node, edge, fill) = card(LOG_TOP, None);
     node.flex_direction = FlexDirection::Column;
     node.align_items = AlignItems::default();
     node.justify_content = JustifyContent::default();
     node.row_gap = Val::Px(6.0);
     node.padding = UiRect::axes(Val::Px(12.0), Val::Px(10.0));
     node.overflow = Overflow::clip();
-    root.spawn((
-        node,
-        edge,
-        BackgroundColor(palette::CARD_BG.with_alpha(0.9)),
-    ))
-    .with_children(|list| {
+    // The card's own fill, kept rather than thinned. At 0.9 the sand
+    // behind the sidebar came through and the feed read as a different
+    // material from the clock card touching it above: (36, 34, 33) against
+    // the clock's (18, 20, 28), twice as light and brown where the other
+    // is blue-black. Nothing said why, and every other override in this
+    // function says why.
+    root.spawn((node, edge, fill)).with_children(|list| {
         for index in 0..LOG_LINES {
             list.spawn((
                 LogLine(index),
