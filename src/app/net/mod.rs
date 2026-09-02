@@ -918,3 +918,60 @@ mod homecoming_tests {
         assert_eq!(returned.played_seed, 7);
     }
 }
+
+#[cfg(test)]
+mod hash_tests {
+    use super::*;
+
+    /// The desync check has to work across the gap between two peers, and
+    /// the gap runs both ways: a peer a commit lead ahead of us sends its
+    /// hash for a frame we have not simulated yet.
+    ///
+    /// So a peer's hash is kept rather than compared on arrival and
+    /// weighed once our own for that frame appears. Comparing only what
+    /// was already in hand would have skipped exactly the checks a lagging
+    /// peer sends, which is the peer a desync is most likely to be about.
+    #[test]
+    fn a_peer_hash_that_arrives_early_is_still_weighed() {
+        let mut hashes = HashCheck::default();
+        // It arrives first, and there is nothing yet to hold it against.
+        hashes.record_peer(60, 0xBAD_B0A7);
+        hashes.compare();
+        assert_eq!(hashes.desync_at, None, "nothing to compare it to yet");
+        // A frame in between, which both sides agree on, is not a desync.
+        hashes.record_own(30, 0xC0FFEE);
+        hashes.record_peer(30, 0xC0FFEE);
+        hashes.compare();
+        assert_eq!(hashes.desync_at, None, "and they agree about frame 30");
+        // We reach 60 at last, and the hash that has been waiting is what
+        // catches it.
+        hashes.record_own(60, 0x600D_B0A7);
+        hashes.compare();
+        assert_eq!(hashes.desync_at, Some(60), "the waiting hash caught it");
+    }
+
+    /// A round that agreed all the way through never raises one, however
+    /// many hashes crossed: the check is loud, and a loud check that cries
+    /// on a healthy round is one nobody believes on a sick one.
+    #[test]
+    fn a_round_that_agrees_is_never_flagged_and_a_new_one_starts_level() {
+        let mut hashes = HashCheck::default();
+        for frame in (0..300).step_by(HASH_INTERVAL as usize) {
+            let hash = u64::from(frame) * 0x9E37_79B9;
+            hashes.record_own(frame, hash);
+            hashes.record_peer(frame, hash);
+            hashes.compare();
+        }
+        assert_eq!(hashes.desync_at, None, "every frame agreed");
+
+        // Last round's disagreement is last round's. A new board starts
+        // level, or one bad round would paint every round after it.
+        hashes.record_own(30, 1);
+        hashes.record_peer(30, 2);
+        hashes.compare();
+        assert_eq!(hashes.desync_at, Some(30));
+        hashes.reset();
+        hashes.compare();
+        assert_eq!(hashes.desync_at, None, "and the new board is level");
+    }
+}

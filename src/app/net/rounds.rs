@@ -503,6 +503,130 @@ mod next_round_tests {
         assert_eq!(host.session.frame(), 0);
     }
 
+    /// Register `joiners` on the host's socket in order, so their peer
+    /// indices are known, and hand back the sockets they greeted from.
+    fn gather(host: &mut OnlineSession, joiners: &[&str]) -> Vec<UdpTransport> {
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut sockets = Vec::new();
+        for (want, name) in joiners.iter().enumerate() {
+            let socket = UdpTransport::join(("127.0.0.1", port)).expect("join");
+            socket.send(NetMsg::hello(name));
+            for _ in 0..40 {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                host.poll_between_rounds(0.0);
+                if host.transport.peer_count() > want {
+                    break;
+                }
+            }
+            assert_eq!(host.transport.peer_count(), want + 1, "{name} is aboard");
+            sockets.push(socket);
+        }
+        sockets
+    }
+
+    /// A series tally is kept by seat, and seats move. A peer that leaves
+    /// between rounds frees its chair and everyone behind it shuffles up
+    /// one, so the host re-deals the wins along with the chairs.
+    ///
+    /// Without that, a tally each peer kept by seat number handed the
+    /// departed player's rounds to whoever moved into their seat: Cy walks
+    /// into the next round holding Bo's two wins and its own three lost,
+    /// and the table crowns the wrong champion.
+    #[test]
+    fn the_wins_follow_the_chairs_when_a_peer_leaves() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1, 2], DEFAULT_DELAY),
+            3,
+            terms(1),
+        );
+        let _sockets = gather(&mut host, &["Bo", "Cy"]);
+        host.peers.deal(&[Some(1), Some(2)]);
+        host.names[0] = "Anna".into();
+        host.names[1] = "Bo".into();
+        host.names[2] = "Cy".into();
+
+        // Three rounds played: Anna one, Bo two, Cy three.
+        let standing = SeriesStanding {
+            round: 3,
+            wins: [1, 2, 3, 0, 0, 0],
+        };
+        // And Bo walks off while the results card is up, which frees seat
+        // one and moves Cy up into it.
+        host.transport.forget(0);
+        host.peers.forget(0);
+
+        let next = host
+            .call_next_round(terms(2), Some(standing))
+            .expect("a series has a standing");
+        assert_eq!(next.round, 4, "the round about to begin");
+        assert_eq!(
+            next.wins[0], 1,
+            "the host keeps its own, seat zero being its own"
+        );
+        assert_eq!(
+            next.wins[1], 3,
+            "Cy took its three rounds up the table with it"
+        );
+        assert_eq!(next.wins[2], 0, "and nothing of Bo's was left for anyone");
+        assert_eq!(host.names[1], "Cy", "the name moved with the chair too");
+        assert_eq!(host.series_standing, Some(next), "and the host holds it");
+    }
+
+    /// The host is the only peer that can tell who sent what, so it is the
+    /// only one that can catch a peer speaking for somebody else's seat.
+    ///
+    /// It matters because of the relay: the spokes of the star hear each
+    /// other only through the hub, so an input the hub believes is an
+    /// input the whole table believes. One unchecked datagram and every
+    /// peer that heard the relay is playing a different round from the one
+    /// that did not - which is a desync lockstep has no way back from.
+    #[test]
+    fn a_peer_speaks_only_for_the_seat_it_holds() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1, 2], DEFAULT_DELAY),
+            3,
+            terms(7),
+        );
+        let mut sockets = gather(&mut host, &["Bo", "Cy"]);
+        host.peers.deal(&[Some(1), Some(2)]);
+
+        // Bo holds seat one. It sends for its own chair, and for Cy's.
+        let own = crate::sim::InputMsg {
+            player: 1,
+            frame: DEFAULT_DELAY,
+            action: PlayerAction::Remove { x: 1, y: 1 },
+        };
+        let forged = crate::sim::InputMsg {
+            player: 2,
+            frame: DEFAULT_DELAY,
+            action: PlayerAction::Remove { x: 2, y: 2 },
+        };
+        // What reaches Cy is the question: the hub is the only way Bo can
+        // reach it at all, so what the hub relays is what the table plays.
+        let mut relayed: Vec<u8> = Vec::new();
+        for _ in 0..40 {
+            sockets[0].send(NetMsg::Input(own));
+            sockets[0].send(NetMsg::Input(forged));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.pump(PlayerAction::None, |_| {});
+            for (msg, _) in sockets[1].recv_all() {
+                if let NetMsg::Input(input) = msg {
+                    relayed.push(input.player);
+                }
+            }
+            if relayed.contains(&1) {
+                break;
+            }
+        }
+        assert!(relayed.contains(&1), "the chair it holds reaches the table");
+        assert!(
+            !relayed.contains(&2),
+            "the chair it does not hold never does: {relayed:?}"
+        );
+    }
+
     /// The stale `Start` a host re-answers a stray greeting with must not
     /// read as a new round, or every late hello would restart the match.
     #[test]
