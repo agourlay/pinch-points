@@ -343,7 +343,7 @@ fn add_phase_transitions(app: &mut App) {
     app.add_systems(
         OnEnter(Phase::Won),
         (
-            audio::play_win,
+            audio::play_win.run_if(in_state(Screen::Puzzle)),
             results::spawn_puzzle_won.run_if(in_state(Screen::Puzzle)),
             progress::record_cleared.run_if(in_state(Screen::Puzzle)),
             // After the clear is recorded: the campaign-finished trophy asks
@@ -360,7 +360,7 @@ fn add_phase_transitions(app: &mut App) {
     app.add_systems(
         OnEnter(Phase::Lost),
         (
-            audio::play_lose,
+            audio::play_lose.run_if(in_state(Screen::Puzzle)),
             results::spawn_puzzle_lost.run_if(in_state(Screen::Puzzle)),
             hint::record_loss.run_if(in_state(Screen::Puzzle)),
         ),

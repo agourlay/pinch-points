@@ -99,6 +99,25 @@ const EAR_GAP: f32 = 0.3;
 /// positional sounds get a lift to sit level with the stingers.
 const SPATIAL_GAIN: f32 = 1.4;
 
+/// Whether a post going down at `owner`'s hand is one to be heard here.
+///
+/// The seat rule and the whole of its exception. `seated_here` reads
+/// correctly wherever this machine answers for a seat: alone in a puzzle
+/// it is your seat, at a table it is every human seat sharing the speaker,
+/// online it is your seat and nobody else's.
+///
+/// Where it does not read correctly is where this machine answers for *no*
+/// seat, because then it says "nobody" and means it. An online spectator
+/// and a replay both spawn no cursor at all (see
+/// `cursor::spawn_versus_cursors`: there is no seat to place from), so
+/// every post on the beach fell silent while the banks, the gulls and the
+/// horn played on - a replay of your own round with all the arrows taken
+/// out of it. A machine holding no seat is watching, and a watcher is
+/// there to hear the whole beach.
+pub(crate) fn post_is_heard(cursors: &Query<&crate::app::cursor::Cursor>, owner: u8) -> bool {
+    cursors.is_empty() || crate::app::cursor::seated_here(cursors, owner)
+}
+
 /// Where a board position lands in the listener's little stereo field.
 ///
 /// The x is mirrored: rodio's spatial mixer boosts the ear *further* from
@@ -184,12 +203,18 @@ fn play_at(commands: &mut Commands, sound: &Handle<AudioSource>, gain: f32, at: 
 /// caller's "already played this one" flag, and the first call through it
 /// wins.
 ///
-/// Signpost cues are per tile, so one frame can hold several of a kind -
-/// every seat may act on the same tick, and posts placed together wear out
-/// together. Sample-aligned copies of one sound do not read as several
-/// things happening; they read as one louder, dirtier version of it, and
-/// four of them at full gain clip. This is the rule the denial knock has
-/// always used, applied where the volume actually is.
+/// The sim reports per tile and per crab, so one frame can hold a great
+/// many of a kind: every seat may act on the same tick, posts placed
+/// together wear out together, and a castle can take a whole stream of
+/// crabs at once. Sample-aligned copies of one sound do not read as
+/// several things happening; they read as one louder, dirtier version of
+/// it, and four of them at full gain clip. This is the rule the denial
+/// knock has always used, applied where the volume actually is.
+///
+/// What `used` counts is the caller's to choose, and it is the axis a
+/// listener could tell apart: one flag for all the posts, since they knock
+/// alike wherever they are, and one per seat for banks, since each seat's
+/// crabs arrive at its own castle and pan to its own side of the beach.
 fn once(
     commands: &mut Commands,
     used: &mut bool,
@@ -232,12 +257,33 @@ pub fn play_events(
     let half_width = f32::from(sim.0.width()) * crate::app::layout::TILE / 2.0;
     let pan = |pos: &Vec2| pan_pos(half_width, *pos);
     let (mut placed, mut removed, mut evicted) = (false, false, false);
+    // Banks are the busiest thing on the beach, and the one cue the sim
+    // raises per crab rather than per act: twelve six-seat rounds of bots
+    // put eighty-seven of them on a single tick, with two or three on a
+    // tick all round. Eighty-seven sample-aligned copies at the spatial
+    // gain are not eighty-seven sounds, they are one blare and eighty-seven
+    // sinks to mix it from.
+    //
+    // Per seat rather than one flag for the lot, because unlike posts these
+    // are distinguishable: a seat's crabs walk into that seat's castle, so
+    // each flag stands for one place on the beach and six castles filling
+    // at once still read as six.
+    let mut banked = [false; crate::sim::MAX_PLAYERS];
+    let mut goldened = [false; crate::sim::MAX_PLAYERS];
     for event in events.read() {
         match event {
-            SimEvent::CrabBanked { kind, pos, .. } => {
-                play_at(&mut commands, &sounds.bank, gain, pan(pos));
-                if *kind == crate::sim::CrabKind::Golden {
-                    play_at(&mut commands, &sounds.golden, gain, pan(pos));
+            SimEvent::CrabBanked {
+                owner, kind, pos, ..
+            } => {
+                let seat = usize::from(*owner);
+                let at = pan(pos);
+                if let Some(used) = banked.get_mut(seat) {
+                    once(&mut commands, used, &sounds.bank, gain, at);
+                }
+                if *kind == crate::sim::CrabKind::Golden
+                    && let Some(used) = goldened.get_mut(seat)
+                {
+                    once(&mut commands, used, &sounds.golden, gain, at);
                 }
             }
             SimEvent::CrabEaten { pos } => play_at(&mut commands, &sounds.eat, gain, pan(pos)),
@@ -258,13 +304,11 @@ pub fn play_events(
             // online it was announcing arrows that went down in somebody
             // else's room.
             //
-            // `seated_here` is the whole rule, and it reads correctly in
-            // all three modes without being told which one it is in: alone
-            // in a puzzle it is your seat, at a table it is every human
-            // seat sharing the speaker, and online it is your seat and
-            // nobody else's.
+            // Unless nobody here holds one, which is what watching is.
+            // [`post_is_heard`] is the whole rule, and it reads correctly
+            // in every mode without being told which one it is in.
             SimEvent::SignpostPlaced { owner, pos } => {
-                if crate::app::cursor::seated_here(&cursors, *owner) {
+                if post_is_heard(&cursors, *owner) {
                     once(&mut commands, &mut placed, &sounds.place, gain, pan(pos));
                 }
             }
@@ -272,7 +316,7 @@ pub fn play_events(
             // on its own, so leaving this ungated let every bot post knock
             // on the way out and the beach kept its click track.
             SimEvent::SignpostRemoved { owner, pos } => {
-                if crate::app::cursor::seated_here(&cursors, *owner) {
+                if post_is_heard(&cursors, *owner) {
                     once(&mut commands, &mut removed, &sounds.remove, gain, pan(pos));
                 }
             }
@@ -286,7 +330,7 @@ pub fn play_events(
                 // past the cap raises one of these: gating the placement
                 // and the removal but not this left five bots knocking
                 // almost continuously on a six-seat beach.
-                if crate::app::cursor::seated_here(&cursors, *owner) {
+                if post_is_heard(&cursors, *owner) {
                     once(&mut commands, &mut evicted, &sounds.evict, gain, pan(pos));
                 }
             }
@@ -309,41 +353,39 @@ pub fn play_events(
     }
 }
 
+/// The puzzle's win stinger. Versus ends on the horn instead, which is why
+/// this is gated at all; the gate is the schedule's `in_state`, as it is
+/// for every other system in the same phase transition.
 pub fn play_win(
     mut commands: Commands,
     sounds: Res<Sounds>,
-    screen: Res<State<Screen>>,
     settings: Res<crate::app::settings::GameSettings>,
     muted: Res<Muted>,
 ) {
-    if *screen.get() == Screen::Puzzle {
-        play(&mut commands, &sounds.win, sfx_gain(&settings, &muted));
-    }
+    play(&mut commands, &sounds.win, sfx_gain(&settings, &muted));
 }
 
+/// The puzzle's lose stinger; gated like [`play_win`].
 pub fn play_lose(
     mut commands: Commands,
     sounds: Res<Sounds>,
-    screen: Res<State<Screen>>,
     settings: Res<crate::app::settings::GameSettings>,
     muted: Res<Muted>,
 ) {
-    if *screen.get() == Screen::Puzzle {
-        play(&mut commands, &sounds.lose, sfx_gain(&settings, &muted));
-    }
+    play(&mut commands, &sounds.lose, sfx_gain(&settings, &muted));
 }
 
 /// One dull knock per frame with at least one rejected placement.
 pub fn play_denied(
     mut commands: Commands,
     mut denials: MessageReader<PlacementDenied>,
-    sounds: Option<Res<Sounds>>,
+    sounds: Res<Sounds>,
     settings: Res<crate::app::settings::GameSettings>,
     muted: Res<Muted>,
 ) {
     let any = denials.read().next().is_some();
     denials.clear();
-    if any && let Some(sounds) = sounds {
+    if any {
         play(&mut commands, &sounds.denied, sfx_gain(&settings, &muted));
     }
 }
@@ -384,17 +426,30 @@ pub fn rotate_music(
     ));
 }
 
-/// The tide nudge: over the last 30 seconds of a versus round the music
-/// speeds up, ramping to +35% at the wave. Everywhere else it plays
-/// straight. Speed-only (pitch rises with it, which is the point).
+/// How much faster the theme runs by the time the wave lands.
+const SURGE_RAMP: f32 = 0.35;
+
+/// The tide nudge: across the final scramble of a versus round the music
+/// speeds up, ramping to [`SURGE_RAMP`] at the wave. Everywhere else it
+/// plays straight. Speed-only (pitch rises with it, which is the point).
+///
+/// The window is [`crate::sim::SURGE_TICKS`] and is not a number of its
+/// own here. It was, twice over, and it was the only reader that spelled
+/// it out: the gulls double, the water reddens, the HUD turns its clock
+/// red and the surge stinger sounds, all off the sim's constant, while the
+/// music ramped off a copy. Move the scramble and the copy would have gone
+/// on describing the old one, with nothing failing to compile to say so.
 pub fn surge_tempo(
     sim: Res<crate::app::Sim>,
     screen: Res<State<Screen>>,
     sinks: Query<&AudioSink, With<Music>>,
 ) {
+    let window = u64::from(crate::sim::SURGE_TICKS);
     let ramp = if *screen.get() == Screen::Versus {
         match sim.0.remaining_ticks() {
-            Some(ticks) if ticks <= 900 => 1.0 + 0.35 * (1.0 - ticks as f32 / 900.0),
+            Some(ticks) if ticks <= window => {
+                1.0 + SURGE_RAMP * (1.0 - ticks as f32 / window as f32)
+            }
             _ => 1.0,
         }
     } else {
@@ -481,27 +536,47 @@ mod tests {
         app
     }
 
-    /// Put a post down for `owner` and count the one-shots it set off.
-    fn place(app: &mut App, owner: u8) -> usize {
-        app.world_mut().write_message(SimEvent::SignpostPlaced {
-            owner,
-            pos: Vec2::ZERO,
-        });
+    /// Everything `events` sets off on one frame, counted, with the stage
+    /// swept clear for the next call.
+    ///
+    /// Every test below is some version of "how many sounds did that make",
+    /// and each used to carry its own copy of this: write, update, count,
+    /// despawn. One of them is enough, and a test that says only what it is
+    /// about is a test that can be read.
+    fn heard(app: &mut App, events: impl IntoIterator<Item = SimEvent>) -> usize {
+        for event in events {
+            app.world_mut().write_message(event);
+        }
         app.update();
-        let played = app
-            .world_mut()
-            .query_filtered::<Entity, With<AudioPlayer>>()
-            .iter(app.world())
-            .count();
         let live: Vec<Entity> = app
             .world_mut()
             .query_filtered::<Entity, With<AudioPlayer>>()
             .iter(app.world())
             .collect();
+        let played = live.len();
         for entity in live {
             app.world_mut().entity_mut(entity).despawn();
         }
         played
+    }
+
+    fn placed(owner: u8) -> SimEvent {
+        SimEvent::SignpostPlaced {
+            owner,
+            pos: Vec2::ZERO,
+        }
+    }
+
+    /// A crab of `kind` walking into `owner`'s castle.
+    fn banked(owner: u8, kind: crate::sim::CrabKind) -> SimEvent {
+        SimEvent::CrabBanked {
+            id: 0,
+            owner,
+            pos: Vec2::ZERO,
+            keep: Vec2::ZERO,
+            value: 1,
+            kind,
+        }
     }
 
     /// The rule the whole beach turns on: a post knocks when the seat that
@@ -511,9 +586,10 @@ mod tests {
     #[test]
     fn only_the_seats_at_this_machine_are_heard() {
         let mut app = table(1);
-        assert_eq!(place(&mut app, 0), 1, "your own post knocks");
+        assert_eq!(heard(&mut app, [placed(0)]), 1, "your own post knocks");
         for bot in 1..6 {
-            assert_eq!(place(&mut app, bot), 0, "seat {bot} is not at this table");
+            let played = heard(&mut app, [placed(bot)]);
+            assert_eq!(played, 0, "seat {bot} is not at this table");
         }
     }
 
@@ -524,29 +600,13 @@ mod tests {
     #[test]
     fn a_post_leaving_is_as_quiet_as_a_post_arriving() {
         let mut app = table(1);
-        let mut removed = |owner: u8| {
-            app.world_mut().write_message(SimEvent::SignpostRemoved {
-                owner,
-                pos: Vec2::ZERO,
-            });
-            app.update();
-            let played = app
-                .world_mut()
-                .query_filtered::<Entity, With<AudioPlayer>>()
-                .iter(app.world())
-                .count();
-            let live: Vec<Entity> = app
-                .world_mut()
-                .query_filtered::<Entity, With<AudioPlayer>>()
-                .iter(app.world())
-                .collect();
-            for entity in live {
-                app.world_mut().entity_mut(entity).despawn();
-            }
-            played
+        let gone = |owner| SimEvent::SignpostRemoved {
+            owner,
+            pos: Vec2::ZERO,
         };
-        assert_eq!(removed(0), 1, "your own post going is worth hearing");
-        assert_eq!(removed(3), 0, "a bot's expiring is not");
+        let played = heard(&mut app, [gone(0)]);
+        assert_eq!(played, 1, "your own post going is worth hearing");
+        assert_eq!(heard(&mut app, [gone(3)]), 0, "a bot's expiring is not");
     }
 
     /// And the third end: a post traded away at the cap. Versus defaults
@@ -555,30 +615,15 @@ mod tests {
     #[test]
     fn a_post_traded_away_is_as_quiet_as_the_other_two() {
         let mut app = table(1);
-        let mut evicted = |owner: u8| {
-            app.world_mut().write_message(SimEvent::SignpostEvicted {
-                owner,
-                pos: Vec2::ZERO,
-                dir: crate::sim::Direction::Up,
-            });
-            app.update();
-            let played = app
-                .world_mut()
-                .query_filtered::<Entity, With<AudioPlayer>>()
-                .iter(app.world())
-                .count();
-            let live: Vec<Entity> = app
-                .world_mut()
-                .query_filtered::<Entity, With<AudioPlayer>>()
-                .iter(app.world())
-                .collect();
-            for entity in live {
-                app.world_mut().entity_mut(entity).despawn();
-            }
-            played
+        let traded = |owner| SimEvent::SignpostEvicted {
+            owner,
+            pos: Vec2::ZERO,
+            dir: crate::sim::Direction::Up,
         };
-        assert_eq!(evicted(0), 1, "losing your own oldest is worth hearing");
-        assert_eq!(evicted(4), 0, "a bot trading one of its own is not");
+        let played = heard(&mut app, [traded(0)]);
+        assert_eq!(played, 1, "losing your own oldest is worth hearing");
+        let played = heard(&mut app, [traded(4)]);
+        assert_eq!(played, 0, "a bot trading one of its own is not");
     }
 
     /// Two people on one couch share a speaker, so both are heard; the
@@ -586,9 +631,64 @@ mod tests {
     #[test]
     fn a_shared_couch_hears_everybody_sitting_at_it() {
         let mut app = table(2);
-        assert_eq!(place(&mut app, 0), 1);
-        assert_eq!(place(&mut app, 1), 1, "the seat beside you is in the room");
-        assert_eq!(place(&mut app, 2), 0, "the bot is not");
+        assert_eq!(heard(&mut app, [placed(0)]), 1);
+        let played = heard(&mut app, [placed(1)]);
+        assert_eq!(played, 1, "the seat beside you is in the room");
+        assert_eq!(heard(&mut app, [placed(2)]), 0, "the bot is not");
+    }
+
+    /// A machine that answers for no seat is watching - an online
+    /// spectator, or a replay - and hears the whole beach rather than
+    /// none of it. The seat rule read "nobody" there, which took every
+    /// post out of a replay of your own round while the banks, the gulls
+    /// and the horn played on.
+    #[test]
+    fn a_watcher_hears_every_seat_because_it_holds_none() {
+        let mut app = table(0);
+        assert_eq!(heard(&mut app, [placed(0)]), 1, "somebody's post knocks");
+        let played = heard(&mut app, [placed(4)]);
+        assert_eq!(played, 1, "and so does a seat right across the beach");
+    }
+
+    /// Banks are the one cue the sim raises per crab, and a castle can take
+    /// a whole stream of them on one tick: twelve six-seat rounds of bots
+    /// put eighty-seven on a single one. Sample-aligned copies are not
+    /// eighty-seven sounds, so a seat's castle filling is one sound.
+    ///
+    /// Per seat, though, and not one for the lot: six castles filling at
+    /// once is six things happening in six places, and the beach should say
+    /// so. This is the axis the flag is kept on.
+    #[test]
+    fn a_castle_taking_a_stream_of_crabs_banks_once_for_it() {
+        use crate::sim::CrabKind;
+        let mut app = table(1);
+        let common = |owner| banked(owner, CrabKind::Common);
+        assert_eq!(heard(&mut app, [common(0)]), 1, "one crab, one sound");
+        let played = heard(&mut app, (0..40).map(|_| common(0)));
+        assert_eq!(played, 1, "and forty into the one castle is still one");
+        // Unlike a post, a bank is not gated by the seat: a rival banking
+        // is news, and hearing where it happened is the point of the pan.
+        assert_eq!(heard(&mut app, [common(3)]), 1, "a rival's castle too");
+        let played = heard(&mut app, (0..6).map(common));
+        assert_eq!(played, 6, "six castles at once are six things");
+        let played = heard(&mut app, (0..60).map(|i| common(i % 6)));
+        assert_eq!(played, 6, "however many crabs each of them took");
+    }
+
+    /// The golden chime rides along with the bank and is held to the same
+    /// seat: a castle taking two golden crabs on one tick is one arrival
+    /// worth announcing, not two of them stacked on top of each other.
+    #[test]
+    fn a_golden_arrival_chimes_once_a_castle_too() {
+        use crate::sim::CrabKind;
+        let mut app = table(1);
+        let golden = |owner| banked(owner, CrabKind::Golden);
+        let played = heard(&mut app, [golden(0)]);
+        assert_eq!(played, 2, "the bank it is, and the chime it is worth");
+        let played = heard(&mut app, [golden(0), golden(0)]);
+        assert_eq!(played, 2, "two into one castle are still one of each");
+        let played = heard(&mut app, [golden(0), golden(1)]);
+        assert_eq!(played, 4, "two castles are two of each");
     }
 
     /// The three ways to silence the theme, and how they compose. Each one
