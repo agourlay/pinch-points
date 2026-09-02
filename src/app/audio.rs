@@ -258,11 +258,12 @@ pub fn play_events(
     let pan = |pos: &Vec2| pan_pos(half_width, *pos);
     let (mut placed, mut removed, mut evicted) = (false, false, false);
     // Banks are the busiest thing on the beach, and the one cue the sim
-    // raises per crab rather than per act: twelve six-seat rounds of bots
-    // put eighty-seven of them on a single tick, with two or three on a
-    // tick all round. Eighty-seven sample-aligned copies at the spatial
-    // gain are not eighty-seven sounds, they are one blare and eighty-seven
-    // sinks to mix it from.
+    // raises per crab rather than per act. Twelve six-seat rounds of bots,
+    // counted through the differ itself: eight into one castle on a single
+    // tick, and two to four of them a couple of hundred times over sixty
+    // thousand ticks. Sample-aligned copies at the spatial gain are not
+    // eight sounds, they are one loud dirty one and eight sinks to mix it
+    // from.
     //
     // Per seat rather than one flag for the lot, because unlike posts these
     // are distinguishable: a seat's crabs walk into that seat's castle, so
@@ -651,9 +652,9 @@ mod tests {
     }
 
     /// Banks are the one cue the sim raises per crab, and a castle can take
-    /// a whole stream of them on one tick: twelve six-seat rounds of bots
-    /// put eighty-seven on a single one. Sample-aligned copies are not
-    /// eighty-seven sounds, so a seat's castle filling is one sound.
+    /// a stream of them on one tick: twelve six-seat rounds of bots put
+    /// eight into one castle on a single tick. Sample-aligned copies are
+    /// not eight sounds, so a seat's castle filling is one sound.
     ///
     /// Per seat, though, and not one for the lot: six castles filling at
     /// once is six things happening in six places, and the beach should say
