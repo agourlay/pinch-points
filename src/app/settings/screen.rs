@@ -269,25 +269,16 @@ pub fn enter_settings(
                             ..default()
                         })
                         .with_children(|side| {
-                            for (group, rows) in column {
-                                side.spawn((
-                                    Text::new(group.label(tr)),
-                                    TextFont {
-                                        font_size: FontSize::Px(menu_ui::type_scale::BODY),
-                                        ..default()
-                                    },
-                                    TextColor(palette::GOLD.with_alpha(0.55)),
-                                    Node {
-                                        margin: UiRect::top(Val::Px(if index == 0 {
-                                            0.0
-                                        } else {
-                                            10.0
-                                        }))
-                                        .with_bottom(Val::Px(3.0))
-                                        .with_left(Val::Px(10.0)),
-                                        ..default()
-                                    },
-                                ));
+                            // `at`, not `index`: the running index counts
+                            // rows across the whole card, and whether a
+                            // heading wants air above it is a question
+                            // about its own column. Asked of the row
+                            // counter, the right column's first heading
+                            // was never the first anything, so it took the
+                            // 10px meant to separate two groups and the
+                            // two columns started ten pixels apart.
+                            for (at, (group, rows)) in column.iter().enumerate() {
+                                side.spawn(menu_ui::heading(group.label(tr), at == 0));
                                 for row in *rows {
                                     let flag = (*row == Row::Language)
                                         .then(|| art.flag(settings.language));
