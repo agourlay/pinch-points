@@ -12,7 +12,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub const IDLE_ROW: Color = Color::srgb(0.66, 0.54, 0.17);
 /// The highlighted row in every list menu.
 pub const SELECTED_ROW: Color = Color::srgb(0.95, 0.9, 0.6);
-/// Dark card/panel background used by every overlay.
+/// The in-round chrome's fill: the sidebar cards, the event feed, the
+/// announcement banner. Opaque, because what is behind it is the board.
+///
+/// Not the browsing screens' card - that is [`CARD_FILL`], which is a
+/// different dark for a different reason: it hangs over the bright,
+/// moving postcard and needs both the blue-black and the 0.95 to sit
+/// still against it. Two fills, one for each thing a card can stand on.
 pub const CARD_BG: Color = Color::srgb(0.07, 0.08, 0.11);
 /// Trophy gold: titles, crowns, champions, the daily best.
 pub const GOLD: Color = Color::srgb(0.96, 0.83, 0.35);
@@ -78,6 +84,14 @@ pub const PIP_ON: Color = Color::srgba(1.0, 1.0, 1.0, 0.95);
 pub const PIP_OFF: Color = Color::srgba(1.0, 1.0, 1.0, 0.25);
 /// The seat name on a score chip.
 pub const CHIP_NAME: Color = Color::srgba(1.0, 1.0, 1.0, 0.92);
+/// The brightest text in the round chrome: the header's labels, and the
+/// score on a chip.
+///
+/// Full white and meant to be, which is the whole reason it is written
+/// down. A chip carries three whites - the name at 0.92, the tier pips at
+/// 0.95, and the number, which is the thing being read across a room -
+/// and the brightest of the three was the one nobody had named.
+pub const HUD_INK: Color = Color::WHITE;
 
 // --- the title sign ---------------------------------------------------------
 
@@ -96,8 +110,6 @@ pub const SIGN_FILL: Color = Color::srgba(0.05, 0.09, 0.14, 0.96);
 pub const CLOCK_CALM: Color = Color::srgb(0.95, 0.93, 0.84);
 pub const CLOCK_RED: Color = Color::srgb(0.96, 0.25, 0.18);
 pub const CLOCK_RED_BRIGHT: Color = Color::srgb(1.0, 0.55, 0.25);
-/// The big clock digits on the sidebar card.
-pub const SIDE_CLOCK: Color = Color::srgb(0.96, 0.93, 0.82);
 
 // --- the stage grid ---------------------------------------------------------
 

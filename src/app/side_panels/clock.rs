@@ -1,5 +1,11 @@
-//! The sidebar's big tide clock: the same digits and colour ramp as the
-//! puzzle clock up top, in a card of its own.
+//! The sidebar's big tide clock: the same reading and the same colour
+//! ramp as the clock up top, in a card of its own and at its own size.
+//!
+//! Both go through `hud::clock_into` and `hud::clock_color`, so they say
+//! the same thing and turn red together. What they do not share is the
+//! type: this one is the headline of a narrow column with nothing else in
+//! its card, where the header's has a whole strip to sit in. The doc used
+//! to claim "the same digits", which read as the same size and was not.
 
 use super::card;
 use crate::app::Sim;
@@ -11,6 +17,12 @@ use bevy::prelude::*;
 pub struct SideClock;
 
 const CLOCK_TOP: f32 = 10.0;
+
+/// Bigger than [`crate::app::menu_ui::type_scale::DISPLAY`], which the
+/// header's clock uses, and off the scale on purpose: it is the only
+/// thing in its card and the one number a player checks from across a
+/// room. The card is 64 tall and this is what fills it.
+const CLOCK_PX: f32 = 44.0;
 
 /// Drive the sidebar clock: mm:ss, red for the closing stretch of the
 /// round and pulsing for the last of it. Versus rounds are two minutes and
@@ -46,10 +58,14 @@ pub(super) fn spawn_clock(root: &mut ChildSpawnerCommands) {
                 SideClock,
                 Text::new(""),
                 TextFont {
-                    font_size: FontSize::Px(44.0),
+                    font_size: FontSize::Px(CLOCK_PX),
                     ..default()
                 },
-                TextColor(crate::app::palette::SIDE_CLOCK),
+                // The calm colour, which is what `update_side_clock` will
+                // write on the first frame anyway. It used to spawn in a
+                // `SIDE_CLOCK` of its own - a second calm ink, a percent
+                // away from this one, that no frame ever drew.
+                TextColor(crate::app::palette::CLOCK_CALM),
             ));
         });
 }
