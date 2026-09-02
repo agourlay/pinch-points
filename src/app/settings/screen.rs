@@ -212,6 +212,14 @@ pub struct SettingsUi;
 /// at a full one.
 const LABEL_W: f32 = 252.0;
 const VALUE_W: f32 = 322.0;
+/// A point under [`menu_ui::type_scale::ROW`], and the only list card in
+/// the game that is.
+///
+/// Not drift: it is the size at which two columns of rows fit a
+/// 1280-wide window in every language. At the scale's 19 the German duos
+/// value runs 332px into a 322px cell, and the ten pixels the cell would
+/// need are twenty on the card, which has eighteen to give. Both halves
+/// are held by tests below; this line is the third thing they hold.
 const ROW_FONT: f32 = 18.0;
 
 /// The language row's flag chip: 3:2, the ratio the art is drawn at, and
@@ -238,70 +246,58 @@ pub fn enter_settings(
     commands
         .spawn((
             SettingsUi,
-            // Centred between the bars, like every other list screen.
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(52.0),
-                bottom: Val::Px(52.0),
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                row_gap: Val::Px(10.0),
-                ..default()
-            },
+            // Centred between the bars, like every other list screen -
+            // through the frame that says so, rather than a copy of its
+            // numbers.
+            menu_ui::between_bars(),
         ))
         .with_children(|wrap| {
-            wrap.spawn((
-                Node {
-                    column_gap: Val::Px(28.0),
-                    padding: UiRect::axes(Val::Px(22.0), Val::Px(16.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    border_radius: BorderRadius::all(Val::Px(16.0)),
-                    ..default()
-                },
-                BackgroundColor(palette::CARD_FILL),
-                menu_ui::ShoreCard,
-                BorderColor::all(palette::CARD_EDGE),
-            ))
-            .with_children(|card| {
-                for column in SECTIONS {
-                    card.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(2.0),
-                        ..default()
-                    })
-                    .with_children(|side| {
-                        for (group, rows) in column {
-                            side.spawn((
-                                Text::new(group.label(tr)),
-                                TextFont {
-                                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
-                                    ..default()
-                                },
-                                TextColor(palette::GOLD.with_alpha(0.55)),
-                                Node {
-                                    margin: UiRect::top(Val::Px(if index == 0 {
-                                        0.0
-                                    } else {
-                                        10.0
-                                    }))
-                                    .with_bottom(Val::Px(3.0))
-                                    .with_left(Val::Px(10.0)),
-                                    ..default()
-                                },
-                            ));
-                            for row in *rows {
-                                let flag =
-                                    (*row == Row::Language).then(|| art.flag(settings.language));
-                                spawn_setting_row(side, index, flag);
-                                index += 1;
+            // The shared card, laid out sideways: this one holds columns
+            // of rows rather than a single run of them. Built by hand
+            // before, which is how it came to be the only list card in the
+            // game standing flat on the sand with no shadow under it.
+            let (mark, mut node, fill, edge, shadow) = menu_ui::screen_card();
+            node.flex_direction = FlexDirection::Row;
+            node.align_items = AlignItems::FlexStart;
+            node.column_gap = Val::Px(28.0);
+            wrap.spawn((mark, node, fill, edge, shadow))
+                .with_children(|card| {
+                    for column in SECTIONS {
+                        card.spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(2.0),
+                            ..default()
+                        })
+                        .with_children(|side| {
+                            for (group, rows) in column {
+                                side.spawn((
+                                    Text::new(group.label(tr)),
+                                    TextFont {
+                                        font_size: FontSize::Px(menu_ui::type_scale::BODY),
+                                        ..default()
+                                    },
+                                    TextColor(palette::GOLD.with_alpha(0.55)),
+                                    Node {
+                                        margin: UiRect::top(Val::Px(if index == 0 {
+                                            0.0
+                                        } else {
+                                            10.0
+                                        }))
+                                        .with_bottom(Val::Px(3.0))
+                                        .with_left(Val::Px(10.0)),
+                                        ..default()
+                                    },
+                                ));
+                                for row in *rows {
+                                    let flag = (*row == Row::Language)
+                                        .then(|| art.flag(settings.language));
+                                    spawn_setting_row(side, index, flag);
+                                    index += 1;
+                                }
                             }
-                        }
-                    });
-                }
-            });
+                        });
+                    }
+                });
             // Read-only controller mapping reference, under the card.
             for line in [tr.pad_help1, tr.pad_help2] {
                 // On its own pill: below the card these lines sit on open

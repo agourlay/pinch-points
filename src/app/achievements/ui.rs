@@ -339,148 +339,142 @@ pub fn enter_achievements(
     commands
         .spawn((
             AchievementsUi,
-            // Between the bars and centred in what is left, the same frame
-            // the stage list sits in.
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(50.0),
-                bottom: Val::Px(50.0),
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
+            // Between the bars and centred in what is left, the same
+            // frame the stage list sits in - which it now literally is.
+            // It said so while sitting two pixels inside it.
+            crate::app::menu_ui::between_bars(),
         ))
         .with_children(|wrap| {
-            wrap.spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: Val::Px(8.0),
-                    padding: UiRect::axes(Val::Px(20.0), Val::Px(14.0)),
-                    border: UiRect::all(Val::Px(1.0)),
-                    border_radius: BorderRadius::all(Val::Px(16.0)),
-                    ..default()
-                },
-                BackgroundColor(palette::CARD_FILL),
-                crate::app::menu_ui::ShoreCard,
-                BorderColor::all(palette::CARD_EDGE),
-            ))
-            .with_children(|card| {
-                let earned = ACHIEVEMENTS
-                    .iter()
-                    .filter(|a| unlocked.0.contains(a.id))
-                    .count();
-                card.spawn((
-                    Text::new(fill(
-                        tr.ach_progress,
-                        &[
-                            ("a", &earned.to_string()),
-                            ("b", &ACHIEVEMENTS.len().to_string()),
-                        ],
-                    )),
-                    TextFont {
-                        font_size: FontSize::Px(menu_ui::type_scale::ROW),
+            // The shared card, with room between the count, the shelf and
+            // the key. Built by hand before, with its own padding and no
+            // shadow: the same card, sitting differently.
+            // `bg` and not `fill`: this file's `fill` is the one that puts
+            // words into a translated string, and it is used all through
+            // the card below.
+            let (mark, mut node, bg, edge, shadow) = crate::app::menu_ui::screen_card();
+            node.row_gap = Val::Px(8.0);
+            wrap.spawn((mark, node, bg, edge, shadow))
+                .with_children(|card| {
+                    let earned = ACHIEVEMENTS
+                        .iter()
+                        .filter(|a| unlocked.0.contains(a.id))
+                        .count();
+                    card.spawn((
+                        Text::new(fill(
+                            tr.ach_progress,
+                            &[
+                                ("a", &earned.to_string()),
+                                ("b", &ACHIEVEMENTS.len().to_string()),
+                            ],
+                        )),
+                        TextFont {
+                            font_size: FontSize::Px(menu_ui::type_scale::ROW),
+                            ..default()
+                        },
+                        TextColor(palette::PARCHMENT.with_alpha(0.75)),
+                    ));
+                    // The shelf and its scrollbar ride together: a list that
+                    // stops at a clean row boundary looks finished, and the
+                    // prompt in the corner is not where anyone is looking.
+                    card.spawn(Node {
+                        column_gap: Val::Px(BAR_GAP),
+                        align_items: AlignItems::FlexStart,
                         ..default()
-                    },
-                    TextColor(palette::PARCHMENT.with_alpha(0.75)),
-                ));
-                // The shelf and its scrollbar ride together: a list that
-                // stops at a clean row boundary looks finished, and the
-                // prompt in the corner is not where anyone is looking.
-                card.spawn(Node {
-                    column_gap: Val::Px(BAR_GAP),
-                    align_items: AlignItems::FlexStart,
-                    ..default()
-                })
-                .with_children(|band| {
-                    band.spawn((
-                        Shelf,
-                        Node {
-                            // The viewport. Its child is as tall as the
-                            // trophies make it and slides behind this.
-                            max_height: Val::Px(SHELF_HEIGHT),
-                            overflow: Overflow::scroll_y(),
-                            ..default()
-                        },
-                        ScrollPosition::default(),
-                    ))
-                    .with_children(|shelf| {
-                        shelf
-                            .spawn(Node {
-                                column_gap: Val::Px(16.0),
-                                ..default()
-                            })
-                            .with_children(|grid| {
-                                for chunk in 0..COLS {
-                                    grid.spawn(Node {
-                                        flex_direction: FlexDirection::Column,
-                                        row_gap: Val::Px(2.0),
-                                        ..default()
-                                    })
-                                    .with_children(|column| {
-                                        let first = chunk * per_column;
-                                        let last = (first + per_column).min(ACHIEVEMENTS.len());
-                                        for (index, achievement) in
-                                            ACHIEVEMENTS.iter().enumerate().take(last).skip(first)
-                                        {
-                                            let done = unlocked.0.contains(achievement.id);
-                                            let (now, goal) = achievement.progress(&stats);
-                                            spawn_trophy(column, tr, index, done, now, goal);
-                                        }
-                                    });
-                                }
-                            });
-                    });
-                    // The track, and the thumb that says how far down the
-                    // shelf you are. Placed by `update_shelf_scrollbar`,
-                    // which is the only thing that knows how tall the rows
-                    // turned out to be.
-                    band.spawn((
-                        Node {
-                            width: Val::Px(BAR_WIDTH),
-                            height: Val::Px(SHELF_HEIGHT),
-                            flex_shrink: 0.0,
-                            border_radius: BorderRadius::all(Val::Px(BAR_WIDTH / 2.0)),
-                            ..default()
-                        },
-                        BackgroundColor(palette::PARCHMENT.with_alpha(0.12)),
-                    ))
-                    .with_children(|track| {
-                        track.spawn((
-                            ShelfThumb,
+                    })
+                    .with_children(|band| {
+                        band.spawn((
+                            Shelf,
                             Node {
-                                position_type: PositionType::Absolute,
+                                // The viewport. Its child is as tall as the
+                                // trophies make it and slides behind this.
+                                max_height: Val::Px(SHELF_HEIGHT),
+                                overflow: Overflow::scroll_y(),
+                                ..default()
+                            },
+                            ScrollPosition::default(),
+                        ))
+                        .with_children(|shelf| {
+                            shelf
+                                .spawn(Node {
+                                    column_gap: Val::Px(16.0),
+                                    ..default()
+                                })
+                                .with_children(|grid| {
+                                    for chunk in 0..COLS {
+                                        grid.spawn(Node {
+                                            flex_direction: FlexDirection::Column,
+                                            row_gap: Val::Px(2.0),
+                                            ..default()
+                                        })
+                                        .with_children(
+                                            |column| {
+                                                let first = chunk * per_column;
+                                                let last =
+                                                    (first + per_column).min(ACHIEVEMENTS.len());
+                                                for (index, achievement) in ACHIEVEMENTS
+                                                    .iter()
+                                                    .enumerate()
+                                                    .take(last)
+                                                    .skip(first)
+                                                {
+                                                    let done = unlocked.0.contains(achievement.id);
+                                                    let (now, goal) = achievement.progress(&stats);
+                                                    spawn_trophy(
+                                                        column, tr, index, done, now, goal,
+                                                    );
+                                                }
+                                            },
+                                        );
+                                    }
+                                });
+                        });
+                        // The track, and the thumb that says how far down the
+                        // shelf you are. Placed by `update_shelf_scrollbar`,
+                        // which is the only thing that knows how tall the rows
+                        // turned out to be.
+                        band.spawn((
+                            Node {
                                 width: Val::Px(BAR_WIDTH),
                                 height: Val::Px(SHELF_HEIGHT),
+                                flex_shrink: 0.0,
                                 border_radius: BorderRadius::all(Val::Px(BAR_WIDTH / 2.0)),
                                 ..default()
                             },
-                            BackgroundColor(palette::GOLD.with_alpha(0.7)),
-                        ));
+                            BackgroundColor(palette::PARCHMENT.with_alpha(0.12)),
+                        ))
+                        .with_children(|track| {
+                            track.spawn((
+                                ShelfThumb,
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    width: Val::Px(BAR_WIDTH),
+                                    height: Val::Px(SHELF_HEIGHT),
+                                    border_radius: BorderRadius::all(Val::Px(BAR_WIDTH / 2.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(palette::GOLD.with_alpha(0.7)),
+                            ));
+                        });
                     });
+                    let footer = fill(
+                        tr.stats_footer,
+                        &[
+                            ("banked", &stats.banked.to_string()),
+                            ("golden", &stats.golden.to_string()),
+                            ("wins", &stats.wins.to_string()),
+                            ("rounds", &stats.rounds.to_string()),
+                            ("puzzles", &stats.puzzles.to_string()),
+                        ],
+                    );
+                    card.spawn((
+                        Text::new(footer),
+                        TextFont {
+                            font_size: FontSize::Px(menu_ui::type_scale::BODY),
+                            ..default()
+                        },
+                        TextColor(palette::PARCHMENT.with_alpha(0.6)),
+                    ));
                 });
-                let footer = fill(
-                    tr.stats_footer,
-                    &[
-                        ("banked", &stats.banked.to_string()),
-                        ("golden", &stats.golden.to_string()),
-                        ("wins", &stats.wins.to_string()),
-                        ("rounds", &stats.rounds.to_string()),
-                        ("puzzles", &stats.puzzles.to_string()),
-                    ],
-                );
-                card.spawn((
-                    Text::new(footer),
-                    TextFont {
-                        font_size: FontSize::Px(menu_ui::type_scale::BODY),
-                        ..default()
-                    },
-                    TextColor(palette::PARCHMENT.with_alpha(0.6)),
-                ));
-            });
         });
 }
 

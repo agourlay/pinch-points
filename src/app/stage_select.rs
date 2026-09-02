@@ -269,16 +269,10 @@ pub fn enter_stage_select(
             // Fills the space between the header and the prompt line, and
             // centres the grid in it: the list is the whole screen here.
             Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(52.0),
-                bottom: Val::Px(52.0),
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
+                // Wider than the shared frame's, and said out loud: the
+                // grid and its key want air between them.
                 row_gap: Val::Px(12.0),
-                ..default()
+                ..crate::app::menu_ui::between_bars()
             },
         ))
         .with_children(|wrap| {
@@ -287,145 +281,141 @@ pub fn enter_stage_select(
                 ..default()
             })
             .with_children(|line| {
-                line.spawn((
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        row_gap: Val::Px(12.0),
-                        padding: UiRect::axes(Val::Px(28.0), Val::Px(20.0)),
-                        border: UiRect::all(Val::Px(1.0)),
-                        border_radius: BorderRadius::all(Val::Px(16.0)),
-                        ..default()
-                    },
-                    BackgroundColor(palette::CARD_FILL),
-                    crate::app::menu_ui::ShoreCard,
-                    BorderColor::all(palette::CARD_EDGE),
-                ))
-                .with_children(|column| {
-                    // The count and its bar are the shipped campaign's, which is
-                    // the thing that can be finished. Levels the player keeps
-                    // adding would make the denominator a moving target, and
-                    // "82 of 93" would read as an unfinished campaign forever.
-                    let shipped = 0..campaign.builtins;
-                    let total = shipped.len();
-                    let done = progress.cleared_in(&campaign, shipped);
-                    column.spawn((
-                        Text::new(fill(
-                            tr.stage_progress,
-                            &[("a", &done.to_string()), ("b", &total.to_string())],
-                        )),
-                        TextFont {
-                            font_size: FontSize::Px(menu_ui::type_scale::ROW),
-                            ..default()
-                        },
-                        TextColor(palette::PARCHMENT.with_alpha(0.75)),
-                    ));
-                    // The same count as a bar. Eighty-two gold tiles scattered
-                    // through a grid do not add up to a feeling of progress on
-                    // their own; one line across the top does.
-                    let filled = if total == 0 {
-                        0.0
-                    } else {
-                        done as f32 / total as f32 * 100.0
-                    };
-                    column.spawn((
-                        Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(4.0),
-                            border_radius: BorderRadius::all(Val::Px(2.0)),
-                            ..default()
-                        },
-                        BackgroundColor(palette::BAR_TRACK),
-                        children![(
+                // The shared card, holding a grid rather than a list, so
+                // it wants more air around it than a run of rows does.
+                // Built by hand before, and so the only one of the three
+                // big list screens with no shadow under it.
+                // `bg` and not `fill`: this file's `fill` is the one that
+                // puts words into a translated string.
+                let (mark, mut node, bg, edge, shadow) = crate::app::menu_ui::screen_card();
+                node.row_gap = Val::Px(12.0);
+                node.padding = UiRect::axes(Val::Px(28.0), Val::Px(20.0));
+                line.spawn((mark, node, bg, edge, shadow))
+                    .with_children(|column| {
+                        // The count and its bar are the shipped campaign's, which is
+                        // the thing that can be finished. Levels the player keeps
+                        // adding would make the denominator a moving target, and
+                        // "82 of 93" would read as an unfinished campaign forever.
+                        let shipped = 0..campaign.builtins;
+                        let total = shipped.len();
+                        let done = progress.cleared_in(&campaign, shipped);
+                        column.spawn((
+                            Text::new(fill(
+                                tr.stage_progress,
+                                &[("a", &done.to_string()), ("b", &total.to_string())],
+                            )),
+                            TextFont {
+                                font_size: FontSize::Px(menu_ui::type_scale::ROW),
+                                ..default()
+                            },
+                            TextColor(palette::PARCHMENT.with_alpha(0.75)),
+                        ));
+                        // The same count as a bar. Eighty-two gold tiles scattered
+                        // through a grid do not add up to a feeling of progress on
+                        // their own; one line across the top does.
+                        let filled = if total == 0 {
+                            0.0
+                        } else {
+                            done as f32 / total as f32 * 100.0
+                        };
+                        column.spawn((
                             Node {
-                                width: Val::Percent(filled),
-                                height: Val::Percent(100.0),
+                                width: Val::Percent(100.0),
+                                height: Val::Px(4.0),
                                 border_radius: BorderRadius::all(Val::Px(2.0)),
                                 ..default()
                             },
-                            BackgroundColor(palette::GOLD),
-                        )],
-                    ));
-                    // The same rows the cursor will walk, drawn from the one
-                    // layout the screen agreed on above.
-                    let layout = &list.rows;
-                    // The player's own levels are a shelf under the campaign,
-                    // with a label of their own: they are not stage eighty-three.
-                    let has_custom = campaign.builtins < campaign.levels.len();
-                    let heading = if has_custom { HEADING_ROOM } else { 0.0 };
-                    let edge = tile(layout.len(), heading);
-                    column
-                        .spawn(Node {
-                            flex_direction: FlexDirection::Column,
-                            align_items: AlignItems::Center,
-                            row_gap: Val::Px(GAP),
-                            ..default()
-                        })
-                        .with_children(|grid| {
-                            for row in layout {
-                                if has_custom && row.start == campaign.builtins {
-                                    spawn_shelf_heading(grid, tr, &campaign, &progress);
-                                }
-                                grid.spawn(Node {
-                                    column_gap: Val::Px(GAP),
-                                    ..default()
-                                })
-                                .with_children(|line| {
-                                    for index in row.clone() {
-                                        spawn_tile(line, &campaign, &progress, index, edge);
-                                    }
-                                });
-                            }
-                        });
-                    // The key to the edges. Colours nobody can decode are just
-                    // noise, and the number under each swatch is the whole
-                    // rule: that many signposts, no more.
-                    column
-                        .spawn(Node {
-                            column_gap: Val::Px(14.0),
-                            align_items: AlignItems::Center,
-                            margin: UiRect::top(Val::Px(4.0)),
-                            ..default()
-                        })
-                        .with_children(|key| {
-                            key.spawn((
-                                Text::new(tr.stage_key.to_string()),
-                                TextFont {
-                                    font_size: FontSize::Px(menu_ui::type_scale::FINE),
+                            BackgroundColor(palette::BAR_TRACK),
+                            children![(
+                                Node {
+                                    width: Val::Percent(filled),
+                                    height: Val::Percent(100.0),
+                                    border_radius: BorderRadius::all(Val::Px(2.0)),
                                     ..default()
                                 },
-                                TextColor(palette::PARCHMENT.with_alpha(0.45)),
-                            ));
-                            for posts in KEY_POSTS {
-                                key.spawn(Node {
-                                    column_gap: Val::Px(5.0),
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                })
-                                .with_children(|item| {
-                                    item.spawn((
-                                        Node {
-                                            width: Val::Px(10.0),
-                                            height: Val::Px(10.0),
-                                            border: UiRect::all(Val::Px(2.0)),
-                                            border_radius: BorderRadius::all(Val::Px(3.0)),
-                                            ..default()
-                                        },
-                                        BackgroundColor(Color::NONE),
-                                        BorderColor::all(difficulty_ink(posts)),
-                                    ));
-                                    item.spawn((
-                                        Text::new(posts.to_string()),
-                                        TextFont {
-                                            font_size: FontSize::Px(menu_ui::type_scale::FINE),
-                                            ..default()
-                                        },
-                                        TextColor(palette::PARCHMENT.with_alpha(0.60)),
-                                    ));
-                                });
-                            }
-                        });
-                });
+                                BackgroundColor(palette::GOLD),
+                            )],
+                        ));
+                        // The same rows the cursor will walk, drawn from the one
+                        // layout the screen agreed on above.
+                        let layout = &list.rows;
+                        // The player's own levels are a shelf under the campaign,
+                        // with a label of their own: they are not stage eighty-three.
+                        let has_custom = campaign.builtins < campaign.levels.len();
+                        let heading = if has_custom { HEADING_ROOM } else { 0.0 };
+                        let edge = tile(layout.len(), heading);
+                        column
+                            .spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                row_gap: Val::Px(GAP),
+                                ..default()
+                            })
+                            .with_children(|grid| {
+                                for row in layout {
+                                    if has_custom && row.start == campaign.builtins {
+                                        spawn_shelf_heading(grid, tr, &campaign, &progress);
+                                    }
+                                    grid.spawn(Node {
+                                        column_gap: Val::Px(GAP),
+                                        ..default()
+                                    })
+                                    .with_children(|line| {
+                                        for index in row.clone() {
+                                            spawn_tile(line, &campaign, &progress, index, edge);
+                                        }
+                                    });
+                                }
+                            });
+                        // The key to the edges. Colours nobody can decode are just
+                        // noise, and the number under each swatch is the whole
+                        // rule: that many signposts, no more.
+                        column
+                            .spawn(Node {
+                                column_gap: Val::Px(14.0),
+                                align_items: AlignItems::Center,
+                                margin: UiRect::top(Val::Px(4.0)),
+                                ..default()
+                            })
+                            .with_children(|key| {
+                                key.spawn((
+                                    Text::new(tr.stage_key.to_string()),
+                                    TextFont {
+                                        font_size: FontSize::Px(menu_ui::type_scale::FINE),
+                                        ..default()
+                                    },
+                                    TextColor(palette::PARCHMENT.with_alpha(0.45)),
+                                ));
+                                for posts in KEY_POSTS {
+                                    key.spawn(Node {
+                                        column_gap: Val::Px(5.0),
+                                        align_items: AlignItems::Center,
+                                        ..default()
+                                    })
+                                    .with_children(|item| {
+                                        item.spawn((
+                                            Node {
+                                                width: Val::Px(10.0),
+                                                height: Val::Px(10.0),
+                                                border: UiRect::all(Val::Px(2.0)),
+                                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(Color::NONE),
+                                            BorderColor::all(difficulty_ink(posts)),
+                                        ));
+                                        item.spawn((
+                                            Text::new(posts.to_string()),
+                                            TextFont {
+                                                font_size: FontSize::Px(menu_ui::type_scale::FINE),
+                                                ..default()
+                                            },
+                                            TextColor(palette::PARCHMENT.with_alpha(0.60)),
+                                        ));
+                                    });
+                                }
+                            });
+                    });
             });
             // Both lines sit under the card, not in it. They change with
             // every cursor move, and inside the card they would size it:
