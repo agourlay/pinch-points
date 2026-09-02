@@ -12,6 +12,7 @@
 //! the PRNG is (see [`Pcg32`](crate::sim::Pcg32)).
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 /// Codes wider than this are not allowed by the format; the dictionary is
 /// cleared when it fills up.
@@ -73,24 +74,31 @@ pub fn compress(symbols: &[u8], min_code_bits: u8) -> Vec<u8> {
     };
     let mut prefix = u16::from(first);
     for symbol in symbols {
-        if let Some(&code) = dict.get(&(prefix, symbol)) {
-            prefix = code;
-            continue;
-        }
-        bits.write(prefix, width);
-        if next < 1 << MAX_CODE_BITS {
-            dict.insert((prefix, symbol), next);
-            next += 1;
-            if next > (1u16 << width) && width < MAX_CODE_BITS {
-                width += 1;
+        // One hash per pair: the lookup and the insert that follows a miss
+        // are the same `entry` call.
+        match dict.entry((prefix, symbol)) {
+            Entry::Occupied(known) => {
+                prefix = *known.get();
+                continue;
             }
-        } else {
-            // Full: start over, exactly as the decoder will on seeing this.
-            bits.write(clear, width);
-            dict.clear();
-            next = end + 1;
-            width = min_code_bits + 1;
+            Entry::Vacant(slot) => {
+                bits.write(prefix, width);
+                if next < 1 << MAX_CODE_BITS {
+                    slot.insert(next);
+                    next += 1;
+                    if next > (1u16 << width) && width < MAX_CODE_BITS {
+                        width += 1;
+                    }
+                    prefix = u16::from(symbol);
+                    continue;
+                }
+            }
         }
+        // Full: start over, exactly as the decoder will on seeing this.
+        bits.write(clear, width);
+        dict.clear();
+        next = end + 1;
+        width = min_code_bits + 1;
         prefix = u16::from(symbol);
     }
     bits.write(prefix, width);

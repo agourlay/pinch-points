@@ -387,10 +387,14 @@ fn unlock_new(
 ) {
     let tr = settings.tr();
     for (index, achievement) in ACHIEVEMENTS.iter().enumerate() {
-        if unlocked.0.contains(achievement.id) || !achievement.met(stats) {
+        // One hash per achievement: `insert` says whether the id was new,
+        // so the `contains` that used to guard it is gone. Meeting the
+        // threshold is a fn-pointer call and a compare, cheaper than
+        // hashing the id, so it goes first and keeps the set untouched
+        // for an achievement the player has not earned yet.
+        if !achievement.met(stats) || !unlocked.0.insert(achievement.id) {
             continue;
         }
-        unlocked.0.insert(achievement.id);
         spawn_toast(commands, tr.ach_names[index], tr.ach_descs[index]);
         if let Some(sounds) = sounds {
             play_chime(commands, sounds, sfx_gain(settings, muted));
