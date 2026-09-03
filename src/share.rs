@@ -300,6 +300,26 @@ mod tests {
         assert!(swaps > 0, "the sample code had no adjacent pair to swap");
     }
 
+    /// A character past ASCII whose low byte spells an alphabet letter is
+    /// not that letter: the lookup used to truncate and read it as one.
+    #[test]
+    fn a_character_past_ascii_is_not_in_the_alphabet() {
+        for &letter in ALPHABET {
+            assert!(index_of(char::from(letter)).is_some());
+            let lookalike = char::from_u32(u32::from(letter) + 0x100).expect("a char");
+            assert_eq!(
+                index_of(lookalike),
+                None,
+                "{lookalike:?} read as {letter:?}"
+            );
+        }
+        let code = encode(Kind::Beach, b"seed 12345");
+        let first = code.chars().next().expect("a code");
+        let lookalike = char::from_u32(u32::from(first) + 0x100).expect("a char");
+        let forged = code.replacen(first, &lookalike.to_string(), 1);
+        assert_eq!(decode(&forged), None);
+    }
+
     #[test]
     fn what_is_not_a_code_is_refused() {
         for junk in [

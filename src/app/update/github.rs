@@ -333,6 +333,21 @@ mod tests {
 
     /// What is not a release: GitHub's 404 body, a tag that is not a
     /// version, a page that is not https, and nonsense.
+    /// The one string that leaves the process goes to a browser, or on
+    /// Windows to `cmd`, which expands `%NAME%`. A release page of ours
+    /// has never needed an escape, so a percent is refused outright.
+    #[test]
+    fn a_release_page_carries_no_percent() {
+        assert!(is_release_page(
+            "https://github.com/agourlay/pinch-points/releases/tag/v1.2.3"
+        ));
+        assert!(!is_release_page(
+            "https://github.com/agourlay/pinch-points/releases/tag/%41"
+        ));
+        assert!(!is_release_page("http://github.com/x/y"), "https only");
+        assert!(!is_release_page("https://github.com/x/y?a=b"), "no query");
+    }
+
     #[test]
     fn what_is_not_a_release() {
         assert_eq!(

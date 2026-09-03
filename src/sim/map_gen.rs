@@ -354,6 +354,25 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
 mod tests {
     use super::*;
 
+    /// Asked about a custom arena of any size the level format allows, the
+    /// spots must come back rather than subtract past zero: a 2x1 beach
+    /// off the shelf once took the round down on its first frame.
+    #[test]
+    fn castle_spots_never_subtract_past_zero() {
+        for (w, h) in [(1u8, 1u8), (2, 1), (1, 2), (3, 3), (4, 2)] {
+            let spots = castle_spots(w, h);
+            assert_eq!(spots.len(), MAX_PLAYERS);
+            for (x, y) in spots {
+                assert!(x <= w && y <= h, "({x},{y}) on a {w}x{h} board");
+            }
+        }
+        assert_eq!(
+            castle_spots(9, 7)[1],
+            (7, 5),
+            "and a real board is unchanged"
+        );
+    }
+
     #[test]
     fn classic_arena_seats_castles_in_join_order() {
         for seats in 2..=4u8 {

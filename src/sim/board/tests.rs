@@ -591,6 +591,21 @@ fn gulls_eat_across_the_seam_of_a_wrapping_board() {
     }
 }
 
+/// The fold is per axis: the top and bottom edges are a seam too.
+#[test]
+fn gulls_eat_across_the_top_and_bottom_seam_as_well() {
+    for wrap in [false, true] {
+        let mut board = Board::new(3, 5, 0);
+        board.set_wrap(wrap);
+        common(&mut board, 1, 4, Down, Handedness::Left);
+        board.spawn_gull(1, 0, Up);
+        board.crabs[0].progress = 120;
+        board.gulls[0].progress = 120;
+        board.gulls_eat();
+        assert_eq!(board.crabs.is_empty(), wrap, "wrap {wrap}");
+    }
+}
+
 /// A lured crab takes the short way to the castle, which on a wrapping
 /// board can be through the seam.
 #[test]

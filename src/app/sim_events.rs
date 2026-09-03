@@ -529,6 +529,36 @@ mod tests {
         );
     }
 
+    /// A round picked back up from a pasted code arrives mid-clock, and
+    /// can be further along than the board watched before it. The clock
+    /// then says nothing rolled back, and the diff used to run across the
+    /// two unrelated boards: every remembered crab departed into whatever
+    /// the new beach held at its old tile. The beach's size and seed are
+    /// what tell them apart.
+    #[test]
+    fn a_pasted_round_further_along_is_still_a_swap() {
+        let mut board = Board::new(6, 4, 7);
+        board.spawn_crab(1, 1, Direction::Right, Handedness::Left, CrabKind::Common);
+        let mut watch = synced(&board);
+        for _ in 0..40 {
+            board.tick_idle();
+            diff(&board, &mut watch);
+        }
+        let mut pasted = Board::new(8, 6, 99);
+        pasted.set_tile(1, 1, TileKind::Castle(0));
+        for _ in 0..300 {
+            pasted.tick_idle();
+        }
+        assert!(
+            pasted.ticks() > watch.ticks,
+            "the pasted round is further along"
+        );
+        assert!(
+            diff(&pasted, &mut watch).is_empty(),
+            "a different beach is a swap whatever its clock says"
+        );
+    }
+
     /// Losing your oldest signpost to the cap fires; every other way one
     /// leaves the board does not.
     ///

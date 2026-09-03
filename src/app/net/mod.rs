@@ -926,6 +926,75 @@ mod homecoming_tests {
 }
 
 #[cfg(test)]
+mod table_tests {
+    use super::*;
+    use crate::sim::DEFAULT_DELAY;
+
+    fn session(local: Option<u8>, port: u16) -> OnlineSession {
+        let transport = match local {
+            Some(0) => UdpTransport::host(0).expect("host socket"),
+            _ => UdpTransport::join(("127.0.0.1", port)).expect("join"),
+        };
+        OnlineSession::new(
+            transport,
+            match local {
+                Some(seat) => Lockstep::new(seat, vec![0, 1], DEFAULT_DELAY),
+                None => Lockstep::observer(vec![0, 1], DEFAULT_DELAY),
+            },
+            2,
+            MatchTerms::default(),
+        )
+    }
+
+    /// The running beacon says how many chairs are spoken for: the humans
+    /// in the lockstep and everyone in line who did not ask to watch. It
+    /// used to count the lockstep alone, so with two playing and four
+    /// queued it still said two of six.
+    #[test]
+    fn the_beacon_counts_the_queue_as_taken() {
+        let mut host = session(Some(0), 0);
+        assert_eq!(host.players_spoken_for(), 2, "the two at the table");
+        host.peers.row(0).name = "Bo".into();
+        assert_eq!(host.players_spoken_for(), 3, "one in line for a chair");
+        host.peers.row(1).watch = true;
+        assert_eq!(host.players_spoken_for(), 3, "a watcher wants no chair");
+        for peer in 2..8 {
+            host.peers.row(peer).name = "Cy".into();
+        }
+        assert_eq!(
+            host.players_spoken_for(),
+            MAX_PLAYERS as u8,
+            "and never more chairs than the table has"
+        );
+    }
+
+    /// A joiner reads its own seat in the host's abandonment notice: that
+    /// is how it learns it was dropped, rather than waiting out the host
+    /// and being told the host had left. Somebody else's seat, or the
+    /// host's own view, says nothing of the kind.
+    #[test]
+    fn a_seat_told_of_its_own_abandonment_knows_it_was_dropped() {
+        let host = session(Some(0), 0);
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut joiner = session(Some(1), port);
+        assert!(!joiner.dropped(), "nothing said yet");
+        joiner.abandoned.push((0, 30));
+        assert!(!joiner.dropped(), "another seat's abandonment is theirs");
+        joiner.abandoned.push((1, 30));
+        assert!(joiner.dropped(), "its own is the word it was waiting for");
+        let mut host = host;
+        host.abandoned.push((0, 30));
+        assert!(!host.dropped(), "the host drops nobody it is");
+        let mut watcher = session(None, port);
+        watcher.abandoned.push((1, 30));
+        assert!(
+            !watcher.dropped(),
+            "a spectator holds no seat to be dropped from"
+        );
+    }
+}
+
+#[cfg(test)]
 mod hash_tests {
     use super::*;
 

@@ -229,6 +229,21 @@ mod tests {
         assert!(progress.unlocked(&campaign, 5), "the player's own level");
     }
 
+    /// A record from a build with a list this one lacks keeps what it can
+    /// read: the unknown list is dropped rather than fatal, and the known
+    /// one is not lost with it.
+    #[test]
+    fn a_list_this_build_lacks_is_ignored() {
+        let mixed = Progress::parse("cleared: reef:Far Shoal\ncleared: tide:Welcome Ashore\n");
+        assert!(mixed.is_cleared(CampaignKind::TidePool, "Welcome Ashore"));
+        assert_eq!(mixed.cleared_count(), 1);
+        assert_eq!(CampaignKind::from_key("reef"), None);
+        assert_eq!(
+            CampaignKind::from_key("beach"),
+            Some(CampaignKind::BeachDay)
+        );
+    }
+
     #[test]
     fn progress_survives_a_save_and_load() {
         let mut progress = Progress::default();
