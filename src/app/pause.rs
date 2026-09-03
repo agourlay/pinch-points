@@ -271,6 +271,41 @@ mod tests {
         assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
     }
 
+    /// On a puzzle's won or lost card Escape is the way back to the stage
+    /// list, read by the card's own input; the pause card stays out of it
+    /// rather than opening underneath for a frame.
+    #[test]
+    fn the_card_stays_shut_on_a_finished_puzzle() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_state::<Phase>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<PauseMenu>();
+        app.init_resource::<Paused>();
+        app.init_resource::<crate::app::net::Online>();
+        app.insert_resource(GameSettings::default());
+        app.add_message::<AppExit>();
+        app.add_systems(Update, pause_input);
+        app.insert_resource(State::new(Screen::Puzzle));
+        for phase in [Phase::Won, Phase::Lost] {
+            app.insert_resource(State::new(phase));
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(KeyCode::Escape);
+            app.update();
+            assert!(!app.world().resource::<PauseMenu>().open, "{phase:?}");
+            assert!(!app.world().resource::<Paused>().0, "{phase:?}");
+        }
+        // And in the running phase the same press opens it.
+        app.insert_resource(State::new(Phase::Running));
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.reset_all();
+        keys.press(KeyCode::Escape);
+        app.update();
+        assert!(app.world().resource::<PauseMenu>().open);
+    }
+
     /// A running puzzle, with the running-phase input beside the card as
     /// the schedule has it. Escape used to be read by both: the phase
     /// input froze the round, and the card then took that frozen state as

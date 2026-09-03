@@ -566,6 +566,37 @@ mod tests {
         assert_eq!(winner, "draw", "filed under the result, not the beach");
     }
 
+    /// A pasted round is filed under whoever took it, worked out by
+    /// playing it through: named as the recording named the seat, or by
+    /// its number when it did not.
+    fn banked_round() -> Replay {
+        let level = crate::sim::Level::parse(
+            "name: T\nposts: 1\ncrab: 0,0 R R common\nmap:\n\
+             +-+-+\n|. 0|\n+ + +\n|. .|\n+-+-+\n",
+        )
+        .expect("level");
+        let mut replay = Replay::new(level);
+        for _ in 0..60 {
+            replay.record([crate::sim::PlayerAction::None; crate::sim::MAX_PLAYERS]);
+        }
+        assert!(replay.playback().scores()[0] > 0, "the crab walked home");
+        replay
+    }
+
+    #[test]
+    fn a_pasted_round_is_filed_under_the_name_of_whoever_took_it() {
+        let tr = &crate::app::i18n::EN;
+        let mut replay = banked_round();
+        replay.names[0] = "Anna".into();
+        assert_eq!(winner_of(&replay, tr), "Anna");
+    }
+
+    #[test]
+    fn a_pasted_round_with_no_names_is_filed_under_the_seat() {
+        let tr = &crate::app::i18n::EN;
+        assert_eq!(winner_of(&banked_round(), tr), "P1");
+    }
+
     /// The three ways a paste is not a round, each with its own answer. One
     /// shrug for all three leaves a player guessing which mistake they made.
     #[test]

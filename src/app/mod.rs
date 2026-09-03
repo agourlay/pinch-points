@@ -347,3 +347,38 @@ pub struct Resuming(pub Option<suspend::Suspended>);
 /// says so rather than doing nothing.
 #[derive(Resource, Default)]
 pub struct RoundNotice(pub String);
+
+#[cfg(test)]
+mod chrome_tests {
+    use super::*;
+
+    /// The header is drawn over the board's world, so every screen with a
+    /// board keeps at least the header's height clear above it, and the
+    /// menu, which has no board, reserves nothing.
+    #[test]
+    fn the_header_never_sits_on_the_board() {
+        assert_eq!(Screen::Menu.chrome().top, 0.0);
+        for screen in [
+            Screen::Versus,
+            Screen::Puzzle,
+            Screen::Editor,
+            Screen::Lobby,
+            Screen::Settings,
+            Screen::Controls,
+            Screen::MatchSetup,
+            Screen::Achievements,
+            Screen::StageSelect,
+            Screen::Replays,
+            Screen::Interlude,
+            Screen::Language,
+            Screen::NewVersion,
+        ] {
+            assert!(
+                screen.chrome().top >= menu_ui::HEADER_H,
+                "{screen:?} reserves {} under a header of {}",
+                screen.chrome().top,
+                menu_ui::HEADER_H
+            );
+        }
+    }
+}

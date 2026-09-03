@@ -270,3 +270,166 @@ pub fn versus_over_input(
     homecoming.0 = Some(session.back_to_the_lobby());
     next_screen.set(Screen::Lobby);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::campaign::CampaignKind;
+    use crate::app::progress::Progress;
+    use crate::sim::{Level, campaign_levels};
+
+    /// Three shipped stages, and one of the player's own behind them when
+    /// asked for.
+    fn campaign_with(index: usize, mine: bool) -> Campaign {
+        let mut levels: Vec<Level> = campaign_levels().into_iter().take(3).collect();
+        if mine {
+            let mut mine = levels[0].clone();
+            mine.name = "Mine".into();
+            levels.push(mine);
+        }
+        Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index,
+            builtins: 3,
+        }
+    }
+
+    fn campaign(index: usize) -> Campaign {
+        campaign_with(index, true)
+    }
+
+    fn tap(app: &mut App, key: KeyCode) {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.reset_all();
+        keys.press(key);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+    }
+
+    /// The won card, with the list at `index`.
+    fn won(index: usize) -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_state::<Phase>();
+        app.insert_resource(State::new(Screen::Puzzle));
+        app.insert_resource(State::new(Phase::Won));
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.insert_resource(campaign(index));
+        app.add_message::<LoadLevel>();
+        app.add_systems(Update, done_input);
+        app
+    }
+
+    fn loads(app: &App) -> usize {
+        app.world()
+            .resource::<Messages<LoadLevel>>()
+            .iter_current_update_messages()
+            .count()
+    }
+
+    /// The shipped campaign ends with its last shipped stage: Enter there
+    /// goes to the menu rather than walking on into the player's own
+    /// levels behind it, which are a shelf and not stage four.
+    #[test]
+    fn enter_after_the_last_shipped_stage_goes_to_the_menu() {
+        let mut app = won(2);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(loads(&app), 0, "nothing loaded");
+        app.update();
+        assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
+        assert_eq!(
+            app.world().resource::<Campaign>().index,
+            2,
+            "the list stays put"
+        );
+    }
+
+    /// In the middle of the list Enter loads the next stage, and the last
+    /// of the player's own levels ends the list the same way the campaign
+    /// ends.
+    #[test]
+    fn enter_walks_the_list_and_stops_at_its_end() {
+        let mut app = won(0);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(loads(&app), 1, "the next stage is loaded");
+        assert_eq!(app.world().resource::<Campaign>().index, 1);
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Puzzle
+        );
+
+        let mut app = won(3);
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(loads(&app), 0);
+        app.update();
+        assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
+    }
+
+    /// Browsing from setup honours the ladder both ways: P from the first
+    /// stage wraps onto the end of the shipped list, which is as locked as
+    /// any stage ahead, and is refused with the same flash; once the first
+    /// stage is cleared N opens the second, and P walks back. (With a
+    /// level of the player's own on the shelf the wrap lands on that, and
+    /// those are never locked, so the list here is the shipped one.)
+    #[test]
+    fn browsing_from_setup_honours_the_ladder_both_ways() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Phase>();
+        app.insert_resource(State::new(Phase::Setup));
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<Progress>();
+        app.insert_resource(Sim(campaign_with(0, false).levels[0].board()));
+        app.insert_resource(campaign_with(0, false));
+        app.add_message::<LoadLevel>();
+        app.add_message::<PlacementDenied>();
+        app.add_systems(Update, setup_input);
+        let mut cursor = Cursor::seated(0);
+        (cursor.x, cursor.y) = (1, 1);
+        app.world_mut().spawn((cursor, Transform::default()));
+        let denials = |app: &App| {
+            app.world()
+                .resource::<Messages<PlacementDenied>>()
+                .iter_current_update_messages()
+                .count()
+        };
+
+        tap(&mut app, KeyCode::KeyP);
+        assert_eq!(
+            app.world().resource::<Campaign>().index,
+            0,
+            "the end is locked"
+        );
+        assert_eq!(denials(&app), 1, "and refused out loud");
+        tap(&mut app, KeyCode::KeyN);
+        assert_eq!(
+            app.world().resource::<Campaign>().index,
+            0,
+            "so is the second"
+        );
+        assert_eq!(denials(&app), 1);
+
+        let first = app.world().resource::<Campaign>().levels[0].name.clone();
+        app.world_mut()
+            .resource_mut::<Progress>()
+            .mark(CampaignKind::TidePool, &first);
+        tap(&mut app, KeyCode::KeyN);
+        assert_eq!(
+            app.world().resource::<Campaign>().index,
+            1,
+            "cleared, so open"
+        );
+        assert_eq!(loads(&app), 1);
+        tap(&mut app, KeyCode::KeyP);
+        assert_eq!(app.world().resource::<Campaign>().index, 0, "and back");
+        assert_eq!(denials(&app), 0);
+    }
+}

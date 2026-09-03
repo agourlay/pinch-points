@@ -603,6 +603,63 @@ mod next_round_tests {
         assert!(host.peers.get(1).is_some_and(Peer::watches));
     }
 
+    /// What a greeting earns: a peer in the plan is told its place again,
+    /// under whatever it now calls itself, and one behind the plan is told
+    /// how many are ahead of it.
+    #[test]
+    fn a_greeting_is_answered_with_the_peers_place_and_keeps_its_name() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(1),
+        );
+        host.names[0] = "Anna".into();
+        let _sockets = gather(&mut host, &["Bo", "Cy"]);
+        host.peers.deal(&[Some(1)]);
+        host.names[1] = "Bo".into();
+
+        let answer = host.answer_greeting(0, "Bobby", false);
+        assert!(
+            matches!(answer, NetMsg::Start { seat: Some(1), .. }),
+            "seated, and told so: {answer:?}"
+        );
+        assert_eq!(host.names[1], "Bobby", "under the name it greeted with");
+
+        let answer = host.answer_greeting(1, "Cy", false);
+        assert!(
+            matches!(answer, NetMsg::Queued { ahead: 0 }),
+            "behind the plan, first in line: {answer:?}"
+        );
+        assert_eq!(
+            host.peer_name(1),
+            Some("Cy"),
+            "and remembered for the next deal"
+        );
+    }
+
+    /// A seated peer that arms W between rounds is told it is watching,
+    /// and the wish is kept for the next deal.
+    #[test]
+    fn a_watch_from_a_seated_peer_is_told_the_rail() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(1),
+        );
+        let _sockets = gather(&mut host, &["Bo"]);
+        host.peers.deal(&[Some(1)]);
+        let answer = host.answer_greeting(0, "", true);
+        assert!(
+            matches!(answer, NetMsg::Start { seat: None, .. }),
+            "{answer:?}"
+        );
+        assert!(host.peers.get(0).is_some_and(Peer::watches));
+        host.call_next_round(terms(2), None);
+        assert_eq!(host.peers.seat_of(0), None, "dealt the rail it asked for");
+    }
+
     /// A peer that leaves while the scores are being read leaves nothing
     /// stalled, so the round never notices; the host has to. One that has
     /// said nothing for as long as the round waits before giving a seat

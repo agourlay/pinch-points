@@ -244,6 +244,26 @@ mod tests {
         );
     }
 
+    /// The file is written in one order whatever order the stages were
+    /// cleared in, list first and then name, so two saves of the same
+    /// record are the same bytes.
+    #[test]
+    fn the_record_is_written_in_one_order() {
+        let mut progress = Progress::default();
+        progress.mark(CampaignKind::TidePool, "Undertow");
+        progress.mark(CampaignKind::TidePool, "Corner Pocket");
+        progress.mark(CampaignKind::BeachDay, "First Flood");
+        assert_eq!(
+            progress.to_text(),
+            "cleared: beach:First Flood\ncleared: tide:Corner Pocket\ncleared: tide:Undertow\n"
+        );
+        let mut reversed = Progress::default();
+        reversed.mark(CampaignKind::BeachDay, "First Flood");
+        reversed.mark(CampaignKind::TidePool, "Corner Pocket");
+        reversed.mark(CampaignKind::TidePool, "Undertow");
+        assert_eq!(reversed.to_text(), progress.to_text());
+    }
+
     #[test]
     fn progress_survives_a_save_and_load() {
         let mut progress = Progress::default();

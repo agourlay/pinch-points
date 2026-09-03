@@ -641,6 +641,24 @@ mod tests {
         assert!(level.to_text().contains("raids: off"));
     }
 
+    /// A beach keeps its raids: the finish-line reasoning that turns them
+    /// off for a stage does not apply where the goal is a score, and the
+    /// versus beaches all play with them on.
+    #[test]
+    fn a_beach_from_the_editor_keeps_its_raids() {
+        let mut board = sand();
+        board.set_tile(0, 0, TileKind::Castle(0));
+        board.set_tile(5, 4, TileKind::Castle(1));
+        let state = EditorState {
+            posts: 3,
+            kind: LevelKind::Arena,
+            ..EditorState::default()
+        };
+        let beach = level_here(&state, &board, "Beach");
+        assert!(beach.board().castle_raids());
+        assert!(!beach.to_text().contains("raids:"));
+    }
+
     /// The toggle decides two things at once: which list the saved level
     /// joins, and which signpost rule it is played under. A beach saved
     /// under the puzzle rule handed a versus table three posts each and no

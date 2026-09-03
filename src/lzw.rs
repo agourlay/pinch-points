@@ -282,23 +282,9 @@ mod tests {
         // And one just past the entry being built: at 8 bits the clear
         // code is 256, the end code 257, and after one literal the table
         // holds 258 entries, so 258 is the one code a stream may name
-        // ahead of time and 300 is not. Written at 9 bits, low bit first.
-        let mut bits = Vec::new();
-        for code in [256u32, 65, 300, 257] {
-            for bit in 0..9 {
-                bits.push((code >> bit) & 1 == 1);
-            }
-        }
-        let packed: Vec<u8> = bits
-            .chunks(8)
-            .map(|byte| {
-                byte.iter()
-                    .enumerate()
-                    .fold(0u8, |acc, (i, &b)| acc | (u8::from(b) << i))
-            })
-            .collect();
+        // ahead of time and 300 is not.
         assert_eq!(
-            decompress(&packed, 8),
+            decompress(&nine_bit_stream(&[256, 65, 300, 257]), 8),
             None,
             "a code past the table is refused"
         );
@@ -310,6 +296,39 @@ mod tests {
                 .collect();
             let _ = decompress(&junk, 8);
         }
+    }
+
+    /// Codes written at nine bits each, low bit first: what a fresh 8-bit
+    /// stream reads until its table outgrows the width.
+    fn nine_bit_stream(codes: &[u32]) -> Vec<u8> {
+        let mut bits = Vec::new();
+        for code in codes {
+            for bit in 0..9 {
+                bits.push((code >> bit) & 1 == 1);
+            }
+        }
+        bits.chunks(8)
+            .map(|byte| {
+                byte.iter()
+                    .enumerate()
+                    .fold(0u8, |acc, (i, &b)| acc | (u8::from(b) << i))
+            })
+            .collect()
+    }
+
+    /// The one code a stream may name before it exists is the entry being
+    /// built: after a literal 65 the table holds 258 entries, and 258 is
+    /// "65 followed by its own first byte", which is how a run of one byte
+    /// is written. The refusal one code further on must not swallow it.
+    #[test]
+    fn the_entry_being_built_may_be_named_ahead_of_time() {
+        assert_eq!(
+            decompress(&nine_bit_stream(&[256, 65, 258, 257]), 8),
+            Some(vec![65, 65, 65])
+        );
+        // Which is exactly what the encoder writes for that run.
+        let back = decompress(&compress(&[65, 65, 65], 8), 8);
+        assert_eq!(back, Some(vec![65, 65, 65]));
     }
 
     /// A few kilobytes that name megabytes are refused rather than

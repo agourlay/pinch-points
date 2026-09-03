@@ -372,6 +372,40 @@ mod tests {
         assert_eq!(Level::deadline(&untimed.board()), PUZZLE_TICK_LIMIT);
     }
 
+    /// Every goal but Survive loses when the deadline beats it: the
+    /// board's round when it states one, the campaign limit when it does
+    /// not. A crab circling a castle-less beach is never banked and never
+    /// eaten, so only the clock can end it.
+    #[test]
+    fn the_deadline_loses_every_goal_but_survive() {
+        let map = "map:\n+-+-+\n|. .|\n+ + +\n|. .|\n+-+-+\n";
+        let timed = Level::parse(&format!(
+            "name: T\nposts: 0\nround: 300\ncrab: 0,0 R R common\n{map}"
+        ))
+        .expect("level");
+        let mut board = timed.board();
+        assert_eq!(timed.play_out(&mut board), (PuzzleOutcome::Lost, 300));
+        let untimed = Level::parse(&format!("name: T\nposts: 0\ncrab: 0,0 R R common\n{map}"))
+            .expect("level");
+        let mut board = untimed.board();
+        assert_eq!(
+            untimed.play_out(&mut board),
+            (PuzzleOutcome::Lost, PUZZLE_TICK_LIMIT)
+        );
+    }
+
+    /// `raids: on` is the default said out loud, and is read as such: only
+    /// `off` turns them away, and a stated rule keeps whatever the file
+    /// says.
+    #[test]
+    fn raids_on_is_the_default_said_out_loud() {
+        let text = "name: T\nposts: 1\nrule: reject 1\nraids: on\ncrab: 0,0 R R common\nmap:\n\
+                    +-+-+\n|. 0|\n+ + +\n|. .|\n+-+-+\n";
+        let level = Level::parse(text).expect("level");
+        assert!(level.board().castle_raids());
+        assert!(!level.to_text().contains("raids:"), "not worth writing");
+    }
+
     #[test]
     fn a_turnstiles_pivot_survives_the_format() {
         for next_right in [true, false] {

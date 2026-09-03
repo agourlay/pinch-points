@@ -591,6 +591,71 @@ fn gulls_eat_across_the_seam_of_a_wrapping_board() {
     }
 }
 
+/// Where a gull may be put down, asked of the board rather than kept by
+/// each placer: sand and pool yes, rock and kelp no, off the board no.
+#[test]
+fn a_gull_may_stand_on_sand_and_in_a_pool_but_not_on_rock_or_kelp() {
+    let mut board = Board::new(5, 5, 0);
+    board.set_tile(1, 1, TileKind::Rock);
+    board.set_tile(2, 2, TileKind::Kelp);
+    board.set_tile(3, 3, TileKind::Pool);
+    assert!(board.gull_may_stand(0, 0), "sand");
+    assert!(board.gull_may_stand(3, 3), "a pool");
+    assert!(!board.gull_may_stand(1, 1), "rock");
+    assert!(!board.gull_may_stand(2, 2), "kelp");
+    assert!(!board.gull_may_stand(5, 0), "off the board");
+}
+
+/// Evict with a cap of zero is refused by every parser, but a board built
+/// by hand can still be told it. The first placement then has nothing to
+/// evict and is refused, rather than expecting an oldest post to exist.
+#[test]
+fn evicting_with_nothing_to_evict_refuses_rather_than_panics() {
+    let mut board = Board::new(5, 5, 0);
+    board.set_signpost_rule(0, CapPolicy::Evict);
+    assert!(
+        board.can_place_signpost(0, 2, 2),
+        "the rule says evict, so yes"
+    );
+    assert!(
+        !board.place_signpost(0, 2, 2, Right),
+        "but there is nothing to trade"
+    );
+    assert!(board.signpost_at(2, 2).is_none());
+}
+
+/// The editor's removers take coordinates like every other public
+/// mutator, and check them like every other: off the board is a bug in
+/// the caller, said loudly rather than removing from a wrong tile.
+#[test]
+#[should_panic(expected = "crab off the board")]
+fn removing_crabs_off_the_board_is_refused_loudly() {
+    Board::new(5, 5, 0).remove_crabs_at(5, 0);
+}
+
+#[test]
+#[should_panic(expected = "gull off the board")]
+fn removing_gulls_off_the_board_is_refused_loudly() {
+    Board::new(5, 5, 0).remove_gulls_at(0, 5);
+}
+
+/// The lure's short way is per axis too.
+#[test]
+fn a_lure_pulls_through_the_top_and_bottom_seam_as_well() {
+    for (wrap, expect) in [(false, Down), (true, Up)] {
+        let mut board = Board::new(3, 5, 0);
+        board.set_wrap(wrap);
+        board.set_tile(1, 4, TileKind::Castle(0));
+        board.force_lure(0);
+        let target = board.lure_target();
+        assert_eq!(
+            board.lure_step(board.index_of(1, 0), target),
+            Some(expect),
+            "wrap {wrap}"
+        );
+    }
+}
+
 /// The fold is per axis: the top and bottom edges are a seam too.
 #[test]
 fn gulls_eat_across_the_top_and_bottom_seam_as_well() {

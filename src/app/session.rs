@@ -658,6 +658,24 @@ mod tests {
         }
     }
 
+    /// The daily's table is one human and three fierce rivals, built from
+    /// its own config rather than the player's.
+    #[test]
+    fn the_daily_seats_one_human_against_three_hard_bots() {
+        let daily = match_setup::MatchConfig::daily();
+        assert!(daily.armed, "ready to launch as it is");
+        let bots = bot_seats(&daily);
+        assert_eq!(bots[0], None, "the player's chair");
+        assert_eq!(
+            &bots[1..4],
+            &[Some(BotLevel::Hard); 3],
+            "three fierce rivals"
+        );
+        assert!(bots[4..].iter().all(Option::is_none), "and no more chairs");
+        let player = match_setup::MatchConfig::default();
+        assert_ne!(player.seats, daily.seats, "the player's own is untouched");
+    }
+
     /// The AI fills from the top seat down, each with its own level, and
     /// leaves the human seats alone.
     /// Boards from the shelf or a pasted code can be any size at all, and
