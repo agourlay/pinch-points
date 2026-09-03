@@ -316,6 +316,7 @@ fn add_screen_transitions(app: &mut App) {
             announce::clear_announcements,
             hint::clear_hint_ghosts,
             pause::reset_pause,
+            reset_puzzle_phase,
             achievements::save_now,
         ),
     );

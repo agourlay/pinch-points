@@ -325,7 +325,6 @@ pub fn menu_input(
     settings: Res<GameSettings>,
     caps: Res<crate::app::keycaps::KeyCaps>,
     mut campaign: ResMut<Campaign>,
-    mut config: ResMut<crate::app::match_setup::MatchConfig>,
     mut daily: ResMut<crate::app::Daily>,
     mut resuming: ResMut<crate::app::Resuming>,
     mut notice: ResMut<crate::app::RoundNotice>,
@@ -400,14 +399,8 @@ pub fn menu_input(
         }
         MenuEntry::Achievements => next_screen.set(Screen::Achievements),
         MenuEntry::DailyChallenge => {
-            // The daily: today's arena, three fierce bots, standard round.
-            config.seats = 4;
-            config.bots = 3;
-            config.bot_levels = [crate::sim::BotLevel::Hard; crate::sim::MAX_PLAYERS];
-            config.map = crate::app::match_setup::MapChoice::GenClassic;
-            config.gulls = crate::app::match_setup::GullPressure::Normal;
-            config.round = crate::app::match_setup::RoundLength::Standard;
-            config.armed = true;
+            // The daily brings its own table (`MatchConfig::daily`), read
+            // by `load_versus` while this is set.
             daily.active = true;
             next_screen.set(Screen::Versus);
         }

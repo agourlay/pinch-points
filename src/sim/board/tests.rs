@@ -559,6 +559,45 @@ fn gulls_eat_exactly_at_the_range_boundary() {
     }
 }
 
+/// Two creatures meeting head-on through the seam of a wrapping arena are
+/// a tile apart on the sand and a whole board apart in raw coordinates.
+/// The eat check has to measure the sand, or a gull and a crab walk
+/// through each other there; the same board without the seam keeps them
+/// apart, since there is a wall between them.
+#[test]
+fn gulls_eat_across_the_seam_of_a_wrapping_board() {
+    for wrap in [false, true] {
+        let mut board = Board::new(5, 3, 0);
+        board.set_wrap(wrap);
+        common(&mut board, 4, 1, Right, Handedness::Left);
+        board.spawn_gull(0, 1, Left);
+        // Gull at x = -120, crab at x = 4 * 256 + 120: sixteen subunits
+        // apart through the seam, twelve hundred and more the other way.
+        board.crabs[0].progress = 120;
+        board.gulls[0].progress = 120;
+        board.gulls_eat();
+        assert_eq!(board.crabs.is_empty(), wrap, "wrap {wrap}");
+    }
+}
+
+/// A lured crab takes the short way to the castle, which on a wrapping
+/// board can be through the seam.
+#[test]
+fn a_lure_pulls_through_the_seam_when_that_is_the_short_way() {
+    for (wrap, expect) in [(false, Right), (true, Left)] {
+        let mut board = Board::new(5, 3, 0);
+        board.set_wrap(wrap);
+        board.set_tile(4, 1, TileKind::Castle(0));
+        board.force_lure(0);
+        let target = board.lure_target();
+        assert_eq!(
+            board.lure_step(board.index_of(0, 1), target),
+            Some(expect),
+            "wrap {wrap}"
+        );
+    }
+}
+
 #[test]
 fn turnstile_alternates_deflections() {
     let mut board = Board::new(5, 5, 0);

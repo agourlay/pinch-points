@@ -129,7 +129,11 @@ pub(super) fn fit_camera(
     let Ok(window) = windows.single() else {
         return;
     };
-    let menu = matches!(screen.get(), Screen::Menu);
+    // Every postcard screen, not only the menu: the postcard is sized to
+    // the window in world units, and scaling the camera to whatever board
+    // `Sim` last held left it short of the window's edges on the list
+    // screens after a round, by a strip of clear colour at the bottom.
+    let menu = crate::app::postcard_screen(*screen.get());
     let chrome = screen.get().chrome();
     // The chrome is UI, so it takes whatever the global UI scale makes of
     // it; the board does not. Reserving the unscaled width here would slide

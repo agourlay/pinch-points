@@ -595,7 +595,11 @@ mod next_round_tests {
         host.call_next_round(terms(2), None);
         assert_eq!(host.peers.seat_of(0), Some(1), "Bo is dealt a chair");
         assert_eq!(host.names[1], "Bo", "under its own name");
-        assert_eq!(host.peers.seat_of(1), None, "Dee gets the rail it asked for");
+        assert_eq!(
+            host.peers.seat_of(1),
+            None,
+            "Dee gets the rail it asked for"
+        );
         assert!(host.peers.get(1).is_some_and(Peer::watches));
     }
 
@@ -620,7 +624,11 @@ mod next_round_tests {
         host.poll_between_rounds(super::super::presence::ABANDON_AFTER);
         assert_eq!(host.transport.peer_count(), 1, "Bo is forgotten");
         assert_eq!(host.peers.len(), 1, "row and all");
-        assert_eq!(host.peer_name(0), Some("Cy"), "and Cy moved down into its index");
+        assert_eq!(
+            host.peer_name(0),
+            Some("Cy"),
+            "and Cy moved down into its index"
+        );
 
         host.call_next_round(terms(2), None);
         assert_eq!(host.seats, 2, "Anna and Cy, nobody else");
@@ -672,7 +680,11 @@ mod next_round_tests {
             }
         }
         assert!(rearmed_in.is_some(), "the call reached the joiner");
-        assert_eq!(joiner.session.frame(), 0, "and the new lockstep is untouched");
+        assert_eq!(
+            joiner.session.frame(),
+            0,
+            "and the new lockstep is untouched"
+        );
     }
 
     /// A series tally is kept by seat, and seats move. A peer that leaves

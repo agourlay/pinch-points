@@ -228,9 +228,19 @@ impl Board {
         let castle = lure_target?;
         let (fx, fy) = self.coords(from);
         let (cx, cy) = self.coords(castle);
-        let (dx, dy) = (cx - fx, cy - fy);
+        let (mut dx, mut dy) = (cx - fx, cy - fy);
         if dx == 0 && dy == 0 {
             return None;
+        }
+        // On a wrapping board the short way may be through the seam.
+        if self.wrap {
+            let (w, h) = (i32::from(self.width()), i32::from(self.height()));
+            if dx.abs() * 2 > w {
+                dx -= dx.signum() * w;
+            }
+            if dy.abs() * 2 > h {
+                dy -= dy.signum() * h;
+            }
         }
         Some(Direction::toward(dx, dy))
     }

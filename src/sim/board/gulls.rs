@@ -271,6 +271,28 @@ impl Board {
         )
     }
 
+    /// Manhattan distance between two sub-positions, in subunits. On a
+    /// wrapping board the short way round counts: two creatures meeting
+    /// head-on through the seam are a tile apart on the sand and a whole
+    /// board apart in raw coordinates, and measuring the latter let them
+    /// walk through each other there, the failure `sub_position` exists to
+    /// rule out everywhere else.
+    fn sub_distance(&self, a: (i32, i32), b: (i32, i32)) -> u32 {
+        let (mut dx, mut dy) = ((a.0 - b.0).unsigned_abs(), (a.1 - b.1).unsigned_abs());
+        if self.wrap {
+            let sub = u32::from(SUBUNITS_PER_TILE);
+            let (w, h) = (
+                u32::from(self.width()) * sub,
+                u32::from(self.height()) * sub,
+            );
+            dx %= w;
+            dy %= h;
+            dx = dx.min(w - dx);
+            dy = dy.min(h - dy);
+        }
+        dx + dy
+    }
+
     /// Fixed-order collision pass: each gull, in index order, eats every crab
     /// within [`EAT_RANGE`] subunits of it (Manhattan distance across the
     /// board, spec §4.3). Flying gulls eat nothing.
@@ -280,12 +302,12 @@ impl Board {
             if gull.state != GullState::Walking {
                 continue;
             }
-            let (gx, gy) = self.sub_position(gull.tile, gull.dir, gull.progress);
+            let at = self.sub_position(gull.tile, gull.dir, gull.progress);
             let mut c = 0;
             while c < self.crabs.len() {
                 let crab = self.crabs[c];
-                let (cx, cy) = self.sub_position(crab.tile, crab.dir, crab.progress);
-                if (gx - cx).unsigned_abs() + (gy - cy).unsigned_abs() <= u32::from(EAT_RANGE) {
+                let crab_at = self.sub_position(crab.tile, crab.dir, crab.progress);
+                if self.sub_distance(at, crab_at) <= u32::from(EAT_RANGE) {
                     self.crabs.remove(c);
                     continue;
                 }

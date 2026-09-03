@@ -136,6 +136,11 @@ impl Origin {
 #[derive(Default)]
 pub struct Watch {
     ticks: u64,
+    /// The beach itself, by size and seed: what tells a round picked back
+    /// up from a pasted code, which arrives mid-clock, from the board this
+    /// was last read from. The clock alone cannot, when the pasted round
+    /// is further along than the board before it was.
+    beach: (u8, u8, u64),
     origin: Option<Origin>,
     scores: [u32; MAX_PLAYERS],
     tiers: [u8; MAX_PLAYERS],
@@ -170,6 +175,7 @@ impl Watch {
         }
         Watch {
             ticks: board.ticks(),
+            beach: (board.width(), board.height(), board.seed()),
             origin: Origin::of(board),
             scores: *board.scores(),
             tiers,
@@ -331,8 +337,9 @@ pub fn diff(board: &crate::sim::Board, watch: &mut Watch) -> Vec<SimEvent> {
     // that have never ticked (a puzzle's Setup phase, skipping levels from
     // there, an editor resize) the clock reads 0 on both sides, so those
     // are told apart by their origin instead: same clock, different board.
-    let swapped =
-        board.ticks() < watch.ticks || (board.ticks() == 0 && next.origin != watch.origin);
+    let swapped = board.ticks() < watch.ticks
+        || next.beach != watch.beach
+        || (board.ticks() == 0 && next.origin != watch.origin);
     let events = if swapped {
         Vec::new()
     } else {

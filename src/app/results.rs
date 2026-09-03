@@ -311,12 +311,16 @@ pub fn spawn_puzzle_won(
         .language
         .level_name(&campaign.current().name)
         .to_string();
-    let last = campaign.index + 1 == campaign.levels.len();
+    // The shipped campaign ends with its last shipped stage; the player's
+    // own levels behind it are a shelf, not stage eighty-three, and the
+    // last of those ends only the list.
+    let last_shipped = campaign.index + 1 == campaign.builtins;
+    let last = last_shipped || campaign.index + 1 == campaign.levels.len();
     let card = results_card(&mut commands);
     commands.entity(card).with_children(|wrap| {
         wrap.spawn(menu_ui::screen_card()).with_children(|card| {
             let head = card_text(30.0, palette::GOLD);
-            let title = match last {
+            let title = match last_shipped {
                 true => tr.campaign_done,
                 false => tr.all_safe,
             };

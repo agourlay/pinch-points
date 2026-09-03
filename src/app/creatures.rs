@@ -329,17 +329,23 @@ pub fn sync_gull_sprites(
     // written into it, a retry, a resumed round and an editor test run all
     // wipe the sprites and rebuild them, and keying the arrival cue off
     // that puffed sand under every bird on the beach at once, every time.
-    mut before: Local<(u64, Vec<u32>)>,
+    mut before: Local<(Option<u64>, Vec<u32>)>,
     existing: Query<(Entity, &GullSprite)>,
 ) {
     let board = &sim.0;
     // A clock that has run backwards is a different board, whose gull ids
-    // start again at zero; nothing on it has "arrived".
+    // start again at zero, and a board at tick zero has not run at all:
+    // nothing on either has "arrived", the birds on it are the ones it was
+    // written with. So is a board this has never seen. The memory is
+    // reseeded from those birds rather than emptied, which was what puffed
+    // sand under every pre-placed gull on load and on every retry.
     let (last_ticks, seen) = &mut *before;
-    if board.ticks() < *last_ticks {
+    let fresh = board.ticks() == 0 || last_ticks.is_none_or(|last| board.ticks() < last);
+    if fresh {
         seen.clear();
+        seen.extend(board.gulls().iter().map(|g| g.id));
     }
-    *last_ticks = board.ticks();
+    *last_ticks = Some(board.ticks());
     live.clear();
     live.extend(board.gulls().iter().map(|g| (g.id, *g)));
     for (entity, sprite) in &existing {

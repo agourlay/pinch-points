@@ -8,9 +8,7 @@
 
 use crate::app::cursor::{Cursor, FLASH_SECS, keymap};
 use crate::app::settings::{CommitScheme, GameSettings};
-use crate::app::{
-    Campaign, LoadLevel, Paused, PendingActions, Phase, PlacementDenied, Screen, Sim,
-};
+use crate::app::{Campaign, LoadLevel, PendingActions, Phase, PlacementDenied, Screen, Sim};
 use crate::sim::PlayerAction;
 use bevy::prelude::*;
 
@@ -70,21 +68,33 @@ pub fn setup_input(
         }
     }
     if caps.just_pressed(&keys, 'P') {
-        campaign.index = (campaign.index + campaign.levels.len() - 1) % campaign.levels.len();
-        load.write(LoadLevel { keep_posts: false });
+        // Backward wraps onto the end of the list, which is as locked as
+        // anything ahead: the same ladder, the same refusal.
+        let prev = (campaign.index + campaign.levels.len() - 1) % campaign.levels.len();
+        if progress.unlocked(&campaign, prev) {
+            campaign.index = prev;
+            load.write(LoadLevel { keep_posts: false });
+        } else {
+            cursor.flash = FLASH_SECS;
+            denied.write(PlacementDenied {
+                player: 0,
+                out_of_signposts: false,
+            });
+        }
     }
 }
 
-/// Puzzle running phase: R resets to setup (keeping placed posts), Esc pauses.
+/// Puzzle running phase: R resets to setup (keeping placed posts).
+///
+/// Esc is the pause card's key, as it is in setup and in versus. This
+/// used to toggle `Paused` on it as well, which the card then read as the
+/// state to hand back on closing: Continue left the round frozen with no
+/// card up, and the next Esc pair unfroze it.
 pub fn running_input(
     keys: Res<ButtonInput<KeyCode>>,
     caps: Res<crate::app::keycaps::KeyCaps>,
-    mut paused: ResMut<Paused>,
     mut load: MessageWriter<LoadLevel>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) {
-        paused.0 = !paused.0;
-    }
     if caps.just_pressed(&keys, 'R') {
         load.write(LoadLevel { keep_posts: true });
     }
@@ -112,8 +122,10 @@ pub fn done_input(
         }
         // The end of the list is the end of the list. Wrapping to level one
         // read as the game not having noticed: the card says "that was the
-        // last level" and then puts you back on the first.
-        if campaign.index + 1 == campaign.levels.len() {
+        // last level" and then puts you back on the first. The shipped
+        // campaign ends with its last shipped stage too, rather than
+        // walking on into the player's own levels behind it.
+        if campaign.index + 1 == campaign.levels.len() || campaign.index + 1 == campaign.builtins {
             next_screen.set(Screen::Menu);
             return;
         }

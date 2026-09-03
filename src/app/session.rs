@@ -99,6 +99,9 @@ pub(super) fn load_versus(
         daily,
         resuming,
     } = &mut source;
+    // The daily plays on a table of its own rather than the player's.
+    let daily_config = match_setup::MatchConfig::daily();
+    let config: &match_setup::MatchConfig = if daily.active { &daily_config } else { config };
     // A round picked back up beats every other source: it is already a
     // beach, mid-play, and nothing here should build it a fresh one.
     let resumed = resuming.0.take();
@@ -196,6 +199,14 @@ pub(super) fn load_versus(
     }
     paused.0 = false;
     next_vphase.set(VersusPhase::Running);
+}
+
+/// Leaving a puzzle mid-run leaves `Phase` where it was, and the next
+/// puzzle entered would run its first frame under it: `sim_should_run`
+/// says yes to `Running`, and the stale board ticks once before the load
+/// swaps it. `end_versus` puts `VersusPhase` back for the same reason.
+pub(super) fn reset_puzzle_phase(mut next_phase: ResMut<NextState<Phase>>) {
+    next_phase.set(Phase::Setup);
 }
 
 /// Where a seat's cursor starts a round: fanned out near its own castle,
@@ -648,11 +659,18 @@ mod tests {
             let board = crate::sim::Board::new(w, h, 0);
             for player in 0..MAX_PLAYERS as u8 {
                 let (x, y) = cursor_home(&board, player);
-                assert!(x < w && y < h, "seat {player} opened at ({x},{y}) on a {w}x{h} board");
+                assert!(
+                    x < w && y < h,
+                    "seat {player} opened at ({x},{y}) on a {w}x{h} board"
+                );
             }
         }
         let big = crate::sim::Board::new(12, 9, 0);
-        assert_eq!(cursor_home(&big, 0), (2, 2), "two in from the host's corner");
+        assert_eq!(
+            cursor_home(&big, 0),
+            (2, 2),
+            "two in from the host's corner"
+        );
         assert_eq!(cursor_home(&big, 1), (9, 6), "and from the far one");
     }
 

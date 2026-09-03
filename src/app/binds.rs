@@ -259,7 +259,7 @@ pub fn bindable(key: KeyCode) -> bool {
 
 /// The list of bindable keys, used to read a name back into a [`KeyCode`].
 /// Built from [`bindable`] so the two can never disagree.
-fn all_bindable() -> impl Iterator<Item = KeyCode> {
+pub(crate) fn all_bindable() -> impl Iterator<Item = KeyCode> {
     // KeyCode has no iterator, but every variant we accept is reachable
     // from this catalogue of candidates.
     CANDIDATES.iter().copied().filter(|&key| bindable(key))

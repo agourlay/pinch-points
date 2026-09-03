@@ -109,6 +109,10 @@ pub fn pause_input(
     // Start means "begin the run".
     let start_ok = !(*screen.get() == Screen::Puzzle && *phase.get() == Phase::Setup);
     let pad_start = start_ok && pads.iter().any(|p| p.just_pressed(GamepadButton::Start));
+    // Nor on a puzzle's won or lost card, where Esc is the way back to
+    // the stage list and a pause card would open under it for a frame.
+    let done = *screen.get() == Screen::Puzzle && matches!(*phase.get(), Phase::Won | Phase::Lost);
+    let escape = !done && keys.just_pressed(KeyCode::Escape);
     let pad_up = pads.iter().any(|p| p.just_pressed(GamepadButton::DPadUp));
     let pad_down = pads.iter().any(|p| p.just_pressed(GamepadButton::DPadDown));
     let pad_accept = pads.iter().any(|p| p.just_pressed(GamepadButton::South));
@@ -117,7 +121,7 @@ pub fn pause_input(
     // unexplained. Their Escape is as good as ours.
     let peer_paused = online.0.as_ref().is_some_and(|s| s.session.paused());
     if !menu.open {
-        if keys.just_pressed(KeyCode::Escape) || pad_start || peer_paused {
+        if escape || pad_start || peer_paused {
             menu.open = true;
             menu.selected = 0;
             // What to hand back on the way out: a replay stopped from its
@@ -265,5 +269,63 @@ mod tests {
         assert!(!app.world().resource::<PauseMenu>().open, "the card closed");
         assert!(!app.world().resource::<Paused>().0, "and unfroze");
         assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
+    }
+
+    /// A running puzzle, with the running-phase input beside the card as
+    /// the schedule has it. Escape used to be read by both: the phase
+    /// input froze the round, and the card then took that frozen state as
+    /// what to hand back on Continue, so the round stayed frozen with no
+    /// card up. One reader now; Continue unfreezes.
+    #[test]
+    fn continue_unfreezes_a_running_puzzle() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_state::<Phase>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<PauseMenu>();
+        app.init_resource::<Paused>();
+        app.init_resource::<crate::app::net::Online>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.insert_resource(GameSettings::default());
+        app.add_message::<AppExit>();
+        app.add_message::<crate::app::LoadLevel>();
+        app.add_systems(
+            Update,
+            (crate::app::play_input::running_input, pause_input).chain(),
+        );
+        app.insert_resource(State::new(Screen::Puzzle));
+        app.insert_resource(State::new(Phase::Running));
+
+        let tap = |app: &mut App, key: KeyCode| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(key);
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+        };
+        tap(&mut app, KeyCode::Escape);
+        assert!(app.world().resource::<PauseMenu>().open, "the card opened");
+        assert!(app.world().resource::<Paused>().0, "and froze the round");
+        tap(&mut app, KeyCode::Enter);
+        assert!(
+            !app.world().resource::<PauseMenu>().open,
+            "Continue closed it"
+        );
+        assert!(
+            !app.world().resource::<Paused>().0,
+            "and the round runs again"
+        );
+        // Escape again closes it the same way.
+        tap(&mut app, KeyCode::Escape);
+        assert!(app.world().resource::<PauseMenu>().open);
+        tap(&mut app, KeyCode::Escape);
+        assert!(!app.world().resource::<PauseMenu>().open);
+        assert!(
+            !app.world().resource::<Paused>().0,
+            "Escape out is Continue too"
+        );
     }
 }

@@ -52,10 +52,15 @@ pub struct ControlsFeedback;
 #[derive(Component)]
 pub struct ControlsCell(usize, Half);
 
-/// Action gutter and key gutter, sized for the longest of each in any of
-/// the languages.
-const LABEL_W: f32 = 268.0;
-const VALUE_W: f32 = 196.0;
+/// Action gutter and key gutter, sized in pixels for the widest thing
+/// either ever holds in any language: the French "remove all your arrows"
+/// on the left, its "press a key" prompt on the right. Measured, and held
+/// to, by `every_row_fits_its_cell_in_every_language`; the cells clip
+/// silently, and at the old 268 and 196 seven strings did.
+const LABEL_W: f32 = 304.0;
+const VALUE_W: f32 = 280.0;
+/// The row font, which the measurement has to be taken at.
+const ROW_FONT: f32 = 19.0;
 
 /// Where a heading falls, and which one: before the seat picker, before
 /// the movement keys, before the placement keys, and before the two that
@@ -91,11 +96,11 @@ pub fn enter_controls(
                         .with_children(|line| {
                             line.spawn((
                                 ControlsCell(row, Half::Label),
-                                menu_ui::cell(LABEL_W, 19.0),
+                                menu_ui::cell(LABEL_W, ROW_FONT),
                             ));
                             line.spawn((
                                 ControlsCell(row, Half::Value),
-                                menu_ui::cell(VALUE_W, 19.0),
+                                menu_ui::cell(VALUE_W, ROW_FONT),
                             ));
                         });
                 }
@@ -269,6 +274,45 @@ mod tests {
         assert_eq!(action_at(RESET_ROW), None);
         assert_eq!(action_at(1), Some(Action::MoveUp));
         assert_eq!(action_at(ROWS - 2), Some(Action::ClearAll));
+    }
+
+    /// Every string a cell can hold, at the row font, in every language,
+    /// against the cell that holds it. The cells clip silently, so this is
+    /// the only thing that says when a translation has outgrown its gutter:
+    /// the labels are the action names, the reset row and the seat row;
+    /// the values are every key a seat can be bound to as its cap reads
+    /// (the widest is a spelled-out key on a bare keyboard), the listening
+    /// prompt, the reset key's name, and the seat picker with its arrows.
+    #[test]
+    fn every_row_fits_its_cell_in_every_language() {
+        use crate::app::i18n::metrics::text_px;
+        let caps = crate::app::keycaps::KeyCaps::default();
+        let keys: Vec<String> = binds::all_bindable().map(|key| caps.label(key)).collect();
+        for lang in crate::app::i18n::ALL_LANGS {
+            let tr = lang.tr();
+            let mut labels: Vec<String> = tr.bind_actions.iter().map(|s| s.to_string()).collect();
+            labels.push(tr.ctl_reset.to_string());
+            labels.push(tr.ctl_seat.to_string());
+            for label in labels {
+                let w = text_px(&label, ROW_FONT);
+                assert!(
+                    w <= LABEL_W,
+                    "{lang:?}: label {label:?} is {w:.1}px, and the cell holds {LABEL_W}"
+                );
+            }
+            let mut values = keys.clone();
+            values.push(tr.ctl_listening.to_string());
+            values.push(tr.ctl_reset_key.to_string());
+            let seat = crate::app::seat_label(tr, BOUND_SEATS as u8 - 1);
+            values.push(format!("< {seat} >"));
+            for value in values {
+                let w = text_px(&value, ROW_FONT);
+                assert!(
+                    w <= VALUE_W,
+                    "{lang:?}: value {value:?} is {w:.1}px, and the cell holds {VALUE_W}"
+                );
+            }
+        }
     }
 
     /// Rebinding refuses a key another action already owns, including one

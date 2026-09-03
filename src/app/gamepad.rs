@@ -183,7 +183,11 @@ pub fn pad_move_cursor(
         if !repeat.0.is_finished() {
             continue;
         }
-        let first_step = repeat.0.elapsed() == repeat.0.duration();
+        // The zero-length timer is the one a fresh press starts on. Asking
+        // whether the timer's elapsed equals its duration said yes for
+        // every finished timer, since Bevy clamps a finished one to its
+        // duration, so the hold never got past the first-step delay.
+        let first_step = repeat.0.duration().is_zero();
         repeat.0 = Timer::from_seconds(
             if first_step {
                 settings.repeat_delay

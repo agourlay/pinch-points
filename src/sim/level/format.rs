@@ -491,7 +491,9 @@ fn place_entities(board: &mut Board, header: &Header) -> Result<(), String> {
     for &(x, y, dir) in &header.gulls {
         check("gull", x, y)?;
         if !board.gull_may_stand(x, y) {
-            return Err(format!("gull at ({x},{y}) is standing on a rock or in kelp"));
+            return Err(format!(
+                "gull at ({x},{y}) is standing on a rock or in kelp"
+            ));
         }
         board.spawn_gull(x, y, dir);
     }
@@ -576,7 +578,10 @@ mod tests {
         assert!(err.contains("period must be at least 1"), "{err}");
         let err = level_with("rule: evict 0").unwrap_err();
         assert!(err.contains("at least 1"), "{err}");
-        assert!(level_with("rule: reject 0").is_ok(), "no posts to give is a legal puzzle");
+        assert!(
+            level_with("rule: reject 0").is_ok(),
+            "no posts to give is a legal puzzle"
+        );
         let err = level_with("crab: 1,1 R L common").unwrap_err();
         assert!(err.contains("standing on a rock"), "{err}");
         let err = level_with("gull: 1,1 R").unwrap_err();

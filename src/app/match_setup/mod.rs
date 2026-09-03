@@ -232,6 +232,26 @@ impl Default for MatchConfig {
     }
 }
 
+impl MatchConfig {
+    /// The daily challenge's table: today's arena, three fierce bots, a
+    /// standard round. Its own value rather than a write into the
+    /// player's config, which used to come back from the daily set to
+    /// this and show it on the setup screen as what they had chosen.
+    pub fn daily() -> Self {
+        MatchConfig {
+            seats: 4,
+            bots: 3,
+            bot_levels: [BotLevel::Hard; MAX_PLAYERS],
+            map: MapChoice::GenClassic,
+            custom: 0,
+            gulls: GullPressure::Normal,
+            round: RoundLength::Standard,
+            series: crate::app::tournament::SeriesLength::Single,
+            armed: true,
+        }
+    }
+}
+
 pub const BOT_LEVELS: [BotLevel; 3] = [BotLevel::Easy, BotLevel::Normal, BotLevel::Hard];
 
 /// The wire form of this screen's choices, for a host to send and every peer

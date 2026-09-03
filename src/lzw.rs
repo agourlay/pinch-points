@@ -180,6 +180,9 @@ pub(crate) fn decode(data: &[u8], min_code_bits: u8) -> Option<(Vec<u8>, usize)>
             // The one code a stream may name before it exists: the entry
             // being built right now. Anything further ahead is not a stream
             // this encoder wrote.
+            if usize::from(code) != table.len() {
+                return None;
+            }
             let prefix = table.get(usize::from(prev?))?;
             let mut entry = prefix.clone();
             entry.push(*entry.first()?);
@@ -276,6 +279,29 @@ mod tests {
     fn nonsense_is_refused_rather_than_followed() {
         // A code far past anything the dictionary can hold yet.
         assert_eq!(decompress(&[0xFF, 0xFF, 0xFF, 0xFF], 8), None);
+        // And one just past the entry being built: at 8 bits the clear
+        // code is 256, the end code 257, and after one literal the table
+        // holds 258 entries, so 258 is the one code a stream may name
+        // ahead of time and 300 is not. Written at 9 bits, low bit first.
+        let mut bits = Vec::new();
+        for code in [256u32, 65, 300, 257] {
+            for bit in 0..9 {
+                bits.push((code >> bit) & 1 == 1);
+            }
+        }
+        let packed: Vec<u8> = bits
+            .chunks(8)
+            .map(|byte| {
+                byte.iter()
+                    .enumerate()
+                    .fold(0u8, |acc, (i, &b)| acc | (u8::from(b) << i))
+            })
+            .collect();
+        assert_eq!(
+            decompress(&packed, 8),
+            None,
+            "a code past the table is refused"
+        );
         // Whatever it is handed, it either answers or declines - never both,
         // and never for long.
         for seed in 0..400u32 {

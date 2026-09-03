@@ -781,7 +781,10 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n");
             assert!(zeroed.contains(line), "{key} is set on the awkward board");
-            assert!(Board::parse_snapshot(&zeroed).is_err(), "{line} should be refused");
+            assert!(
+                Board::parse_snapshot(&zeroed).is_err(),
+                "{line} should be refused"
+            );
         }
         // A truncated save: every line but the header removed in turn.
         let lines: Vec<&str> = good.lines().collect();

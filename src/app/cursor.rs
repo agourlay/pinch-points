@@ -309,14 +309,35 @@ pub fn spawn_puzzle_cursor(mut commands: Commands, art: Res<crate::app::art::Art
 /// Versus cursors: online spawns only the local seat's cursor (rivals'
 /// placements arrive over the wire); local play seats two keyboard players
 /// plus one per extra connected gamepad.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_versus_cursors(
     mut commands: Commands,
     art: Res<crate::app::art::Art>,
     online: Res<crate::app::net::Online>,
     playback: Res<crate::app::Playback>,
     config: Res<crate::app::match_setup::MatchConfig>,
+    daily: Res<crate::app::Daily>,
+    resuming: Res<crate::app::Resuming>,
     pads: Query<&Gamepad>,
 ) {
+    // Before `load_versus` takes the resumed round, which is why this can
+    // still read it. Its table is the round's own: one cursor per human
+    // seat, and none for the AI's, or a keypress on the AI's keys steered
+    // its crabs over the head of the bot.
+    if let Some(round) = &resuming.0 {
+        let humans = round.bots[..usize::from(round.seats)]
+            .iter()
+            .filter(|bot| bot.is_none())
+            .count() as u8;
+        spawn_cursors(&mut commands, &art, humans);
+        return;
+    }
+    let daily_config = crate::app::match_setup::MatchConfig::daily();
+    let config = if daily.active {
+        &daily_config
+    } else {
+        &*config
+    };
     // A replay has no cursor, for the same reason a spectator has none:
     // there is no seat here to place from. Cursor movement is live input
     // and was never recorded, so one drawn over a replay simply sits in the
