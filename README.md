@@ -114,9 +114,8 @@ event, the gull surge) are also announced across the centre of the screen.
 
 ![The lure: banking a molting crab turns every loose crab the luring player's colour and pulls it home - here, to green P3](docs/screenshots/lure.png)
 
-**The tide.** The clock turns red for the last 30 seconds, the gull surge
-doubles, and the music speeds up; when the tide comes in, the highest bank
-wins.
+**The tide.** The clock turns red for the last 30 seconds and the gull
+surge doubles; when the tide comes in, the highest bank wins.
 
 **Terrain.**
 

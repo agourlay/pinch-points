@@ -427,49 +427,6 @@ pub fn rotate_music(
     ));
 }
 
-/// How much faster the theme runs by the time the wave lands.
-const SURGE_RAMP: f32 = 0.35;
-
-/// How fast the theme runs with `remaining` ticks left, which is 1.0
-/// everywhere but inside the final scramble.
-///
-/// Pure and apart from the system, because the only other way to read the
-/// ramp is off a live `AudioSink`, and a curve nobody can check is a curve
-/// that quietly stops matching the thing it is supposed to be racing.
-pub(crate) fn surge_ramp(remaining: Option<u64>) -> f32 {
-    let window = u64::from(crate::sim::SURGE_TICKS);
-    match remaining {
-        Some(ticks) if ticks <= window => 1.0 + SURGE_RAMP * (1.0 - ticks as f32 / window as f32),
-        _ => 1.0,
-    }
-}
-
-/// The tide nudge: across the final scramble of a versus round the music
-/// speeds up, ramping to [`SURGE_RAMP`] at the wave. Everywhere else it
-/// plays straight. Speed-only (pitch rises with it, which is the point).
-///
-/// The window is [`crate::sim::SURGE_TICKS`] and is not a number of its
-/// own here. It was, twice over, and it was the only reader that spelled
-/// it out: the gulls double, the water reddens, the HUD turns its clock
-/// red and the surge stinger sounds, all off the sim's constant, while the
-/// music ramped off a copy. Move the scramble and the copy would have gone
-/// on describing the old one, with nothing failing to compile to say so.
-pub fn surge_tempo(
-    sim: Res<crate::app::Sim>,
-    screen: Res<State<Screen>>,
-    sinks: Query<&AudioSink, With<Music>>,
-) {
-    let ramp = match *screen.get() == Screen::Versus {
-        true => surge_ramp(sim.0.remaining_ticks()),
-        false => 1.0,
-    };
-    for sink in &sinks {
-        if (sink.speed() - ramp).abs() > 0.005 {
-            sink.set_speed(ramp);
-        }
-    }
-}
-
 /// M mutes the game: the cap that says M, on whatever keyboard this is.
 ///
 /// It used to stop the music alone, which was never what a player reaching
@@ -822,47 +779,6 @@ mod tests {
             assert_eq!(playing(&mut app), 0, "silence {silence} starts nothing");
             assert_eq!(next(&app), at, "and does not walk the list either");
         }
-    }
-
-    /// The tide nudge, end to end. The theme races the round it is played
-    /// under, so the curve has to start where the scramble starts and
-    /// arrive at the top exactly when the wave does.
-    ///
-    /// Read off the sim's own window rather than a number of its own: this
-    /// is the check that the two stay married, and it is the one thing a
-    /// live `AudioSink` cannot be asked.
-    #[test]
-    fn the_tide_nudge_ramps_across_the_scramble_and_nowhere_else() {
-        let window = u64::from(crate::sim::SURGE_TICKS);
-        let top = 1.0 + SURGE_RAMP;
-        assert_eq!(surge_ramp(None), 1.0, "an untimed round never hurries");
-        assert_eq!(surge_ramp(Some(window * 4)), 1.0, "nor the early minutes");
-        assert_eq!(surge_ramp(Some(window + 1)), 1.0, "nor a tick before it");
-        assert_eq!(
-            surge_ramp(Some(window)),
-            1.0,
-            "the scramble opens at a walk"
-        );
-        assert!(
-            (surge_ramp(Some(0)) - top).abs() < 1e-6,
-            "and the wave lands at the top"
-        );
-        assert!(
-            (surge_ramp(Some(window / 2)) - (1.0 + SURGE_RAMP / 2.0)).abs() < 1e-3,
-            "halfway through is halfway up"
-        );
-        // Never backwards, and never past the top: a round the players are
-        // living through should not hear the music hesitate, and a sink
-        // asked for a speed outside the ramp is a sink asked for a pitch
-        // nobody designed.
-        let mut last = 1.0;
-        for left in (0..=window).rev() {
-            let now = surge_ramp(Some(left));
-            assert!(now >= last - 1e-6, "{left} ticks left went backwards");
-            assert!(now <= top + 1e-6, "{left} ticks left overshot to {now}");
-            last = now;
-        }
-        assert!((last - top).abs() < 1e-6, "and it finishes at the top");
     }
 
     /// The stereo field mirrors the board (rodio boosts the far ear), tops
