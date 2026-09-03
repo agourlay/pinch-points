@@ -413,6 +413,7 @@ pub static RU: Tr = Tr {
     lobby_card_terms: "РАУНД",
     online_seat_abandoned: "{p} выбыл - замок берёт ИИ",
     online_host_gone: "хозяин ушёл - без него раунд не продолжить",
+    online_dropped: "хозяин отключил тебя - пять секунд от тебя ничего не доходило",
     lobby_queued_next: "Раунд уже идёт - ты следующий",
     lobby_queued_behind: "Раунд уже идёт - перед тобой {n}",
     lobby_beach_full: "На том пляже мест нет",

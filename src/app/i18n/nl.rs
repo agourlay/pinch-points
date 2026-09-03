@@ -406,6 +406,7 @@ pub static NL: Tr = Tr {
     lobby_card_terms: "DE RONDE",
     online_seat_abandoned: "{p} is weg - een AI neemt het kasteel over",
     online_host_gone: "de host is weg - die ronde kon niet doorgaan",
+    online_dropped: "de host heeft je opgegeven - vijf seconden lang kwam er niets van je aan",
     lobby_queued_next: "Ronde bezig - jij bent de volgende",
     lobby_queued_behind: "Ronde bezig - {n} voor jou",
     lobby_beach_full: "Dat strand is vol",

@@ -555,6 +555,10 @@ struct Tr {
     /// every input and calls every round. Read on the menu the joiners
     /// are walked back to.
     pub online_host_gone: &'static str,
+    /// The host gave up on this seat: nothing it sent got through for
+    /// as long as the host waits before handing a seat to an AI. Read on
+    /// the menu, like `online_host_gone`.
+    pub online_dropped: &'static str,
     /// Waiting for a match that is already under way: next in line, or
     /// with `{n}` people ahead.
     pub lobby_queued_next: &'static str,

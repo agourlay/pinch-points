@@ -406,6 +406,7 @@ pub static ES: Tr = Tr {
     lobby_card_terms: "LA RONDA",
     online_seat_abandoned: "{p} se ha ido - una IA se queda el castillo",
     online_host_gone: "el anfitrión se fue - esa ronda no pudo seguir",
+    online_dropped: "el anfitrión te dejó fuera - nada de lo tuyo llegó durante cinco segundos",
     lobby_queued_next: "Ronda en curso - eres el siguiente",
     lobby_queued_behind: "Ronda en curso - {n} por delante de ti",
     lobby_beach_full: "Esa playa está llena",

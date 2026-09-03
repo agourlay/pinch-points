@@ -133,11 +133,15 @@ impl OnlineSession {
         for (msg, from) in self.transport.recv_all() {
             self.mark_heard(from);
             match msg {
-                NetMsg::Hello { .. } | NetMsg::Watch => {
+                NetMsg::Hello { name } => {
                     if host {
-                        let answer = self
-                            .queue_place(from)
-                            .unwrap_or_else(|| self.start_msg(self.seat_of(from)));
+                        let answer = self.answer_greeting(from, &name_from_wire(&name), false);
+                        self.transport.send_to(from, answer);
+                    }
+                }
+                NetMsg::Watch => {
+                    if host {
+                        let answer = self.answer_greeting(from, "", true);
                         self.transport.send_to(from, answer);
                     }
                 }
@@ -172,6 +176,11 @@ impl OnlineSession {
                 | NetMsg::Incompatible { .. } => {}
             }
         }
+        // After the socket is drained, so a greeting that arrived in this
+        // very poll counts as a word before the silence is judged.
+        if host {
+            self.forget_the_silent();
+        }
     }
 
     /// Host: the table for the next round, admitting whoever queued while
@@ -198,6 +207,37 @@ impl OnlineSession {
                 Some(seat)
             })
             .collect()
+    }
+
+    /// Host: what a greeting earns its sender, with what it said kept.
+    ///
+    /// One answer whether the round is running (`pump`) or the table is on
+    /// the results card (`poll_between_rounds`): a peer in line is told
+    /// so, and one in the plan is told its place again, in case the Start
+    /// went astray. The name and the wish to watch are written down either
+    /// way, because they are what the next round's plan is dealt from. The
+    /// card path once answered without writing either, so a player who
+    /// turned up while the scores were being read was seated nameless
+    /// next round, and a would-be watcher was dealt a chair.
+    pub(super) fn answer_greeting(&mut self, from: usize, told: &str, watch: bool) -> NetMsg {
+        debug_assert!(self.is_host(), "only the host answers greetings");
+        if !told.is_empty() {
+            self.remember_peer_name(from, told);
+        }
+        if watch {
+            self.note_watch_wish(from);
+        }
+        if let Some(queued) = self.queue_place(from) {
+            return queued;
+        }
+        // A watcher is told it is watching, so the seat it gets is not one.
+        let seat = if watch { None } else { self.seat_of(from) };
+        if let Some(slot) = seat.and_then(|seat| self.names.get_mut(usize::from(seat)))
+            && !told.is_empty()
+        {
+            *slot = told.to_string();
+        }
+        self.start_msg(seat)
     }
 
     /// Host: write down a peer's name against its socket index, growing the
@@ -522,6 +562,117 @@ mod next_round_tests {
             sockets.push(socket);
         }
         sockets
+    }
+
+    /// A greeting on the results card carries the same two things it
+    /// carries in the lobby, a name and a wish to watch, and the host
+    /// has to keep both: they are what the next round's table is dealt
+    /// from. The card path once answered without writing either down, so
+    /// Bo was seated nameless and Dee, who asked for the rail, was dealt a
+    /// chair.
+    #[test]
+    fn a_greeting_on_the_results_card_keeps_its_name_and_its_wish() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(1),
+        );
+        host.names[0] = "Anna".into();
+        let _bo = gather(&mut host, &["Bo"]);
+        let port = host.transport.local_addr().expect("addr").port();
+        let dee = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        dee.send(crate::app::lobby::greeting(true, "Dee"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() == 2 {
+                break;
+            }
+        }
+        assert_eq!(host.transport.peer_count(), 2, "Dee is aboard");
+
+        host.call_next_round(terms(2), None);
+        assert_eq!(host.peers.seat_of(0), Some(1), "Bo is dealt a chair");
+        assert_eq!(host.names[1], "Bo", "under its own name");
+        assert_eq!(host.peers.seat_of(1), None, "Dee gets the rail it asked for");
+        assert!(host.peers.get(1).is_some_and(Peer::watches));
+    }
+
+    /// A peer that leaves while the scores are being read leaves nothing
+    /// stalled, so the round never notices; the host has to. One that has
+    /// said nothing for as long as the round waits before giving a seat
+    /// up is forgotten before the next table is dealt, so the ghost is
+    /// not dealt a chair that every table then freezes on.
+    #[test]
+    fn a_peer_silent_on_the_results_card_is_not_dealt_a_chair() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1, 2], DEFAULT_DELAY),
+            3,
+            terms(1),
+        );
+        host.names[0] = "Anna".into();
+        let sockets = gather(&mut host, &["Bo", "Cy"]);
+        // Cy keeps greeting, as a joiner on the card does; Bo has gone.
+        sockets[1].send(NetMsg::hello("Cy"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        host.poll_between_rounds(super::super::presence::ABANDON_AFTER);
+        assert_eq!(host.transport.peer_count(), 1, "Bo is forgotten");
+        assert_eq!(host.peers.len(), 1, "row and all");
+        assert_eq!(host.peer_name(0), Some("Cy"), "and Cy moved down into its index");
+
+        host.call_next_round(terms(2), None);
+        assert_eq!(host.seats, 2, "Anna and Cy, nobody else");
+        assert_eq!(host.names[1], "Cy");
+    }
+
+    /// The host's call for the next round can land on a joiner that is
+    /// still ticking out the last frames of the round the host has
+    /// finished. The lockstep it takes up is at frame zero and the board
+    /// is still the old one: the pump that rearmed must not tick, or the
+    /// new round's first two frames are played out on the wrong beach and
+    /// the joiner walks into the arena two frames ahead of every table.
+    #[test]
+    fn a_call_that_lands_mid_pump_does_not_tick_the_old_board() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(111),
+        );
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(111),
+        );
+        joiner.transport.send(NetMsg::hello("Bo"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() == 1 {
+                break;
+            }
+        }
+        host.peers.deal(&[Some(1)]);
+        host.call_next_round(terms(222), None);
+
+        let mut ticks = 0;
+        let mut rearmed_in = None;
+        for pump in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let before = ticks;
+            joiner.pump(PlayerAction::None, |_| ticks += 1);
+            if joiner.next_round {
+                assert_eq!(ticks, before, "the pump that rearmed did not tick");
+                rearmed_in = Some(pump);
+                break;
+            }
+        }
+        assert!(rearmed_in.is_some(), "the call reached the joiner");
+        assert_eq!(joiner.session.frame(), 0, "and the new lockstep is untouched");
     }
 
     /// A series tally is kept by seat, and seats move. A peer that leaves

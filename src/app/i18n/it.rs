@@ -406,6 +406,7 @@ pub static IT: Tr = Tr {
     lobby_card_terms: "IL ROUND",
     online_seat_abandoned: "{p} se n'è andato - un'IA prende il castello",
     online_host_gone: "l'host se n'è andato - quel round non poteva continuare",
+    online_dropped: "l'host ti ha lasciato fuori - per cinque secondi non è arrivato niente da te",
     lobby_queued_next: "Round in corso - sei il prossimo",
     lobby_queued_behind: "Round in corso - {n} davanti a te",
     lobby_beach_full: "Quella spiaggia è piena",

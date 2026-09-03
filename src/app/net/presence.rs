@@ -22,7 +22,7 @@ use crate::sim::BotLevel;
 /// an AI. Long enough that a burst of loss cannot be mistaken for somebody
 /// leaving, since the resend tail repeats every tick, and short enough that a
 /// table is not left staring at a still beach.
-const ABANDON_AFTER: f32 = 5.0;
+pub(super) const ABANDON_AFTER: f32 = 5.0;
 
 /// How long a joiner waits on a host that has stopped speaking before it
 /// calls the round off.
@@ -210,6 +210,9 @@ impl OnlineSession {
         let frame = self.session.frame();
         for seat in &gone {
             self.session.abandon(*seat, frame);
+            // To everyone, the dropped peer included, and before it is
+            // forgotten: its own abandonment is how it learns it was
+            // dropped (`dropped`) rather than waiting out the host.
             self.transport
                 .send(NetMsg::Abandoned { seat: *seat, frame });
             if !self.abandoned.iter().any(|(held, _)| held == seat) {
@@ -241,6 +244,42 @@ impl OnlineSession {
             self.peers.len() <= self.transport.peer_count(),
             "a peer's row outlived the peer it was kept for"
         );
+    }
+
+    /// Host, between rounds: drop every peer that has said nothing for
+    /// [`ABANDON_AFTER`], the same patience the round itself has.
+    ///
+    /// The results card is the one place a peer leaves without the round
+    /// noticing: Escape, the menu, a crash, and nothing stalls, because
+    /// nothing is being simulated. Left on the socket, it was dealt a
+    /// chair in the next round and every table froze on the ghost for
+    /// five seconds before the host gave up on it. A joiner on the card
+    /// greets once a second precisely so that silence means something.
+    pub(super) fn forget_the_silent(&mut self) {
+        debug_assert!(self.is_host(), "only the host keeps the table");
+        for peer in (0..self.peers.len()).rev() {
+            if self
+                .peers
+                .get(peer)
+                .is_some_and(|peer| peer.silence >= ABANDON_AFTER)
+            {
+                self.transport.forget(peer);
+                self.peers.forget(peer);
+            }
+        }
+    }
+
+    /// Whether the host gave up on this seat: its own abandonment came
+    /// over the wire. The host stops talking to a seat it has dropped, so
+    /// left to [`Self::host_gone`] a joiner that merely stalled for five
+    /// seconds sat on a frozen beach for twenty more and was then told the
+    /// host had left, which was not what happened.
+    pub fn dropped(&self) -> bool {
+        !self.is_host()
+            && self
+                .session
+                .seat()
+                .is_some_and(|mine| self.abandoned.iter().any(|(seat, _)| *seat == mine))
     }
 
     /// The seat the status line should name, if any.
@@ -313,10 +352,17 @@ pub(crate) fn leave_a_hostless_round(
     mut notice: ResMut<RoundNotice>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
-    if online.0.as_ref().is_some_and(OnlineSession::host_gone) {
-        // The menu drops the session on its way in, and reads the notice
-        // once it is there.
-        notice.0 = settings.tr().online_host_gone.to_string();
+    let Some(session) = online.0.as_ref() else {
+        return;
+    };
+    let tr = settings.tr();
+    // The menu drops the session on its way in, and reads the notice
+    // once it is there.
+    if session.dropped() {
+        notice.0 = tr.online_dropped.to_string();
+        next_screen.set(Screen::Menu);
+    } else if session.host_gone() {
+        notice.0 = tr.online_host_gone.to_string();
         next_screen.set(Screen::Menu);
     }
 }

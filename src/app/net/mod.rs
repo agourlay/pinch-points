@@ -357,14 +357,18 @@ impl OnlineSession {
     ///
     /// `taken` counts the humans, not the table: an AI seat gives way to a
     /// player who wants it, the same way the lobby fills bots in behind
-    /// whoever turned up.
+    /// whoever turned up. The humans in line for the next round count
+    /// too, since the chair each will take is spoken for: the lobby
+    /// refuses a beach with no chair "this round or the next", and a
+    /// beacon that left the queue out let a sixth player in to be dealt
+    /// the rail with no notice.
     pub fn keep_announcing(&mut self, delta: f32) {
         if self.home.announcer.aboard().is_none()
             || !crate::app::lobby::once_a_second(&mut self.home.announce_in, delta)
         {
             return;
         }
-        let taken = self.session.player_count() as u8;
+        let taken = self.players_spoken_for();
         let (Some(announcer), Ok(addr)) =
             (self.home.announcer.aboard(), self.transport.local_addr())
         else {
@@ -495,6 +499,18 @@ impl OnlineSession {
         self.session.watching()
     }
 
+    /// The humans at the table and in line for it: the players in the
+    /// lockstep plus every queued peer that did not ask to watch. What the
+    /// running beacon reports as taken.
+    pub(crate) fn players_spoken_for(&self) -> u8 {
+        let queued = self
+            .peers
+            .iter()
+            .filter(|peer| peer.place == peers::Place::Queued && !peer.watch)
+            .count();
+        (self.session.player_count() + queued).min(MAX_PLAYERS) as u8
+    }
+
     /// One fixed-tick's worth of network pumping: commit and (re)send local
     /// input, drain the socket (the host relays joiner inputs to the other
     /// joiners and re-answers stray hellos with their seat), then simulate
@@ -520,6 +536,14 @@ impl OnlineSession {
             None => {}
         }
         let host = self.is_host();
+        // Set when the host's call for the next round arrives in this very
+        // pump, which is possible for a joiner or spectator still on the
+        // last frames of the round the host has finished. The lockstep is
+        // fresh from frame zero then, and the board is still the old one:
+        // ticking would play the new round's first frames out on it, and
+        // the joiner would enter the arena two frames ahead of every other
+        // table, a desync at the first hash.
+        let mut rearmed = false;
         // Likewise every seat given up on, for the rest of the round: a
         // joiner that misses the one notice waits on that seat forever,
         // and the host never notices, because a joiner that is waiting is
@@ -539,27 +563,8 @@ impl OnlineSession {
                 // watching, so the seat it gets is not one.
                 NetMsg::Hello { name } => {
                     if host {
-                        // Its name is written down whether it is at the
-                        // table or waiting in line: a peer that queues
-                        // mid-round holds no seat to keep it in yet, and
-                        // without this it was seated nameless next round.
-                        let told = name_from_wire(&name);
-                        if !told.is_empty() {
-                            self.remember_peer_name(from, &told);
-                        }
-                        if let Some(queued) = self.queue_place(from) {
-                            self.transport.send_to(from, queued);
-                            continue;
-                        }
-                        let seat = self.seat_of(from);
-                        if let Some(slot) =
-                            seat.and_then(|seat| self.names.get_mut(usize::from(seat)))
-                            && !told.is_empty()
-                        {
-                            *slot = told;
-                        }
-                        let start = self.start_msg(seat);
-                        self.transport.send_to(from, start);
+                        let answer = self.answer_greeting(from, &name_from_wire(&name), false);
+                        self.transport.send_to(from, answer);
                     }
                 }
                 NetMsg::Watch => {
@@ -570,10 +575,7 @@ impl OnlineSession {
                         // The wish is remembered, so a peer that armed W and
                         // dialled in mid-round is seated as an onlooker next
                         // round rather than dealt a chair it never asked for.
-                        self.note_watch_wish(from);
-                        let answer = self
-                            .queue_place(from)
-                            .unwrap_or_else(|| self.start_msg(None));
+                        let answer = self.answer_greeting(from, "", true);
                         self.transport.send_to(from, answer);
                     }
                 }
@@ -642,6 +644,7 @@ impl OnlineSession {
                         beach,
                     });
                     self.next_round = true;
+                    rearmed = true;
                 }
                 NetMsg::Start { names, .. } => {
                     // Stale as a launch signal, but a joiner in the direct
@@ -679,6 +682,9 @@ impl OnlineSession {
             }
         }
         self.hashes.compare();
+        if rearmed {
+            return committed;
+        }
         // At most a couple of frames per fixed tick: a lagging peer catches
         // up gradually instead of spiralling.
         for _ in 0..2 {

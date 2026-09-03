@@ -413,6 +413,7 @@ pub static DE: Tr = Tr {
     lobby_card_terms: "DIE RUNDE",
     online_seat_abandoned: "{p} ist raus - eine KI übernimmt die Burg",
     online_host_gone: "der Gastgeber ist weg - diese Runde konnte nicht weitergehen",
+    online_dropped: "der Gastgeber hat dich aufgegeben - fünf Sekunden lang kam nichts von dir an",
     lobby_queued_next: "Runde läuft - du bist als Nächstes dran",
     lobby_queued_behind: "Runde läuft - {n} vor dir",
     lobby_beach_full: "Dieser Strand ist voll",
