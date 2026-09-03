@@ -16,8 +16,8 @@ settings gutters are measured against. Pass --ttc to point at another
 copy.
 
 Run it after adding or rewording a Japanese string: a character that is
-not in the subset draws as nothing at all. `japanese_font_covers_every_
-character` in i18n fails when this has not been re-run.
+not in the subset draws as nothing at all. `the_japanese_font_carries_every_
+character_the_tables_use` in i18n fails when this has not been re-run.
 """
 import argparse
 import re

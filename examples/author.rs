@@ -7,8 +7,8 @@
 //! and the search is exponential in the post count.
 //!
 //! Searches under [`DEFAULT_NODE_BUDGET`] rather than exhaustively, because
-//! that ceiling *is* the shipping constraint: `tests/it/campaign.rs` proves
-//! minimality under it, and the editor gives up there too. A level the
+//! that ceiling *is* the shipping constraint: `examples/verify_levels.rs`
+//! proves minimality under it, and the editor gives up there too. A level the
 //! budget cannot answer is a level that cannot ship, so hearing "gave up"
 //! while authoring is the useful answer and not a limitation. Pass
 //! `--exhaustive` to wait for the truth instead.

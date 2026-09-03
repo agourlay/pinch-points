@@ -151,7 +151,8 @@ wins.
   rules).
 - **Driftwood**: a level editor with a built-in solver, playtesting, and
   save-to-campaign. `F1` names the level, `F5` cycles the beach size
-  (up to 20×13), and `F2` files it under its name, so saving is keeping
+  (up to 20×13), `F6` toggles between a puzzle stage and a versus beach,
+  and `F2` files it under its name, so saving is keeping
   rather than replacing. Saved levels appear at the end of the Tide Pool
   stage list, unlocked, and can be picked as a versus beach.
 
@@ -287,8 +288,9 @@ deliberately.
 
 ### Tooling
 
-- `cargo run --example author -- levels/<file>.txt`: the level design loop;
-  reports whether a level self-solves and what the solver finds.
+- `cargo run --release --example author -- levels/<file>.txt`: the level
+  design loop; reports whether a level self-solves and what the solver
+  finds. Release, because a debug solver is tens of times slower.
 - `cargo run --release --example verify_levels`: the campaign minimality
   proof — every shipped level must need every arrow it grants. A parallel,
   exhaustive-per-level solver search (a minute in release, so run it in
@@ -300,11 +302,18 @@ deliberately.
   `PINCH_BOTS=<n>` for AI seats), and `PINCH_SANDBOX`,
   `PINCH_AUTOPLAY=<level>`, `PINCH_EDITOR`, `PINCH_MATCH`, `PINCH_REPLAY`,
   `PINCH_LIBRARY`, `PINCH_ACHIEVEMENTS`, `PINCH_SETTINGS`,
-  `PINCH_CONTROLS`, `PINCH_STAGES=tide|beach`, and
-  `PINCH_LOBBY_HOST`/`PINCH_LOBBY_JOIN`/`PINCH_LOBBY_WATCH` open the rest.
-  `PINCH_BANNER=lure|surge|<0-7>` raises an announcement and
-  `PINCH_TIDE=<0-7>` fires the tide event itself, which is how what an
-  event *does* gets watched. `PINCH_WINDOW=<w>x<h>` opens at a given size,
+  `PINCH_CONTROLS`, `PINCH_LANGUAGE`, `PINCH_STAGES=tide|beach`, and
+  `PINCH_LOBBY_HOST`/`PINCH_LOBBY_JOIN`/`PINCH_LOBBY_WATCH` open the rest;
+  `PINCH_AUTOPLAY` with `PINCH_NOSOLVE=1` starts each level's run without
+  placing anything, so a timed level runs out. `PINCH_BANNER=lure|surge|<0-7>`
+  raises an announcement, `PINCH_TIDE=<0-7>` fires the tide event itself,
+  which is how what an event *does* gets watched, and `PINCH_LURE=<seat>`
+  starts a lure a few seconds in. `PINCH_PAUSE=1`, `PINCH_OVER=1` and
+  `PINCH_INTERLUDE=1` raise the pause card, the results card and the series
+  interlude a couple of seconds into a versus round, for shooting them.
+  `PINCH_NET_PROBE=1` submits one scripted signpost mid-round over the wire,
+  and `PINCH_ST_EXEC` runs every schedule on the single-threaded executor,
+  for the CPU measurement. `PINCH_WINDOW=<w>x<h>` opens at a given size,
   for checking a screen at the sizes people drag a window to, and
   `PINCH_SCREENSHOT=<path>` with `PINCH_SCREENSHOT_AT=<seconds>` took every
   picture in this file. `PINCH_NO_UPDATE` skips the

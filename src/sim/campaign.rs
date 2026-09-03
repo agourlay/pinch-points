@@ -1,8 +1,9 @@
 //! The Tide Pool campaign: embedded levels, in play order.
 //!
-//! Every level carries a `solution:` line that `tests/campaign.rs` replays
-//! against the sim: a level that ships is a level that is provably solvable
-//! within its signpost inventory.
+//! Every level is replayed against the sim by `tests/it/campaign.rs`: one
+//! that carries a `solution:` line is provably solvable within its signpost
+//! inventory, and one that does not (the watch-levels, which grant no posts,
+//! and the controls tutorial) provably solves itself.
 
 use crate::sim::level::Level;
 
@@ -12,7 +13,7 @@ pub const CAMPAIGN: &[&str] = &[
     include_str!("../../levels/03_follow_the_claw.txt"),
     include_str!("../../levels/04_corner_pocket.txt"),
     include_str!("../../levels/05_two_minds.txt"),
-    include_str!("../../levels/06_signpost_splitter.txt"),
+    include_str!("../../levels/06_undertow.txt"),
     include_str!("../../levels/07_family_outing.txt"),
     include_str!("../../levels/08_detour.txt"),
     include_str!("../../levels/09_both_lanes.txt"),

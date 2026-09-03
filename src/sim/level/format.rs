@@ -3,7 +3,7 @@
 //!
 //! Kept apart from the level *model* next door: the format is the only
 //! thing that cares about glyphs, lattices and `key: value` headers, and it
-//! is the half with a round-trip contract to keep (see `tests/format.rs`).
+//! is the half with a round-trip contract to keep (see `tests/it/format.rs`).
 
 use super::{Goal, Level, LevelKind};
 use crate::sim::board::{Board, CapPolicy, TileKind};

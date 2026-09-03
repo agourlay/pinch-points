@@ -34,6 +34,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      # The start-up release check (`app::update`) compares the tag's
+      # version with the binary's own: a tag ahead of Cargo.toml makes
+      # every build of this release nag itself forever, and one behind it
+      # is never announced. Cheaper to learn here than after the build.
+      - name: Check the tag names the manifest's version
+        shell: bash
+        run: |
+          version="$(grep -m1 '^version = ' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "release tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
       # A stock runner has around 14 GB free and a debug Bevy link does not
       # fit in it, which is what took CI down in "Put the disk back". A
       # release build is far smaller - no debuginfo, one binary, no test or

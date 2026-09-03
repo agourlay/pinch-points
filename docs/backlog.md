@@ -240,7 +240,7 @@ prompts, no anti-cheat - so what follows is input and display.
   wants. Worth doing on the day: a Deck and a desktop then share a
   campaign, which is the thing players notice.
 
-- **Achievements are ours, not Steam's.** The game keeps 32 of its own,
+- **Achievements are ours, not Steam's.** The game keeps fifty of its own,
   and a player who sees an achievements screen on a Steam game expects
   them on their profile. That is `steamworks-rs` and a hook in
   `achievements::unlock`, the same dependency the on-screen keyboard

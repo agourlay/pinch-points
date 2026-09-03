@@ -34,11 +34,6 @@ ureq = "3"
 # parley instead would mean tracking whichever version bevy_text pulls,
 # and a second copy of parley and fontique in the build whenever we drift.
 parlance = "0.1"
-# Asking the operating system what the keys say (`app::keymap`), so the
-# caps on screen are the caps on the keyboard from the first frame rather
-# than from the first press. A crate of its own because two of the three
-# platforms answer only through FFI, and this one forbids unsafe code:
-# see the note on that in `lib.rs`.
 # Not called from here: this turns on the one feature that makes the text
 # stack's data layer report through `log` rather than straight to stderr.
 # Japanese line breaking wants a CJK dictionary the baked data does not

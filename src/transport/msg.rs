@@ -456,13 +456,12 @@ impl NetMsg {
                     .ok()?;
                 let standing = (round != 0).then_some(SeriesStanding { round, wins });
                 let after = series_at + 1 + crate::sim::MAX_PLAYERS;
-                let beach = match body.get(after..after + 2) {
-                    Some(len) => {
-                        let len = usize::from(u16::from_le_bytes(len.try_into().ok()?));
-                        body.get(after + 2..after + 2 + len)?.to_vec()
-                    }
-                    None => Vec::new(),
-                };
+                // Every encoder of this version writes the length, so a
+                // datagram that ends before it is not one of ours.
+                let len = usize::from(u16::from_le_bytes(
+                    body.get(after..after + 2)?.try_into().ok()?,
+                ));
+                let beach = body.get(after + 2..after + 2 + len)?.to_vec();
                 Some(NetMsg::Start {
                     seats,
                     seat,
