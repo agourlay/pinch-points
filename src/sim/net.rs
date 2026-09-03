@@ -242,7 +242,10 @@ impl Lockstep {
     /// has since been lifted (see `lifted`). Both are the per-tick echoes
     /// of a pause that is over, arriving after the resume.
     pub fn receive_pause(&mut self, frame: u32) {
-        if frame < self.frame || self.lifted.is_some_and(|lifted| frame <= lifted) {
+        if frame < self.frame
+            || frame > self.horizon()
+            || self.lifted.is_some_and(|lifted| frame <= lifted)
+        {
             return;
         }
         self.pause_at = Some(match self.pause_at {
@@ -263,6 +266,12 @@ impl Lockstep {
     /// frame, and a peer that had not yet heard the earliest proposal is
     /// resuming from the same pause under a later number.
     pub fn receive_resume(&mut self, frame: u32) -> u32 {
+        // Off the wire, so bounded like every other frame number that
+        // arrives that way: `lifted` is added to when the next pause is
+        // proposed, and a peer naming the last frame there is would have
+        // had that addition overflow. One short of the horizon, so that
+        // next pause, one past this, is still a frame this peer accepts.
+        let frame = frame.min(self.horizon().saturating_sub(1));
         let lifted = [self.lifted, self.pause_at, Some(frame)]
             .into_iter()
             .flatten()
@@ -414,8 +423,16 @@ impl Lockstep {
     /// [`resend_span`]). Every frame accepted here makes a slot, and a peer
     /// naming frames up to `u32::MAX` would otherwise grow the table
     /// without bound.
+    /// The furthest frame a peer may name: as far ahead of the frame being
+    /// simulated as a resend span twice over. Frame numbers arrive off the
+    /// wire, and one past this is either a peer that has run away from the
+    /// table or one that is not playing fair; both are dropped.
+    fn horizon(&self) -> u32 {
+        self.frame + 2 * resend_span(self.delay)
+    }
+
     pub fn receive(&mut self, msg: InputMsg) {
-        let horizon = self.frame + 2 * resend_span(self.delay);
+        let horizon = self.horizon();
         if msg.frame < self.frame || msg.frame > horizon || !self.players.contains(&msg.player) {
             return;
         }
@@ -1009,10 +1026,30 @@ mod pause_echo_tests {
     #[test]
     fn a_new_pause_is_always_past_the_lifted_one() {
         let mut a = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
-        a.receive_resume(1000);
+        a.receive_resume(50);
         let at = a.request_pause().expect("a player may pause");
-        assert!(at > 1000, "{at}");
+        assert!(at > 50, "{at}");
         assert_eq!(a.pause_frame(), Some(at));
+    }
+
+    /// A resume names a frame off the wire, and the next local pause is
+    /// proposed one past it. A peer naming the last frame there is made
+    /// that addition overflow: a panic in debug, and in release a
+    /// proposal that wrapped to zero, was dropped as an echo, and was
+    /// broadcast anyway, stopping every other table at a frame this one
+    /// never honoured. Bounded to the horizon like every input frame.
+    #[test]
+    fn a_resume_from_the_end_of_time_cannot_break_the_next_pause() {
+        let mut a = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
+        let lifted = a.receive_resume(u32::MAX);
+        assert!(lifted <= 2 * resend_span(DEFAULT_DELAY), "{lifted}");
+        let at = a.request_pause().expect("a player may pause");
+        assert!(at > lifted, "{at}");
+        assert_eq!(a.pause_frame(), Some(at), "and the pause is really held");
+        // A pause proposal from past the horizon is dropped the same way.
+        let mut b = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
+        b.receive_pause(u32::MAX);
+        assert_eq!(b.pause_frame(), None);
     }
 }
 
