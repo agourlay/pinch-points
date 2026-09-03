@@ -228,7 +228,7 @@ impl Screen {
             // The menu is a full-bleed postcard laid out 1:1.
             Screen::Menu => Chrome::of(0.0, 0.0, 0.0),
             // Versus flanks the board with the two score panels.
-            Screen::Versus => Chrome::of(2.0 * side_panels::SIDEBAR_W + 60.0, 60.0, 104.0),
+            Screen::Versus => Chrome::of(2.0 * side_panels::SIDEBAR_W + 60.0, ABOVE_BOARD, 104.0),
             Screen::Puzzle
             | Screen::Editor
             | Screen::Lobby
@@ -240,10 +240,15 @@ impl Screen {
             | Screen::Replays
             | Screen::Interlude
             | Screen::Language
-            | Screen::NewVersion => Chrome::of(40.0, 60.0, 104.0),
+            | Screen::NewVersion => Chrome::of(40.0, ABOVE_BOARD, 104.0),
         }
     }
 }
+
+/// What the header keeps clear above the board: the header itself and
+/// the air the board's top edge wants under it. Derived, so a taller
+/// header pushes the board down rather than sitting on it.
+const ABOVE_BOARD: f32 = menu_ui::HEADER_H + 18.0;
 
 /// Puzzle-mode round phases (spec §5.1: place, run, win or lose, retry).
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]

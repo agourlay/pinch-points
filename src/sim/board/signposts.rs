@@ -8,10 +8,6 @@
 use super::*;
 
 impl Board {
-    /// Spec §3.3: signposts go on empty sand only, not on castles, rocks,
-    /// spawners, or a tile that already has one. At the cap, the outcome
-    /// depends on the board's `CapPolicy`: evict the player's oldest (versus)
-    /// or reject the placement (puzzle inventory).
     /// Whether a placement at `(x, y)` would succeed, without mutating.
     /// Mirrors [`Board::place_signpost`] exactly; the UI uses it for instant
     /// denied feedback on a queued (not yet applied) action.
@@ -60,6 +56,10 @@ impl Board {
             && self.signpost_count(player) >= self.rules.signpost_cap as usize
     }
 
+    /// Spec §3.3: signposts go on empty sand only, not on castles, rocks,
+    /// spawners, or a tile that already has one. At the cap, the outcome
+    /// depends on the board's `CapPolicy`: evict the player's oldest (versus)
+    /// or reject the placement (puzzle inventory).
     pub fn place_signpost(&mut self, player: PlayerId, x: u8, y: u8, dir: Direction) -> bool {
         if !self.can_place_signpost(player, x, y) {
             return false;

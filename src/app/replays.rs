@@ -377,7 +377,27 @@ fn round_from(
     let text =
         crate::app::codes::payload_text(pasted, tr, crate::share::Kind::Round, tr.code_round_bad)?;
     let replay = Replay::parse(&text).map_err(|e| fill(tr.code_round_bad, &[("e", &e)]))?;
-    Ok((replay.level.name.clone(), text))
+    Ok((winner_of(&replay, tr), text))
+}
+
+/// Who took a pasted round, for the shelf to file it under like every
+/// other round. The file carries the inputs and not the result, so the
+/// round is played through to its last tick; it carries no team mode
+/// either, so it is read as a free-for-all. Named as the recording named
+/// the seat, or by its number. It used to be filed under the beach's
+/// name, next to rounds filed under a player's.
+fn winner_of(replay: &Replay, tr: &crate::app::i18n::Tr) -> String {
+    let board = replay.playback();
+    let leaders = crate::app::side_panels::leading_seats(
+        board.scores(),
+        board.castle_seats(),
+        crate::app::teams::TeamMode::Solo,
+    );
+    match leaders.iter().position(|&led| led) {
+        Some(seat) if !replay.names[seat].is_empty() => replay.names[seat].clone(),
+        Some(seat) => crate::app::seat_label(tr, seat as u8),
+        None => "draw".to_string(),
+    }
 }
 
 /// A round off the clipboard, onto the shelf.
@@ -518,14 +538,15 @@ mod tests {
     }
 
     /// A round survives being carried as a share code and comes back as the
-    /// same text, filed under the same winner. The clipboard itself is not
+    /// same text, filed under whoever took it, which for forty ticks of
+    /// nobody banking anything is nobody. The clipboard itself is not
     /// touched: with `system_clipboard` on it is the real one, and a test
     /// has no business sitting on what someone just copied.
     #[test]
     fn a_round_travels_as_a_code_and_comes_back() {
         let tr = &crate::app::i18n::EN;
         let mut replay = Replay::new(crate::sim::Level::from_board(
-            "Anna",
+            "Turf War",
             3,
             crate::sim::classic_arena(false, 2),
         ));
@@ -542,7 +563,7 @@ mod tests {
         let code = crate::share::encode(crate::share::Kind::Round, text.as_bytes());
         let (winner, back) = round_from(crate::share::decode(&code), tr).expect("a round");
         assert_eq!(back, text, "what went in is what comes out");
-        assert!(!winner.is_empty(), "and it knows what to file it under");
+        assert_eq!(winner, "draw", "filed under the result, not the beach");
     }
 
     /// The three ways a paste is not a round, each with its own answer. One
@@ -728,8 +749,13 @@ pub fn update_replay_bar(
     };
     let total = replay.inputs.len().max(1);
     let through = (*at).min(total);
+    let width = Val::Percent(through as f32 / total as f32 * 100.0);
     for mut node in &mut track {
-        node.width = Val::Percent(through as f32 / total as f32 * 100.0);
+        // Written only when it moves: a `Node` marked changed relays out
+        // the whole interface, every frame the replay plays.
+        if node.width != width {
+            node.width = width;
+        }
     }
     let tr = settings.tr();
     let line = format!(

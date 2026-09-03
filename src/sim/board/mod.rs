@@ -422,8 +422,6 @@ impl Board {
 
     // --- the player's one verb -------------------------------------------
 
-    /// Change the signpost cap and what happens at it. Versus keeps the
-    /// default (3, evict-oldest); puzzle mode sets (inventory, reject).
     /// Let gulls into the castles, or keep them out. See `castle_raids`.
     pub fn set_castle_raids(&mut self, raids: bool) {
         self.rules.castle_raids = raids;
@@ -433,6 +431,8 @@ impl Board {
         self.rules.castle_raids
     }
 
+    /// Change the signpost cap and what happens at it. Versus keeps the
+    /// default (3, evict-oldest); puzzle mode sets (inventory, reject).
     pub fn set_signpost_rule(&mut self, cap: u8, policy: CapPolicy) {
         self.rules.signpost_cap = cap;
         self.rules.cap_policy = policy;
@@ -684,12 +684,20 @@ impl Board {
 
     /// Remove every crab standing on tile `(x, y)` (editor use).
     pub fn remove_crabs_at(&mut self, x: u8, y: u8) {
+        assert!(
+            self.in_bounds(i32::from(x), i32::from(y)),
+            "crab off the board"
+        );
         let tile = self.index(i32::from(x), i32::from(y));
         self.crabs.retain(|c| c.tile != tile);
     }
 
     /// Remove every gull standing on tile `(x, y)` (editor use).
     pub fn remove_gulls_at(&mut self, x: u8, y: u8) {
+        assert!(
+            self.in_bounds(i32::from(x), i32::from(y)),
+            "gull off the board"
+        );
         let tile = self.index(i32::from(x), i32::from(y));
         self.gulls.retain(|g| g.tile != tile);
     }

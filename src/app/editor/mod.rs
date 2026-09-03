@@ -236,27 +236,24 @@ pub fn editor_input(
     // Resizing starts a fresh beach: there is no honest way to keep a
     // 20-wide layout when it becomes 9 wide, and half a level silently
     // thrown away is worse than a clean sheet you asked for.
-    for (key, forward) in [(KeyCode::F5, true)] {
-        if keys.just_pressed(key) {
-            let board = &sim.0;
-            let now = (board.width(), board.height());
-            let at = EDITOR_SIZES.iter().position(|&s| s == now).unwrap_or(1);
-            let n = EDITOR_SIZES.len();
-            let (w, h) = EDITOR_SIZES[(at + if forward { 1 } else { n - 1 }) % n];
-            replace_board(
-                Board::new(w, h, 0xED17),
-                &mut sim,
-                &mut state,
-                &mut commands,
-                sprites,
-                &mut cursors,
-            );
-            state.feedback = fill(
-                settings.tr().ed_resized,
-                &[("w", &w.to_string()), ("h", &h.to_string())],
-            );
-            return;
-        }
+    if keys.just_pressed(KeyCode::F5) {
+        let board = &sim.0;
+        let now = (board.width(), board.height());
+        let at = EDITOR_SIZES.iter().position(|&s| s == now).unwrap_or(1);
+        let (w, h) = EDITOR_SIZES[(at + 1) % EDITOR_SIZES.len()];
+        replace_board(
+            Board::new(w, h, 0xED17),
+            &mut sim,
+            &mut state,
+            &mut commands,
+            sprites,
+            &mut cursors,
+        );
+        state.feedback = fill(
+            settings.tr().ed_resized,
+            &[("w", &w.to_string()), ("h", &h.to_string())],
+        );
+        return;
     }
     if keys.just_pressed(KeyCode::F1) {
         state.mode = Mode::Naming;

@@ -99,6 +99,7 @@ pub fn track_events(
             &muted,
             &sounds,
         );
+        save(&stats, &unlocked);
     }
 }
 
@@ -397,8 +398,11 @@ fn unlock_new(
         if let Some(sounds) = sounds {
             play_chime(commands, sounds, sfx_gain(settings, muted));
         }
-        save(stats, unlocked);
     }
+    // Saved by the caller, once: every one of them writes the stats it
+    // just changed anyway, and a save is a sync to disk on the frame
+    // thread. This used to save here as well, per trophy, so an unlock
+    // mid-round cost two of them and a double unlock three.
 }
 
 #[cfg(test)]

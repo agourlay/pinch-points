@@ -190,7 +190,8 @@ impl Board {
                 gull.dir = gull.dir.reverse();
                 let (rx, ry) = gull.dir.offset();
                 if !self.in_bounds(x + rx, y + ry) {
-                    // 1×1 board: nowhere to fly. Land where we are.
+                    // A board one tile long on this axis: nowhere to fly.
+                    // Land where we are.
                     gull.state = GullState::Walking;
                     gull.takeoff_in = self.roll_takeoff();
                     return false;

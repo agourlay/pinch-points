@@ -433,7 +433,7 @@ pub static ES: Tr = Tr {
     ed_playtest_prompt: "teclas de flecha poner | Espacio quitar | Esc fin de la prueba",
     ed_solvable: "tiene solución: {placements}",
     ed_solvable_free: "tiene solución sin ninguna flecha",
-    ed_not_solvable: "SIN solución con {n} flechas",
+    ed_not_solvable: "SIN solución - flechas: {n}",
     ed_solver_gave_up: "abandono - demasiado grande. Prueba con menos flechas.",
     ed_validating: "revisando...",
     ed_already_validating: "ya se está revisando...",
@@ -468,7 +468,7 @@ pub static ES: Tr = Tr {
     ed_kind_arena: "una playa de batalla",
     ed_now_puzzle: "ahora es un reto: entra en la Charca de marea",
     ed_now_arena: "ahora es una playa de batalla: entra en la lista de mapas",
-    ed_arena_ok: "una playa para {n}, con {h} agujeros que la alimentan",
+    ed_arena_ok: "una playa para {n} - agujeros que la alimentan: {h}",
     ed_arena_needs_seats: "castillos para {n} - hace falta uno por jugador",
     ed_arena_no_crabs: "ni cangrejos ni agujeros: nada que disputarse",
 };

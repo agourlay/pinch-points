@@ -138,9 +138,13 @@ fn checksum(body: &str) -> u8 {
 
 /// Where `ch` sits in the alphabet, if it is in it at all.
 fn index_of(ch: char) -> Option<u8> {
+    // Compared as a byte only once it is one: `as u8` truncates, and a
+    // character past ASCII whose low byte happened to spell a digit was
+    // being read as that digit.
+    let byte = u8::try_from(ch).ok()?;
     ALPHABET
         .iter()
-        .position(|&a| a == ch as u8)
+        .position(|&a| a == byte)
         .map(|index| index as u8)
 }
 

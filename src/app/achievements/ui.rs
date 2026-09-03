@@ -32,7 +32,7 @@ pub(super) fn spawn_toast(commands: &mut Commands, name: &str, desc: &str) {
             GlobalZIndex(30),
             Node {
                 position_type: PositionType::Absolute,
-                top: Val::Px(52.0),
+                top: Val::Px(TOAST_TOP),
                 right: Val::Px(12.0),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(2.0),
@@ -238,8 +238,8 @@ fn spawn_trophy(
                 ));
                 // A fixed name column, so every description starts at the
                 // same x and the eye can run down the list of what to do.
-                // Wide enough for the longest name in any of the three
-                // languages (French, at twenty-two characters).
+                // Wide enough for the longest name in any language, which
+                // `every_trophy_name_fits_its_column` measures in pixels.
                 line.spawn((
                     Node {
                         width: Val::Px(204.0),

@@ -433,7 +433,7 @@ pub static EN: Tr = Tr {
     ed_playtest_prompt: "arrow keys place | Space remove | Esc end test",
     ed_solvable: "solvable: {placements}",
     ed_solvable_free: "solvable with no arrows at all",
-    ed_not_solvable: "NOT solvable within {n} arrows",
+    ed_not_solvable: "NOT solvable - arrows granted: {n}",
     ed_solver_gave_up: "gave up - too big to check. Try fewer arrows.",
     ed_validating: "validating...",
     ed_already_validating: "already validating...",
@@ -468,7 +468,7 @@ pub static EN: Tr = Tr {
     ed_kind_arena: "turf war beach",
     ed_now_puzzle: "a puzzle now: it joins the Tide Pool list",
     ed_now_arena: "a turf war beach now: it joins the map dial",
-    ed_arena_ok: "a beach for {n}, with {h} holes feeding it",
+    ed_arena_ok: "a beach for {n} - holes feeding it: {h}",
     ed_arena_needs_seats: "castles for {n} so far - a beach wants one per player",
     ed_arena_no_crabs: "no crabs and no holes: nothing to fight over",
 };

@@ -197,9 +197,11 @@ pub fn spawn_static_board(commands: &mut Commands, board: &Board, art: &Art) {
     spawn_weather(commands, board, art);
 }
 
-/// How far past the board a drifting thing turns round, in world units:
-/// clear of any window the camera's clamped zoom can show.
-const REACH: f32 = 2400.0;
+/// How far past the board a drifting cloud shadow turns round, in world
+/// units: clear of any window the camera's clamped zoom can show. Not the
+/// planes' `wash::REACH`, which is how far the world is *built*; a cloud
+/// turning round that far out would be gone for a minute at a time.
+const CLOUD_REACH: f32 = 2400.0;
 
 /// A shadow of a cloud nobody can see, crossing the beach.
 #[derive(Component)]
@@ -234,7 +236,7 @@ fn spawn_weather(commands: &mut Commands, board: &Board, art: &Art) {
     // a much larger visible beach, and a shadow wrapping at the board's
     // edge vanished and reappeared in plain sight mid-sand. The closing
     // wave carries the same reasoning as `wash::REACH`.
-    let edge = w / 2.0 + REACH;
+    let edge = w / 2.0 + CLOUD_REACH;
     for (i, (span, speed, at)) in [(3.4, 9.0, -0.28), (5.0, -6.0, 0.12), (2.6, 13.0, 0.38)]
         .into_iter()
         .enumerate()
@@ -288,8 +290,8 @@ pub fn drift_cloud_shadows(
 /// rather than the window, because the camera zooms to fit the board and
 /// world units are the only ones that hold still while it does.
 fn spawn_dusk_shore(commands: &mut Commands, board: &Board, art: &Art) {
-    // Far larger than any zoomed-out view can reach.
-    const REACH: f32 = 9000.0;
+    // Far larger than any zoomed-out view can reach: the wave's reach.
+    const REACH: f32 = super::wash::REACH;
     let top = f32::from(board.height()) * TILE / 2.0 + 26.0;
     let plane = |size: Vec2, at: Vec2, z: f32, color: Color| {
         (

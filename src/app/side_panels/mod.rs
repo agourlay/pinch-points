@@ -100,7 +100,7 @@ fn sidebar(left: bool) -> (SidePanelRoot, Node) {
             position_type: PositionType::Absolute,
             left: if left { Val::Px(0.0) } else { Val::Auto },
             right: if left { Val::Auto } else { Val::Px(0.0) },
-            top: Val::Px(46.0),
+            top: Val::Px(menu_ui::UNDER_HEADER),
             bottom: Val::Px(44.0),
             width: Val::Px(SIDEBAR_W),
             ..default()

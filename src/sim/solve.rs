@@ -234,11 +234,11 @@ impl<'a> Search<'a> {
     }
 
     fn run(&mut self, board: &mut Board, depth: u8) -> Option<Vec<Placement>> {
-        if depth == 0 {
-            return self.wins(board).then(Vec::new);
-        }
         // Somewhere we have already been, by another road. Nothing about the
         // board depends on how it was reached, so neither does the answer.
+        // The leaves are asked too, and they are the ones that matter: a
+        // set of `d` posts has up to `d` parents, and each used to play the
+        // full board out again, which is the one thing the budget counts.
         let mut key: Vec<(u8, u8, u8)> = self
             .placed
             .iter()
@@ -247,6 +247,9 @@ impl<'a> Search<'a> {
         key.sort_unstable();
         if !self.seen.insert(key) {
             return None;
+        }
+        if depth == 0 {
+            return self.wins(board).then(Vec::new);
         }
         for (x, y) in self.visited_placeable_tiles(board) {
             for dir in Direction::ALL {

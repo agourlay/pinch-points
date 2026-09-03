@@ -2,7 +2,8 @@
 //! integration test of the versus loop the sim can do headless.
 
 use pinch_points::sim::{
-    BotLevel, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER, PlayerAction, bot_action, classic_arena_seeded,
+    BotLevel, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER, PlayerAction, bot_action,
+    classic_arena_seeded, generate_arena,
 };
 
 #[test]
@@ -35,7 +36,14 @@ fn four_hard_bots_finish_a_round_with_a_result() {
 fn a_bot_never_proposes_a_placement_the_board_refuses() {
     for (seats, seed) in [(2u8, 1u64), (4, 2), (6, 3)] {
         for level in [BotLevel::Easy, BotLevel::Normal, BotLevel::Hard] {
-            let mut board = classic_arena_seeded(seed, false, seats.min(4));
+            // The classic arena seats four; six seats want a generated
+            // beach, or the last two bots play with no castle of their own
+            // and the six-seat leg tests nothing the four-seat one did not.
+            let mut board = if seats <= 4 {
+                classic_arena_seeded(seed, false, seats)
+            } else {
+                generate_arena(seed, seats, 20, 13)
+            };
             for tick in 0..1500u32 {
                 let mut actions = [PlayerAction::None; MAX_PLAYERS];
                 for seat in 0..seats {

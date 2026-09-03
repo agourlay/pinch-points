@@ -80,13 +80,15 @@ pub struct Release {
 
 /// What a release page's address must look like before it is handed to
 /// a browser (or, on Windows, to `cmd`): on GitHub, over https, and made
-/// of nothing a shell has opinions about. The reply is GitHub's own over
-/// TLS, so this is belt to those braces, but the address is the one thing
-/// here that leaves the process.
+/// of nothing a shell has opinions about. No percent, in particular:
+/// `cmd` expands `%NAME%`, and a release page of ours has never needed
+/// an escape. The reply is GitHub's own over TLS, so this is belt to
+/// those braces, but the address is the one thing here that leaves the
+/// process.
 fn is_release_page(url: &str) -> bool {
     url.starts_with("https://github.com/")
         && url.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~' | '/' | ':' | '%' | '+')
+            c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '~' | '/' | ':' | '+')
         })
 }
 

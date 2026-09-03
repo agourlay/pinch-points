@@ -11,7 +11,7 @@ use crate::app::net::Online;
 use crate::app::settings::GameSettings;
 use crate::app::teams::TeamMode;
 use crate::app::{Bots, Campaign, CampaignKind, Phase, Playback, Screen, Seats, Sim, VersusPhase};
-use crate::sim::{Goal, LURE_TICKS, TideEvent};
+use crate::sim::{Goal, LURE_TICKS, TICKS_PER_SECOND, TideEvent};
 use bevy::prelude::*;
 
 use crate::app::palette::{CLOCK_CALM, CLOCK_RED, CLOCK_RED_BRIGHT};
@@ -314,20 +314,24 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
     } else {
         String::new()
     };
+    // Three seconds of the event's name, then the status slot is free.
     if let Some((event, at)) = sim.0.last_event()
-        && sim.0.ticks().saturating_sub(at) < 90
+        && sim.0.ticks().saturating_sub(at) < u64::from(3 * TICKS_PER_SECOND)
     {
         status = fill(tr.tide_event, &[("e", event_name(tr, event))]);
     }
     if let Some((owner, remaining)) = sim.0.lure() {
         let seat = names.label(tr, owner);
-        // First moments name the trigger; then a live countdown.
-        status = if remaining > LURE_TICKS - 60 {
+        // The first two seconds name the trigger; then a live countdown.
+        status = if remaining > LURE_TICKS - 2 * TICKS_PER_SECOND {
             fill(tr.lure_started, &[("p", &seat)])
         } else {
             fill(
                 tr.lure_banner,
-                &[("s", &remaining.div_ceil(30).to_string()), ("p", &seat)],
+                &[
+                    ("s", &remaining.div_ceil(TICKS_PER_SECOND).to_string()),
+                    ("p", &seat),
+                ],
             )
         };
     }

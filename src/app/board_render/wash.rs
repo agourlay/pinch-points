@@ -44,8 +44,9 @@ const DRAIN: f32 = 0.7;
 /// `boot::fit_camera` clamps the zoom at 0.8, so a board smaller than the
 /// window leaves a great deal of beach visible around it, and a wave cut
 /// to the board's own width ends in two hard vertical edges with dry sand
-/// beyond them. `spawn_dusk_shore` reaches this far for the same reason.
-const REACH: f32 = 9000.0;
+/// beyond them. `spawn_dusk_shore` reaches this far for the same reason,
+/// and reads it from here.
+pub(super) const REACH: f32 = 9000.0;
 
 /// Send the wave in when the round ends.
 ///

@@ -6,7 +6,7 @@ use crate::sim::{Level, LevelKind};
 use bevy::prelude::*;
 
 /// Which level list the player is running.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum CampaignKind {
     TidePool,
     BeachDay,
@@ -20,6 +20,13 @@ impl CampaignKind {
             CampaignKind::TidePool => "tide",
             CampaignKind::BeachDay => "beach",
         }
+    }
+
+    /// The list a save-file key names, if this build has it.
+    pub fn from_key(key: &str) -> Option<CampaignKind> {
+        [CampaignKind::TidePool, CampaignKind::BeachDay]
+            .into_iter()
+            .find(|kind| kind.key() == key)
     }
 }
 

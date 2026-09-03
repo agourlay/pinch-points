@@ -177,6 +177,15 @@ impl Tournament {
         self.state == SeriesState::Decided
     }
 
+    /// Whether the tally settles the series: somebody has a majority of
+    /// the rounds, or the last round has been played. Read by the round
+    /// bookkeeping, which sets the state from it, and by the tests, which
+    /// used to carry a copy of the expression and could pass on the copy.
+    fn tally_decides(&self) -> bool {
+        let best = *self.wins.iter().max().unwrap_or(&0);
+        best >= self.length.target() || self.round >= self.length.rounds()
+    }
+
     /// The unique holder of the most round wins, if there is one. Only
     /// meaningful free-for-all; [`Tournament::winner`] is the one to ask.
     fn champion(&self) -> Option<u8> {
@@ -228,8 +237,7 @@ pub fn record_series_round(
             tournament.wins[seat] += 1;
         }
     }
-    let best = *tournament.wins.iter().max().unwrap_or(&0);
-    if best >= tournament.length.target() || tournament.round >= tournament.length.rounds() {
+    if tournament.tally_decides() {
         tournament.state = SeriesState::Decided;
     }
 }
@@ -478,8 +486,7 @@ mod tests {
             let mut t = Tournament::start(length);
             t.wins = wins;
             t.round = round;
-            let best = *t.wins.iter().max().unwrap_or(&0);
-            best >= t.length.target() || t.round >= t.length.rounds()
+            t.tally_decides()
         };
         assert!(
             decided(SeriesLength::BestOfThree, [2, 0, 0, 0, 0, 0], 2),

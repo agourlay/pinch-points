@@ -400,21 +400,32 @@ pub(super) fn advance_sim(
         // the frames the players agree on.
         let local = session.session.seat().map(usize::from);
         let action = local.map_or(PlayerAction::None, |seat| pending.0[seat]);
-        let sim = &mut sim.0;
-        let recorder = &mut recorder.0;
+        // Borrowed past change detection: a mutable borrow of the resource
+        // marks it changed whether or not a frame runs, and while a peer
+        // is stalled none does. `observe_sim` reads the flag to skip
+        // re-reading a board that has not moved, which is exactly the
+        // stalled case, so it is set by hand below when a frame did run.
+        let sim_board = &mut sim.bypass_change_detection().0;
+        let recording = &mut recorder.bypass_change_detection().0;
         let bots = &*bots;
+        let mut advanced = false;
         let committed = session.pump(action, |net| {
             if let Some(mut frame_actions) = net.session.advance() {
                 // The lockstep carries only the humans; the AI seats are
                 // derived from the frame every peer has just agreed on.
-                fill_bot_actions(sim, bots, &mut frame_actions);
-                sim.tick(&frame_actions);
-                if let Some(replay) = recorder {
+                fill_bot_actions(sim_board, bots, &mut frame_actions);
+                sim_board.tick(&frame_actions);
+                if let Some(replay) = recording {
                     replay.record(frame_actions);
                 }
-                net.after_frame(sim.state_hash());
+                net.after_frame(sim_board.state_hash());
+                advanced = true;
             }
         });
+        if advanced {
+            sim.set_changed();
+            recorder.set_changed();
+        }
         if let Some(seat) = local
             && (committed || session.session.paused())
         {

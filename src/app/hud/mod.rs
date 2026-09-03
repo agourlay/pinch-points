@@ -99,7 +99,7 @@ pub fn spawn_hud(
     commands
         .spawn((Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(46.0),
+            top: Val::Px(menu_ui::UNDER_HEADER),
             left: Val::Px(0.0),
             width: Val::Percent(100.0),
             justify_content: JustifyContent::Center,

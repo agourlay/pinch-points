@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// Spawn-mania flavours (tide events).
+/// Tempo shifts (tide events): the beach's clock run faster or slower.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tempo {
     /// Everything on the beach moves at double speed.
@@ -91,7 +91,7 @@ impl Board {
     /// a minute to play, which is the tensest stretch of a round with
     /// nothing left to route. Swapped rather than re-rolled, so the draw
     /// count stays fixed.
-    fn surge_safe(&self, event: TideEvent) -> TideEvent {
+    pub(super) fn surge_safe(&self, event: TideEvent) -> TideEvent {
         if !self.in_surge() {
             return event;
         }
@@ -107,8 +107,6 @@ impl Board {
         }
     }
 
-    /// Apply one tide event's effects (split from the roulette so each event
-    /// is unit-testable in isolation).
     /// Start a lure for `owner`, as banking a molting crab does.
     ///
     /// Same reason as [`Self::force_tide_event`]: the dev hook and the
@@ -125,6 +123,8 @@ impl Board {
         self.apply_tide_event(event, banker);
     }
 
+    /// Apply one tide event's effects (split from the roulette so each event
+    /// is unit-testable in isolation).
     pub(super) fn apply_tide_event(&mut self, event: TideEvent, banker: PlayerId) {
         self.last_event = Some((event, self.tick));
         // Set here rather than in the roulette so a forced event starts

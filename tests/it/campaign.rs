@@ -80,10 +80,17 @@ fn no_campaign_level_moves_its_own_target() {
 
 /// Levels that grant signposts must actually need them: a level whose crabs
 /// bank by themselves teaches a false lesson about its own solution.
+///
+/// The one exception is named, not inferred: level 1 is the controls
+/// tutorial, and its post is there to be practised with on a board that
+/// cannot be lost. This used to skip every level with no `solution:` line
+/// instead, which let that one through and would have let through any
+/// later level whose author forgot the line, the very lesson it guards.
 #[test]
 fn granted_signposts_are_necessary() {
+    const TUTORIAL: &str = "Welcome Ashore";
     for (i, level) in campaign_levels().iter().enumerate() {
-        if level.posts == 0 || level.solution.is_empty() {
+        if level.posts == 0 || level.name == TUTORIAL {
             continue; // watch-levels solve themselves by design
         }
         let (outcome, _) = level.play_out(&mut level.board());

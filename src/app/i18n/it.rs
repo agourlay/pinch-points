@@ -433,7 +433,7 @@ pub static IT: Tr = Tr {
     ed_playtest_prompt: "tasti freccia metti | Spazio togli | Esc fine prova",
     ed_solvable: "risolvibile: {placements}",
     ed_solvable_free: "risolvibile senza nessuna freccia",
-    ed_not_solvable: "NON risolvibile con {n} frecce",
+    ed_not_solvable: "NON risolvibile - frecce: {n}",
     ed_solver_gave_up: "rinuncio - troppo grande da controllare. Prova con meno frecce.",
     ed_validating: "controllo...",
     ed_already_validating: "sto già controllando...",
@@ -468,7 +468,7 @@ pub static IT: Tr = Tr {
     ed_kind_arena: "una spiaggia da battaglia",
     ed_now_puzzle: "ora è un rompicapo: entra nella Pozza di marea",
     ed_now_arena: "ora è una spiaggia da battaglia: entra nella lista delle mappe",
-    ed_arena_ok: "una spiaggia per {n}, con {h} buchi che la riforniscono",
+    ed_arena_ok: "una spiaggia per {n} - buchi che la riforniscono: {h}",
     ed_arena_needs_seats: "castelli per {n} - ne serve uno per giocatore",
     ed_arena_no_crabs: "né granchi né buchi: niente da contendersi",
 };

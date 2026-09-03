@@ -103,7 +103,7 @@ impl Brush {
     }
 }
 
-/// Step the castle on a tile through the four seats and then away again,
+/// Step the castle on a tile through every seat and then away again,
 /// so one key paints every owner. Anything else on the tile is replaced
 /// (and its creatures swept) on the way in.
 pub(super) fn cycle_castle(board: &mut Board, x: u8, y: u8) {

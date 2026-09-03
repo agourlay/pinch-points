@@ -165,6 +165,11 @@ pub fn screen_card() -> (ShoreCard, Node, BackgroundColor, BorderColor, BoxShado
 /// tucked itself under every card on every list screen, silently.
 pub const HEADER_H: f32 = 42.0;
 
+/// The first row clear of the header, for the in-round chrome that hangs
+/// from it: the hint line and the two sidebars. Derived, like [`BAR_H`],
+/// so a taller header moves them down rather than over them.
+pub const UNDER_HEADER: f32 = HEADER_H + 4.0;
+
 /// The air between a card and the chrome at either end of it.
 const BAR_AIR: f32 = 10.0;
 

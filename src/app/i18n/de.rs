@@ -440,7 +440,7 @@ pub static DE: Tr = Tr {
     ed_playtest_prompt: "Pfeiltasten setzen | Leertaste entfernen | Esc beendet die Probe",
     ed_solvable: "lösbar: {placements}",
     ed_solvable_free: "lösbar ganz ohne Pfeile",
-    ed_not_solvable: "NICHT lösbar mit {n} Pfeilen",
+    ed_not_solvable: "NICHT lösbar - Pfeile: {n}",
     ed_solver_gave_up: "aufgegeben - zu groß zum Prüfen. Versuch weniger Pfeile.",
     ed_validating: "prüfe...",
     ed_already_validating: "prüfe schon...",
@@ -475,7 +475,7 @@ pub static DE: Tr = Tr {
     ed_kind_arena: "Schlachtstrand",
     ed_now_puzzle: "jetzt ein Rätsel: es kommt in den Gezeitentümpel",
     ed_now_arena: "jetzt ein Schlachtstrand: er kommt in die Kartenauswahl",
-    ed_arena_ok: "ein Strand für {n}, mit {h} Löchern als Nachschub",
+    ed_arena_ok: "ein Strand für {n} - Löcher als Nachschub: {h}",
     ed_arena_needs_seats: "Burgen für {n} - eine pro Spieler muss es sein",
     ed_arena_no_crabs: "keine Krabben, keine Löcher: nichts zu holen",
 };

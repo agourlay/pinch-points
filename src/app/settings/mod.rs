@@ -33,8 +33,6 @@ pub const REPLAY_CAP_MIN: u8 = 5;
 pub const REPLAY_CAP_MAX: u8 = 99;
 pub const REPLAY_CAP_DEFAULT: u8 = 20;
 
-/// UI scale bounds, percent: small enough to fit the chrome on a short
-/// laptop screen, large enough to read across a room.
 /// Where the gamepad deadzone dial stops, percent of travel.
 pub const DEADZONE_RANGE: std::ops::RangeInclusive<u8> = 20..=80;
 /// Where the volume dials stop.
@@ -43,6 +41,8 @@ pub const VOLUME_RANGE: std::ops::RangeInclusive<u8> = 0..=100;
 /// parser clamps a saved value into them, so the two cannot disagree.
 pub const REPEAT_DELAY_RANGE: std::ops::RangeInclusive<f32> = 0.1..=0.5;
 pub const REPEAT_INTERVAL_RANGE: std::ops::RangeInclusive<f32> = 0.03..=0.2;
+/// UI scale bounds, percent: small enough to fit the chrome on a short
+/// laptop screen, large enough to read across a room.
 pub const UI_SCALE_MIN: u8 = 80;
 pub const UI_SCALE_MAX: u8 = 150;
 

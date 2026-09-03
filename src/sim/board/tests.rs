@@ -503,13 +503,24 @@ fn can_place_mirrors_place() {
 #[test]
 fn signpost_fade_is_full_under_puzzle_rules_and_decays_under_evict() {
     let mut board = Board::new(5, 5, 0);
+    // Puzzle rules (Reject): permanent, always full, however old. Set
+    // before the post goes down: a fresh board is under Evict, and a
+    // fresh post reads full under either rule, so a test that read it at
+    // age zero was not reading the Reject branch at all.
+    board.set_signpost_rule(3, CapPolicy::Reject);
     assert!(board.place_signpost(0, 2, 2, Right));
     let sp = board.signpost_at(2, 2).unwrap();
-    // Puzzle rules (Reject): permanent, always full.
-    assert_eq!(board.signpost_fade(&sp), 1.0);
+    for _ in 0..SIGNPOST_LIFETIME {
+        board.tick_idle();
+    }
+    assert_eq!(board.signpost_fade(&sp), 1.0, "a puzzle post never fades");
+    assert!(board.signpost_at(2, 2).is_some(), "nor washes away");
 
     // Versus rules (Evict): full when fresh, half at half-life, gone at end.
+    let mut board = Board::new(5, 5, 0);
     board.set_signpost_rule(3, CapPolicy::Evict);
+    assert!(board.place_signpost(0, 2, 2, Right));
+    let sp = board.signpost_at(2, 2).unwrap();
     assert_eq!(board.signpost_fade(&sp), 1.0);
     for _ in 0..SIGNPOST_LIFETIME / 2 {
         board.tick_idle();
@@ -976,11 +987,36 @@ fn the_roulette_keeps_gulls_out_of_the_surge() {
         surging.tick_idle();
     }
     assert!(surging.in_surge());
+    // The spin's filter, asked outright: the wheel itself draws from the
+    // PRNG, and which face it lands on is not the point.
+    assert_eq!(
+        surging.surge_safe(TideEvent::GullMania),
+        TideEvent::CrabMania
+    );
+    assert_eq!(
+        surging.surge_safe(TideEvent::GullAttack),
+        TideEvent::SpeedUp
+    );
+    for kept in [
+        TideEvent::CrabMania,
+        TideEvent::Monopoly,
+        TideEvent::SpeedUp,
+        TideEvent::SlowDown,
+        TideEvent::FreshSand,
+        TideEvent::CastleSwap,
+    ] {
+        assert_eq!(surging.surge_safe(kept), kept, "{kept:?} stands");
+    }
+    assert_eq!(
+        board.surge_safe(TideEvent::GullMania),
+        TideEvent::GullMania,
+        "outside the surge"
+    );
+    // Applying one directly is still honoured; only the spin is filtered.
     surging.apply_tide_event(TideEvent::GullMania, 0);
     assert_eq!(
         surging.last_event().map(|(e, _)| e),
-        Some(TideEvent::GullMania),
-        "applying one directly is still honoured; only the spin is filtered"
+        Some(TideEvent::GullMania)
     );
 }
 

@@ -238,20 +238,4 @@ mod tests {
             "the tide never runs past its own ceiling: {late}"
         );
     }
-
-    /// The bars and the lip riding them read one function, so the foam can
-    /// never come adrift of the water it sits on. They used to work it out
-    /// separately from the same three inputs.
-    #[test]
-    fn the_foam_and_the_water_are_measured_once() {
-        let board = timed(3600, 900);
-        let remaining = board.remaining_ticks().expect("a clock");
-        for seconds in [0.0, 0.37, 4.2, 91.5] {
-            assert_eq!(
-                tide_depth(&board, remaining, seconds),
-                tide_depth(&board, remaining, seconds),
-                "the same moment has to give the same answer"
-            );
-        }
-    }
 }

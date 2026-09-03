@@ -433,7 +433,7 @@ pub static FR: Tr = Tr {
     ed_playtest_prompt: "touches fléchées placer | Espace retirer | Échap fin d'essai",
     ed_solvable: "résoluble : {placements}",
     ed_solvable_free: "résoluble sans aucune flèche",
-    ed_not_solvable: "PAS résoluble avec {n} flèches",
+    ed_not_solvable: "PAS résoluble - flèches accordées : {n}",
     ed_solver_gave_up: "abandon - trop grand à vérifier. Essaie moins de flèches.",
     ed_validating: "vérification...",
     ed_already_validating: "vérification en cours...",
@@ -468,7 +468,7 @@ pub static FR: Tr = Tr {
     ed_kind_arena: "plage de bataille",
     ed_now_puzzle: "casse-tête : il rejoint la Mare aux crabes",
     ed_now_arena: "plage de bataille : elle rejoint le choix des cartes",
-    ed_arena_ok: "une plage pour {n}, avec {h} trous qui la nourrissent",
+    ed_arena_ok: "une plage pour {n} - trous qui la nourrissent : {h}",
     ed_arena_needs_seats: "des châteaux pour {n} - il en faut un par joueur",
     ed_arena_no_crabs: "ni crabes ni trous : rien à se disputer",
 };

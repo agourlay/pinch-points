@@ -433,7 +433,7 @@ pub static NL: Tr = Tr {
     ed_playtest_prompt: "pijltjestoetsen zetten | Spatie weg | Esc proefspel uit",
     ed_solvable: "op te lossen: {placements}",
     ed_solvable_free: "op te lossen zonder ook maar een pijl",
-    ed_not_solvable: "NIET op te lossen met {n} pijlen",
+    ed_not_solvable: "NIET op te lossen - pijlen: {n}",
     ed_solver_gave_up: "opgegeven - te groot om na te kijken. Probeer minder pijlen.",
     ed_validating: "nakijken...",
     ed_already_validating: "al aan het nakijken...",
@@ -468,7 +468,7 @@ pub static NL: Tr = Tr {
     ed_kind_arena: "een strand voor de strijd",
     ed_now_puzzle: "nu een puzzel: hij komt in de Getijdenpoel",
     ed_now_arena: "nu een strand voor de strijd: het komt in de lijst met kaarten",
-    ed_arena_ok: "een strand voor {n}, met {h} gaten die het voeden",
+    ed_arena_ok: "een strand voor {n} - gaten die het voeden: {h}",
     ed_arena_needs_seats: "kastelen voor {n} - er hoort er een per speler te zijn",
     ed_arena_no_crabs: "geen krabben en geen gaten: niets om over te vechten",
 };

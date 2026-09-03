@@ -440,7 +440,7 @@ pub static RU: Tr = Tr {
     ed_playtest_prompt: "клавиши-стрелки ставить | Space убрать | Esc конец проверки",
     ed_solvable: "решается: {placements}",
     ed_solvable_free: "решается вообще без стрелок",
-    ed_not_solvable: "НЕ решается за {n} стрелок",
+    ed_not_solvable: "НЕ решается - стрелок в запасе: {n}",
     ed_solver_gave_up: "сдались - слишком большой, не проверить. Возьми меньше стрелок.",
     ed_validating: "проверяем...",
     ed_already_validating: "уже проверяем...",
@@ -475,7 +475,7 @@ pub static RU: Tr = Tr {
     ed_kind_arena: "пляж для битвы",
     ed_now_puzzle: "теперь головоломка: попадёт в список Приливной лужи",
     ed_now_arena: "теперь пляж для битвы: попадёт в выбор карт",
-    ed_arena_ok: "пляж на {n}, крабов гонят {h} нор",
+    ed_arena_ok: "пляж на {n} - нор с крабами: {h}",
     ed_arena_needs_seats: "замков пока на {n} - пляжу нужен один на игрока",
     ed_arena_no_crabs: "ни крабов, ни нор: делить нечего",
 };

@@ -8,8 +8,8 @@ use std::net::TcpListener;
 
 /// A one-shot HTTP/1.1 server on a port of the system's choosing. Each
 /// request is answered by path from `reply`, which returns the status
-/// line's reason and the extra headers and body to send. It serves until
-/// the listener is dropped with the test.
+/// line's reason and the extra headers and body to send. It serves, on a
+/// thread of its own, for as long as the test process lasts.
 fn serve(reply: impl Fn(&str) -> (u16, Vec<(String, String)>, String) + Send + 'static) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
     let port = listener.local_addr().unwrap().port();

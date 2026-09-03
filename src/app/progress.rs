@@ -11,30 +11,40 @@
 
 use crate::app::{Campaign, CampaignKind};
 use bevy::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// The cleared-stage record, under the XDG data directory.
 fn save_path() -> std::path::PathBuf {
     crate::app::paths::data_dir().join("progress.txt")
 }
 
+/// Kept as one set of names per list rather than one set of `kind:name`
+/// keys: the stage list asks after every tile every frame, and a key
+/// built for each lookup was a hundred-odd allocations a frame on a
+/// screen where nothing moves.
 #[derive(Resource, Default)]
 pub struct Progress {
-    cleared: HashSet<String>,
-}
-
-fn key(kind: CampaignKind, name: &str) -> String {
-    format!("{}:{name}", kind.key())
+    cleared: HashMap<CampaignKind, HashSet<String>>,
 }
 
 impl Progress {
     pub fn is_cleared(&self, kind: CampaignKind, name: &str) -> bool {
-        self.cleared.contains(&key(kind, name))
+        self.cleared
+            .get(&kind)
+            .is_some_and(|names| names.contains(name))
     }
 
     /// Records a clear; true when this was the first time.
     pub fn mark(&mut self, kind: CampaignKind, name: &str) -> bool {
-        self.cleared.insert(key(kind, name))
+        self.cleared
+            .entry(kind)
+            .or_default()
+            .insert(name.to_string())
+    }
+
+    /// How many stages are cleared, over both lists.
+    pub fn cleared_count(&self) -> usize {
+        self.cleared.values().map(HashSet::len).sum()
     }
 
     /// Forget every cleared stage, both lists at once: they share this one
@@ -89,7 +99,14 @@ impl Progress {
         // here until it is written out. `parse` is lenient and would never
         // notice one going unsaved.
         let Self { cleared } = self;
-        let mut keys: Vec<&str> = cleared.iter().map(String::as_str).collect();
+        let mut keys: Vec<String> = cleared
+            .iter()
+            .flat_map(|(kind, names)| {
+                names
+                    .iter()
+                    .map(move |name| format!("{}:{name}", kind.key()))
+            })
+            .collect();
         keys.sort_unstable();
         keys.iter().fold(String::new(), |mut out, key| {
             out.push_str("cleared: ");
@@ -100,15 +117,18 @@ impl Progress {
     }
 
     /// Lenient parse, in the style of the other save files: anything that is
-    /// not a `cleared:` line is ignored rather than fatal.
+    /// not a `cleared:` line naming a list this build has is ignored rather
+    /// than fatal.
     pub fn parse(text: &str) -> Progress {
         let mut progress = Progress::default();
         for line in text.lines() {
             if let Some((key, value)) = line.split_once(':')
                 && key.trim() == "cleared"
-                && !value.trim().is_empty()
+                && let Some((kind, name)) = value.trim().split_once(':')
+                && let Some(kind) = CampaignKind::from_key(kind)
+                && !name.is_empty()
             {
-                progress.cleared.insert(value.trim().to_string());
+                progress.mark(kind, name);
             }
         }
         progress
@@ -217,10 +237,10 @@ mod tests {
         let back = Progress::parse(&progress.to_text());
         assert!(back.is_cleared(CampaignKind::TidePool, "Welcome Ashore"));
         assert!(back.is_cleared(CampaignKind::BeachDay, "First Flood"));
-        assert_eq!(back.cleared.len(), 2);
+        assert_eq!(back.cleared_count(), 2);
         // Junk lines are ignored, not fatal.
         let salvaged = Progress::parse("garbage\ncleared:\ncleared: tide:Welcome Ashore\n");
         assert!(salvaged.is_cleared(CampaignKind::TidePool, "Welcome Ashore"));
-        assert_eq!(salvaged.cleared.len(), 1);
+        assert_eq!(salvaged.cleared_count(), 1);
     }
 }
