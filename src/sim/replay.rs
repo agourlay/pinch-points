@@ -44,13 +44,6 @@ impl Replay {
         }
     }
 
-    /// Record who was playing. Called once, at the moment the round starts,
-    /// because that is when the shell knows.
-    pub fn named(mut self, names: [String; MAX_PLAYERS]) -> Replay {
-        self.names = names;
-        self
-    }
-
     pub fn record(&mut self, actions: [PlayerAction; MAX_PLAYERS]) {
         self.inputs.push(actions);
     }
@@ -159,14 +152,9 @@ mod tests {
              +-+-+\n|. 0|\n+ + +\n|. .|\n+-+-+\n",
         )
         .expect("level");
-        let mut replay = Replay::new(level).named([
-            "Anna".into(),
-            "Bo".into(),
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-        ]);
+        let mut replay = Replay::new(level);
+        replay.names[0] = "Anna".into();
+        replay.names[1] = "Bo".into();
         replay.record([PlayerAction::None; MAX_PLAYERS]);
         let text = replay.to_text();
         let back = Replay::parse(&text).expect("round trip");

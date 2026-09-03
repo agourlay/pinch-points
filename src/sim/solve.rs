@@ -9,7 +9,7 @@
 
 use crate::sim::board::{Board, TileKind};
 use crate::sim::direction::Direction;
-use crate::sim::level::{Level, PUZZLE_TICK_LIMIT, PuzzleOutcome};
+use crate::sim::level::{Level, PuzzleOutcome};
 
 /// A signpost as an instruction: where it goes and which way it points.
 ///
@@ -21,8 +21,8 @@ pub type Placement = (u8, u8, Direction);
 ///
 /// Counted in simulations rather than seconds, so a board costs the same
 /// budget on every machine and in every build profile. Each simulation is
-/// itself bounded by [`PUZZLE_TICK_LIMIT`], which makes this a ceiling on
-/// total work rather than merely on visits.
+/// itself bounded by the board's [`Level::deadline`], which makes this a
+/// ceiling on total work rather than merely on visits.
 ///
 /// Sized from both ends, and both ends were measured.
 ///
@@ -198,7 +198,7 @@ impl<'a> Search<'a> {
         }
         let mut sim = board.clone();
         let mut seen = vec![false; sim.width() as usize * sim.height() as usize];
-        for _ in 0..PUZZLE_TICK_LIMIT {
+        for _ in 0..Level::deadline(&sim) {
             sim.tick_idle();
             for crab in sim.crabs() {
                 seen[crab.tile as usize] = true;

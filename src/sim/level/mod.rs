@@ -157,16 +157,12 @@ impl Level {
         self.board.castle_seats()
     }
 
-    /// Win/loss state of a board created by [`Level::board`], judged by the
-    /// level's goal. All goals use banked-count accounting (spec §5.1: a
-    /// crab a gull ate is a loss for AllCrabs/Survive, never a quiet
-    /// disappearance).
     /// Run `board` idle until the goal is decided, and say when it was.
     ///
     /// Every caller that wants to know how a board ends wants exactly this
     /// loop, and ten of them once carried their own copy. [`Level::outcome`]
-    /// is what makes it terminate: every goal loses or wins by
-    /// `PUZZLE_TICK_LIMIT`, so the loop needs no guard of its own, and if
+    /// is what makes it terminate: every goal loses or wins by the board's
+    /// [`Level::deadline`], so the loop needs no guard of its own, and if
     /// that ever moves there is one place to put it.
     pub fn play_out(&self, board: &mut Board) -> (PuzzleOutcome, u64) {
         loop {
@@ -197,10 +193,23 @@ impl Level {
         Ok(board)
     }
 
+    /// The tick by which every goal on `board` is decided: its own round
+    /// when it carries one, else [`PUZZLE_TICK_LIMIT`], which stands in for
+    /// a stage with no timer, which would otherwise never end. One answer
+    /// for the outcome, the solver's scan and the clock, so a stage that
+    /// states a longer round is not cut off at the limit anyway.
+    pub fn deadline(board: &Board) -> u64 {
+        board.round_length().map_or(PUZZLE_TICK_LIMIT, u64::from)
+    }
+
+    /// Win/loss state of a board created by [`Level::board`], judged by the
+    /// level's goal. All goals use banked-count accounting (spec §5.1: a
+    /// crab a gull ate is a loss for AllCrabs/Survive, never a quiet
+    /// disappearance). [`Level::deadline`] is the clock it is judged on.
     pub fn outcome(&self, board: &Board) -> PuzzleOutcome {
         let alive = board.crabs().len() as u32;
         let eaten = board.crabs_banked() + alive < board.crabs_spawned();
-        let timed_out = board.round_over() || board.ticks() >= PUZZLE_TICK_LIMIT;
+        let timed_out = board.ticks() >= Self::deadline(board);
         // What each goal counts as already lost, and as already won. Losing
         // is checked first: a goal met on the same tick a crab was eaten does
         // not save an AllCrabs or Survive stage.
@@ -211,8 +220,7 @@ impl Level {
             ),
             Goal::Bank(n) => (false, board.crabs_banked() >= n),
             // Survive is the one goal the clock is *for*: running it out is
-            // the win. The tick limit stands in when a stage has no timer,
-            // which would otherwise never end.
+            // the win (see `deadline` for which clock).
             Goal::Survive => (eaten, timed_out),
             Goal::Golden => (false, board.golden_banked() >= 1),
         };
@@ -306,6 +314,64 @@ mod tests {
     /// A turnstile's pivot survives the format: a replay stores its starting
     /// board as a level, and generated arenas mirror their logs, so a dropped
     /// pivot would flip half of them on every recorded round.
+    /// A row wider than the top border is a map drawn wrong, not one to
+    /// read to the border's width: that dropped the row's last tiles and
+    /// walls without a word.
+    #[test]
+    fn parse_refuses_a_map_row_wider_than_its_border() {
+        let text = "name: T\nposts: 1\nmap:\n+-+-+\n|.|.|.|\n+-+-+\n";
+        let err = Level::parse(text).unwrap_err();
+        assert!(err.contains("row 1 is 7 wide"), "{err}");
+    }
+
+    /// Castle raids travel with the level. A puzzle with no `rule:` of its
+    /// own turns them off in `board()` regardless; one that states its
+    /// rule, as every editor-made puzzle does, keeps whatever the file
+    /// says, and the file says `raids: off` when they are.
+    #[test]
+    fn castle_raids_survive_the_format() {
+        let map = "map:\n+-+-+\n|. 0|\n+ + +\n|. .|\n+-+-+\n";
+        let head = "name: T\nposts: 1\nrule: reject 1\ncrab: 0,0 R R common\n";
+        let kept = Level::parse(&format!("{head}{map}")).expect("level");
+        assert!(kept.board().castle_raids(), "stated rule, raids kept");
+        assert!(
+            !kept.to_text().contains("raids:"),
+            "the default is not written"
+        );
+        let off = Level::parse(&format!("{head}raids: off\n{map}")).expect("level");
+        assert!(!off.board().castle_raids());
+        let text = off.to_text();
+        assert!(text.contains("raids: off"), "{text}");
+        let back = Level::parse(&text).expect("round trip");
+        assert!(!back.board().castle_raids());
+    }
+
+    /// A stage that states a round longer than the campaign tick limit is
+    /// judged on its round: the limit stands in only for a stage with no
+    /// timer. A Survive stage with ninety seconds on the clock used to be
+    /// declared won at sixty.
+    #[test]
+    fn a_stated_round_outlasts_the_tick_limit() {
+        let text = "name: T\nposts: 0\ngoal: survive\nround: 2700\nmap:\n\
+                    +-+-+\n|. .|\n+ + +\n|. .|\n+-+-+\n";
+        let level = Level::parse(text).expect("level");
+        let mut board = level.board();
+        assert_eq!(Level::deadline(&board), 2700);
+        for _ in 0..PUZZLE_TICK_LIMIT {
+            board.tick_idle();
+        }
+        assert_eq!(
+            level.outcome(&board),
+            PuzzleOutcome::Running,
+            "the limit is not the round"
+        );
+        let (outcome, at) = level.play_out(&mut board);
+        assert_eq!((outcome, at), (PuzzleOutcome::Won, 2700));
+        // And without a round the limit is the deadline, as before.
+        let untimed = Level::parse(&text.replace("round: 2700\n", "")).expect("level");
+        assert_eq!(Level::deadline(&untimed.board()), PUZZLE_TICK_LIMIT);
+    }
+
     #[test]
     fn a_turnstiles_pivot_survives_the_format() {
         for next_right in [true, false] {

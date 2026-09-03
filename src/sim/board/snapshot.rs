@@ -411,7 +411,11 @@ impl Fields {
 }
 
 fn sized(bits: Vec<bool>, want: usize, what: &str) -> Result<Vec<bool>, String> {
-    if bits.len() < want {
+    // The count the size implies, give or take the nibble the hex rounds
+    // up to: fewer is a truncated save, a nibble or more over is a wall
+    // map for another board, and reading the first `want` of that would
+    // be walls for a beach this is not.
+    if bits.len() < want || bits.len() >= want + 4 {
         return Err(format!("{what}: {} bits, wanted {want}", bits.len()));
     }
     let mut bits = bits;
@@ -448,6 +452,9 @@ fn parse_post(words: &mut std::str::SplitWhitespace) -> Result<(usize, Signpost)
     let tile = next_num::<usize>(words, "post tile")?;
     let dir = next_dir(words, "post direction")?;
     let owner = next_num::<PlayerId>(words, "post owner")?;
+    if seat(owner).is_none() {
+        return Err(format!("post owner: no seat {owner}"));
+    }
     let word = words.next().ok_or("post health: missing")?;
     let health = match word {
         "full" => SignpostHealth::Full,
@@ -769,10 +776,22 @@ mod tests {
             Board::parse_snapshot(&good.replace("rule: reject 2", "rule: evict 0")).is_err(),
             "evict with nothing to evict"
         );
-        assert!(
-            Board::parse_snapshot(&good.replace("rule: reject 2", "rule: reject 0")).is_ok(),
-            "reject at zero is a board with no posts to give, which is legal"
-        );
+
+        // A post owned by a seat that does not exist would index the
+        // score table past its end; a wall map longer than the board's
+        // is a wall map for another board.
+        let posted = good
+            .lines()
+            .find(|l| l.starts_with("post:"))
+            .expect("a post");
+        let orphan = posted.replace(" 1 ", " 9 ");
+        assert_ne!(posted, orphan, "{posted}");
+        assert!(Board::parse_snapshot(&good.replace(posted, &orphan)).is_err());
+        let walls = good
+            .lines()
+            .find(|l| l.starts_with("hwalls:"))
+            .expect("walls");
+        assert!(Board::parse_snapshot(&good.replace(walls, &format!("{walls}f"))).is_err());
         for line in ["lure: 1 0", "mania: gull 0", "tempo: slow 0"] {
             let key = line.split(':').next().unwrap();
             let zeroed: String = good

@@ -336,12 +336,25 @@ fn level_from(
 /// rule, which is the one every generated beach plays under. Stamping the
 /// puzzle rule on a handmade beach gave a versus table three signposts each
 /// and no way to replace them, which is not the game the other beaches play.
+///
+/// A puzzle also plays without castle raids, as every campaign puzzle
+/// does: its castle is the finish line, and a gull leaving through it
+/// would move the target.
+///
+/// What comes back is read from the text that will be saved, not the
+/// board on screen. The two differ when gulls were placed and erased:
+/// each placement draws from the board's PRNG, the text carries only the
+/// seed, and the survivors read back with a different hand and takeoff.
+/// A "solvable" certified on the live board was then a claim about a
+/// beach nobody would ever play.
 pub(super) fn level_here(state: &EditorState, board: &Board, name: &str) -> Level {
     let mut snapshot = board.clone();
     if state.kind == LevelKind::Puzzle {
         snapshot.set_signpost_rule(state.posts, crate::sim::CapPolicy::Reject);
+        snapshot.set_castle_raids(false);
     }
-    Level::from_board(name, state.posts, snapshot).with_kind(state.kind)
+    let level = Level::from_board(name, state.posts, snapshot).with_kind(state.kind);
+    Level::parse(&level.to_text()).unwrap_or(level)
 }
 
 /// The editor's command keys: post inventory, wrap, gull cadence, the
@@ -569,7 +582,7 @@ pub fn rebuild_statics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::TileKind;
+    use crate::sim::{CrabKind, Direction, Handedness, TileKind};
 
     fn sand() -> Board {
         Board::new(6, 5, 3)
@@ -596,6 +609,39 @@ mod tests {
         assert_eq!(level.name, "Gull Alley");
         let back = Level::parse(&level.to_text()).expect("round trip");
         assert_eq!(back.name, "Gull Alley");
+    }
+
+    /// What the solver and the playtest are handed is what the file will
+    /// say. Placing a gull draws from the board's PRNG and the text carries
+    /// only the seed, so a board that placed and erased gulls reads back
+    /// with the survivors rolled afresh; a "solvable" certified on the
+    /// live board was a claim about a beach nobody would play.
+    #[test]
+    fn the_level_certified_is_the_level_saved() {
+        let mut board = sand();
+        board.set_tile(0, 0, TileKind::Castle(0));
+        board.spawn_crab(2, 2, Direction::Right, Handedness::Left, CrabKind::Common);
+        // Two birds placed and taken back move the stream past where the
+        // file's seed will start it.
+        board.spawn_gull(3, 3, Direction::Right);
+        board.remove_gulls_at(3, 3);
+        board.spawn_gull(4, 4, Direction::Right);
+        board.remove_gulls_at(4, 4);
+        board.spawn_gull(1, 3, Direction::Right);
+        let state = EditorState {
+            posts: 3,
+            kind: LevelKind::Puzzle,
+            ..EditorState::default()
+        };
+        let level = level_here(&state, &board, "Stage");
+        let saved = Level::parse(&level.to_text()).expect("round trip");
+        assert_eq!(
+            level.board().state_hash(),
+            saved.board().state_hash(),
+            "the board certified is the board saved"
+        );
+        assert!(!level.board().castle_raids(), "a stage plays without raids");
+        assert!(level.to_text().contains("raids: off"));
     }
 
     /// The toggle decides two things at once: which list the saved level

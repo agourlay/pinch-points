@@ -55,8 +55,14 @@ impl Level {
     }
 
     /// Serialize back to the text format `parse` reads. Round-trips exactly
-    /// for un-ticked boards (creature sub-tile state is not representable,
-    /// by design, since levels describe starting states).
+    /// for an un-ticked board that `parse` built (creature sub-tile state
+    /// is not representable, by design, since levels describe starting
+    /// states). A board edited by hand is a little different: placing a
+    /// gull draws twice from the board's PRNG, and the text carries the
+    /// seed, not the stream's position, so a board that placed and erased
+    /// gulls reads back with the survivors rolled afresh. That is why the
+    /// editor certifies the text it will save rather than the board it
+    /// edited (`level_here`).
     pub fn to_text(&self) -> String {
         use std::fmt::Write;
         let board = &self.board;
@@ -106,6 +112,13 @@ impl Level {
         }
         if board.wrap() {
             let _ = writeln!(out, "wrap: on");
+        }
+        // Written only when they are off, being on by default. An
+        // editor-made puzzle states its rule and so keeps whatever raids
+        // the board had: without this line it played, was checked and was
+        // hinted with raids on, while every campaign puzzle plays without.
+        if !board.castle_raids() {
+            let _ = writeln!(out, "raids: off");
         }
         // Tide events are game state, not authoring flavour: dropping the
         // flag made replays of versus rounds silently diverge.
@@ -210,6 +223,11 @@ struct Header {
     wrap: bool,
     /// `None` when the file predates the editor's puzzle/arena toggle.
     kind: Option<LevelKind>,
+    /// Inverted like the snapshot's, because raids are the one board
+    /// switch that is on by default: a file that says nothing keeps them,
+    /// and only `raids: off` turns them away. A puzzle with no `rule:` of
+    /// its own turns them off regardless, in [`Level::board`].
+    no_castle_raids: bool,
 }
 
 impl Default for Header {
@@ -232,6 +250,7 @@ impl Default for Header {
             goal: Goal::AllCrabs,
             wrap: false,
             kind: None,
+            no_castle_raids: false,
         }
     }
 }
@@ -303,6 +322,7 @@ impl Header {
                     _ => return Err(format!("goal: bad value {value:?}")),
                 };
             }
+            "raids" => self.no_castle_raids = value == "off",
             "kind" => {
                 self.kind = Some(
                     LevelKind::from_token(value)
@@ -411,6 +431,19 @@ fn parse_lattice<'a>(lines: impl Iterator<Item = &'a str>, seed: u64) -> Result<
             u8::MAX
         ));
     };
+    // A row wider than the top border is a different thing: nothing trims
+    // a line longer, so it is a map drawn wrong, and reading it to the
+    // border's width would drop its last tiles and walls without a word.
+    if let Some((row, width)) = lattice
+        .iter()
+        .map(|row| row.chars().count())
+        .enumerate()
+        .find(|(_, width)| *width > lat_w)
+    {
+        return Err(format!(
+            "map row {row} is {width} wide, past the top border's {lat_w}"
+        ));
+    }
     // Short rows pad with spaces rather than erroring: text editors trim
     // trailing whitespace, and wrap-map rows legitimately end in spaces
     // (open edges) - to_text itself emits them trimmed.
@@ -499,6 +532,9 @@ fn place_entities(board: &mut Board, header: &Header) -> Result<(), String> {
     }
     board.set_gull_period(header.gull_period);
     board.set_round_length(header.round);
+    if header.no_castle_raids {
+        board.set_castle_raids(false);
+    }
     if header.wrap {
         board.set_wrap(true);
     }
