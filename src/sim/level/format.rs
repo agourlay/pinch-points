@@ -322,6 +322,12 @@ impl Header {
                 let policy = policy.trim();
                 let policy = CapPolicy::from_token(policy)
                     .ok_or_else(|| format!("rule: bad policy {policy:?}"))?;
+                // Evicting needs something to evict: at a cap of zero the
+                // first placement would look for an oldest post that is
+                // not there. Reject at zero is a puzzle with no posts.
+                if cap == 0 && policy == CapPolicy::Evict {
+                    return Err("rule: evict needs a cap of at least 1".to_string());
+                }
                 self.rule = Some((cap, policy));
             }
             "score" => {
@@ -484,8 +490,8 @@ fn place_entities(board: &mut Board, header: &Header) -> Result<(), String> {
     }
     for &(x, y, dir) in &header.gulls {
         check("gull", x, y)?;
-        if board.tile_at(x, y) == TileKind::Rock {
-            return Err(format!("gull at ({x},{y}) is standing on a rock"));
+        if !board.gull_may_stand(x, y) {
+            return Err(format!("gull at ({x},{y}) is standing on a rock or in kelp"));
         }
         board.spawn_gull(x, y, dir);
     }
@@ -568,10 +574,18 @@ mod tests {
     fn placing_an_entity_where_it_cannot_go_is_refused_with_the_reason() {
         let err = level_with("spawner: 0,0 R 0").unwrap_err();
         assert!(err.contains("period must be at least 1"), "{err}");
+        let err = level_with("rule: evict 0").unwrap_err();
+        assert!(err.contains("at least 1"), "{err}");
+        assert!(level_with("rule: reject 0").is_ok(), "no posts to give is a legal puzzle");
         let err = level_with("crab: 1,1 R L common").unwrap_err();
         assert!(err.contains("standing on a rock"), "{err}");
         let err = level_with("gull: 1,1 R").unwrap_err();
         assert!(err.contains("standing on a rock"), "{err}");
+        // Kelp is the other tile a gull cannot stand in, and the sim
+        // asserts on it just the same: a refusal here, not a panic.
+        let kelp = "name: T\nposts: 1\ngull: 1,1 R\nmap:\n+-+-+\n|.|.|\n+-+-+\n|.|K|\n+-+-+\n";
+        let err = Level::parse(kelp).unwrap_err();
+        assert!(err.contains("in kelp"), "{err}");
         for line in ["spawner: 2,0 R 4", "crab: 0,2 R L common", "gull: 5,5 D"] {
             let err = level_with(line).unwrap_err();
             assert!(err.contains("off the 2x2 board"), "{line}: {err}");

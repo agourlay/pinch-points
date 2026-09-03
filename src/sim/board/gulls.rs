@@ -4,6 +4,16 @@
 use super::*;
 
 impl Board {
+    /// Whether a gull can be put down on `(x, y)`: sand, not rock and not
+    /// kelp, which a gull's feet cannot reach through. The one rule every
+    /// placer asks (`spawn_gull` asserts it) so a level file, a pasted
+    /// code and the editor's brush cannot disagree with the sim about
+    /// where a bird may stand.
+    pub fn gull_may_stand(&self, x: u8, y: u8) -> bool {
+        self.in_bounds(i32::from(x), i32::from(y))
+            && !matches!(self.tile_at(x, y), TileKind::Rock | TileKind::Kelp)
+    }
+
     /// Drop a gull onto the board, walking. Used by level setup and the
     /// periodic edge spawner.
     pub fn spawn_gull(&mut self, x: u8, y: u8, dir: Direction) {
@@ -11,14 +21,8 @@ impl Board {
             self.in_bounds(i32::from(x), i32::from(y)),
             "gull off the board"
         );
+        assert!(self.gull_may_stand(x, y), "gull on a rock or in kelp");
         let tile = self.index(i32::from(x), i32::from(y));
-        assert!(
-            !matches!(
-                self.grid.tiles[tile as usize],
-                TileKind::Rock | TileKind::Kelp
-            ),
-            "gull on a rock or in kelp"
-        );
         let id = self.next_gull_id;
         self.next_gull_id += 1;
         let handed = self.roll_handedness();

@@ -169,7 +169,7 @@ pub(super) fn paint(board: &mut Board, x: u8, y: u8, brush: Brush) {
             let tile = board.index_of(x, y);
             if board.gulls().iter().any(|g| g.tile == tile) {
                 board.remove_gulls_at(x, y);
-            } else if board.tile_at(x, y) != TileKind::Rock {
+            } else if board.gull_may_stand(x, y) {
                 board.spawn_gull(x, y, Direction::Right);
             }
             return;
@@ -323,7 +323,22 @@ mod tests {
         Board::new(6, 5, 3)
     }
 
-    /// One key paints all four owners and then clears the tile, and a
+    /// The gull brush asks the sim where a bird may stand rather than
+    /// keeping its own list: it once refused rock and let kelp through,
+    /// which `spawn_gull` meets with a panic.
+    #[test]
+    fn the_gull_key_refuses_rock_and_kelp() {
+        let mut board = sand();
+        board.set_tile(1, 1, TileKind::Rock);
+        board.set_tile(2, 2, TileKind::Kelp);
+        paint(&mut board, 1, 1, Brush::Gull);
+        paint(&mut board, 2, 2, Brush::Gull);
+        assert!(board.gulls().is_empty(), "nowhere for a gull to stand");
+        paint(&mut board, 3, 3, Brush::Gull);
+        assert_eq!(board.gulls().len(), 1, "sand takes one");
+    }
+
+    /// One key paints every seat's castle and then clears the tile, and a
     /// castle never lands on top of a creature.
     #[test]
     fn the_castle_key_walks_the_seats_then_clears() {

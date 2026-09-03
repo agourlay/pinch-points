@@ -191,15 +191,30 @@ pub(super) fn load_versus(
     board_render::spawn_water_foam(&mut commands, &art);
     pending.0 = [PlayerAction::None; MAX_PLAYERS];
     for (mut cur, mut transform) in &mut cursors {
-        // Fan the cursors out near their own castles.
-        let spots = castle_spots(sim.0.width(), sim.0.height());
-        let (cx, cy) = spots[usize::from(cur.player).min(spots.len() - 1)];
-        cur.x = cx.clamp(2, sim.0.width() - 3);
-        cur.y = cy.clamp(2, sim.0.height() - 3);
+        (cur.x, cur.y) = cursor_home(&sim.0, cur.player);
         transform.translation = layout::tile_center(&sim.0, cur.x, cur.y).extend(layout::z::CURSOR);
     }
     paused.0 = false;
     next_vphase.set(VersusPhase::Running);
+}
+
+/// Where a seat's cursor starts a round: fanned out near its own castle,
+/// two tiles in from the corner so the first press is not into a wall.
+///
+/// Clamped to the board, not to the two-tile inset: a custom arena can be
+/// as small as the level format allows, and asking `clamp` for an inset
+/// the board cannot hold was how a 3x3 beach off the shelf, or pasted as
+/// a round code, took the game down on its first frame. On a board too
+/// small for the inset the cursor sits as far in as there is.
+fn cursor_home(board: &crate::sim::Board, player: u8) -> (u8, u8) {
+    let (w, h) = (board.width(), board.height());
+    let spots = castle_spots(w, h);
+    let (cx, cy) = spots[usize::from(player).min(spots.len() - 1)];
+    let inset = |len: u8| 2.min(len.saturating_sub(1) / 2);
+    (
+        cx.clamp(inset(w), w - 1 - inset(w)),
+        cy.clamp(inset(h), h - 1 - inset(h)),
+    )
 }
 
 /// Every category of entity rendered from board state, bundled so the two
@@ -623,6 +638,24 @@ mod tests {
 
     /// The AI fills from the top seat down, each with its own level, and
     /// leaves the human seats alone.
+    /// Boards from the shelf or a pasted code can be any size at all, and
+    /// the cursor's opening spot has to be on every one of them: near the
+    /// castle on a real arena, and simply on the board when there is no
+    /// room for the two-tile inset.
+    #[test]
+    fn a_cursor_opens_on_the_board_whatever_its_size() {
+        for (w, h) in [(1, 1), (2, 1), (3, 3), (4, 5), (5, 5), (12, 9), (20, 13)] {
+            let board = crate::sim::Board::new(w, h, 0);
+            for player in 0..MAX_PLAYERS as u8 {
+                let (x, y) = cursor_home(&board, player);
+                assert!(x < w && y < h, "seat {player} opened at ({x},{y}) on a {w}x{h} board");
+            }
+        }
+        let big = crate::sim::Board::new(12, 9, 0);
+        assert_eq!(cursor_home(&big, 0), (2, 2), "two in from the host's corner");
+        assert_eq!(cursor_home(&big, 1), (9, 6), "and from the far one");
+    }
+
     #[test]
     fn the_ai_takes_the_top_seats() {
         let mut config = armed(4, 2);

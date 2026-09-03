@@ -28,15 +28,22 @@ use crate::sim::rng::Pcg32;
 /// closest it comes; the few percent the edges keep is the price of the
 /// shape. Handicapping the edge castles to even it up overshoots every way
 /// it has been tried.
+///
+/// Every generated board is at least 9x7, so the spots are one tile in from
+/// the walls. A custom arena can be any size the level format allows, down
+/// to 1x1, and this is asked about those too (`load_versus` starts each
+/// cursor near its castle): the arithmetic saturates so a tiny board gets
+/// spots that are merely wrong, never a subtraction past zero.
 pub fn castle_spots(width: u8, height: u8) -> [(u8, u8); MAX_PLAYERS] {
-    let mid = (width - 1) / 2;
+    let mid = width.saturating_sub(1) / 2;
+    let (far_x, far_y) = (width.saturating_sub(2), height.saturating_sub(2));
     [
         (1, 1),
-        (width - 2, height - 2),
-        (width - 2, 1),
-        (1, height - 2),
+        (far_x, far_y),
+        (far_x, 1),
+        (1, far_y),
         (mid, 1),
-        (width - 1 - mid, height - 2),
+        (width.saturating_sub(1 + mid), far_y),
     ]
 }
 

@@ -240,7 +240,11 @@ impl Fields {
                 let token = words.next().ok_or("rule: missing policy")?;
                 let policy = CapPolicy::from_token(token)
                     .ok_or_else(|| format!("rule: bad policy {token:?}"))?;
-                self.rule = Some((policy, next_num(&mut words, "rule cap")?));
+                let cap = next_num(&mut words, "rule cap")?;
+                if cap == 0 && policy == CapPolicy::Evict {
+                    return Err("rule: evict needs a cap of at least 1".to_string());
+                }
+                self.rule = Some((policy, cap));
             }
             "counters" => {
                 self.counters = Some((
@@ -266,7 +270,7 @@ impl Fields {
             "events" => self.events_enabled = value == "on",
             "lure" => {
                 let owner = next_num::<PlayerId>(&mut words, "lure owner")?;
-                self.lure = Some((owner, next_num(&mut words, "lure ticks")?));
+                self.lure = Some((owner, ticks_left(&mut words, "lure")?));
             }
             "cooldown" => self.lure_cooldown = next_num(&mut words, "cooldown")?,
             "event_cooldown" => {
@@ -279,7 +283,7 @@ impl Fields {
                     "gull" => Mania::Gull,
                     other => return Err(format!("mania: bad kind {other:?}")),
                 };
-                self.mania = Some((kind, next_num(&mut words, "mania ticks")?));
+                self.mania = Some((kind, ticks_left(&mut words, "mania")?));
             }
             "tempo" => {
                 let which = words.next().ok_or("tempo: missing speed")?;
@@ -288,7 +292,7 @@ impl Fields {
                     "slow" => Tempo::Slow,
                     other => return Err(format!("tempo: bad speed {other:?}")),
                 };
-                self.tempo = Some((shift, next_num(&mut words, "tempo ticks")?));
+                self.tempo = Some((shift, ticks_left(&mut words, "tempo")?));
             }
             "last_event" => {
                 let index = next_num::<usize>(&mut words, "last_event index")?;
@@ -422,6 +426,17 @@ fn next_num<T: std::str::FromStr>(
     let word = words.next().ok_or_else(|| format!("{what}: missing"))?;
     word.parse()
         .map_err(|_| format!("{what}: bad number {word:?}"))
+}
+
+/// The ticks left on a running lure, mania or tempo. At least one: the
+/// sim clears each of these the tick it reaches zero and never writes a
+/// zero, and `tick` counts down before it looks, so a zero read back here
+/// would count past the bottom on the first tick.
+fn ticks_left(words: &mut std::str::SplitWhitespace, what: &str) -> Result<u32, String> {
+    match next_num(words, &format!("{what} ticks"))? {
+        0 => Err(format!("{what}: a running one has at least a tick left")),
+        ticks => Ok(ticks),
+    }
 }
 
 fn next_dir(words: &mut std::str::SplitWhitespace, what: &str) -> Result<Direction, String> {
@@ -746,6 +761,28 @@ mod tests {
             Board::parse_snapshot(&good.replace("size: 5 4", "size: 6 4")).is_err(),
             "a tile count that does not fit the size"
         );
+        // Values the sim never writes and could not run: an evict cap of
+        // zero has nothing to evict on the first placement, and a timer
+        // at zero counts past the bottom on the first tick.
+        assert!(good.contains("rule: reject 2"), "{good}");
+        assert!(
+            Board::parse_snapshot(&good.replace("rule: reject 2", "rule: evict 0")).is_err(),
+            "evict with nothing to evict"
+        );
+        assert!(
+            Board::parse_snapshot(&good.replace("rule: reject 2", "rule: reject 0")).is_ok(),
+            "reject at zero is a board with no posts to give, which is legal"
+        );
+        for line in ["lure: 1 0", "mania: gull 0", "tempo: slow 0"] {
+            let key = line.split(':').next().unwrap();
+            let zeroed: String = good
+                .lines()
+                .map(|l| if l.starts_with(key) { line } else { l })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(zeroed.contains(line), "{key} is set on the awkward board");
+            assert!(Board::parse_snapshot(&zeroed).is_err(), "{line} should be refused");
+        }
         // A truncated save: every line but the header removed in turn.
         let lines: Vec<&str> = good.lines().collect();
         for drop in 1..lines.len() {

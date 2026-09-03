@@ -78,7 +78,12 @@ impl Board {
                 .enumerate()
                 .filter_map(|(i, slot)| slot.filter(|sp| sp.owner == player).map(|sp| (sp.seq, i)))
                 .min();
-            let (_, i) = oldest.expect("at cap implies at least one signpost");
+            // At the cap there is one to evict, unless the cap is zero,
+            // which every parser refuses under Evict; a board built by
+            // hand that way gets a refusal here rather than a panic.
+            let Some((_, i)) = oldest else {
+                return false;
+            };
             self.signposts[i] = None;
         }
         self.stamp_signpost(t, player, dir);
