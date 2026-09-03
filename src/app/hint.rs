@@ -146,10 +146,19 @@ pub fn draw_hint(
     sim: Res<Sim>,
     art: Res<art::Art>,
     ghosts: Query<Entity, With<HintGhost>>,
+    mut drawn_on: Local<(u8, u8)>,
 ) {
-    if !hints.is_changed() && !sim.is_changed() {
+    // Redrawn when the hint changes, or when the board's size does: the
+    // ghost sits at a tile centre, which only the size moves. Redrawing
+    // on every change to the sim tore the sprite down and put it back
+    // thirty times a second for as long as a hint was up during a run.
+    // Every level load writes `hints`, so a swapped board of the same
+    // size is caught there.
+    let size = (sim.0.width(), sim.0.height());
+    if !hints.is_changed() && !(sim.is_changed() && *drawn_on != size) {
         return;
     }
+    *drawn_on = size;
     for ghost in &ghosts {
         commands.entity(ghost).despawn();
     }
