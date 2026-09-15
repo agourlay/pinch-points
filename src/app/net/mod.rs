@@ -521,9 +521,13 @@ impl OnlineSession {
         let committed = self.session.commit_local(local_action).is_some();
         // The newest commit and the whole resend tail behind it, in one
         // datagram: see `NetMsg::Inputs` for what that is worth at a full
-        // table.
+        // table. To the table and the rail, never to the queue: a peer in
+        // line is not simulating anything (`PeerBook::follows_the_round`).
+        let peers = &self.peers;
         self.transport
-            .send_inputs(self.session.recent_commits(), None);
+            .send_inputs(self.session.recent_commits(), |peer| {
+                peers.follows_the_round(peer)
+            });
         // Pause state is repeated every tick rather than sent once: UDP
         // drops, and the peer that misses a Pause would otherwise sit
         // watching a frozen beach with no card, while a missed Resume would
@@ -608,7 +612,10 @@ impl OnlineSession {
                         self.session.receive(input);
                     }
                     if host {
-                        self.transport.send_inputs(&inputs, Some(from));
+                        let peers = &self.peers;
+                        self.transport.send_inputs(&inputs, |peer| {
+                            peer != from && peers.follows_the_round(peer)
+                        });
                     }
                 }
                 NetMsg::Hash { frame, hash } => {

@@ -151,6 +151,24 @@ impl PeerBook {
             .count()
     }
 
+    /// Whether `peer` is following the round and so needs its inputs:
+    /// at the table, or at the rail in step from frame zero. A peer in
+    /// line for the next round is not, and used to be sent the whole
+    /// lockstep anyway: at a full table that is six datagrams a tick each,
+    /// about 180 a second, for frames it is not simulating and cannot use.
+    /// Four people waiting turned a table's 930 datagrams a second into
+    /// 1657.
+    ///
+    /// Everyone hears when the book holds no plan, and that exception is
+    /// the whole reason this is not simply `place != Queued`: `Queued` is
+    /// the default place, so a joiner (which knows one peer, the host) and
+    /// the direct `PINCH_HOST` pair (which keeps no plan at all) would
+    /// otherwise stop sending inputs to the only peer they have.
+    pub fn follows_the_round(&self, peer: usize) -> bool {
+        let planned = self.planned();
+        planned == 0 || peer < planned
+    }
+
     /// The peer holding `seat`, if any does.
     pub fn holder_of(&self, seat: u8) -> Option<usize> {
         self.0.iter().position(|peer| peer.seat() == Some(seat))
@@ -232,5 +250,33 @@ mod tests {
         assert_eq!(watching, [false, true, true]);
         assert!(peers.iter().all(|p| p.seat().is_none()));
         assert_eq!(peers.planned(), 0);
+    }
+
+    /// Who the round's inputs are for. A peer in line is not simulating
+    /// anything and used to be sent the lot anyway.
+    #[test]
+    fn only_the_table_and_the_rail_follow_the_round() {
+        let mut peers = PeerBook::default();
+        peers.reach(4);
+        peers.deal(&[Some(1), None]);
+        peers.reach(4);
+        assert_eq!(peers.planned(), 2, "a seat and a place at the rail");
+        assert!(peers.follows_the_round(0), "the seated peer");
+        assert!(peers.follows_the_round(1), "the watcher, in step from zero");
+        assert!(!peers.follows_the_round(2), "the one in line");
+        assert!(!peers.follows_the_round(3), "and the one behind it");
+    }
+
+    /// The exception that keeps online play working at all: `Queued` is
+    /// the default place, and a joiner knows exactly one peer (the host)
+    /// which it has no plan for. Filtering on the place alone would stop
+    /// it sending its own inputs anywhere.
+    #[test]
+    fn a_book_with_no_plan_sends_to_everyone() {
+        let mut peers = PeerBook::default();
+        peers.reach(2);
+        assert_eq!(peers.planned(), 0, "nothing was ever dealt");
+        assert!(peers.follows_the_round(0));
+        assert!(peers.follows_the_round(1));
     }
 }

@@ -793,6 +793,55 @@ mod next_round_tests {
         assert_eq!(host.series_standing, Some(next), "and the host holds it");
     }
 
+    /// A peer in line for the next round is not sent this one.
+    ///
+    /// It is not simulating anything: it is sitting in the lobby looking at
+    /// the terms card, and the frames it would be sent are frames it cannot
+    /// use. Measured before this held: a six-seat table ran at 930
+    /// datagrams a second, and four people waiting in line took it to 1657,
+    /// because the host sent the whole lockstep to every peer it had.
+    #[test]
+    fn a_peer_in_line_is_not_sent_the_round() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(11),
+        );
+        let mut sockets = gather(&mut host, &["Bo"]);
+        host.peers.deal(&[Some(1)]);
+
+        // And then somebody turns up mid-round, who is in line rather than
+        // at the table: the default place, which is what the plan leaves
+        // every peer it does not reach.
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut latecomer = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        latecomer.send(NetMsg::hello("Dee"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() == 2 {
+                break;
+            }
+        }
+        assert_eq!(host.transport.peer_count(), 2, "Dee is on the socket");
+        assert_eq!(host.peers.planned(), 1, "and in line, not at the table");
+
+        for _ in 0..5 {
+            host.pump(PlayerAction::None, |_| {});
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let inputs = |transport: &mut UdpTransport| {
+            transport
+                .recv_all()
+                .iter()
+                .filter(|(msg, _)| matches!(msg, NetMsg::Inputs(_)))
+                .count()
+        };
+        assert!(inputs(&mut sockets[0]) > 0, "the table hears the round");
+        assert_eq!(inputs(&mut latecomer), 0, "the queue does not");
+    }
+
     /// The host is the only peer that can tell who sent what, so it is the
     /// only one that can catch a peer speaking for somebody else's seat.
     ///

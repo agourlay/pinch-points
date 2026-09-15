@@ -50,10 +50,23 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// nothing at all.
 pub const PROTOCOL_VERSION: u8 = 11;
 
-/// Connections a host accepts: five rivals (a six-seat table) and a few
-/// onlookers. How many of them get a seat is the lobby's business, not the
-/// socket's.
-pub const MAX_PEERS: usize = 9;
+/// Connections a host accepts: five rivals (a six-seat table) and everyone
+/// else who turned up. How many of them get a seat is the lobby's
+/// business, not the socket's.
+///
+/// One pool for the lot, so a full table used to leave room for four
+/// onlookers and the tenth person to arrive was ignored: no answer, and a
+/// joiner that hears nothing reports the host as absent rather than the
+/// beach as full. A hall is bigger than that.
+///
+/// Raised to sixteen once a peer in line stopped being sent the round it
+/// is not watching (see `PeerBook::follows_the_round`). That is what makes
+/// the number affordable: someone waiting now costs a roster line and a
+/// beacon, where before each one cost the host about 180 datagrams a
+/// second. A *watcher* still costs that, because it is simulating the
+/// round like everybody else, so eleven onlookers at a full table is worth
+/// having only because most of them are in line rather than at the rail.
+pub const MAX_PEERS: usize = 16;
 
 /// The receive buffer, which must hold the largest message whole: UDP
 /// truncates a datagram to the buffer given, and a truncated message
@@ -168,13 +181,17 @@ impl UdpTransport {
     }
 
     /// Send a tick's worth of inputs, in as few datagrams as the cap
-    /// allows: `skip` names a peer to leave out (the one the host is
-    /// relaying them *from*), or `None` to send to the table entire.
+    /// allows, to every peer `hears` says is following the round.
+    ///
+    /// The audience is the caller's business and not the socket's: who is
+    /// at the table, who is at the rail and who is in line for the next
+    /// round is the lobby's bookkeeping. This layer knows only that a peer
+    /// it is not told to send to costs nothing.
     ///
     /// Encodes once per datagram rather than once per peer, and into the
     /// stack: this is the one path the game walks thousands of times a
     /// second, and a `Vec` per recipient was most of what it allocated.
-    pub fn send_inputs(&self, msgs: &[InputMsg], skip: Option<usize>) {
+    pub fn send_inputs(&self, msgs: &[InputMsg], mut hears: impl FnMut(usize) -> bool) {
         if msgs.is_empty() {
             return;
         }
@@ -182,7 +199,7 @@ impl UdpTransport {
             let mut buf = [0u8; MAX_DATAGRAM];
             let len = encode_inputs(chunk, &mut buf);
             for (index, peer) in self.peers.iter().enumerate() {
-                if Some(index) != skip {
+                if hears(index) {
                     let _ = self.socket.send_to(&buf[..len], peer);
                 }
             }

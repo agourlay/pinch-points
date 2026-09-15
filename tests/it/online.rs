@@ -41,7 +41,8 @@ impl Peer {
         // pre-handshake window where the host cannot send yet. One datagram
         // for the lot, as the game sends it.
         self.transport
-            .send_inputs(self.session.recent_commits(), None);
+            // This harness keeps no lobby and no plan, so everyone hears.
+            .send_inputs(self.session.recent_commits(), |_| true);
         for (msg, _) in self.transport.recv_all() {
             match msg {
                 NetMsg::Hello { .. } | NetMsg::Watch => {}
