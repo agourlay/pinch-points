@@ -37,6 +37,49 @@ pub fn run() {
                 ),
                 ..bevy::log::LogPlugin::default()
             })
+            .set(TaskPoolPlugin {
+                task_pool_options: TaskPoolOptions {
+                    // Bevy caps the io and async-compute pools at four
+                    // threads each and hands the compute pool everything
+                    // left over, uncapped. On a 24-core machine that is
+                    // sixteen workers for this game's hundred small
+                    // systems, and a `perf` profile of a six-seat XL round
+                    // is then mostly the workers finding each other: queue
+                    // pops, work stealing and a contended mutex come to
+                    // about 18% of samples, with this game's own code
+                    // nowhere near the top of the list.
+                    //
+                    // Swept on that machine with `PINCH_THREADS`, 30 s of
+                    // that round each, CPU seconds (user + sys):
+                    //
+                    //     cap  1     8.8     cap  4    13.3
+                    //     cap  2     9.2     cap  6    15.9
+                    //     cap  3    10.8     uncapped  21.2
+                    //
+                    // Nothing else moves: every one of those runs holds the
+                    // fixed tick exactly, and the round clock reads 2:30 in
+                    // all of them. The engine is spending more to coordinate
+                    // this game's systems than the systems spend working,
+                    // and it spends it per worker.
+                    //
+                    // Two rather than one, because a cap is not a count and
+                    // the machines this has to be right on are not this one:
+                    // the second worker costs 0.4 CPU-seconds here and is
+                    // the one that absorbs a heavy frame on a slow laptop,
+                    // where the systems really do take long enough to want
+                    // splitting. A two-core machine gets what its own core
+                    // count allows either way.
+                    compute: TaskPoolThreadAssignmentPolicy {
+                        // `PINCH_THREADS=n` sweeps the cap, and `=0` puts
+                        // Bevy's own default back, which is how the table
+                        // above was measured and how to re-measure it on a
+                        // machine that is not this one.
+                        max_threads: dev::compute_threads().unwrap_or(2),
+                        ..TaskPoolOptions::default().compute
+                    },
+                    ..TaskPoolOptions::default()
+                },
+            })
             .set(RenderPlugin {
                 render_creation: RenderCreation::Automatic(Box::new(WgpuSettings {
                     // Debug builds default to the Vulkan validation

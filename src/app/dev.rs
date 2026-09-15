@@ -54,6 +54,15 @@ pub(super) fn bots() -> Option<u8> {
     std::env::var("PINCH_BOTS").ok()?.parse().ok()
 }
 
+/// `PINCH_THREADS=n`: the cap on Bevy's compute pool, for sweeping it on a
+/// machine before deciding what the shipped cap should be. `0` lifts the cap
+/// back to Bevy's own default, which is every core the io and async pools
+/// did not take.
+pub(super) fn compute_threads() -> Option<usize> {
+    let n: usize = std::env::var("PINCH_THREADS").ok()?.parse().ok()?;
+    Some(if n == 0 { usize::MAX } else { n })
+}
+
 /// `PINCH_SEATS=n`: how many seats a skirmish sets the table for.
 fn seats() -> Option<u8> {
     std::env::var("PINCH_SEATS").ok()?.parse().ok()

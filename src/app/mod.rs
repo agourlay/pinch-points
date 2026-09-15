@@ -88,6 +88,7 @@ use crate::sim::{
     Board, BotLevel, Level, MAX_PLAYERS, PlayerAction, PuzzleOutcome, Replay, bot_action,
     castle_spots, classic_arena, classic_arena_seeded, generate_arena,
 };
+use bevy::app::{TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPolicy};
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy::render::settings::{InstanceFlags, RenderCreation, WgpuSettings};
