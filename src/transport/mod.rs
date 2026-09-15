@@ -32,6 +32,10 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// the table stopped being played on and gave way to the generated arena
 /// the terms name.
 ///
+/// Version 11 is where a tick's inputs became one datagram: `Input`
+/// retired and `Inputs` took its place, which is a tag added and a tag
+/// withdrawn, the two cases this number exists for.
+///
 /// That last one is the shape this paragraph is about, and worth reading
 /// twice: not one byte of the `Start` moved. Two builds hold the identical
 /// datagram, agree on every field in it, and lay out different beaches
@@ -44,7 +48,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// Without it two peers on different builds decode each other's messages and
 /// silently disagree about the round, which looks like a desync or like
 /// nothing at all.
-pub const PROTOCOL_VERSION: u8 = 10;
+pub const PROTOCOL_VERSION: u8 = 11;
 
 /// Connections a host accepts: five rivals (a six-seat table) and a few
 /// onlookers. How many of them get a seat is the lobby's business, not the
@@ -160,6 +164,28 @@ impl UdpTransport {
         let bytes = msg.encode();
         for peer in &self.peers {
             let _ = self.socket.send_to(&bytes, peer);
+        }
+    }
+
+    /// Send a tick's worth of inputs, in as few datagrams as the cap
+    /// allows: `skip` names a peer to leave out (the one the host is
+    /// relaying them *from*), or `None` to send to the table entire.
+    ///
+    /// Encodes once per datagram rather than once per peer, and into the
+    /// stack: this is the one path the game walks thousands of times a
+    /// second, and a `Vec` per recipient was most of what it allocated.
+    pub fn send_inputs(&self, msgs: &[InputMsg], skip: Option<usize>) {
+        if msgs.is_empty() {
+            return;
+        }
+        for chunk in msgs.chunks(MAX_INPUTS_PER_DATAGRAM) {
+            let mut buf = [0u8; MAX_DATAGRAM];
+            let len = encode_inputs(chunk, &mut buf);
+            for (index, peer) in self.peers.iter().enumerate() {
+                if Some(index) != skip {
+                    let _ = self.socket.send_to(&buf[..len], peer);
+                }
+            }
         }
     }
 

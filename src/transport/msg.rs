@@ -18,7 +18,22 @@ pub enum NetMsg {
     /// Handshake ping from a peer that wants to watch, not play. Repeated
     /// like `Hello` until a `Start` lands.
     Watch,
-    Input(InputMsg),
+    /// Every input the sender can still be holding for a peer: the newest
+    /// commit and the resend tail behind it, in one datagram.
+    ///
+    /// One datagram and not thirty-four, which is what this was until
+    /// version 11. The tail is repeated in full every tick, so at a
+    /// six-seat table the host was writing 850 datagrams a tick between
+    /// its own commits and the ones it relays: 25,500 a second, each
+    /// carrying ten bytes of input behind sixty-six of framing. Batched it
+    /// is 25 a tick, and the bytes fall eightfold with them.
+    ///
+    /// Nothing about the redundancy changed, and that is deliberate: the
+    /// whole tail still goes out every tick, so a lost datagram is made
+    /// good by the next one 33 ms later exactly as a lost input was. What
+    /// did change is that a peer now gets all of a tick's tail or none of
+    /// it, rather than the ragged subset a burst of loss used to leave.
+    Inputs(Vec<InputMsg>),
     /// State fingerprint after `frame`, for loud desync detection.
     Hash {
         frame: u32,
@@ -192,7 +207,13 @@ impl NetMsg {
 // So a new tag is three lines, not one: the tag, `HIGHEST_TAG` below it,
 // and the version.
 const TAG_HELLO: u8 = 0;
-const TAG_INPUT: u8 = 1;
+/// Retired in version 11, when a tick's inputs became one datagram rather
+/// than thirty-four. The number stays spoken for and is never handed to
+/// another message: a version 10 peer still sends it, and `peek_version`
+/// only answers `Incompatible` for a tag inside the range, which is what
+/// tells that peer why its round never starts. Reusing the number would
+/// have this build read those datagrams as whatever took its place.
+const TAG_RETIRED_INPUT: u8 = 1;
 const TAG_HASH: u8 = 2;
 const TAG_START: u8 = 3;
 const TAG_PAUSE: u8 = 4;
@@ -203,10 +224,24 @@ const TAG_QUEUED: u8 = 8;
 const TAG_CHAT: u8 = 9;
 const TAG_ROSTER: u8 = 10;
 const TAG_ABANDONED: u8 = 11;
+const TAG_INPUTS: u8 = 12;
 /// The last of them, which `peek_version` uses to tell one of ours from
 /// stray traffic on the port. Kept here rather than written into that
 /// check, so the line to update sits directly under the line being added.
-const HIGHEST_TAG: u8 = TAG_ABANDONED;
+const HIGHEST_TAG: u8 = TAG_INPUTS;
+
+/// Inputs one datagram may carry.
+///
+/// The cap is the buffer: `2 + 1 + 127 * INPUT_BYTES` is 1019 bytes, inside
+/// [`MAX_DATAGRAM`] and inside any MTU worth worrying about, which matters
+/// more than the buffer does. A datagram past the path MTU is fragmented,
+/// and a fragment lost is the whole datagram lost, so a batch that grew to
+/// need two IP packets would be a resend tail that fails twice as often as
+/// the thing it exists to repair.
+///
+/// A tail never comes close: `2 * resend_span(DEFAULT_DELAY)` is 66. The
+/// host's relay does, at a full table, and chunks.
+pub const MAX_INPUTS_PER_DATAGRAM: usize = 127;
 
 /// How a peer that came to watch is written down in a `Start`: outside
 /// the range of real seats, so it cannot collide with one.
@@ -302,6 +337,29 @@ impl MatchTerms {
     }
 }
 
+/// A batch of inputs straight into the caller's buffer: byte for byte what
+/// `NetMsg::Inputs(..).encode()` writes, without the `Vec` that would take.
+/// Answers the length written.
+///
+/// `msgs` must be within [`MAX_INPUTS_PER_DATAGRAM`]; the one caller chunks,
+/// and `the_two_encoders_agree` holds the two spellings to each other.
+pub(super) fn encode_inputs(msgs: &[InputMsg], buf: &mut [u8; MAX_DATAGRAM]) -> usize {
+    debug_assert!(
+        msgs.len() <= MAX_INPUTS_PER_DATAGRAM,
+        "{} inputs in one datagram",
+        msgs.len()
+    );
+    let count = msgs.len().min(MAX_INPUTS_PER_DATAGRAM);
+    buf[0] = TAG_INPUTS;
+    buf[1] = PROTOCOL_VERSION;
+    buf[2] = count as u8;
+    for (index, msg) in msgs[..count].iter().enumerate() {
+        let at = 3 + index * INPUT_BYTES;
+        buf[at..at + INPUT_BYTES].copy_from_slice(&msg.encode());
+    }
+    3 + count * INPUT_BYTES
+}
+
 impl NetMsg {
     pub fn encode(self) -> Vec<u8> {
         // Byte 0 tags the message, byte 1 says who wrote it; the payload
@@ -313,7 +371,7 @@ impl NetMsg {
             NetMsg::Chat { .. } => vec![TAG_CHAT],
             NetMsg::Roster { .. } => vec![TAG_ROSTER],
             NetMsg::Abandoned { .. } => vec![TAG_ABANDONED],
-            NetMsg::Input(_) => vec![TAG_INPUT],
+            NetMsg::Inputs(_) => vec![TAG_INPUTS],
             NetMsg::Hash { .. } => vec![TAG_HASH],
             NetMsg::Start { .. } => vec![TAG_START],
             NetMsg::Pause { .. } => vec![TAG_PAUSE],
@@ -345,7 +403,22 @@ impl NetMsg {
                 bytes.extend_from_slice(&terms.encode());
             }
             NetMsg::Hello { name } => bytes.extend_from_slice(&name),
-            NetMsg::Input(msg) => bytes.extend_from_slice(&msg.encode()),
+            NetMsg::Inputs(ref inputs) => {
+                // Count first, then that many fixed-width inputs. A batch
+                // past the cap is truncated rather than sent whole, the way
+                // an oversized beach is: the alternative is a datagram the
+                // receiver never sees. Senders chunk, so nothing here does.
+                debug_assert!(
+                    inputs.len() <= MAX_INPUTS_PER_DATAGRAM,
+                    "{} inputs in one datagram",
+                    inputs.len()
+                );
+                let count = inputs.len().min(MAX_INPUTS_PER_DATAGRAM);
+                bytes.push(count as u8);
+                for input in &inputs[..count] {
+                    bytes.extend_from_slice(&input.encode());
+                }
+            }
             NetMsg::Hash { frame, hash } => {
                 bytes.extend_from_slice(&frame.to_le_bytes());
                 bytes.extend_from_slice(&hash.to_le_bytes());
@@ -413,10 +486,30 @@ impl NetMsg {
                 name: body.get(..WIRE_NAME)?.try_into().ok()?,
             }),
             TAG_WATCH => Some(NetMsg::Watch),
-            TAG_INPUT => {
-                let payload: [u8; INPUT_BYTES] = body.get(..INPUT_BYTES)?.try_into().ok()?;
-                Some(NetMsg::Input(InputMsg::decode(payload)))
+            TAG_INPUTS => {
+                // A count past the cap is refused rather than clamped: the
+                // encoder would write back fewer than it read, and a message
+                // that does not survive its own round trip is one the host
+                // could relay as something other than what it was told.
+                let count = usize::from(*body.first()?);
+                if count > MAX_INPUTS_PER_DATAGRAM {
+                    return None;
+                }
+                let packed = body.get(1..1 + count * INPUT_BYTES)?;
+                Some(NetMsg::Inputs(
+                    packed
+                        .as_chunks::<INPUT_BYTES>()
+                        .0
+                        .iter()
+                        .map(|chunk| InputMsg::decode(*chunk))
+                        .collect(),
+                ))
             }
+            // Spoken for and unread. A peer on this version never sends
+            // it; one on an older version is answered by the caller, which
+            // is the whole reason the number stays inside the tag range
+            // rather than being handed to something else.
+            TAG_RETIRED_INPUT => None,
             TAG_HASH => {
                 let frame = u32::from_le_bytes(body.get(..4)?.try_into().ok()?);
                 let hash = u64::from_le_bytes(body.get(4..12)?.try_into().ok()?);
@@ -553,10 +646,105 @@ mod tests {
                 frame: u32::MAX,
                 hash: u64::MAX,
             },
+            // A batch filled to the cap, which is the one message whose
+            // size a caller chooses rather than the format fixing it.
+            super::NetMsg::Inputs(vec![
+                super::InputMsg {
+                    player: 5,
+                    frame: u32::MAX,
+                    action: crate::sim::PlayerAction::Place {
+                        x: 19,
+                        y: 12,
+                        dir: crate::sim::Direction::Left,
+                    },
+                };
+                super::MAX_INPUTS_PER_DATAGRAM
+            ]),
         ] {
             let len = msg.clone().encode().len();
             assert!(len <= super::MAX_DATAGRAM, "{len} bytes: {msg:?}");
         }
+    }
+
+    /// The whole point of the batch: a tail as long as the lockstep can
+    /// ever hold it must be one datagram, not two. `resend_span` keeps
+    /// commits from `frame - span` while they run to `frame + span - 1`, so
+    /// twice the span is the most [`Lockstep::recent_commits`] can answer,
+    /// and it is nowhere near the cap.
+    ///
+    /// If this ever fails the fix is not a larger buffer: a datagram past
+    /// the path MTU fragments, and a resend tail that needs two IP packets
+    /// to arrive is one that fails twice as often as the loss it repairs.
+    /// Chunk instead, as the host's relay already does.
+    #[test]
+    fn a_full_resend_tail_is_one_datagram() {
+        let span = (crate::sim::DEFAULT_DELAY + crate::sim::MAX_COMMIT_LEAD) as usize;
+        let tail = 2 * span;
+        assert!(
+            tail <= super::MAX_INPUTS_PER_DATAGRAM,
+            "a {tail}-message tail does not fit {} per datagram",
+            super::MAX_INPUTS_PER_DATAGRAM
+        );
+        let len = super::NetMsg::Inputs(vec![
+            super::InputMsg {
+                player: 5,
+                frame: u32::MAX,
+                action: crate::sim::PlayerAction::None,
+            };
+            tail
+        ])
+        .encode()
+        .len();
+        assert!(len <= super::MAX_DATAGRAM, "{len} bytes");
+    }
+
+    /// The batch has two encoders: the one every message uses, and the one
+    /// the send path uses to keep a `Vec` off the hot loop. They write the
+    /// same bytes or they are two protocols.
+    #[test]
+    fn the_two_encoders_agree() {
+        for count in [0usize, 1, 34, super::MAX_INPUTS_PER_DATAGRAM] {
+            let msgs: Vec<super::InputMsg> = (0..count)
+                .map(|i| super::InputMsg {
+                    player: (i % crate::sim::MAX_PLAYERS) as u8,
+                    frame: i as u32 * 7,
+                    action: crate::sim::PlayerAction::Place {
+                        x: (i % 20) as u8,
+                        y: (i % 13) as u8,
+                        dir: crate::sim::Direction::Right,
+                    },
+                })
+                .collect();
+            let mut buf = [0u8; super::MAX_DATAGRAM];
+            let len = super::encode_inputs(&msgs, &mut buf);
+            assert_eq!(
+                &buf[..len],
+                super::NetMsg::Inputs(msgs.clone()).encode().as_slice(),
+                "{count} inputs"
+            );
+            assert_eq!(
+                super::NetMsg::decode(&buf[..len]),
+                Some(super::NetMsg::Inputs(msgs)),
+                "{count} inputs"
+            );
+        }
+    }
+
+    /// The retired tag earns its keep at exactly one moment: a version 10
+    /// peer dials in, sends the inputs it has always sent, and has to be
+    /// told why nothing happens. That answer only goes out for a tag
+    /// inside the range, so the number stays spoken for and is never handed
+    /// to a message this build would then read those datagrams as.
+    #[test]
+    fn a_version_ten_input_is_refused_and_answered() {
+        let mut old = vec![super::TAG_RETIRED_INPUT, 10];
+        old.extend_from_slice(&[0u8; crate::sim::INPUT_BYTES]);
+        assert_eq!(super::NetMsg::decode(&old), None, "not read as anything");
+        assert_eq!(
+            super::NetMsg::peek_version(&old),
+            Some(10),
+            "and answered with why"
+        );
     }
 
     /// [`MAX_BEACH_BYTES`] is what the sender trusts, so it has to be a
@@ -648,7 +836,7 @@ mod tests {
             NetMsg::Resume { frame: 0 },
             NetMsg::Resume { frame: 70_000 },
             NetMsg::Pause { frame: 7 },
-            NetMsg::Input(InputMsg {
+            NetMsg::Inputs(vec![InputMsg {
                 player: 1,
                 frame: 42,
                 action: PlayerAction::Place {
@@ -656,18 +844,39 @@ mod tests {
                     y: 8,
                     dir: Direction::Down,
                 },
-            }),
+            }]),
+            // An empty batch is never sent, and still has to come back as
+            // one: the fuzzer will build the three bytes that say so.
+            NetMsg::Inputs(Vec::new()),
             // The XL beach is 20 wide: a placement out in column 18 has to
             // survive the trip, which it did not while a tile was a nibble.
-            NetMsg::Input(InputMsg {
-                player: 5,
-                frame: 4000,
-                action: PlayerAction::Place {
-                    x: 18,
-                    y: 11,
-                    dir: Direction::Left,
+            // Behind it, the shape a real tail has: several frames of one
+            // seat in one datagram.
+            NetMsg::Inputs(vec![
+                InputMsg {
+                    player: 5,
+                    frame: 4000,
+                    action: PlayerAction::Place {
+                        x: 18,
+                        y: 11,
+                        dir: Direction::Left,
+                    },
                 },
-            }),
+                InputMsg {
+                    player: 5,
+                    frame: 4001,
+                    action: PlayerAction::None,
+                },
+                InputMsg {
+                    player: 5,
+                    frame: 4002,
+                    action: PlayerAction::Place {
+                        x: 0,
+                        y: 0,
+                        dir: Direction::Up,
+                    },
+                },
+            ]),
             NetMsg::Hash {
                 frame: 990,
                 hash: 0xDEAD_BEEF_0BAD_F00D,
@@ -843,6 +1052,17 @@ mod wire_fuzz_probe {
             }
             .encode(),
             NetMsg::Hash { frame: 7, hash: 9 }.encode(),
+            // The count byte is a length off the wire, and the one field
+            // in the protocol that says how much to read.
+            NetMsg::Inputs(vec![
+                InputMsg {
+                    player: 1,
+                    frame: 9,
+                    action: crate::sim::PlayerAction::None,
+                };
+                6
+            ])
+            .encode(),
             ANNOUNCE_MAGIC.to_vec(),
             Vec::new(),
         ];

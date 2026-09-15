@@ -371,7 +371,7 @@ pub fn join_tick(
                 }
                 NetMsg::Hello { .. }
                 | NetMsg::Watch
-                | NetMsg::Input(_)
+                | NetMsg::Inputs(_)
                 | NetMsg::Hash { .. }
                 | NetMsg::Pause { .. }
                 | NetMsg::Abandoned { .. }

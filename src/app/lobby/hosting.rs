@@ -447,7 +447,7 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
                     picked.said.push((from, who, text));
                 }
             }
-            NetMsg::Input(_)
+            NetMsg::Inputs(_)
             | NetMsg::Hash { .. }
             | NetMsg::Start { .. }
             | NetMsg::Pause { .. }

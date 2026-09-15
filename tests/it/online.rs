@@ -38,14 +38,17 @@ impl Peer {
     fn step(&mut self, local_action: PlayerAction) {
         let _ = self.session.commit_local(local_action);
         // Redundant resend of the recent tail: survives packet loss and the
-        // pre-handshake window where the host cannot send yet.
-        for &msg in self.session.recent_commits() {
-            self.transport.send(NetMsg::Input(msg));
-        }
+        // pre-handshake window where the host cannot send yet. One datagram
+        // for the lot, as the game sends it.
+        self.transport.send_inputs(self.session.recent_commits(), None);
         for (msg, _) in self.transport.recv_all() {
             match msg {
                 NetMsg::Hello { .. } | NetMsg::Watch => {}
-                NetMsg::Input(input) => self.session.receive(input),
+                NetMsg::Inputs(inputs) => {
+                    for input in inputs {
+                        self.session.receive(input);
+                    }
+                }
                 NetMsg::Hash { frame, hash } => self.peer_hashes.push((frame, hash)),
                 NetMsg::Pause { frame } => self.session.receive_pause(frame),
                 NetMsg::Resume { frame } => {

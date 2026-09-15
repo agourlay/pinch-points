@@ -165,7 +165,7 @@ impl OnlineSession {
                         self.next_round = true;
                     }
                 }
-                NetMsg::Input(_)
+                NetMsg::Inputs(_)
                 | NetMsg::Hash { .. }
                 | NetMsg::Pause { .. }
                 | NetMsg::Resume { .. }
@@ -827,13 +827,15 @@ mod next_round_tests {
         // reach it at all, so what the hub relays is what the table plays.
         let mut relayed: Vec<u8> = Vec::new();
         for _ in 0..40 {
-            sockets[0].send(NetMsg::Input(own));
-            sockets[0].send(NetMsg::Input(forged));
+            // Both in one batch, which is the shape the weeding has to
+            // survive now: the honest input and the forged one arrive in a
+            // single datagram, and only one of them may be passed on.
+            sockets[0].send(NetMsg::Inputs(vec![own, forged]));
             std::thread::sleep(std::time::Duration::from_millis(5));
             host.pump(PlayerAction::None, |_| {});
             for (msg, _) in sockets[1].recv_all() {
-                if let NetMsg::Input(input) = msg {
-                    relayed.push(input.player);
+                if let NetMsg::Inputs(inputs) = msg {
+                    relayed.extend(inputs.iter().map(|input| input.player));
                 }
             }
             if relayed.contains(&1) {

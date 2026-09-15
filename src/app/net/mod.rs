@@ -519,9 +519,10 @@ impl OnlineSession {
     /// committed (false = at the commit lead; retry it next tick).
     pub fn pump(&mut self, local_action: PlayerAction, mut tick: impl FnMut(&mut Self)) -> bool {
         let committed = self.session.commit_local(local_action).is_some();
-        for &msg in self.session.recent_commits() {
-            self.transport.send(NetMsg::Input(msg));
-        }
+        // The newest commit and the whole resend tail behind it, in one
+        // datagram: see `NetMsg::Inputs` for what that is worth at a full
+        // table.
+        self.transport.send_inputs(self.session.recent_commits(), None);
         // Pause state is repeated every tick rather than sent once: UDP
         // drops, and the peer that misses a Pause would otherwise sit
         // watching a frozen beach with no card, while a missed Resume would
@@ -579,7 +580,7 @@ impl OnlineSession {
                         self.transport.send_to(from, answer);
                     }
                 }
-                NetMsg::Input(input) => {
+                NetMsg::Inputs(mut inputs) => {
                     // The host knows which seat each peer was given, and
                     // takes inputs for that seat alone: a peer speaking for
                     // another's seat (a bug, or a spectator with ideas)
@@ -589,19 +590,24 @@ impl OnlineSession {
                     // direct `PINCH_HOST` pair keeps no plan, having never
                     // been through a lobby; with nothing to check against
                     // it takes any seat but its own, as it always did.
+                    //
+                    // Weeded before anything is believed *or* passed on,
+                    // rather than per datagram as it was when an input was
+                    // one: what the host relays is what it accepted.
                     if host {
-                        let allowed = if self.peers.planned() == 0 {
-                            Some(input.player) != self.session.seat()
-                        } else {
-                            self.seat_of(from) == Some(input.player)
-                        };
-                        if !allowed {
-                            continue;
-                        }
+                        let planned = self.peers.planned();
+                        let own = self.session.seat();
+                        let theirs = self.seat_of(from);
+                        inputs.retain(|input| match planned {
+                            0 => Some(input.player) != own,
+                            _ => theirs == Some(input.player),
+                        });
                     }
-                    self.session.receive(input);
+                    for &input in &inputs {
+                        self.session.receive(input);
+                    }
                     if host {
-                        relay(&self.transport, from, NetMsg::Input(input));
+                        self.transport.send_inputs(&inputs, Some(from));
                     }
                 }
                 NetMsg::Hash { frame, hash } => {
@@ -874,7 +880,7 @@ mod homecoming_tests {
                             session.remember_peer_name(from, &told);
                         }
                         NetMsg::Watch => session.note_watch_wish(from),
-                        NetMsg::Input(_)
+                        NetMsg::Inputs(_)
                         | NetMsg::Hash { .. }
                         | NetMsg::Start { .. }
                         | NetMsg::Pause { .. }
