@@ -508,6 +508,60 @@ pub(super) fn debug_autoplay(
     next_phase.set(Phase::Running);
 }
 
+/// `PINCH_AUTOPILOT=easy|normal|hard`, or `=1` for normal: the level the
+/// local seat plays itself at. Anything else names no level and leaves the
+/// seat to its player.
+pub(super) fn autopilot_level() -> Option<crate::sim::BotLevel> {
+    use crate::sim::BotLevel;
+    match std::env::var("PINCH_AUTOPILOT").ok()?.as_str() {
+        "easy" => Some(BotLevel::Easy),
+        "1" | "normal" => Some(BotLevel::Normal),
+        "hard" => Some(BotLevel::Hard),
+        _ => None,
+    }
+}
+
+/// Dev hook: play this process's own seat with the bot brain, through the
+/// same pending-actions path a keystroke takes.
+///
+/// `PINCH_BOTS` is not this, and the difference is the whole point of
+/// having both. An AI seat is derived: it sits *beside* the humans, the
+/// lockstep never carries it, and every peer works out its moves from the
+/// frame they have all agreed on. So a table of five AI seats puts not one
+/// byte on the wire, and a room of idle humans is what a load test of the
+/// netcode actually measures. This drives a *human* seat instead, so the
+/// placements are committed and relayed exactly as a player's are, and six
+/// processes can play a real round with nobody at any of the keyboards.
+///
+/// Only ever a seat this process holds: a spectator commits nothing, and a
+/// peer that reached for another's chair would be refused by the host and
+/// would be asking for the desync the seat check exists to prevent.
+pub(super) fn debug_autopilot(
+    sim: Res<Sim>,
+    online: Res<net::Online>,
+    mut pending: ResMut<PendingActions>,
+    mut level: Local<Option<Option<crate::sim::BotLevel>>>,
+) {
+    let Some(level) = *level.get_or_insert_with(autopilot_level) else {
+        return;
+    };
+    let seat = match online.0.as_ref() {
+        Some(session) => match session.session.seat() {
+            Some(seat) => seat,
+            None => return,
+        },
+        None => 0,
+    };
+    let Some(slot) = pending.0.get_mut(usize::from(seat)) else {
+        return;
+    };
+    // Never over a real one: a hand on the keys still beats the autopilot,
+    // which is what makes this usable to watch as well as to measure.
+    if matches!(slot, PlayerAction::None) {
+        *slot = crate::sim::bot_action(&sim.0, seat, level);
+    }
+}
+
 /// Dev hook: with `PINCH_NET_PROBE=1`, submit one scripted signpost three
 /// seconds into a versus round, through the normal pending-actions path (so
 /// online it rides the lockstep like a real keystroke). On the classic arena

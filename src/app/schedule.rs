@@ -645,7 +645,7 @@ fn add_play_systems(app: &mut App) {
             check_outcome.run_if(puzzle_running),
             play_input::versus_input.run_if(versus_running),
             suspend::copy_round_code.run_if(versus_running),
-            dev::debug_net_probe.run_if(versus_running),
+            (dev::debug_net_probe, dev::debug_autopilot).run_if(versus_running),
             (
                 dev::debug_banner.run_if(versus_running.or_else(puzzle_running)),
                 dev::debug_moments,
