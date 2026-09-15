@@ -579,12 +579,7 @@ mod tests {
             for seats in 2..=4u8 {
                 let board = generate_arena(seed, seats, 12, 9);
                 let (w, h) = (board.width(), board.height());
-                let corners = [
-                    (1, 1),
-                    (w - 2, h - 2),
-                    (w - 2, 1),
-                    (1, h - 2),
-                ];
+                let corners = [(1, 1), (w - 2, h - 2), (w - 2, 1), (1, h - 2)];
                 for seat in 0..seats {
                     let spot = board.castle_of(seat).expect("a castle");
                     assert!(

@@ -19,13 +19,13 @@ exclude = ["docs/", ".github/"]
 [dependencies]
 bevy = { version = "0.19.1", features = ["wav", "vorbis", "system_clipboard"] }
 include_dir = "0.7.4"
-semver = "1"
+semver = "1.0.28"
 # The start-up release check (`app::update`): one HTTPS GET to GitHub and
 # the JSON it answers with. serde_json is already in the tree under Bevy;
 # ureq brings rustls and a bundled root store, so the check works the same
 # on every desktop without asking the OS for certificates.
-serde_json = "1"
-ureq = "3"
+serde_json = "1.0.51"
+ureq = "3.4.2"
 # One type, `Script`, for one call: telling the text stack which face to
 # reach for when a line is in a script the UI font has no glyphs for
 # (`app::boot`, Japanese). This is the crate that type actually lives in
@@ -33,13 +33,13 @@ ureq = "3"
 # directly is what keeps the version out of the argument. Depending on
 # parley instead would mean tracking whichever version bevy_text pulls,
 # and a second copy of parley and fontique in the build whenever we drift.
-parlance = "0.1"
+parlance = "0.1.0"
 # Not called from here: this turns on the one feature that makes the text
 # stack's data layer report through `log` rather than straight to stderr.
 # Japanese line breaking wants a CJK dictionary the baked data does not
 # carry, and says so once per line per frame; routed through `log` it can
 # be filtered, which `app::schedule` does.
-icu_provider = { version = "2", features = ["logging"] }
+icu_provider = { version = "2.3.1", features = ["logging"] }
 
 # What `app::keymap` asks on Linux. The pure-Rust connection: the core
 # X11 protocol answers without libxkbcommon to link, a dev package to
@@ -55,14 +55,14 @@ icu_provider = { version = "2", features = ["logging"] }
 # and `get_keyboard_mapping` are all unchanged across it. Move when winit
 # and arboard do, and the tree keeps one copy.
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb = { version = "0.13", default-features = false }
+x11rb = { version = "0.13.2", default-features = false }
 
 [dev-dependencies]
 # A progress bar for `examples/verify_levels`, the campaign minimality
 # proof: a release run of it is minutes of otherwise-silent solving, and a
 # bar is how you tell "still working" from "wedged". Examples build against
 # dev-dependencies, and nothing the game ships links this.
-indicatif = "0.18"
+indicatif = "0.18.6"
 
 [lints]
 workspace = true
