@@ -159,8 +159,8 @@ pub fn update_log(
                 Color::NONE
             }
         };
-        crate::app::menu_ui::set_text(&mut text, &value);
-        crate::app::menu_ui::set_color(&mut color, target);
+        menu_ui::set_text(&mut text, &value);
+        menu_ui::set_color(&mut color, target);
     }
 }
 

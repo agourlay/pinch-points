@@ -712,7 +712,7 @@ pub fn moment_effects(
                     Sprite {
                         image: art.arrow.clone(),
                         color: palette::player_color(*owner).lighter(0.12),
-                        custom_size: Some(Vec2::splat(layout::TILE * 0.88)),
+                        custom_size: Some(Vec2::splat(TILE * 0.88)),
                         ..default()
                     },
                     Transform::from_translation(pos.extend(layout::z::PARTICLE))

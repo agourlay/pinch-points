@@ -911,9 +911,12 @@ mod tests {
         );
         // Run the round into the stall the missing player causes.
         for _ in 0..40 {
-            session.pump(crate::sim::PlayerAction::None, |net| {
-                while net.session.advance().is_some() {}
-            });
+            session.pump(
+                PlayerAction::None,
+                |net| {
+                    while net.session.advance().is_some() {}
+                },
+            );
         }
         app.insert_resource(Online(Some(session)));
         app.add_systems(Update, abandon_the_departed);
@@ -950,7 +953,7 @@ mod tests {
         let session = online.0.as_mut().expect("a session");
         let mut moved = 0;
         for _ in 0..40 {
-            session.pump(crate::sim::PlayerAction::None, |net| {
+            session.pump(PlayerAction::None, |net| {
                 while let Some(mut actions) = net.session.advance() {
                     fill_bot_actions(&board, bots, &mut actions);
                     board.tick(&actions);

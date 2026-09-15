@@ -32,7 +32,7 @@ pub struct HeaderBar;
 
 pub fn spawn_hud(
     mut commands: Commands,
-    settings: Res<crate::app::settings::GameSettings>,
+    settings: Res<GameSettings>,
     art: Res<crate::app::art::Art>,
 ) {
     let font = TextFont {

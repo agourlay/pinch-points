@@ -59,7 +59,7 @@ pub fn spawn_editor_ui(
             },
             BorderColor::all(crate::app::palette::CARD_EDGE),
             BackgroundColor(crate::app::palette::CARD_FILL),
-            crate::app::menu_ui::card_shadow(),
+            menu_ui::card_shadow(),
         ))
         .with_children(|panel| {
             // What is being built, above the brushes and lit like them: the
@@ -176,7 +176,7 @@ pub fn update_editor_palette(
             true => crate::app::palette::SELECTED_ROW.with_alpha(0.22),
             false => Color::NONE,
         };
-        crate::app::menu_ui::set_bg(&mut fill, want);
+        menu_ui::set_bg(&mut fill, want);
     }
     let at = Brush::ALL.iter().position(|b| *b == state.brush);
     for (row, mut fill) in &mut rows {
@@ -184,14 +184,14 @@ pub fn update_editor_palette(
             true => crate::app::palette::SELECTED_ROW.with_alpha(0.22),
             false => Color::NONE,
         };
-        crate::app::menu_ui::set_bg(&mut fill, want);
+        menu_ui::set_bg(&mut fill, want);
     }
     for (label, mut color) in &mut labels {
         let want = match Some(label.0) == at {
             true => crate::app::palette::SELECTED_ROW,
             false => crate::app::palette::PARCHMENT,
         };
-        crate::app::menu_ui::set_color(&mut color, want);
+        menu_ui::set_color(&mut color, want);
     }
     let Some(cursor) = cursors.iter().next() else {
         return;
@@ -199,6 +199,6 @@ pub fn update_editor_palette(
     let board = &sim.0;
     let standing = standing_on(board, cursor.x, cursor.y).label(tr);
     for mut text in &mut under {
-        crate::app::menu_ui::set_text(&mut text, &fill(tr.ed_under, &[("t", standing)]));
+        menu_ui::set_text(&mut text, &fill(tr.ed_under, &[("t", standing)]));
     }
 }

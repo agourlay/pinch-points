@@ -495,8 +495,7 @@ mod tests {
             }
         }
         assert_eq!(
-            accepted,
-            (MAX_COMMIT_LEAD) as usize,
+            accepted, MAX_COMMIT_LEAD as usize,
             "commits stop at the lead cap while the sim is stalled"
         );
         // The peer's inputs arrive; frames advance; commits reopen.

@@ -82,11 +82,7 @@ pub fn note_denials(
 
 /// Age it out. A level change clears it too: the sentence is about the
 /// board that refused, and that board is gone.
-pub fn tick_denied_note(
-    time: Res<Time>,
-    campaign: Res<crate::app::Campaign>,
-    mut note: ResMut<DeniedNote>,
-) {
+pub fn tick_denied_note(time: Res<Time>, campaign: Res<Campaign>, mut note: ResMut<DeniedNote>) {
     if campaign.is_changed() {
         note.0 = 0.0;
         return;

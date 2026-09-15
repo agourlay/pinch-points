@@ -606,44 +606,44 @@ mod tests {
     /// is how a 64-byte buffer once swallowed the named `Start` whole.
     #[test]
     fn every_message_fits_the_receive_buffer() {
-        let widest = super::wire_name("WWWWWWWWWWWWWWWWWWWWWWWW");
+        let widest = wire_name("WWWWWWWWWWWWWWWWWWWWWWWW");
         for msg in [
-            super::NetMsg::Hello { name: widest },
-            super::NetMsg::Chat {
+            NetMsg::Hello { name: widest },
+            NetMsg::Chat {
                 name: widest,
-                text: super::wire_chat(&"W".repeat(super::CHAT_CHARS)),
+                text: wire_chat(&"W".repeat(CHAT_CHARS)),
             },
-            super::NetMsg::Start {
+            NetMsg::Start {
                 seats: 6,
                 seat: Some(5),
-                terms: super::MatchTerms::default(),
+                terms: MatchTerms::default(),
                 names: [widest; crate::sim::MAX_PLAYERS],
                 // The widest a Start gets: a full table of longest names
                 // and the largest beach the sender will hand it.
                 standing: None,
-                beach: vec![0xAB; super::MAX_BEACH_BYTES],
+                beach: vec![0xAB; MAX_BEACH_BYTES],
             },
-            super::NetMsg::Hash {
+            NetMsg::Hash {
                 frame: u32::MAX,
                 hash: u64::MAX,
             },
             // A batch filled to the cap, which is the one message whose
             // size a caller chooses rather than the format fixing it.
-            super::NetMsg::Inputs(vec![
-                super::InputMsg {
+            NetMsg::Inputs(vec![
+                InputMsg {
                     player: 5,
                     frame: u32::MAX,
-                    action: crate::sim::PlayerAction::Place {
+                    action: PlayerAction::Place {
                         x: 19,
                         y: 12,
-                        dir: crate::sim::Direction::Left,
+                        dir: Direction::Left,
                     },
                 };
-                super::MAX_INPUTS_PER_DATAGRAM
+                MAX_INPUTS_PER_DATAGRAM
             ]),
         ] {
             let len = msg.clone().encode().len();
-            assert!(len <= super::MAX_DATAGRAM, "{len} bytes: {msg:?}");
+            assert!(len <= MAX_DATAGRAM, "{len} bytes: {msg:?}");
         }
     }
 
@@ -662,21 +662,20 @@ mod tests {
         let span = (crate::sim::DEFAULT_DELAY + crate::sim::MAX_COMMIT_LEAD) as usize;
         let tail = 2 * span;
         assert!(
-            tail <= super::MAX_INPUTS_PER_DATAGRAM,
-            "a {tail}-message tail does not fit {} per datagram",
-            super::MAX_INPUTS_PER_DATAGRAM
+            tail <= MAX_INPUTS_PER_DATAGRAM,
+            "a {tail}-message tail does not fit {MAX_INPUTS_PER_DATAGRAM} per datagram",
         );
-        let len = super::NetMsg::Inputs(vec![
-            super::InputMsg {
+        let len = NetMsg::Inputs(vec![
+            InputMsg {
                 player: 5,
                 frame: u32::MAX,
-                action: crate::sim::PlayerAction::None,
+                action: PlayerAction::None,
             };
             tail
         ])
         .encode()
         .len();
-        assert!(len <= super::MAX_DATAGRAM, "{len} bytes");
+        assert!(len <= MAX_DATAGRAM, "{len} bytes");
     }
 
     /// The batch has two encoders: the one every message uses, and the one
@@ -684,28 +683,28 @@ mod tests {
     /// same bytes or they are two protocols.
     #[test]
     fn the_two_encoders_agree() {
-        for count in [0usize, 1, 34, super::MAX_INPUTS_PER_DATAGRAM] {
-            let msgs: Vec<super::InputMsg> = (0..count)
-                .map(|i| super::InputMsg {
+        for count in [0usize, 1, 34, MAX_INPUTS_PER_DATAGRAM] {
+            let msgs: Vec<InputMsg> = (0..count)
+                .map(|i| InputMsg {
                     player: (i % crate::sim::MAX_PLAYERS) as u8,
                     frame: i as u32 * 7,
-                    action: crate::sim::PlayerAction::Place {
+                    action: PlayerAction::Place {
                         x: (i % 20) as u8,
                         y: (i % 13) as u8,
-                        dir: crate::sim::Direction::Right,
+                        dir: Direction::Right,
                     },
                 })
                 .collect();
-            let mut buf = [0u8; super::MAX_DATAGRAM];
-            let len = super::encode_inputs(&msgs, &mut buf);
+            let mut buf = [0u8; MAX_DATAGRAM];
+            let len = encode_inputs(&msgs, &mut buf);
             assert_eq!(
                 &buf[..len],
-                super::NetMsg::Inputs(msgs.clone()).encode().as_slice(),
+                NetMsg::Inputs(msgs.clone()).encode().as_slice(),
                 "{count} inputs"
             );
             assert_eq!(
-                super::NetMsg::decode(&buf[..len]),
-                Some(super::NetMsg::Inputs(msgs)),
+                NetMsg::decode(&buf[..len]),
+                Some(NetMsg::Inputs(msgs)),
                 "{count} inputs"
             );
         }
@@ -718,11 +717,11 @@ mod tests {
     /// to a message this build would then read those datagrams as.
     #[test]
     fn a_version_ten_input_is_refused_and_answered() {
-        let mut old = vec![super::TAG_RETIRED_INPUT, 10];
-        old.extend_from_slice(&[0u8; crate::sim::INPUT_BYTES]);
-        assert_eq!(super::NetMsg::decode(&old), None, "not read as anything");
+        let mut old = vec![TAG_RETIRED_INPUT, 10];
+        old.extend_from_slice(&[0u8; INPUT_BYTES]);
+        assert_eq!(NetMsg::decode(&old), None, "not read as anything");
         assert_eq!(
-            super::NetMsg::peek_version(&old),
+            NetMsg::peek_version(&old),
             Some(10),
             "and answered with why"
         );
@@ -734,19 +733,19 @@ mod tests {
     /// room to spare for a field somebody adds to `Start` later.
     #[test]
     fn a_start_carrying_the_largest_beach_still_fits() {
-        let widest = super::wire_name("WWWWWWWWWWWWWWWWWWWWWWWW");
-        let len = super::NetMsg::Start {
+        let widest = wire_name("WWWWWWWWWWWWWWWWWWWWWWWW");
+        let len = NetMsg::Start {
             seats: 6,
             seat: Some(5),
-            terms: super::MatchTerms::default(),
+            terms: MatchTerms::default(),
             names: [widest; crate::sim::MAX_PLAYERS],
             standing: None,
-            beach: vec![0xAB; super::MAX_BEACH_BYTES],
+            beach: vec![0xAB; MAX_BEACH_BYTES],
         }
         .encode()
         .len();
-        assert!(len <= super::MAX_DATAGRAM, "{len} bytes");
-        let spare = super::MAX_DATAGRAM - len;
+        assert!(len <= MAX_DATAGRAM, "{len} bytes");
+        let spare = MAX_DATAGRAM - len;
         assert!(spare >= 16, "only {spare} bytes of slack left");
     }
 
@@ -801,9 +800,9 @@ mod tests {
 
     #[test]
     fn decode_rejects_garbage() {
-        assert!(super::NetMsg::decode(&[]).is_none());
-        assert!(super::NetMsg::decode(&[0xFF, 1, 2, 3]).is_none());
-        assert!(super::NetMsg::decode(b"PNCH?").is_none());
+        assert!(NetMsg::decode(&[]).is_none());
+        assert!(NetMsg::decode(&[0xFF, 1, 2, 3]).is_none());
+        assert!(NetMsg::decode(b"PNCH?").is_none());
     }
 
     use crate::sim::{Direction, PlayerAction};

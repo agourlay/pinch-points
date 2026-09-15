@@ -69,7 +69,7 @@ pub(super) struct RoundSource<'w> {
     config: Res<'w, match_setup::MatchConfig>,
     beaches: Res<'w, match_setup::CustomBeaches>,
     daily: Res<'w, Daily>,
-    resuming: ResMut<'w, crate::app::Resuming>,
+    resuming: ResMut<'w, Resuming>,
 }
 
 /// Boot the versus arena: fresh board, sprites, running phase. Online
@@ -124,7 +124,7 @@ pub(super) fn load_versus(
         let seed = if daily.active {
             Daily::seed()
         } else {
-            crate::app::clock::fresh_seed()
+            clock::fresh_seed()
         };
         let (w, h) = config.map.size();
         let mut board = if config.map == match_setup::MapChoice::Custom {
@@ -217,7 +217,7 @@ pub(super) fn reset_puzzle_phase(mut next_phase: ResMut<NextState<Phase>>) {
 /// the board cannot hold was how a 3x3 beach off the shelf, or pasted as
 /// a round code, took the game down on its first frame. On a board too
 /// small for the inset the cursor sits as far in as there is.
-fn cursor_home(board: &crate::sim::Board, player: u8) -> (u8, u8) {
+fn cursor_home(board: &Board, player: u8) -> (u8, u8) {
     let (w, h) = (board.width(), board.height());
     // The board is asked first, and the spot table is only the fallback.
     // Which seat owns which castle is drawn with the beach now (see
@@ -381,7 +381,7 @@ pub(super) fn advance_sim(
     mut online: ResMut<net::Online>,
     mut recorder: ResMut<Recorder>,
     mut playback: ResMut<Playback>,
-    speed: Res<crate::app::replays::PlaybackSpeed>,
+    speed: Res<replays::PlaybackSpeed>,
     bots: Res<Bots>,
 ) {
     if paused.0 {
@@ -471,7 +471,7 @@ pub(super) fn check_outcome(
 pub(super) fn resolve_seat_names(
     online: Res<net::Online>,
     playback: Res<Playback>,
-    settings: Res<crate::app::settings::GameSettings>,
+    settings: Res<settings::GameSettings>,
     mut recorder: ResMut<Recorder>,
     mut names: ResMut<SeatNames>,
 ) {
@@ -515,12 +515,12 @@ pub(super) fn poll_reel(mut reel_thread: ResMut<ReelThread>, mut highlight: ResM
 fn winner_name(
     sim: &Sim,
     seats: &Seats,
-    settings: &crate::app::settings::GameSettings,
+    settings: &settings::GameSettings,
     online: &net::Online,
     names: &SeatNames,
 ) -> String {
-    let mode = crate::app::teams::in_play(settings, online, seats.0);
-    let leaders = crate::app::side_panels::leading_seats(sim.0.scores(), seats.0, mode);
+    let mode = teams::in_play(settings, online, seats.0);
+    let leaders = side_panels::leading_seats(sim.0.scores(), seats.0, mode);
     match leaders.iter().position(|&led| led) {
         Some(seat) => names.label(settings.tr(), seat as u8),
         None => "draw".to_string(),
@@ -531,7 +531,7 @@ fn winner_name(
 pub(super) fn check_versus_over(
     sim: Res<Sim>,
     seats: Res<Seats>,
-    settings: Res<crate::app::settings::GameSettings>,
+    settings: Res<settings::GameSettings>,
     online: Res<net::Online>,
     seat_names: Res<SeatNames>,
     mut recorder: ResMut<Recorder>,
@@ -544,24 +544,24 @@ pub(super) fn check_versus_over(
         highlight.0 = None;
         reel_thread.0 = None;
         if let Some(replay) = recorder.0.take() {
-            let library = crate::app::replays::library_dir();
+            let library = replays::library_dir();
             let text = replay.to_text();
             // `last.txt` is still the newest round, for the menu's Replay
             // entry and the dev hook; the library keeps every round beside
             // it under a name that says when it was and who took it.
-            let last = crate::app::replay_path();
-            match crate::app::paths::write_atomic(&last, &text) {
+            let last = replay_path();
+            match paths::write_atomic(&last, &text) {
                 Ok(()) => info!("replay saved to {}", last.display()),
                 Err(e) => warn!("could not save replay: {e}"),
             }
-            let stamp = crate::app::clock::now_secs();
+            let stamp = clock::now_secs();
             let winner = winner_name(&sim, &seats, &settings, &online, &seat_names);
-            let kept = library.join(crate::app::replays::file_name(stamp, &winner));
-            if let Err(e) = crate::app::paths::write_atomic(&kept, &text) {
+            let kept = library.join(replays::file_name(stamp, &winner));
+            if let Err(e) = paths::write_atomic(&kept, &text) {
                 warn!("could not file the replay: {e}");
             }
             // Trimmed here, the one moment the shelf can have grown.
-            crate::app::replays::prune(settings.replay_cap);
+            replays::prune(settings.replay_cap);
             // The reel re-simulates the whole round twice and encodes 150
             // frames, so it goes on its own thread: the results card should
             // appear the instant the tide comes in, not after the GIF.
@@ -569,12 +569,12 @@ pub(super) fn check_versus_over(
             // answers with the path when the GIF is written, and nothing
             // when the round was too short or the write failed, and
             // `poll_reel` carries the answer over to the card.
-            let reel = crate::app::highlight_path();
+            let reel = highlight_path();
             let answer = Arc::new(OnceLock::new());
             reel_thread.0 = Some(Arc::clone(&answer));
             std::thread::spawn(move || {
                 let saved = match crate::highlight::reel(&replay) {
-                    Some(bytes) => match crate::app::paths::write_atomic(&reel, bytes) {
+                    Some(bytes) => match paths::write_atomic(&reel, bytes) {
                         Ok(()) => {
                             info!("highlight reel saved to {}", reel.display());
                             Some(reel.display().to_string())
@@ -610,13 +610,13 @@ mod tests {
     /// resources it reads, and nothing else.
     fn sim_app() -> App {
         let mut app = App::new();
-        app.insert_resource(Sim(crate::sim::classic_arena(false, 2)));
+        app.insert_resource(Sim(classic_arena(false, 2)));
         app.init_resource::<PendingActions>();
         app.init_resource::<Paused>();
         app.init_resource::<net::Online>();
         app.init_resource::<Recorder>();
         app.init_resource::<Playback>();
-        app.init_resource::<crate::app::replays::PlaybackSpeed>();
+        app.init_resource::<replays::PlaybackSpeed>();
         app.init_resource::<Bots>();
         app.add_systems(Update, advance_sim);
         app
@@ -627,12 +627,12 @@ mod tests {
     /// both have to answer, and a seat that was renamed keeps its name.
     #[test]
     fn a_kept_round_is_filed_under_whoever_took_it() {
-        let mut board = crate::sim::Board::new(5, 5, 0);
+        let mut board = Board::new(5, 5, 0);
         board.set_tile(0, 0, crate::sim::TileKind::Castle(0));
         board.set_tile(4, 4, crate::sim::TileKind::Castle(1));
         let seats = Seats(2);
         let online = net::Online::default();
-        let named = |scores: [u32; MAX_PLAYERS], settings: &crate::app::settings::GameSettings| {
+        let named = |scores: [u32; MAX_PLAYERS], settings: &settings::GameSettings| {
             let mut board = board.clone();
             for (seat, score) in scores.iter().enumerate() {
                 board.set_score(seat as u8, *score);
@@ -642,7 +642,7 @@ mod tests {
             winner_name(&Sim(board), &seats, settings, &online, &names)
         };
 
-        let plain = crate::app::settings::GameSettings::default();
+        let plain = settings::GameSettings::default();
         assert_eq!(named([0, 7, 0, 0, 0, 0], &plain), "P2");
         // Level scores are nobody's round, and the file has to say so
         // rather than crediting the lowest seat.
@@ -651,7 +651,7 @@ mod tests {
 
         // A renamed seat is filed under its name, since that is what the
         // player will look for on the shelf.
-        let mut settings = crate::app::settings::GameSettings::default();
+        let mut settings = settings::GameSettings::default();
         settings.names[1] = "Bo".to_string();
         assert_eq!(named([0, 7, 0, 0, 0, 0], &settings), "Bo");
     }
@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn a_cursor_opens_on_the_board_whatever_its_size() {
         for (w, h) in [(1, 1), (2, 1), (3, 3), (4, 5), (5, 5), (12, 9), (20, 13)] {
-            let board = crate::sim::Board::new(w, h, 0);
+            let board = Board::new(w, h, 0);
             for player in 0..MAX_PLAYERS as u8 {
                 let (x, y) = cursor_home(&board, player);
                 assert!(
@@ -701,7 +701,7 @@ mod tests {
                 );
             }
         }
-        let big = crate::sim::Board::new(12, 9, 0);
+        let big = Board::new(12, 9, 0);
         assert_eq!(
             cursor_home(&big, 0),
             (2, 2),
@@ -916,14 +916,14 @@ mod tests {
     fn the_transport_speed_is_how_many_frames_a_replay_eats() {
         for speed in [1u8, 2, 4] {
             let mut app = sim_app();
-            let level = Level::from_board("Turf War", 3, crate::sim::classic_arena(false, 2));
+            let level = Level::from_board("Turf War", 3, classic_arena(false, 2));
             let mut replay = Replay::new(level);
             for _ in 0..40 {
                 replay.record([PlayerAction::None; MAX_PLAYERS]);
             }
             app.world_mut().insert_resource(Playback(Some((replay, 0))));
             app.world_mut()
-                .insert_resource(crate::app::replays::PlaybackSpeed(speed));
+                .insert_resource(replays::PlaybackSpeed(speed));
             app.update();
             let (_, idx) = app
                 .world()
@@ -943,12 +943,11 @@ mod tests {
     #[test]
     fn a_replay_stops_when_the_recording_runs_out() {
         let mut app = sim_app();
-        let level = Level::from_board("Turf War", 3, crate::sim::classic_arena(false, 2));
+        let level = Level::from_board("Turf War", 3, classic_arena(false, 2));
         let mut replay = Replay::new(level);
         replay.record([PlayerAction::None; MAX_PLAYERS]);
         app.world_mut().insert_resource(Playback(Some((replay, 0))));
-        app.world_mut()
-            .insert_resource(crate::app::replays::PlaybackSpeed(4));
+        app.world_mut().insert_resource(replays::PlaybackSpeed(4));
         for _ in 0..5 {
             app.update();
         }

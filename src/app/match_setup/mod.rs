@@ -123,19 +123,19 @@ impl RoundLength {
     }
 }
 
-impl crate::app::cycle::Cycle for MapChoice {
+impl Cycle for MapChoice {
     const VARIANTS: &'static [Self] = &Self::ALL;
 }
-impl crate::app::cycle::Cycle for GullPressure {
+impl Cycle for GullPressure {
     const VARIANTS: &'static [Self] = &Self::ALL;
 }
-impl crate::app::cycle::Cycle for RoundLength {
+impl Cycle for RoundLength {
     const VARIANTS: &'static [Self] = &Self::ALL;
 }
-impl crate::app::cycle::Cycle for crate::sim::BotLevel {
+impl Cycle for BotLevel {
     const VARIANTS: &'static [Self] = &BOT_LEVELS;
 }
-impl crate::app::cycle::Cycle for crate::app::tournament::SeriesLength {
+impl Cycle for crate::app::tournament::SeriesLength {
     const VARIANTS: &'static [Self] = &crate::app::tournament::SeriesLength::ALL;
 }
 
@@ -386,7 +386,7 @@ mod tests {
     /// every stop of every dial.
     ///
     /// Measured in the same pixels the two cells are declared in, which
-    /// is the whole reason they are declared that way: [`screen::LABEL_W`]
+    /// is the whole reason they are declared that way: [`LABEL_W`]
     /// carries what a character-counted budget did to this card.
     #[test]
     fn every_row_fits_its_cell_in_every_language() {
@@ -904,7 +904,7 @@ mod tests {
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<MatchMenu>();
         app.init_resource::<MatchConfig>();
-        app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.init_resource::<CustomBeaches>();
         app.init_resource::<crate::app::tournament::Tournament>();
         app.insert_resource(GameSettings::default());
         app.add_systems(Update, match_setup_input);

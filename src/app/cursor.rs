@@ -567,7 +567,7 @@ mod tests {
 
         // One tile over: on its way, not there yet.
         let stepped = place(6, 4);
-        assert!(stepped != home, "it did not move at all");
+        assert_ne!(stepped, home, "it did not move at all");
         assert!(
             stepped.distance(next_door) > 1.0,
             "one tile should glide, not snap: {stepped:?}"

@@ -20,7 +20,7 @@ use crate::app::palette::{CLOCK_CALM, CLOCK_RED, CLOCK_RED_BRIGHT};
 /// keeps: the clocks repaint every frame and change once a second.
 pub(crate) fn clock_into(out: &mut String, ticks: u64) {
     use std::fmt::Write;
-    let secs = ticks / u64::from(crate::sim::TICKS_PER_SECOND);
+    let secs = ticks / u64::from(TICKS_PER_SECOND);
     out.clear();
     let _ = write!(out, "{}:{:02}", secs / 60, secs % 60);
 }
@@ -63,7 +63,7 @@ pub(crate) fn urgency_band(round: Option<u32>, band: u32) -> u64 {
 /// flashing. `round` is the board's round length, absent on an untimed
 /// puzzle counting down the campaign tick limit.
 pub(crate) fn clock_color(ticks: u64, round: Option<u32>, elapsed: f32, blink: bool) -> Color {
-    const BLINK_TICKS: u64 = 10 * crate::sim::TICKS_PER_SECOND as u64;
+    const BLINK_TICKS: u64 = 10 * TICKS_PER_SECOND as u64;
     let red = urgency_band(round, crate::sim::SURGE_TICKS);
     // The blink is the last third of the red, and never more than the ten
     // seconds it is worth on a long round: the two have to stay in that
@@ -786,12 +786,12 @@ mod tests {
         assert_eq!(prompt, EN.prompt_setup_custom);
         // And so does the one-hand preset: placement is on IJKL then, not
         // the arrows the stock legend names.
-        let one_hand = crate::app::settings::GameSettings {
+        let one_hand = GameSettings {
             commit: crate::app::settings::CommitScheme::Ijkl,
-            ..crate::app::settings::GameSettings::default()
+            ..GameSettings::default()
         };
         assert!(!one_hand.stock_legend());
-        assert!(crate::app::settings::GameSettings::default().stock_legend());
+        assert!(GameSettings::default().stock_legend());
     }
 
     /// Every tide event maps to a distinct, non-empty localized name; an
@@ -817,7 +817,7 @@ mod tests {
 
     #[test]
     fn clock_formats_minutes_and_seconds() {
-        let tps = u64::from(crate::sim::TICKS_PER_SECOND);
+        let tps = u64::from(TICKS_PER_SECOND);
         assert_eq!(clock_text(0), "0:00");
         assert_eq!(clock_text(29 * tps), "0:29");
         assert_eq!(clock_text(90 * tps), "1:30");
@@ -830,8 +830,8 @@ mod tests {
     /// those flat figures are for, and they are unchanged on one.
     #[test]
     fn the_clock_reddens_then_blinks() {
-        let tps = u64::from(crate::sim::TICKS_PER_SECOND);
-        let long = Some(3 * 60 * crate::sim::TICKS_PER_SECOND);
+        let tps = u64::from(TICKS_PER_SECOND);
+        let long = Some(3 * 60 * TICKS_PER_SECOND);
         for round in [None, long] {
             assert_eq!(clock_color(60 * tps, round, 0.0, true), CLOCK_CALM);
             assert_eq!(clock_color(20 * tps, round, 0.0, true), CLOCK_RED);

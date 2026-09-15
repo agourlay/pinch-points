@@ -506,7 +506,7 @@ impl OnlineSession {
         let queued = self
             .peers
             .iter()
-            .filter(|peer| peer.place == peers::Place::Queued && !peer.watch)
+            .filter(|peer| peer.place == Place::Queued && !peer.watch)
             .count();
         (self.session.player_count() + queued).min(MAX_PLAYERS) as u8
     }
@@ -730,7 +730,7 @@ pub fn session_from_env() -> Option<OnlineSession> {
     // the clamp is on the bots so a wild PINCH_BOTS cannot wrap the sum
     // back under the two humans.
     let humans = 2u8;
-    let bots = bots.min(crate::sim::MAX_PLAYERS as u8 - humans);
+    let bots = bots.min(MAX_PLAYERS as u8 - humans);
     let seats = humans + bots;
     let terms = MatchTerms {
         bots,

@@ -244,23 +244,23 @@ mod tests {
     #[test]
     fn parse_rejects_bad_tile_chars() {
         let text = "name: Bad\nposts: 1\nmap:\n+-+\n|X|\n+-+\n";
-        let err = super::Level::parse(text).unwrap_err();
+        let err = Level::parse(text).unwrap_err();
         assert!(err.contains("bad tile char"), "{err}");
     }
 
     #[test]
     fn parse_rejects_unknown_keys() {
         let text = "name: Bad\nwibble: 3\nmap:\n+-+\n|.|\n+-+\n";
-        let err = super::Level::parse(text).unwrap_err();
+        let err = Level::parse(text).unwrap_err();
         assert!(err.contains("unknown key"), "{err}");
     }
 
     #[test]
     fn parse_rejects_malformed_solutions_and_directions() {
         let text = "name: Bad\nposts: 1\nsolution: 0,0 Q\nmap:\n+-+\n|.|\n+-+\n";
-        assert!(super::Level::parse(text).is_err());
+        assert!(Level::parse(text).is_err());
         let text = "name: Bad\nposts: 1\nsolution: zero,0 U\nmap:\n+-+\n|.|\n+-+\n";
-        assert!(super::Level::parse(text).is_err());
+        assert!(Level::parse(text).is_err());
     }
 
     /// A degenerate lattice is refused, not asserted against. `parse` is
@@ -275,7 +275,7 @@ mod tests {
             "name: Bad\nposts: 1\nmap:\n+\n|\n+\n", // one column of border
             "name: Bad\nposts: 1\nmap:\n+\n",
         ] {
-            let err = super::Level::parse(text).unwrap_err();
+            let err = Level::parse(text).unwrap_err();
             assert!(err.contains("at least one tile"), "{text:?} gave {err}");
         }
     }
@@ -288,13 +288,13 @@ mod tests {
         let border: String = "+-".repeat(300) + "+";
         let row: String = "|.".repeat(300) + "|";
         let text = format!("name: Vast\nposts: 1\nmap:\n{border}\n{row}\n{border}\n");
-        let err = super::Level::parse(&text).unwrap_err();
+        let err = Level::parse(&text).unwrap_err();
         assert!(err.contains("300"), "{err}");
         // And the widest board that *does* fit still parses.
         let border: String = "+-".repeat(255) + "+";
         let row: String = "|.".repeat(255) + "|";
         let text = format!("name: Wide\nposts: 1\nmap:\n{border}\n{row}\n{border}\n");
-        let level = super::Level::parse(&text).expect("255 tiles is nameable");
+        let level = Level::parse(&text).expect("255 tiles is nameable");
         assert_eq!(level.board.width(), 255);
     }
 
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn parse_pads_short_map_rows() {
         let text = "name: Trimmed\nposts: 1\nmap:\n+-+-+\n|.\n+-+-+\n";
-        let level = super::Level::parse(text).expect("pads, never panics");
+        let level = Level::parse(text).expect("pads, never panics");
         assert_eq!(level.board.width(), 2);
     }
 

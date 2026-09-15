@@ -272,7 +272,7 @@ pub fn enter_stage_select(
                 // Wider than the shared frame's, and said out loud: the
                 // grid and its key want air between them.
                 row_gap: Val::Px(12.0),
-                ..crate::app::menu_ui::between_bars()
+                ..menu_ui::between_bars()
             },
         ))
         .with_children(|wrap| {
@@ -287,7 +287,7 @@ pub fn enter_stage_select(
                 // big list screens with no shadow under it.
                 // `bg` and not `fill`: this file's `fill` is the one that
                 // puts words into a translated string.
-                let (mark, mut node, bg, edge, shadow) = crate::app::menu_ui::screen_card();
+                let (mark, mut node, bg, edge, shadow) = menu_ui::screen_card();
                 node.row_gap = Val::Px(12.0);
                 node.padding = UiRect::axes(Val::Px(28.0), Val::Px(20.0));
                 line.spawn((mark, node, bg, edge, shadow))

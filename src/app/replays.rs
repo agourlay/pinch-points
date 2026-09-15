@@ -216,7 +216,7 @@ pub fn enter_library(
                         font_size: FontSize::Px(menu_ui::type_scale::ROW),
                         ..default()
                     },
-                    TextColor(crate::app::palette::PARCHMENT.with_alpha(0.6)),
+                    TextColor(palette::PARCHMENT.with_alpha(0.6)),
                     // No `no_wrap` here, unlike the row cells: the width is
                     // fixed to the shelf and the line is free to take a
                     // second row rather than run off the card.
@@ -273,8 +273,8 @@ pub fn update_library(
             &mut color,
             match (picked, library.kept.get(at(row.0)).is_some()) {
                 (true, _) => Color::WHITE,
-                (false, true) => crate::app::palette::PARCHMENT.with_alpha(0.75),
-                (false, false) => crate::app::palette::PARCHMENT.with_alpha(0.45),
+                (false, true) => palette::PARCHMENT.with_alpha(0.75),
+                (false, false) => palette::PARCHMENT.with_alpha(0.45),
             },
         );
     }
@@ -682,10 +682,10 @@ const TRACK: f32 = 420.0;
 pub fn tend_replay_bar(
     mut commands: Commands,
     playback: Res<Playback>,
-    screen: Res<State<crate::app::Screen>>,
+    screen: Res<State<Screen>>,
     bar: Query<Entity, With<ReplayBar>>,
 ) {
-    let watching = playback.0.is_some() && *screen.get() == crate::app::Screen::Versus;
+    let watching = playback.0.is_some() && *screen.get() == Screen::Versus;
     if !watching {
         for entity in &bar {
             commands.entity(entity).despawn();
@@ -771,7 +771,7 @@ pub fn update_replay_bar(
     playback: Res<Playback>,
     paused: Res<crate::app::Paused>,
     speed: Res<PlaybackSpeed>,
-    settings: Res<crate::app::settings::GameSettings>,
+    settings: Res<GameSettings>,
     mut track: Query<&mut Node, With<ReplayProgress>>,
     mut readout: Query<&mut Text, With<ReplayReadout>>,
 ) {

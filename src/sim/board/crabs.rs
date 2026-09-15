@@ -13,8 +13,9 @@ impl Board {
             "crab off the board"
         );
         let tile = self.index(i32::from(x), i32::from(y));
-        assert!(
-            self.grid.tiles[tile as usize] != TileKind::Rock,
+        assert_ne!(
+            self.grid.tiles[tile as usize],
+            TileKind::Rock,
             "crab on a rock"
         );
         let id = self.next_crab_id;

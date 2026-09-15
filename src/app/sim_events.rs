@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn bank_and_eaten_classification() {
         let mut board = Board::new(6, 4, 7);
-        board.set_tile(3, 1, crate::sim::TileKind::Castle(2));
+        board.set_tile(3, 1, TileKind::Castle(2));
         board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Giant);
         let mut watch = synced(&board);
         let mut banked = None;
@@ -732,7 +732,7 @@ mod tests {
     #[test]
     fn a_crab_the_tide_banked_reads_as_banked_and_not_as_eaten() {
         let mut board = Board::new(9, 7, 5);
-        board.set_tile(7, 5, crate::sim::TileKind::Castle(1));
+        board.set_tile(7, 5, TileKind::Castle(1));
         // Out in the open, walking nowhere near a castle: the shape the
         // tiles get wrong.
         board.spawn_crab(1, 1, Direction::Right, Handedness::Left, CrabKind::Common);
@@ -743,7 +743,7 @@ mod tests {
             "off open sand, and nothing yet says otherwise"
         );
 
-        board.force_tide_event(crate::sim::TideEvent::Monopoly, 1);
+        board.force_tide_event(TideEvent::Monopoly, 1);
         let SimEvent::CrabBanked {
             id, owner, keep, ..
         } = crab_departure(&board, &prev)
@@ -764,13 +764,13 @@ mod tests {
     #[test]
     fn a_sweep_puts_no_deaths_on_the_stream() {
         let mut board = Board::new(9, 7, 11);
-        board.set_tile(7, 5, crate::sim::TileKind::Castle(0));
+        board.set_tile(7, 5, TileKind::Castle(0));
         for x in 1..5u8 {
             board.spawn_crab(x, 1, Direction::Right, Handedness::Left, CrabKind::Common);
         }
         let mut watch = Watch::default();
         let _ = diff(&board, &mut watch);
-        board.force_tide_event(crate::sim::TideEvent::Monopoly, 0);
+        board.force_tide_event(TideEvent::Monopoly, 0);
         board.tick_idle();
         let events = diff(&board, &mut watch);
         let banked = events
@@ -807,18 +807,15 @@ mod tests {
         let mut app = App::new();
         app.add_message::<SimEvent>();
         let mut board = Board::new(6, 4, 7);
-        board.set_tile(3, 1, crate::sim::TileKind::Castle(1));
+        board.set_tile(3, 1, TileKind::Castle(1));
         board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Common);
-        app.insert_resource(crate::app::Sim(board));
+        app.insert_resource(Sim(board));
         app.add_systems(Update, observe_sim);
         app.update(); // syncs the watch to the starting board
 
         let mut banked = false;
         for _ in 0..600 {
-            app.world_mut()
-                .resource_mut::<crate::app::Sim>()
-                .0
-                .tick_idle();
+            app.world_mut().resource_mut::<Sim>().0.tick_idle();
             app.update();
             let mut messages = app.world_mut().resource_mut::<Messages<SimEvent>>();
             if messages
@@ -840,9 +837,9 @@ mod tests {
         let mut app = App::new();
         app.add_message::<SimEvent>();
         let mut board = Board::new(6, 4, 7);
-        board.set_tile(3, 1, crate::sim::TileKind::Castle(1));
+        board.set_tile(3, 1, TileKind::Castle(1));
         board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Common);
-        app.insert_resource(crate::app::Sim(board));
+        app.insert_resource(Sim(board));
         app.add_systems(Update, observe_sim);
         app.update(); // syncs the watch to the starting board
 
@@ -858,10 +855,7 @@ mod tests {
 
         let mut banked = false;
         for _ in 0..600 {
-            app.world_mut()
-                .resource_mut::<crate::app::Sim>()
-                .0
-                .tick_idle();
+            app.world_mut().resource_mut::<Sim>().0.tick_idle();
             app.update();
             let mut messages = app.world_mut().resource_mut::<Messages<SimEvent>>();
             if messages

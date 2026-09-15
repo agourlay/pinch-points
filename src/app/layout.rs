@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn tile_centers_round_trip_through_nearest_tile() {
-        let board = crate::sim::Board::new(12, 9, 1);
+        let board = Board::new(12, 9, 1);
         for y in 0..board.height() {
             for x in 0..board.width() {
                 let pos = tile_center(&board, x, y);
@@ -106,11 +106,11 @@ mod tests {
 
     #[test]
     fn creature_pos_at_rest_is_the_tile_center() {
-        let board = crate::sim::Board::new(7, 5, 1);
+        let board = Board::new(7, 5, 1);
         for tile in 0..(7 * 5u16) {
             let (x, y) = board.coords_u8(tile);
             assert_eq!(
-                creature_pos(&board, tile, crate::sim::Direction::Right, 0),
+                creature_pos(&board, tile, Right, 0),
                 tile_center(&board, x, y)
             );
         }
@@ -159,7 +159,7 @@ mod tests {
         for progress in [0, 17, 64, crate::sim::SUBUNITS_PER_TILE - 1] {
             for dir in [Up, Down, Left, Right] {
                 let tile = board.index_of(6, 4);
-                let pose = crate::sim::Pose {
+                let pose = Pose {
                     tile,
                     dir,
                     progress,

@@ -825,7 +825,7 @@ mod tests {
         // every packet by whether it names ours.
         let transport = UdpTransport::host(0).expect("game socket");
         let port = transport.local_addr().expect("addr").port();
-        let mine = |heard: Vec<(std::net::SocketAddr, Beacon)>| {
+        let mine = |heard: Vec<(SocketAddr, Beacon)>| {
             heard
                 .into_iter()
                 .filter(|(addr, _)| addr.port() == port)

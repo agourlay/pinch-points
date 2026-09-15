@@ -232,10 +232,7 @@ fn spawn_trophy(
                 ..default()
             })
             .with_children(|line| {
-                line.spawn(unlock_mark(
-                    done,
-                    crate::app::achievements::ACHIEVEMENTS[index].id,
-                ));
+                line.spawn(unlock_mark(done, ACHIEVEMENTS[index].id));
                 // A fixed name column, so every description starts at the
                 // same x and the eye can run down the list of what to do.
                 // Wide enough for the longest name in any language, which
@@ -342,7 +339,7 @@ pub fn enter_achievements(
             // Between the bars and centred in what is left, the same
             // frame the stage list sits in - which it now literally is.
             // It said so while sitting two pixels inside it.
-            crate::app::menu_ui::between_bars(),
+            menu_ui::between_bars(),
         ))
         .with_children(|wrap| {
             // The shared card, with room between the count, the shelf and
@@ -351,7 +348,7 @@ pub fn enter_achievements(
             // `bg` and not `fill`: this file's `fill` is the one that puts
             // words into a translated string, and it is used all through
             // the card below.
-            let (mark, mut node, bg, edge, shadow) = crate::app::menu_ui::screen_card();
+            let (mark, mut node, bg, edge, shadow) = menu_ui::screen_card();
             node.row_gap = Val::Px(8.0);
             wrap.spawn((mark, node, bg, edge, shadow))
                 .with_children(|card| {
@@ -483,7 +480,7 @@ pub fn achievements_input(
     mut next_screen: ResMut<NextState<crate::app::Screen>>,
     mut shelf: Query<(&mut ScrollPosition, &ComputedNode), With<Shelf>>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) || crate::app::menu_ui::enter(&keys) {
+    if keys.just_pressed(KeyCode::Escape) || menu_ui::enter(&keys) {
         next_screen.set(crate::app::Screen::Menu);
         return;
     }

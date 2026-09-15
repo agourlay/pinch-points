@@ -447,7 +447,7 @@ pub fn kick_castles(
 
 /// A castle that just grew says so.
 ///
-/// [`crate::sim::castle_tier`] is the whole scoreboard (spec §3.4), and
+/// [`castle_tier`] is the whole scoreboard (spec §3.4), and
 /// until this existed a castle crossing a threshold changed shape between
 /// one frame and the next with nothing to mark it: the loudest good news a
 /// player gets, delivered by a sprite swap. `TierUp` was one of the events

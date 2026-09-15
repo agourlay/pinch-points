@@ -51,7 +51,7 @@ pub fn enter_match_setup(
     // The shelf may have changed since the last visit (a beach deleted, or
     // resaved with fewer castles): a config still pointing at it is moved
     // on, so the dial reads what will be played.
-    crate::app::match_setup::settle_map(&mut config, &beaches);
+    settle_map(&mut config, &beaches);
     let tr = settings.tr();
     commands
         .spawn((MatchUi, menu_ui::between_bars()))
@@ -164,7 +164,7 @@ pub fn update_match_pad_info(
 ) {
     let tr = settings.tr();
     if let Ok(mut text) = note.single_mut() {
-        let line = crate::app::match_setup::beaches_note(&config, tr, &beaches).unwrap_or_default();
+        let line = beaches_note(&config, tr, &beaches).unwrap_or_default();
         menu_ui::set_text(&mut text, &line);
     }
     let humans = config.seats - config.bots;
@@ -267,14 +267,14 @@ pub fn match_setup_input(
             // Five and six castles need a beach with room for them, and a
             // handmade beach only seats as many as it has castles: the map
             // follows the table.
-            crate::app::match_setup::settle_map(&mut config, &beaches);
+            settle_map(&mut config, &beaches);
         }
         Row::Bots => {
             config.bots = crate::app::cycle::dial(config.bots, turn, 1, 0..=config.seats - 1);
         }
         Row::BotLevel(slot) => cycle_ai_level(&mut config, slot, turn),
         Row::Map => {
-            crate::app::match_setup::cycle_map(&mut config, turn, &beaches);
+            cycle_map(&mut config, turn, &beaches);
             // Stepping down to a small beach drops the seats it cannot hold
             // rather than starting a match six players cannot all sit at.
             if config.map.size().0 < WIDE_ENOUGH {
@@ -374,7 +374,7 @@ pub(super) fn row_text(
         // end of it in every language.
         Row::Map => (
             tr.match_map.to_string(),
-            dial(&crate::app::match_setup::map_label(config, tr, beaches)),
+            dial(&map_label(config, tr, beaches)),
         ),
         Row::Gulls => (
             tr.match_gulls.to_string(),

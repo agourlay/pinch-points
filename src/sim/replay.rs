@@ -173,8 +173,8 @@ mod tests {
 
     #[test]
     fn parse_rejects_garbage() {
-        assert!(super::Replay::parse("not a replay").is_err());
-        assert!(super::Replay::parse("").is_err());
+        assert!(Replay::parse("not a replay").is_err());
+        assert!(Replay::parse("").is_err());
     }
 
     use crate::sim::direction::Direction;

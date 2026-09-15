@@ -203,7 +203,7 @@ pub fn drive_announcements(
         for (part, text, border, fill) in &mut parts {
             let ink = part.ink.with_alpha(part.ink.alpha() * alpha);
             if let Some(mut color) = text {
-                crate::app::menu_ui::set_color(&mut color, ink);
+                menu_ui::set_color(&mut color, ink);
             }
             if let Some(mut color) = border
                 && color.top != ink
@@ -211,7 +211,7 @@ pub fn drive_announcements(
                 *color = BorderColor::all(ink);
             }
             if let (Some(mut color), Some(base)) = (fill, part.fill) {
-                crate::app::menu_ui::set_bg(&mut color, base.with_alpha(base.alpha() * alpha));
+                menu_ui::set_bg(&mut color, base.with_alpha(base.alpha() * alpha));
             }
         }
         return;

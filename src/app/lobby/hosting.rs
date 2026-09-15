@@ -54,8 +54,8 @@ pub(super) fn idle() -> HostAsk {
 
 /// Peers as they stand on a socket: named, with the given ones watching.
 #[cfg(test)]
-pub(super) fn peers_named(names: &[&str], watchers: &[usize]) -> crate::app::net::PeerBook {
-    let mut peers = crate::app::net::PeerBook::default();
+pub(super) fn peers_named(names: &[&str], watchers: &[usize]) -> PeerBook {
+    let mut peers = PeerBook::default();
     for (i, name) in names.iter().enumerate() {
         peers.row(i).name = name.to_string();
     }
@@ -100,7 +100,7 @@ pub fn host_tick(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<GameSettings>,
-    config: Res<crate::app::match_setup::MatchConfig>,
+    config: Res<MatchConfig>,
     beaches: Res<crate::app::match_setup::CustomBeaches>,
     mut state: ResMut<LobbyState>,
     mut online: ResMut<Online>,
@@ -537,7 +537,7 @@ pub(super) fn announce_to_table(state: &LobbyState, who: &str, line: &str) {
 /// Seats run out before connections do: the socket takes nine peers and the
 /// table has six chairs. The surplus is seated as onlookers rather than
 /// handed a seat number the sim has no slot for.
-pub(super) fn seat_plan(peers: &crate::app::net::PeerBook) -> Vec<Option<u8>> {
+pub(super) fn seat_plan(peers: &PeerBook) -> Vec<Option<u8>> {
     let mut next = 1u8; // seat 0 is the host's
     peers
         .iter()
@@ -568,7 +568,7 @@ mod tests {
     use super::*;
 
     /// `n` nameless peers, the given ones watching.
-    fn table(n: usize, watchers: &[usize]) -> crate::app::net::PeerBook {
+    fn table(n: usize, watchers: &[usize]) -> PeerBook {
         let names = vec![""; n];
         peers_named(&names, watchers)
     }

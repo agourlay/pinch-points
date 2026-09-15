@@ -1,6 +1,6 @@
 //! Share codes at the keyboard: put one on the clipboard, take one off it.
 //!
-//! The codec is [`crate::share`]; this is the half that touches the machine.
+//! The codec is [`share`]; this is the half that touches the machine.
 //! It exists so the editor and the replay library ask the same question the
 //! same way, and so the one awkward detail (that a clipboard read is a
 //! promise on the web and an answer everywhere else) is written down once.
@@ -107,7 +107,7 @@ mod tests {
     /// resource is the *real* one, so a test that read and wrote it would
     /// sit on whatever the person running the suite had just copied, and
     /// two such tests would hand each other their payloads. The codec is tested
-    /// in [`crate::share`]; what is worth testing here is the sentence a
+    /// in [`share`]; what is worth testing here is the sentence a
     /// player gets when a paste is not what the screen wanted.
     #[test]
     fn the_wrong_sort_of_code_says_which_sort_it_is() {

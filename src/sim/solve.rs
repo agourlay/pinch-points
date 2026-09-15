@@ -335,12 +335,12 @@ mod tests {
 
     #[test]
     fn validate_reports_solvability_either_way() {
-        let solvable = crate::sim::campaign_levels().remove(1);
+        let solvable = campaign_levels().remove(1);
         assert!(validate(&solvable).is_ok());
         // A castle sealed on all four sides cannot be solved.
         let text = "name: No\nposts: 1\ncrab: 0,0 R L common\nmap:\n\
 +-+-+-+\n|. . .|\n+ +-+ +\n|.|0|.|\n+ +-+ +\n|. . .|\n+-+-+-+\n";
-        let level = crate::sim::Level::parse(text).expect("parses");
+        let level = Level::parse(text).expect("parses");
         let err = validate(&level).unwrap_err();
         assert!(err.contains("no solution"), "{err}");
     }

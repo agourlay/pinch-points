@@ -1241,7 +1241,7 @@ fn sparkling_bank_spins_events_only_when_enabled() {
     // leave immediate state (others set timers).
     match event {
         TideEvent::SpeedUp | TideEvent::SlowDown => {
-            assert!(party.state_hash() != quiet.state_hash());
+            assert_ne!(party.state_hash(), quiet.state_hash());
         }
         TideEvent::CrabMania
         | TideEvent::GullMania
@@ -1361,7 +1361,7 @@ fn a_swept_crab_is_remembered_a_few_ticks_and_then_forgotten() {
     assert_eq!(board.swept_home(crab), Some(1), "the tick it happened on");
     board.tick_idle();
     assert_eq!(board.swept_home(crab), Some(1), "and the frame after it");
-    for _ in 0..super::SWEEP_MEMORY {
+    for _ in 0..SWEEP_MEMORY {
         board.tick_idle();
     }
     assert_eq!(board.swept_home(crab), None, "but not for the round");
@@ -1382,7 +1382,7 @@ fn a_sweep_leaves_the_fingerprint_alone() {
         common(&mut board, x, 4, Right, Handedness::Left);
     }
     let before = board.state_hash();
-    board.swept_home.push(super::Swept {
+    board.swept_home.push(Swept {
         crab: 7,
         owner: 1,
         at: 0,
@@ -1694,7 +1694,7 @@ fn flying(board: &Board, x: u8, y: u8, dir: Direction, remaining: u8) -> Gull {
         tile,
         dir,
         progress: 0,
-        prev: crate::sim::Pose {
+        prev: Pose {
             tile,
             dir,
             progress: 0,

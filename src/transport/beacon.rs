@@ -369,7 +369,7 @@ impl Announcer {
     fn subnet(&self, round: u32) -> Option<std::net::Ipv4Addr> {
         use std::sync::atomic::Ordering::Relaxed;
         if due_for_recheck(round) {
-            let fresh = bits_of(crate::transport::local_ip().and_then(subnet_broadcast));
+            let fresh = bits_of(local_ip().and_then(subnet_broadcast));
             self.subnet.store(fresh, Relaxed);
         }
         match self.subnet.load(Relaxed) {
@@ -397,7 +397,7 @@ impl Announcer {
             socket,
             id: id.rotate_left(16) ^ port,
             subnet: std::sync::atomic::AtomicU32::new(bits_of(
-                crate::transport::local_ip().and_then(subnet_broadcast),
+                local_ip().and_then(subnet_broadcast),
             )),
             sent: std::sync::atomic::AtomicU32::new(0),
         })

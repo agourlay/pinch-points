@@ -113,7 +113,7 @@ impl Board {
     /// tests need one on demand, and waiting for a molt to turn up and be
     /// banked is not a thing a screenshot can do.
     pub fn force_lure(&mut self, owner: PlayerId) {
-        self.lure = Some((owner, crate::sim::LURE_TICKS));
+        self.lure = Some((owner, LURE_TICKS));
     }
 
     /// Fire a named tide event outright. The roulette is the only caller
@@ -130,7 +130,7 @@ impl Board {
         // Set here rather than in the roulette so a forced event starts
         // the clock too: the point is "an event is running", not "the
         // wheel was spun".
-        self.event_cooldown = crate::sim::EVENT_COOLDOWN;
+        self.event_cooldown = EVENT_COOLDOWN;
         match event {
             TideEvent::CrabMania => {
                 self.gulls.clear();

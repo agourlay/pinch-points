@@ -145,7 +145,7 @@ pub struct GameSettings {
     pub commit: CommitScheme,
     /// What drives P1 and P2. Seats past the second are always `Auto`:
     /// they have no keyboard of their own to choose between.
-    pub seat_input: [SeatInput; crate::app::binds::BOUND_SEATS],
+    pub seat_input: [SeatInput; BOUND_SEATS],
     /// Cursor hold-to-repeat: initial delay and repeat interval, seconds.
     pub repeat_delay: f32,
     pub repeat_interval: f32,
@@ -252,11 +252,7 @@ impl GameSettings {
     /// Every path that changes the language comes through here, and has
     /// to bring the caps table with it, so the presumption can never be
     /// left behind by the words on screen.
-    pub fn set_language(
-        &mut self,
-        language: crate::app::i18n::Lang,
-        caps: &mut crate::app::keycaps::KeyCaps,
-    ) {
+    pub fn set_language(&mut self, language: Lang, caps: &mut crate::app::keycaps::KeyCaps) {
         self.language = language;
         caps.presume(crate::app::keycaps::Layout::of(language));
     }
@@ -354,7 +350,7 @@ impl Default for GameSettings {
     fn default() -> Self {
         GameSettings {
             commit: CommitScheme::Arrows,
-            seat_input: [SeatInput::Auto; crate::app::binds::BOUND_SEATS],
+            seat_input: [SeatInput::Auto; BOUND_SEATS],
             repeat_delay: 0.28,
             repeat_interval: 0.09,
             music_on: true,

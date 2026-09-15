@@ -129,7 +129,7 @@ impl BotLevel {
     /// would meet every new crab a beat before a seat on an even one.
     ///
     /// Ties inside a single tick are the sim's business, not the bot's:
-    /// see [`Board::action_order`](crate::sim::Board).
+    /// see [`Board::action_order`](Board).
     fn acts_on(self, player: PlayerId, ticks: u64) -> bool {
         let cadence = self.cadence();
         let window = ticks / cadence;

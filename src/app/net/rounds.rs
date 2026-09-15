@@ -678,7 +678,7 @@ mod next_round_tests {
         // Cy keeps greeting, as a joiner on the card does; Bo has gone.
         sockets[1].send(NetMsg::hello("Cy"));
         std::thread::sleep(std::time::Duration::from_millis(20));
-        host.poll_between_rounds(super::super::presence::ABANDON_AFTER);
+        host.poll_between_rounds(presence::ABANDON_AFTER);
         assert_eq!(host.transport.peer_count(), 1, "Bo is forgotten");
         assert_eq!(host.peers.len(), 1, "row and all");
         assert_eq!(

@@ -1,7 +1,7 @@
 //! Share codes: a beach, a level, or a whole round as one line of text.
 //!
 //! A code is `PP<kind><body>`, where the body is the payload compressed
-//! ([`crate::lzw`]) and written in an alphabet chosen to survive being read
+//! ([`lzw`]) and written in an alphabet chosen to survive being read
 //! aloud, retyped, and passed through a chat window that likes to capitalise
 //! things. The last character is a checksum, so a code with a typo in it is
 //! refused rather than half-loaded.

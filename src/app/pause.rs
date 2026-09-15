@@ -226,7 +226,7 @@ mod tests {
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<PauseMenu>();
         app.init_resource::<Paused>();
-        app.init_resource::<crate::app::net::Online>();
+        app.init_resource::<Online>();
         app.insert_resource(GameSettings::default());
         app.add_message::<AppExit>();
         app.add_systems(Update, pause_input);
@@ -283,7 +283,7 @@ mod tests {
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<PauseMenu>();
         app.init_resource::<Paused>();
-        app.init_resource::<crate::app::net::Online>();
+        app.init_resource::<Online>();
         app.insert_resource(GameSettings::default());
         app.add_message::<AppExit>();
         app.add_systems(Update, pause_input);
@@ -320,7 +320,7 @@ mod tests {
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<PauseMenu>();
         app.init_resource::<Paused>();
-        app.init_resource::<crate::app::net::Online>();
+        app.init_resource::<Online>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.insert_resource(GameSettings::default());
         app.add_message::<AppExit>();

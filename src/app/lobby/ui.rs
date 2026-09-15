@@ -191,7 +191,7 @@ pub fn update_lobby_view(
 /// The ink a seat's name reads in, wherever its name is written: on the
 /// table, and on everything that seat says in the feed beside it.
 fn seat_tone(seat: usize) -> Color {
-    crate::app::palette::player_color(seat as u8).lighter(0.15)
+    palette::player_color(seat as u8).lighter(0.15)
 }
 
 /// The ink a name in the feed reads in. A name with no seat at the table,
@@ -623,7 +623,7 @@ fn spawn_table_face(
                         tr.lobby_card_players,
                         Val::Auto,
                         |body| {
-                            for row in 0..crate::sim::MAX_PLAYERS {
+                            for row in 0..MAX_PLAYERS {
                                 body.spawn(Node {
                                     padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
                                     ..default()

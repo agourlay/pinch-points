@@ -506,7 +506,7 @@ mod tests {
     fn buzzed(app: &mut App) -> Vec<Entity> {
         let mut messages = app
             .world_mut()
-            .resource_mut::<bevy::ecs::message::Messages<GamepadRumbleRequest>>();
+            .resource_mut::<Messages<GamepadRumbleRequest>>();
         let out: Vec<Entity> = messages.drain().map(|request| request.gamepad()).collect();
         out
     }
