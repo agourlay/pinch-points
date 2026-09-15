@@ -133,6 +133,38 @@ pub(super) const MAX_BEACON: usize = 96;
 /// one datagram is the one the network eats.
 pub(super) const FAREWELL_REPEATS: usize = 3;
 
+/// How often a beacon goes out on every [`LOBBY_PORTS`] port rather than
+/// on the first alone.
+///
+/// The ladder is there so several instances on *one machine* can each bind
+/// a port, which is testing and shared houses, not a hall. On the air it
+/// multiplied every announcement by eight: measured at 24 datagrams a
+/// second per host, 16 of them broadcast, and eight beaches on the air came
+/// to 192 a second between them. Broadcast is the expensive kind: every
+/// machine on the network takes delivery of it, and on Wi-Fi it is sent at
+/// the slowest rate every station can hear, so a hall's worth of it is
+/// airtime taken from the games.
+///
+/// The loopback copies still go to every port every time, because that is
+/// the case the ladder exists for and loopback costs the hall nothing. It
+/// is only the broadcast half that thins, so what a second instance on this
+/// machine hears does not change at all. A listener on another machine
+/// holding a port past the first is a machine running several copies of the
+/// game, and it now learns of a beach within this many seconds rather than
+/// one.
+pub(super) const WIDE_EVERY: u32 = 4;
+
+/// The ports this beacon's *broadcast* half goes to: all of them on every
+/// `WIDE_EVERY`th announcement, and on a farewell, which is sent once at a
+/// moment that does not come again and has to reach every listener there
+/// is. The first port otherwise.
+pub(super) fn wide_ports(round: u32, farewell: bool) -> &'static [u16] {
+    match farewell || round.is_multiple_of(WIDE_EVERY) {
+        true => &LOBBY_PORTS,
+        false => &LOBBY_PORTS[..1],
+    }
+}
+
 /// A name a beacon carries at `at`, the beach's or its host's, and empty
 /// from a build that sent none or a host that never typed one. Sanitized
 /// like any other name off the wire, because that is what it is: bytes a
@@ -262,6 +294,10 @@ pub struct Announcer {
     /// The broadcast address of the network this machine is actually on,
     /// where one can be worked out. See [`subnet_broadcast`].
     subnet: Option<std::net::Ipv4Addr>,
+    /// Beacons sent so far, which picks the ones that go out on the whole
+    /// port ladder. See [`WIDE_EVERY`]. Atomic rather than `&mut`, because
+    /// a farewell is sent from `Drop` with nothing but a shared borrow.
+    sent: std::sync::atomic::AtomicU32,
 }
 
 /// The directed broadcast address of `ip`'s own network, assuming the /24
@@ -308,6 +344,7 @@ impl Announcer {
             // a beach stands, and asking the routing table every second
             // for the same answer would be a socket a second.
             subnet: crate::transport::local_ip().and_then(subnet_broadcast),
+            sent: std::sync::atomic::AtomicU32::new(0),
         })
     }
 
@@ -363,12 +400,20 @@ impl Announcer {
         packet.extend_from_slice(&self.id.to_le_bytes());
         packet.extend_from_slice(&wire_name(host));
         debug_assert_eq!(packet.len(), BEACON_BYTES);
+        let round = self
+            .sent
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let wide = wide_ports(round, times > 1);
         for _ in 0..times {
             for port in LOBBY_PORTS {
-                let _ = self.socket.send_to(&packet, ("255.255.255.255", port));
-                if let Some(subnet) = self.subnet {
-                    let _ = self.socket.send_to(&packet, (subnet, port));
+                if wide.contains(&port) {
+                    let _ = self.socket.send_to(&packet, ("255.255.255.255", port));
+                    if let Some(subnet) = self.subnet {
+                        let _ = self.socket.send_to(&packet, (subnet, port));
+                    }
                 }
+                // Every port, every time: this is the copy the ladder is
+                // for, and it never leaves the machine.
                 let _ = self.socket.send_to(&packet, ("127.0.0.1", port));
             }
         }
@@ -378,6 +423,42 @@ impl Announcer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the hall pays for discovery, and what it stopped paying.
+    ///
+    /// The broadcast half is the half every machine on the network takes
+    /// delivery of, so it is the half that has to be thin; the loopback
+    /// copies are this machine's own business and stay on every port.
+    #[test]
+    fn only_every_fourth_beacon_shouts_at_the_whole_ladder() {
+        let wide: Vec<usize> = (0..12).map(|n| wide_ports(n, false).len()).collect();
+        assert_eq!(wide, [8, 1, 1, 1, 8, 1, 1, 1, 8, 1, 1, 1]);
+        // Which is 2.9 broadcast datagrams a second where there were 16:
+        // one port every second, all eight every fourth, twice over for
+        // the limited and the directed address.
+        let sent: usize = wide.iter().take(WIDE_EVERY as usize).sum::<usize>() * 2;
+        assert_eq!(sent, 22, "per {WIDE_EVERY} seconds");
+        // A farewell is never thinned: it is sent once, at a moment that
+        // does not come again, and a listener that misses it keeps offering
+        // a beach that has gone.
+        for round in 0..12 {
+            assert_eq!(wide_ports(round, true).len(), LOBBY_PORTS.len(), "{round}");
+        }
+    }
+
+    /// The thinned beacon has to go to the port a lone listener holds, and
+    /// that is the first: `Discovery::bind` walks [`LOBBY_PORTS`] in order
+    /// and stops at the first one free, so the one machine in a hall
+    /// running a single copy of the game is always on `LOBBY_PORTS[0]`.
+    /// Sent anywhere else, a beach would be heard every fourth second
+    /// instead of every second by everybody.
+    ///
+    /// Asserted rather than bound: every other test in this process is
+    /// taking lobby ports too, so what `bind` answers here says nothing.
+    #[test]
+    fn the_thinned_beacon_goes_to_the_port_a_lone_listener_holds() {
+        assert_eq!(wide_ports(1, false), &LOBBY_PORTS[..1]);
+    }
 
     /// The second address a beacon is shouted at: this machine's own
     /// network, for the access points that forward a directed broadcast
