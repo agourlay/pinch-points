@@ -219,8 +219,15 @@ pub(super) fn reset_puzzle_phase(mut next_phase: ResMut<NextState<Phase>>) {
 /// small for the inset the cursor sits as far in as there is.
 fn cursor_home(board: &crate::sim::Board, player: u8) -> (u8, u8) {
     let (w, h) = (board.width(), board.height());
+    // The board is asked first, and the spot table is only the fallback.
+    // Which seat owns which castle is drawn with the beach now (see
+    // `seat_spots`), so the table no longer answers that question; and a
+    // handmade beach never did, which is why a custom arena used to start
+    // its cursors at the generated spots whatever it had built.
     let spots = castle_spots(w, h);
-    let (cx, cy) = spots[usize::from(player).min(spots.len() - 1)];
+    let (cx, cy) = board
+        .castle_of(player)
+        .unwrap_or_else(|| spots[usize::from(player).min(spots.len() - 1)]);
     let inset = |len: u8| 2.min(len.saturating_sub(1) / 2);
     (
         cx.clamp(inset(w), w - 1 - inset(w)),

@@ -47,6 +47,56 @@ pub fn castle_spots(width: u8, height: u8) -> [(u8, u8); MAX_PLAYERS] {
     ]
 }
 
+/// Which castle spot each seat takes on a board built from `seed`.
+///
+/// The spots are not equal work. Four are corners and two are the centres
+/// of the long edges, and `examples/balance` over 3000 six-seat rounds puts
+/// the edge pair about six percent ahead of the worst corner: a 13% spread
+/// between the best seat and the worst, and four of the six seats past the
+/// harness's own two-sigma bar. That gap is the shape of a rectangle and
+/// cannot be designed away (see [`castle_spots`]), so what moves instead is
+/// *who* gets it. A table that plays five rounds now plays them from
+/// different chairs, and over a series the advantage cancels rather than
+/// compounding on whoever joined third.
+///
+/// Shuffled in pairs, never seat by seat, and that is load-bearing.
+/// [`castle_spots`] lists 180-degree opposite pairs, `(0,1) (2,3) (4,5)`,
+/// and both team modes are built on it: Pairs gives a team a whole pair,
+/// Trios gives each team one seat from every pair. Permuting whole pairs
+/// and flipping within them keeps seat `2k` opposite seat `2k+1`, so a
+/// team split stays the mirror image of the other team. Shuffling the six
+/// spots freely would quietly hand one team two corners and the other two
+/// edges.
+///
+/// Only the pairs in use are touched: at four seats or fewer the two edge
+/// spots stay out of it, which is what keeps a four-seat board off the
+/// long edges and the same size it asked for.
+fn seat_spots(seed: u64, seats: u8) -> [usize; MAX_PLAYERS] {
+    // A stream of its own, so drawing it cannot shift the arena's own rolls
+    // and change the beach that a seed has always built.
+    let mut rng = Pcg32::new(seed, 0x0c_a571);
+    let pairs = (seats.clamp(2, MAX_PLAYERS as u8) as usize).div_ceil(2);
+    let mut order: Vec<usize> = (0..pairs).collect();
+    // Fisher-Yates over the pairs in use.
+    for i in (1..pairs).rev() {
+        let j = (rng.next_u32() as usize) % (i + 1);
+        order.swap(i, j);
+    }
+    let mut spots = [0usize; MAX_PLAYERS];
+    for (seat_pair, &spot_pair) in order.iter().enumerate() {
+        let flip = usize::from(rng.next_u32().is_multiple_of(2));
+        spots[seat_pair * 2] = spot_pair * 2 + flip;
+        spots[seat_pair * 2 + 1] = spot_pair * 2 + (1 - flip);
+    }
+    // Pairs the seat count never reaches keep their own spots, so the array
+    // is always a permutation whatever it is asked about.
+    for pair in pairs..MAX_PLAYERS / 2 {
+        spots[pair * 2] = pair * 2;
+        spots[pair * 2 + 1] = pair * 2 + 1;
+    }
+    spots
+}
+
 /// Whether a board this wide can seat the long-edge castles evenly. Only an
 /// odd width has a centre column for them to share.
 fn seats_the_long_edges_evenly(width: u8) -> bool {
@@ -251,11 +301,14 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
     };
     let mut rng = Pcg32::new(seed, 0x0a_2e4a);
     let mut board = Board::new(width, height, seed);
-    for (seat, &(x, y)) in castle_spots(width, height)
+    let spots = castle_spots(width, height);
+    // Which chair is which castle is drawn with the board: see `seat_spots`.
+    for (seat, spot) in seat_spots(seed, seats)
         .iter()
         .enumerate()
         .take(seats.clamp(2, MAX_PLAYERS as u8) as usize)
     {
+        let (x, y) = spots[*spot];
         board.set_tile(x, y, TileKind::Castle(seat as PlayerId));
     }
 
@@ -490,6 +543,87 @@ mod tests {
     /// those two flips permute the four corner castles among themselves,
     /// every seat faces an identical routing problem, and no seat spread
     /// can come from the map itself.
+    /// The one thing the shuffle may never break. Both team modes read
+    /// fairness off `castle_spots` pairing seat `2k` with seat `2k+1` as
+    /// 180-degree opposites: Pairs hands a team a whole pair, Trios hands
+    /// each team one seat out of every pair. Shuffle the six spots freely
+    /// and a team quietly gets two corners while the other gets two edges.
+    #[test]
+    fn every_seat_pair_still_sits_on_opposite_castles() {
+        for seed in 0..200u64 {
+            for seats in 2..=MAX_PLAYERS as u8 {
+                let board = generate_arena(seed, seats, 12, 9);
+                let (w, h) = (board.width(), board.height());
+                for pair in 0..usize::from(seats) / 2 {
+                    let a = board
+                        .castle_of(pair as u8 * 2)
+                        .expect("a seat in the count has a castle");
+                    let b = board
+                        .castle_of(pair as u8 * 2 + 1)
+                        .expect("and so does its partner");
+                    assert_eq!(
+                        (w - 1 - a.0, h - 1 - a.1),
+                        b,
+                        "seed {seed}, {seats} seats, pair {pair}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Four seats or fewer keep off the long edges however the pairs fall,
+    /// which is what lets a four-seat board stay the size it asked for.
+    #[test]
+    fn a_small_table_never_lands_on_a_long_edge() {
+        for seed in 0..200u64 {
+            for seats in 2..=4u8 {
+                let board = generate_arena(seed, seats, 12, 9);
+                let (w, h) = (board.width(), board.height());
+                let corners = [
+                    (1, 1),
+                    (w - 2, h - 2),
+                    (w - 2, 1),
+                    (1, h - 2),
+                ];
+                for seat in 0..seats {
+                    let spot = board.castle_of(seat).expect("a castle");
+                    assert!(
+                        corners.contains(&spot),
+                        "seed {seed}, {seats} seats: seat {seat} at {spot:?} is not a corner"
+                    );
+                }
+            }
+        }
+    }
+
+    /// And the shuffle actually shuffles: the long-edge pair is worth a few
+    /// percent, so no seat may hold it every round. Seat zero is the host's
+    /// chair online, which is the one that used to be stuck with a corner
+    /// for a whole series.
+    #[test]
+    fn the_edge_castles_do_not_always_fall_to_the_same_seats() {
+        let mut edge = 0;
+        let seeds = 300u64;
+        for seed in 0..seeds {
+            let board = generate_arena(seed, 6, 20, 13);
+            let (x, y) = board.castle_of(0).expect("the host has a castle");
+            let (w, h) = (board.width(), board.height());
+            // A corner sits one tile in from both walls; the long-edge
+            // castles are the two that do not.
+            let corner = (x == 1 || x == w - 2) && (y == 1 || y == h - 2);
+            if !corner {
+                edge += 1;
+            }
+        }
+        // One pair in three is the edge pair, and a seat holds one of its
+        // pair's two spots, so seat zero should take an edge about a third
+        // of the time. Loose bounds: this is a shuffle, not a schedule.
+        assert!(
+            (seeds / 6..seeds / 2).contains(&edge),
+            "seat zero took an edge castle {edge} times in {seeds}"
+        );
+    }
+
     #[test]
     fn generated_arenas_mirror_both_ways() {
         for &(w, h) in &[(9u8, 7u8), (12, 9), (16, 11), (20, 13)] {
