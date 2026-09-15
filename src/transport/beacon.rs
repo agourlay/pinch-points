@@ -154,6 +154,31 @@ pub(super) const FAREWELL_REPEATS: usize = 3;
 /// one.
 pub(super) const WIDE_EVERY: u32 = 4;
 
+/// How often the machine's own network is looked up again.
+///
+/// It was worked out once, when the announcer was made, on the reasoning
+/// that a machine's address does not change while a beach stands. At a
+/// party it does: a DHCP lease comes back on another subnet, or a laptop
+/// roams to a second access point. The directed broadcast then names a
+/// network this machine is no longer on, for as long as the process runs,
+/// and every access point that drops the limited broadcast (the reason
+/// the directed one is sent at all) stops carrying this beach. The host
+/// sees nothing wrong: it is still announcing, and its own loopback copies
+/// still come back.
+///
+/// Eight seconds is the compromise the original comment was after. Asking
+/// costs a socket bound and connected, which sends nothing and takes
+/// microseconds, so once every eight beacons is far from the "socket a
+/// second" that was worth avoiding, and a beach that moved is findable
+/// again within eight seconds rather than never.
+pub(super) const SUBNET_RECHECK_EVERY: u32 = 8;
+
+/// Whether this beacon is one of the ones that re-asks the routing table.
+/// Round zero does not: `new` has just asked.
+pub(super) fn due_for_recheck(round: u32) -> bool {
+    round != 0 && round.is_multiple_of(SUBNET_RECHECK_EVERY)
+}
+
 /// The ports this beacon's *broadcast* half goes to: all of them on every
 /// `WIDE_EVERY`th announcement, and on a farewell, which is sent once at a
 /// moment that does not come again and has to reach every listener there
@@ -292,8 +317,16 @@ pub struct Announcer {
     /// See [`Beacon::id`] for what it is for.
     id: u64,
     /// The broadcast address of the network this machine is actually on,
-    /// where one can be worked out. See [`subnet_broadcast`].
-    subnet: Option<std::net::Ipv4Addr>,
+    /// where one can be worked out, re-asked every
+    /// [`SUBNET_RECHECK_EVERY`] beacons. See [`subnet_broadcast`] for what
+    /// it is, and [`Announcer::subnet`] for why it does not simply sit
+    /// where `new` put it.
+    ///
+    /// Held as the address's bits, with zero for "none": `0.0.0.0` is not
+    /// a broadcast address any network has, so it is free to mean absence,
+    /// and an atomic keeps every send path on `&self`. A farewell goes out
+    /// from `Drop`, which has nothing else.
+    subnet: std::sync::atomic::AtomicU32,
     /// Beacons sent so far, which picks the ones that go out on the whole
     /// port ladder. See [`WIDE_EVERY`]. Atomic rather than `&mut`, because
     /// a farewell is sent from `Drop` with nothing but a shared borrow.
@@ -321,7 +354,30 @@ pub fn subnet_broadcast(ip: std::net::IpAddr) -> Option<std::net::Ipv4Addr> {
     Some(std::net::Ipv4Addr::new(a, b, c, 255))
 }
 
+/// An address as the bits [`Announcer::subnet`] holds, and `0` for none.
+fn bits_of(addr: Option<std::net::Ipv4Addr>) -> u32 {
+    addr.map_or(0, u32::from)
+}
+
 impl Announcer {
+    /// The network this machine is on right now, as the beacon should
+    /// address it, or `None` where it has no route out of itself.
+    ///
+    /// Re-asked on the [`SUBNET_RECHECK_EVERY`] cadence rather than every
+    /// beacon, and never on the send path's critical stretch: the lookup
+    /// happens first, the answer is stored, and the sends read it back.
+    fn subnet(&self, round: u32) -> Option<std::net::Ipv4Addr> {
+        use std::sync::atomic::Ordering::Relaxed;
+        if due_for_recheck(round) {
+            let fresh = bits_of(crate::transport::local_ip().and_then(subnet_broadcast));
+            self.subnet.store(fresh, Relaxed);
+        }
+        match self.subnet.load(Relaxed) {
+            0 => None,
+            bits => Some(std::net::Ipv4Addr::from(bits)),
+        }
+    }
+
     /// `id` is drawn by the caller, since this layer has no clock and no
     /// PRNG. It must differ between hosts and stay put for as long as one
     /// runs.
@@ -340,10 +396,9 @@ impl Announcer {
         Ok(Announcer {
             socket,
             id: id.rotate_left(16) ^ port,
-            // Worked out once: the machine's address does not change while
-            // a beach stands, and asking the routing table every second
-            // for the same answer would be a socket a second.
-            subnet: crate::transport::local_ip().and_then(subnet_broadcast),
+            subnet: std::sync::atomic::AtomicU32::new(bits_of(
+                crate::transport::local_ip().and_then(subnet_broadcast),
+            )),
             sent: std::sync::atomic::AtomicU32::new(0),
         })
     }
@@ -400,15 +455,14 @@ impl Announcer {
         packet.extend_from_slice(&self.id.to_le_bytes());
         packet.extend_from_slice(&wire_name(host));
         debug_assert_eq!(packet.len(), BEACON_BYTES);
-        let round = self
-            .sent
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let round = self.sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let wide = wide_ports(round, times > 1);
+        let subnet = self.subnet(round);
         for _ in 0..times {
             for port in LOBBY_PORTS {
                 if wide.contains(&port) {
                     let _ = self.socket.send_to(&packet, ("255.255.255.255", port));
-                    if let Some(subnet) = self.subnet {
+                    if let Some(subnet) = subnet {
                         let _ = self.socket.send_to(&packet, (subnet, port));
                     }
                 }
@@ -423,6 +477,41 @@ impl Announcer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The lookup cadence: not on the first beacon, because `new` has just
+    /// asked, and every [`SUBNET_RECHECK_EVERY`] after.
+    #[test]
+    fn the_network_is_asked_about_again_on_a_cadence() {
+        let due: Vec<u32> = (0..20).filter(|round| due_for_recheck(*round)).collect();
+        assert_eq!(due, [8, 16]);
+    }
+
+    /// The bug this fixes: an address worked out once and kept for the life
+    /// of the process. A lease that comes back on another subnet, or a
+    /// laptop that roams, left the directed broadcast naming a network the
+    /// machine had left, and the host went on announcing into it.
+    ///
+    /// Asserted as "the stale one does not survive" rather than against any
+    /// particular address, since what this machine answers is this
+    /// machine's business: the planted value is a documentation address
+    /// (RFC 5737) that no routing table can hand back.
+    #[test]
+    fn a_subnet_that_went_stale_does_not_outlive_the_recheck() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let announcer = Announcer::new(0x5AB1).expect("announcer");
+        let stale = std::net::Ipv4Addr::new(203, 0, 113, 255);
+        announcer.subnet.store(u32::from(stale), Relaxed);
+        // A round that is not due leaves it exactly where it was, which is
+        // what keeps this off the routing table every second.
+        assert_eq!(announcer.subnet(1), Some(stale));
+        assert_eq!(announcer.subnet(SUBNET_RECHECK_EVERY - 1), Some(stale));
+        // A round that is due replaces it, whatever this machine answers.
+        assert_ne!(
+            announcer.subnet(SUBNET_RECHECK_EVERY),
+            Some(stale),
+            "a stale network outlived the recheck"
+        );
+    }
 
     /// What the hall pays for discovery, and what it stopped paying.
     ///
