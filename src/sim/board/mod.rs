@@ -342,6 +342,13 @@ struct Swept {
 /// enough that the list is a handful of entries and never a round's worth.
 const SWEEP_MEMORY: u64 = 8;
 
+/// Replace `dst`'s contents with `src`'s, keeping `dst`'s buffer. The one
+/// move [`Board::copy_from`] is made of.
+fn refill<T: Copy>(dst: &mut Vec<T>, src: &[T]) {
+    dst.clear();
+    dst.extend_from_slice(src);
+}
+
 impl Board {
     /// An empty all-sand board with walled borders (spec §3.1; wrap-around
     /// edges are a later, flag-gated variant).
@@ -390,6 +397,73 @@ impl Board {
         // indices are stated once, in set_wrap.
         board.set_wrap(false);
         board
+    }
+
+    /// Become an exact copy of `other`, reusing the buffers this board
+    /// already holds instead of allocating fresh ones.
+    ///
+    /// `*self = other.clone()` is the same value and costs one allocation
+    /// per non-empty `Vec`, which is a poor bargain for a caller that makes
+    /// a copy per node of a search and drops it a moment later
+    /// (`sim::solve`). `Clone::clone_from` would be the natural spelling and
+    /// is not available: the derive does not forward it to the fields, so a
+    /// derived one allocates exactly as much as `clone`.
+    ///
+    /// Every field is named rather than waved through with `..`, so that a
+    /// new field on `Board` fails to compile here instead of quietly going
+    /// uncopied. An uncopied one would let the copy play differently from
+    /// the board it was made from, which is the one thing it must never do.
+    pub(crate) fn copy_from(&mut self, other: &Self) {
+        let Self {
+            grid,
+            seed,
+            signposts,
+            rules,
+            crabs,
+            scores,
+            rng,
+            tick,
+            signpost_seq,
+            next_crab_id,
+            gulls,
+            next_gull_id,
+            lure,
+            lure_cooldown,
+            event_cooldown,
+            crabs_banked,
+            golden_banked,
+            events_enabled,
+            mania,
+            tempo,
+            last_event,
+            wrap,
+            event_queue,
+            swept_home,
+        } = other;
+        self.grid.copy_from(grid);
+        self.seed = *seed;
+        refill(&mut self.signposts, signposts);
+        self.rules = *rules;
+        refill(&mut self.crabs, crabs);
+        self.scores = *scores;
+        self.rng.clone_from(rng);
+        self.tick = *tick;
+        self.signpost_seq = *signpost_seq;
+        self.next_crab_id = *next_crab_id;
+        refill(&mut self.gulls, gulls);
+        self.next_gull_id = *next_gull_id;
+        self.lure = *lure;
+        self.lure_cooldown = *lure_cooldown;
+        self.event_cooldown = *event_cooldown;
+        self.crabs_banked = *crabs_banked;
+        self.golden_banked = *golden_banked;
+        self.events_enabled = *events_enabled;
+        self.mania = *mania;
+        self.tempo = *tempo;
+        self.last_event = *last_event;
+        self.wrap = *wrap;
+        refill(&mut self.event_queue, event_queue);
+        refill(&mut self.swept_home, swept_home);
     }
 
     // --- level authoring -------------------------------------------------

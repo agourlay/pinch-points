@@ -108,6 +108,23 @@ impl Grid {
     pub(super) fn in_bounds(&self, x: i32, y: i32) -> bool {
         x >= 0 && y >= 0 && x < i32::from(self.width) && y < i32::from(self.height)
     }
+
+    /// Become an exact copy of `other`, keeping the buffers already held.
+    /// The grid half of [`Board::copy_from`], which explains why.
+    pub(super) fn copy_from(&mut self, other: &Self) {
+        let Self {
+            width,
+            height,
+            h_walls,
+            v_walls,
+            tiles,
+        } = other;
+        self.width = *width;
+        self.height = *height;
+        refill(&mut self.h_walls, h_walls);
+        refill(&mut self.v_walls, v_walls);
+        refill(&mut self.tiles, tiles);
+    }
 }
 
 impl Board {

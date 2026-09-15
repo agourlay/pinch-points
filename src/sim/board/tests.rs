@@ -12,6 +12,46 @@ fn ticks_to_cross(tiles: u32, speed: u32) -> u32 {
     (tiles * u32::from(SUBUNITS_PER_TILE)).div_ceil(speed)
 }
 
+/// A board with something on every field worth copying: creatures, a
+/// castle to bank into, signposts, a spun clock, walls off the border.
+fn lively(seed: u64, size: u8) -> Board {
+    let mut board = Board::new(size, size, seed);
+    board.set_events_enabled(true);
+    board.set_tile(size - 1, 0, TileKind::Castle(0));
+    board.set_wall(1, 1, Right, true);
+    common(&mut board, 0, 0, Right, Handedness::Left);
+    common(&mut board, 0, size - 1, Up, Handedness::Right);
+    board.spawn_gull(size - 1, size - 1, Left);
+    board.place_signpost(0, 1, 0, Down);
+    for _ in 0..20 {
+        board.tick_idle();
+    }
+    board
+}
+
+/// `copy_from` is `clone` with the allocations left out, and the whole
+/// search rests on it being nothing else: a field it forgets to carry is a
+/// copy that plays a different game from the board it was copied from.
+/// Compared by `Debug`, which prints every field, rather than by
+/// `state_hash`, which deliberately leaves some out.
+#[test]
+fn copy_from_lands_exactly_where_clone_does() {
+    let source = lively(7, 6);
+    // Onto a board of another size, with longer buffers to cut back and a
+    // history of its own: the scratch board a search reuses is never blank.
+    let mut copy = lively(99, 9);
+    copy.copy_from(&source);
+    assert_eq!(format!("{copy:?}"), format!("{source:?}"));
+    assert_eq!(copy.state_hash(), source.state_hash());
+    // And it keeps playing the same game, not merely starting from it.
+    let mut clone = source.clone();
+    for _ in 0..40 {
+        copy.tick_idle();
+        clone.tick_idle();
+    }
+    assert_eq!(format!("{copy:?}"), format!("{clone:?}"));
+}
+
 #[test]
 fn crab_crosses_a_tile_at_spec_speed() {
     let mut board = Board::new(5, 1, 0);

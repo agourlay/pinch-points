@@ -138,6 +138,33 @@ struct Search<'a> {
     seen: std::collections::HashSet<Vec<(u8, u8, u8)>>,
     /// The signposts standing right now, in placement order.
     placed: Vec<Placement>,
+    /// The board every simulation is played on, kept from node to node.
+    ///
+    /// Neither [`Search::wins`] nor [`Search::visited_placeable_tiles`] may
+    /// play the node's own board: that board is the position the search has
+    /// to be able to back out to. They played a `clone` of it apiece, which
+    /// is an allocation per `Vec` on it, twice per node, thrown away at the
+    /// end of the call. [`Board::copy_from`] writes the same copy into this
+    /// one and keeps its buffers.
+    ///
+    /// Never live across a recursive call: each user fills it, reads its
+    /// answer out, and is finished with it before recursing, so one board
+    /// serves the whole search rather than one per depth.
+    sim: Board,
+    /// Scratch for [`Search::visited_placeable_tiles`]: one flag per tile,
+    /// resized to the board and refilled per call.
+    visited: Vec<bool>,
+    /// Candidate-tile buffers, handed back here as each level unwinds.
+    ///
+    /// This one does need a buffer per depth: `run` reads its candidates
+    /// for as long as it is looping over them, and that loop spans its
+    /// recursive calls. The depth is the level's inventory, so the pool
+    /// settles at a handful of buffers and stops growing.
+    tile_pool: Vec<Vec<(u8, u8)>>,
+    /// Scratch for the memo key, so that a node the memo already holds
+    /// costs a lookup and nothing else. Only a node that is new to the memo
+    /// allocates, and that allocation is the memo's own entry.
+    key: Vec<(u8, u8, u8)>,
 }
 
 impl<'a> Search<'a> {
@@ -151,6 +178,10 @@ impl<'a> Search<'a> {
             gave_up: false,
             seen: std::collections::HashSet::new(),
             placed: Vec::new(),
+            sim: level.board(),
+            visited: Vec::new(),
+            tile_pool: Vec::new(),
+            key: Vec::new(),
         }
     }
 
@@ -184,42 +215,46 @@ impl<'a> Search<'a> {
         if !self.charge() {
             return false;
         }
-        let mut sim = board.clone();
-        self.level.play_out(&mut sim).0 == PuzzleOutcome::Won
+        self.sim.copy_from(board);
+        self.level.play_out(&mut self.sim).0 == PuzzleOutcome::Won
     }
 
     /// Tiles any creature arrives at during a run of the current board: the
     /// only places a new signpost could matter. Gulls count too: a solution
     /// may hinge on steering a gull away from the crabs. Restricted to empty,
     /// signpost-free tiles (the only legal placements).
-    fn visited_placeable_tiles(&mut self, board: &Board) -> Vec<(u8, u8)> {
+    ///
+    /// Answers into `tiles` rather than into a fresh `Vec`, so that the
+    /// caller can lend the same buffer to node after node.
+    fn visited_placeable_tiles(&mut self, board: &Board, tiles: &mut Vec<(u8, u8)>) {
+        tiles.clear();
         if !self.charge() {
-            return Vec::new();
+            return;
         }
-        let mut sim = board.clone();
-        let mut seen = vec![false; sim.width() as usize * sim.height() as usize];
-        for _ in 0..Level::deadline(&sim) {
-            sim.tick_idle();
-            for crab in sim.crabs() {
-                seen[crab.tile as usize] = true;
+        self.sim.copy_from(board);
+        self.visited.clear();
+        self.visited
+            .resize(self.sim.width() as usize * self.sim.height() as usize, false);
+        for _ in 0..Level::deadline(&self.sim) {
+            self.sim.tick_idle();
+            for crab in self.sim.crabs() {
+                self.visited[crab.tile as usize] = true;
             }
-            for gull in sim.gulls() {
-                seen[gull.tile as usize] = true;
+            for gull in self.sim.gulls() {
+                self.visited[gull.tile as usize] = true;
             }
-            if sim.crabs().is_empty() {
+            if self.sim.crabs().is_empty() {
                 break;
             }
         }
-        let mut tiles = Vec::new();
         for (x, y, kind) in board.tiles() {
-            if seen[usize::from(board.index_of(x, y))]
+            if self.visited[usize::from(board.index_of(x, y))]
                 && kind == TileKind::Empty
                 && board.signpost_at(x, y).is_none()
             {
                 tiles.push((x, y));
             }
         }
-        tiles
     }
 
     /// One whole search at a fixed inventory size.
@@ -239,22 +274,26 @@ impl<'a> Search<'a> {
         // The leaves are asked too, and they are the ones that matter: a
         // set of `d` posts has up to `d` parents, and each used to play the
         // full board out again, which is the one thing the budget counts.
-        let mut key: Vec<(u8, u8, u8)> = self
-            .placed
-            .iter()
-            .map(|(x, y, dir)| (*x, *y, dir.id()))
-            .collect();
-        key.sort_unstable();
-        if !self.seen.insert(key) {
+        self.key.clear();
+        self.key
+            .extend(self.placed.iter().map(|(x, y, dir)| (*x, *y, dir.id())));
+        self.key.sort_unstable();
+        if self.seen.contains(&self.key) {
             return None;
         }
+        self.seen.insert(self.key.clone());
         if depth == 0 {
             return self.wins(board).then(Vec::new);
         }
-        for (x, y) in self.visited_placeable_tiles(board) {
+        // Borrowed for the whole loop, recursive calls included, and handed
+        // back at the end: see `tile_pool`.
+        let mut tiles = self.tile_pool.pop().unwrap_or_default();
+        self.visited_placeable_tiles(board, &mut tiles);
+        let mut found = None;
+        'candidates: for &(x, y) in &tiles {
             for dir in Direction::ALL {
                 if self.gave_up {
-                    return None;
+                    break 'candidates;
                 }
                 if !board.place_signpost(0, x, y, dir) {
                     continue;
@@ -262,13 +301,16 @@ impl<'a> Search<'a> {
                 self.placed.push((x, y, dir));
                 if let Some(mut placements) = self.run(board, depth - 1) {
                     placements.push((x, y, dir));
-                    return Some(placements);
+                    found = Some(placements);
+                    break 'candidates;
                 }
                 self.placed.pop();
                 board.remove_signpost(0, x, y);
             }
         }
-        None
+        tiles.clear();
+        self.tile_pool.push(tiles);
+        found
     }
 }
 
