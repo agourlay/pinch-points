@@ -233,8 +233,10 @@ impl<'a> Search<'a> {
         }
         self.sim.copy_from(board);
         self.visited.clear();
-        self.visited
-            .resize(self.sim.width() as usize * self.sim.height() as usize, false);
+        self.visited.resize(
+            self.sim.width() as usize * self.sim.height() as usize,
+            false,
+        );
         for _ in 0..Level::deadline(&self.sim) {
             self.sim.tick_idle();
             for crab in self.sim.crabs() {
