@@ -522,7 +522,8 @@ impl OnlineSession {
         // The newest commit and the whole resend tail behind it, in one
         // datagram: see `NetMsg::Inputs` for what that is worth at a full
         // table.
-        self.transport.send_inputs(self.session.recent_commits(), None);
+        self.transport
+            .send_inputs(self.session.recent_commits(), None);
         // Pause state is repeated every tick rather than sent once: UDP
         // drops, and the peer that misses a Pause would otherwise sit
         // watching a frozen beach with no card, while a missed Resume would

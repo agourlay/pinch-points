@@ -12,9 +12,7 @@ use super::*;
 pub enum NetMsg {
     /// Handshake ping; the host learns the peer's address (and what to
     /// call them) from it.
-    Hello {
-        name: WireName,
-    },
+    Hello { name: WireName },
     /// Handshake ping from a peer that wants to watch, not play. Repeated
     /// like `Hello` until a `Start` lands.
     Watch,
@@ -35,10 +33,7 @@ pub enum NetMsg {
     /// it, rather than the ragged subset a burst of loss used to leave.
     Inputs(Vec<InputMsg>),
     /// State fingerprint after `frame`, for loud desync detection.
-    Hash {
-        frame: u32,
-        hash: u64,
-    },
+    Hash { frame: u32, hash: u64 },
     /// Host → joiner: the match begins with `seats` seats on `terms`; you are
     /// `seat`, and the table is called `names` (empty entries fall back to
     /// seat labels). Re-sent whenever a joiner is still saying hello.
@@ -78,16 +73,12 @@ pub enum NetMsg {
     /// Someone hit pause: everybody stops committing at `frame`. Re-sent
     /// every tick while paused, so a dropped datagram costs a moment of
     /// confusion rather than a stuck match.
-    Pause {
-        frame: u32,
-    },
+    Pause { frame: u32 },
     /// Play on: the pause that was to freeze on `frame` is lifted. Also
     /// re-sent until the sim visibly moves again. The frame is what lets a
     /// peer tell the `Pause` echoes still in flight from before the resume
     /// (see `Lockstep::receive_pause`) from a fresh pause.
-    Resume {
-        frame: u32,
-    },
+    Resume { frame: u32 },
     /// Host → the table: `seat` has stopped sending and an AI is taking
     /// the chair.
     ///
@@ -104,10 +95,7 @@ pub enum NetMsg {
     /// "from the frame you are stuck on" is not the same frame everywhere.
     /// Repeated for the rest of the round, since a lost one leaves that
     /// peer frozen while the others play on.
-    Abandoned {
-        seat: u8,
-        frame: u32,
-    },
+    Abandoned { seat: u8, frame: u32 },
     /// Host → the lobby: who is at the table right now, in seat order.
     ///
     /// A joiner has only ever spoken to the host, so without this it knows
@@ -129,10 +117,7 @@ pub enum NetMsg {
     ///
     /// Relayed by the host to the rest of the table, like an input: the
     /// spokes of the star cannot hear each other.
-    Chat {
-        name: WireName,
-        text: WireChat,
-    },
+    Chat { name: WireName, text: WireChat },
     /// Host → a peer that turned up after the launch: the round is under
     /// way and cannot take you, but you are in line for the next one, with
     /// `ahead` people in front of you.
@@ -141,9 +126,7 @@ pub enum NetMsg {
     /// which was worse than useless: lockstep replays from frame zero, so
     /// such a peer built a board nobody would ever send it inputs for and
     /// sat there, apparently connected, forever.
-    Queued {
-        ahead: u8,
-    },
+    Queued { ahead: u8 },
     /// "I speak protocol `version`, and what you sent me is not it." The
     /// answer to a datagram from another build, so a mismatched joiner is
     /// told why nothing is happening instead of greeting a host that ignores
@@ -152,9 +135,7 @@ pub enum NetMsg {
     /// The one message exempt from the version gate, and the one whose layout
     /// is frozen along with the version byte: every build, past and future,
     /// can read `[TAG_INCOMPATIBLE, version]`.
-    Incompatible {
-        version: u8,
-    },
+    Incompatible { version: u8 },
 }
 
 /// Where a series stands as a round begins: its 1-based number, and the

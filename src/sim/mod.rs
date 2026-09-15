@@ -29,8 +29,8 @@ pub use gull::{Gull, GullState};
 pub use level::{Goal, Level, LevelKind, PUZZLE_TICK_LIMIT, PuzzleOutcome};
 pub use map_gen::{castle_spots, classic_arena, classic_arena_seeded, generate_arena};
 pub use net::{
-    DEFAULT_DELAY, HASH_INTERVAL, INPUT_BYTES, InputMsg, Lockstep, MAX_COMMIT_LEAD,
-    decode_action, encode_action,
+    DEFAULT_DELAY, HASH_INTERVAL, INPUT_BYTES, InputMsg, Lockstep, MAX_COMMIT_LEAD, decode_action,
+    encode_action,
 };
 pub use pose::Pose;
 pub use replay::Replay;

@@ -40,7 +40,8 @@ impl Peer {
         // Redundant resend of the recent tail: survives packet loss and the
         // pre-handshake window where the host cannot send yet. One datagram
         // for the lot, as the game sends it.
-        self.transport.send_inputs(self.session.recent_commits(), None);
+        self.transport
+            .send_inputs(self.session.recent_commits(), None);
         for (msg, _) in self.transport.recv_all() {
             match msg {
                 NetMsg::Hello { .. } | NetMsg::Watch => {}
