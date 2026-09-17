@@ -55,6 +55,7 @@ h1, h2, h3 { line-height: 1.2; letter-spacing: -0.015em; }
   justify-content: space-between;
   padding: 14px 24px;
   background: rgba(7, 10, 18, 0.82);
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--hairline);
 }
