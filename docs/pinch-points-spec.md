@@ -415,9 +415,11 @@ Each action packs into **3 bytes**:
 (A full byte per axis: the nibble this spec first called for caps boards at
 16 wide, and the XL beach is 20. 3 bytes × 6 players × 30 Hz is trivial.)
 
-**Rollback remains the target**, waiting on the ecosystem (risk 6 in §9).
-The packed input and `Board` snapshots are the groundwork that keeps the
-swap contained; see `backlog.md`.
+**Rollback remains available**, and is unbuilt for want of a need rather
+than a dependency: the delay it would give back is three frames on a link
+whose round trip is a millisecond. The packed input and `Board` snapshots
+are the groundwork that keeps the swap contained if that ever changes; see
+`backlog.md`, which also says why the Bevy wrappers are the wrong way in.
 
 ### 7.7 Replays
 
@@ -487,6 +489,6 @@ How each design risk was settled. Remaining ideas live in `backlog.md`.
 | 3 | Original's roulette trigger conditions | Not reproduced; the tide-event set and its tuning are our own (§3.6) |
 | 4 | Gull steerability tuning | Playtested to the dials in §3.5; steering gulls is the offensive game, not the whole game |
 | 5 | Handedness + directional castle gates | Gates dropped. Handedness alone carries the sorting puzzles, and the pair was unreadable in the player's head |
-| 6 | Bevy 0.19 ecosystem maturity for netcode | Real: `bevy_ggrs`/`bevy_matchbox` still target 0.18, so online ships as deterministic lockstep instead of rollback (§7.6) |
+| 6 | Bevy 0.19 ecosystem maturity for netcode | Overtaken (re-checked 2026-09-17): `bevy_ggrs` 0.22 takes 0.19, and raw `ggrs` never wanted an engine at all, so the wrappers were never the obstacle they looked like. Online ships as deterministic lockstep because a 100 ms delay over a 1 ms LAN does not need prediction, not because rollback is blocked (§7.6, `backlog.md`) |
 | 7 | Title SEO collision | Accepted; revisit before a store page |
 | 8 | Board wrap-around edges | The original wraps. Per-level flag, taught at campaign level 26, and the open-ocean versus map turns it on |

@@ -386,10 +386,12 @@ fn four_player_star_relay_stays_bit_identical() {
 /// for.
 ///
 /// It joins with them rather than mid-round: a lockstep session replays from
-/// frame zero and the resend tail is forty commits deep, so a peer that
-/// arrives late can never fill the frames it missed. Watching from partway
-/// through needs a mid-round snapshot, which the level format cannot carry
-/// (see the testing note in docs/backlog.md).
+/// frame zero and the resend tail only reaches `resend_span` frames back (33
+/// at the default delay), so a peer that arrives late can never fill the
+/// frames it missed. Watching from partway
+/// through needs a snapshot join instead of a replay, which nothing sends
+/// today; see "Watching a round that has already started" in
+/// docs/backlog.md.
 #[test]
 fn a_spectator_sees_the_same_round_without_holding_it_up() {
     use pinch_points::app::net::OnlineSession;
