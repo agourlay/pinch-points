@@ -42,7 +42,7 @@ img { display: block; width: 100%; height: auto; }
   background: linear-gradient(180deg, var(--sky) 0%, var(--sand) 62%);
 }
 
-.hero > * { max-width: var(--wrap); margin-inline: auto; }
+.hero-inner { max-width: var(--wrap); margin: 0 auto; }
 
 .eyebrow {
   margin: 0 0 18px;
@@ -125,11 +125,14 @@ main h2 {
 /* ---- three beats ---- */
 
 .beats {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 36px;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   text-align: center;
 }
+
+.beats > div { flex: 1 1 240px; max-width: 320px; }
 
 .beats h2 { color: var(--crab); }
 .beats p { margin: 0; color: var(--ink-soft); }
@@ -145,8 +148,10 @@ main h2 {
 .gallery figure { margin: 0; }
 
 .gallery figcaption {
-  margin-top: 14px;
+  margin: 14px auto 0;
+  max-width: 44ch;
   font-size: 1rem;
+  text-align: center;
   color: var(--ink-soft);
 }
 
