@@ -64,7 +64,7 @@ Nothing blocks these. They want the work and no more.
   and the Deck is 1280x800, so `fit_ratio` stays at 1.0 and nothing
   shrinks.
 
-- **An itch.io page**, with the README screenshots. The binaries exist to
+- **An itch.io page**, with the shots in `docs/screenshots`. The binaries exist to
   put on it: `v0.4.0` is tagged and `release.yml` builds six targets across
   Linux, Windows and macOS. A Steam build is a longer road and has a
   section of its own below; the update check is the one place the two
