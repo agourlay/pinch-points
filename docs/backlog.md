@@ -117,11 +117,6 @@ has least use for.
   so setting it too low trades latency for hitches, which wifi will show
   before ethernet does. Wants two machines and a real LAN to judge.
 
-  Cheaper still, and unrelated to netcode: draw the local player's post the
-  moment the key is pressed, greyed until its frame commits. It buys no
-  precision, since the post affects nothing until the sim reaches it, but it
-  answers "did that register?", which is most of what a player feels.
-
 ## Performance
 
 - **Single-threaded executor for the main world.** Now behind the

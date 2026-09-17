@@ -12,7 +12,7 @@
 
 use crate::app::cursor::Cursor;
 use crate::app::settings::{GameSettings, SeatInput};
-use crate::app::{PendingActions, Phase, PlacementDenied, Sim};
+use crate::app::{PendingActions, Phase, PlacementDenied, Screen, Sim};
 use crate::sim::{Direction, MAX_PLAYERS, PlayerAction};
 use bevy::input::gamepad::{GamepadRumbleIntensity, GamepadRumbleRequest};
 use bevy::prelude::*;
@@ -303,7 +303,20 @@ pub fn pad_setup_input(
 /// input resource so every menu keeps a single input path. Registered only
 /// on menu-like screens and result phases, never during play (East places
 /// Right in a round).
-pub fn pad_menu_bridge(pads: Query<&Gamepad>, mut keys: ResMut<ButtonInput<KeyCode>>) {
+///
+/// East is the exception, and [`Screen::Menu`] is where it bites: Escape
+/// means "back" on every screen the bridge runs on except the landing
+/// menu, which has nowhere back to go and leaves the game instead
+/// (`menu_scene::menu_input`). A player holding a pad reads East as back,
+/// presses it expecting the previous screen, and the game closes with
+/// nothing asked. So the menu gets the other five and not that one: the
+/// keyboard keeps its Escape, which is deliberate and is spelled out in
+/// the prompt line, and the pad keeps every way *in* it had.
+pub fn pad_menu_bridge(
+    pads: Query<&Gamepad>,
+    screen: Res<State<Screen>>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+) {
     const MAP: [(GamepadButton, KeyCode); 6] = [
         (GamepadButton::DPadUp, KeyCode::KeyW),
         (GamepadButton::DPadDown, KeyCode::KeyS),
@@ -312,8 +325,12 @@ pub fn pad_menu_bridge(pads: Query<&Gamepad>, mut keys: ResMut<ButtonInput<KeyCo
         (GamepadButton::South, KeyCode::Enter),
         (GamepadButton::East, KeyCode::Escape),
     ];
+    let quits = *screen.get() == Screen::Menu;
     for pad in &pads {
         for (button, key) in MAP {
+            if quits && button == GamepadButton::East {
+                continue;
+            }
             if pad.just_pressed(button) {
                 keys.press(key);
             }
@@ -615,5 +632,84 @@ mod tests {
         let mut app = table(2, 1);
         app.world_mut().resource_mut::<GameSettings>().rumble = false;
         assert!(raid(&mut app, 1).is_empty());
+    }
+
+    /// One pad on `screen`, with the bridge wired up and nothing else.
+    fn bridged(screen: Screen) -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(screen));
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.world_mut().spawn(Gamepad::default());
+        app.add_systems(Update, pad_menu_bridge);
+        app
+    }
+
+    /// Press `button` on the one pad and run a frame.
+    fn press(app: &mut App, button: GamepadButton) {
+        let pad = app
+            .world_mut()
+            .query_filtered::<Entity, With<Gamepad>>()
+            .single(app.world())
+            .expect("one pad");
+        app.world_mut()
+            .get_mut::<Gamepad>(pad)
+            .expect("the pad")
+            .digital_mut()
+            .press(button);
+        app.update();
+    }
+
+    /// B on the landing menu must not reach Escape, because Escape there
+    /// is `AppExit` and nothing asks first: a player reaching for "back"
+    /// would close the game.
+    #[test]
+    fn east_does_not_quit_from_the_menu() {
+        let mut app = bridged(Screen::Menu);
+        press(&mut app, GamepadButton::East);
+        assert!(
+            !app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::Escape),
+            "B on the menu must not synthesize the key that leaves the game"
+        );
+    }
+
+    /// Everywhere else Escape means back, which is what B should do, so
+    /// the menu's exception must not cost the pad its way out of a
+    /// sub-screen.
+    #[test]
+    fn east_still_goes_back_from_a_sub_screen() {
+        for screen in [Screen::Settings, Screen::Controls, Screen::StageSelect] {
+            let mut app = bridged(screen);
+            press(&mut app, GamepadButton::East);
+            assert!(
+                app.world()
+                    .resource::<ButtonInput<KeyCode>>()
+                    .pressed(KeyCode::Escape),
+                "B is the way back from {screen:?}"
+            );
+        }
+    }
+
+    /// The menu keeps every other button: the exception is East alone,
+    /// not the bridge.
+    #[test]
+    fn the_menu_keeps_the_rest_of_the_bridge() {
+        for (button, key) in [
+            (GamepadButton::DPadUp, KeyCode::KeyW),
+            (GamepadButton::DPadDown, KeyCode::KeyS),
+            (GamepadButton::DPadLeft, KeyCode::KeyA),
+            (GamepadButton::DPadRight, KeyCode::KeyD),
+            (GamepadButton::South, KeyCode::Enter),
+        ] {
+            let mut app = bridged(Screen::Menu);
+            press(&mut app, button);
+            assert!(
+                app.world().resource::<ButtonInput<KeyCode>>().pressed(key),
+                "{button:?} still drives the menu"
+            );
+        }
     }
 }

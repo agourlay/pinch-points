@@ -95,10 +95,16 @@ wildcard_enum_match_arm = "warn"
 [profile.release]
 lto = "fat"
 codegen-units = 1
+# Nothing reads a symbol out of a shipped build: a panic here reports its
+# own location and the profiler has its own profile below. The names are
+# most of what a release binary carries that is not code.
+strip = true
 
 # Release speed with the symbols a profiler needs. `debug` costs nothing at
 # run time; it only stops `perf` reporting the whole solver as one
-# unnamed frame.
+# unnamed frame. `strip` has to be undone by hand, because inheriting
+# release would otherwise throw away the symbols `debug` just asked for.
 [profile.profiling]
 inherits = "release"
 debug = true
+strip = false
