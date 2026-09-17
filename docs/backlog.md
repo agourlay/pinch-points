@@ -11,8 +11,9 @@ belong next to the code they explain.
   ever, and a run could stop the moment one does rather than grinding every
   dead end out to the 1800-tick limit.
 
-  Built 2026-08-14 and reverted. It is *correct* (all 38 shipped levels
-  validated identically and the whole suite passed) and it is *slower*.
+  Built 2026-08-14 and reverted. It is *correct* (all 38 levels shipped
+  at the time validated identically and the whole suite passed) and it is
+  *slower*.
   The `--ignored` level check went 120 s → 147 s, and two earlier shapes of
   it were far worse (332 s hashing the whole board per tick; still losing
   when cut down to only the parts that move). The reason is arithmetic, not
@@ -199,19 +200,12 @@ prompts, no anti-cheat - so what follows is input and display.
   refactor even before Steam. `pad_help1` / `pad_help2` on the settings
   card are the only lines that speak pad today.
 
-- **B quits the game.** The bridge maps East onto Escape, and Escape on
-  the menu is `AppExit` (`menu_scene::menu_input`, and the comment there
-  explains why the keyboard wants it). So a Deck player pressing B
-  expecting "back" leaves the game, with nothing asked. Either drop East
-  from the bridge on the menu screen, or put the same two-press
-  confirmation on it that the progress reset has.
-
 - **Small text on a seven-inch screen.** The interface is laid out for
   1280x720 and the Deck is 1280x800, so `fit_ratio` stays at 1.0 and
   nothing shrinks - that part is luck, but it is good luck. The problem is
-  the absolute sizes: 12.5px, 13px and 15px carry the notes, the hints,
-  the menu blurbs and the pad help, and illegible small text is the most
-  common Verified failure there is. `UI_SCALE_MAX` is 150, which only
+  the absolute sizes: `type_scale::FINE` is 13px and `BODY` 15px, which
+  carry the notes, the hints, the menu blurbs and the pad help, and
+  illegible small text is the most common Verified failure there is. `UI_SCALE_MAX` is 150, which only
   helps a player who finds the dial. Raise the floor on those sizes, or
   default the UI scale up when the window arrives Deck-sized.
 
@@ -238,7 +232,7 @@ prompts, no anti-cheat - so what follows is input and display.
 - **Achievements are ours, not Steam's.** The game keeps fifty of its own,
   and a player who sees an achievements screen on a Steam game expects
   them on their profile. That is `steamworks-rs` and a hook in
-  `achievements::unlock`, the same dependency the on-screen keyboard
+  `achievements::track::unlock_new`, the same dependency the keyboard
   wants, which is an argument for doing both at once or neither.
 
 - **Packaging.** Build inside the Steam Linux Runtime 3.0 (sniper)
@@ -248,8 +242,7 @@ prompts, no anti-cheat - so what follows is input and display.
   the Deck runs Xwayland under gamescope, so x11 alone would do there.
   `system_clipboard` (the share codes) goes through X11 and wants testing
   under gamescope - it already degrades politely (`code_copy_failed`).
-  Add `strip = true` to the release profile. Ship `assets/` beside the
-  binary, both font licences with it (the OFL requires the notice travel
+  Ship `assets/` beside the binary, both font licences with it (the OFL requires the notice travel
   with the font), and consider capping to 60 to spare the battery.
 
 - **The paperwork.** Steam Direct is $100 per app, refundable at $1,000 of
@@ -271,7 +264,7 @@ prompts, no anti-cheat - so what follows is input and display.
 ## Infrastructure
 
 - **An itch.io page**, with the README screenshots. The binaries exist to
-  put on it: `v0.1.0` is tagged and `release.yml` builds six targets across
+  put on it: `v0.4.0` is tagged and `release.yml` builds six targets across
   Linux, Windows and macOS. A Steam build is a longer road and has a section
   of its own above; the update check is the one place the two disagree,
   since it wants to be on for a downloaded build and off for a store one.
