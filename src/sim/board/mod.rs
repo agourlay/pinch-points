@@ -24,37 +24,25 @@ pub const LURE_TICKS: u32 = 300;
 /// itself. Non-stacking plus a cooldown stops the first molt from deciding
 /// the round.
 ///
-/// Was 10 s, matching the lure. That set the floor for one lure to the next
-/// at 20 s, and the leader kept hitting it: a measured six-player round ran
-/// lures 22.9 s, 25.8 s, 27.2 s and 23.3 s apart, one castle holding 50 of
-/// the 60 lured seconds, a third of the round. Doubling the spell puts the
-/// floor at 30 s and the uptime ceiling at a third of a round rather than
-/// half, which is enough separation for the beach to refill and the other
-/// castles to have a turn at it.
+/// At 10 s, matching the lure, a measured six-player round ran lures 22.9,
+/// 25.8, 27.2 and 23.3 s apart with one castle holding 50 of the 60 lured
+/// seconds. Doubling the spell puts the floor at 30 s and the uptime
+/// ceiling at a third of a round rather than half.
 pub const LURE_COOLDOWN: u32 = 600;
 /// Ticks after any tide event before the roulette may spin again.
 ///
 /// The roulette fires when a Sparkling crab banks, and Sparkling is 2% of
-/// what the *spawners* produce - so the events that raise the crab supply
-/// raise their own rate. Crab Mania floods the spawners and Speed Up banks
-/// everything faster, and both spin the wheel that rolled them. Measured
-/// over the seven kept rounds the result ranges from nought events in
-/// three minutes to twelve, and the worst of them put six inside nineteen
-/// seconds - three Crab Manias among them, two events three ticks apart -
-/// with the centre banner never off the screen.
+/// what the *spawners* produce, so the events that raise the crab supply
+/// raise their own rate: Crab Mania floods the spawners and Speed Up banks
+/// everything faster, and both spin the wheel that rolled them. Unvalved,
+/// the seven kept rounds ran from nought events in three minutes to twelve,
+/// the worst putting six inside nineteen seconds.
 ///
-/// One [`EVENT_TICKS`] is the value because it is the thing being fixed:
-/// an event's own effect lasts that long, so this is exactly "no second
-/// event until the first has finished". It is the same shape of valve as
-/// [`LURE_COOLDOWN`], which the other self-feeding mechanic already had.
-///
-/// Re-running the seven kept rounds through it (`cargo run --example
-/// round_events`) puts the worst of them at three events rather than
-/// eleven and the next at nine rather than twelve, and - the number that
-/// matters - **none** of them lands inside another's window, in any round,
-/// which is what it is for. The rounds diverge under the new rule, so
-/// those are the cadences that input stream produces now rather than a
-/// strict before-and-after of one round.
+/// One [`EVENT_TICKS`] is exactly "no second event until the first has
+/// finished", the same valve [`LURE_COOLDOWN`] puts on the other
+/// self-feeding mechanic. Re-run through it (`cargo run --example
+/// round_events`), no event in any kept round lands inside another's
+/// window.
 pub const EVENT_COOLDOWN: u32 = EVENT_TICKS;
 /// Versus signposts fade away after this many ticks (10 s, the original's
 /// balance valve against stale fortifications). Puzzle-rule boards
@@ -240,18 +228,15 @@ pub struct Rules {
     /// point.
     ///
     /// False in a puzzle, where a raid has nothing to take and one bad
-    /// side effect. The score it halves is never shown - the puzzle header
-    /// counts crabs saved, not points - while the spill puts banked crabs
-    /// back on the sand, and each of those counts as newly spawned. That
-    /// is the denominator of "Saved a/b", so the level's own target grew
-    /// every time a gull touched the castle. Nine shipped campaign levels
-    /// did it while playing their authored solution.
+    /// side effect: the spill puts banked crabs back on the sand, each
+    /// counting as newly spawned, which is the denominator of "Saved a/b".
+    /// Nine shipped campaign levels grew their own target that way while
+    /// playing their authored solution.
     ///
     /// The gull still walks in and still leaves the beach with the flock.
-    /// That departure is load-bearing and was nobody's plan: a castle is
-    /// the one tile that takes a gull off the sand, and the levels were
-    /// tuned around it. Shutting the door instead left Two Giants with no
-    /// two-post solution at all.
+    /// That departure is load-bearing: a castle is the one tile that takes
+    /// a gull off the sand, and shutting the door instead left Two Giants
+    /// with no two-post solution at all.
     pub castle_raids: bool,
 }
 
@@ -313,15 +298,13 @@ pub struct Board {
     /// home, so afterwards nothing on the board says what became of them:
     /// they are simply gone, from tiles that are not castles. The render
     /// layer tells a bank from a death by reading the tile a departed crab
-    /// left, so it read every one of them as the gulls' work - which for a
-    /// sweep of eighty-two crabs is eighty-two death sounds, eight hundred
-    /// feathers, a screen shake, and no sign at all that anybody scored.
+    /// left, so a sweep of eighty-two crabs read as eighty-two deaths,
+    /// with no sign that anybody scored.
     ///
-    /// So the sim writes down what only the sim knows. Nothing in here is
-    /// ever read back by the sim, which is why it stays out of the
-    /// fingerprint: it cannot make two peers play differently, and hashing
-    /// it would only make this build disagree with builds it is playing
-    /// identically to.
+    /// Nothing in here is ever read back by the sim, which is why it stays
+    /// out of the fingerprint: it cannot make two peers play differently,
+    /// and hashing it would only make this build disagree with builds it
+    /// is playing identically to.
     swept_home: Vec<Swept>,
 }
 
@@ -405,14 +388,13 @@ impl Board {
     /// `*self = other.clone()` is the same value and costs one allocation
     /// per non-empty `Vec`, which is a poor bargain for a caller that makes
     /// a copy per node of a search and drops it a moment later
-    /// (`sim::solve`). `Clone::clone_from` would be the natural spelling and
-    /// is not available: the derive does not forward it to the fields, so a
-    /// derived one allocates exactly as much as `clone`.
+    /// (`sim::solve`). `Clone::clone_from` is not available: the derive does
+    /// not forward it to the fields, so a derived one allocates as much as
+    /// `clone`.
     ///
-    /// Every field is named rather than waved through with `..`, so that a
-    /// new field on `Board` fails to compile here instead of quietly going
-    /// uncopied. An uncopied one would let the copy play differently from
-    /// the board it was made from, which is the one thing it must never do.
+    /// Every field is named rather than waved through with `..`, so a new
+    /// field on `Board` fails to compile here instead of quietly going
+    /// uncopied and letting the copy play differently.
     pub(crate) fn copy_from(&mut self, other: &Self) {
         let Self {
             grid,
@@ -789,10 +771,9 @@ impl Board {
     /// The seat a crab was banked *for* by the tide, if it was one of
     /// those rather than one that walked home.
     ///
-    /// The render layer's question, and the only reason [`Board`] keeps
-    /// the record at all: a crab that vanished off open sand looks eaten
-    /// from the outside, and half the time a `Monopoly` fires it is the
-    /// opposite of eaten.
+    /// The render layer's question, and the only reason [`Board`] keeps the
+    /// record: a crab that vanished off open sand looks eaten from the
+    /// outside.
     pub fn swept_home(&self, crab: u32) -> Option<PlayerId> {
         self.swept_home
             .iter()

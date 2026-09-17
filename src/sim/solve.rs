@@ -26,32 +26,21 @@ pub type Placement = (u8, u8, Direction);
 ///
 /// Sized from both ends, and both ends were measured.
 ///
-/// The ceiling is there for the boards nobody vetted: an author's own level,
-/// which can be any size, any shape, and unsolvable in ways that take far
-/// longer to prove than to draw. A 12x9 board with six crabs, sealed so that
-/// no solution exists, ran past ten minutes unbudgeted without an answer. At
-/// this ceiling that same board gives up in 48 seconds of a release build,
-/// measured 2026-08-15. The editor validates on a background thread and says
-/// it is working, so that is a wait rather than a freeze.
+/// The ceiling is there for the boards nobody vetted: an author's own
+/// level, which can be any size, any shape, and unsolvable in ways that
+/// take far longer to prove than to draw. A sealed 12x9 board with six
+/// crabs ran past ten minutes unbudgeted; at this ceiling it gives up in 48
+/// seconds of a release build (2026-08-15), on the editor's background
+/// thread, which is a wait rather than a freeze.
 ///
-/// Raised from 50,000 the same day, and the reason is the campaign rather
-/// than the editor. `no_campaign_level_grants_a_post_it_does_not_need`
-/// proves a level's inventory minimal under this number, and proving that no
-/// *three*-post answer exists costs roughly the cube of the tiles the crabs
-/// cross. At 50,000 that proof consumed the whole budget on any board big
-/// enough to need four posts, so four-post levels could not be shown minimal
-/// and therefore could not ship: of 140 boards built to need one, 101 gave
-/// up and none came back with four. The old ceiling was not protecting the
-/// editor from slow boards so much as capping how hard a level was allowed
-/// to be.
-///
-/// Raised again to 1,000,000 on 2026-08-16, and again the campaign asked
-/// for it. Gulls started eating the crabs they met, which makes a placement
-/// fail later and deeper, and four gull levels stopped fitting: 400,000 for
-/// The Long Shelf, 600,000 for Quick Feet, a round million for Slow And
-/// Sure and The Far Corner. Six to twelve seconds each on this machine, on
-/// the editor's background thread, which is a wait on a button you press
-/// deliberately.
+/// The floor is the campaign.
+/// `no_campaign_level_grants_a_post_it_does_not_need` proves a level's
+/// inventory minimal under this number, and proving no *three*-post answer
+/// exists costs roughly the cube of the tiles the crabs cross. At 50,000
+/// that proof consumed the whole budget on any board big enough to need
+/// four posts: of 140 boards built to need one, 101 gave up. Gulls eating
+/// the crabs they meet makes a placement fail later and deeper, and four
+/// gull levels needed a million (six to twelve seconds each).
 pub const DEFAULT_NODE_BUDGET: u32 = 1_000_000;
 
 /// How hard a search may work before it admits defeat.
@@ -66,8 +55,8 @@ pub enum Effort {
 
 /// What a search found, and when it found nothing, whether that is a proof.
 ///
-/// The distinction is what a budget is for. "No solution" is a claim
-/// about the level; "gave up" is a claim about the search, and an editor that
+/// The distinction is what a budget is for. "No solution" is a claim about
+/// the level; "gave up" is a claim about the search, and an editor that
 /// prints the first when it means the second tells an author their level is
 /// broken when it may be fine.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,25 +105,22 @@ struct Search<'a> {
     ///
     /// Signposts are a *set*: placing A then B leaves exactly the board
     /// that placing B then A leaves. The search walks orderings, so without
-    /// this it explores every one of them, and there are `depth!` of those.
-    /// Six wasted subtrees out of seven at three posts, twenty-three out of
-    /// twenty-four at four. That factorial is what kept four-post levels out
-    /// of reach of any budget worth having.
+    /// this it explores all `depth!` of them: six wasted subtrees out of
+    /// seven at three posts, twenty-three out of twenty-four at four.
     ///
-    /// Ordering the candidates instead would be cheaper still and is not
-    /// sound here: the candidate set is recomputed at each depth from the
-    /// board as it now stands, so a tile can become worth trying only
-    /// *because* an earlier signpost sent a crab across it. Refusing to go
-    /// back would lose those. Remembering where we have been loses nothing.
+    /// Ordering the candidates instead would be cheaper and is not sound
+    /// here: the candidate set is recomputed at each depth from the board as
+    /// it now stands, so a tile can become worth trying only *because* an
+    /// earlier signpost sent a crab across it.
     ///
-    /// Cleared between depths, and that is not housekeeping. The search
-    /// runs once per inventory size, and a set that failed with one post
-    /// left to spend says nothing about the same set with two. Carrying the
-    /// memo across those runs made `Both Lanes` unsolvable, which is what
-    /// the minimality guard is for.
-    /// Keyed by `(x, y, Direction::id)` so the set can be sorted and
-    /// hashed without asking a sim type to grow orderings it has no other
-    /// use for.
+    /// Cleared between depths, and that is not housekeeping: the search runs
+    /// once per inventory size, and a set that failed with one post left to
+    /// spend says nothing about the same set with two. Carrying the memo
+    /// across those runs made `Both Lanes` unsolvable.
+    ///
+    /// Keyed by `(x, y, Direction::id)` so the set can be sorted and hashed
+    /// without asking a sim type to grow orderings it has no other use
+    /// for.
     seen: std::collections::HashSet<Vec<(u8, u8, u8)>>,
     /// The signposts standing right now, in placement order.
     placed: Vec<Placement>,
@@ -142,10 +128,9 @@ struct Search<'a> {
     ///
     /// Neither [`Search::wins`] nor [`Search::visited_placeable_tiles`] may
     /// play the node's own board: that board is the position the search has
-    /// to be able to back out to. They played a `clone` of it apiece, which
-    /// is an allocation per `Vec` on it, twice per node, thrown away at the
-    /// end of the call. [`Board::copy_from`] writes the same copy into this
-    /// one and keeps its buffers.
+    /// to be able to back out to. A `clone` apiece is an allocation per
+    /// `Vec` on it, twice per node; [`Board::copy_from`] writes the same
+    /// copy into this one and keeps its buffers.
     ///
     /// Never live across a recursive call: each user fills it, reads its
     /// answer out, and is finished with it before recursing, so one board
@@ -207,10 +192,9 @@ impl<'a> Search<'a> {
     /// Does this exact board win on its own, by the level's own reckoning?
     ///
     /// The judge is [`Level::outcome`], the same one the game uses, rather
-    /// than a copy of the all-crabs rule: a Beach Day stage asks for a number
-    /// banked, or for nobody eaten, and a solver that only knows how to bank
-    /// every crab answers a harder question than it was asked, reporting "no
-    /// solution" for stages that are perfectly beatable.
+    /// than a copy of the all-crabs rule: a Beach Day stage asks for a
+    /// number banked, or for nobody eaten, and a solver that only knows how
+    /// to bank every crab reports "no solution" for beatable stages.
     fn wins(&mut self, board: &Board) -> bool {
         if !self.charge() {
             return false;
@@ -271,11 +255,11 @@ impl<'a> Search<'a> {
     }
 
     fn run(&mut self, board: &mut Board, depth: u8) -> Option<Vec<Placement>> {
-        // Somewhere we have already been, by another road. Nothing about the
-        // board depends on how it was reached, so neither does the answer.
-        // The leaves are asked too, and they are the ones that matter: a
-        // set of `d` posts has up to `d` parents, and each used to play the
-        // full board out again, which is the one thing the budget counts.
+        // Somewhere we have already been, by another road. Nothing about
+        // the board depends on how it was reached, so neither does the
+        // answer. The leaves are asked too, and they are the ones that
+        // matter: a set of `d` posts has up to `d` parents, each playing the
+        // full board out again.
         self.key.clear();
         self.key
             .extend(self.placed.iter().map(|(x, y, dir)| (*x, *y, dir.id())));

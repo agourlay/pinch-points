@@ -172,10 +172,9 @@ pub enum Screen {
 
 /// Fixed interface a board must not slide under, in unscaled pixels.
 ///
-/// Three floats in a row, two of them the same unit and one of them not,
-/// is a thing to get the wrong way round: the camera reads `top` and
-/// `bottom` to centre the board on the gap between the bars, and swapping
-/// them moves every board a few pixels the wrong way on every screen.
+/// Three floats in a row, two of them the same unit and one not, is a thing
+/// to get the wrong way round: the camera reads `top` and `bottom` to
+/// centre the board on the gap between the bars.
 #[derive(Clone, Copy)]
 pub struct Chrome {
     /// The sidebars, both of them together.
@@ -216,14 +215,12 @@ impl Screen {
     /// The fixed interface this screen puts around a board.
     ///
     /// Top and bottom are separate because they are not equal: the header
-    /// is one line and the prompt runs to two in the wordier languages. A
-    /// single height would fit the board and then centre it on the window
-    /// rather than on the gap, which is how the editor's bottom wall rail
-    /// ended up under the prompt.
+    /// is one line and the prompt runs to two in the wordier languages, and
+    /// a single height centres the board on the window rather than on the
+    /// gap, which put the editor's bottom wall rail under the prompt.
     ///
-    /// Lives here rather than in the camera system because it is a fact
-    /// about the screen, and because a new screen should have to answer
-    /// this question at the point it is declared.
+    /// Lives here rather than in the camera system so a new screen has to
+    /// answer the question where it is declared.
     fn chrome(self) -> Chrome {
         match self {
             // The menu is a full-bleed postcard laid out 1:1.
@@ -287,10 +284,9 @@ pub struct LoadLevel {
 pub struct PlacementDenied {
     pub player: u8,
     /// The inventory said no, not the tile. Worth a line of its own: every
-    /// other refusal is answered by aiming somewhere else, and this one is
-    /// answered by picking a signpost back up. They looked identical - the
-    /// same flash, the same knock - so "you have none left" read as "not
-    /// there".
+    /// other refusal is answered by aiming somewhere else, and this one by
+    /// picking a signpost back up, and with the same flash and knock "you
+    /// have none left" reads as "not there".
     pub out_of_signposts: bool,
 }
 

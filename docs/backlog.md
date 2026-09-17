@@ -5,18 +5,14 @@ here, including the measurements behind it, which belong next to the code
 they explain.
 
 Audited against the tree on 2026-09-17. Entries are grouped by what they
-are actually waiting for, because "roughly ordered by value" turned out to
-hide the thing worth knowing: most of these are not waiting for a decision
-about value at all, they are waiting for a machine, or for a reason, or
-for nothing.
+are waiting for, which for most of them is a machine, or a reason, or
+nothing.
 
-Two habits keep this file honest, both learned the hard way. Delete an
-entry in the commit that implements it: the ghost-post entry outlived its
-own implementation by three weeks because the commit edited this file
-without removing the paragraph it had just satisfied. And date a figure
-whenever one is written down, because a bare number reads as current for
-ever: a level count, a tag and a crate version had all quietly aged out
-by the time anyone looked again.
+Two habits keep this file honest. Delete an entry in the commit that
+implements it: the ghost-post entry outlived its own implementation by
+three weeks. And date a figure whenever one is written down, because a bare
+number reads as current for ever: a level count, a tag and a crate version
+had all aged out by the time anyone looked again.
 
 ## Ready when someone is
 
@@ -29,27 +25,24 @@ Nothing blocks these. They want the work and no more.
   blunder draw that had been in every round ever played. `ci.yml` has a
   single `build` job on push and pull request, and no schedule.
 
-  That second regression is the argument for the nightly. The figures here
-  were taken 2026-08-11 and nobody looked again until 2026-08-22, by which
-  time every one of them had moved, one from 3.2 sigma to 5.9. Standing at
+  That second regression is the argument for the nightly: the figures here
+  were taken 2026-08-11 and not read again until 2026-08-22, by which time
+  every one of them had moved, one from 3.2 sigma to 5.9. Standing at
   2026-08-22 (`BALANCE_FULL=1`), worst seat deviation per generated sweep:
-  two seats 0.3 sigma, four 1.3 on the 12x9 beach and 1.2 on the 16x11,
-  six 2.5. The 16x11 run is 200 games against the others' 3000, so its
-  figure is the noisy one and not a fifth-column effect; a nightly job
-  should even the sample sizes before reading anything into it.
+  two seats 0.3 sigma, four 1.3 on the 12x9 beach and 1.2 on the 16x11, six
+  2.5. The 16x11 run is 200 games against the others' 3000, so its figure is
+  the noisy one; a nightly job should even the sample sizes first.
 
-  Read the generated sweeps and not the `classic` ones: those play a
-  single handmade board a hundred times with only the warm-up offset
-  varying, which is a small and heavily correlated sample, and their
-  sigmas swing several points between runs that change nothing they
-  measure.
+  Read the generated sweeps and not the `classic` ones, which play a single
+  handmade board a hundred times with only the warm-up offset varying: a
+  small, heavily correlated sample whose sigmas swing several points between
+  runs that change nothing they measure.
 
 - **It launches windowed.** With no `PINCH_WINDOW` the window is Bevy's
-  default 1280x720. Default to borderless fullscreen instead, with a
-  toggle and a settings row, which desktop players have been owed anyway.
-  Also a Deck requirement, where gamescope will scale a 720p window to
-  fill the screen so nothing is broken, but a first launch should look
-  intended.
+  default 1280x720. Default to borderless fullscreen instead, with a toggle
+  and a settings row. Also a Deck requirement, where gamescope scales a 720p
+  window to fill the screen so nothing is broken, but a first launch should
+  look intended.
 
 - **Raise the floor on small text.** `type_scale::FINE` is 13px and `BODY`
   15px, and between them they carry the notes, the hints, the menu blurbs
@@ -60,16 +53,15 @@ Nothing blocks these. They want the work and no more.
   may be fine, but they are below anything the interface uses deliberately.
 
   Also a Deck requirement, and the most common Verified failure there is.
-  The layout itself is lucky there: the interface is built for 1280x720
-  and the Deck is 1280x800, so `fit_ratio` stays at 1.0 and nothing
-  shrinks.
+  The layout itself is lucky: the interface is built for 1280x720 and the
+  Deck is 1280x800, so `fit_ratio` stays at 1.0 and nothing shrinks.
 
 - **An itch.io page**, with the shots in `docs/screenshots`. The binaries
   exist to put on it: `v0.4.0` is tagged and `release.yml` builds six
   targets across Linux, Windows and macOS. A Steam build is a longer road
-  and has a section of its own below; the update check is the one place
-  the two disagree, since it wants to be on for a downloaded build and off
-  for a store one.
+  and has a section of its own below; the update check is the one place the
+  two disagree, wanting to be on for a downloaded build and off for a store
+  one.
 
 ## Waiting on a machine
 
@@ -80,11 +72,11 @@ and neither can be judged on the machine they were written on.
   3 (`sim/net.rs:22`), with no adaptivity and no setting; the sessions that
   read it are built in `app/net/rounds.rs` and `app/net/mod.rs`. On a wired
   LAN the round trip is about a millisecond, so most of those three frames
-  are jitter margin rather than necessity, and delay 1 still leaves a 33 ms
-  budget. Turning it down recovers two thirds of what rollback offers for
-  the price of a constant, and the session waits rather than desyncs, so
-  setting it too low trades latency for hitches, which wifi will show
-  before ethernet does. Wants two machines and a real LAN to judge.
+  are jitter margin, and delay 1 still leaves a 33 ms budget. Turning it
+  down recovers two thirds of what rollback offers for the price of a
+  constant; the session waits rather than desyncs, so too low trades
+  latency for hitches, which wifi shows before ethernet does. Wants two
+  machines and a real LAN to judge.
 
 - **Single-threaded executor for the main world.** Behind the
   `PINCH_ST_EXEC=1` dev hook (`schedule.rs`), which swaps every main-world
@@ -114,12 +106,12 @@ and neither can be judged on the machine they were written on.
   working.
 
   What is *still* not known is how much frame budget it leaves on a slower
-  machine: serializing a hundred systems gives up the parallelism that
-  would absorb a heavy frame, and this hardware's uncapped test is not
-  trustworthy (an integrated GPU driven at several hundred fps throttles;
-  one 22-second run swung between 9 and 615 fps). Before adopting as the
-  default, run `PINCH_ST_EXEC=1` on the slowest machine available and
-  watch for hitches; the editor and puzzle screens remain unmeasured.
+  machine: serializing a hundred systems gives up the parallelism that would
+  absorb a heavy frame, and this hardware's uncapped test is not trustworthy
+  (an integrated GPU driven at several hundred fps throttles; one 22-second
+  run swung between 9 and 615 fps). Run `PINCH_ST_EXEC=1` on the slowest
+  machine available and watch for hitches before adopting it as the default;
+  the editor and puzzle screens remain unmeasured.
 
 ## Waiting on a reason
 
@@ -142,11 +134,11 @@ would change that.
   `ggrs` fits what is here already: `Config::State` is a `Board` (`Clone`,
   `state_hash`, `to_snapshot`), `Input` is the 3-byte packed action
   (`encode_action`; the 8 of `INPUT_BYTES` is the whole wire message),
-  `Address` is a `SocketAddr`, and `transport.rs` is the socket. One more
-  piece fell into place by accident: `sim_events.rs` diffs the board once a
-  frame rather than hooking the moments things happen, so a re-simulated
-  frame emits the net change instead of firing every bank sound twice.
-  That is the part that usually makes a rollback retrofit miserable.
+  `Address` is a `SocketAddr`, and `transport.rs` is the socket. And
+  `sim_events.rs` diffs the board once a frame rather than hooking the
+  moments things happen, so a re-simulated frame emits the net change
+  instead of firing every bank sound twice, which is the part that usually
+  makes a rollback retrofit miserable.
 
   Price: `ggrs` wants serde on the input type, and brings serde, bincode,
   parking_lot and rand with it. All of that lands in the shell beside the
@@ -160,15 +152,14 @@ would change that.
   Bevy wrapper in the middle.
 
   Worth keeping straight before reading either netcode entry: `ggrs` and
-  `matchbox_socket` carry no Bevy dependency at all, the property the sim
-  insists on for itself, while `bevy_ggrs` and `bevy_matchbox` are the
-  wrappers that marry them to the ECS. It is the wrappers that lag Bevy
-  releases, and the wrappers this game has least use for. As of 2026-09-17
-  and unchanged since 2026-08-11: `bevy_matchbox` 0.14 still pins
-  `bevy ^0.18` while this game is on 0.19, and it fails quietly rather than
-  loudly, since a 0.19 app that adds it *resolves*, ending up with both
-  0.18 and 0.19 in the lockfile and a plugin built from types the 0.19
-  `App` will not take. `bevy_ggrs` 0.22 does take `bevy ^0.19`.
+  `matchbox_socket` carry no Bevy dependency at all, while `bevy_ggrs` and
+  `bevy_matchbox` are the wrappers that marry them to the ECS. It is the
+  wrappers that lag Bevy releases, and the wrappers this game has least use
+  for. As of 2026-09-17 and unchanged since 2026-08-11: `bevy_matchbox` 0.14
+  still pins `bevy ^0.18` while this game is on 0.19, and it fails quietly,
+  since a 0.19 app that adds it *resolves*, ending up with both versions in
+  the lockfile and a plugin built from types the 0.19 `App` will not take.
+  `bevy_ggrs` 0.22 does take `bevy ^0.19`.
 
 - **Rising Tide, a flag-gated round variant.** Rows flood progressively
   during the round, washing away the posts standing on them and becoming
@@ -191,27 +182,24 @@ would change that.
   replace it, since every other seat, the keyboard included, keeps the two
   stages.
 
-- **Watching a round that has already started.** A peer the socket picks
-  up mid-round is answered with `NetMsg::Queued { ahead }` and waits for
-  the next one (`net::rounds::queue_place`). That is deliberate and it
-  replaced something worse, since admitting a latecomer as a spectator was
-  how one used to end up staring at frame zero forever: a lockstep session
-  replays from frame zero and the resend tail only reaches `resend_span`
-  frames back, 33 at the default delay, so a peer that arrives late can
-  never fill the frames it missed. (Forty was the old fixed window, and
-  `sim/net.rs:133` records why it went: it deadlocked under a one-way loss
-  burst.)
+- **Watching a round that has already started.** A peer the socket picks up
+  mid-round is answered with `NetMsg::Queued { ahead }` and waits for the
+  next one (`net::rounds::queue_place`). That is deliberate: a lockstep
+  session replays from frame zero and the resend tail only reaches
+  `resend_span` frames back, 33 at the default delay, so a latecomer
+  admitted as a spectator ends up staring at frame zero forever. (Forty was
+  the old fixed window, and `sim/net.rs:133` records why it went: it
+  deadlocked under a one-way loss burst.)
 
   Letting them in needs a snapshot join rather than a replay: hand the
   arrival the board as it stands and start their session at that frame
-  instead of zero. The format for it exists and is exercised. The *level*
-  format cannot carry a round in progress, which is what the note in
-  `tests/it/online.rs` means, but `snapshot-v1`
-  (`Board::to_snapshot` / `parse_snapshot`) carries every field
-  `state_hash` covers, and `app::suspend` already moves a mid-round board
-  between machines that way for the share codes. What is missing is a
-  `Lockstep` that can begin at a nonzero frame, and a wire message to
-  carry the snapshot.
+  instead of zero. The format exists and is exercised. The *level* format
+  cannot carry a round in progress, which is what the note in
+  `tests/it/online.rs` means, but `snapshot-v1` (`Board::to_snapshot` /
+  `parse_snapshot`) carries every field `state_hash` covers, and
+  `app::suspend` already moves a mid-round board between machines that way.
+  What is missing is a `Lockstep` that can begin at a nonzero frame, and a
+  wire message to carry the snapshot.
 
   Worth it on a busy LAN, where someone wandering over to watch is the
   common case and "wait for the next round" is the whole of the answer
@@ -219,12 +207,11 @@ would change that.
 
 - **The round-end spectacle, half of it.** The wave shipped
   (`board_render::wash`): at zero the sea comes in over the whole beach,
-  holds, and drains, with everything the round built underneath it. What
-  did not ship is the other half of the original's ending, the sheltered
-  crabs scuttling home to sea. The obstacle is that the sim is frozen at
-  the wave (spec §3.7) and the crabs it is holding are the *scored* ones,
-  so sending them anywhere is a render-side fiction that has to invent both
-  a count and a route. Worth doing when someone wants it; not worth
+  holds, and drains, with everything the round built underneath it. What did
+  not ship is the other half of the original's ending, the sheltered crabs
+  scuttling home to sea. The sim is frozen at the wave (spec §3.7) and the
+  crabs it holds are the *scored* ones, so sending them anywhere is a
+  render-side fiction that has to invent both a count and a route. Not worth
   unfreezing anything for.
 
 ## Steam and the Steam Deck
@@ -235,12 +222,12 @@ desktop players too: borderless fullscreen by default and the small-text
 floor.
 
 The shape of it, checked 2026-08-17 and re-checked 2026-09-17: the game is
-in unusually good order for a controller-first platform, because
-`gamepad::pad_menu_bridge` already mirrors the d-pad onto W/S/A/D and South
-onto Enter, and the seat-claiming ceremony already runs off Start. What is
-missing is *text*, both the text a player has to type and the text the game
-uses to name keys it no longer has. Those two are the work; everything
-under them is paperwork and packaging.
+in good order for a controller-first platform, `gamepad::pad_menu_bridge`
+already mirroring the d-pad onto W/S/A/D and South onto Enter, and the
+seat-claiming ceremony already running off Start. What is missing is *text*,
+both the text a player has to type and the text the game uses to name keys
+it no longer has. Those two are the work; the rest is paperwork and
+packaging.
 
 Valve grades a Deck build Verified / Playable / Unsupported on four counts:
 input, display, seamlessness, system support. Seamlessness and system
@@ -255,20 +242,19 @@ anti-cheat, so what follows is input and display.
   editor's `F1` naming, and seat names on the match-setup card.
 
   Two ways out. Link `steamworks-rs` and call
-  `ShowFloatingGamepadTextInput` when a naming row opens, the honest fix
-  and the same dependency the achievements below want. Or make typing
-  optional: a pad-driven letter grid, or a default name the lobby accepts,
-  so the keyboard is a convenience rather than a gate. The second is
-  cheaper and works off Steam too, which the first does not.
+  `ShowFloatingGamepadTextInput` when a naming row opens, which is the
+  honest fix and the same dependency the achievements below want. Or make
+  typing optional, with a pad-driven letter grid or a default name the lobby
+  accepts. The second is cheaper and works off Steam too.
 
 - **Every prompt line is worded for a keyboard.** `menu_prompt`,
   `prompt_setup`, `prompt_versus_short` and the rest spell out WASD, Enter,
   Esc, Space and the arrow keys, in eight languages. Verified asks that
   on-screen glyphs match the device in the player's hands. The input path
-  is already bridged; it is only the words that lie. This is not only a
-  Deck problem: a pad player on a desktop reads the same lies, and the one
-  place the words and the bridge actually disagreed was a button that
-  quietly closed the game.
+  is already bridged; it is only the words that lie. Not only a Deck
+  problem: a pad player on a desktop reads the same lies, and the one place
+  the words and the bridge actually disagreed was a button that quietly
+  closed the game.
 
   The seam to do it at exists and is proven. `KeyCaps::legend`
   (`keycaps/mod.rs:166`) already rewrites key names in a prompt from a
@@ -276,16 +262,15 @@ anti-cheat, so what follows is input and display.
   it, so there is no call-site plumbing to build and no per-language prompt
   variant to write.
 
-  What it does not yet reach is the hard half, and this is why the entry is
-  still large. `BLOCKS` matches only spellings that are the same in every
-  language: `WASD`, `IJKL`, `W/S`, `A/D`. The words a pad player most needs
-  replaced are the localized ones. French alone says `Entrée`, `Échap` and
-  `Espace`, and every language spells the arrow keys its own way
-  (`touches fléchées`, `矢印キー`, `клавиши-стрелки`). Reaching those means
-  the tables carry a language-independent marker where they currently carry
-  a translated key name, which is a mechanical edit to every prompt line in
-  eight tables, and it touches translations. Real work, and smaller than
-  writing a pad variant of every line, but not a one-liner.
+  What it does not reach is the hard half. `BLOCKS` matches only spellings
+  that are the same in every language: `WASD`, `IJKL`, `W/S`, `A/D`. The
+  words a pad player most needs replaced are the localized ones: French
+  alone says `Entrée`, `Échap` and `Espace`, and every language spells the
+  arrow keys its own way (`touches fléchées`, `矢印キー`,
+  `клавиши-стрелки`). Reaching those means the tables carry a
+  language-independent marker where they now carry a translated key name, a
+  mechanical edit to every prompt line in eight tables. Smaller than writing
+  a pad variant of every line, but not a one-liner.
 
   `pad_help1` / `pad_help2` on the settings card are the only lines that
   speak pad today.
@@ -308,7 +293,7 @@ anti-cheat, so what follows is input and display.
   (`ACHIEVEMENTS`), and a player who sees an achievements screen on a Steam
   game expects them on their profile. That is `steamworks-rs` and a hook in
   `achievements::track::unlock_new`, the same dependency the on-screen
-  keyboard wants, which is an argument for doing both at once or neither.
+  keyboard wants, so both at once or neither.
 
 - **Packaging.** Build inside the Steam Linux Runtime 3.0 (sniper)
   container and set it as the depot's compat tool: building on a host glibc
@@ -349,13 +334,12 @@ Kept because the next person to have the idea deserves the measurements.
   Built 2026-08-14 and reverted. It is *correct*, validating all 38 levels
   that shipped at the time identically with the whole suite passing, and it
   is *slower*. The `--ignored` level check went 120 s to 147 s, and two
-  earlier shapes of it were far worse (332 s hashing the whole board per
-  tick; still losing when cut down to only the parts that move). The reason
-  is arithmetic, not soundness: watching costs a hash and a set insert
-  every tick of every node, while the runs that actually cycle are a small
-  minority, 51 of roughly 2700 nodes on the one test measured. Skipping the
-  watch until a run has passed 150 ticks recovered most of the loss and
-  still did not pay for itself.
+  earlier shapes were far worse (332 s hashing the whole board per tick;
+  still losing when cut down to only the parts that move). The arithmetic is
+  the reason: watching costs a hash and a set insert every tick of every
+  node, while the runs that cycle are a small minority, 51 of roughly 2700
+  nodes on the one test measured. Skipping the watch until a run has passed
+  150 ticks recovered most of the loss and still did not pay for itself.
 
   Both cautions found earlier hold and are worth keeping: the transition
   reads the absolute tick (spawner periods, gull period), so the key needs

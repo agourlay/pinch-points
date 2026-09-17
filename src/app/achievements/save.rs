@@ -145,11 +145,10 @@ pub fn parse(text: &str) -> (Stats, Unlocked) {
     // this a returning player's standing daily score reads as zero, and the
     // backfill below would not see a trophy they had already earned.
     stats.daily_record = stats.daily_record.max(stats.daily_best);
-    // Backfill: anything the stats already satisfy is earned, whether or not
-    // the file remembers it. A trophy added after a player passed its
-    // threshold would otherwise sit on the shelf reading "25/25" and locked,
-    // waiting for one more of something they had already done twenty-five
-    // times. No toast for these; they are not news.
+    // Backfill: anything the stats already satisfy is earned, whether or
+    // not the file remembers it. A trophy added after a player passed its
+    // threshold would otherwise sit on the shelf reading "25/25" and
+    // locked. No toast for these; they are not news.
     for achievement in &ACHIEVEMENTS {
         if achievement.met(&stats) {
             unlocked.0.insert(achievement.id);
@@ -178,11 +177,10 @@ mod tests {
     /// Everything a player has ever done survives the trip to disk.
     ///
     /// `to_text` destructures `Stats` with no rest pattern, so a new field
-    /// cannot be added without deciding whether it is saved - but nothing
-    /// forces `parse` to be taught to read it back, and the parser is
-    /// lenient by design: an unknown key is skipped in silence. So a stat
-    /// written and never read comes back as zero, and the only symptom is
-    /// a lifetime total that quietly resets between runs.
+    /// cannot be added without deciding whether it is saved, but nothing
+    /// forces `parse` to read it back and an unknown key is skipped in
+    /// silence. A stat written and never read comes back as zero, and the
+    /// only symptom is a lifetime total that resets between runs.
     #[test]
     fn a_lifetime_of_play_survives_the_trip_to_disk() {
         // Every field distinct and non-default, so a parser that dropped
@@ -206,12 +204,10 @@ mod tests {
             series_wins: 7,
             online_wins: 26,
             daily_days: 44,
-            // At least `daily_best`, and deliberately so: `parse` lifts
-            // today's best into the all-time record, so a save written
-            // before that field existed does not lose it. A fixture with a
-            // record below today's would come back *corrected* rather than
-            // unchanged, and this test would be reading that migration
-            // instead of the round trip.
+            // At least `daily_best`, deliberately: `parse` lifts today's
+            // best into the all-time record, so a fixture with a record
+            // below today's comes back *corrected* and this test would be
+            // reading that migration instead of the round trip.
             daily_record: 501,
             ..Stats::default()
         };
@@ -225,8 +221,7 @@ mod tests {
         // Nothing *lost*, rather than nothing gained: the shelf is derived
         // from the stats as well as read from the file, so a lifetime this
         // long lights more trophies on the way in than were written out.
-        // That is the feature - a save from before a trophy existed earns
-        // it on load - so the count is not the thing to assert.
+        // That is the feature, so the count is not the thing to assert.
         for trophy in ACHIEVEMENTS.iter().take(5) {
             assert!(
                 earned.0.contains(trophy.id),
@@ -236,11 +231,11 @@ mod tests {
         }
     }
 
-    /// A save file written by a newer build has to be readable by this
-    /// one. Trophies are named by id, and a version that added one writes
-    /// a name this build has never heard of: refusing the file, or taking
-    /// the unknown name as earned, would either wipe a player's shelf or
-    /// light a trophy that does not exist here.
+    /// A save file written by a newer build has to be readable by this one.
+    /// Trophies are named by id, and a version that added one writes a name
+    /// this build has never heard of: refusing the file would wipe a
+    /// player's shelf, and taking it as earned would light a trophy that
+    /// does not exist here.
     #[test]
     fn a_trophy_from_the_future_is_ignored_rather_than_believed() {
         let stats = Stats {

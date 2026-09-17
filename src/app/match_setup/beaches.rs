@@ -7,15 +7,12 @@
 
 use super::*;
 
-/// The board those terms describe, built through the same path a local match
-/// uses so online and offline cannot drift apart.
 /// The handmade beaches on this machine, as of the last time a screen that
 /// offers them opened.
 ///
 /// A resource and not a function call, because the two places that read it
-/// are drawn every frame: `map_label` used to go to the disk and parse
-/// every level file sixty times a second, which is a strange thing for a
-/// menu to do.
+/// are drawn every frame: as a call, `map_label` went to the disk and
+/// parsed every level file sixty times a second.
 #[derive(Resource, Default)]
 pub struct CustomBeaches(pub Vec<Beach>);
 
@@ -67,11 +64,9 @@ impl CustomBeaches {
 /// The aside for the map row when the shelf has beaches on it and this
 /// table is too big for every one of them.
 ///
-/// The dial skipping an empty stop is right - a press that changes nothing
-/// is a dead press - but it left the reason unsaid. A beach with two
-/// castles simply stopped being offered the moment a third player joined
-/// the table, which from the other side of the screen looks like a beach
-/// the game has lost.
+/// The dial skipping an empty stop is right, a press that changes nothing
+/// being a dead press, but unsaid it looks like a beach the game has lost:
+/// two castles stop being offered the moment a third player sits down.
 pub fn beaches_note(
     config: &MatchConfig,
     tr: &crate::app::i18n::Tr,
@@ -114,8 +109,8 @@ pub fn cycle_map(config: &mut MatchConfig, turn: Turn, beaches: &CustomBeaches) 
 /// `Custom` with no beach that seats the table (the shelf changed, or the
 /// table grew, since it was chosen; [`settle_map`] steps off it where it
 /// can) reads as the beach that will actually be played: both the local
-/// launch and the wire build a generated 20x13 arena for it, which is the
-/// XL beach, so that is the name shown. It used to say "Classic".
+/// launch and the wire build a generated 20x13 arena, so it names the XL
+/// beach.
 pub fn map_label(
     config: &MatchConfig,
     tr: &crate::app::i18n::Tr,
@@ -160,9 +155,9 @@ pub fn beach_bytes(config: &MatchConfig, seats: u8, beaches: &CustomBeaches) -> 
         .filter(|beach| beach.level.seats() >= seats)
         .filter(|beach| {
             // A beach that will not fit a datagram is dropped here, where
-            // the fallback is a generated arena everybody can build. Sent
-            // anyway it would be truncated on arrival and refused, and the
-            // joiner would wait out an invitation that never decoded.
+            // the fallback is a generated arena everybody can build: sent
+            // anyway it is truncated on arrival and refused, and the joiner
+            // waits out an invitation that never decoded.
             let sendable = !beach.too_big_to_send();
             if !sendable {
                 warn!(

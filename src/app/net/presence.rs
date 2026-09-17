@@ -7,8 +7,7 @@
 //!
 //! Both halves of that live here: the session's, which decides a seat has
 //! gone, and the shell's, which puts an AI in the chair and tells the
-//! table. They were a file apart, and the second read as an odd guest in
-//! the middle of level loading.
+//! table.
 
 use super::*;
 use crate::app::cycle::Cycle;
@@ -28,12 +27,10 @@ pub(super) const ABANDON_AFTER: f32 = 5.0;
 /// calls the round off.
 ///
 /// Nothing can save a round whose host has gone: it alone relays every
-/// input, decides who has left, and calls the next one. So this is not a
-/// patience that buys anything. It is only long enough that a machine
-/// which stumbles (a big alt-tab, a sleeping laptop lid, a hotel wifi
-/// hiccup) is given a fair chance to come back before its friends are sent
-/// home. Four times the patience the host shows an ordinary player, which
-/// is the most a table will sit and stare anyway.
+/// input, decides who has left, and calls the next one. So this buys
+/// nothing but a fair chance for a machine that stumbles (a big alt-tab, a
+/// sleeping laptop lid, a hotel wifi hiccup). Four times the patience the
+/// host shows an ordinary player.
 const HOST_GONE_AFTER: f32 = 20.0;
 
 /// How long the picture has to have been still before the status line
@@ -46,10 +43,9 @@ const SAY_WAITING_AFTER: f32 = 0.6;
 /// the round is moving again, so a wait that keeps coming back holds one
 /// steady line rather than blinking once per stumble.
 ///
-/// It has to outlast the gap between two stalls in a round that is merely
-/// limping, and that gap is at most [`SAY_WAITING_AFTER`] of fresh waiting
-/// plus whatever play sits between them. A second and a half covers the
-/// former twice over; longer than that and a round that has genuinely
+/// It has to outlast the gap between two stalls in a limping round, which
+/// is at most [`SAY_WAITING_AFTER`] of fresh waiting plus whatever play
+/// sits between them. Longer than this and a round that has genuinely
 /// recovered goes on being talked about.
 const SAY_WAITING_FOR: f32 = 1.5;
 
@@ -86,15 +82,14 @@ impl OnlineSession {
     /// Whether the host has gone: a joiner's own verdict on the one peer it
     /// has, and the only thing it may decide by itself.
     ///
-    /// Deciding *this* alone is safe where deciding a seat is not. An
+    /// Deciding *this* alone is safe where deciding a seat is not: an
     /// abandoned seat keeps playing under an AI and every peer must agree
-    /// on the frame that happened; a joiner leaving takes nothing with it
-    /// but itself.
+    /// on the frame that happened, while a joiner leaving takes nothing
+    /// with it but itself.
     ///
     /// A pause makes no difference: the pump runs through one (that is
     /// what carries the resume), so a host that is there keeps talking
-    /// however still the picture is, and one that has quit under the pause
-    /// card should not leave the table sitting on it for good.
+    /// however still the picture is.
     pub fn host_gone(&self) -> bool {
         !self.is_host()
             && self
@@ -112,12 +107,10 @@ impl OnlineSession {
     /// Two things have to be true, and the second is the one that matters:
     /// the round is held up by that seat, *and* the machine holding it has
     /// not said a word for [`ABANDON_AFTER`]. A held-up frame on its own is
-    /// weak evidence: it is also what a burst of loss looks like, and what
-    /// a peer that is a second behind looks like. A table where the slowest
-    /// laptop loses its castle every few minutes is worse than one that
-    /// waits. Silence is the strong evidence: every peer sends on
-    /// every tick it runs, resending every commit a peer could still be
-    /// missing, so a machine still in the room is a machine still talking.
+    /// also what a burst of loss looks like, and what a peer a second
+    /// behind looks like. Silence is the strong evidence: every peer sends
+    /// on every tick it runs, resending every commit a peer could still be
+    /// missing, so a machine still in the room is still talking.
     ///
     /// Returns what was given up on this call, which the tests read. The
     /// lasting record is `abandoned`, because a joiner is *told* rather
@@ -160,11 +153,10 @@ impl OnlineSession {
         if at != stall.stalled_on || waiting.is_empty() {
             stall.stalled_on = at;
             stall.stalled_for = 0.0;
-            // The line is let down gently. One frame getting through is
-            // not the round recovering: a limping round gets one through
-            // every other tick. The clock only runs while the picture is
-            // actually moving, so a wait that keeps coming back reads as one
-            // steady line rather than a dozen.
+            // The line is let down gently: one frame getting through is
+            // not the round recovering, since a limping round gets one
+            // through every other tick. The hold only runs down while the
+            // picture is actually moving.
             stall.waiting_hold = (stall.waiting_hold - delta).max(0.0);
             if stall.waiting_hold == 0.0 {
                 stall.waiting_on = None;
@@ -228,9 +220,8 @@ impl OnlineSession {
     ///
     /// Abandoning only unsticks the play; without this the departed peer is
     /// still counted, still holds its place in the launch plan, and is
-    /// still dealt a seat in the round after. That round stalls on it for
-    /// five seconds and gives up on the same ghost all over again, every
-    /// round, until somebody goes back to the lobby.
+    /// still dealt a seat in the round after, which stalls on the same
+    /// ghost all over again.
     fn forget_seat(&mut self, seat: u8) {
         debug_assert!(usize::from(seat) < MAX_PLAYERS, "no such seat: {seat}");
         let Some(peer) = self.peers.holder_of(seat) else {
@@ -251,10 +242,9 @@ impl OnlineSession {
     ///
     /// The results card is the one place a peer leaves without the round
     /// noticing: Escape, the menu, a crash, and nothing stalls, because
-    /// nothing is being simulated. Left on the socket, it was dealt a
-    /// chair in the next round and every table froze on the ghost for
-    /// five seconds before the host gave up on it. A joiner on the card
-    /// greets once a second precisely so that silence means something.
+    /// nothing is being simulated. Left on the socket, it is dealt a chair
+    /// in the next round and freezes every table on the ghost. A joiner on
+    /// the card greets once a second so that silence means something.
     pub(super) fn forget_the_silent(&mut self) {
         debug_assert!(self.is_host(), "only the host keeps the table");
         for peer in (0..self.peers.len()).rev() {
@@ -271,9 +261,9 @@ impl OnlineSession {
 
     /// Whether the host gave up on this seat: its own abandonment came
     /// over the wire. The host stops talking to a seat it has dropped, so
-    /// left to [`Self::host_gone`] a joiner that merely stalled for five
-    /// seconds sat on a frozen beach for twenty more and was then told the
-    /// host had left, which was not what happened.
+    /// left to [`Self::host_gone`] the joiner would sit on a frozen beach
+    /// for twenty seconds and then be told the host had left, which is not
+    /// what happened.
     pub fn dropped(&self) -> bool {
         !self.is_host()
             && self
@@ -286,8 +276,7 @@ impl OnlineSession {
     ///
     /// A lockstep frame runs only when every seat's input is in, so a
     /// still picture is the ordinary shape of somebody else's trouble.
-    /// This lets the screen say whose, instead of leaving a table
-    /// of people asking each other whether it has crashed.
+    /// This lets the screen say whose.
     pub fn waiting_on(&self) -> Option<u8> {
         self.stall
             .waiting_on
@@ -342,10 +331,8 @@ pub(crate) fn abandon_the_departed(
 /// Every other kind of departure leaves a round that can go on: a rival's
 /// castle is handed to an AI and the beach plays out. A host's cannot. It
 /// is the hub of the star: it relays every input, decides who has left,
-/// and calls the next round. A table whose host has vanished is not
-/// waiting for anything. Before this, it waited anyway: a still beach,
-/// forever, with no word about why and nothing on screen to suggest that
-/// Escape was the way out.
+/// and calls the next round. Without this the table waits on a still beach
+/// forever, with nothing on screen to suggest Escape is the way out.
 pub(crate) fn leave_a_hostless_round(
     settings: Res<GameSettings>,
     online: Res<Online>,
@@ -380,11 +367,9 @@ mod tests {
     /// The pause *is* the stall: every peer stops committing at the agreed
     /// frame, so nobody completes it and `awaiting` names everybody. The
     /// shell's own `Paused` flag is never set in an online round, because
-    /// the pause card leaves the ticker running on purpose so the network
-    /// pump keeps carrying the resume. So the flag alone said "nothing is
-    /// paused", and five seconds later the host handed every rival's castle
-    /// to an AI and went on simulating a round its peers were no longer part
-    /// of. Pausing for a moment cost you the game.
+    /// the pause card leaves the ticker running so the pump keeps carrying
+    /// the resume. Read from that flag alone, pausing for a moment cost
+    /// every rival their castle five seconds later.
     #[test]
     fn a_paused_round_is_not_an_abandoned_one() {
         // Delay zero, so frame zero is waiting on both seats from the off:
@@ -420,9 +405,7 @@ mod tests {
     /// A held-up frame is weak evidence: it is equally what a burst of loss
     /// looks like, and what a laptop half a second behind looks like. The
     /// strong evidence is silence on the socket, since every peer sends on
-    /// every tick it runs. The slowest machine at the table losing its
-    /// castle to an AI every few minutes is the failure that makes people
-    /// stop playing.
+    /// every tick it runs.
     #[test]
     fn a_peer_that_is_still_talking_keeps_its_castle() {
         let transport = UdpTransport::host(0).expect("game socket");
@@ -499,13 +482,11 @@ mod tests {
     /// A table reading the scores together is not a table whose host has
     /// gone, however quiet it is.
     ///
-    /// The trap under this fix, and the worse bug of the two: a settled
-    /// session falls silent between rounds on purpose (see `greet_in`), so
-    /// silence read as evidence there walks every joiner out of a
-    /// perfectly good table.
-    ///
-    /// The greeting is what makes the silence mean something. Over real
-    /// sockets, because the point is that a reply actually comes back.
+    /// A settled session falls silent between rounds on purpose (see
+    /// `greet_in`), so silence read as evidence there walks every joiner
+    /// out of a perfectly good table. The greeting is what makes it mean
+    /// something, and this runs over real sockets so a reply really comes
+    /// back.
     #[test]
     fn a_quiet_results_card_is_not_a_host_that_has_gone() {
         let mut host = OnlineSession::new(
@@ -549,18 +530,12 @@ mod tests {
     /// A round that is running says nothing at all, and gives nobody's
     /// castle away.
     ///
-    /// This is the bug under the reported one. A lockstep sim advances
-    /// until it *cannot*, and it does that on the fixed step; the tick that
-    /// watches for stalls runs afterwards, in `Update`. So "are the next
-    /// frame's inputs in?" is asked at the one moment in the frame where
-    /// the answer is always no, and every healthy online round was read as
-    /// permanently stalled: both screens said "waiting for Bob" through a
-    /// match that was running perfectly, and the host was five seconds from
-    /// handing every rival's seat to an AI at all times, held back by
-    /// nothing but the socket-silence rule.
-    ///
-    /// The picture moving is the only thing either reader wanted to know,
-    /// and it is not a matter of timing within a frame.
+    /// A lockstep sim advances until it *cannot*, on the fixed step, and
+    /// the tick that watches for stalls runs afterwards, in `Update`. So
+    /// "are the next frame's inputs in?" is asked at the one moment where
+    /// the answer is always no, and every healthy round read as
+    /// permanently stalled. The picture moving is the only thing either
+    /// reader wants to know.
     #[test]
     fn a_round_that_is_running_says_nothing() {
         use crate::sim::PlayerAction;
@@ -601,13 +576,9 @@ mod tests {
     /// A round that keeps stopping and starting says so once, not once per
     /// stumble.
     ///
-    /// The bug this was reported as: "constant flickering in the corner".
-    /// The line was read straight off the stall clock, and that clock snaps
-    /// back to zero the instant one frame gets through, and a limping round
-    /// does that over and over. So the line came up, a
-    /// frame landed, it went, the wait built back past the threshold, it
-    /// came up again: a strobe in the corner of the eye of somebody trying
-    /// to play.
+    /// Read straight off the stall clock it strobes: that clock snaps back
+    /// to zero the instant one frame gets through, and a limping round does
+    /// that over and over.
     #[test]
     fn a_round_that_keeps_stumbling_says_so_once() {
         use crate::sim::PlayerAction;
@@ -623,10 +594,9 @@ mod tests {
         let frame = 1.0 / 60.0;
 
         /// A frame of a round that is moving, in the order the app runs it:
-        /// the sim advances on the fixed step, as far as it can, and only
-        /// then does the tick that watches for stalls get a look. It
-        /// therefore always finds the *next* frame's slots empty. That is
-        /// why this cannot be judged by looking at them.
+        /// the sim advances on the fixed step, and only then does the tick
+        /// that watches for stalls get a look, always finding the *next*
+        /// frame's slots empty.
         fn moving(session: &mut OnlineSession, delta: f32) {
             let at = session.session.frame();
             session.session.commit_local(PlayerAction::None);
@@ -661,8 +631,8 @@ mod tests {
         assert_eq!(session.waiting_on(), Some(1), "and then it says whose");
 
         // The round limps: a stretch of play, a stall, a stretch of play.
-        // Every one of those stretches used to blink the line out and every
-        // stall used to bring it back, which is the strobe as reported.
+        // Every stretch blinked the line out and every stall brought it
+        // back, which is the strobe.
         for _ in 0..20 {
             for _ in 0..(0.3 / frame) as usize {
                 moving(&mut session, frame);
@@ -800,11 +770,9 @@ mod tests {
         assert!(joiner.abandoned.is_empty(), "and nothing was given up");
     }
 
-    /// Abandoning has to empty the chair for good. Unsticking the play is
-    /// only half of it: a peer that is still counted still holds its place
-    /// in the launch plan, is dealt a seat in the round after, and stalls
-    /// that one too: five seconds of nothing at the start of every round
-    /// from then on, for a player who left once.
+    /// Abandoning has to empty the chair for good. A peer that is still
+    /// counted holds its place in the launch plan, is dealt a seat in the
+    /// round after, and stalls that one too.
     #[test]
     fn an_abandoned_player_does_not_haunt_the_next_round() {
         let mut host = hosting(vec![0, 1]);
@@ -842,10 +810,8 @@ mod tests {
         assert_eq!(host.terms.bots, 1, "and somebody in the other one");
     }
 
-    /// A host never gives up on itself. Its own slot is empty whenever it
-    /// has not committed this frame yet, which is an ordinary moment. A
-    /// host that handed its own castle to an AI would be sitting there
-    /// watching a bot play its round.
+    /// A host never gives up on itself: its own slot is empty whenever it
+    /// has not committed this frame yet, which is an ordinary moment.
     #[test]
     fn a_host_never_abandons_its_own_castle() {
         let mut session = hosting(vec![0]);
@@ -890,9 +856,8 @@ mod tests {
 
     /// The whole thing, driven by the system that really runs it: a player
     /// stops sending, the round comes back, an AI is holding their castle,
-    /// and the feed says so. Built as the app builds it, because the parts
-    /// were each right the last time something like this broke and it was
-    /// the wiring between them that was not.
+    /// and the feed says so. Built as the app builds it, since it is the
+    /// wiring between the parts that breaks.
     #[test]
     fn a_departed_player_is_replaced_by_an_ai_and_the_feed_says_so() {
         let mut app = App::new();

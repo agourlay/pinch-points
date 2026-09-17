@@ -14,66 +14,52 @@ use std::io;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 
 /// The wire protocol this build speaks. Bump it whenever the layout of any
-/// datagram changes, and whenever one is *added*, which is the case that
-/// is easy to miss: two builds both claiming the same version, one of them
-/// sending a message the other has no tag for, is the silent disagreement
-/// the byte exists to prevent. Chat, the roster and the
-/// abandonment notice all arrived under version 4 before this was noticed.
+/// datagram changes, and whenever one is *added*, which is the case that is
+/// easy to miss: chat, the roster and the abandonment notice all arrived
+/// under version 4 before anybody noticed.
 ///
 /// Bump it for a change in **what the sim does**, too. Lockstep sends
 /// inputs, not outcomes, so two builds that tick the same inputs to
 /// different boards are the worst version of this: every datagram decodes,
 /// and the game quietly stops being the same game on both machines. Version
-/// 6 is where gulls started catching crabs they walked head-on into, 7
-/// is where a `Start` grew a tail (the host's handmade beach, when the
-/// round is played on one), 8 is where `Resume` and `Abandoned` each
-/// grew a frame number, and gulls started catching crabs across the seam
-/// of a wrapping board, and 10 is where a handmade beach that cannot seat
-/// the table stopped being played on and gave way to the generated arena
-/// the terms name.
+/// 6 is where gulls started catching crabs they walked head-on into, 7 is
+/// where a `Start` grew a tail (the host's handmade beach), 8 is where
+/// `Resume` and `Abandoned` each grew a frame number and gulls started
+/// catching crabs across the seam of a wrapping board, 10 is where a
+/// handmade beach that cannot seat the table gave way to the generated
+/// arena the terms name, and 11 is where a tick's inputs became one
+/// datagram.
 ///
-/// Version 11 is where a tick's inputs became one datagram: `Input`
-/// retired and `Inputs` took its place, which is a tag added and a tag
-/// withdrawn, the two cases this number exists for.
-///
-/// That last one is the shape this paragraph is about, and worth reading
-/// twice: not one byte of the `Start` moved. Two builds hold the identical
-/// datagram, agree on every field in it, and lay out different beaches
-/// from it. Nothing would have complained, and the hash check would have
-/// called it a desync without ever saying why.
+/// Version 10 is the shape worth reading twice: not one byte of the `Start`
+/// moved. Two builds hold the identical datagram, agree on every field in
+/// it, and lay out different beaches from it.
 ///
 /// Byte 1 of every datagram carries this number, and **that position is
 /// frozen for all time**: it is how a build tells "I cannot read this"
-/// apart from "I disagree with this", however the rest of the format moves.
-/// Without it two peers on different builds decode each other's messages and
-/// silently disagree about the round, which looks like a desync or like
-/// nothing at all.
+/// apart from "I disagree with this", however the rest of the format
+/// moves.
 pub const PROTOCOL_VERSION: u8 = 11;
 
 /// Connections a host accepts: five rivals (a six-seat table) and everyone
 /// else who turned up. How many of them get a seat is the lobby's
 /// business, not the socket's.
 ///
-/// One pool for the lot, so a full table used to leave room for four
-/// onlookers and the tenth person to arrive was ignored: no answer, and a
+/// One pool for the lot, so at ten a full table left room for four
+/// onlookers and the next person to arrive was ignored: no answer, and a
 /// joiner that hears nothing reports the host as absent rather than the
-/// beach as full. A hall is bigger than that.
+/// beach as full.
 ///
-/// Raised to sixteen once a peer in line stopped being sent the round it
-/// is not watching (see `PeerBook::follows_the_round`). That is what makes
-/// the number affordable: someone waiting now costs a roster line and a
-/// beacon, where before each one cost the host about 180 datagrams a
-/// second. A *watcher* still costs that, because it is simulating the
-/// round like everybody else, so eleven onlookers at a full table is worth
-/// having only because most of them are in line rather than at the rail.
+/// Sixteen is affordable because a peer in line is no longer sent the round
+/// it is not watching (see `PeerBook::follows_the_round`): someone waiting
+/// costs a roster line and a beacon, where before it cost the host about
+/// 180 datagrams a second. A *watcher* still costs that, being in the
+/// round like everybody else.
 pub const MAX_PEERS: usize = 16;
 
 /// The receive buffer, which must hold the largest message whole: UDP
-/// truncates a datagram to the buffer given, and a truncated message
-/// fails decode silently. A test proves every message fits.
-/// A datagram this build will read. Raised from 512 when the host became
-/// able to send a handmade beach with the invitation: a compressed 20x13
-/// level is a few hundred bytes on top of the seats and the names.
+/// truncates a datagram to the buffer given, and a truncated message fails
+/// decode silently. A test proves every message fits. Raised from 512 when
+/// the host became able to send a handmade beach with the invitation.
 const MAX_DATAGRAM: usize = 1024;
 
 /// The most compressed beach an invitation may carry. Everything else in a
@@ -82,10 +68,9 @@ const MAX_DATAGRAM: usize = 1024;
 ///
 /// It has to be a number the sender checks, because the failure is silent
 /// at the other end: an oversized datagram is truncated to the receive
-/// buffer, decode refuses the remains, and the joiner sits waiting for an
-/// invitation that arrived and was thrown away. A busy 20x13 beach packs to
-/// about 570 bytes and fits; one with a crab on every tile packs to over
-/// 1300 and does not.
+/// buffer, decode refuses the remains, and the joiner waits for an
+/// invitation that was thrown away. A busy 20x13 beach packs to about 570
+/// bytes and fits; one with a crab on every tile packs to over 1300.
 ///
 /// `a_start_carrying_the_largest_beach_still_fits` holds the arithmetic.
 pub const MAX_BEACH_BYTES: usize = 832;
@@ -106,12 +91,11 @@ pub struct UdpTransport {
 ///
 /// A host binds `0.0.0.0`, so its own socket cannot say which of the
 /// machine's addresses a friend should dial, and the standard library has
-/// no way to list interfaces. So this asks the routing table instead:
-/// connecting a UDP socket sends nothing at all, but it does make the
-/// kernel choose the interface it *would* send from, and the socket then
-/// knows the address of that interface. The target is a direction to
-/// point in, nothing more: a documentation address (RFC 5737) that belongs
-/// to nobody, and no datagram is ever sent to it.
+/// no way to list interfaces. So this asks the routing table: connecting a
+/// UDP socket sends nothing, but it makes the kernel choose the interface
+/// it *would* send from, and the socket then knows that interface's
+/// address. The target is a direction to point in, a documentation address
+/// (RFC 5737) no datagram is ever sent to.
 pub fn local_ip() -> Option<std::net::IpAddr> {
     let probe = UdpSocket::bind(("0.0.0.0", 0)).ok()?;
     probe.connect(("203.0.113.1", 9)).ok()?;
@@ -185,8 +169,7 @@ impl UdpTransport {
     ///
     /// The audience is the caller's business and not the socket's: who is
     /// at the table, who is at the rail and who is in line for the next
-    /// round is the lobby's bookkeeping. This layer knows only that a peer
-    /// it is not told to send to costs nothing.
+    /// round is the lobby's bookkeeping.
     ///
     /// Encodes once per datagram rather than once per peer, and into the
     /// stack: this is the one path the game walks thousands of times a
@@ -218,13 +201,11 @@ impl UdpTransport {
     /// Forget a peer, closing the gap behind it.
     ///
     /// Indices shift, and every list the caller keeps alongside `peers`
-    /// shifts with them, which is why this returns nothing clever and
-    /// leaves the caller to do it: the lobby knows what it is keeping and
-    /// this layer does not.
+    /// shifts with them, which the caller does itself: the lobby knows what
+    /// it is keeping and this layer does not.
     ///
-    /// UDP never says a peer has gone, so somebody has to decide it has.
-    /// Without this a socket fills with ghosts: they hold seats, they are
-    /// counted, and the table never has room again.
+    /// UDP never says a peer has gone, so somebody has to decide it has, or
+    /// the socket fills with ghosts that hold seats and are counted.
     pub fn forget(&mut self, index: usize) {
         if index < self.peers.len() {
             self.peers.remove(index);

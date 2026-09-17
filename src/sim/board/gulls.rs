@@ -258,11 +258,10 @@ impl Board {
     /// Where a creature actually stands, in board subunits: the tile it is
     /// filed under, plus how far it has walked out of that tile's centre.
     ///
-    /// Measuring against the tile alone is what let a gull and a crab walk
-    /// through each other. Two creatures approaching head-on cross the gap
-    /// between two tile centres while still filed under *different* tiles,
-    /// so a same-tile test never sees the contact, and by the time they do
-    /// share a tile they have passed and their offsets point apart.
+    /// Measured against the tile alone, a gull and a crab walk through each
+    /// other: two creatures approaching head-on cross the gap between two
+    /// tile centres while still filed under *different* tiles, and by the
+    /// time they share one they have passed.
     fn sub_position(&self, tile: u16, dir: Direction, progress: u16) -> (i32, i32) {
         let (x, y) = self.coords(tile);
         let (dx, dy) = sub_offset(dir, progress);
@@ -275,9 +274,7 @@ impl Board {
     /// Manhattan distance between two sub-positions, in subunits. On a
     /// wrapping board the short way round counts: two creatures meeting
     /// head-on through the seam are a tile apart on the sand and a whole
-    /// board apart in raw coordinates, and measuring the latter let them
-    /// walk through each other there, the failure `sub_position` exists to
-    /// rule out everywhere else.
+    /// board apart in raw coordinates.
     fn sub_distance(&self, a: (i32, i32), b: (i32, i32)) -> u32 {
         let (mut dx, mut dy) = ((a.0 - b.0).unsigned_abs(), (a.1 - b.1).unsigned_abs());
         if self.wrap {

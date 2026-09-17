@@ -40,10 +40,8 @@ pub(super) fn arena_report(board: &Board, tr: &crate::app::i18n::Tr) -> String {
 ///
 /// Both lists have a floor: the stage list takes a puzzle with a crab to
 /// route, the map dial takes a beach with a castle for every seat at the
-/// table. A file that clears neither is written to disk and then never seen
-/// again, and being saved is exactly the moment an author stops looking for
-/// it. Before the kind was the author's to choose nothing could go missing
-/// this way: every level with a crab was a stage.
+/// table. A file that clears neither is written to disk and never seen
+/// again, and being saved is the moment an author stops looking for it.
 pub(super) fn orphan_warning(
     state: &EditorState,
     level: &Level,
@@ -63,11 +61,10 @@ pub(super) fn orphan_warning(
 /// was running.
 ///
 /// Off the frame thread because even a budgeted search is seconds of work
-/// (`DEFAULT_NODE_BUDGET`), and the editor has to keep drawing while it
-/// happens. Superseding rather than queueing because only the newest board
-/// matters: an answer about a board the author has already replaced is worse
-/// than no answer at all. The displaced thread runs on to its budget and
-/// writes into a slot nobody holds any more, and its verdict is dropped.
+/// (`DEFAULT_NODE_BUDGET`) and the editor has to keep drawing. Superseding
+/// rather than queueing because only the newest board matters: the
+/// displaced thread runs on to its budget, writes into a slot nobody holds
+/// any more, and its verdict is dropped.
 pub(super) fn start_validation(state: &mut EditorState, level: Level) {
     let slot: SolverSlot = Arc::new(Mutex::new(None));
     let thread_slot = Arc::clone(&slot);

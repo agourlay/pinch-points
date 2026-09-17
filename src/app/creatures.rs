@@ -17,10 +17,9 @@ use bevy::prelude::*;
 pub struct CrabSprite {
     pub id: u32,
     pub kind: CrabKind,
-    /// A per-crab lift or drop on the shell colour, drawn once from the
-    /// id. Twenty crabs of one kind used to be twenty copies of one
-    /// sprite; this is what turns a queue of them into a crowd. Small
-    /// enough that a kind is still read by its colour.
+    /// A per-crab lift or drop on the shell colour, drawn once from the id,
+    /// so twenty crabs of one kind are a crowd rather than twenty copies of
+    /// one sprite. Small enough that a kind is still read by its colour.
     pub(crate) shade: f32,
 }
 
@@ -29,11 +28,9 @@ const SHADE_SPREAD: f32 = 0.05;
 
 /// One crab's shell: its kind's colour, nudged by its own shade.
 ///
-/// Only the kinds a beach is *crowded* with. The shade is there to stop
-/// twenty commons reading as twenty copies of one sprite, and twenty is
-/// never how many golden crabs are on the sand: those three carry their
-/// worth in their colour, and a golden lightened by a twentieth lands
-/// nearer a juvenile's pale orange than its own yellow - fifty points
+/// Only the kinds a beach is *crowded* with. Twenty is never how many
+/// golden crabs are on the sand, and a golden lightened by a twentieth
+/// lands nearer a juvenile's pale orange than its own yellow: fifty points
 /// wearing the face of two.
 pub(crate) fn shell_color(kind: CrabKind, shade: f32) -> Color {
     let base = body_color(kind);
@@ -210,10 +207,9 @@ pub fn interpolate_crabs(
     let alpha = smoothing_alpha(board.ticks(), &mut watch, time.delta_secs(), &fixed_time);
     by_id.clear();
     by_id.extend(board.crabs().iter().map(|c| (c.id, *c)));
-    // Precious crabs glint on one clock: they twinkle together, and what
-    // keeps that from reading as a metronome is the scatter `glint` puts
-    // on each star's own position. A clock apiece would be a timer per
-    // crab for a twinkle nobody is timing.
+    // Precious crabs glint on one clock: they twinkle together, and the
+    // scatter `glint` puts on each star's position keeps that from reading
+    // as a metronome.
     *glint_clock += time.delta_secs();
     let glint_now = *glint_clock >= 0.22;
     if glint_now {
@@ -263,8 +259,8 @@ pub fn interpolate_crabs(
             transform.scale = Vec3::splat(pulse);
         }
         // The shadow: pushed out from under the body, the same way as
-        // every other thing standing on this sand. It used to sit exactly
-        // beneath the crab, which is to say it was never once seen.
+        // every other thing standing on this sand, since one sitting
+        // exactly beneath the crab is never seen.
         //
         // After the pulse, and divided by it: a child's translation is in
         // the parent's frame, so a molting crab would otherwise swing its
@@ -276,9 +272,8 @@ pub fn interpolate_crabs(
             }
         }
         // Sparkling and golden crabs actually sparkle. The golden one is
-        // fifty points walking and is worth more than a twinkle: it draws
-        // a ribbon of sparks behind it, so a table of four can see which
-        // way the jackpot is heading from across the room.
+        // fifty points walking, so it draws a ribbon of sparks behind it
+        // and a table of four can see which way the jackpot is heading.
         if glint_now {
             match sprite.kind {
                 CrabKind::Sparkling => effects::glint(
@@ -327,8 +322,7 @@ pub fn sync_gull_sprites(
     // The gulls that were on the board last frame, and the clock they were
     // on. A *sprite* being new is not a gull arriving: a level with gulls
     // written into it, a retry, a resumed round and an editor test run all
-    // wipe the sprites and rebuild them, and keying the arrival cue off
-    // that puffed sand under every bird on the beach at once, every time.
+    // wipe the sprites and rebuild them.
     mut before: Local<(Option<u64>, Vec<u32>)>,
     existing: Query<(Entity, &GullSprite)>,
 ) {
@@ -336,9 +330,8 @@ pub fn sync_gull_sprites(
     // A clock that has run backwards is a different board, whose gull ids
     // start again at zero, and a board at tick zero has not run at all:
     // nothing on either has "arrived", the birds on it are the ones it was
-    // written with. So is a board this has never seen. The memory is
-    // reseeded from those birds rather than emptied, which was what puffed
-    // sand under every pre-placed gull on load and on every retry.
+    // written with. So the memory is reseeded from those birds rather than
+    // emptied, which otherwise puffs sand under every pre-placed gull.
     let (last_ticks, seen) = &mut *before;
     let fresh = board.ticks() == 0 || last_ticks.is_none_or(|last| board.ticks() < last);
     if fresh {
@@ -397,14 +390,13 @@ pub fn sync_gull_sprites(
 ///
 /// It also buys the telegraph for free. The shadow is pinned to the
 /// ground, so it slides out from under the bird as it climbs and comes
-/// back under it as it drops: by the time a gull is a tile from landing,
-/// its shadow is already on the tile it is going to land on, which is the
-/// warning the beach never used to give.
+/// back under it as it drops: a tile from landing, its shadow is already
+/// on the tile it will land on.
 ///
-/// The flight scale is kept modest on purpose. Walls draw above creatures,
-/// but a border plank is thirteen pixels of a tile-sized frame, so a gull
-/// scaled far past its tile hangs out over the edge of the board with
-/// nothing to occlude it and reads as a sprite that has come loose.
+/// The flight scale is kept modest. Walls draw above creatures, but a
+/// border plank is thirteen pixels of a tile-sized frame, so a gull scaled
+/// far past its tile hangs over the edge of the board with nothing to
+/// occlude it.
 #[allow(clippy::too_many_arguments)]
 pub fn interpolate_gulls(
     sim: Res<Sim>,
@@ -434,10 +426,9 @@ pub fn interpolate_gulls(
     by_id.clear();
     by_id.extend(board.gulls().iter().map(|g| (g.id, *g)));
     // A clock that has run backwards is a different board, and gull ids
-    // start again at zero on every one of them. Pruning by id alone let a
-    // recycled id inherit a latched descent and a frozen altitude, so the
-    // bird slid flat over the sand with its shadow pinned under it - the
-    // landing telegraph off, silently, for the rest of that hop.
+    // start again at zero on every one of them. Pruned by id alone, a
+    // recycled id inherits a latched descent and a frozen altitude, and the
+    // bird slides flat over the sand with its shadow pinned under it.
     if fresh {
         aloft.clear();
     }
@@ -498,10 +489,9 @@ pub fn interpolate_gulls(
                 continue;
             };
             // Left behind on the ground, further out the higher the bird
-            // is, with a slow circling drift on top of the drop: the
-            // kinetic cue that it is airborne. A walking gull's shadow
-            // sits at its feet, where the same offset every other thing on
-            // the beach casts puts it.
+            // is, with a slow circling drift on top of the drop: the cue
+            // that it is airborne. A walking gull's shadow sits at its
+            // feet, at the offset everything else on the beach casts.
             let drift = Vec2::new((t * 2.1 + phase).cos() * 2.5, (t * 1.7 + phase).sin() * 2.5);
             let drop = 26.0 * altitude;
             let world = layout::SUN + Vec2::new(-drop * 0.5, -drop) + drift * altitude;
@@ -540,12 +530,11 @@ impl Flight {
     /// How high the bird is, `across` of the way over a tile with
     /// `remaining` tiles of hop still to go.
     ///
-    /// The load-bearing part is that the last airborne tile is the one
-    /// with `remaining == 1`, not zero. The sim lands a gull on the tick
-    /// its counter would reach zero, so `Flying { remaining: 0 }` is a
-    /// state no frame ever observes: reading the descent off it left the
-    /// bird at full height until the instant it became a walking gull and
-    /// then dropped it in one frame, which is the opposite of a telegraph.
+    /// The load-bearing part is that the last airborne tile is the one with
+    /// `remaining == 1`, not zero. The sim lands a gull on the tick its
+    /// counter would reach zero, so `Flying { remaining: 0 }` is a state no
+    /// frame observes: reading the descent off it holds the bird at full
+    /// height and then drops it in one frame.
     ///
     /// A gull whose landing tile turns out to be rock or kelp is given one
     /// more tile to glide, and its `across` starts over: without the latch
@@ -599,10 +588,9 @@ fn kick_up(commands: &mut Commands, rng: &mut effects::VisualRng, art: &Art, pos
 mod tests {
     use super::*;
 
-    /// A crab keeps its shell for as long as it lives. The shade is a
-    /// hash of the id rather than a draw, precisely so that a sprite
-    /// rebuilt around a crab - and they are rebuilt constantly - does not
-    /// hand it a new colour each time.
+    /// A crab keeps its shell for as long as it lives. The shade is a hash
+    /// of the id rather than a draw, so a sprite rebuilt around a crab, as
+    /// they constantly are, does not hand it a new colour.
     #[test]
     fn a_crab_keeps_the_shell_it_was_born_with() {
         for id in [0u32, 1, 7, 64, 1_000, 65_535, u32::MAX] {
@@ -631,13 +619,11 @@ mod tests {
 
     /// A shell is its kind's colour, nudged - never another kind's.
     ///
-    /// The kinds are told apart by colour on a crowded beach, and what
-    /// that needs is not a small *number* (the nudge is a perceptual
-    /// lighten, so a saturated gold moves a long way in blue for very
-    /// little visible change) but a guarantee about neighbours: whatever
-    /// the shade does, the shell must still be nearer its own kind than
-    /// any other. A spread wide enough to blur a juvenile into a common
-    /// would cost the read.
+    /// The kinds are told apart by colour on a crowded beach, and what that
+    /// needs is not a small *number* (the nudge is a perceptual lighten, so
+    /// a saturated gold moves a long way in blue for little visible change)
+    /// but a guarantee about neighbours: whatever the shade does, the shell
+    /// must still be nearer its own kind than any other.
     #[test]
     fn a_shade_never_carries_a_shell_into_another_kind() {
         const KINDS: [CrabKind; 6] = [
@@ -671,10 +657,9 @@ mod tests {
         }
     }
 
-    /// The sun stays put while the creature turns. A shadow given a plain
-    /// local offset swings round its owner at every corner, which is the
-    /// artefact `unturned` exists to undo - so undoing it has to be exact,
-    /// for every heading.
+    /// The sun stays put while the creature turns: a shadow given a plain
+    /// local offset swings round its owner at every corner, and `unturned`
+    /// has to undo that exactly, for every heading.
     #[test]
     fn a_shadow_holds_its_bearing_through_every_turn() {
         for dir in [
@@ -697,11 +682,10 @@ mod tests {
         }
     }
 
-    /// The gull's invented altitude has one subtle contract in it: the
-    /// last tile a gull flies is the one with `remaining == 1`, because
+    /// The last tile a gull flies is the one with `remaining == 1`, because
     /// the sim lands it on the tick the counter would reach zero. Reading
-    /// the descent off zero instead held the bird at full height and then
-    /// dropped it in a single frame.
+    /// the descent off zero holds the bird at full height and then drops it
+    /// in a single frame.
     #[test]
     fn a_gull_climbs_once_and_only_ever_comes_down() {
         let mut flight = Flight {

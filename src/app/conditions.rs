@@ -1,10 +1,8 @@
 //! The named run conditions the schedule is written in.
 //!
 //! Every one is a `fn(..) -> bool` over the screen and phase states (and
-//! the odd resource), and every one is read by `schedule.rs` alone. They
-//! were split between there and `session.rs`; here the schedule reads as
-//! prose against one list, and `session.rs` is left with what its own doc
-//! says it is: boot, teardown, reload, tick, outcome.
+//! the odd resource), and every one is read by `schedule.rs` alone. Split
+//! between there and `session.rs`, neither read as one list.
 
 use super::{Phase, Playback, Screen, VersusPhase, editor, lobby, match_setup};
 use bevy::prelude::*;
@@ -27,15 +25,14 @@ pub(super) fn board_screens(screen: Res<State<Screen>>) -> bool {
     }
 }
 
-/// Screens where a round is being played, a puzzle or a versus match, as
-/// one named condition, so the schedule reads as prose.
-/// The screens that stand on the postcard beach: the menu at full
-/// daylight, every browsing screen behind the scrim. Board screens are
-/// out: a round is played over its own sand, not over a second beach.
+/// The screens that stand on the postcard beach: the menu at full daylight,
+/// every browsing screen behind the scrim. Board screens are out: a round
+/// is played over its own sand, not over a second beach.
 pub(super) fn postcard_screens(screen: Res<State<Screen>>) -> bool {
     super::postcard_screen(*screen.get())
 }
 
+/// Screens where a round is being played, a puzzle or a versus match.
 pub(super) fn play_screens(screen: Res<State<Screen>>) -> bool {
     matches!(screen.get(), Screen::Puzzle | Screen::Versus)
 }
@@ -44,10 +41,8 @@ pub(super) fn play_screens(screen: Res<State<Screen>>) -> bool {
 /// name, a beach's name, an address, a line of chat.
 ///
 /// The global letter keys are mnemonics, and a mnemonic has to stand down
-/// when the letter is one the player meant to write - M is in "Emma" and
-/// in most sentences worth sending. It only started to matter when M
-/// became the master mute: silencing the whole game halfway through
-/// typing a name is a good deal louder than the theme stopping.
+/// when the letter is one the player meant to write: M is in "Emma", and
+/// as the master mute it silences the whole game halfway through a name.
 pub(super) fn text_entry_open(
     lobby: Res<lobby::LobbyState>,
     setup: Res<match_setup::MatchMenu>,
@@ -121,8 +116,7 @@ mod tests {
     ///
     /// Run through `run_system_once` rather than by hanging a marker system
     /// off each condition: a run condition *is* a system returning `bool`,
-    /// so this asks it the same question the schedule does and reads the
-    /// same answer, without a schedule in the way.
+    /// so this asks it the same question the schedule does.
     fn world(screen: Screen, phase: Phase, vphase: VersusPhase) -> World {
         let mut world = World::new();
         world.insert_resource(State::new(screen));
@@ -164,10 +158,10 @@ mod tests {
     }
 
     /// The three screens that draw a board are exactly the three that have
-    /// one. Everything hung off this condition reads live board state, and
-    /// a screen wrongly included would have those systems probing whatever
-    /// board was last loaded - which is how a stale sprite becomes a panic
-    /// in `tile_at` rather than a stale picture.
+    /// one. Everything hung off this condition reads live board state, so a
+    /// screen wrongly included has those systems probing whatever board was
+    /// last loaded, which is a panic in `tile_at` rather than a stale
+    /// picture.
     #[test]
     fn a_board_is_drawn_on_the_three_screens_that_have_one() {
         for screen in EVERY_SCREEN {
@@ -180,9 +174,9 @@ mod tests {
     }
 
     /// A round is being *played* on two screens only. The editor draws a
-    /// board and can even run one, but nothing that belongs to a match -
-    /// the announcements, the pause card, the trophy counters - belongs to
-    /// a level being built.
+    /// board and can even run one, but nothing that belongs to a match (the
+    /// announcements, the pause card, the trophy counters) belongs to a
+    /// level being built.
     #[test]
     fn only_two_screens_are_a_round_in_progress() {
         for screen in EVERY_SCREEN {
@@ -215,10 +209,10 @@ mod tests {
 
     /// The one that decides whether the game is running at all.
     ///
-    /// Every arm of this is a different answer to "is time passing", and a
-    /// wrong one is either a frozen beach or a puzzle whose crabs walk
-    /// while the player is still placing. The editor is the subtle case:
-    /// its board ticks only while it is being playtested.
+    /// Every arm is a different answer to "is time passing", and a wrong one
+    /// is either a frozen beach or a puzzle whose crabs walk while the
+    /// player is still placing. The editor's board ticks only while it is
+    /// being playtested.
     #[test]
     fn time_passes_on_exactly_the_screens_and_phases_that_are_playing() {
         let run = |screen, phase, vphase| {
@@ -317,10 +311,10 @@ mod tests {
         }
     }
 
-    /// Watching is not playing. Everything that counts a deed - the
-    /// trophies, the lifetime stats - hangs off this, so a replay that
-    /// read as live play would award a round somebody else already won,
-    /// every time it was watched.
+    /// Watching is not playing. Everything that counts a deed (the
+    /// trophies, the lifetime stats) hangs off this, so a replay read as
+    /// live play awards a round somebody else won, every time it is
+    /// watched.
     #[test]
     fn a_round_being_watched_is_not_a_round_being_played() {
         let mut world = world(Screen::Versus, Phase::Running, VersusPhase::Running);
@@ -341,10 +335,9 @@ mod tests {
 
     /// While a player is typing, a letter is a letter.
     ///
-    /// Three screens can have a name half-written on them, and each one is
-    /// a separate latch: the global letter keys are mnemonics, and M is in
-    /// "Emma". Any one of them being missed here means the master mute
-    /// fires in the middle of typing a name.
+    /// Three screens can have a name half-written on them, and each is a
+    /// separate latch: miss one and the master mute fires in the middle of
+    /// typing a name.
     #[test]
     fn any_half_typed_name_takes_the_keyboard() {
         let mut world = world(Screen::Lobby, Phase::Setup, VersusPhase::Running);

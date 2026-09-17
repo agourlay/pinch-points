@@ -62,10 +62,9 @@ pub struct Level {
 /// What a level was built to be.
 ///
 /// The two want opposite things of a beach: a puzzle wants one bank and a
-/// route to it, an arena wants a castle per seat and crabs arriving forever.
-/// A file that does not say which it is has to be guessed at, and guessing
-/// put a versus beach in the middle of the campaign and kept a spawner-fed
-/// arena off the map dial for want of a starting crab.
+/// route to it, an arena wants a castle per seat and crabs arriving
+/// forever. A file that does not say which has to be guessed at, and
+/// guessing put a versus beach in the middle of the campaign.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum LevelKind {
     /// A stage for one player: route every crab home with the signposts the
@@ -123,9 +122,9 @@ impl Level {
     /// matches) keep the rule the match was played under.
     ///
     /// An arena that states no rule keeps the board's own, which is the
-    /// versus one. Reading `posts:` as a rule there gave a table three
-    /// signposts each and no way to replace them - the file says how many
-    /// the *author* had to hand, not how a match is played on it.
+    /// versus one: `posts:` says how many the *author* had to hand, not how
+    /// a match is played on it, and read as a rule it gives a table three
+    /// signposts each and no way to replace them.
     pub fn board(&self) -> Board {
         let mut board = self.board.clone();
         if !self.explicit_rule && self.kind == LevelKind::Puzzle {
@@ -159,11 +158,9 @@ impl Level {
 
     /// Run `board` idle until the goal is decided, and say when it was.
     ///
-    /// Every caller that wants to know how a board ends wants exactly this
-    /// loop, and ten of them once carried their own copy. [`Level::outcome`]
-    /// is what makes it terminate: every goal loses or wins by the board's
-    /// [`Level::deadline`], so the loop needs no guard of its own, and if
-    /// that ever moves there is one place to put it.
+    /// [`Level::outcome`] is what makes it terminate: every goal loses or
+    /// wins by the board's [`Level::deadline`], so the loop needs no guard
+    /// of its own.
     pub fn play_out(&self, board: &mut Board) -> (PuzzleOutcome, u64) {
         loop {
             board.tick_idle();
@@ -263,11 +260,11 @@ mod tests {
         assert!(Level::parse(text).is_err());
     }
 
-    /// A degenerate lattice is refused, not asserted against. `parse` is
-    /// fallible because it reads text a stranger wrote (a pasted level
-    /// code, a hand-edited custom level) and both callers handle the
-    /// error. Odd-sized alone let a lone border line through as a
-    /// zero-sized board, which `Board::new` met with a panic.
+    /// A degenerate lattice is refused, not asserted against: `parse` reads
+    /// text a stranger wrote (a pasted level code, a hand-edited custom
+    /// level) and both callers handle the error. Checking odd-sized alone
+    /// let a lone border line through as a zero-sized board, which
+    /// `Board::new` met with a panic.
     #[test]
     fn parse_rejects_a_map_with_no_tiles() {
         for text in [
@@ -311,12 +308,9 @@ mod tests {
     use super::*;
     use crate::sim::board::TileKind;
 
-    /// A turnstile's pivot survives the format: a replay stores its starting
-    /// board as a level, and generated arenas mirror their logs, so a dropped
-    /// pivot would flip half of them on every recorded round.
     /// A row wider than the top border is a map drawn wrong, not one to
-    /// read to the border's width: that dropped the row's last tiles and
-    /// walls without a word.
+    /// read to the border's width: read that way, the row's last tiles and
+    /// walls go without a word.
     #[test]
     fn parse_refuses_a_map_row_wider_than_its_border() {
         let text = "name: T\nposts: 1\nmap:\n+-+-+\n|.|.|.|\n+-+-+\n";
@@ -347,9 +341,9 @@ mod tests {
     }
 
     /// A stage that states a round longer than the campaign tick limit is
-    /// judged on its round: the limit stands in only for a stage with no
-    /// timer. A Survive stage with ninety seconds on the clock used to be
-    /// declared won at sixty.
+    /// judged on its round, the limit standing in only for a stage with no
+    /// timer: a Survive stage with ninety seconds on the clock was declared
+    /// won at sixty.
     #[test]
     fn a_stated_round_outlasts_the_tick_limit() {
         let text = "name: T\nposts: 0\ngoal: survive\nround: 2700\nmap:\n\
@@ -406,6 +400,9 @@ mod tests {
         assert!(!level.to_text().contains("raids:"), "not worth writing");
     }
 
+    /// A turnstile's pivot survives the format: a replay stores its
+    /// starting board as a level, and generated arenas mirror their logs,
+    /// so a dropped pivot would flip half of them on every recorded round.
     #[test]
     fn a_turnstiles_pivot_survives_the_format() {
         for next_right in [true, false] {

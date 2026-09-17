@@ -2,14 +2,12 @@
 //!
 //! One editor for all three, because they are the same act (type, Enter,
 //! Esc) and three private little text fields would be three chances to
-//! forget that every other key must fall silent while one is open.
+//! forget that every other key falls silent while one is open.
 
 use super::*;
 
 /// What the keyboard is currently spelling out. One mechanism for all
-/// three, because they are the same act (type, Enter, Esc) and a lobby
-/// with three private little text editors in it would be three chances to
-/// forget that the rest of the keys must go quiet while one is open.
+/// three: see the module doc.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Entry {
     /// Who you are. Asked for before anything else, because a beach full
@@ -21,10 +19,9 @@ pub enum Entry {
     /// Where a beach is, typed out as `ip:port`.
     ///
     /// The way in when no beacon can reach: a network that drops
-    /// broadcasts, a host on another subnet, a friend at the other end of
-    /// a VPN. Nothing about a hosted beach depends on having been heard;
-    /// it is a socket waiting to be greeted, so dialling one by hand joins
-    /// just as picking it off the list would.
+    /// broadcasts, a host on another subnet, a friend at the other end of a
+    /// VPN. A hosted beach is a socket waiting to be greeted, so dialling
+    /// one by hand joins just as picking it off the list would.
     Address,
     /// A line of chat.
     Chat,
@@ -44,8 +41,7 @@ pub struct Typing {
 ///
 /// Split out from the system that acts on it so the whole walk from H to a
 /// beach on the air can be tested without a keyboard, a socket or a
-/// settings file. The walk is the way into every online game there is, and
-/// a hole in it is a hole in the only door.
+/// settings file.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Answered {
     /// Not a usable answer. Ask the same thing again.
@@ -119,13 +115,11 @@ impl Typing {
 
     /// Asked before `then` can happen, pre-filled with the name on file.
     ///
-    /// Asked *every* time, not only when there is no name yet. Two
+    /// Asked *every* time, not only when there is no name yet: two
     /// instances on one machine share one settings file, so the second
-    /// player inherited the first one's name and was never asked: two
-    /// rivals under one name, and the join list none the wiser. And a
-    /// machine on a busy LAN is a machine somebody else was sitting at ten
-    /// minutes ago. Enter accepts what is already there, so the cost of
-    /// asking is one keystroke.
+    /// player inherits the first one's name, and a machine on a busy LAN is
+    /// one somebody else was sitting at ten minutes ago. Enter accepts what
+    /// is already there, so the cost of asking is one keystroke.
     pub fn player_name(then: Intent, was: &str) -> Typing {
         Typing {
             what: Entry::PlayerName,
@@ -137,11 +131,9 @@ impl Typing {
 
 /// What the line being typed did with this frame.
 ///
-/// Three states, and they were an `Option<Option<Intent>>` until the
-/// paragraph needed to explain which nesting meant what turned out to be
-/// hiding a bug; see the note at the end of [`drive_typing`]. Two of these
-/// are "the lobby may not act on this frame", and they are now spelled
-/// differently enough to be hard to swap.
+/// Three states. As an `Option<Option<Intent>>` the nesting hid a bug; see
+/// the note at the end of [`drive_typing`]. Two of these are "the lobby may
+/// not act on this frame", spelled differently enough to be hard to swap.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Typed {
     /// Nothing was being typed. The frame belongs to the lobby.
@@ -226,14 +218,11 @@ pub(super) fn drive_typing(
     // it acts on that intent rather than on the keystroke that finished
     // the line.
     //
-    // Answering `Nothing` here instead, as the old `Some(Some(intent?))`
-    // did by way of the `?`, handed the Enter that
-    // ended a line back to a lobby that reads Enter as *join the beach
-    // under the cursor*. So naming yourself on the way to hosting dialled
-    // somebody else's beach with the same keystroke, and the "name your
-    // beach" question then sat over a lobby that was already joining one.
-    // It only ever showed up with a beach on the list, which is not how
-    // the machine you develop on usually looks.
+    // Answering `Nothing` here instead, as `Some(Some(intent?))` did by way
+    // of the `?`, hands the Enter that ended a line back to a lobby that
+    // reads Enter as *join the beach under the cursor*: naming yourself on
+    // the way to hosting dialled somebody else's beach with the same
+    // keystroke.
     match intent {
         Some(intent) => Typed::Unblocked(intent),
         None => Typed::Taken,
@@ -359,9 +348,8 @@ mod door_tests {
     /// The other way in, for a beach no beacon reached: J, an address, a
     /// name, and the same dialling as any row of the list.
     ///
-    /// The address is asked for *first* and the name second, so that the
-    /// name step is the one that already exists: the same `PlayerThen`
-    /// every joiner walks through, carrying where it is going.
+    /// The address is asked for *first* and the name second, so the name
+    /// step is the `PlayerThen` every joiner already walks through.
     #[test]
     fn an_address_is_asked_first_and_the_name_second() {
         let asked = Typing::address("");
@@ -428,13 +416,10 @@ mod door_tests {
         );
     }
 
-    /// The bug this was reported as, and the one none of the above would
-    /// have caught: pressing H opened a question that could not be seen.
-    ///
     /// A name is asked for *while browsing*, before there is a beach to be
-    /// at, and the prompt lived inside the chat card, which is on the face
-    /// that is hidden then. So H turned every key into text and appeared to
-    /// do nothing at all. The prompt must belong to neither face.
+    /// at. With the prompt inside the chat card, which is on the face that
+    /// is hidden then, H turned every key into text and appeared to do
+    /// nothing. The prompt belongs to neither face.
     #[test]
     fn the_prompt_is_not_on_a_face_that_can_be_hidden() {
         let mut app = App::new();
@@ -482,13 +467,12 @@ mod door_tests {
 
     /// The Enter that finishes an answer is not also an Enter on the list.
     ///
-    /// Two questions in a row (a name and then what the beach is called,
-    /// a name and then where it is) are the only places where finishing a
+    /// Two questions in a row (a name and then what the beach is called, a
+    /// name and then where it is) are the only places where finishing a
     /// line leaves another one open. The lobby reads Enter as "join the
-    /// beach under the cursor", so that same keystroke used to dial one:
-    /// you pressed H, typed your name, and were silently joined to somebody
-    /// else's game with "name your beach" still on the screen. Invisible
-    /// with an empty list, which is the list a developer usually has.
+    /// beach under the cursor", so that same keystroke dialled one: press
+    /// H, type your name, and be joined to somebody else's game with "name
+    /// your beach" still on screen.
     #[test]
     fn finishing_one_question_does_not_join_the_beach_under_the_cursor() {
         use bevy::input::ButtonState;

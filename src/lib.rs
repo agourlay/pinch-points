@@ -7,15 +7,13 @@
 //!
 //! There is almost no `unsafe` here and there is not going to be more: the
 //! game is a grid of integers, and the one thing it does with bytes a
-//! stranger wrote, decoding them, is the last place to want manual memory
-//! handling.
+//! stranger wrote is decode them.
 //!
 //! The one exception is [`app::keymap`], where asking Windows and macOS
 //! what the keys say means calling their keyboard APIs: a dozen lines of
 //! FFI with a reason written over each of them. That module allows itself
-//! what this line denies, which is the only way in - `deny` rather than
-//! `forbid` for exactly that reason, and a `#[allow(unsafe_code)]`
-//! anywhere else is a change to argue with, not to wave through.
+//! what this line denies, which is why it is `deny` rather than `forbid`;
+//! an `#[allow(unsafe_code)]` anywhere else is a change to argue with.
 #![deny(unsafe_code)]
 
 pub mod app;

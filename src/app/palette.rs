@@ -15,10 +15,10 @@ pub const SELECTED_ROW: Color = Color::srgb(0.95, 0.9, 0.6);
 /// The in-round chrome's fill: the sidebar cards, the event feed, the
 /// announcement banner. Opaque, because what is behind it is the board.
 ///
-/// Not the browsing screens' card - that is [`CARD_FILL`], which is a
-/// different dark for a different reason: it hangs over the bright,
-/// moving postcard and needs both the blue-black and the 0.95 to sit
-/// still against it. Two fills, one for each thing a card can stand on.
+/// Not the browsing screens' card, which is [`CARD_FILL`]: that one hangs
+/// over the bright, moving postcard and needs both the blue-black and the
+/// 0.95 to sit still against it. One fill for each thing a card stands
+/// on.
 pub const CARD_BG: Color = Color::srgb(0.07, 0.08, 0.11);
 /// Trophy gold: titles, crowns, champions, the daily best.
 pub const GOLD: Color = Color::srgb(0.96, 0.83, 0.35);
@@ -62,12 +62,11 @@ pub const TOAST_FILL: Color = Color::srgb(0.1, 0.12, 0.16);
 pub const CARD_SHADOW: Color = Color::srgba(0.0, 0.05, 0.12, 0.45);
 /// The fill behind the row or box under the cursor, on every screen that
 /// has one: [`GOLD`] at a wash's strength. `menu_ui::band` is how a screen
-/// asks for it, and it lived under a lobby heading while four other
-/// screens were quietly computing the same three numbers for themselves.
+/// asks for it.
 ///
-/// A bar rather than a marker character: with a dozen beaches on screen
-/// the eye wants a block, and the number stays where it is instead of
-/// shuffling sideways to make room for a caret.
+/// A bar rather than a marker character: with a dozen beaches on screen the
+/// eye wants a block, and the number stays where it is instead of shuffling
+/// sideways to make room for a caret.
 pub const PICKED_WASH: Color = Color::srgba(0.96, 0.83, 0.35, 0.16);
 
 // --- white-on-dark hairlines and washes -------------------------------------
@@ -87,10 +86,9 @@ pub const CHIP_NAME: Color = Color::srgba(1.0, 1.0, 1.0, 0.92);
 /// The brightest text in the round chrome: the header's labels, and the
 /// score on a chip.
 ///
-/// Full white and meant to be, which is the whole reason it is written
-/// down. A chip carries three whites - the name at 0.92, the tier pips at
-/// 0.95, and the number, which is the thing being read across a room -
-/// and the brightest of the three was the one nobody had named.
+/// Full white and meant to be, which is why it is written down: a chip
+/// carries three whites, the name at 0.92, the tier pips at 0.95, and the
+/// number, which is the thing being read across a room.
 pub const HUD_INK: Color = Color::WHITE;
 
 // --- the title sign ---------------------------------------------------------
@@ -177,9 +175,9 @@ pub(crate) fn classic_color(player: u8) -> Color {
 /// deuteranopia both by hue and by brightness.
 ///
 /// Six is where hue alone runs out, so the sixth is a slate that separates
-/// on brightness instead. The six were picked by searching the Okabe-Ito set
-/// for the combination with the widest worst-case separation under the
-/// dichromat model the test uses (0.28, against a bar of 0.2).
+/// on brightness instead. The six have the widest worst-case separation in
+/// the Okabe-Ito set under the dichromat model the test uses (0.28, against
+/// a bar of 0.2).
 fn safe_color(player: u8) -> Color {
     match player {
         0 => Color::srgb(0.80, 0.40, 0.00), // vermillion
@@ -218,9 +216,8 @@ mod tests {
     }
 
     /// The point of the accessible palette: every pair of seats stays
-    /// telling-apart-able without red/green discrimination. The default
-    /// flags fail this, P1 red and P3 green being the classic trap, which
-    /// is why the option exists.
+    /// distinguishable without red/green discrimination. The default flags
+    /// fail this, P1 red and P3 green being the classic trap.
     #[test]
     fn the_safe_palette_survives_color_blind_vision() {
         let separation = |palette: fn(u8) -> Color| {

@@ -1,10 +1,10 @@
 //! The stuck-player hint: after a few failed runs, one signpost of a
 //! solution, shown dimmed on the sand.
 //!
-//! Only ever one, and only on request. A puzzle that hands you the answer is
-//! not a puzzle, but a puzzle you cannot see into is not a lesson either,
-//! and the levels ship with a solution the tests already replay, so the
-//! game knows the answer whether or not it says so.
+//! Only ever one, and only on request: a puzzle that hands you the answer
+//! is not a puzzle, and one you cannot see into is not a lesson. The levels
+//! ship with a solution the tests already replay, so the game knows the
+//! answer whether or not it says so.
 
 use crate::app::campaign::CampaignKind;
 use crate::app::{Campaign, Phase, Sim, art, layout, palette};
@@ -64,9 +64,9 @@ const DENIED_SECS: f32 = 2.5;
 
 /// A refusal the player deserves a sentence about, counting down.
 ///
-/// Only the spent-inventory one. Every other refusal is answered by
-/// aiming somewhere else and the flash says enough; this one is answered
-/// by picking a signpost back up, and nothing on screen said so.
+/// Only the spent-inventory one. Every other refusal is answered by aiming
+/// somewhere else and the flash says enough; this one is answered by
+/// picking a signpost back up.
 #[derive(Resource, Default)]
 pub struct DeniedNote(f32);
 
@@ -145,11 +145,10 @@ pub fn draw_hint(
     mut drawn_on: Local<(u8, u8)>,
 ) {
     // Redrawn when the hint changes, or when the board's size does: the
-    // ghost sits at a tile centre, which only the size moves. Redrawing
-    // on every change to the sim tore the sprite down and put it back
-    // thirty times a second for as long as a hint was up during a run.
-    // Every level load writes `hints`, so a swapped board of the same
-    // size is caught there.
+    // ghost sits at a tile centre, which only the size moves. Redrawing on
+    // every change to the sim tore the sprite down and put it back thirty
+    // times a second. Every level load writes `hints`, so a swapped board
+    // of the same size is caught there.
     let size = (sim.0.width(), sim.0.height());
     if !hints.is_changed() && !(sim.is_changed() && *drawn_on != size) {
         return;
@@ -310,10 +309,9 @@ mod tests {
     /// Running out of signposts says so, and says it differently from
     /// every other refusal.
     ///
-    /// Both kinds of no fire the same flash and the same knock, so until
-    /// this line existed "you have none left" and "not on that tile" were
-    /// indistinguishable - which is what players hit when a level handed
-    /// out fewer signposts than they wanted.
+    /// Both kinds of no fire the same flash and the same knock, so without
+    /// this line "you have none left" and "not on that tile" are
+    /// indistinguishable.
     #[test]
     fn a_spent_inventory_gets_a_sentence_of_its_own() {
         use crate::app::i18n::EN;

@@ -6,9 +6,8 @@
 //! which needs every field [`Board::state_hash`] covers or the board it
 //! reloads is a different board from the next tick onward.
 //!
-//! So this is the other half: not pretty, not hand-authored, and complete.
-//! `parse(to_snapshot(board))` has the same state hash as `board` for any
-//! board, however far into a round it is.
+//! So this is the other half: `parse(to_snapshot(board))` has the same
+//! state hash as `board` for any board, however far into a round it is.
 //!
 //! The completeness is held by the compiler, not by vigilance:
 //! [`Board::parse_snapshot`] builds its result with a struct literal naming
@@ -180,9 +179,8 @@ impl Board {
 /// A snapshot's lines, gathered before any of them is trusted.
 ///
 /// The lines `to_snapshot` always writes are all `Option` here and all
-/// unwrapped in [`Fields::build`]. Defaulting one instead would turn a
-/// truncated save into a board that parses and plays differently, which is
-/// the whole failure this format exists to avoid.
+/// unwrapped in [`Fields::build`]: defaulting one turns a truncated save
+/// into a board that parses and plays differently.
 #[derive(Default)]
 struct Fields {
     size: Option<(u8, u8)>,
@@ -195,12 +193,10 @@ struct Fields {
     gull_period: Option<u32>,
     round_length: Option<u32>,
     wrap: bool,
-    /// Stored the way the wire stores it - the exception, not the rule -
-    /// because `Default` here has to mean "the line was absent". Castle
-    /// raids are the one board switch that is *on* by default, so a
-    /// `castle_raids: bool` deriving `false` would quietly turn them off
-    /// in every snapshot that omitted the line, which is every versus
-    /// round there is.
+    /// Stored the way the wire stores it, because `Default` here has to
+    /// mean "the line was absent". Castle raids are the one board switch
+    /// that is *on* by default, so a `castle_raids: bool` deriving `false`
+    /// would turn them off in every snapshot that omitted the line.
     no_castle_raids: bool,
     events_enabled: bool,
     lure: Option<(PlayerId, u32)>,
@@ -626,9 +622,8 @@ mod tests {
     /// recorded last event all need a sparkling crab banked.
     ///
     /// Reaches in and sets the private fields directly rather than playing
-    /// toward them: the point is coverage of the *format*, and a test that
-    /// had to engineer a tide event to check one line would test the
-    /// roulette instead.
+    /// toward them: the point is coverage of the *format*, and engineering
+    /// a tide event to check one line would test the roulette instead.
     fn awkward_board() -> Board {
         let mut board = Board::new(5, 4, 0xABCD);
         board.set_tile(0, 0, TileKind::Castle(0));

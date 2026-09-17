@@ -98,48 +98,28 @@ const TICKS: u64 = 10_000;
 /// Anchor value for cross-platform comparison. If a deliberate rule change
 /// shifts it, rerun and update; an unexplained shift is a determinism bug.
 ///
-/// Last re-derived 2026-08-27, when the tide roulette was given the same
-/// kind of room the lure got. The wheel is spun by banking a Sparkling
-/// crab, and several of the faces it lands on put more crabs on the beach,
-/// so the events raised their own rate: measured across the kept rounds it
-/// ranged from nought events in three minutes to twelve, and the worst put
-/// six inside nineteen seconds. `EVENT_COOLDOWN` holds it to one event per
-/// ten seconds - one `EVENT_TICKS`, so a second cannot start on top of the
-/// first. That moves this round (the wheel is spun on it) and the new
-/// `event_cooldown` field joins the fingerprint besides, for the reason
-/// `lure_cooldown` did: it is live state that decides what happens next.
+/// Why it has moved, most recent first:
 ///
-/// Before that, 2026-08-22, when the lure was given room: the quiet
-/// spell after one ends went from 10 s to 20 s and the molting crab's share
-/// of the spawn mix from 4% to 3%. Both move this round - a lure decides
-/// where every loose crab walks, and the mix bands shifted so crabs above
-/// the molting band draw a different kind, and the kinds move at different
-/// speeds.
-///
-/// Before that, 2026-08-21, when castle raids became a board switch so
-/// puzzles could turn them off. `castle_raids` joined the fingerprint
-/// because it decides whether a gull reaching a castle takes anything, and
-/// two boards that disagreed on it would report the same hash and then
-/// play apart. The board here is an arena, with raids on as ever, so the
-/// round it plays is unchanged - only the hash's reach grew.
-///
-/// Before that, 2026-08-16, when gulls started catching crabs they had
-/// been walking through. Contact was tested tile by tile, and two creatures
-/// approaching head-on cross between two tile centres while still filed
-/// under different tiles, so the collision was never looked at. Every gull
-/// on this board now eats what it meets, which moves the round.
-///
-/// Before that, 2026-08-13, when `lure_cooldown` joined the fingerprint.
-/// It was live state all along, since it decides whether banking a molt
-/// starts a lure, but it had never been hashed, so two boards could hold
-/// different cooldowns, report the same hash, and then play differently.
-/// The rules did not move; what the hash can see did.
-///
-/// Before that, 2026-07-30 for the widening to six seats: every board
-/// hashes six per-seat slots now, so the anchor moved even where the rules
-/// did not. (The rules moved that day too: the lure stopped stacking, the
-/// roulette stopped rolling gull events into the surge, and the spawners
-/// took a crab cap.)
+/// - 2026-08-27: `EVENT_COOLDOWN` holds the tide roulette to one event per
+///   `EVENT_TICKS`, which moves this round, and `event_cooldown` joins the
+///   fingerprint as live state that decides what happens next.
+/// - 2026-08-22: the lure's quiet spell went from 10 s to 20 s and the
+///   molting crab's share of the spawn mix from 4% to 3%. Both move the
+///   round: a lure decides where every loose crab walks, and the shifted
+///   bands draw different kinds, which move at different speeds.
+/// - 2026-08-21: castle raids became a board switch so puzzles could turn
+///   them off, and `castle_raids` joined the fingerprint. This board is an
+///   arena with raids on, so only the hash's reach grew.
+/// - 2026-08-16: gulls started catching crabs they had been walking
+///   through. Contact was tested tile by tile, so two creatures meeting
+///   head-on between tile centres were never looked at.
+/// - 2026-08-13: `lure_cooldown` joined the fingerprint. It was live state
+///   all along, so two boards could hold different cooldowns, report the
+///   same hash and then play differently.
+/// - 2026-07-30: six seats, so every board hashes six per-seat slots. The
+///   rules moved that day too: the lure stopped stacking, the roulette
+///   stopped rolling gull events into the surge, and the spawners took a
+///   crab cap.
 const EXPECTED_HASH: u64 = 0x509a_9e6e_cf97_32c5;
 
 #[test]
@@ -183,11 +163,10 @@ fn different_seeds_diverge() {
 /// The daily challenge is the same beach for everybody, and a different
 /// one tomorrow.
 ///
-/// The whole premise is in the strapline: "the same beach for everyone".
-/// Nobody can check that from inside one machine except by pinning the
-/// only thing that varies - the day - and proving the beach follows it and
-/// nothing else. A seed that drifted would hand two friends different
-/// boards and the same scoreboard.
+/// From inside one machine that can only be checked by pinning the one
+/// thing that varies, the day, and proving the beach follows it and nothing
+/// else. A seed that drifted would hand two friends different boards and
+/// the same scoreboard.
 #[test]
 fn the_daily_beach_is_one_beach_a_day() {
     use pinch_points::app::Daily;
@@ -217,11 +196,9 @@ fn the_daily_beach_is_one_beach_a_day() {
 /// the same last frame.
 ///
 /// `replays_round_trip_through_text` proves the *file* comes back equal.
-/// This is the harder half: that the round it describes, replayed from
-/// the reloaded copy, ends on the board the original ended on. A field
-/// rounded off in the format would pass the first and fail here, days
-/// later, as a kept round that plays out differently from the one that
-/// was played.
+/// This is the harder half: the round it describes, replayed from the
+/// reloaded copy, ends on the board the original ended on. A field rounded
+/// off in the format passes the first and fails here.
 #[test]
 fn a_replay_reloaded_from_text_ends_on_the_same_board() {
     use pinch_points::sim::{BotLevel, Level, Replay, bot_action, classic_arena_seeded};

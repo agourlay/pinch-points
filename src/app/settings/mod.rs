@@ -46,16 +46,13 @@ pub const REPEAT_INTERVAL_RANGE: std::ops::RangeInclusive<f32> = 0.03..=0.2;
 pub const UI_SCALE_MIN: u8 = 80;
 pub const UI_SCALE_MAX: u8 = 150;
 
-/// What drives one of the two keyboard seats. The first two seats are the
-/// ones a couch pair sits in, and the pad order they inherit is not
-/// obvious: with two pads and no ceremony, pad one drives P2 and pad two
-/// drives P1, because pads fill the table from the top down. This is how
-/// you say otherwise.
+/// What drives one of the two keyboard seats. Pads fill the table from the
+/// top down, so with two pads and no ceremony pad one drives P2 and pad
+/// two drives P1; this is how you say otherwise.
 ///
 /// The keyboard stays live whatever this says, apart from [`Self::Keys`],
-/// which is the one that turns pads off. Picking a controller says *which*
-/// controller is yours, not that the keyboard has stopped working: a pad
-/// that goes flat mid-round should not strand the player holding it.
+/// which is the one that turns pads off: picking a controller says *which*
+/// controller is yours, not that the keyboard has stopped working.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SeatInput {
     /// Pads fill the seats from the highest down, as they always have.
@@ -170,11 +167,11 @@ pub struct GameSettings {
     pub language: Lang,
     /// Controller rumble on raids, surges, and round end.
     ///
-    /// The two board-wide ones buzz every pad in the room, which is right
-    /// for them: the surge and the tide coming in happen to the whole
-    /// beach (`audio::play_events`). A raid does not - it happens to one
-    /// seat - so that one is aimed, and reaches only the hands of the
-    /// player whose castle it was (`gamepad::rumble_on_raid`).
+    /// The two board-wide ones buzz every pad in the room: the surge and
+    /// the tide coming in happen to the whole beach
+    /// (`audio::play_events`). A raid happens to one seat, so that one is
+    /// aimed at the hands of the player whose castle it was
+    /// (`gamepad::rumble_on_raid`).
     pub rumble: bool,
     /// Left-stick deadzone percent (20-80) before it counts as a direction.
     pub pad_deadzone: u8,
@@ -193,17 +190,14 @@ pub struct GameSettings {
     pub names: [String; MAX_PLAYERS],
     /// How many finished rounds the shelf keeps before the oldest fall off.
     ///
-    /// A round is filed after every match, and nothing ever removed one, so
-    /// the library grew for as long as the game was played. A cap is the
-    /// only thing that makes "keep every round" a promise the disk can go
-    /// on keeping.
+    /// A round is filed after every match, so without a cap the library
+    /// grows for as long as the game is played.
     pub replay_cap: u8,
     /// The last beach dialled by hand, `ip:port`, empty until one is.
     ///
-    /// Kept because the machine that had to be dialled once will have to be
-    /// dialled again (a LAN with broadcast turned off does not turn it back
-    /// on between rounds) and re-typing an address is a poor way to spend
-    /// the evening. Only ever written from an address that parsed.
+    /// A LAN with broadcast turned off does not turn it back on between
+    /// rounds, so the machine dialled once has to be dialled again. Only
+    /// ever written from an address that parsed.
     pub last_beach: String,
     /// Ask GitHub on start-up whether a newer release is out, and say so
     /// on a page of its own (see [`crate::app::update`]). The one thing
@@ -214,11 +208,10 @@ pub struct GameSettings {
     /// working it out (which is right almost always - see
     /// [`crate::app::keycaps::KeyCaps::force`] for the "almost").
     ///
-    /// A preference, unlike the learned caps table, which is not one -
-    /// nobody sets it - and so lives as its own resource,
-    /// [`crate::app::keycaps::KeyCaps`]. The two still share the file:
-    /// the save path takes both and writes the `keycaps:` line beside
-    /// this one.
+    /// A preference, unlike the learned caps table, which nobody sets and
+    /// which lives as its own resource, [`crate::app::keycaps::KeyCaps`].
+    /// The two still share the file: the save path takes both and writes
+    /// the `keycaps:` line beside this one.
     pub keyboard: Option<crate::app::keycaps::Layout>,
 }
 
@@ -233,10 +226,9 @@ impl GameSettings {
         self.language.tr()
     }
 
-    /// Set the keyboard the game reads the caps off, or `None` to have
-    /// it work that out again. The one path that changes it, and it asks
-    /// for the caps table outright - a separate resource now - so the
-    /// table can never disagree with the row on the card.
+    /// Set the keyboard the game reads the caps off, or `None` to have it
+    /// work that out again. The one path that changes it, and it asks for
+    /// the caps table outright so the two can never disagree.
     pub fn set_keyboard(
         &mut self,
         keyboard: Option<crate::app::keycaps::Layout>,
@@ -249,9 +241,9 @@ impl GameSettings {
     /// Set the interface language, and with it the keyboard the game
     /// presumes: a player reading in French is typing on AZERTY until a
     /// press says otherwise (see [`crate::app::keycaps::Layout::of`]).
-    /// Every path that changes the language comes through here, and has
-    /// to bring the caps table with it, so the presumption can never be
-    /// left behind by the words on screen.
+    /// Every path that changes the language comes through here and brings
+    /// the caps table with it, so the presumption cannot be left behind by
+    /// the words on screen.
     pub fn set_language(&mut self, language: Lang, caps: &mut crate::app::keycaps::KeyCaps) {
         self.language = language;
         caps.presume(crate::app::keycaps::Layout::of(language));
@@ -274,9 +266,8 @@ impl GameSettings {
     }
 
     /// Sound-effect gain, 0.0–1.0, with the on/off switch folded in. Zero
-    /// means silence, so callers test the gain rather than asking about
-    /// the switch and the slider separately - and a one-shot at zero gain
-    /// is never spawned at all.
+    /// means silence, so callers test the gain rather than the switch and
+    /// the slider separately, and a one-shot at zero gain is not spawned.
     pub fn sfx_gain(&self) -> f32 {
         if self.sfx_on {
             f32::from(self.sfx_volume) / 100.0
@@ -376,10 +367,9 @@ impl Default for GameSettings {
 }
 
 impl GameSettings {
-    /// The caps come in as a parameter because they are a resource of
-    /// their own, not a field: forgetting them here would leave `caps`
-    /// unused, which the warning pass refuses, the same way the
-    /// destructure below refuses a field left unwritten.
+    /// The caps come in as a parameter because they are a resource of their
+    /// own, not a field: forgetting them leaves `caps` unused, which the
+    /// warning pass refuses.
     pub fn to_text(&self, caps: &crate::app::keycaps::KeyCaps) -> String {
         // Destructured with no rest pattern: a new setting refuses to build
         // here until it is written out. The lenient `parse` below would
@@ -573,7 +563,7 @@ impl GameSettings {
     /// The distinction is the whole of the first-run language picker:
     /// defaults and a saved English are the same settings, and only one of
     /// them means nobody has been asked yet. One read rather than a
-    /// [`Path::exists`] beside a load, which could disagree with it.
+    /// [`Path::exists`] beside a load, which could disagree.
     ///
     /// [`Path::exists`]: std::path::Path::exists
     pub fn load_saved() -> Option<(GameSettings, crate::app::keycaps::KeyCaps)> {
@@ -817,9 +807,8 @@ mod tests {
     }
 
     /// A settings.txt from before the switches existed comes up with the
-    /// sound on. Silence is the one wrong answer here: a file that predates
-    /// a feature must not read as a player having turned it off, and this
-    /// is a lenient parse, where a missing line is simply a default.
+    /// sound on: a file that predates a feature must not read as a player
+    /// having turned it off.
     #[test]
     fn a_file_without_the_switches_still_has_sound() {
         let old = "music: 60\nsfx: 40\n";

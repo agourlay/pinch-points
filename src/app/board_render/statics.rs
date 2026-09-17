@@ -13,13 +13,11 @@ use bevy::prelude::*;
 /// Marker for a signpost sprite; carries the state it was built from so the
 /// sync system can tell when the board's signpost changed under it.
 ///
-/// Wear and age are deliberately *not* part of that key. They used to be:
-/// a quantized fade bucket meant a post was despawned and respawned six
-/// times over its life, which is cheap enough but leaves the sprite with
-/// no memory - and a post that is rebuilt every second cannot be given an
-/// animation, because the animation restarts with it. They are written in
-/// place by [`dress_signposts`] instead, and the sprite now lives from the
-/// moment it is planted to the moment it is pulled.
+/// Wear and age are deliberately *not* part of that key. As a quantized
+/// fade bucket they had a post despawned and respawned six times over its
+/// life, which leaves the sprite with no memory and no animation that can
+/// outlive a rebuild. They are written in place by [`dress_signposts`]
+/// instead, and the sprite lives from planting to pulling.
 #[derive(Component)]
 pub struct SignpostSprite {
     x: u8,
@@ -31,12 +29,10 @@ pub struct SignpostSprite {
     /// The tick the sim says this post was planted or re-pointed on.
     ///
     /// Pressing the same direction again on your own fading post is normal
-    /// versus play: the sim stamps it `Full` with a fresh `placed`, and
-    /// nothing else changes - not the tile, not the heading, not the
-    /// owner. So the diff key sees no change, the differ raises no
-    /// `SignpostPlaced`, and there is no ring and no knock. Without this
-    /// the post simply snapped from worn and faint to fresh and bright
-    /// between two frames with nothing marking it.
+    /// versus play: the sim stamps it `Full` with a fresh `placed` and
+    /// nothing else changes, so the diff key sees nothing, the differ
+    /// raises no `SignpostPlaced`, and there is no ring and no knock.
+    /// Without this the post snaps from worn to fresh between two frames.
     planted: u64,
 }
 
@@ -66,9 +62,9 @@ fn plant_pop(age: f32) -> f32 {
 
 /// How strongly a post draws with `fade` of its life left.
 ///
-/// Floored well short of transparent. Wear used to be spelled with alpha
-/// alone and a worn, aged post came out at an eighth of full strength on
-/// bright sand - as the one thing on the board the player steers with.
+/// Floored well short of transparent: spelled with alpha alone, a worn,
+/// aged post comes out at an eighth of full strength on bright sand, as
+/// the one thing on the board the player steers with.
 fn post_alpha(fade: f32) -> f32 {
     0.55 + 0.45 * fade
 }
@@ -108,9 +104,9 @@ fn spawn_sand(commands: &mut Commands, art: &Art, pos: Vec2, x: u8, y: u8) {
 
 /// The soft blob a thing standing on the sand casts.
 ///
-/// Rocks, kelp and the fence used to float: nothing on a tile cast
-/// anything, and a beach lit from nowhere reads as a diagram. One sprite
-/// per feature is the cheapest depth there is.
+/// Without one, rocks, kelp and the fence float, and a beach lit from
+/// nowhere reads as a diagram. One sprite per feature is the cheapest
+/// depth there is.
 fn ground_shadow(commands: &mut Commands, art: &Art, pos: Vec2, size: f32) {
     commands.spawn((
         BoardStatic,
@@ -215,11 +211,9 @@ pub struct CloudShadow {
 /// The light over the board: a vignette that sinks the corners, and the
 /// shadows of clouds crossing the sand.
 ///
-/// Both sit between the sand and everything that stands on it. That is the
-/// load-bearing choice: a vignette over the whole scene would dim the
-/// crabs and posts in the corners too, and those are the pieces a player
-/// is reading under time pressure. The ground gets a centre; the pieces
-/// stay exactly as bright as they were.
+/// Both sit between the sand and everything that stands on it: a vignette
+/// over the whole scene would dim the crabs and posts in the corners too,
+/// and those are the pieces a player reads under time pressure.
 fn spawn_weather(commands: &mut Commands, board: &Board, art: &Art) {
     let w = f32::from(board.width()) * TILE;
     let h = f32::from(board.height()) * TILE;
@@ -231,11 +225,10 @@ fn spawn_weather(commands: &mut Commands, board: &Board, art: &Art) {
     // Three of them, at different heights, sizes and speeds, so the beach
     // is never quite evenly lit twice.
     //
-    // They turn round well outside the window, not just outside the board.
+    // They turn round well outside the window, not just outside the board:
     // `boot::fit_camera` stops zooming in at 0.8, so a small board sits in
     // a much larger visible beach, and a shadow wrapping at the board's
-    // edge vanished and reappeared in plain sight mid-sand. The closing
-    // wave carries the same reasoning as `wash::REACH`.
+    // edge vanishes in plain sight mid-sand.
     let edge = w / 2.0 + CLOUD_REACH;
     for (i, (span, speed, at)) in [(3.4, 9.0, -0.28), (5.0, -6.0, 0.12), (2.6, 13.0, 0.38)]
         .into_iter()
@@ -251,9 +244,8 @@ fn spawn_weather(commands: &mut Commands, board: &Board, art: &Art) {
             ),
             // Spread across the *board*, not across the wrap distance:
             // `edge` is how far out they turn round, and starting them
-            // there put two of the three so far off screen that one took
-            // two minutes to drift into view and the beach spent nearly a
-            // whole round under a single shadow.
+            // there leaves two of the three so far off screen that the
+            // beach spends most of a round under a single shadow.
             Transform::from_translation(Vec3::new(
                 -w / 2.0 + (i as f32 + 0.5) / 3.0 * w,
                 at * h,
@@ -351,10 +343,9 @@ fn spawn_walls(commands: &mut Commands, board: &Board, art: &Art) {
             Quat::IDENTITY
         };
         // Every plank drops one, the frame and the interior runs alike, so
-        // the fence reads as standing in the sand at the same height
-        // wherever it is. The offset is in world space and the rotation is
-        // applied after it, which is why the shadow is its own entity
-        // rather than a child of the plank.
+        // the fence stands in the sand at the same height wherever it is.
+        // The offset is in world space and the rotation is applied after
+        // it, so the shadow is its own entity rather than a child.
         commands.spawn((
             BoardStatic,
             image_sprite(&art.plank, Color::srgba(0.10, 0.07, 0.05, 0.34), plank_size),
@@ -484,9 +475,8 @@ pub fn sync_signposts(
         };
         let pos = layout::tile_center(board, x, y);
         // One clear owner-coloured arrow, over a shadow of itself so it
-        // reads as standing in the sand rather than painted on it. The
-        // colour and the art are written on the first frame by
-        // `dress_signposts`; what is set here is only what it starts as.
+        // stands in the sand rather than being painted on it. The colour
+        // and the art are written on the first frame by `dress_signposts`.
         commands
             .spawn((
                 SignpostSprite {
@@ -586,11 +576,9 @@ pub fn dress_signposts(
             }
             // The sun is one direction for the whole beach, so the offset
             // is undone out of the arrow's rotation: a post pointing left
-            // and a post pointing up drop their shadow the same way.
-            // Divided by the pop, for the reason the creatures' shadows
-            // are divided by theirs: a child's translation is in the
-            // parent's frame, so the plant's 1.35x overshoot would fling
-            // the shadow out and drag it back in again.
+            // and one pointing up drop their shadow the same way. Divided
+            // by the pop, since a child's translation is in the parent's
+            // frame and the 1.35x overshoot would fling the shadow out.
             let scale = transform.scale.x.max(f32::EPSILON);
             let local = transform.rotation.inverse() * (layout::SUN / scale).extend(0.0);
             shadow_tf.translation = Vec3::new(local.x, local.y, -0.05);
@@ -703,10 +691,9 @@ mod tests {
     /// The plant has to hand over to rest without a step in it.
     ///
     /// Past `PLANT_POP` the size is a flat 1.0, so the curve has to arrive
-    /// there on its own: if it ends anywhere else, every post on the beach
-    /// visibly jumps on the frame the animation stops. Asserting the value
-    /// *at* the boundary proves nothing - that is the flat branch - so
-    /// this reads the last moment of the curve itself.
+    /// there on its own, or every post jumps on the frame the animation
+    /// stops. Asserting the value *at* the boundary reads the flat branch,
+    /// so this reads the last moment of the curve itself.
     #[test]
     fn the_plant_hands_over_to_rest_without_a_step() {
         assert!(plant_pop(0.0) > 1.3, "driven in big: {}", plant_pop(0.0));
@@ -747,10 +734,10 @@ mod tests {
         assert!(post_alpha(0.0) >= 0.55, "and a spent one is still legible");
     }
 
-    /// The alpha floor costs the fade most of the range it used to speak
-    /// in, so the size carries the rest of the message: a post about to go
-    /// is visibly smaller, and never small enough to be mistaken for
-    /// somebody else's.
+    /// The alpha floor costs the fade most of its range, so the size
+    /// carries the rest of the message: a post about to go is visibly
+    /// smaller, and never small enough to be mistaken for somebody
+    /// else's.
     #[test]
     fn an_expiring_post_withers_but_does_not_shrivel() {
         assert_eq!(wither(1.0), 1.0, "a fresh post is full size");

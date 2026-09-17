@@ -65,11 +65,10 @@ pub struct MenuList {
 #[derive(Component)]
 pub struct MenuRow(pub usize);
 
-/// The three columns of a menu row. They are separate text nodes rather
-/// than one padded string so each can carry its own size and ink: the
-/// hotkey wants to recede, the mode name wants to lead, and the blurb is
-/// an aside. As one string in one colour they competed, which is what made
-/// the list read as a wall.
+/// The three columns of a menu row. Separate text nodes rather than one
+/// padded string, so each can carry its own size and ink: the hotkey
+/// recedes, the mode name leads, and the blurb is an aside. In one colour
+/// they compete, and the list reads as a wall.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MenuCol {
     Key,
@@ -104,9 +103,8 @@ fn spawn_title(commands: &mut Commands, settings: &GameSettings) {
         ))
         .with_children(|wrap| {
             // The sign itself: the same deep-sea card with a gold hairline
-            // that the mode list, the crab legend and the stage list wear,
-            // tying the postcard to the rest of the game and keeping pale
-            // letters legible where a cloud drifts behind.
+            // the mode list, the crab legend and the stage list wear, which
+            // also keeps pale letters legible where a cloud drifts behind.
             wrap.spawn((
                 Node {
                     flex_direction: FlexDirection::Column,
@@ -234,9 +232,8 @@ pub fn enter_menu(mut commands: Commands, settings: Res<GameSettings>) {
 /// worth reading off a screenshot when a friend's beach will not take a
 /// join, and the number the new-version page is comparing against.
 ///
-/// On the prompt line's own dark pill, at the other end of it, so the two
-/// read as one strip along the bottom rather than as a label loose on the
-/// sand.
+/// On the prompt line's own dark pill, at the other end, so the two read as
+/// one strip along the bottom rather than a label loose on the sand.
 fn spawn_version(commands: &mut Commands) {
     commands.spawn((
         MenuArt,

@@ -2,9 +2,8 @@
 //!
 //! The wheel is spun by banking a Sparkling crab and several of the faces
 //! it lands on put more crabs on the beach, so the mechanic feeds itself:
-//! the interesting properties are all about *cadence*, and cadence only
-//! shows over a whole round. These play real rounds rather than poking the
-//! board, for the same reason the campaign proofs do.
+//! the interesting properties are about *cadence*, which only shows over a
+//! whole round. So these play real rounds rather than poking the board.
 
 use pinch_points::sim::{
     Board, BotLevel, EVENT_COOLDOWN, MAX_PLAYERS, Pcg32, PlayerAction, TideEvent, TileKind,
@@ -59,11 +58,10 @@ fn events_of(seed: u64) -> Vec<(u64, TideEvent)> {
 /// The property the cooldown exists for, over forty rounds rather than
 /// the one contrived board its unit test uses.
 ///
-/// An event's own effect runs for `EVENT_TICKS`, and the cooldown is one
-/// of those, so two events can never be watched at once: no mania on top
-/// of a mania, and no banner cut off by the next banner. Before it, one
-/// measured round put six inside nineteen seconds, three of them Crab
-/// Mania.
+/// An event's own effect runs for `EVENT_TICKS`, and the cooldown is one of
+/// those, so two events can never be watched at once: no mania on top of a
+/// mania, and no banner cut off by the next. Unvalved, one measured round
+/// put six inside nineteen seconds.
 #[test]
 fn no_two_tide_events_land_inside_one_another() {
     let mut rounds_with_events = 0;
@@ -90,9 +88,8 @@ fn no_two_tide_events_land_inside_one_another() {
 }
 
 /// Every face of the wheel is reachable. One draw indexes the whole list,
-/// so an off-by-one in the modulo or a mis-ordered table would quietly
-/// retire an event - and the one that went missing would be the last in
-/// the list, which nobody would notice for a very long time.
+/// so an off-by-one in the modulo or a mis-ordered table retires an event,
+/// and the one that goes missing is the last in the list.
 #[test]
 fn the_roulette_reaches_every_face() {
     let mut seen: Vec<TideEvent> = Vec::new();
@@ -136,10 +133,9 @@ fn a_beach_with_events_off_stays_quiet() {
 }
 
 /// Every face leaves a board that still plays. The events reach in and
-/// rewrite live state - Crab Mania empties the flock, Monopoly drains half
-/// the crab list mid-round, Castle Swap deals the castles out again - and
-/// a board left inconsistent by one of them would fail somewhere else
-/// entirely, ticks later.
+/// rewrite live state (Crab Mania empties the flock, Monopoly drains half
+/// the crab list mid-round, Castle Swap deals the castles out again), and a
+/// board left inconsistent by one fails somewhere else, ticks later.
 #[test]
 fn every_tide_event_leaves_a_board_that_still_plays() {
     for event in TideEvent::ALL {
@@ -191,9 +187,8 @@ fn every_tide_event_leaves_a_board_that_still_plays() {
 /// The map dial hands out beaches that are actually playable.
 ///
 /// A generated arena is built by an algorithm rather than a person, and
-/// nobody looks at one before it is played: the dial rolls it and six
-/// people sit down in front of it. So the things a human author would
-/// never get wrong are exactly the ones worth asserting - a seat with no
+/// nobody looks at one before it is played, so the things a human author
+/// would never get wrong are the ones worth asserting: a seat with no
 /// castle to run for, a crab standing inside a rock, a board that seats
 /// fewer than it was asked to.
 #[test]
@@ -238,10 +233,9 @@ fn every_generated_beach_is_one_that_can_be_played() {
     }
 }
 
-/// And a different beach for a different seed. A generator that ignored
-/// its seed would pass every legality check above and quietly ship one
-/// board for ever, which is the failure nobody would report as a bug -
-/// only as the maps feeling samey.
+/// And a different beach for a different seed. A generator that ignored its
+/// seed would pass every legality check above and ship one board for ever,
+/// which nobody reports as a bug, only as the maps feeling samey.
 #[test]
 fn the_map_dial_is_not_one_beach_wearing_hats() {
     let hashes: Vec<u64> = (0..24u64)

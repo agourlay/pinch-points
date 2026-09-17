@@ -116,8 +116,7 @@ mod tests {
 
     /// A language with no flag file loads nothing: the asset server logs a
     /// miss and the settings row draws an empty gap where the chip goes.
-    /// Nothing else notices, so this does. Run tools/gen_flags.py after
-    /// adding a language.
+    /// Run tools/gen_flags.py after adding a language.
     #[test]
     fn every_language_has_a_flag_on_disk() {
         for lang in ALL_LANGS {

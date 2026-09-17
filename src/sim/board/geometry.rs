@@ -26,9 +26,9 @@ pub struct Grid {
 }
 
 /// Which creature is asking to move. Only one tile tells them apart (a
-/// walking gull cannot enter kelp and a crab slips through) but that one
-/// rule reaches every wall resolution, and `true` at a call site says
-/// nothing about which way round it goes.
+/// walking gull cannot enter kelp and a crab slips through), but that rule
+/// reaches every wall resolution and `true` at a call site says nothing
+/// about which way round it goes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Walker {
     Crab,
@@ -163,8 +163,8 @@ impl Board {
     /// A turnstile physically deflects whoever crosses it, alternating
     /// sides; it overrides lures and signposts. `true` if the tile was one,
     /// in which case the walker's exit is already wall-resolved and its
-    /// arrival is settled. One body for crabs and gulls, so the deflection rule cannot
-    /// drift between them.
+    /// arrival settled. One body for crabs and gulls, so the deflection
+    /// rule cannot drift between them.
     pub(super) fn turnstile_deflect(
         &mut self,
         tile: u16,
@@ -300,10 +300,9 @@ mod tests {
     use super::*;
 
     /// A tile index and a pair of coordinates are the same thing said two
-    /// ways, and everything the sim does walks between them: a crab's
-    /// position, a signpost's tile, the wire's board, the render layer's
-    /// every sprite. An off-by-one in either direction would put the whole
-    /// board a tile out of step with itself.
+    /// ways, and everything the sim does walks between them, so an
+    /// off-by-one in either direction puts the whole board a tile out of
+    /// step with itself.
     #[test]
     fn an_index_and_a_pair_of_coordinates_are_the_same_place() {
         for (w, h) in [(1u8, 1u8), (2, 3), (9, 7), (21, 13)] {

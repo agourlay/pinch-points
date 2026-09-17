@@ -73,10 +73,10 @@ fn probe(board: Board, seats: u8) {
 /// `count` is the number of games the iterator will yield, so the bar has a
 /// length before the first slow round is played; it is trusted, not checked
 /// against the iterator.
+///
 /// Returns the worst seat deviation seen, in units of standard error, so
-/// the caller can hold it to a budget. Printing it and dropping it was how
-/// a seat handicap in the bot's blunder draw sat in every round ever played
-/// until somebody happened to read the output.
+/// the caller can hold it to a budget. Printed and dropped, it let a seat
+/// handicap in the bot's blunder draw sit in every round ever played.
 fn tally(
     label: &str,
     count: u64,
@@ -109,10 +109,10 @@ fn tally(
     // so the result line below owns the terminal.
     bar.finish_and_clear();
     // Round scores scatter hugely from seed to seed, so a seat average is
-    // only worth reading beside its standard error: a five percent gap on
-    // a few hundred games is usually nothing. Sigma is how far each seat
-    // sits from the table average in units of that error; anything past
-    // about two is worth investigating, anything under is noise.
+    // only worth reading beside its standard error: a five percent gap on a
+    // few hundred games is usually nothing. Sigma is how far each seat sits
+    // from the table average in units of that error, and anything past
+    // about two is worth investigating.
     let n = f64::from(n.max(1));
     let mean = totals.iter().take(seats).sum::<f64>() / seats as f64 / n;
     print!("{label}: {n} games, ties {ties} | ");
@@ -141,12 +141,10 @@ fn tally(
 struct Sweep {
     label: &'static str,
     worst: f64,
-    /// `None` for the `classic` sweeps, which are reported and never gated.
-    /// Those play a single handmade board a hundred times with only the
-    /// warm-up offset or the seed varying, which is a small and heavily
-    /// correlated sample: their sigmas swing several points between runs
-    /// that change nothing they measure, so a gate on them would fail on
-    /// nights when nothing happened.
+    /// `None` for the `classic` sweeps, which are reported and never gated:
+    /// they play a single handmade board a hundred times with only the
+    /// warm-up offset or the seed varying, so their sigmas swing several
+    /// points between runs that change nothing they measure.
     budget: Option<f64>,
 }
 
@@ -169,10 +167,9 @@ fn sweep(
 
 /// Fail the run if any gated sweep drifted past what it is allowed.
 ///
-/// This is the whole point of running the harness unattended: the figures
-/// were last read by hand on 2026-08-11 and not again until 2026-08-22, by
-/// which time every one of them had moved and one had gone from 3.2 sigma
-/// to 5.9. A printed number nobody compares is not a check.
+/// The point of running the harness unattended: read by hand on 2026-08-11
+/// and not again until 2026-08-22, every figure had moved and one had gone
+/// from 3.2 sigma to 5.9.
 fn verdict(sweeps: &[Sweep]) {
     let over: Vec<(&str, f64, f64)> = sweeps
         .iter()
@@ -209,10 +206,9 @@ fn verdict(sweeps: &[Sweep]) {
 /// | generated 6p 21x13 | 2.5 | 2.7 | 3.5 |
 ///
 /// The six-seat budget is the uncomfortable one, and its headroom is the
-/// thinnest on purpose. `tally` says anything past about two is worth
-/// investigating; six seats was already at 2.5 and is now 2.7, so this
-/// budget accepts a drift the harness itself calls suspicious. It is set to
-/// catch that figure getting worse, not to bless where it stands.
+/// thinnest on purpose: `tally` calls anything past about two worth
+/// investigating, and six seats is at 2.7. It is set to catch that figure
+/// getting worse, not to bless where it stands.
 const BUDGET_2P_12X9: f64 = 2.0;
 const BUDGET_4P_12X9: f64 = 2.5;
 /// 200 games against the others' 3000, so the noisiest of the four.
@@ -225,9 +221,8 @@ fn main() {
 
     // Budgets are per sweep because the sweeps are not comparable: two
     // seats sit a third of a sigma apart and six sit two and a half, so one
-    // global number would either miss real drift at two seats or fail every
-    // night at six. Each is the figure measured on the date in the comment
-    // beside it, plus room for the noise a re-run shows.
+    // global number would miss real drift at two seats or fail every night
+    // at six.
     let mut sweeps: Vec<Sweep> = Vec::new();
 
     sweep(
@@ -296,11 +291,10 @@ fn main() {
         (0..200u64).map(|seed| play(generate_arena(seed, 4, 16, 11), 4)),
         4,
     );
-    // Six seats is four corners and two long-edge castles, which are not the
-    // same job: this sweep is what says whether that difference shows up in
-    // the score. The XL beach is the one a six-player match is played on, and
-    // it generates one column wider than it is asked for so the edge castles
-    // have a centre to share (see `castle_spots`).
+    // Six seats is four corners and two long-edge castles, which are not
+    // the same job, and this sweep says whether that shows up in the score.
+    // The XL beach generates one column wider than it is asked for so the
+    // edge castles have a centre to share (see `castle_spots`).
     sweep(
         &mut sweeps,
         "generated 6p 21x13",

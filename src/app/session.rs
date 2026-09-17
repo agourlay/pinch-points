@@ -47,10 +47,9 @@ pub(super) fn seat_count(
     };
     // Clamped on the way out, because two of these sources are not the
     // game's to trust: `online` is whatever number a host wrote into a
-    // datagram, and `pads` is however many gamepads happen to be plugged
-    // in. `Seats` indexes the per-seat arrays, which are `MAX_PLAYERS`
-    // long, and a seventh seat ran off the end of the scores in
-    // `leading_seats` and took the round down with it.
+    // datagram, and `pads` is however many gamepads are plugged in. `Seats`
+    // indexes the per-seat arrays, and a seventh seat ran off the end of
+    // the scores in `leading_seats`.
     let seats = asked.clamp(2, MAX_PLAYERS as u8);
     debug_assert!(
         (2..=MAX_PLAYERS as u8).contains(&seats),
@@ -129,9 +128,7 @@ pub(super) fn load_versus(
         let (w, h) = config.map.size();
         let mut board = if config.map == match_setup::MapChoice::Custom {
             // A beach somebody built. Locally there is nobody to send it
-            // to, so it is read off the shelf; the dial offers it either
-            // way, and a match that quietly generated a random arena
-            // instead would be the dial lying.
+            // to, so it is read off the shelf.
             beaches
                 .fitting(config.seats)
                 .get(config.custom)
@@ -179,11 +176,9 @@ pub(super) fn load_versus(
     };
     // A replay is the round from its first tick, and a round started from
     // a pasted code has no first tick to hand: the code carries the board
-    // as it stood when it was copied, not the inputs that got it there. A
-    // recording that opened on the mid-round board would replay as a
-    // different round from the one that was played, so a pasted round is
-    // not recorded at all. Nothing downstream minds: every reader of the
-    // recorder is already an `if let`.
+    // as it stood when it was copied, not the inputs that got it there. So
+    // a pasted round is not recorded at all, which every reader of the
+    // recorder already allows for.
     recorder.0 = if playback.0.is_none() && resumed.is_none() {
         Some(Replay::new(Level::from_board("Turf War", 3, sim.0.clone())))
     } else {
@@ -214,16 +209,13 @@ pub(super) fn reset_puzzle_phase(mut next_phase: ResMut<NextState<Phase>>) {
 ///
 /// Clamped to the board, not to the two-tile inset: a custom arena can be
 /// as small as the level format allows, and asking `clamp` for an inset
-/// the board cannot hold was how a 3x3 beach off the shelf, or pasted as
-/// a round code, took the game down on its first frame. On a board too
-/// small for the inset the cursor sits as far in as there is.
+/// the board cannot hold took a 3x3 beach down on its first frame. On a
+/// board too small for the inset the cursor sits as far in as there is.
 fn cursor_home(board: &Board, player: u8) -> (u8, u8) {
     let (w, h) = (board.width(), board.height());
-    // The board is asked first, and the spot table is only the fallback.
-    // Which seat owns which castle is drawn with the beach now (see
-    // `seat_spots`), so the table no longer answers that question; and a
-    // handmade beach never did, which is why a custom arena used to start
-    // its cursors at the generated spots whatever it had built.
+    // The board is asked first, and the spot table is only the fallback:
+    // which seat owns which castle is drawn with the beach (see
+    // `seat_spots`), and a handmade beach was never in the table at all.
     let spots = castle_spots(w, h);
     let (cx, cy) = board
         .castle_of(player)
@@ -236,9 +228,9 @@ fn cursor_home(board: &Board, player: u8) -> (u8, u8) {
 }
 
 /// Every category of entity rendered from board state, bundled so the two
-/// teardown paths (screen exit and level reload) can never drift apart
-/// again: a missed category here once left turnstile sprites probing a
-/// smaller board and panicking in `tile_at`.
+/// teardown paths (screen exit and level reload) cannot drift apart: a
+/// missed category left turnstile sprites probing a smaller board and
+/// panicking in `tile_at`.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct BoardSprites<'w, 's> {
     statics: Query<'w, 's, Entity, With<board_render::BoardStatic>>,
@@ -407,11 +399,10 @@ pub(super) fn advance_sim(
         // the frames the players agree on.
         let local = session.session.seat().map(usize::from);
         let action = local.map_or(PlayerAction::None, |seat| pending.0[seat]);
-        // Borrowed past change detection: a mutable borrow of the resource
-        // marks it changed whether or not a frame runs, and while a peer
-        // is stalled none does. `observe_sim` reads the flag to skip
-        // re-reading a board that has not moved, which is exactly the
-        // stalled case, so it is set by hand below when a frame did run.
+        // Borrowed past change detection: a mutable borrow marks the
+        // resource changed whether or not a frame runs, and while a peer is
+        // stalled none does. `observe_sim` reads the flag to skip a board
+        // that has not moved, so it is set by hand below when one did.
         let sim_board = &mut sim.bypass_change_detection().0;
         let recording = &mut recorder.bypass_change_detection().0;
         let bots = &*bots;
@@ -477,17 +468,14 @@ pub(super) fn resolve_seat_names(
 ) {
     names.0 = match (&playback.0, &online.0) {
         // A replay is watched, not played: the names belong to the round on
-        // screen, not to whoever is sitting here now. Without this, watching
-        // somebody else's online match relabelled every crab with the local
-        // couch names.
+        // screen, not to whoever is sitting here now.
         (Some((replay, _)), _) => replay.names.clone(),
         (None, Some(session)) => session.names.clone(),
         (None, None) => settings.names.clone(),
     };
-    // And stamp them onto the round being recorded, which was created one
-    // system earlier, before anybody knew who was playing. Recorded now
-    // rather than at save time because by then the session is gone and an
-    // online round's names went with it.
+    // And stamp them onto the round being recorded, created one system
+    // earlier before anybody knew who was playing. Now rather than at save
+    // time, by when an online round's names have gone with its session.
     if let Some(replay) = &mut recorder.0 {
         replay.names = names.0.clone();
     }
@@ -564,11 +552,9 @@ pub(super) fn check_versus_over(
             replays::prune(settings.replay_cap);
             // The reel re-simulates the whole round twice and encodes 150
             // frames, so it goes on its own thread: the results card should
-            // appear the instant the tide comes in, not after the GIF.
-            // The card only says the reel is there once it is: the thread
-            // answers with the path when the GIF is written, and nothing
-            // when the round was too short or the write failed, and
-            // `poll_reel` carries the answer over to the card.
+            // appear the instant the tide comes in, not after the GIF. The
+            // thread answers with the path once the GIF is written, and
+            // nothing if the round was too short or the write failed.
             let reel = highlight_path();
             let answer = Arc::new(OnceLock::new());
             reel_thread.0 = Some(Arc::clone(&answer));
@@ -751,9 +737,9 @@ mod tests {
     }
 
     /// Two of the sources are outside the game's control, and the count
-    /// they give becomes the length of every per-seat loop. A seventh seat
-    /// used to run straight off the end of the `MAX_PLAYERS`-long scores in
-    /// `leading_seats` and panic the round.
+    /// they give becomes the length of every per-seat loop: a seventh seat
+    /// runs off the end of the `MAX_PLAYERS`-long scores in
+    /// `leading_seats`.
     #[test]
     fn a_seat_count_never_leaves_the_table() {
         let config = armed(3, 1);
@@ -825,12 +811,10 @@ mod tests {
 
     /// The teardown has to sweep *every* category of board sprite.
     ///
-    /// Its own comment records what a miss costs: a category left behind
-    /// once meant turnstile sprites surviving onto a smaller board and
-    /// panicking in `tile_at` - a crash at level load, from a sprite
-    /// nobody was looking at. The two teardown paths share this bundle so
-    /// they cannot drift apart, and this is the guard that the bundle
-    /// itself is complete.
+    /// A category left behind meant turnstile sprites surviving onto a
+    /// smaller board and panicking in `tile_at`: a crash at level load,
+    /// from a sprite nobody was looking at. The two teardown paths share
+    /// this bundle, and this is the guard that the bundle is complete.
     #[test]
     fn the_teardown_leaves_no_board_sprite_behind() {
         use crate::app::{board_render, creatures};
@@ -910,8 +894,7 @@ mod tests {
 
     /// A recording is fed one frame per tick, or as many as the transport
     /// asks for. The speed is the whole of the fast-forward: there is no
-    /// separate scrubbing path, so a speed that did not multiply here
-    /// would be a transport button that did nothing.
+    /// separate scrubbing path.
     #[test]
     fn the_transport_speed_is_how_many_frames_a_replay_eats() {
         for speed in [1u8, 2, 4] {

@@ -24,14 +24,11 @@ use bevy::prelude::*;
 
 const EDITOR_BOARD: (u8, u8) = (12, 9);
 
-/// Beach sizes the editor offers, smallest first. The same set versus
-/// plays on, so a level built here fits any of the arenas the game already
-/// draws. Before this the editor had exactly one size, which made "a big
-/// beach" something you could play on but not build.
+/// Beach sizes the editor offers, smallest first. The same set versus plays
+/// on, so a level built here fits any of the arenas the game already
+/// draws.
 const EDITOR_SIZES: [(u8, u8); 4] = [(9, 7), (12, 9), (16, 11), (20, 13)];
 const GULL_PERIODS: [u32; 4] = [0, 480, 240, 120];
-/// The editor's save slot, under the XDG data directory beside the
-/// player's dropped-in levels.
 /// Where the editor used to put its one and only level. Still read, so a
 /// level saved by an older build is still there; nothing writes it now.
 pub fn legacy_save_path() -> std::path::PathBuf {
@@ -44,12 +41,11 @@ pub fn custom_dir() -> std::path::PathBuf {
 }
 
 /// Where a level called `name` is filed. One file per name, so saving is
-/// keeping rather than replacing: the editor wrote to a single fixed path
-/// before this, and a second level overwrote the first.
+/// keeping rather than replacing.
 ///
-/// The name also has to survive being a file name, and every level in the
-/// campaign is identified by its name (that is what progress is keyed on),
-/// so two levels sharing one would share their gold star.
+/// The name also has to survive being a file name, and every level is
+/// identified by its name (that is what progress is keyed on), so two
+/// levels sharing one would share their gold star.
 pub fn save_path(name: &str) -> std::path::PathBuf {
     custom_dir().join(format!(
         "{}.txt",
@@ -80,10 +76,9 @@ pub struct EditorState {
     dirty: bool,
 }
 
-/// What the editor is doing, which is what its keys mean. One state
-/// rather than a `naming` flag, a `named` flag and a `testing` snapshot,
-/// three of which could once be set at the same time and none of which
-/// were meant to be.
+/// What the editor is doing, which is what its keys mean. One state rather
+/// than a `naming` flag, a `named` flag and a `testing` snapshot, which
+/// could all be set at once.
 #[derive(Default, Debug)]
 pub enum Mode {
     /// The board is being edited; keys are brushes and commands.
@@ -153,8 +148,8 @@ const NAME_MAX: usize = 28;
 
 /// True while the editor is spelling out a name, which is when the board
 /// keys mean letters. A run condition rather than an early return, because
-/// the cursor is walked by a system of its own: without this, typing
-/// "Wade" walked the cursor up and then left across the beach.
+/// the cursor is walked by a system of its own: typing "Wade" otherwise
+/// walks the cursor up and then left across the beach.
 pub fn editor_naming(state: Res<EditorState>) -> bool {
     state.is_naming()
 }
@@ -187,13 +182,11 @@ pub fn editor_testing(state: Res<EditorState>) -> bool {
 ///
 /// The load path's rule applies here too (see `BoardSprites` in
 /// `session.rs`): every sprite drawn from the old board goes, because the
-/// sync systems probe the new board at each sprite's remembered tile, and
-/// a crab, castle or log left over from a bigger beach probes a tile the
-/// smaller one does not have. Only the statics were being cleared, so a
-/// 20x13 sand shrunk to 9x7 with a castle in its far corner went down in
-/// `tile_at`. The cursor comes back to the middle for the same reason:
-/// movement only clamps on a step, so it would otherwise stand off the
-/// board until it was moved, and be painted on there.
+/// sync systems probe the new board at each sprite's remembered tile, and a
+/// crab, castle or log left over from a bigger beach probes a tile the
+/// smaller one does not have. The cursor comes back to the middle for the
+/// same reason: movement only clamps on a step, so it would stand off the
+/// board until it was moved.
 fn replace_board(
     board: Board,
     sim: &mut Sim,
@@ -227,15 +220,12 @@ pub fn editor_input(
         return;
     }
     typed.clear();
-    // Beach size, on a function key. It was on `[` and `]`, which are
-    // *physical* keys: on a keyboard that is not US the two beside P are
-    // not those brackets at all, so the prompt named keys the player did
-    // not have. F5 is F5 everywhere, and one key that wraps is enough for
-    // four sizes.
+    // Beach size, on a function key. On `[` and `]`, which are *physical*
+    // keys, the prompt named keys a non-US keyboard does not have; F5 is F5
+    // everywhere, and one key that wraps is enough for four sizes.
     //
     // Resizing starts a fresh beach: there is no honest way to keep a
-    // 20-wide layout when it becomes 9 wide, and half a level silently
-    // thrown away is worse than a clean sheet you asked for.
+    // 20-wide layout when it becomes 9 wide.
     if keys.just_pressed(KeyCode::F5) {
         let board = &sim.0;
         let now = (board.width(), board.height());
@@ -310,10 +300,10 @@ pub fn editor_input(
 
 /// A level out of what was on the clipboard, or what to say about why not.
 ///
-/// Takes the pasted code rather than the clipboard itself, so the three ways
-/// this fails (nothing readable there, a code of the wrong sort, a level
-/// this build cannot parse) each get their own answer and their own test,
-/// without a test ever touching the player's real clipboard.
+/// Takes the pasted code rather than the clipboard itself, so the three
+/// ways this fails (nothing readable there, a code of the wrong sort, a
+/// level this build cannot parse) each get their own answer and their own
+/// test.
 fn level_from(
     pasted: Option<(crate::share::Kind, Vec<u8>)>,
     tr: &crate::app::i18n::Tr,
@@ -331,19 +321,18 @@ fn level_from(
 /// The rule is where the two kinds part. A puzzle is played with the
 /// inventory it grants and no evictions; an arena keeps the board's own
 /// rule, which is the one every generated beach plays under. Stamping the
-/// puzzle rule on a handmade beach gave a versus table three signposts each
-/// and no way to replace them, which is not the game the other beaches play.
+/// puzzle rule on a handmade beach gives a versus table three signposts
+/// each and no way to replace them.
 ///
 /// A puzzle also plays without castle raids, as every campaign puzzle
 /// does: its castle is the finish line, and a gull leaving through it
 /// would move the target.
 ///
-/// What comes back is read from the text that will be saved, not the
-/// board on screen. The two differ when gulls were placed and erased:
-/// each placement draws from the board's PRNG, the text carries only the
-/// seed, and the survivors read back with a different hand and takeoff.
-/// A "solvable" certified on the live board was then a claim about a
-/// beach nobody would ever play.
+/// What comes back is read from the text that will be saved, not the board
+/// on screen. The two differ when gulls were placed and erased: each
+/// placement draws from the board's PRNG, the text carries only the seed,
+/// and the survivors read back with a different hand and takeoff, so a
+/// "solvable" certified on the live board is about a beach nobody plays.
 pub(super) fn level_here(state: &EditorState, board: &Board, name: &str) -> Level {
     let mut snapshot = board.clone();
     if state.kind == LevelKind::Puzzle {
@@ -358,10 +347,9 @@ pub(super) fn level_here(state: &EditorState, board: &Board, name: &str) -> Leve
 /// solver, saving, playtesting, and leaving.
 ///
 /// Gated in the schedule on not naming (F1): while a name is being typed
-/// every key is a letter, and before the gate an "o" in the name flipped
-/// wrap, a "v" started the solver, Enter began a playtest and Escape left
-/// for the menu. The frame the name is committed is sat out here (see
-/// `EditorState::named`), because the gate lifts within that frame.
+/// every key is a letter, or an "o" in the name flips wrap and Escape
+/// leaves for the menu. The frame the name is committed is sat out here
+/// (see `EditorState::named`), because the gate lifts within that frame.
 #[allow(clippy::too_many_arguments)]
 pub fn editor_commands(
     mut commands: Commands,
@@ -420,9 +408,8 @@ pub fn editor_commands(
                 );
                 // A pasted level is the one board here that nobody vetted:
                 // authored elsewhere, carried through a chat message, and
-                // dropped straight onto the sand. Check it on the way in
-                // rather than waiting to be asked - which for a beach is a
-                // count of its castles, not a search for a route.
+                // dropped straight onto the sand. Checked on the way in,
+                // which for a beach is a count of its castles.
                 if level.kind == LevelKind::Arena {
                     state.feedback = arena_report(&sim.0, tr);
                 } else {
@@ -611,8 +598,7 @@ mod tests {
     /// What the solver and the playtest are handed is what the file will
     /// say. Placing a gull draws from the board's PRNG and the text carries
     /// only the seed, so a board that placed and erased gulls reads back
-    /// with the survivors rolled afresh; a "solvable" certified on the
-    /// live board was a claim about a beach nobody would play.
+    /// with the survivors rolled afresh.
     #[test]
     fn the_level_certified_is_the_level_saved() {
         let mut board = sand();
@@ -661,8 +647,8 @@ mod tests {
 
     /// The toggle decides two things at once: which list the saved level
     /// joins, and which signpost rule it is played under. A beach saved
-    /// under the puzzle rule handed a versus table three posts each and no
-    /// way to replace them, which is not the game the other beaches play.
+    /// under the puzzle rule hands a versus table three posts each and no
+    /// way to replace them.
     #[test]
     fn the_toggle_sets_the_kind_and_the_rule() {
         use crate::sim::CapPolicy;

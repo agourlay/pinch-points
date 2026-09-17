@@ -9,10 +9,10 @@ use bevy::log::{info, warn};
 /// GitHub `https://` address, checked at parse time.
 ///
 /// `Ok` means the opener started, not that a browser has the page: on a
-/// desktop with no handler `xdg-open` starts fine and fails a moment
-/// later, and it can also sit for as long as the browser it launched
-/// runs. So it is not waited on here; a thread reaps it and logs how it
-/// went, and the notice says "handed to", which is what is known.
+/// desktop with no handler `xdg-open` starts fine and fails a moment later,
+/// and it can sit for as long as the browser it launched runs. So it is not
+/// waited on: a thread reaps it and logs how it went, and the notice says
+/// "handed to".
 #[cfg_attr(test, allow(clippy::unnecessary_wraps))]
 pub(crate) fn open_url(url: &str) -> std::io::Result<()> {
     #[cfg(test)]

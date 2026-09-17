@@ -40,9 +40,9 @@ impl Dial {
         use crate::app::cycle::Cycle;
         match self {
             // The note about beaches this table is too big for is not
-            // appended here: this value cell clips what overruns it, so a
-            // sentence on the end would push the map's own name out of
-            // sight. It gets a line of its own under the dials.
+            // appended here: this value cell clips, so a sentence on the
+            // end would push the map's own name out of sight. It gets a
+            // line of its own under the dials.
             Dial::Map => (
                 tr.match_map,
                 crate::app::match_setup::map_label(config, tr, beaches),
@@ -94,9 +94,8 @@ impl Dial {
 /// The beach these terms describe, once the table is known.
 ///
 /// The handcrafted arena seats four, and a fifth player arriving cannot be
-/// given a castle on it. The match-setup screen keeps that straight by
-/// dropping the seat count, which online is not its to drop. So the map
-/// gives way instead: whoever turned up keeps their chair.
+/// given a castle on it. The match-setup screen drops the seat count, which
+/// online is not its to drop, so the map gives way instead.
 pub fn map_for(config: &MatchConfig, seats: u8) -> crate::app::match_setup::MapChoice {
     use crate::app::match_setup::{CLASSIC_SEATS, MapChoice, WIDE_ENOUGH};
     match seats > CLASSIC_SEATS && config.map.size().0 < WIDE_ENOUGH {

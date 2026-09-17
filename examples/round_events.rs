@@ -2,10 +2,9 @@
 //! landed, and what was on the beach when it did.
 //!
 //! Run: `cargo run --example round_events -- [path]`, defaulting to the
-//! last round the game kept. A replay is the round's inputs, and the sim
-//! is deterministic, so re-running one here reproduces exactly the beach
-//! that was played - which makes this the only honest way to answer "was
-//! that as busy as it felt".
+//! last round the game kept. A replay is the round's inputs and the sim is
+//! deterministic, so re-running one here reproduces the beach that was
+//! played.
 
 use pinch_points::sim::{Replay, TICKS_PER_SECOND, TideEvent};
 

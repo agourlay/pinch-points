@@ -9,12 +9,11 @@ use std::time::Duration;
 /// API, which says so in JSON with the release notes attached, and the
 /// releases page, which redirects to the newest one and says nothing else.
 ///
-/// The API is asked first and is the one that gives the page its notes.
-/// It is also rationed: sixty answers an hour to everyone behind one
-/// public address, and a hall of players launching the game behind one
-/// router is exactly the busy afternoon that runs it dry. When it is dry
-/// the page is asked instead, which is not rationed that way, so the
-/// offer still stands, only without the notes.
+/// The API is asked first and is the one that gives the page its notes. It
+/// is also rationed, sixty answers an hour to everyone behind one public
+/// address, which a hall of players launching the game behind one router
+/// runs dry. The page is asked instead then, so the offer still stands,
+/// only without the notes.
 ///
 /// Both are built from the manifest's repository so a fork asks about
 /// itself.
@@ -78,13 +77,11 @@ pub struct Release {
     pub notes: String,
 }
 
-/// What a release page's address must look like before it is handed to
-/// a browser (or, on Windows, to `cmd`): on GitHub, over https, and made
-/// of nothing a shell has opinions about. No percent, in particular:
-/// `cmd` expands `%NAME%`, and a release page of ours has never needed
-/// an escape. The reply is GitHub's own over TLS, so this is belt to
-/// those braces, but the address is the one thing here that leaves the
-/// process.
+/// What a release page's address must look like before it is handed to a
+/// browser (or, on Windows, to `cmd`): on GitHub, over https, and made of
+/// nothing a shell has opinions about. No percent in particular, since
+/// `cmd` expands `%NAME%`. The reply is GitHub's own over TLS, but the
+/// address is the one thing here that leaves the process.
 fn is_release_page(url: &str) -> bool {
     url.starts_with("https://github.com/")
         && url.chars().all(|c| {
@@ -331,11 +328,9 @@ mod tests {
         assert_eq!(parse_release(no_body).unwrap().notes, "");
     }
 
-    /// What is not a release: GitHub's 404 body, a tag that is not a
-    /// version, a page that is not https, and nonsense.
     /// The one string that leaves the process goes to a browser, or on
-    /// Windows to `cmd`, which expands `%NAME%`. A release page of ours
-    /// has never needed an escape, so a percent is refused outright.
+    /// Windows to `cmd`, which expands `%NAME%`. A release page of ours has
+    /// never needed an escape, so a percent is refused outright.
     #[test]
     fn a_release_page_carries_no_percent() {
         assert!(is_release_page(
@@ -348,6 +343,8 @@ mod tests {
         assert!(!is_release_page("https://github.com/x/y?a=b"), "no query");
     }
 
+    /// What is not a release: GitHub's 404 body, a tag that is not a
+    /// version, a page that is not https, and nonsense.
     #[test]
     fn what_is_not_a_release() {
         assert_eq!(

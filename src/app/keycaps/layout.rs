@@ -9,18 +9,15 @@ use crate::app::i18n::Lang;
 /// QWERTY puts others.
 ///
 /// Only the two layouts that move *letters* are here. The other languages
-/// the game speaks are typed on boards whose letters sit exactly where
-/// QWERTY puts them - Spanish, Italian and Dutch are QWERTY with their own
-/// punctuation and accents, a Japanese JIS board carries the same Latin
-/// letters, and a Russian ЙЦУКЕН board is dual-legend with QWERTY beneath
-/// the Cyrillic - so for them there is nothing to presume and nothing that
-/// would read wrong.
+/// the game speaks are typed on boards whose letters sit where QWERTY puts
+/// them: Spanish, Italian and Dutch are QWERTY with their own punctuation
+/// and accents, a Japanese JIS board carries the same Latin letters, and a
+/// Russian ЙЦУКЕН board is dual-legend with QWERTY beneath the Cyrillic.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Layout {
     /// The one every other table here is written against, and so the one
-    /// with nothing of its own to say. Worth naming all the same: a
-    /// player has to be able to point at it on the settings card and stop
-    /// the game guessing.
+    /// with nothing of its own to say. Named all the same, so a player can
+    /// point at it on the settings card and stop the game guessing.
     Qwerty,
     /// France and Belgium.
     Azerty,
@@ -70,10 +67,8 @@ impl Layout {
     }
 
     /// The layout the country behind a language types on, where it is not
-    /// QWERTY. This is the whole of what the language tells us about the
-    /// keyboard, and it is a majority rather than a rule: a French speaker
-    /// in Montréal types on QWERTY, which is why one press is enough to
-    /// take it back.
+    /// QWERTY. A majority rather than a rule: a French speaker in Montréal
+    /// types on QWERTY, which is why one press takes it back.
     pub fn of(lang: Lang) -> Option<Layout> {
         match lang {
             Lang::Fr => Some(Layout::Azerty),
@@ -88,10 +83,9 @@ impl Layout {
     /// presumed for a guessed one.
     pub fn caps(self) -> &'static [(KeyCode, char)] {
         match self {
-            // Nothing. Every cap here is a difference from QWERTY, so
-            // QWERTY differs from itself in no place at all - which is
-            // exactly what makes it worth naming: choosing it clears
-            // every cap the game thought it knew.
+            // Nothing: every cap here is a difference from QWERTY. Which
+            // is what makes it worth naming, since choosing it clears every
+            // cap the game thought it knew.
             Layout::Qwerty => &[],
             // ² & é " ' ( - è _ ç à ) =  /  a z e r t y u i o p ^ $
             // q s d f g h j k l m ù *    /  w x c v b n , ; : !
@@ -128,7 +122,7 @@ impl Layout {
     /// this one, so the rest of [`Self::caps`] can be taken as read.
     ///
     /// A tell has to be unmistakable, which is less than "differs from
-    /// QWERTY": a UK board says "#" on the key beside Enter, exactly as
+    /// QWERTY": a UK board says "#" on the key beside Enter exactly as
     /// QWERTZ does, so that one names no layout. The letters do.
     pub fn tells(self) -> &'static [(KeyCode, char)] {
         match self {

@@ -10,24 +10,22 @@ use crate::sim::rng::Pcg32;
 /// A castle spot per seat for a board of the given size.
 ///
 /// The first four are the corners, each the 180-degree image of the one
-/// before it, which makes them interchangeable. Seats five and six
-/// sit at the centre of the long edges as another such pair, not the left
-/// and right mid-edges, which is where the side spawner holes point, and a
+/// before it, which makes them interchangeable. Seats five and six sit at
+/// the centre of the long edges as another such pair, not the left and
+/// right mid-edges, which is where the side spawner holes point, and a
 /// castle in front of a hole is fed crabs for free.
 ///
 /// The long-edge pair takes the *centre* column, which is why generated
-/// six-seat arenas are widened to an odd width (see [`generate_arena`]). An
+/// six-seat arenas are widened to an odd width (see [`generate_arena`]): an
 /// even width has no centre, so the pair leans one tile nearer two corners
-/// than the other two: the largest seat bias this board has had. Centred,
-/// the whole castle set mirrors both ways.
+/// than the other two.
 ///
-/// Corners and edges cannot be made the same job, and it is worth saying why
-/// rather than trying again: a rectangle's symmetry group has four elements,
-/// so its positions fall into orbits of at most four, and six equivalent
-/// spots do not exist on one. Four corners and two edge-centres is the
-/// closest it comes; the few percent the edges keep is the price of the
-/// shape. Handicapping the edge castles to even it up overshoots every way
-/// it has been tried.
+/// Corners and edges cannot be made the same job, and it is worth saying
+/// why rather than trying again: a rectangle's symmetry group has four
+/// elements, so its positions fall into orbits of at most four, and six
+/// equivalent spots do not exist on one. The few percent the edges keep is
+/// the price of the shape, and handicapping them overshoots every way it
+/// has been tried.
 ///
 /// Every generated board is at least 9x7, so the spots are one tile in from
 /// the walls. A custom arena can be any size the level format allows, down
@@ -49,24 +47,20 @@ pub fn castle_spots(width: u8, height: u8) -> [(u8, u8); MAX_PLAYERS] {
 
 /// Which castle spot each seat takes on a board built from `seed`.
 ///
-/// The spots are not equal work. Four are corners and two are the centres
-/// of the long edges, and `examples/balance` over 3000 six-seat rounds puts
-/// the edge pair about six percent ahead of the worst corner: a 13% spread
-/// between the best seat and the worst, and four of the six seats past the
-/// harness's own two-sigma bar. That gap is the shape of a rectangle and
-/// cannot be designed away (see [`castle_spots`]), so what moves instead is
-/// *who* gets it. A table that plays five rounds now plays them from
-/// different chairs, and over a series the advantage cancels rather than
-/// compounding on whoever joined third.
+/// The spots are not equal work: `examples/balance` over 3000 six-seat
+/// rounds puts the edge pair about six percent ahead of the worst corner,
+/// a 13% spread between the best seat and the worst. That gap is the shape
+/// of a rectangle and cannot be designed away (see [`castle_spots`]), so
+/// what moves instead is *who* gets it, and over a series the advantage
+/// cancels rather than compounding on whoever joined third.
 ///
 /// Shuffled in pairs, never seat by seat, and that is load-bearing.
 /// [`castle_spots`] lists 180-degree opposite pairs, `(0,1) (2,3) (4,5)`,
 /// and both team modes are built on it: Pairs gives a team a whole pair,
 /// Trios gives each team one seat from every pair. Permuting whole pairs
-/// and flipping within them keeps seat `2k` opposite seat `2k+1`, so a
-/// team split stays the mirror image of the other team. Shuffling the six
-/// spots freely would quietly hand one team two corners and the other two
-/// edges.
+/// and flipping within them keeps seat `2k` opposite seat `2k+1`, where
+/// shuffling the six spots freely would hand one team two corners and the
+/// other two edges.
 ///
 /// Only the pairs in use are touched: at four seats or fewer the two edge
 /// spots stay out of it, which is what keeps a four-seat board off the
@@ -127,9 +121,9 @@ fn end_spawners(width: u8, height: u8) -> [(u8, u8, Direction); 4] {
 /// The four images of a tile under the arena's two mirror symmetries,
 /// left-right and top-bottom.
 ///
-/// Every generated feature is placed on all four at once. That is what
+/// Every generated feature is placed on all four at once, which is what
 /// makes the four corner castles interchangeable: 180-degree symmetry alone
-/// only pairs seat 1 with seat 2 and seat 3 with seat 4, and left the other
+/// pairs seat 1 with seat 2 and seat 3 with seat 4, and leaves the other
 /// diagonal measurably better off.
 fn quad(width: u8, height: u8, x: u8, y: u8) -> [(u8, u8); 4] {
     [
@@ -270,9 +264,7 @@ pub fn classic_arena_seeded(seed: u64, preload_scores: bool, seats: u8) -> Board
         board.set_wall(x, y, dir, true);
     }
     // Balance: starters and opening gulls mirror under the same 180-degree
-    // rotation as the walls, so neither half begins richer. (The old
-    // Molting-vs-Giant pair fed P2's quadrant double the starting value,
-    // and the lone top gull pressured only the upper castles.) Rotation
+    // rotation as the walls, so neither half begins richer. Rotation
     // preserves chirality, so a strict mirror needs equal handedness.
     board.spawn_crab(3, 2, Direction::Right, Handedness::Left, CrabKind::Molting);
     board.spawn_crab(8, 6, Direction::Left, Handedness::Left, CrabKind::Molting);
@@ -382,10 +374,9 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
         }
     }
     // Turnstiles ring the middle rather than sitting on it: a turnstile is
-    // the one tile with a handedness, and a handed thing standing on a
-    // mirror axis is its own opposite: the one shape this board cannot
-    // make fair. One tile in from each axis, the group is four honest
-    // mirror images.
+    // the one tile with a handedness, and a handed thing on a mirror axis
+    // is its own opposite. One tile in from each axis, the group is four
+    // honest mirror images.
     place_quad(
         &mut board,
         (width - 1) / 2 - 1,
@@ -538,11 +529,6 @@ mod tests {
         }
     }
 
-    /// The fairness contract for generated arenas: the whole board reads
-    /// the same after a left-right flip and after a top-bottom flip. Since
-    /// those two flips permute the four corner castles among themselves,
-    /// every seat faces an identical routing problem, and no seat spread
-    /// can come from the map itself.
     /// The one thing the shuffle may never break. Both team modes read
     /// fairness off `castle_spots` pairing seat `2k` with seat `2k+1` as
     /// 180-degree opposites: Pairs hands a team a whole pair, Trios hands
@@ -593,8 +579,7 @@ mod tests {
 
     /// And the shuffle actually shuffles: the long-edge pair is worth a few
     /// percent, so no seat may hold it every round. Seat zero is the host's
-    /// chair online, which is the one that used to be stuck with a corner
-    /// for a whole series.
+    /// chair online, and was stuck with a corner for a whole series.
     #[test]
     fn the_edge_castles_do_not_always_fall_to_the_same_seats() {
         let mut edge = 0;
@@ -621,6 +606,10 @@ mod tests {
 
     #[test]
     fn generated_arenas_mirror_both_ways() {
+        // The fairness contract: the whole board reads the same after a
+        // left-right flip and after a top-bottom flip. Those two flips
+        // permute the four corner castles among themselves, so every seat
+        // faces an identical routing problem.
         for &(w, h) in &[(9u8, 7u8), (12, 9), (16, 11), (20, 13)] {
             for seed in 0..25u64 {
                 let board = generate_arena(seed, 4, w, h);
@@ -731,9 +720,9 @@ mod tests {
         );
     }
     /// A generated beach with no edges. Wrapping is as old as the campaign's
-    /// level 26, but it had only ever run on handcrafted boards - a generated
+    /// level 26, but had only ever run on handcrafted boards: a generated
     /// arena puts spawner holes *in* the border tiles a wrapping creature
-    /// walks through, which is a combination nothing had played before.
+    /// walks through.
     #[test]
     fn an_open_ocean_arena_plays_a_round() {
         use crate::sim::{BotLevel, MAX_PLAYERS, PlayerAction, bot_action};

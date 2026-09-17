@@ -41,12 +41,11 @@ fn every_campaign_level_is_solvable_with_its_solution() {
 
 /// A campaign level's target must hold still while it is played.
 ///
-/// The puzzle header counts "Saved a/b", and `b` is `crabs_spawned` - so
+/// The puzzle header counts "Saved a/b", and `b` is `crabs_spawned`, so
 /// anything that spawns a crab mid-run moves the finish line. A gull
-/// reaching a castle used to do exactly that: the raid spilled banked crabs
-/// back onto the sand as *new* ones, and nine shipped levels grew their own
-/// target while the player watched, on the authored solution. It read as
-/// the gull being counted, which is how it was reported.
+/// reaching a castle did exactly that: the raid spilled banked crabs back
+/// onto the sand as *new* ones, and nine shipped levels grew their own
+/// target on the authored solution.
 ///
 /// Campaign puzzles now play with `castle_raids` off (see `Level::board`).
 /// Levels that spawn on purpose, through a `spawner:`, are exempt: there
@@ -83,9 +82,8 @@ fn no_campaign_level_moves_its_own_target() {
 ///
 /// The one exception is named, not inferred: level 1 is the controls
 /// tutorial, and its post is there to be practised with on a board that
-/// cannot be lost. This used to skip every level with no `solution:` line
-/// instead, which let that one through and would have let through any
-/// later level whose author forgot the line, the very lesson it guards.
+/// cannot be lost. Skipping every level with no `solution:` line instead
+/// would let through any level whose author forgot the line.
 #[test]
 fn granted_signposts_are_necessary() {
     const TUTORIAL: &str = "Welcome Ashore";
@@ -104,19 +102,16 @@ fn granted_signposts_are_necessary() {
     }
 }
 
-// Every granted signpost must be load-bearing, and one more guard proves it:
-// `granted_signposts_are_necessary` (above) only catches a level that needs
-// *none* of its posts; a level that hands over two and falls to one is just
-// as dishonest. Six levels did exactly that, their boards open enough that
-// both crabs drifted onto one border circuit where a single post caught them
-// all. Catching it means proving no cheaper solution exists, which is an
-// exhaustive-per-level solver search: a minute in release across every core,
-// far more as the `#[ignore]`d debug test it used to be. So it is not a test
-// and not in CI - it lives in `examples/verify_levels.rs`, run by hand after
-// editing a level file (`cargo run --release --example verify_levels`), since
-// levels change far less often than code. It also calibrates
-// `DEFAULT_NODE_BUDGET`: nothing else searches a real level under the ceiling
-// the editor gives up at.
+// Every granted signpost must be load-bearing, and one more guard proves
+// it: `granted_signposts_are_necessary` (above) only catches a level that
+// needs *none* of its posts, and a level that hands over two and falls to
+// one is as dishonest. Six levels did exactly that. Catching it means
+// proving no cheaper solution exists, an exhaustive-per-level solver search
+// costing a minute in release across every core, so it is not a test and
+// not in CI: it lives in `examples/verify_levels.rs`, run by hand after
+// editing a level file (`cargo run --release --example verify_levels`). It
+// also calibrates `DEFAULT_NODE_BUDGET`, nothing else searching a real
+// level under the ceiling the editor gives up at.
 
 /// No level is beaten by pointing two signposts at each other.
 ///
@@ -126,10 +121,9 @@ fn granted_signposts_are_necessary() {
 /// a cheat rather than an answer: the level's walls, weed and gulls stop
 /// mattering the moment it is available.
 ///
-/// `Kelp Keep` shipped exactly this. The three guards above all passed,
-/// because the pair really does win and the board really does lose without
-/// it. What none of them asked was whether the win had anything to do with
-/// the beach it was won on.
+/// `Kelp Keep` shipped exactly this, past all three guards above: the pair
+/// really does win and the board really does lose without it. What none of
+/// them asked was whether the win had anything to do with the beach.
 ///
 /// A post aimed into a *wall* is a different thing and stays legal: the
 /// wall reverses the crab (spec §9 open question 2, frozen), that reversal
@@ -226,12 +220,10 @@ fn campaign_levels_have_unique_names() {
 
 /// Nothing starts standing where it cannot stand.
 ///
-/// A crab written onto a rock, or a gull into kelp, is a level that is
-/// wrong from its first frame: the creature is inside terrain the sim
-/// will never walk it out of, and the level is unwinnable in a way the
-/// solver cannot report because the board it is handed is already broken.
-/// Authored by hand in text, so this is the guard that catches a typo in
-/// a coordinate.
+/// A crab written onto a rock, or a gull into kelp, is wrong from its first
+/// frame: the creature is inside terrain the sim will never walk it out of,
+/// and the solver cannot report it, being handed a broken board. Levels are
+/// authored by hand, so this catches a typo in a coordinate.
 #[test]
 fn no_shipped_level_starts_a_creature_where_it_cannot_stand() {
     // Rock and rock alone. Kelp and a tide pool are walked *through* -
@@ -270,10 +262,10 @@ fn no_shipped_level_starts_a_creature_where_it_cannot_stand() {
 
 /// Every level that asks for a bank has somewhere to bank.
 ///
-/// Three of the four goals are counted in banked crabs, and a board with
-/// no castle cannot satisfy any of them by any play at all - it would
-/// come back from the solver as "no solution found", which reads as an
-/// authoring note rather than as a broken map.
+/// Three of the four goals are counted in banked crabs, and a board with no
+/// castle cannot satisfy any of them by any play: it comes back from the
+/// solver as "no solution found", which reads as an authoring note rather
+/// than a broken map.
 ///
 /// `Survive` is deliberately exempt and is the reason this is not simply
 /// "every level has a castle": a level whose goal is that no crab is

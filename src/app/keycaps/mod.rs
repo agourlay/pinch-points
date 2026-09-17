@@ -2,10 +2,9 @@
 //!
 //! Every binding is a Bevy [`KeyCode`], which is a physical position: the
 //! key under the QWERTY "W" is `KeyW` on an AZERTY board too, where its cap
-//! reads "Z". So the stock WASD already moves an AZERTY player on ZQSD -
-//! but every legend on screen spelled the QWERTY caps, and the controls
-//! screen answered a press of "Z" with "W", which reads as the game
-//! ignoring the keyboard in front of it.
+//! reads "Z". So the stock WASD already moves an AZERTY player on ZQSD,
+//! but a legend that spells the QWERTY caps answers a press of "Z" with
+//! "W", which reads as the game ignoring the keyboard in front of it.
 //!
 //! The keys the game reads by their *letter* - M for mute, H for the hint,
 //! N/P/R, C/V, T - are mnemonics, and a mnemonic has to sit on the cap that
@@ -23,8 +22,7 @@
 //!    code and the layout-aware character, and the pair is remembered
 //!    (see [`learn_keycaps`]). This is what catches a layout switched
 //!    mid-session, and what answers on a platform with no query. Both of
-//!    these live in the settings file, as one table: a fact is a fact
-//!    whichever asked for it.
+//!    these live in the settings file, as one table.
 //! 3. **Presumed from the language.** A player who reads the game in
 //!    French is typing on AZERTY, and one who reads it in German on
 //!    QWERTZ - so a first run is spelled right even before the query
@@ -50,12 +48,10 @@ use crate::app::settings::GameSettings;
 /// What this keyboard's caps say, where they differ from Bevy's QWERTY
 /// spelling: what presses have shown, over what the language presumes.
 ///
-/// A resource of its own rather than a field of
-/// [`GameSettings`]: it is per-machine learned state, not a preference,
-/// and it changes on ordinary keypresses. Kept inside the settings it
-/// made every settings reader re-run (and re-serialise) for each learned
-/// cap. It still travels in the same settings.txt, as the `keycaps:`
-/// line; the save path takes both resources.
+/// A resource of its own rather than a field of [`GameSettings`]: it is
+/// per-machine learned state, not a preference, and it changes on ordinary
+/// keypresses, which inside the settings re-ran every settings reader. It
+/// still travels in the same settings.txt, as the `keycaps:` line.
 #[derive(Resource, Clone, PartialEq, Eq, Debug, Default)]
 pub struct KeyCaps {
     /// Physical key -> the character on its cap, from presses. Empty on a
@@ -67,24 +63,22 @@ pub struct KeyCaps {
     /// that would have is the press that clears it.
     presumed: Option<Layout>,
     /// The layout the player named on the settings card, which is the
-    /// whole answer for as long as it is set - not a cap over the top of
-    /// the others but instead of them, because "this is an AZERTY board"
-    /// is a statement about the whole board.
+    /// whole answer for as long as it is set, rather than a cap over the
+    /// top of the others: "this is an AZERTY board" is a statement about
+    /// the whole board.
     ///
-    /// Saved as its own setting rather than in the caps text, since it is
-    /// a preference and the rest is evidence. The evidence goes on being
-    /// collected underneath: switch back to Auto and it is all still
-    /// there, up to date.
+    /// Saved as its own setting rather than in the caps text, since it is a
+    /// preference and the rest is evidence. The evidence goes on being
+    /// collected underneath, so Auto comes back up to date.
     forced: Option<Layout>,
 }
 
 /// The key groups the legends name by their QWERTY caps, and the physical
 /// keys they stand for, letter for letter.
 ///
-/// The move blocks are the obvious pair, but "W/S" and "A/D" are the ones
-/// most players read most often: every menu, settings and setup prompt in
-/// every language opens with one, so a board they are not respelled on is
-/// a board where the very first line on screen names the wrong keys.
+/// The move blocks are the obvious pair, but "W/S" and "A/D" are read most
+/// often: every menu, settings and setup prompt opens with one, so
+/// unrespelled they make the first line on screen name the wrong keys.
 ///
 /// The punctuation inside a spelling is kept as it is written; only the
 /// letters are looked up. Longest first, so a shorter group cannot eat
@@ -149,10 +143,9 @@ impl KeyCaps {
         keys.just_pressed(self.key_for(letter))
     }
 
-    /// Whether `key` is one of the [`binds::GLOBAL_KEYS`] on this
-    /// keyboard - read by its letter whatever the bindings say, so not a
-    /// key to hand a seat. The stock check is by position; this one is by
-    /// cap, which is what the game reads.
+    /// Whether `key` is one of the [`binds::GLOBAL_KEYS`] on this keyboard,
+    /// read by its letter whatever the bindings say, so not a key to hand a
+    /// seat. The stock check is by position; this one is by cap.
     pub fn is_global(&self, key: KeyCode) -> bool {
         binds::GLOBAL_LETTERS
             .iter()
@@ -187,15 +180,14 @@ impl KeyCaps {
 
     /// Take the operating system's word for the caps, key by key.
     ///
-    /// Each pair goes through [`Self::learn`], because a keymap read from
-    /// the platform is the same kind of fact as a press and deserves the
-    /// same treatment: it overwrites a stale cap, forgets one that is
-    /// back to its QWERTY spelling, and retires a presumption it
-    /// disagrees with. Whether anything changed.
+    /// Each pair goes through [`Self::learn`], a keymap read from the
+    /// platform being the same kind of fact as a press: it overwrites a
+    /// stale cap, forgets one back to its QWERTY spelling, and retires a
+    /// presumption it disagrees with. Whether anything changed.
     ///
-    /// The keys the platform would not answer for - a dead key, a cap
-    /// outside ASCII - are simply absent from `keymap`, so whatever the
-    /// presses and the language had to say about them still stands.
+    /// The keys the platform would not answer for (a dead key, a cap
+    /// outside ASCII) are absent from `keymap`, so what the presses and the
+    /// language said about them still stands.
     pub fn adopt(&mut self, keymap: &[(KeyCode, char)]) -> bool {
         let mut changed = false;
         for &(key, cap) in keymap {
@@ -208,11 +200,9 @@ impl KeyCaps {
     /// presses and the language say - or, with `None`, go back to working
     /// it out from all three.
     ///
-    /// The escape hatch every game ships, and the reason it is worth
-    /// shipping: detection is right almost always, and "almost" covers
-    /// remote desktops, KVMs, a borrowed machine and the odd locale
-    /// nobody thought of. A player who can see the wrong letters on the
-    /// card must be able to say so.
+    /// Detection is right almost always, and "almost" covers remote
+    /// desktops, KVMs, a borrowed machine and the odd locale nobody thought
+    /// of. A player who can see the wrong letters must be able to say so.
     pub fn force(&mut self, layout: Option<Layout>) {
         self.forced = layout;
     }
@@ -220,10 +210,9 @@ impl KeyCaps {
     /// Take `layout` as this keyboard, until a press says otherwise.
     ///
     /// Called with the language's [`Layout::of`] whenever the language is
-    /// set, which is also every load - so a guess disproved in an earlier
+    /// set, which is also every load. A guess disproved in an earlier
     /// session is not made again: the press that disproved it is in
-    /// `learned`, and a presumption is refused outright by any learned cap
-    /// that spells one of its keys differently.
+    /// `learned`, and any learned cap that disagrees refuses it.
     pub fn presume(&mut self, layout: Option<Layout>) {
         self.presumed = layout.filter(|layout| {
             layout
@@ -244,10 +233,9 @@ impl KeyCaps {
     /// to QWERTY unlearn itself.
     ///
     /// The exception is a press that disproves the presumed layout. That
-    /// one is written down even though it agrees with QWERTY, because it
-    /// is the only record that the guess was wrong - without it the
-    /// language would make the same guess at the next launch, and the
-    /// player would spend every session's first keypress taking it back.
+    /// one is written down even though it agrees with QWERTY, being the
+    /// only record that the guess was wrong: without it the language makes
+    /// the same guess at the next launch.
     pub fn learn(&mut self, key: KeyCode, cap: char) -> bool {
         if !cap.is_ascii_graphic() || !learnable(key) {
             return false;
@@ -531,8 +519,8 @@ mod tests {
 
     /// [`KeyCaps::legend`] respells the literal block names, so every
     /// language's legends have to name the blocks by those four letters
-    /// exactly - a translation that wrote "W-A-S-D" or "ZQSD" would slip
-    /// past it and teach the wrong keys.
+    /// exactly: "W-A-S-D" or "ZQSD" slips past it and teaches the wrong
+    /// keys.
     #[test]
     fn every_language_names_the_blocks_by_their_qwerty_caps() {
         let mut azerty = KeyCaps::default();
@@ -582,9 +570,8 @@ mod tests {
     }
 
     /// The menu, settings and setup prompts open with "W/S" or "A/D" in
-    /// every language, and they are the first line a player reads on any
-    /// screen. A translation that spelled one differently would keep the
-    /// QWERTY letters on an AZERTY board, so this pins all eight.
+    /// every language, and a translation that spelled one differently would
+    /// keep the QWERTY letters on an AZERTY board. All eight are pinned.
     #[test]
     fn every_language_names_the_menu_keys_by_their_qwerty_caps() {
         let mut azerty = KeyCaps::default();

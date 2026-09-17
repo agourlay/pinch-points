@@ -17,8 +17,7 @@ pub fn now_secs() -> u64 {
 ///
 /// Howard Hinnant's algorithm, integer-only, and no date crate for two
 /// fields. Shared because the shelf of kept rounds stamps them and the
-/// daily challenge names its day, and two copies of a calendar is two
-/// calendars.
+/// daily challenge names its day.
 pub fn civil_date(days: u32) -> (u32, u32) {
     let z = i64::from(days) + 719_468;
     let era = z.div_euclid(146_097);
@@ -47,14 +46,13 @@ pub fn fresh_seed() -> u64 {
 /// The UTC offset in force at `stamp`, in seconds east of UTC.
 ///
 /// Read from the system zone file, because a player reads a replay's stamp
-/// on the wall clock behind them: a round played at 06:36 in Paris was
-/// listed as 04:36, which is a true statement about a clock nobody in the
-/// room was looking at.
+/// on the wall clock behind them: a round played at 06:36 in Paris listed
+/// as 04:36 is true about a clock nobody in the room is looking at.
 ///
 /// Per-stamp rather than one offset for the whole run, so a round kept in
 /// August and one kept in January each read right on the same shelf. Zero
-/// where there is no zone file to read - Windows keeps its zone in the
-/// registry and is left on UTC, as it was before this existed.
+/// where there is no zone file: Windows keeps its zone in the registry and
+/// is left on UTC.
 pub fn local_offset(stamp: u64) -> i64 {
     static ZONE: std::sync::OnceLock<Option<Zone>> = std::sync::OnceLock::new();
     // Parsed once: the shelf asks this for every kept round each time it
@@ -89,9 +87,8 @@ impl Zone {
 /// The zone file's bytes: what `TZ` names, or the system's own.
 ///
 /// `TZ` holding a POSIX rule rather than a zone name (`EST5EDT`) names no
-/// file, so it falls through to the system zone rather than being honoured.
-/// Naming a rule inline is rare, and a shelf an hour out beats a shelf that
-/// refuses to say anything.
+/// file, so it falls through to the system zone: naming a rule inline is
+/// rare, and a shelf an hour out beats one that says nothing.
 fn zone_bytes() -> Option<Vec<u8>> {
     if let Some(tz) = std::env::var_os("TZ") {
         let tz = tz.to_str()?.trim_start_matches(':');
@@ -162,10 +159,10 @@ fn block_len(counts: &Counts, stamp: usize) -> usize {
 ///
 /// A version 2 or later file carries everything twice: once with 32-bit
 /// stamps for readers that predate the format, then again with 64-bit ones.
-/// The wide block is the one read, and not only for the year 2038: the
-/// "slim" files most distributions now ship leave the 32-bit block with no
-/// transitions at all, so a reader that trusted it would answer every
-/// question with the zone's pre-1900 local mean time.
+/// The wide block is the one read, and not only for 2038: the "slim" files
+/// most distributions ship leave the 32-bit block with no transitions at
+/// all, so a reader trusting it answers with the zone's pre-1900 local mean
+/// time.
 fn parse_tzif(bytes: &[u8]) -> Option<Zone> {
     let (version, counts) = tzif_header(bytes, 0)?;
     let (at, counts, stamp) = match version >= b'2' {
@@ -274,10 +271,9 @@ mod tests {
         );
     }
 
-    /// The trap this reader exists to avoid. Distributions ship "slim"
-    /// files: version 2 or later, with the 32-bit block emptied out and
-    /// every transition in the 64-bit one. A reader that took the first
-    /// block would answer every question with the sole leftover type.
+    /// Distributions ship "slim" files: version 2 or later, with the 32-bit
+    /// block emptied out and every transition in the 64-bit one. A reader
+    /// that took the first block answers with the sole leftover type.
     #[test]
     fn a_slim_file_is_read_from_its_wide_block() {
         let lmt = [(561i32, 0u8)]; // Paris local mean time, the slim leftover

@@ -66,15 +66,13 @@ fn the_hand_slips_at_its_own_rate() {
 /// Every seat blunders at the same rate *as its own hand is offered the
 /// chance to*, which is the only rate that reaches the beach.
 ///
-/// The regression this guards: the slip was keyed on `ticks ^ player`, so
-/// each seat sat on its own residue mod `every`, while a seat is only
-/// offered a placement every `cadence` ticks - and 20 and 8 share a factor,
-/// so those residues were not sampled evenly. Normal's four seats came out
-/// at 13.3%, 8.9%, 11.9% and 13.7% against an intended 12.5%, and because
-/// nothing in the draw varied with the board it was the same handicap in
-/// every round ever played. It was worth about 4 sigma of seat drift on a
-/// 3000-game fairness sweep, on a beach whose four corners are identical by
-/// construction.
+/// Keyed on `ticks ^ player`, each seat sat on its own residue mod `every`
+/// while a seat is only offered a placement every `cadence` ticks; 20 and 8
+/// share a factor, so those residues were not sampled evenly and Normal's
+/// four seats came out at 13.3%, 8.9%, 11.9% and 13.7% against an intended
+/// 12.5%. Nothing in the draw varied with the board, so it was the same
+/// handicap in every round, worth about 4 sigma of seat drift on a
+/// 3000-game fairness sweep.
 #[test]
 fn every_seat_blunders_at_the_same_rate_it_is_offered() {
     for level in [BotLevel::Easy, BotLevel::Normal] {
@@ -87,9 +85,8 @@ fn every_seat_blunders_at_the_same_rate_it_is_offered() {
         let rates: Vec<f64> = (0..MAX_PLAYERS as u8)
             .map(|seat| {
                 // Only the ticks this seat is actually offered a placement
-                // on. Sampling every tick instead is what hid this: across
-                // all ticks the old draw was even, and it was the cadence
-                // picking them out that made it lopsided.
+                // on: across all ticks the old draw was even, and it was
+                // the cadence picking them out that made it lopsided.
                 let offered: Vec<u64> = (0..5400u64).filter(|t| level.acts_on(seat, *t)).collect();
                 let mut slips = 0u32;
                 // Enough boards that the tolerance below sits at three

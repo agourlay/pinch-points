@@ -2,10 +2,9 @@
 //! headless screenshots, and campaign autoplay. All inert unless the
 //! matching variable is set.
 //!
-//! Every `PINCH_*` variable the game answers to is read here, either by
-//! the [`DevHook`] ladder or by one of the typed accessors below, so this
-//! file is the complete inventory of the dev surface and each variable is
-//! parsed once.
+//! Every `PINCH_*` variable the game answers to is read here, either by the
+//! [`DevHook`] ladder or by one of the typed accessors below, so this file
+//! is the complete inventory of the dev surface.
 
 use crate::app::{Campaign, PendingActions, Phase, Screen, Sim, announce, match_setup, net};
 use crate::sim::{Direction, PlayerAction, TideEvent};
@@ -96,8 +95,7 @@ pub(super) fn update_demo() -> bool {
 /// A shortcut past the menu, as asked for by the environment.
 ///
 /// Read by one pure function over a variable lookup, so the precedence
-/// (which hook wins when two are set) is explicit and testable, and
-/// `kickoff` only has to act on the answer.
+/// (which hook wins when two are set) is explicit and testable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum DevHook {
     /// `PINCH_LOBBY_HOST` / `PINCH_LOBBY_JOIN`: the LAN lobby screen.
@@ -316,10 +314,9 @@ pub(super) fn debug_tide(mut sim: ResMut<Sim>, mut hook: Local<OneShot>) {
 /// A hook that reads its variable once, waits for the round to have
 /// something on the beach worth looking at, and then fires exactly once.
 ///
-/// Three hooks had this shape copied out: read the environment into a
-/// `Local` so it is not re-read every frame, bail unless the round has run
-/// a few seconds, set a `fired` flag. Three copies of a four-line rule is
-/// three places for it to drift.
+/// Three hooks share the shape: read the environment into a `Local` so it
+/// is not re-read every frame, bail unless the round has run a few seconds,
+/// set a `fired` flag.
 #[derive(Default)]
 pub(super) struct OneShot {
     setting: Option<Option<String>>,
@@ -388,9 +385,8 @@ pub(super) fn debug_banner(
 /// Whether this run exists to take a picture.
 ///
 /// The visual harness reads probe pixels off the result, and the camera
-/// shake (`boot::shake_camera`) moves every one of them: a raid, the
-/// surge, or the wave that ends a round all put trauma in the pool, and
-/// the wave is precisely what `PINCH_NOSOLVE` exists to photograph. A shot
+/// shake (`boot::shake_camera`) moves every one of them: the wave that ends
+/// a round is precisely what `PINCH_NOSOLVE` exists to photograph. A shot
 /// run holds the camera still.
 pub(super) fn screenshotting() -> bool {
     std::env::var("PINCH_SCREENSHOT").is_ok()
@@ -524,14 +520,12 @@ pub(super) fn autopilot_level() -> Option<crate::sim::BotLevel> {
 /// Dev hook: play this process's own seat with the bot brain, through the
 /// same pending-actions path a keystroke takes.
 ///
-/// `PINCH_BOTS` is not this, and the difference is the whole point of
-/// having both. An AI seat is derived: it sits *beside* the humans, the
-/// lockstep never carries it, and every peer works out its moves from the
-/// frame they have all agreed on. So a table of five AI seats puts not one
-/// byte on the wire, and a room of idle humans is what a load test of the
-/// netcode actually measures. This drives a *human* seat instead, so the
-/// placements are committed and relayed exactly as a player's are, and six
-/// processes can play a real round with nobody at any of the keyboards.
+/// `PINCH_BOTS` is not this. An AI seat is derived: it sits *beside* the
+/// humans, the lockstep never carries it, and every peer works out its
+/// moves from the frame they have all agreed on, so a table of five AI
+/// seats puts nothing on the wire. This drives a *human* seat instead, so
+/// the placements are committed and relayed exactly as a player's are and
+/// six processes can play a real round with nobody at the keyboards.
 ///
 /// Only ever a seat this process holds: a spectator commits nothing, and a
 /// peer that reached for another's chair would be refused by the host and

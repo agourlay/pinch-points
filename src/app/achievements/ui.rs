@@ -64,10 +64,9 @@ pub(super) fn spawn_toast(commands: &mut Commands, name: &str, desc: &str) {
 /// Stack visible toasts under the header and expire them.
 ///
 /// Each one is placed under the measured height of the one before it, not
-/// under a constant. A toast is as tall as its two lines make it, and the
-/// constant that used to space them cleared the real thing by one pixel: a
-/// longer trophy name, a bigger font or a language with taller metrics and
-/// they would have overlapped, with nothing in the code to say why.
+/// under a constant: a toast is as tall as its two lines make it, and a
+/// constant that cleared the real thing by one pixel would overlap on a
+/// longer name or a language with taller metrics.
 pub fn update_toasts(
     time: Res<Time>,
     mut commands: Commands,
@@ -98,11 +97,12 @@ pub struct AchievementsUi;
 /// The unlock mark: a filled gold disc when earned, an empty ring when not.
 ///
 /// A disc rather than the star sprite, whose arms come out thinner than a
-/// pixel at the 22 the list row allows, and it needs no asset at all.
+/// pixel at the 22 the list row allows, and it needs no asset.
+///
 /// The medal's ink, by what the trophy is for: banking gold, versus red,
 /// puzzles green, the daily sky-blue, the editor violet, the gulls white.
-/// A wall of fifty gold rows read as one blur; the inks group them
-/// the way the difficulty inks group the stage grid.
+/// Fifty gold rows read as one blur; the inks group them the way the
+/// difficulty inks group the stage grid.
 fn category_ink(id: &str) -> Color {
     match id {
         // Versus: the beach fought over, and who you fought there.
@@ -148,8 +148,8 @@ const COLS: usize = 2;
 
 /// A trophy tile's own height, and the `row_gap` the column puts under it.
 /// Named rather than inlined because the viewport height below is derived
-/// from them, and a row that changed shape without them would silently
-/// start cutting the bottom row in half.
+/// from them, and a row that changed shape without them would cut the
+/// bottom row in half.
 const TILE_HEIGHT: f32 = 32.0;
 const TILE_GAP: f32 = 2.0;
 
@@ -188,9 +188,8 @@ const BAR_GAP: f32 = 8.0;
 const MIN_THUMB: f32 = 24.0;
 
 /// One trophy's row: the mark, its name, what it asks for, how far along,
-/// and a bar saying the same thing at a glance. The bar is the point of the
-/// restyle: "292/1000" is a fact you have to read, and a bar a third full
-/// is one you can see.
+/// and a bar saying the same thing at a glance. "292/1000" is a fact you
+/// have to read; a bar a third full is one you can see.
 fn spawn_trophy(
     column: &mut ChildSpawnerCommands,
     tr: &crate::app::i18n::Tr,
@@ -343,11 +342,9 @@ pub fn enter_achievements(
         ))
         .with_children(|wrap| {
             // The shared card, with room between the count, the shelf and
-            // the key. Built by hand before, with its own padding and no
-            // shadow: the same card, sitting differently.
-            // `bg` and not `fill`: this file's `fill` is the one that puts
-            // words into a translated string, and it is used all through
-            // the card below.
+            // the key. `bg` and not `fill`: this file's `fill` is the one
+            // that puts words into a translated string, and it is used all
+            // through the card below.
             let (mark, mut node, bg, edge, shadow) = menu_ui::screen_card();
             node.row_gap = Val::Px(8.0);
             wrap.spawn((mark, node, bg, edge, shadow))
@@ -541,8 +538,7 @@ pub fn update_shelf_scrollbar(
 ///
 /// Its height is the fraction of the shelf you can see, which is the part
 /// that says there is more; its position is how far through you are. A
-/// shelf shorter than its viewport fills the track, which is the truth: all
-/// of it is in front of you.
+/// shelf shorter than its viewport fills the track.
 fn thumb_bounds(viewport: f32, content: f32, scroll: f32) -> (f32, f32) {
     if content <= viewport || viewport <= 0.0 {
         return (SHELF_HEIGHT, 0.0);
@@ -557,9 +553,8 @@ fn thumb_bounds(viewport: f32, content: f32, scroll: f32) -> (f32, f32) {
 /// tall the shelf behind it is.
 ///
 /// Clamped here rather than left to the layout, which clamps what it
-/// *draws* and leaves the component alone. An unclamped component runs on
-/// past the end of the list, and then the first several presses back the
-/// other way move nothing at all, which reads as a stuck key.
+/// *draws* and leaves the component alone: an unclamped component runs past
+/// the end of the list, and the first presses back move nothing.
 fn scrolled(from: f32, step: f32, viewport: f32, content: f32) -> f32 {
     (from + step).clamp(0.0, (content - viewport).max(0.0))
 }

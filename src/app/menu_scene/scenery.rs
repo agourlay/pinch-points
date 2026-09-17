@@ -88,10 +88,8 @@ pub struct Scrim;
 ///
 /// The shore itself is spawned and resized by [`refit_shore`]; this system
 /// owns the two transitions refit cannot see: leaving the postcard set for
-/// a board screen (the scene goes, so a puzzle is not played over a
-/// distracting second beach), and the menu against every other postcard
-/// screen (the menu gets the scene at full daylight, the rest behind the
-/// scrim).
+/// a board screen, and the menu against every other postcard screen (the
+/// menu gets the scene at full daylight, the rest behind the scrim).
 pub fn tend_backdrop(
     mut commands: Commands,
     screen: Res<State<crate::app::Screen>>,
@@ -147,12 +145,11 @@ fn spawn_shore(commands: &mut Commands, art: &art::Art, rng: &mut VisualRng, win
     // A band of one colour with a second washed over it, opaque at one
     // edge and gone at the other.
     //
-    // The postcard was four flat bands, and two of the three joins showed:
-    // a hard line across the sky a third of the way up, and another where
-    // the sea changed its mind. This is the same four colours with the
-    // steps taken out of them. `ramp` is opaque at its top, so a wash that
-    // has to be strongest at the *bottom* is turned over - which mirrors
-    // it left to right as well, and does not matter to a gradient.
+    // As four flat bands, two of the three joins showed: a hard line across
+    // the sky a third of the way up, and another where the sea changed its
+    // mind. This is the same four colours with the steps taken out. `ramp`
+    // is opaque at its top, so a wash strongest at the *bottom* is turned
+    // over, which mirrors it left to right and does not matter here.
     let wash = |y: f32, height: f32, color: Color, z: f32, upward: bool| {
         (
             MenuShore,
@@ -558,9 +555,8 @@ fn spawn_critter(
     // Crabs and gulls face their travel. Their sprites are authored facing
     // +X (`tools/gen_sprites.py`), the same convention the board uses, so
     // this is the board's own rotation for Right or Left rather than a
-    // quarter turn: a quarter turn had them crossing the postcard
-    // sideways. Clouds and boats stay level, boats flipping to sail
-    // forward.
+    // quarter turn, which had them crossing the postcard sideways. Clouds
+    // and boats stay level, boats flipping to sail forward.
     let rotation = match kind {
         CritterKind::Crab | CritterKind::Gull => crate::app::layout::dir_rotation(if rightward {
             crate::sim::Direction::Right

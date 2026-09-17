@@ -19,9 +19,9 @@ use bevy::prelude::*;
 /// How long a series runs: the three positions of the match screen's mode
 /// dial.
 ///
-/// One dial rather than a flag and a length, because the lengths differ in
-/// nothing else: a match is one round, three, or five, and everything that
-/// follows from that is arithmetic on [`SeriesLength::rounds`].
+/// One dial rather than a flag and a length: a match is one round, three or
+/// five, and everything that follows is arithmetic on
+/// [`SeriesLength::rounds`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SeriesLength {
     #[default]
@@ -63,10 +63,9 @@ impl SeriesLength {
 
 /// Where a series stands, if there is one.
 ///
-/// One value rather than the `active` and `finished` flags it replaces:
-/// four readers each re-derived "running" as `active && !finished`, and a
-/// pair of flags admits a fourth state (finished but not active) that
-/// nothing means.
+/// One value rather than `active` and `finished` flags: four readers each
+/// re-derived "running" as `active && !finished`, and a pair of flags
+/// admits a fourth state nothing means.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SeriesState {
     /// A single round, or no match at all: nothing to tally.
@@ -117,11 +116,9 @@ impl Tournament {
     }
 
     /// The tournament a peer arms from the host's invitation: the series
-    /// length the terms carry, at the round and tally the wire says. A
-    /// single round arms nothing, so the host and every joiner run this
-    /// same function and cannot disagree about whether there is a series;
-    /// a peer admitted mid-series takes up the standing rather than
-    /// starting its own tally at zero.
+    /// length the terms carry, at the round and tally the wire says. The
+    /// host and every joiner run this same function, so a peer admitted
+    /// mid-series takes up the standing rather than starting its own.
     pub fn taken_up(length: SeriesLength, round: u8, wins: [u8; MAX_PLAYERS]) -> Self {
         match length.is_series() {
             true => Tournament {
@@ -177,10 +174,8 @@ impl Tournament {
         self.state == SeriesState::Decided
     }
 
-    /// Whether the tally settles the series: somebody has a majority of
-    /// the rounds, or the last round has been played. Read by the round
-    /// bookkeeping, which sets the state from it, and by the tests, which
-    /// used to carry a copy of the expression and could pass on the copy.
+    /// Whether the tally settles the series: somebody has a majority of the
+    /// rounds, or the last round has been played.
     fn tally_decides(&self) -> bool {
         let best = *self.wins.iter().max().unwrap_or(&0);
         best >= self.length.target() || self.round >= self.length.rounds()
@@ -225,11 +220,9 @@ pub fn record_series_round(
     }
     // Every peer counts the round it just watched, so its results card is
     // right even for the final round, which is followed by no invitation.
-    // Online, a re-deal of the seats between rounds would leave this tally
-    // pinned to the old chairs; the host's next invitation carries the
-    // authoritative wins moved onto the new ones, and `enter_interlude`
-    // overwrites this with them, so a mid-series seat change corrects
-    // itself without this having to know the mapping.
+    // Online, the host's next invitation carries the authoritative wins
+    // moved onto the re-dealt seats and `enter_interlude` overwrites this
+    // with them, so a mid-series seat change corrects itself.
     let mode = crate::app::teams::in_play(&settings, &online, seats.0);
     let leaders = leading_seats(sim.0.scores(), seats.0, mode);
     for (seat, led) in leaders.iter().enumerate() {
@@ -313,10 +306,10 @@ pub fn enter_interlude(
     // host's to say and arrive in the terms; the config steps below are
     // for a local series, and `load_versus` ignores them for an online one.
     //
-    // The round number and the tally are the host's word online: it re-deals
-    // them to the next round's seats and sends them out, so both are adopted
-    // here rather than counted locally, which would advance the round twice
-    // and credit a moved seat's wins to whoever now sits in it.
+    // The round number and the tally are the host's word online: it
+    // re-deals them to the next round's seats and sends them out, so both
+    // are adopted here rather than counted locally, which would advance the
+    // round twice.
     match &mut online.0 {
         Some(session) => {
             session.next_round = false;
@@ -515,8 +508,8 @@ mod tests {
 
     /// The wire carries the series as a dial index, and the app reads it
     /// through [`MatchTerms::is_series`]. The two must agree for every
-    /// position of the dial: they did not, once, and a best-of-five went
-    /// out to every joiner as a single round.
+    /// position of the dial, or a best-of-five goes out to every joiner as
+    /// a single round.
     #[test]
     fn the_wire_flag_agrees_with_the_dial() {
         for (index, length) in SeriesLength::ALL.iter().enumerate() {

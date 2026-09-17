@@ -42,11 +42,10 @@ pub struct OnlineSession {
     /// long since it last said anything.
     ///
     /// The silence is the difference between a player who has *gone* and
-    /// one who is merely behind: a machine that is still talking to us has
-    /// not left the room, however far its inputs have fallen back, and
-    /// giving its castle away because a burst of loss held one frame up is
-    /// how you lose a friend's round for them. A joiner keeps the one row
-    /// it has, the host, and calls the round off when that goes quiet.
+    /// one who is merely behind: a machine still talking to us has not left
+    /// the room, however far its inputs have fallen back. A joiner keeps
+    /// the one row it has, the host, and calls the round off when that goes
+    /// quiet.
     pub(crate) peers: PeerBook,
     /// What each seat is called, agreed at the handshake so every peer
     /// shows the same table. Empty entries fall back to seat labels; local
@@ -71,8 +70,7 @@ pub struct OnlineSession {
     /// it: the 1-based round number and the wins per seat, both re-dealt to
     /// this round's chairs. The shell folds it into its `Tournament` on the
     /// way into the arena, so a peer admitted mid-series joins the table's
-    /// standings rather than starting its own, and a survivor whose seat
-    /// moved keeps the wins it earned. `None` outside a series.
+    /// standings rather than starting its own. `None` outside a series.
     pub series_standing: Option<SeriesStanding>,
     /// Ticks of `Resume` still to repeat (see [`RESUME_ECHOES`]).
     resume_echo: u8,
@@ -97,14 +95,12 @@ pub struct Home {
     /// Joiner side: seconds until the next greeting while the results card
     /// is up.
     ///
-    /// An established session says nothing at all between rounds. Inputs
+    /// An established session says nothing at all between rounds: inputs
     /// and hashes belong to the round that ended, and the host has nothing
-    /// to send until somebody calls the next one, so both ends fall silent
-    /// on purpose. That is fine until silence is being read as evidence,
-    /// and then it is a joiner walking out of a perfectly good table
-    /// twenty seconds into a results card. So a joiner keeps saying hello,
-    /// on the same cadence the lobby uses, and the host's reply is what
-    /// tells it the host is still there.
+    /// to send until somebody calls the next one. Silence read as evidence
+    /// is then a joiner walking out of a perfectly good table twenty
+    /// seconds into a results card, so it keeps saying hello on the lobby's
+    /// cadence, and the host's reply is what tells it the host is there.
     greet_in: f32,
 }
 
@@ -127,16 +123,10 @@ impl Home {
 ///
 /// Measured by the frame number rather than by whether the next frame's
 /// inputs happen to be in, because the second question is asked at a
-/// moment where the answer is always no. The sim runs on the fixed step
-/// and advances until it *cannot*; the tick that watches for stalls runs
-/// after it, in `Update`. So it always found the next frame's slots
-/// empty and always called a healthy round stalled. That put "waiting
-/// for Bob" on both screens of a round that was running perfectly, and
-/// made the socket-silence rule necessary to stop the host handing out
-/// its friends' castles five seconds into every match.
-///
-/// "The picture has not moved" is the thing both readers actually want,
-/// and it is not a matter of timing within a frame.
+/// moment where the answer is always no: the sim advances until it
+/// *cannot*, and the tick that watches for stalls runs after it, in
+/// `Update`. So it always found the next frame's slots empty and always
+/// called a healthy round stalled.
 #[derive(Default)]
 struct StallWatch {
     /// Seconds the round has been unable to move, and the frame it has
@@ -147,10 +137,9 @@ struct StallWatch {
     /// naming them.
     ///
     /// A latch rather than a reading of `stalled_for`, because that number
-    /// snaps back to zero the moment one frame gets through, and a round
-    /// that is limping gets a frame through all the time. Reading it
-    /// directly put the line on and off once a second: a strobe in the
-    /// corner of the eye, which is worse than saying nothing at all.
+    /// snaps back to zero the moment one frame gets through, and a limping
+    /// round gets a frame through all the time. Reading it directly put the
+    /// line on and off once a second.
     waiting_on: Option<u8>,
     waiting_hold: f32,
 }
@@ -225,10 +214,9 @@ impl HashCheck {
 ///
 /// A hosted beach stops being announced when its session goes, whichever
 /// way that happens: the match ending, the player quitting to the menu, a
-/// desync giving up. Holding the duty here, beside the announcer itself,
-/// rather than at each of those exits is what keeps the promise: there is
-/// no path that drops an announcing session without either saying goodbye
-/// or deliberately taking the announcer back out through
+/// desync giving up. Holding the duty here rather than at each of those
+/// exits means no path drops an announcing session without either saying
+/// goodbye or taking the announcer back out through
 /// [`OnlineSession::back_to_the_lobby`], the one exit where the beach is
 /// not going anywhere.
 struct Farewell {
@@ -356,12 +344,10 @@ impl OnlineSession {
     /// honour; what it offers is a place in the queue.
     ///
     /// `taken` counts the humans, not the table: an AI seat gives way to a
-    /// player who wants it, the same way the lobby fills bots in behind
-    /// whoever turned up. The humans in line for the next round count
-    /// too, since the chair each will take is spoken for: the lobby
-    /// refuses a beach with no chair "this round or the next", and a
-    /// beacon that left the queue out let a sixth player in to be dealt
-    /// the rail with no notice.
+    /// player who wants it. The humans in line for the next round count
+    /// too, since the chair each will take is spoken for, and a beacon that
+    /// left the queue out let a sixth player in to be dealt the rail with
+    /// no notice.
     pub fn keep_announcing(&mut self, delta: f32) {
         if self.home.announcer.aboard().is_none()
             || !crate::app::lobby::once_a_second(&mut self.home.announce_in, delta)
@@ -485,11 +471,8 @@ impl OnlineSession {
         }
     }
 
-    /// Is this session the star's hub? Seat 0 hosts and relays.
-    ///
-    /// Public because the shell has to know who calls the next round, which
-    /// it did through a second method of the same one line, under a second
-    /// copy of this sentence.
+    /// Is this session the star's hub? Seat 0 hosts and relays. Public
+    /// because the shell has to know who calls the next round.
     pub fn is_host(&self) -> bool {
         self.session.seat() == Some(0)
     }
@@ -594,11 +577,10 @@ impl OnlineSession {
                     // only the host, which has already done this. The
                     // direct `PINCH_HOST` pair keeps no plan, having never
                     // been through a lobby; with nothing to check against
-                    // it takes any seat but its own, as it always did.
+                    // it takes any seat but its own.
                     //
-                    // Weeded before anything is believed *or* passed on,
-                    // rather than per datagram as it was when an input was
-                    // one: what the host relays is what it accepted.
+                    // Weeded before anything is believed *or* passed on:
+                    // what the host relays is what it accepted.
                     if host {
                         let planned = self.peers.planned();
                         let own = self.session.seat();
@@ -811,9 +793,8 @@ mod homecoming_tests {
         heard
     }
 
-    /// The goodbye still fires on every ordinary way out - quitting to the
-    /// menu, a desync giving up, the process letting go - which is the
-    /// promise the [`Farewell`] guard carries for the whole session.
+    /// The goodbye still fires on every ordinary way out: quitting to the
+    /// menu, a desync giving up, the process letting go.
     #[test]
     fn a_dropped_session_still_says_goodbye() {
         let mut discovery = Discovery::bind().expect("lobby port");
@@ -961,9 +942,7 @@ mod table_tests {
     }
 
     /// The running beacon says how many chairs are spoken for: the humans
-    /// in the lockstep and everyone in line who did not ask to watch. It
-    /// used to count the lockstep alone, so with two playing and four
-    /// queued it still said two of six.
+    /// in the lockstep and everyone in line who did not ask to watch.
     #[test]
     fn the_beacon_counts_the_queue_as_taken() {
         let mut host = session(Some(0), 0);
@@ -1016,10 +995,9 @@ mod hash_tests {
     /// the gap runs both ways: a peer a commit lead ahead of us sends its
     /// hash for a frame we have not simulated yet.
     ///
-    /// So a peer's hash is kept rather than compared on arrival and
-    /// weighed once our own for that frame appears. Comparing only what
-    /// was already in hand would have skipped exactly the checks a lagging
-    /// peer sends, which is the peer a desync is most likely to be about.
+    /// So a peer's hash is kept and weighed once our own for that frame
+    /// appears. Comparing only what was already in hand skipped exactly the
+    /// checks a lagging peer sends.
     #[test]
     fn a_peer_hash_that_arrives_early_is_still_weighed() {
         let mut hashes = HashCheck::default();
@@ -1040,8 +1018,8 @@ mod hash_tests {
     }
 
     /// A round that agreed all the way through never raises one, however
-    /// many hashes crossed: the check is loud, and a loud check that cries
-    /// on a healthy round is one nobody believes on a sick one.
+    /// many hashes crossed: a loud check that cries on a healthy round is
+    /// one nobody believes on a sick one.
     #[test]
     fn a_round_that_agrees_is_never_flagged_and_a_new_one_starts_level() {
         let mut hashes = HashCheck::default();

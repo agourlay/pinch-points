@@ -1,10 +1,9 @@
 //! What the authoring and balance harnesses share: how `--lanes` is read,
 //! and the bar that shows a long batch is still moving.
 //!
-//! Two of them once carried their own copy of each, and the copies had
-//! drifted: one tool defaulted to half the cores and the other to all of
-//! them, and an unreadable `--lanes=abc` meant one thing here and another
-//! there. One reading now, with the default the caller's business.
+//! As a copy per tool the two had drifted: an unreadable `--lanes=abc`
+//! meant one thing in each. One reading now, with the default the caller's
+//! business.
 
 #![allow(dead_code)]
 

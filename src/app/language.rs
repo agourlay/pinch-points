@@ -7,11 +7,10 @@
 //! before anything else is said, costs a keypress and removes the guess.
 //!
 //! The cursor *is* the setting: moving it writes `settings.language`
-//! straight away, so the header, the prompt and the note under the card
-//! are all already speaking the language under the cursor. That is the
-//! preview, and it is why the rows themselves carry no translated words -
-//! only a flag and the language's own name for itself, both of which read
-//! the same whatever the game is currently set to.
+//! straight away, so the header, the prompt and the note under the card are
+//! already speaking the language under the cursor. That preview is why the
+//! rows carry no translated words, only a flag and the language's own name
+//! for itself.
 //!
 //! Around the card: a crab and a gull at its shoulders, and a pale flock
 //! of both behind it. All of them are the game's own sprites, and they say
@@ -42,12 +41,11 @@ pub struct LanguageNote;
 const FLAG_W: f32 = 33.0;
 const FLAG_H: f32 = 22.0;
 /// A row here is a row: the same size the rest of the list screens set
-/// theirs at. It was three points over the scale, which on a card drawn
-/// with the same `screen_card` and the same `card_row` read as a
-/// different game.
+/// theirs at. Three points over the scale, on a card drawn with the same
+/// `screen_card` and `card_row`, read as a different game.
 ///
-/// The flag beside it keeps its own size, which is deliberate and said so
-/// above: the flag is the thing being chosen.
+/// The flag beside it keeps its own size: the flag is the thing being
+/// chosen.
 const ROW_FONT: f32 = menu_ui::type_scale::ROW;
 /// Wide enough for the longest native name at [`ROW_FONT`] - Nederlands,
 /// at ten characters - so every name starts at the same x.
@@ -129,15 +127,13 @@ pub fn opening_screen(saved: bool) -> Screen {
 /// Whether the settings file may be written yet.
 ///
 /// [`opening_screen`] reads "first run" off the absence of that file and
-/// off nothing else, so any write before a language has been taken
-/// answers the picker's question on the player's behalf: they close the
-/// window on the first screen, having chosen nothing, and are never asked
-/// again. Two things would otherwise do exactly that - a keyboard that
-/// learns a cap from a press in the picker, and the start-up keymap read
-/// - so both ask here first.
+/// nothing else, so any write before a language has been taken answers the
+/// picker's question on the player's behalf. Two things would otherwise do
+/// that (a keyboard that learns a cap from a press in the picker, and the
+/// start-up keymap read), so both ask here first.
 ///
-/// Nothing is lost by waiting. The caps stay in the resource, and the
-/// Enter that takes the language writes them out with it.
+/// Nothing is lost by waiting: the caps stay in the resource, and the Enter
+/// that takes the language writes them out with it.
 pub fn may_save(screen: &Screen) -> bool {
     !matches!(screen, Screen::Language)
 }
@@ -157,14 +153,12 @@ fn step(keys: &ButtonInput<KeyCode>, current: Lang) -> (Lang, bool) {
 /// W/S walks the list and sets the language as it goes; Enter keeps it.
 ///
 /// Enter writes the file, and that is what stops the screen coming back:
-/// the picker is chosen at boot on the absence of that file and on
-/// nothing else. Quitting without choosing writes nothing and is asked
-/// again next time, which is the right answer to a window closed on the
-/// first screen.
+/// the picker is chosen at boot on the absence of that file and nothing
+/// else. Quitting without choosing writes nothing and is asked again.
 ///
-/// Escape is deliberately not wired up. There is nowhere behind this
-/// screen to go, and the key that quits the game is a poor thing to leave
-/// under a finger on the first screen anybody sees.
+/// Escape is deliberately not wired up: there is nowhere behind this screen
+/// to go, and the key that quits the game is a poor thing to leave under a
+/// finger on the first screen anybody sees.
 pub fn language_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<GameSettings>,

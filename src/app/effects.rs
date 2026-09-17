@@ -12,8 +12,7 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 /// Which claw a crab put down last. A print is offset to one side of the
-/// stride and the sides alternate; a `bool` called `left` in a tuple was
-/// the kind of thing that reads the other way round at the second site.
+/// stride and the sides alternate.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Foot {
     Left,
@@ -132,10 +131,8 @@ pub struct Particle {
     /// frame and kept.
     ///
     /// It is the ceiling: a piece asked for at 60% never draws stronger
-    /// than 60%. That is new - the alpha in a spawn colour used to be
-    /// thrown away and everything drew at full strength - so a caller that
-    /// wants what it always got asks for 1.0. See [`Particle::shade`] for
-    /// why the ceiling is read once and kept.
+    /// than 60%, so a caller that wants full strength asks for 1.0. See
+    /// [`Particle::shade`] for why it is read once and kept.
     peak: Option<f32>,
     age: f32,
     life: f32,
@@ -179,14 +176,12 @@ impl Particle {
     /// The colour to write this frame, given whatever the sprite is
     /// holding.
     ///
-    /// The peak is taken out of the sprite exactly once and kept, and that
-    /// is the whole point of this existing. The alpha written back is
-    /// already a fraction of the peak, so a peak read out of the sprite
-    /// again next frame is a fraction of a fraction: the fade compounds,
-    /// and every particle in the game goes out several times faster than
-    /// its life says. It is not subtle when it happens - the sand behind a
-    /// walking crab stops appearing at all - but it is invisible in the
-    /// code, because each frame on its own looks right.
+    /// The peak is taken out of the sprite exactly once and kept, which is
+    /// the whole point of this existing. The alpha written back is already
+    /// a fraction of the peak, so reading it out again next frame is a
+    /// fraction of a fraction: the fade compounds, and every particle goes
+    /// out several times faster than its life says, while each frame on
+    /// its own looks right.
     fn shade(&mut self, current: Color) -> Color {
         let peak = *self.peak.get_or_insert(current.alpha());
         let progress = self.progress();
@@ -210,9 +205,7 @@ const FEATHER_GREY: Color = Color::srgba(0.72, 0.76, 0.82, 0.95);
 /// A scatter of pieces thrown out of one point: what a bank, a raid, a
 /// spawn and a gull's meal all look like, differing only in these.
 ///
-/// A struct rather than eight positional arguments, because six of them
-/// are floats and the two that matter most (`size` and `speed`) read the
-/// same way round.
+/// A struct rather than eight positional arguments, six of them floats.
 pub struct Burst {
     pub image: Handle<Image>,
     pub pos: Vec2,
@@ -255,8 +248,8 @@ pub fn burst(commands: &mut Commands, rng: &mut VisualRng, spec: &Burst) {
 /// What a gull leaves of a crab: feathers, lit as they fly and the grey of
 /// the wing they came out of by the time they land.
 ///
-/// The one place a burst's pieces change colour on the way, and the reason
-/// [`Particle::ramp`] exists.
+/// The one place a burst's pieces change colour on the way, and what
+/// [`Particle::ramp`] is for.
 fn feathers(commands: &mut Commands, rng: &mut VisualRng, art: &Art, pos: Vec2) {
     for _ in 0..5 {
         let angle = rng.range(0.0, std::f32::consts::TAU);
@@ -284,8 +277,8 @@ fn feathers(commands: &mut Commands, rng: &mut VisualRng, art: &Art, pos: Vec2) 
 /// A shockwave out of one tile: a bright circle swelling and thinning.
 ///
 /// The shape every "something happened *here*" gets, so a tier-up, a post
-/// going in and a gull touching down are read as the same kind of news at
-/// different volumes.
+/// going in and a gull touching down read as one kind of news at different
+/// volumes.
 pub fn ring(
     commands: &mut Commands,
     art: &Art,
@@ -414,8 +407,8 @@ pub fn confetti(commands: &mut Commands, rng: &mut VisualRng, art: &Art, color: 
 /// A crab on its last quarter-second: the sim has stopped counting it, and
 /// the render layer walks it the rest of the way into the keep.
 ///
-/// The bank is the game's most-repeated reward and it used to be a
-/// disappearance with a puff over it. Here the crab is seen to arrive.
+/// The bank is the game's most-repeated reward, so the crab is seen to
+/// arrive rather than disappearing under a puff.
 #[derive(Component)]
 pub struct Hop {
     from: Vec2,
@@ -452,10 +445,9 @@ pub fn bank_hop(
 /// Where a banking crab is, and how big it looks, `progress` of the way
 /// from the tile it vanished on to the keep it vanished into.
 ///
-/// Split out and tested for the same reason the castles' own hop is: the
-/// two ends are the whole of it. A crab that starts anywhere but where it
-/// was last drawn jumps on its first frame, and one that finishes anywhere
-/// but at the gate is last seen standing on the wall.
+/// The two ends are the whole of it: a crab that starts anywhere but where
+/// it was last drawn jumps on its first frame, and one that finishes
+/// anywhere but at the gate is last seen standing on the wall.
 fn arc(from: Vec2, to: Vec2, progress: f32) -> (Vec2, f32) {
     // Eased both ends, so it sets off and arrives rather than being
     // dragged across.
@@ -926,9 +918,7 @@ mod tests {
     /// The fade must be a fraction of the colour a particle was *spawned*
     /// with, never of the colour it is currently wearing. Shading twice at
     /// one age has to land twice in the same place; when it did not, the
-    /// alpha compounded every frame and the whole particle layer - sand,
-    /// footprints, glints, confetti - went out too fast to be seen. The
-    /// symptom was a beach where crabs left no prints.
+    /// alpha compounded every frame and crabs left no prints at all.
     #[test]
     fn shading_a_particle_twice_lands_in_the_same_place() {
         let mut particle = Particle {
@@ -953,13 +943,9 @@ mod tests {
         );
     }
 
-    /// A ramped particle takes its colour from the ramp and its strength
-    /// from the peak, so a feather thrown white and landing grey still
-    /// fades out rather than holding at the grey.
-    /// Floating text goes through the same ceiling the sprites do. It
-    /// used to take its alpha straight off the strength, so a number asked
-    /// for at 60% arrived at full - [`Particle::peak`] states a rule about
-    /// particles, and a score pip is one.
+    /// Floating text goes through the same ceiling the sprites do: taken
+    /// straight off the strength, a number asked for at 60% arrives at
+    /// full.
     #[test]
     fn floating_text_is_held_to_the_alpha_it_asked_for() {
         let mut particle = Particle {
@@ -983,6 +969,9 @@ mod tests {
         assert!(particle.shade(midway).alpha() < 1e-5, "gone by the end");
     }
 
+    /// A ramped particle takes its colour from the ramp and its strength
+    /// from the peak, so a feather thrown white and landing grey still
+    /// fades out rather than holding at the grey.
     #[test]
     fn a_ramp_moves_the_colour_without_touching_the_fade() {
         let mut particle = Particle {
@@ -1001,9 +990,8 @@ mod tests {
         assert!(end.alpha() < 1e-6, "and gone at the end of life");
     }
 
-    /// A kicked grain of sand has to come back down. Gravity is what
-    /// separates a puff of sand from a puff of smoke, and it was not there
-    /// at all until the particle layer grew one.
+    /// A kicked grain of sand has to come back down: gravity is what
+    /// separates a puff of sand from a puff of smoke.
     #[test]
     fn gravity_brings_a_particle_back_down() {
         let mut particle = Particle {
@@ -1064,10 +1052,9 @@ mod tests {
     }
 
     /// A banking crab has to leave from exactly where it was last drawn
-    /// and arrive at exactly the gate: anything else is a jump on the
-    /// first frame or a crab left standing on the wall on the last. And it
-    /// has to be off the ground in between, which is the only thing
-    /// saying it went *over* rather than *through*.
+    /// and arrive at exactly the gate, and be off the ground in between,
+    /// which is the only thing saying it went *over* rather than
+    /// *through*.
     #[test]
     fn a_bank_starts_on_the_sand_and_finishes_in_the_gate() {
         let (from, to) = (Vec2::new(-120.0, 30.0), Vec2::new(64.0, 64.0));
@@ -1085,9 +1072,8 @@ mod tests {
     }
 
     /// A banking crab travels straight to the gate, never bowing sideways
-    /// off it. The castles' own hop is asserted the same way and for the
-    /// same reason: a path that bowed would carry the crab over a wall on
-    /// a corner-to-corner bank, through terrain it never touched.
+    /// off it: a path that bowed would carry the crab over a wall on a
+    /// corner-to-corner bank, through terrain it never touched.
     #[test]
     fn a_bank_travels_in_a_straight_line() {
         let (from, to) = (Vec2::new(0.0, 0.0), Vec2::new(400.0, 200.0));

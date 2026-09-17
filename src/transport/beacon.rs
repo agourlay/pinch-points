@@ -17,9 +17,7 @@ use super::*;
 /// one; announcers send to every port.
 // Sized for a full table on one machine: five joiners listening at once
 // (six seats less the host, who only announces), plus spares for a
-// spectator or a lingering socket. The 4-port ladder this replaces was the
-// four-player era's, and silently capped same-machine lobbies at three
-// joiners.
+// spectator or a lingering socket.
 pub const LOBBY_PORTS: [u16; 8] = [47700, 47701, 47702, 47703, 47704, 47705, 47706, 47707];
 pub(super) const ANNOUNCE_MAGIC: &[u8; 5] = b"PNCH1";
 
@@ -61,14 +59,12 @@ impl Beacon {
     /// every beacon it sends.
     ///
     /// A beach is identified by this and not by the address it arrived
-    /// from, because one beach reaches a listener from *two* addresses.
-    /// Every beacon goes to the broadcast address and to loopback, because
+    /// from, because one beach reaches a listener from *two* addresses:
+    /// every beacon goes to the broadcast address and to loopback, since
     /// real broadcast does not always come back round to the machine that
-    /// sent it and same-machine play has to work. So a second instance on
-    /// the host's own machine hears both copies, one sourced from 127.0.0.1
-    /// and one from the LAN address, and used to list the one game twice.
-    /// It also spares the list from two machines that happen to draw the
-    /// same ephemeral port.
+    /// sent it. A second instance on the host's own machine hears both
+    /// copies and would list the one game twice. It also spares the list
+    /// from two machines that draw the same ephemeral port.
     ///
     /// Zero from a build that announced no id, which is keyed by address as
     /// it always was.
@@ -108,23 +104,19 @@ pub(super) const BEACON_SEATS_AT: usize = BEACON_TAKEN_AT + 1;
 pub(super) const BEACON_ID_AT: usize = BEACON_SEATS_AT + 1;
 /// The packet as it stood before the host's own name was added, and the
 /// length a beacon has to reach for its table and its id to be believed.
-/// A constant of its own rather than `BEACON_BYTES`, which is now longer:
-/// reading the two against each other keeps a beacon from the build before
-/// this one from losing everything but its beach name.
+/// Separate from `BEACON_BYTES`, which is now longer: read against that,
+/// a beacon from the older build loses all but its beach name.
 pub(super) const BEACON_TABLE_BYTES: usize = BEACON_ID_AT + 8;
 pub(super) const BEACON_HOST_AT: usize = BEACON_TABLE_BYTES;
 pub(super) const BEACON_BYTES: usize = BEACON_HOST_AT + WIRE_NAME;
 
 /// The receive buffer for a beacon, which must hold the largest one whole:
 /// UDP truncates a datagram to the buffer given, so a short buffer would
-/// silently cost every beacon its name, the way a 64-byte buffer once ate
-/// every named `Start`. A test proves the packet fits.
+/// silently cost every beacon its name. A test proves the packet fits.
 ///
-/// Grown past 64 when the host's name pushed the packet to 66. A build
-/// still reading into 64 is unharmed by that: the kernel hands it the
-/// first 64 bytes, which is every field it knew about anyway, and it goes
-/// on reading them where they have always been. Growing at the tail is
-/// what makes truncation survivable.
+/// A build still reading into the old 64 is unharmed: the kernel hands it
+/// the first 64 bytes, which is every field it knew about. Growing at the
+/// tail is what makes truncation survivable.
 pub(super) const MAX_BEACON: usize = 96;
 
 /// How many times a farewell goes out. An `Open` beacon can afford to be
@@ -138,39 +130,31 @@ pub(super) const FAREWELL_REPEATS: usize = 3;
 ///
 /// The ladder is there so several instances on *one machine* can each bind
 /// a port, which is testing and shared houses, not a hall. On the air it
-/// multiplied every announcement by eight: measured at 24 datagrams a
-/// second per host, 16 of them broadcast, and eight beaches on the air came
-/// to 192 a second between them. Broadcast is the expensive kind: every
-/// machine on the network takes delivery of it, and on Wi-Fi it is sent at
-/// the slowest rate every station can hear, so a hall's worth of it is
-/// airtime taken from the games.
+/// multiplied every announcement by eight: 24 datagrams a second per host,
+/// 16 of them broadcast, and eight beaches came to 192 a second between
+/// them. Broadcast is the expensive kind: every machine takes delivery of
+/// it, and on Wi-Fi it goes at the slowest rate every station can hear.
 ///
-/// The loopback copies still go to every port every time, because that is
-/// the case the ladder exists for and loopback costs the hall nothing. It
-/// is only the broadcast half that thins, so what a second instance on this
-/// machine hears does not change at all. A listener on another machine
-/// holding a port past the first is a machine running several copies of the
-/// game, and it now learns of a beach within this many seconds rather than
+/// Only the broadcast half thins. The loopback copies still go to every
+/// port every time, since that is the case the ladder exists for and it
+/// costs the hall nothing. A listener on another machine holding a port
+/// past the first learns of a beach within this many seconds rather than
 /// one.
 pub(super) const WIDE_EVERY: u32 = 4;
 
 /// How often the machine's own network is looked up again.
 ///
-/// It was worked out once, when the announcer was made, on the reasoning
-/// that a machine's address does not change while a beach stands. At a
-/// party it does: a DHCP lease comes back on another subnet, or a laptop
-/// roams to a second access point. The directed broadcast then names a
-/// network this machine is no longer on, for as long as the process runs,
-/// and every access point that drops the limited broadcast (the reason
-/// the directed one is sent at all) stops carrying this beach. The host
-/// sees nothing wrong: it is still announcing, and its own loopback copies
+/// A machine's address does change while a beach stands: a DHCP lease
+/// comes back on another subnet, or a laptop roams to a second access
+/// point. Worked out once, the directed broadcast then names a network
+/// this machine has left, and every access point that drops the limited
+/// broadcast (the reason the directed one is sent at all) stops carrying
+/// the beach. The host sees nothing wrong, since its own loopback copies
 /// still come back.
 ///
-/// Eight seconds is the compromise the original comment was after. Asking
-/// costs a socket bound and connected, which sends nothing and takes
-/// microseconds, so once every eight beacons is far from the "socket a
-/// second" that was worth avoiding, and a beach that moved is findable
-/// again within eight seconds rather than never.
+/// Asking costs a socket bound and connected, which sends nothing and
+/// takes microseconds, so eight seconds keeps it off the routing table
+/// every second while a beach that moved is findable again.
 pub(super) const SUBNET_RECHECK_EVERY: u32 = 8;
 
 /// Whether this beacon is one of the ones that re-asks the routing table.
@@ -207,8 +191,7 @@ pub(super) fn beacon_name(buf: &[u8], len: usize, at: usize) -> String {
 ///
 /// A struct rather than four loose arguments, two of them `&str`: nothing
 /// in `announce(port, "Anna", "Room 3", 2, 6)` would complain if the two
-/// names were the wrong way round, and every beach in the hall would
-/// silently be listed under its host's name and hosted by its own.
+/// names were the wrong way round.
 #[derive(Clone, Copy, Default)]
 pub struct OnAir<'a> {
     /// What the beach is called.
@@ -267,14 +250,11 @@ impl Discovery {
                             false => 0,
                         };
                         // The kind, and only from a packet that reached the
-                        // byte it lives in. `buf` is read into once and
-                        // reused for every datagram of the drain, so byte 7
-                        // of a beacon too short to have one is byte 7 of
-                        // whatever came before it: a pre-farewell beacon
-                        // arriving behind a running one was listed as in
-                        // progress, unjoinable, on the strength of the
-                        // previous packet. Every other field already reads
-                        // its length first; this one is the one that did not.
+                        // byte it lives in. `buf` is reused for every
+                        // datagram of the drain, so byte 7 of a beacon too
+                        // short to have one is byte 7 of whatever came
+                        // before it: a pre-farewell beacon behind a running
+                        // one was listed as in progress and unjoinable.
                         let kind = (len >= 8).then(|| buf[7]);
                         let beacon = match kind {
                             Some(BEACON_CLOSING) => Beacon::Closing { id },
@@ -382,12 +362,11 @@ impl Announcer {
     /// PRNG. It must differ between hosts and stay put for as long as one
     /// runs.
     ///
-    /// This socket's own port is mixed in before it is used. The caller's
+    /// This socket's own port is mixed in before it is used: the caller's
     /// number comes from a clock, and two instances started together on a
-    /// machine whose clock is coarse would draw the same one, collapsing
-    /// two beaches into a single row on the very machine somebody is
-    /// testing with two windows open. An ephemeral port is the one thing
-    /// the OS promises not to hand out twice at once.
+    /// machine with a coarse clock would draw the same one and collapse
+    /// into a single row. An ephemeral port is the one thing the OS
+    /// promises not to hand out twice at once.
     pub fn new(id: u64) -> io::Result<Announcer> {
         let socket = UdpSocket::bind(("0.0.0.0", 0))?;
         socket.set_broadcast(true)?;
@@ -486,15 +465,13 @@ mod tests {
         assert_eq!(due, [8, 16]);
     }
 
-    /// The bug this fixes: an address worked out once and kept for the life
-    /// of the process. A lease that comes back on another subnet, or a
-    /// laptop that roams, left the directed broadcast naming a network the
-    /// machine had left, and the host went on announcing into it.
+    /// An address worked out once and kept for the life of the process
+    /// leaves the directed broadcast naming a network the machine has left.
     ///
     /// Asserted as "the stale one does not survive" rather than against any
-    /// particular address, since what this machine answers is this
-    /// machine's business: the planted value is a documentation address
-    /// (RFC 5737) that no routing table can hand back.
+    /// particular address, since what this machine answers is its own
+    /// business: the planted value is a documentation address (RFC 5737)
+    /// that no routing table can hand back.
     #[test]
     fn a_subnet_that_went_stale_does_not_outlive_the_recheck() {
         use std::sync::atomic::Ordering::Relaxed;
@@ -513,11 +490,9 @@ mod tests {
         );
     }
 
-    /// What the hall pays for discovery, and what it stopped paying.
-    ///
-    /// The broadcast half is the half every machine on the network takes
-    /// delivery of, so it is the half that has to be thin; the loopback
-    /// copies are this machine's own business and stay on every port.
+    /// What the hall pays for discovery. The broadcast half is the half
+    /// every machine takes delivery of, so it is the half that has to be
+    /// thin; the loopback copies stay on every port.
     #[test]
     fn only_every_fourth_beacon_shouts_at_the_whole_ladder() {
         let wide: Vec<usize> = (0..12).map(|n| wide_ports(n, false).len()).collect();
@@ -644,9 +619,8 @@ mod tests {
     }
 
     /// Two hosts that drew the same number from the clock are still two
-    /// hosts. The clock is the caller's, its resolution is the platform's,
-    /// and two windows opened together on one machine is the everyday case,
-    /// not the exotic one.
+    /// hosts: the clock is the caller's, its resolution the platform's, and
+    /// two windows opened together on one machine is the everyday case.
     #[test]
     fn two_announcers_from_one_clock_reading_are_still_two() {
         let (a, b) = (
@@ -657,9 +631,8 @@ mod tests {
     }
 
     /// A beacon must fit its receive buffer whole, or the kernel truncates
-    /// it and the name goes missing without a trace, the failure the
-    /// `Start` datagram already taught this file once. The widest name is
-    /// the check that matters, since that is the part that grew.
+    /// it and the name goes missing without a trace. The widest name is the
+    /// check that matters, since that is the part that grew.
     #[test]
     fn every_beacon_fits_the_receive_buffer() {
         let mut packet = ANNOUNCE_MAGIC.to_vec();
@@ -678,12 +651,11 @@ mod tests {
         assert_eq!(packet.len(), BEACON_BYTES, "the whole layout");
     }
 
-    /// The host's own name is the newest thing on the tail, and the build
-    /// before it sent a packet that stopped at the id. Such a beacon must
-    /// keep everything it *did* say (its beach name, its table, and above
-    /// all its id, which stops one beach being listed twice) and lose only
-    /// the name it never carried. Reading a length against `BEACON_BYTES`
-    /// rather than [`BEACON_TABLE_BYTES`] is how it would lose the lot.
+    /// The build before the host's name sent a packet that stopped at the
+    /// id. Such a beacon keeps everything it *did* say (its beach name, its
+    /// table, and above all its id) and loses only the name it never
+    /// carried. Reading its length against `BEACON_BYTES` rather than
+    /// [`BEACON_TABLE_BYTES`] would lose the lot.
     #[test]
     fn a_beacon_from_before_the_host_had_a_name_keeps_the_rest() {
         let mut discovery = Discovery::bind().expect("bind lobby port");
@@ -778,10 +750,9 @@ mod tests {
     }
 
     /// One buffer serves every datagram of a drain, so a beacon too short
-    /// to carry a field must not be read as carrying the last one's. The
-    /// kind byte is where that bit: a pre-farewell beacon arriving behind
-    /// a running one inherited its kind and was listed as a round already
-    /// under way, which is a beach nobody may join.
+    /// to carry a field must not be read as carrying the last one's: a
+    /// pre-farewell beacon behind a running one inherited its kind and was
+    /// listed as a round already under way, which nobody may join.
     #[test]
     fn a_short_beacon_behind_a_long_one_borrows_none_of_it() {
         let mut discovery = Discovery::bind().expect("bind lobby port");

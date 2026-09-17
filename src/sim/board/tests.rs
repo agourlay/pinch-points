@@ -436,11 +436,9 @@ fn an_event_fired_by_hand_holds_the_wheel_as_well() {
 /// A refused spin must not touch the PRNG.
 ///
 /// The draw that picks the face comes *after* the cooldown check, and it
-/// has to: the stream is the round. Moving the check below the draw would
-/// consume one per refused Sparkling crab, so two peers that disagreed by
-/// a single held spin would then disagree about every crab, gull and
-/// event for the rest of the match - and every kept replay would play
-/// back as a different round.
+/// has to: the stream is the round. A draw per refused Sparkling crab
+/// would have two peers disagreeing about every crab, gull and event after
+/// a single held spin, and every kept replay playing back differently.
 #[test]
 fn a_held_spin_does_not_spend_a_draw() {
     let mut board = Board::new(9, 7, 2);
@@ -458,9 +456,8 @@ fn a_held_spin_does_not_spend_a_draw() {
 }
 
 /// The wheel comes back the moment the cooldown runs out, and not a tick
-/// before. Both ends matter: a cooldown that expired early would let two
-/// events overlap after all, and one that never expired would be a mute
-/// button on the whole mechanic.
+/// before: expiring early lets two events overlap after all, and never
+/// expiring is a mute button on the whole mechanic.
 #[test]
 fn the_wheel_comes_back_on_the_tick_the_cooldown_ends() {
     let mut board = Board::new(9, 7, 2);
@@ -544,9 +541,8 @@ fn can_place_mirrors_place() {
 fn signpost_fade_is_full_under_puzzle_rules_and_decays_under_evict() {
     let mut board = Board::new(5, 5, 0);
     // Puzzle rules (Reject): permanent, always full, however old. Set
-    // before the post goes down: a fresh board is under Evict, and a
-    // fresh post reads full under either rule, so a test that read it at
-    // age zero was not reading the Reject branch at all.
+    // before the post goes down, since a fresh post reads full under
+    // either rule.
     board.set_signpost_rule(3, CapPolicy::Reject);
     assert!(board.place_signpost(0, 2, 2, Right));
     let sp = board.signpost_at(2, 2).unwrap();
@@ -895,15 +891,13 @@ fn gull_raid_halves_the_castle() {
 /// With raids off a gull still walks into the castle and still leaves the
 /// beach - it just takes nothing with it.
 ///
-/// The puzzle rule. A raid halves a score the puzzle header never shows and
-/// spills banked crabs back onto the sand, and each spilled crab counts as
-/// newly spawned - so the "Saved a/b" denominator climbed every time a gull
-/// touched the castle, and the level's own target ran away from the player.
-/// Nine shipped campaign levels did it while playing the authored solution.
+/// The puzzle rule. A raid spills banked crabs back onto the sand, each
+/// counting as newly spawned, so the "Saved a/b" denominator climbed every
+/// time a gull touched the castle: nine shipped campaign levels did it
+/// while playing the authored solution.
 ///
 /// The departure has to survive: a castle is the one tile that takes a gull
-/// off the sand, and the levels lean on it whether or not anyone meant them
-/// to. Sealing the castle instead left Two Giants unsolvable.
+/// off the sand, and sealing it instead left Two Giants unsolvable.
 #[test]
 fn a_raid_with_raids_off_takes_nothing_and_still_ends_the_visit() {
     let mut board = Board::new(7, 5, 0);
@@ -1071,11 +1065,9 @@ fn the_beach_fills_to_a_cap_and_mania_to_twice_it() {
     );
 
     board.apply_tide_event(TideEvent::CrabMania, 0);
-    // Watched across the whole flood rather than read at the end of it. The
-    // mania lasts `EVENT_TICKS` and the beach drains back to the cap once it
-    // lifts, so a single count taken 600 ticks later measures the drain and
-    // not the flood: this asserted on the tail, and held only because the
-    // tail happened to land above the line.
+    // Watched across the whole flood rather than read at the end of it: the
+    // mania lasts `EVENT_TICKS` and the beach drains back to the cap once
+    // it lifts, so a count taken 600 ticks later measures the drain.
     let mut peak = board.crabs().len();
     for _ in 0..600 {
         board.tick_idle();
@@ -1346,10 +1338,8 @@ fn a_swept_crab_is_written_down_against_the_seat_that_got_it() {
     assert_eq!(board.swept_home(9999), None);
 }
 
-/// The record is news about one tick, and it is read between frames - a
-/// frame that ran long can cover several ticks, and the frame straight
-/// after a sweep is the busiest one the renderer ever draws. So it
-/// outlives its own tick, and then it goes.
+/// The record is news about one tick and is read between frames, which can
+/// cover several ticks, so it outlives its own tick and then goes.
 #[test]
 fn a_swept_crab_is_remembered_a_few_ticks_and_then_forgotten() {
     let mut board = party_board();
@@ -1368,13 +1358,11 @@ fn a_swept_crab_is_remembered_a_few_ticks_and_then_forgotten() {
 }
 
 /// The record is written for the render layer and never read back by the
-/// sim, so it has no business in the fingerprint. Two peers playing the
-/// same round have to agree on their hashes, and a field that moved one of
-/// them would be a desync neither could see.
+/// sim, so it has no business in the fingerprint: a field that moved one
+/// peer's hash would be a desync neither could see.
 ///
 /// Put in by hand rather than by playing a round into it: the question is
-/// whether the fingerprint can feel it at all, and the fingerprint is the
-/// only thing being asked.
+/// whether the fingerprint can feel it at all.
 #[test]
 fn a_sweep_leaves_the_fingerprint_alone() {
     let mut board = party_board();
@@ -1573,8 +1561,7 @@ fn gull_mania_ignores_the_flock_cap() {
 /// castle keeps `score / 2` and the odd crab goes with the gull. A score of
 /// 7 keeps 3 and loses 4, all four spilling back onto the sand (under the
 /// spill cap); 3 keeps 1 and spills 2. Pinned so a later "round to nearest"
-/// cannot creep in and quietly change how devastating a raid on a small
-/// castle is.
+/// cannot change how devastating a raid on a small castle is.
 #[test]
 fn a_raid_on_an_odd_score_rounds_the_loss_up_and_spills_it() {
     for (score, kept, spilled) in [(7, 3, 4), (3, 1, 2)] {
@@ -1626,9 +1613,8 @@ fn a_spill_into_a_cramped_corner_lands_only_on_the_open_sand() {
 
 /// Where the ambient flock comes from: every spawn is on the edge of the
 /// board and walks inward, and over enough rolls every edge tile gets its
-/// turn. The perimeter arithmetic has four branches (top, bottom, left,
-/// right) and an off-by-one in any of them either skips tiles or, worse,
-/// indexes past the board.
+/// turn. The perimeter arithmetic has four branches, and an off-by-one in
+/// any of them skips tiles or indexes past the board.
 #[test]
 fn the_gull_spawner_covers_the_whole_perimeter_and_faces_inward() {
     let mut board = Board::new(4, 3, 7);
@@ -1709,9 +1695,8 @@ fn flying(board: &Board, x: u8, y: u8, dir: Direction, remaining: u8) -> Gull {
 /// tile a creature can stand on. On a 4x1 strip with rocks on the far two
 /// tiles, a gull flying right with two hops left runs out over the rocks,
 /// glides one more tile, hits the edge, turns back and puts down on the
-/// first sand it finds. It has to end walking, on sand, in a bounded number
-/// of ticks: a gull that flies forever is a gull that eats nothing all
-/// round.
+/// first sand it finds. It has to end walking, on sand, in a bounded
+/// number of ticks.
 #[test]
 fn a_flying_gull_bounces_off_the_edge_and_lands_on_sand() {
     let mut board = Board::new(4, 1, 0);

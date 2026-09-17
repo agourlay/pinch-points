@@ -47,10 +47,9 @@ fn image_sprite(image: &Handle<Image>, tint: Color, size: Vec2) -> Sprite {
 ///
 /// The sync systems diff sprites against the sim by the coordinates each
 /// sprite was built at, and the sim's `tile_at` and `signpost_at` assert on
-/// coordinates off the board. A sprite left over from a bigger board (a
-/// swap that skipped the teardown) is therefore a crash rather than a
-/// stale picture, so every probe checks here first and treats a stranded
-/// sprite as one to despawn.
+/// coordinates off the board, so a sprite left over from a bigger board is
+/// a crash rather than a stale picture. Every probe checks here first and
+/// despawns a stranded sprite.
 fn on_board(board: &crate::sim::Board, x: u8, y: u8) -> bool {
     x < board.width() && y < board.height()
 }

@@ -1,11 +1,11 @@
 //! Centre-screen announcements for the moments that change the round.
 //!
 //! The side feed reports everything, which makes it good for reading back
-//! and poor for noticing: a lure or a tide event lands in a 14px line in the
-//! corner while four players are watching the middle of the board. The
-//! original put its roulette result across the centre of the screen, and
-//! that is what this does: big, brief, and colour-matched to the feed line
-//! that records it.
+//! and poor for noticing: a lure or a tide event lands in a 14px line in
+//! the corner while four players are watching the middle of the board. So
+//! the roulette result goes across the centre of the screen, as the
+//! original put it: big, brief, and colour-matched to the feed line that
+//! records it.
 //!
 //! Render-only, and deliberately so: it never touches the sim or the clock,
 //! so a peer that is a frame ahead still simulates the same round. Two
@@ -23,13 +23,11 @@ use std::collections::VecDeque;
 /// How long one announcement holds the middle of the screen at full
 /// strength, and the ramps at each end.
 ///
-/// Two seconds of hold rather than the one and a half it began with. The
-/// banner carries a headline *and* a line explaining what the event does,
-/// and a second and a half is enough to read the first and not the second.
-/// It could be spent now that the roulette has a cooldown on it
-/// ([`crate::sim::EVENT_COOLDOWN`]): events used to arrive in waves that
-/// kept the queue below saturated, and lengthening the banner then would
-/// have made the pile-up worse rather than the reading better.
+/// Two seconds of hold, not the one and a half it began with: the banner
+/// carries a headline *and* a line explaining what the event does, and a
+/// second and a half is enough to read the first and not the second. It can
+/// be spent now the roulette has a cooldown ([`crate::sim::EVENT_COOLDOWN`])
+/// and events no longer arrive in waves.
 const HOLD: f32 = 2.0;
 const FADE_IN: f32 = 0.15;
 const FADE_OUT: f32 = 0.45;
@@ -43,11 +41,8 @@ const LIFE: f32 = FADE_IN + HOLD + FADE_OUT;
 ///
 /// The arithmetic is one banner more than it looks: `drive_announcements`
 /// pops the queue *before* spawning, so one is on screen while this many
-/// still wait behind it. The ceiling is therefore `(MAX_QUEUED + 1) *
-/// LIFE`, and they queue rather than overlap, so that is genuinely how
-/// long the middle of the board can stay covered. At three, and with the
-/// hold lengthened to two seconds, that came to 10.4 s - past the line
-/// this constant exists to hold. Two keeps it at 7.8 s.
+/// wait behind it, and the ceiling is `(MAX_QUEUED + 1) * LIFE`. At three,
+/// with the hold at two seconds, that is 10.4 s; two keeps it at 7.8 s.
 const MAX_QUEUED: usize = 2;
 
 /// Something worth the centre of the screen.
@@ -375,10 +370,9 @@ mod tests {
         // the frame after (the despawn is a command, and the next banner
         // waits for it to land).
         //
-        // Counted off `LIFE` rather than written as a number of frames.
-        // Four 800 ms steps was exactly enough at the 2.1 s this banner
-        // used to live, and lengthening the hold turned it into a test
-        // that watched the first banner and never saw the second.
+        // Counted off `LIFE` rather than written as a number of frames:
+        // four 800 ms steps was exactly enough at 2.1 s, so lengthening the
+        // hold left a test that never saw the second banner.
         let step = Duration::from_millis(200);
         let frames = (LIFE / step.as_secs_f32()).ceil() as u32 + 2;
         for _ in 0..frames {

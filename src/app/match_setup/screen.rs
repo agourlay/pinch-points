@@ -57,10 +57,8 @@ pub fn enter_match_setup(
         .spawn((MatchUi, menu_ui::between_bars()))
         .with_children(|wrap| {
             // A fixed height, because the rows that come and go fold away
-            // rather than blanking: four AI-level rows in the middle of the
-            // card would be four holes if they merely emptied, and a card
-            // that shrinks around them jumps while you turn the dial that
-            // adds them.
+            // rather than blanking: a card that shrinks around them jumps
+            // while you turn the dial that adds them.
             let (mark, mut node, fill, edge, shadow) = menu_ui::screen_card();
             node.height = Val::Px(
                 2.0 * menu_ui::CARD_PAD_Y
@@ -133,14 +131,12 @@ pub fn enter_match_setup(
 /// wears. Two cells, the way every other card in the shell does it, rather
 /// than one cell holding a label padded out with spaces.
 ///
-/// Padding was `{:<15}`, and Rust counts that width in `char`s. Two scripts
-/// break that. The Latin ones overrun it - "Niveau van de AI S1" is
-/// nineteen characters - and pushed the dial right on those rows alone.
-/// Japanese undershoots it and still comes out wider: the shipped CJK face
-/// draws a full em where DejaVu Sans Mono draws 0.602, so a two-character
-/// label padded to fifteen is 17 columns wide and a six-character one is
-/// 21, and no number of spaces closes a gap that is 1.66 of one. A cell of
-/// a fixed pixel width has no opinion about either.
+/// Padding as `{:<15}` counts the width in `char`s, and two scripts break
+/// that. The Latin ones overrun it ("Niveau van de AI S1" is nineteen
+/// characters) and push the dial right on those rows alone. Japanese
+/// undershoots it and still comes out wider: the shipped CJK face draws a
+/// full em where DejaVu Sans Mono draws 0.602, and no number of spaces
+/// closes a gap that is 1.66 of one.
 ///
 /// Wide enough for the longest label and the longest built-in value in any
 /// language, measured against those two faces. What the player types - a
@@ -235,11 +231,10 @@ pub fn match_setup_input(
         next_screen.set(Screen::Menu);
         return;
     }
-    // Tab opens a name for typing, not Enter. Enter used to do it, and on
-    // a name row that meant Enter could never do the other thing it says
-    // it does: the name rows are last on the list, so a player who had
-    // just named everyone pressed Enter to start and got the name box
-    // again, and again.
+    // Tab opens a name for typing, not Enter: on a name row Enter could
+    // then never do the other thing it says it does, and the name rows are
+    // last on the list, so a player who had just named everyone would press
+    // Enter to start and get the name box again.
     if keys.just_pressed(KeyCode::Tab)
         && let Row::Name(seat) = Row::ALL[menu.selected]
     {

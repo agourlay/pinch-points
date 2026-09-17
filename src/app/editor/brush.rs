@@ -7,13 +7,9 @@ use bevy::prelude::*;
 
 pub(super) const SPAWNER_PERIOD: u32 = 60;
 
-/// What the brush paints. One name for each thing the sand can hold, so
-/// the palette, the key that selects it and the edit it makes are three
-/// views of one list rather than three lists that have to agree.
-///
-/// Before this the editor had nine letters and no way to find out what any
-/// of them did except to press it and watch: no palette, no selection, and
-/// a prompt line reading `R C H L W P B G O tiles`.
+/// What the brush paints. One name for each thing the sand can hold, so the
+/// palette, the key that selects it and the edit it makes are three views
+/// of one list rather than three lists that have to agree.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Brush {
     /// Bare sand, which is also the eraser: the only way to clear a tile
@@ -48,9 +44,9 @@ impl Brush {
     /// hand that already knows the editor does not have to learn it again.
     ///
     /// None of them may be W, A, S or D: those walk the cursor, and a key
-    /// that does both walks the cursor *and* changes the brush. Weed was
-    /// on W, so moving up quietly armed the kelp. `no_brush_takes_a_
-    /// movement_key` holds the line.
+    /// that does both walks the cursor *and* changes the brush. Weed was on
+    /// W, so moving up armed the kelp; `no_brush_takes_a_movement_key`
+    /// holds the line.
     pub fn key(self) -> KeyCode {
         match self {
             Brush::Sand => KeyCode::KeyX,
@@ -66,10 +62,9 @@ impl Brush {
     }
 
     /// The letter the palette shows beside the brush: the one on the key
-    /// that loads it, always. The two lists once disagreed - Weed moved
-    /// off W to E and the palette went on saying W - and a palette that
-    /// names the wrong key is worse than one that names none, so
-    /// `letters_name_their_keys` now holds them together.
+    /// that loads it, always. The two lists have disagreed, Weed moving off
+    /// W to E while the palette went on saying W, so
+    /// `letters_name_their_keys` holds them together.
     pub fn letter(self) -> &'static str {
         match self {
             Brush::Sand => "X",
@@ -356,11 +351,10 @@ mod tests {
     /// A brush replaces what is on the tile, and `Sand` is what takes it
     /// away.
     ///
-    /// It used to toggle: pressing the same key twice put the tile back to
-    /// bare sand. That reads well with one key per terrain and badly with a
-    /// palette, where dragging a brush along a row would rub out every
-    /// other tile it crossed. `Sand` is now the eraser, and it is the only
-    /// one that does not need to know what it is erasing.
+    /// Toggling, so that pressing the same key twice bares the tile, reads
+    /// well with one key per terrain and badly with a palette, where
+    /// dragging a brush along a row rubs out every other tile. `Sand` is
+    /// the eraser instead.
     #[test]
     fn a_brush_replaces_and_sand_erases() {
         let mut board = sand();

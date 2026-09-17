@@ -257,9 +257,8 @@ fn a_pause_stops_both_peers_on_the_same_frame() {
         step_both(&mut host, &mut join, &mut boards);
         // Playing on every tick from the resume, not most of them: the
         // last `Pause` echoes cross the `Resume`, and taken at face value
-        // they re-paused the peer that had just resumed, which echoed
-        // them back, and the pair flapped with a period of three ticks
-        // (an eighty-tick check happened to land on the playing phase).
+        // they re-pause the peer that has just resumed, which echoes them
+        // back, and the pair flaps with a period of three ticks.
         if step >= 3 {
             assert!(
                 !host.session.paused() && !join.session.paused(),
@@ -281,8 +280,6 @@ fn a_pause_stops_both_peers_on_the_same_frame() {
 
 /// The full 4-player star: one host relays between three joiners over real
 /// loopback sockets, using the same OnlineSession pump the game runs.
-/// Previously this topology was only validated by manual multi-instance
-/// dogfooding.
 #[test]
 fn four_player_star_relay_stays_bit_identical() {
     use pinch_points::app::net::OnlineSession;
@@ -385,13 +382,12 @@ fn four_player_star_relay_stays_bit_identical() {
 /// frame, and (the property that makes a spectator safe) is never waited
 /// for.
 ///
-/// It joins with them rather than mid-round: a lockstep session replays from
-/// frame zero and the resend tail only reaches `resend_span` frames back (33
-/// at the default delay), so a peer that arrives late can never fill the
-/// frames it missed. Watching from partway
-/// through needs a snapshot join instead of a replay, which nothing sends
-/// today; see "Watching a round that has already started" in
-/// docs/backlog.md.
+/// It joins with them rather than mid-round: a lockstep session replays
+/// from frame zero and the resend tail only reaches `resend_span` frames
+/// back (33 at the default delay), so a peer that arrives late can never
+/// fill the frames it missed. Watching from partway through needs a
+/// snapshot join, which nothing sends today; see "Watching a round that has
+/// already started" in docs/backlog.md.
 #[test]
 fn a_spectator_sees_the_same_round_without_holding_it_up() {
     use pinch_points::app::net::OnlineSession;
@@ -638,10 +634,9 @@ fn a_launched_round_seats_every_peer_on_the_same_beach() {
     );
 
     // With no beach riding along, the two builders must be one builder:
-    // `board_from` falls back to `board_for`, and hashing them against
-    // each other on every map stop is what keeps an option one of them
-    // sets (wrap, say, which only the open ocean turns on) from ever
-    // drifting out of the other.
+    // `board_from` falls back to `board_for`, and hashing them against each
+    // other on every map stop keeps an option one of them sets (wrap, which
+    // only the open ocean turns on) from drifting out of the other.
     for map in 0..MapChoice::ALL.len() as u8 {
         for seats in [2u8, 5] {
             let terms = MatchTerms {

@@ -1,11 +1,9 @@
 //! Ask the operating system what each key on the keyboard prints.
 //!
-//! A window toolkit gives you a key press as a *position* - the key under
+//! A window toolkit gives you a key press as a *position*: the key under
 //! QWERTY's W is `KeyW` on an AZERTY board too, where its cap reads "Z".
 //! That is the right thing to bind to and the wrong thing to print on
-//! screen, and a game that prints it anyway tells an AZERTY player to
-//! press W when their W is somewhere else entirely. What is missing is
-//! the other half: what does this key *say*?
+//! screen. What is missing is the other half: what does this key *say*?
 //!
 //! Every platform knows. X11 has had `GetKeyboardMapping` since the
 //! beginning, Windows answers `MapVirtualKeyEx`, and macOS will run a key
@@ -18,12 +16,11 @@
 //! # The unsafe
 //!
 //! This is the only module in the game that has any, and the reason
-//! [`crate`] denies unsafe code rather than forbidding it outright: two
-//! of those three platforms answer through FFI and nothing else. It is a
-//! dozen calls, none of them on the path Linux takes, each one a plain
-//! integer or a reference released on every path out - and every block
-//! below says why it is sound, which the lint under this paragraph is
-//! what enforces.
+//! [`crate`] denies unsafe code rather than forbidding it outright: two of
+//! those three platforms answer through FFI and nothing else. It is a dozen
+//! calls, none of them on the path Linux takes, each one a plain integer or
+//! a reference released on every path out, and every block below says why
+//! it is sound.
 
 // The exception, granted here and nowhere else in the game.
 #![allow(unsafe_code)]
@@ -39,10 +36,9 @@
 /// keycode, which follows the shape of the original Apple keyboard and so
 /// follows nothing else.
 ///
-/// The digit row is deliberately absent. An AZERTY board prints `&é"'`
-/// along the top and the keys are still called 1 to 4 by everyone
-/// including the player, so reporting a cap there would be answering a
-/// question nobody asked.
+/// The digit row is deliberately absent: an AZERTY board prints `&é"'`
+/// along the top and the keys are still called 1 to 4 by everyone,
+/// including the player.
 const KEYS: [(&str, u8, u8); 37] = [
     ("KeyA", 30, 0x00),
     ("KeyB", 48, 0x0B),
@@ -93,10 +89,8 @@ const KEYS: [(&str, u8, u8); 37] = [
 /// talk to us. So an empty answer means "no idea", never "a blank
 /// keyboard", and the caller keeps whatever it believed before.
 ///
-/// Only ASCII, on purpose. A Cyrillic or kana board carries the Latin
-/// caps alongside its own and its players read those, so reporting `ц`
-/// for `KeyW` would replace a legend everyone can read with one only some
-/// can.
+/// Only ASCII, on purpose: a Cyrillic or kana board carries the Latin caps
+/// alongside its own and its players read those.
 ///
 /// # Platform notes
 ///

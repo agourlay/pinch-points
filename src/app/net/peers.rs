@@ -1,12 +1,10 @@
 //! The peers on a socket, as the shell knows them: one row per peer
 //! index, kept in step with the transport's own list.
 //!
-//! Everything the shell keeps about a peer used to live in a parallel
-//! `Vec` of its own (seat, name, watch wish, silence), each grown to reach
-//! a new index by its own loop and each shifted by hand when a peer was
-//! forgotten. Four lists that have to move together or not at all is a
-//! bug waiting for the one site that forgets; one row per peer cannot
-//! come apart.
+//! As four parallel `Vec`s (seat, name, watch wish, silence), each was
+//! grown to reach a new index by its own loop and shifted by hand when a
+//! peer was forgotten: four lists that have to move together or not at
+//! all. One row per peer cannot come apart.
 
 /// Where a peer stands in the round, as the launch plan dealt it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -151,19 +149,17 @@ impl PeerBook {
             .count()
     }
 
-    /// Whether `peer` is following the round and so needs its inputs:
-    /// at the table, or at the rail in step from frame zero. A peer in
-    /// line for the next round is not, and used to be sent the whole
-    /// lockstep anyway: at a full table that is six datagrams a tick each,
-    /// about 180 a second, for frames it is not simulating and cannot use.
-    /// Four people waiting turned a table's 930 datagrams a second into
-    /// 1657.
+    /// Whether `peer` is following the round and so needs its inputs: at
+    /// the table, or at the rail in step from frame zero. A peer in line for
+    /// the next round is not, and sent the whole lockstep anyway costs about
+    /// 180 datagrams a second for frames it cannot use: four people waiting
+    /// turned a table's 930 a second into 1657.
     ///
-    /// Everyone hears when the book holds no plan, and that exception is
-    /// the whole reason this is not simply `place != Queued`: `Queued` is
-    /// the default place, so a joiner (which knows one peer, the host) and
-    /// the direct `PINCH_HOST` pair (which keeps no plan at all) would
-    /// otherwise stop sending inputs to the only peer they have.
+    /// Everyone hears when the book holds no plan, which is why this is not
+    /// simply `place != Queued`: `Queued` is the default place, so a joiner
+    /// (which knows one peer, the host) and the direct `PINCH_HOST` pair
+    /// (which keeps no plan) would stop sending inputs to the only peer
+    /// they have.
     pub fn follows_the_round(&self, peer: usize) -> bool {
         let planned = self.planned();
         planned == 0 || peer < planned

@@ -9,9 +9,8 @@
 //! game is a keypress rather than a rediscovery.
 //!
 //! A beach comes off the list two ways. Normally it says so, on leaving
-//! the lobby or on starting the match, since neither leaves anything
-//! joinable behind. Failing that it simply stops being
-//! heard, and ages off after [`HOST_TTL`]; nothing can be sent by a process
+//! the lobby or on starting the match. Failing that it simply stops being
+//! heard, and ages off after [`HOST_TTL`]: nothing can be sent by a process
 //! that was killed or a machine that lost power, so the timeout stays
 //! underneath the farewell rather than being replaced by it.
 //!
@@ -51,9 +50,9 @@ use std::net::SocketAddr;
 pub(crate) const ANNOUNCE_EVERY: f32 = 1.0;
 
 /// Run a once-a-second clock down by `delta` and say whether it rang; a
-/// clock that rang is wound back up to [`ANNOUNCE_EVERY`]. The beacon,
-/// the joiner's greeting, and the running match's own copies of both keep
-/// time this way, and each used to spell the three lines out for itself.
+/// clock that rang is wound back up to [`ANNOUNCE_EVERY`]. The beacon, the
+/// joiner's greeting, and the running match's own copies of both keep time
+/// this way.
 pub(crate) fn once_a_second(clock: &mut f32, delta: f32) -> bool {
     *clock -= delta;
     if *clock > 0.0 {
@@ -77,13 +76,11 @@ pub(crate) fn greeting(watching: bool, name: &str) -> NetMsg {
 /// Where the player stands in the lobby, and everything that goes with
 /// standing there.
 ///
-/// Before this enum four separate fields said it (`hosting`, `joining`,
-/// `watching`, and whether anything had been heard) and four different
-/// pieces of the lobby each worked it out for themselves, each spelling
-/// the same question differently. A combination nobody names is a
-/// combination that drifts, and a field that only means anything in one
-/// standing (the host's peers, the joiner's patience with a silent host)
-/// is a field that can be read in the wrong one.
+/// One value rather than the four fields that used to say it (`hosting`,
+/// `joining`, `watching`, and whether anything had been heard): a field
+/// that only means anything in one standing (the host's peers, the
+/// joiner's patience with a silent host) is a field that can be read in
+/// the wrong one.
 pub enum Standing {
     /// Choosing a beach, with W armed or not: armed, the next pick
     /// watches rather than plays.
@@ -144,8 +141,7 @@ impl Hosted {
     /// Peers here to play, the ones who fill the seats. Capped at the five
     /// chairs beside the host's: seats run out before the socket does (it
     /// takes nine), and `seat_plan` turns the surplus into onlookers, so a
-    /// table of eight would-be rivals is "5 aboard", not "8 aboard - Enter
-    /// to start (up to 5)", and the beacon never reads "9/6".
+    /// table of eight would-be rivals reads as "5 aboard".
     pub fn players_aboard(&self) -> usize {
         let seatable = MAX_PLAYERS - 1;
         self.peers
@@ -243,8 +239,7 @@ pub enum Intent {
 ///
 /// The two halves are painted differently, a name in its seat's colour
 /// and a notice slanted, and a formatted `"who: line"` would have to be
-/// picked apart again at the colon to do it, on a name the player chose
-/// and may well have put a colon in.
+/// picked apart at a colon the player may well have typed themselves.
 #[derive(Default, Clone, PartialEq, Eq, Debug)]
 pub struct Said {
     /// Who said it, or empty when the lobby itself is speaking: somebody
@@ -652,12 +647,11 @@ pub fn lobby_input(
                     state.say("", &notice);
                 }
                 state.standing = Standing::hosting(announcer, transport);
-                // Stop listening. A host cannot join anyone, so the list is
-                // no use to it, and holding a lobby port it will never read
-                // would deny one to another instance on the same machine,
-                // which is why there are eight. It also stops
-                // the host hearing its own beacon come back round the
-                // loopback and listing itself.
+                // Stop listening. A host cannot join anyone, and holding a
+                // lobby port it will never read would deny one to another
+                // instance on the same machine. It also stops the host
+                // hearing its own beacon come back round the loopback and
+                // listing itself.
                 state.discovery = None;
                 state.hosts.clear();
             }
@@ -741,9 +735,8 @@ mod tests {
     }
 
     /// A host that leaves properly is gone at once, rather than sitting in
-    /// the list for the whole timeout offering a beach nobody can join. The
-    /// ageing stays underneath it for the exits that cannot be announced:
-    /// a killed process, a pulled cable.
+    /// the list for the whole timeout. The ageing stays underneath for the
+    /// exits that cannot be announced: a killed process, a pulled cable.
     #[test]
     fn a_farewell_clears_a_host_without_waiting_out_the_timeout() {
         let mut hosts = Vec::new();
@@ -779,10 +772,9 @@ mod tests {
         assert!(hosts.iter().any(|host| host.addr == addr(5)));
     }
 
-    /// What a host reads while it waits. Pulled out of a two-hundred-line
-    /// system so it can be read at all, and so this can check the counting:
-    /// one rival is not "1 rivals", onlookers are named separately from
-    /// players, and the AI is only ever offered the chairs left over.
+    /// What a host reads while it waits: one rival is not "1 rivals",
+    /// onlookers are named separately from players, and the AI is only
+    /// ever offered the chairs left over.
     #[test]
     fn the_gathering_line_counts_who_is_actually_there() {
         use crate::app::i18n::EN;
@@ -811,10 +803,9 @@ mod tests {
         );
     }
 
-    /// The other half of it: a hosting lobby really does put a farewell on
-    /// the wire, and a lobby that never hosted has nothing to say. Both
-    /// ways out of hosting, leaving the screen and starting the match, go
-    /// through this one call.
+    /// A hosting lobby really does put a farewell on the wire, and a lobby
+    /// that never hosted has nothing to say. Both ways out of hosting,
+    /// leaving the screen and starting the match, go through this call.
     #[test]
     fn a_hosting_lobby_announces_its_own_departure() {
         let mut discovery = Discovery::bind().expect("bind lobby port");
@@ -1081,8 +1072,7 @@ mod table_tests {
         assert_eq!(state.roster(&EN, "Anna"), ["Anna", "Cy"]);
 
         // A nameless host, and a nameless peer, fall back to seat labels
-        // rather than to blanks: a row that says nothing is worse than a
-        // row that says "P2".
+        // rather than to blanks.
         let state = seated(&[""], &[]);
         let table = state.roster(&EN, "");
         assert_eq!(table.len(), 2);
@@ -1094,9 +1084,9 @@ mod table_tests {
     }
 
     /// Dropping a peer has to move the rows behind it with the socket's
-    /// own list, or the row after it silently takes its name and its
-    /// wish to watch. This is the failure that would be invisible until
-    /// somebody found themselves labelled as somebody else.
+    /// own list, or the row after it silently takes its name and its wish
+    /// to watch, and nobody notices until somebody is labelled as somebody
+    /// else.
     #[test]
     fn forgetting_a_peer_moves_everything_that_indexed_it() {
         let mut state = seated(&["Bo", "Cy", "Dee"], &[2]);
@@ -1168,8 +1158,8 @@ mod standing_tests {
         assert!(state.standing().at_a_beach());
     }
 
-    /// The whole point of naming it: four places asked this question and
-    /// each spelled it differently. They must not drift apart again.
+    /// The point of naming the standing: four places used to ask this
+    /// question and each spelled it differently.
     #[test]
     fn everything_that_asks_gets_the_same_answer() {
         let mut state = LobbyState::default();

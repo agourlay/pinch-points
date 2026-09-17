@@ -8,12 +8,11 @@ impl Board {
     /// tick, on every platform: the determinism contract of spec §7.5.
     pub fn state_hash(&self) -> u64 {
         // A census of every field, exhaustive on purpose and with no rest
-        // pattern, so that adding one to `Board` stops compiling until it
-        // is either hashed below or named here as deliberately left out. A
-        // field that silently escapes the fingerprint is a desync no peer
-        // can see: both sides play differently and both report agreement.
-        // `lure_cooldown` escaped exactly this way, and only the two names
-        // under "outside" below have any business doing so.
+        // pattern, so adding one to `Board` stops compiling until it is
+        // either hashed below or named here as deliberately left out. A
+        // field that escapes the fingerprint is a desync no peer can see:
+        // both sides play differently and both report agreement, which is
+        // how `lure_cooldown` escaped.
         let Self {
             // hash_terrain
             grid:
@@ -55,13 +54,12 @@ impl Board {
             wrap: _,
             // Outside the fingerprint, each for a reason of its own: the
             // construction seed is dead once the PRNG state (which *is*
-            // hashed) has been derived from it, the event queue is filled
+            // hashed) has been derived from it; the event queue is filled
             // and drained inside a single tick, so it is always empty by
-            // the time anyone hashes, and the swept-home record is written
-            // for the render layer and never read back by the sim - it
-            // cannot make two peers play differently, and hashing it would
-            // only make this build disagree with builds playing the very
-            // same round.
+            // the time anyone hashes; and the swept-home record is written
+            // for the render layer and never read back by the sim, so
+            // hashing it would only make this build disagree with builds
+            // playing the same round.
             seed: _,
             event_queue: _,
             swept_home: _,
@@ -308,9 +306,8 @@ mod tests {
 
     /// State reachable only by ticking, which the mutator census above
     /// cannot see. The lure cooldown decides whether banking a molt starts
-    /// a lure at all, and while it went unhashed two boards could sit at
-    /// the same fingerprint and then play the round differently: the one
-    /// failure the hash exists to catch.
+    /// a lure at all, so unhashed, two boards sit at the same fingerprint
+    /// and then play the round differently.
     #[test]
     fn the_lure_cooldown_is_part_of_the_fingerprint() {
         use crate::sim::{MAX_PLAYERS, PlayerAction};
@@ -338,9 +335,8 @@ mod tests {
 
     /// The same trap, one field along. `event_cooldown` decides whether
     /// banking a Sparkling crab spins the roulette at all, so two boards
-    /// holding different ones play the round apart - and the census above
-    /// only forces a new field to be *named*, not hashed, which is exactly
-    /// how `lure_cooldown` slipped through in the first place. Removing the
+    /// holding different ones play the round apart, and the census above
+    /// only forces a new field to be *named*, not hashed. Removing the
     /// `h.u32` for this field passes every other test in the suite.
     #[test]
     fn the_event_cooldown_is_part_of_the_fingerprint() {

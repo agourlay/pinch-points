@@ -3,9 +3,8 @@
 //!
 //! A seeded loop rather than a property-testing crate: the sim's own PRNG
 //! generates the streams, so the crate stays dependency-free and every run
-//! plays exactly the same thousand games, reproducing on the next machine.
-//! What that gives up is shrinking; in exchange a failure prints the seed
-//! and the tick, and the games are short enough to read.
+//! plays exactly the same thousand games. What that gives up is shrinking;
+//! in exchange a failure prints the seed and the tick.
 
 use pinch_points::sim::{
     Board, BotLevel, DEFAULT_DELAY, Direction, GullState, InputMsg, Level, Lockstep, MAX_PLAYERS,
@@ -64,10 +63,8 @@ fn actions(rng: &mut Pcg32, board: &Board) -> [PlayerAction; MAX_PLAYERS] {
 
 /// Where a failure happened, printed only if one does.
 ///
-/// A pair of numbers rather than a string, because assertion messages are
-/// formatted on failure and nowhere else: building the label eagerly cost
-/// a heap allocation on every one of a quarter of a million ticks, for a
-/// line almost never read.
+/// A pair of numbers rather than a string: built eagerly, the label cost a
+/// heap allocation on every one of a quarter of a million ticks.
 struct At {
     seed: u64,
     tick: u64,
@@ -127,11 +124,10 @@ fn check_board(board: &Board, at: &At) {
 
     // Signposts: only ever on open sand, and never more than the cap.
     //
-    // Counted in the same walk that checks what they stand on. Asking
-    // `signpost_count` per seat is six scans of the whole board, and this
-    // runs after every tick of every one of a thousand games. It was the
-    // most expensive thing in the suite, by the profiler rather than by
-    // guess.
+    // Counted in the same walk that checks what they stand on: asking
+    // `signpost_count` per seat is six scans of the whole board, after
+    // every tick of every one of a thousand games, and was the most
+    // expensive thing in the suite by the profiler.
     let mut held = [0usize; MAX_PLAYERS];
     for (x, y, kind) in board.tiles() {
         let Some(post) = board.signpost_at(x, y) else {
@@ -189,9 +185,8 @@ fn the_same_stream_always_replays_identically() {
         // A clone is the same board: rollback netcode will lean on this.
         // Checked once per seed rather than once per tick, at a moment that
         // moves with the seed: a thousand boards caught at a thousand
-        // different points is the same breadth of evidence as a quarter of
-        // a million, and it was costing a whole-board clone and two
-        // whole-board hashes on every one of them.
+        // different points is the same evidence for a thousandth of the
+        // clones and hashes.
         let clone_at = seed % TICKS;
         for tick in 0..TICKS {
             let plays = actions(&mut rng, &first);
@@ -264,10 +259,10 @@ fn any_played_board_survives_the_level_format() {
 /// assertion and fail this one on the next draw.
 ///
 /// What this loop does *not* reach, measured: a running mania, a tempo
-/// shift, or a recorded last event. All three need a sparkling crab banked
-/// inside the eight seconds, which happens in none of two hundred games.
-/// Those are covered by `a_board_with_everything_set_survives_a_snapshot`
-/// beside the code.
+/// shift, or a recorded last event, all three needing a sparkling crab
+/// banked inside the eight seconds, which happens in none of two hundred
+/// games. Those are covered by
+/// `a_board_with_everything_set_survives_a_snapshot` beside the code.
 #[test]
 fn any_played_board_survives_a_snapshot() {
     for seed in 0..200u64 {
@@ -339,11 +334,11 @@ fn a_recorded_round_replays_the_round_that_was_played() {
 
 /// Lockstep under every delivery schedule the loop can think of: packets
 /// held back, delivered out of order, and repeated. The protocol promises
-/// that peers either agree or stall, never that they guess, so whatever
-/// the network does to the order, the two boards must stay bit-identical.
+/// that peers either agree or stall, never that they guess, so whatever the
+/// network does to the order, the two boards must stay bit-identical.
 ///
-/// There is one hand-written lag pattern in `sim::net`'s own tests; this is
-/// two hundred more, and it is the kind of coverage a netcode wants.
+/// `sim::net`'s own tests have one hand-written lag pattern; this is two
+/// hundred more.
 #[test]
 fn lockstep_survives_any_delivery_schedule() {
     for seed in 0..200u64 {
@@ -417,11 +412,9 @@ fn lockstep_survives_any_delivery_schedule() {
 /// Every board the game *ships* survives its own snapshot, not just the
 /// fuzzed ones.
 ///
-/// The fuzz above plays random arenas, which is the right way to find a
-/// tile combination nobody thought of - and exactly the wrong way to
-/// catch a hand-authored board using a feature the writer forgot: the
-/// generator only ever produces what it was taught. These are the boards
-/// a player actually loads.
+/// The fuzz above plays random arenas, which finds a tile combination
+/// nobody thought of and never a hand-authored board using a feature the
+/// generator was not taught. These are the boards a player loads.
 #[test]
 fn every_shipped_board_survives_its_own_snapshot() {
     for (list, what) in [
@@ -451,11 +444,11 @@ fn every_shipped_board_survives_its_own_snapshot() {
 
 /// A round picked up from a mid-round snapshot plays on identically.
 ///
-/// This is the whole promise of suspending a match and coming back to it,
-/// and it is a strictly harder ask than a snapshot at tick zero: crabs are
-/// mid-stride, gulls are mid-hop, signposts are part-worn and the PRNG is
-/// somewhere in the middle of its stream. Anything the format rounds off
-/// shows up not at load but as a round that slowly drifts apart.
+/// The whole promise of suspending a match and coming back to it, and a
+/// harder ask than a snapshot at tick zero: crabs are mid-stride, gulls
+/// mid-hop, signposts part-worn and the PRNG somewhere in its stream.
+/// Anything the format rounds off shows up not at load but as a round that
+/// drifts apart.
 #[test]
 fn a_round_resumed_mid_flight_plays_on_the_same() {
     for seed in 0..8u64 {

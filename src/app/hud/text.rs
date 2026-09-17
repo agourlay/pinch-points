@@ -35,21 +35,20 @@ pub(crate) fn clock_text(ticks: u64) -> String {
 
 /// How much of a round the screen draws as its closing emergency.
 ///
-/// `band` is what that stretch is worth on a round with a middle to it: 30 s
-/// of red, the last 10 s of it blinking. A round shorter than the band has
-/// no middle, and the fixed figure then covers the whole of it - which is
-/// how every timed level in the game came to be drawn as one long panic.
-/// The longest round any level file asks for is 900 ticks, exactly
-/// [`crate::sim::SURGE_TICKS`], so *no* shipped level ever left the red.
-/// Dry Feet, at 240 ticks, ran all eight of its seconds under a blinking
-/// clock and heaving water, on a level about walking round a puddle.
+/// `band` is what that stretch is worth on a round with a middle to it:
+/// 30 s of red, the last 10 s of it blinking. A round shorter than the
+/// band has no middle, and the fixed figure then covers the whole of it:
+/// the longest round any level file asks for is 900 ticks, exactly
+/// [`crate::sim::SURGE_TICKS`], so no shipped level ever left the red, and
+/// Dry Feet ran all eight of its seconds under a blinking clock.
 ///
 /// Below the band the last third stands in for it. Versus rounds are two
-/// minutes and up and keep the fixed 30 s exactly as before.
+/// minutes and up and keep the fixed 30 s.
 ///
 /// This is the *drawn* scramble only. [`crate::sim::Board::in_surge`] is
-/// the sim's own 30 s rule - it doubles the gull spawn rate and gates tide
-/// events - and it stays where it is: moving it would move every replay.
+/// the sim's own 30 s rule, which doubles the gull spawn rate and gates
+/// tide events, and it stays where it is: moving it would move every
+/// replay.
 pub(crate) fn urgency_band(round: Option<u32>, band: u32) -> u64 {
     match round {
         Some(round) if round <= band => u64::from(round) / 3,
@@ -84,11 +83,9 @@ pub(crate) fn clock_color(ticks: u64, round: Option<u32>, elapsed: f32, blink: b
 /// What the three shared HUD slots say on a screen: the header's left
 /// side, its right side, and the prompt pill along the bottom.
 ///
-/// A struct and not a `(String, String, String)`, which is what six
-/// functions here used to hand back. Every one of them built the three in
-/// a different order internally, and nothing but position said which was
-/// which: a screen that swapped its status and its prompt would compile,
-/// run, and read as a screen whose header had gone strange.
+/// A struct and not a `(String, String, String)`: with nothing but
+/// position to say which is which, a screen that swapped its status and
+/// its prompt would compile and run.
 pub(super) struct HudText {
     /// Left of the header bar: where you are.
     pub title: String,
@@ -140,12 +137,10 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
 
 pub(super) fn editor_text(tr: &Tr, editor: &EditorState, sim: &Sim) -> HudText {
     let testing = editor.is_testing();
-    // The title carries the level's name, because the name is now the file
-    // it saves to and the caption the stage list will show: it has to be
-    // somewhere a player can see it before pressing F2.
-    // What is being built is as much a part of the title as what it is
-    // called: the two kinds save to different lists, and an author who
-    // finds that out at the map dial found out too late.
+    // The title carries the level's name, which is the file it saves to
+    // and the caption the stage list shows, so it has to be visible before
+    // F2. What is being built belongs there too: the two kinds save to
+    // different lists, and finding that out at the map dial is too late.
     let kind = match editor.kind {
         crate::sim::LevelKind::Puzzle => tr.ed_kind_puzzle,
         crate::sim::LevelKind::Arena => tr.ed_kind_arena,
@@ -227,11 +222,11 @@ pub(super) fn puzzle_text(
         Goal::Survive => fill(tr.goal_survive, &[("t", "")]),
         Goal::Golden => fill(tr.goal_golden, &[("t", "")]),
     };
-    // The inventory goes in front of it, on every goal. It used to be
-    // printed only under `AllCrabs`, so nine campaign levels and all eight
-    // Beach Day stages named a target and never said how many signposts
-    // paid for it - and players read a missing number as "as many as I
-    // like". A level that hands out none says so in the prompt instead.
+    // The inventory goes in front of it, on every goal. Printed only under
+    // `AllCrabs`, nine campaign levels and all eight Beach Day stages named
+    // a target without saying how many signposts paid for it, which reads
+    // as "as many as I like". A level that hands out none says so in the
+    // prompt instead.
     let status = match level.posts {
         0 => goal,
         posts => format!(
@@ -259,9 +254,8 @@ pub(super) fn puzzle_text(
 }
 
 /// The busiest screen there is, and the one that reads off the most: it
-/// takes the whole [`Readout`] rather than ten of its fields, which had
-/// grown past the point where the order of two `&Res`es of the same shape
-/// was checked by anything but eyesight.
+/// takes the whole [`Readout`] rather than ten of its fields, where the
+/// order of two `&Res`es of the same shape was checked by eyesight.
 pub(super) fn versus_text(r: &Readout) -> HudText {
     let Readout {
         tr,
@@ -346,9 +340,8 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         } else if let Some(seat) = session.waiting_on() {
             // Decided once a frame by the session rather than read off the
             // stall clock here: at three frames of input delay a moment's
-            // wait is the ordinary rhythm of the thing, and a line that
-            // came and went with each of them was a strobe in the corner
-            // of the eye.
+            // wait is the ordinary rhythm, and a line that came and went
+            // with each of them is a strobe.
             status = fill(tr.waiting_for, &[("p", &names.label(tr, seat))]);
         }
     }
@@ -421,12 +414,11 @@ pub(super) struct Readout<'a> {
     pub speed: u8,
 }
 
-/// What the header, the status slot and the prompt line say on `screen`.
 /// What the header, the status slot and the prompt say on `screen`.
 ///
 /// The music toggle is added here rather than written into each play
-/// screen's prompt: there are eight of those in every language, and a
-/// key that works everywhere should not be a line eight strings have to
+/// screen's prompt: there are eight of those in every language, and a key
+/// that works everywhere should not be a line eight strings have to
 /// remember to carry.
 pub(super) fn screen_text(screen: Screen, r: &Readout) -> HudText {
     let mut said = screen_text_for(screen, r);
@@ -508,10 +500,9 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
             !r.settings.stock_legend(),
         ),
         // Both lines are already in the language under the cursor: moving
-        // it sets the language, so the header and the prompt are the
-        // preview of whatever is highlighted. The status slot stays empty
-        // - the note that belongs there sits under the card instead,
-        // beside the list rather than in the far corner of the header.
+        // it sets the language, so the header and the prompt preview
+        // whatever is highlighted. The status slot stays empty, its note
+        // sitting under the card beside the list instead.
         Screen::Language => HudText::new(
             r.tr.title_pick_language.to_string(),
             String::new(),
@@ -532,10 +523,8 @@ mod tests {
     use crate::app::i18n::{EN, Lang};
     use crate::sim::{Board, Level, campaign_levels};
 
-    /// Every screen has to say what it is and what the keys do. A screen
-    /// added without a HUD arm would otherwise show the last screen's
-    /// header, which is the kind of thing nobody notices until a player
-    /// does.
+    /// Every screen has to say what it is and what the keys do: one added
+    /// without a HUD arm shows the last screen's header.
     #[test]
     fn every_screen_names_itself_and_its_keys() {
         use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
@@ -590,11 +579,9 @@ mod tests {
     }
 
     /// No prompt names a key twice. `screen_text` appends the mute legend
-    /// to every board prompt itself, on purpose - its own doc says a key
-    /// that works everywhere "should not be a line eight strings have to
-    /// remember to carry" - so a legend that carries one anyway reads
-    /// "M: mute | M: mute", and in two languages at once where the two
-    /// strings picked different words for it.
+    /// to every board prompt itself, so a string that carries one anyway
+    /// reads "M: mute | M: mute", in two wordings where a translation
+    /// picked different words.
     ///
     /// Checked with a recording playing, because that arm is the one the
     /// screen census above cannot reach: it builds its readout with
@@ -824,10 +811,10 @@ mod tests {
         assert_eq!(clock_text(600 * tps), "10:00");
     }
 
-    /// The clock reddens inside the last 30 seconds and blinks for the
-    /// last 10, unless the player asked for less motion, where it holds.
-    /// A long round - versus, or the untimed puzzle backstop - is what
-    /// those flat figures are for, and they are unchanged on one.
+    /// The clock reddens inside the last 30 seconds and blinks for the last
+    /// 10, unless the player asked for less motion, where it holds. The
+    /// flat figures are for a long round (versus, or the untimed puzzle
+    /// backstop) and are unchanged on one.
     #[test]
     fn the_clock_reddens_then_blinks() {
         let tps = u64::from(TICKS_PER_SECOND);
@@ -845,11 +832,10 @@ mod tests {
 
     /// A round shorter than the flat band still has a calm stretch.
     ///
-    /// Every timed level in the game is shorter than [`SURGE_TICKS`] - the
-    /// longest `round:` any file asks for is 900, which is that figure
-    /// exactly - so under the old flat rule not one of them ever showed a
-    /// calm clock. Dry Feet is 240 ticks and was red and blinking from its
-    /// first frame to its last.
+    /// Every timed level in the game is shorter than [`SURGE_TICKS`] (the
+    /// longest `round:` any file asks for is 900, that figure exactly), so
+    /// under a flat rule not one of them shows a calm clock: Dry Feet, at
+    /// 240 ticks, is red and blinking from its first frame to its last.
     #[test]
     fn a_short_round_is_not_one_long_emergency() {
         let dry_feet = Some(240);

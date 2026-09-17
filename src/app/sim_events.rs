@@ -51,36 +51,30 @@ pub enum SimEvent {
     GullLanded { pos: Vec2 },
     /// A signpost went up here, and whose it is.
     ///
-    /// One per tile, never a headcount. A board-wide count is the wrong
-    /// thing to listen to: one seat placing while another pulls nets to
-    /// zero, and the beach falls silent for both of them.
+    /// One per tile, never a headcount: a board-wide count nets one seat's
+    /// placement against another's removal and falls silent for both.
     ///
-    /// The seat used to stop at the differ, on the grounds that a
-    /// placement sounds and looks the same whoever made it. It does not:
-    /// on a six-seat beach the bots place far more often than the people
-    /// do, and a knock for every one of them is a click track running
-    /// under the whole match. It carries the owner now so a listener can
-    /// ask whether the post was one of *its* player's.
+    /// It carries the owner so a listener can ask whether the post was one
+    /// of *its* player's: on a six-seat beach the bots place far more often
+    /// than the people do, and a knock for each is a click track running
+    /// under the whole match.
     SignpostPlaced { owner: PlayerId, pos: Vec2 },
     /// A signpost left this tile and took its owner's count down with it:
     /// they pulled it, or it wore out. [`SimEvent::SignpostEvicted`] is the
     /// one departure that does not.
     ///
     /// Carries the owner for the same reason [`SimEvent::SignpostPlaced`]
-    /// does, and it is the half that matters most: in versus every post
-    /// wears out on its own, so a bot's post whose placement was kept
-    /// quiet still knocked a few seconds later when it went. Silencing one
-    /// end and not the other leaves the click track running at very nearly
-    /// its old rate.
+    /// does: in versus every post wears out on its own, so silencing the
+    /// placement alone leaves the click track running at nearly its old
+    /// rate.
     SignpostRemoved { owner: PlayerId, pos: Vec2 },
     /// A signpost was pushed off the board to make room for a newer one:
     /// `owner` was at the cap under [`crate::sim::CapPolicy::Evict`] and
     /// placed anyway, so their oldest went. `pos` is where it stood.
     ///
     /// The versus and Beach Day rule, never the campaign's, which refuses
-    /// the placement instead. It is the one way a player loses a signpost
-    /// by their own hand without asking to, and until this event existed
-    /// it happened in total silence.
+    /// the placement instead. The one way a player loses a signpost by
+    /// their own hand without asking to.
     SignpostEvicted {
         owner: PlayerId,
         pos: Vec2,
@@ -148,10 +142,9 @@ pub struct Watch {
     /// count where it was, and a sum cannot even see whose post moved.
     posts_by: [usize; MAX_PLAYERS],
     /// Which seat holds the signpost on each occupied tile, and which way
-    /// it points. Only the seat decides whether a tile lost its post -
-    /// re-pointing one in place keeps the seat and changes the direction,
-    /// and that is not an eviction - but the direction has to be kept to
-    /// draw the ghost of a post that is already off the board.
+    /// it points. Only the seat decides whether a tile lost its post, since
+    /// re-pointing one in place keeps the seat and changes the direction;
+    /// the direction is kept to draw the ghost of a post already gone.
     posts_at: HashMap<(u8, u8), (PlayerId, Direction)>,
     gulls: usize,
     flying: usize,
@@ -220,14 +213,11 @@ impl Watch {
 /// most-noticed moment in the game, so it has tests of its own.
 ///
 /// The exception is the one departure the tiles cannot explain. `Monopoly`
-/// banks half the loose crabs where they stand, so they go from open sand
-/// with no castle at either end of the step, and reading the tiles alone
-/// called every one of them a death: eighty-two of them at once, measured,
-/// answered with eighty-two death sounds, eight hundred feathers and a
-/// screen shake, while the seat that had just taken half the beach got no
-/// hop, no bounce and no floating score. The sim writes those down as it
-/// makes them ([`Board::swept_home`](crate::sim::Board::swept_home)), and
-/// they are asked after first.
+/// banks half the loose crabs where they stand, from open sand with no
+/// castle at either end of the step, so the tiles alone call every one of
+/// them a death. The sim writes those down as it makes them
+/// ([`Board::swept_home`](crate::sim::Board::swept_home)), and they are
+/// asked after first.
 ///
 /// Both tile reads are bounds-checked rather than trusting the crab's
 /// coordinates: `prev` was recorded on last frame's board, and should that
@@ -387,9 +377,8 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
     }
 
     // Signposts tile by tile, in both directions. A tile whose seat is the
-    // same on both sides has not changed hands: re-pointing a post in place
-    // keeps the seat and swings the direction, and that is neither a
-    // placement nor a departure.
+    // same on both sides has not changed hands: re-pointing a post keeps
+    // the seat and swings the direction, which is neither.
     for (&(x, y), &(owner, _)) in &next.posts_at {
         if prev.posts_at.get(&(x, y)).is_some_and(|&(o, _)| o == owner) {
             continue;
@@ -401,11 +390,10 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
     }
     // An eviction is a signpost leaving a tile while its owner's count
     // holds: they were at the cap and placed a fourth, so the board took
-    // their oldest in trade. Every other way a signpost goes - expiry, the
-    // player pulling it, a gull finishing it off - takes the count down
-    // with it, which is what tells the two apart. Placing on a frame where
-    // one of yours also expired reads as an eviction; the cue is "one of
-    // yours just went, here", which is true either way.
+    // their oldest in trade. Every other way one goes (expiry, the player
+    // pulling it, a gull finishing it off) takes the count down with it.
+    // Placing on a frame where one of yours also expired reads as an
+    // eviction, and "one of yours just went, here" is true either way.
     for (&(x, y), &(owner, dir)) in &prev.posts_at {
         if next.posts_at.get(&(x, y)).is_some_and(|&(o, _)| o == owner) {
             continue;
@@ -529,12 +517,10 @@ mod tests {
         );
     }
 
-    /// A round picked back up from a pasted code arrives mid-clock, and
-    /// can be further along than the board watched before it. The clock
-    /// then says nothing rolled back, and the diff used to run across the
-    /// two unrelated boards: every remembered crab departed into whatever
-    /// the new beach held at its old tile. The beach's size and seed are
-    /// what tell them apart.
+    /// A round picked back up from a pasted code arrives mid-clock, and can
+    /// be further along than the board watched before it. The clock then
+    /// says nothing rolled back, and the diff runs across two unrelated
+    /// boards. The beach's size and seed are what tell them apart.
     #[test]
     fn a_pasted_round_further_along_is_still_a_swap() {
         let mut board = Board::new(6, 4, 7);
@@ -563,9 +549,9 @@ mod tests {
     /// leaves the board does not.
     ///
     /// The versus rule takes a post in trade for the fourth you place, and
-    /// it used to do so in silence - the count on the header does not even
-    /// move, since one went for one. Pulling a post yourself, or letting
-    /// one expire, is a count going *down*, and neither is news.
+    /// the count on the header does not move, since one went for one.
+    /// Pulling a post yourself, or letting one expire, is a count going
+    /// *down*, and neither is news.
     #[test]
     fn a_signpost_traded_away_at_the_cap_says_so() {
         let mut board = Board::new(6, 4, 5);
@@ -603,9 +589,8 @@ mod tests {
             "the traded post and the way it pointed: {events:?}"
         );
         // And the placement that paid for it sounds too, from the tile it
-        // landed on. The trade used to reach the player as the eviction
-        // alone, because the board-wide count did not move - so a fourth
-        // post went down in versus and nothing said it had.
+        // landed on: the board-wide count does not move, so nothing else
+        // says a fourth post went down.
         assert!(
             events.iter().any(|e| matches!(
                 e,
@@ -649,10 +634,9 @@ mod tests {
     /// Two seats acting between one frame and the next each get their own
     /// cue, from their own tile.
     ///
-    /// These events were once a single board-wide count, and a count is
-    /// deaf to who moved: a placement and a removal in the same frame
-    /// cancelled to a net zero and *neither* player heard anything. On a
-    /// busy versus beach that is the common case, not the corner one.
+    /// A single board-wide count is deaf to who moved: a placement and a
+    /// removal in the same frame cancel to a net zero and *neither* player
+    /// hears anything, which on a busy versus beach is the common case.
     #[test]
     fn one_seat_placing_while_another_pulls_sounds_for_both() {
         let mut board = Board::new(6, 4, 11);
@@ -724,11 +708,9 @@ mod tests {
 
     /// The departure the tiles cannot explain. `Monopoly` banks half the
     /// loose crabs where they stand, so each goes from open sand with no
-    /// castle at either end of its step - which read as a death, every
-    /// time. Eighty-two of them on one measured tick: eighty-two death
-    /// sounds, eight hundred feathers and a screen shake, while the seat
-    /// that had just taken half the beach got no hop, no castle bounce and
-    /// no floating score.
+    /// castle at either end of its step and reads as a death: eighty-two
+    /// of them on one measured tick, while the seat that had just taken
+    /// half the beach got no hop, no bounce and no floating score.
     #[test]
     fn a_crab_the_tide_banked_reads_as_banked_and_not_as_eaten() {
         let mut board = Board::new(9, 7, 5);

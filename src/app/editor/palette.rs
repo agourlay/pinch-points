@@ -33,9 +33,9 @@ pub struct UnderCursor;
 /// The brush palette: every paintable thing, its sprite, and the letter
 /// that loads it.
 ///
-/// The editor used to say `R C H L W P B G O tiles` along the bottom and
-/// leave the rest to memory, which is a poor deal for a screen whose whole
-/// job is making things.
+/// The editor said `R C H L W P B G O tiles` along the bottom and left the
+/// rest to memory, which is a poor deal for a screen whose job is making
+/// things.
 pub fn spawn_editor_ui(
     mut commands: Commands,
     art: Res<crate::app::art::Art>,

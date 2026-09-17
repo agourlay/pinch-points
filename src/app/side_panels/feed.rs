@@ -174,12 +174,10 @@ pub(super) fn spawn_feed(root: &mut ChildSpawnerCommands) {
     node.row_gap = Val::Px(6.0);
     node.padding = UiRect::axes(Val::Px(12.0), Val::Px(10.0));
     node.overflow = Overflow::clip();
-    // The card's own fill, kept rather than thinned. At 0.9 the sand
-    // behind the sidebar came through and the feed read as a different
-    // material from the clock card touching it above: (36, 34, 33) against
-    // the clock's (18, 20, 28), twice as light and brown where the other
-    // is blue-black. Nothing said why, and every other override in this
-    // function says why.
+    // The card's own fill, kept rather than thinned: at 0.9 the sand behind
+    // the sidebar comes through and the feed reads as a different material
+    // from the clock card touching it above, (36, 34, 33) against the
+    // clock's (18, 20, 28).
     root.spawn((node, edge, fill)).with_children(|list| {
         for index in 0..LOG_LINES {
             list.spawn((

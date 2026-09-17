@@ -59,9 +59,9 @@ the wave stops everything where it stands.
 
 Plus terrain and a crab bestiary the original never had, AI that walks a
 cursor to the tile the way you do, replays shareable as text codes (even a
-round *in progress*), a daily challenge that needs no server because the
-sim is deterministic, and an editor whose solver proves a level beatable
-before it ships.
+round *in progress*), a daily challenge that needs no server because the sim
+is deterministic, and an editor whose solver proves a level beatable before
+it ships.
 
 ## Rules
 
@@ -86,9 +86,9 @@ half its bank** and departs. Gulls occasionally take flight for a few
 tiles, ignoring walls and arrows, so no corner is ever fully safe.
 
 **Castles are the scoreboard**, flanked by a ranked leaderboard on the left
-(the leader's card is biggest and wears the crown) and the tide clock over
-a live event feed on the right. Round-changing moments (a lure, a tide
-event, the gull surge) are also announced across the centre of the screen.
+(the leader's card is biggest and wears the crown) and the tide clock over a
+live event feed on the right. A lure, a tide event or the gull surge is
+announced across the centre of the screen as well.
 
 ![The lure: banking a molting crab turns every loose crab the luring player's colour and pulls it home - here, to green P3](screenshots/lure.png)
 
@@ -110,10 +110,9 @@ surge doubles; when the tide comes in, the highest bank wins.
 ![The landing menu: a still postcard with ambient beach critters](screenshots/menu.png)
 
 - **Tide Pool**: a 100-level solo puzzle campaign with a fixed arrow
-  inventory. The test suite proves every level solvable with the arrows
-  given, and every level that needs an arrow unsolvable without them (the
-  opening tutorial hands you one to practise with on a board that cannot
-  lose).
+  inventory. The test suite proves every level solvable with the arrows it
+  grants and unsolvable without them; the opening tutorial is the exception,
+  handing you one to practise with on a board that cannot be lost.
 - **Turf War**: local versus for **2-6 players** on one keyboard plus
   gamepads. Six built-in maps, from the handcrafted classic beach to
   generated arenas up to 20×13 and an edgeless **open ocean** (five and
@@ -121,9 +120,9 @@ surge doubles; when the tide comes in, the highest bank wins.
   any beach you built yourself that has a castle for every seat. Dials for
   gull pressure and round length, **team play**, a **best of 3 or 5**
   series with rotating maps and nameable seats. AI comes at three levels:
-  easy fumbles, fierce reads the terrain and shoves gulls at the leader,
-  and every AI walks a cursor at a capped speed rather than reaching
-  across the board for free (`cargo run --example ladder` plays them off).
+  easy fumbles, fierce reads the terrain and shoves gulls at the leader, and
+  all three walk a cursor at a capped speed rather than reaching across the
+  board for free (`cargo run --example ladder` plays them off).
 - **Beach Day**: eight score-attack challenge stages (timed goals, versus
   rules).
 - **Driftwood**: a level editor with a built-in solver, playtesting, and
@@ -135,9 +134,8 @@ surge doubles; when the tide comes in, the highest bank wins.
 
   "Validate" searches under the same budget the campaign ships to, and a
   level's cost is the tiles its crabs cross rather than the size of its
-  beach: a big beach with a compact puzzle in it validates, one filled
-  edge to edge may be beatable and still take longer than the solver is
-  allowed.
+  beach: a big beach with a compact puzzle in it validates, where one filled
+  edge to edge may be beatable and still outlast the budget.
 - **Beach Lobby**: online play for up to 6 over LAN: deterministic UDP
   lockstep, host-relay star, state-hash desync detection. You name yourself
   before hosting or joining and the host names the beach, so a hall running
@@ -161,26 +159,26 @@ surge doubles; when the tide comes in, the highest bank wins.
   When the match ends, Enter takes the **whole table back to the lobby**
   rather than out to the menu: the sockets stay open, the host goes back on
   the air, and the next game is one keypress away instead of a fresh
-  discovery. Mid-series Enter still means what it did - the host calls the
-  next round, a joiner leaves - since a series is not over yet. The direct
-  `PINCH_HOST` pair below has no lobby to return to, and still ends at the
+  discovery. Mid-series it still means what it did, the host calling the
+  next round and a joiner leaving, since the series is not over. The direct
+  `PINCH_HOST` pair below has no lobby to return to and still ends at the
   menu.
 
   Discovery is a UDP broadcast to `255.255.255.255` on ports 47700-47707,
   so every machine has to share a broadcast domain: a router between two
   subnets, or the client isolation most guest wireless turns on, will hide
-  hosts from each other. So will a firewall on the joining machine: a
-  beacon is unsolicited inbound UDP, which a default-deny firewall drops
-  before the game can hear it. The tell is a direct pair working while the
-  list stays empty, because the joiner starts that exchange and the replies
-  count as solicited. Allow UDP 47700-47707 in (e.g.
-  `sudo ufw allow 47700:47707/udp`) and the list fills.
-  When the network will not cooperate, a direct
-  pair skips discovery entirely: `PINCH_HOST=<port>` on one machine and
-  `PINCH_JOIN=ip:port` on the other boot both straight into the arena, with
-  the host as player 0 and the joiner as player 1. There is no lobby to
-  agree the terms, so `PINCH_BOTS=<n>` (AI seats behind the two humans)
-  has to be set identically on both sides.
+  hosts from each other. So will a firewall on the joining machine, since a
+  beacon is unsolicited inbound UDP. The tell is a direct pair working while
+  the list stays empty, the joiner having started that exchange itself.
+  Allow UDP 47700-47707 in (e.g. `sudo ufw allow 47700:47707/udp`) and the
+  list fills.
+
+  When the network will not cooperate, a direct pair skips discovery
+  entirely: `PINCH_HOST=<port>` on one machine and `PINCH_JOIN=ip:port` on
+  the other boot both straight into the arena, the host as player 0 and the
+  joiner as player 1. There is no lobby to agree the terms, so
+  `PINCH_BOTS=<n>` (AI seats behind the two humans) has to be set
+  identically on both sides.
 - **Replay**: every finished round is kept in a library and watchable at
   1x/2x/4x. `C` copies a round as a checksummed **share code**, `V` pastes
   one back, including a Turf War round *in progress*, which `V` on the
@@ -201,12 +199,11 @@ surge doubles; when the tide comes in, the highest bank wins.
 | P2 | IJKL | numpad 8/5/4/6 | numpad 0 | numpad Enter |
 | any seat | gamepad d-pad/stick | face buttons | L1 | R1 |
 
-Pads are plug-and-play and fill seats from the highest player down, which
-makes keyboard-plus-pad, two pads and two keyboards all work with no setup
-at all; P1 and P2 can each say otherwise and name a controller of their
-own. Every menu is navigable from a pad, and Start on the match-setup
-screen joins the next seat. `M` toggles music, and `Esc` on the menu
-quits.
+Pads are plug-and-play and fill seats from the highest player down, so
+keyboard-plus-pad, two pads and two keyboards all work with no setup; P1 and
+P2 can each say otherwise and name a controller of their own. Every menu is
+navigable from a pad, and Start on the match-setup screen joins the next
+seat. `M` toggles music, and `Esc` on the menu quits.
 
 ## Settings and languages
 
@@ -227,18 +224,17 @@ out in both.
 
 On start-up the game asks GitHub, off-thread, whether a newer release is
 out. If one is, the menu steps onto a page of its own: the new version's
-number, its release notes, and one question - yes opens the release page in
-the browser, no goes back to the menu until next time. It is the one thing
-the game says to the wider internet, so it is a setting (on by default), and
-a machine with no network, or a slow one, gives up inside a few seconds. The
+number, its release notes, and one question, where yes opens the release
+page in the browser and no goes back to the menu until next time. It is the
+one thing the game says to the wider internet, so it is a setting (on by
+default), and a machine with no network gives up inside a few seconds. The
 menu's bottom-right corner shows the running version, which is the number
 the page compares against.
 
 A fresh install opens on the language list rather than on a menu in a
 language nobody chose: eight flags, with the header and prompt rewriting
 themselves as the cursor moves, so the right one can be recognised without
-reading the others. Enter takes it; the picker appears on the absence of a
-settings file and on nothing else.
+reading the others. Enter takes it, and the picker never appears again.
 
 The window is resizable and the interface scales with it, so the whole
 game fits whatever it is dragged to.
@@ -271,10 +267,10 @@ deliberately.
   design loop; reports whether a level self-solves and what the solver
   finds. Release, because a debug solver is tens of times slower.
 - `cargo run --release --example verify_levels`: the campaign minimality
-  proof, that every shipped level must need every arrow it grants. A
-  parallel, exhaustive-per-level solver search (a minute in release, so run
-  it in release, not in CI), with a progress bar; exits non-zero naming any
-  level with an arrow to spare. Run it by hand after editing a level file.
+  proof, that every shipped level needs every arrow it grants. A parallel,
+  exhaustive-per-level solver search, a minute in release and too slow for
+  CI, with a progress bar; exits non-zero naming any level with an arrow to
+  spare. Run it by hand after editing a level file.
 - `PINCH_*` env hooks skip the menus for development and testing:
   `PINCH_SKIRMISH=classic|large|xl|ocean|custom` boots a bots match
   (`PINCH_SERIES=3` or `=5` for a series, `PINCH_SEATS=<n>` for the table,
@@ -286,19 +282,17 @@ deliberately.
   `PINCH_AUTOPLAY` with `PINCH_NOSOLVE=1` starts each level's run without
   placing anything, so a timed level runs out.
   `PINCH_BANNER=lure|surge|<0-7>` raises an announcement, `PINCH_TIDE=<0-7>`
-  fires the tide event itself, which is how what an event *does* gets
-  watched, and `PINCH_LURE=<seat>` starts a lure a few seconds in.
-  `PINCH_PAUSE=1`, `PINCH_OVER=1` and `PINCH_INTERLUDE=1` raise the pause
-  card, the results card and the series interlude a couple of seconds into
-  a versus round, for shooting them.
-  `PINCH_NET_PROBE=1` submits one scripted signpost mid-round over the wire,
-  and `PINCH_ST_EXEC` runs every schedule on the single-threaded executor,
-  for the CPU measurement. `PINCH_WINDOW=<w>x<h>` opens at a given size,
-  for checking a screen at the sizes people drag a window to, and
+  fires the tide event itself, and `PINCH_LURE=<seat>` starts a lure a few
+  seconds in. `PINCH_PAUSE=1`, `PINCH_OVER=1` and `PINCH_INTERLUDE=1` raise
+  the pause card, the results card and the series interlude a couple of
+  seconds into a versus round, for shooting them. `PINCH_NET_PROBE=1`
+  submits one scripted signpost mid-round over the wire, and `PINCH_ST_EXEC`
+  runs every schedule on the single-threaded executor, for the CPU
+  measurement. `PINCH_WINDOW=<w>x<h>` opens at a given size, and
   `PINCH_SCREENSHOT=<path>` with `PINCH_SCREENSHOT_AT=<seconds>` took every
-  picture in this guide. `PINCH_NO_UPDATE` skips the
-  release check for a run and `PINCH_UPDATE_DEMO` opens the new-version page
-  for a made-up release, to look at it without waiting for a real one.
+  picture in this guide. `PINCH_NO_UPDATE` skips the release check for a
+  run, and `PINCH_UPDATE_DEMO` opens the new-version page for a made-up
+  release.
 
 The design document lives in [`pinch-points-spec.md`](pinch-points-spec.md),
 and [`backlog.md`](backlog.md) tracks the remaining ideas.

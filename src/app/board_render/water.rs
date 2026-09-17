@@ -1,10 +1,9 @@
 //! The tide: the water bars swelling outward from the sand's edge as the
 //! round runs out, and the foam lip riding their outer, seaward edge.
 //!
-//! The sand is never covered. Each bar keeps its inner edge on the board's
-//! own edge and grows away from it, so the sea reads as rising around the
-//! beach: wider water, farther foam, and the board itself untouched until
-//! the clock says otherwise.
+//! The sand is never covered: each bar keeps its inner edge on the board's
+//! own edge and grows away from it, so the sea rises around the beach and
+//! the board itself is untouched until the clock says otherwise.
 
 use super::{WATER, WATER_MAX, image_sprite, z};
 use crate::app::Sim;
@@ -16,18 +15,15 @@ use bevy::prelude::*;
 /// Whether the water should be heaving: the closing stretch of the round,
 /// measured the way the clock measures it.
 ///
-/// Not [`crate::sim::Board::in_surge`], which is a flat 30 s. No level file
-/// asks for a round longer than that, so every timed board heaved from its
-/// first frame and the swell stopped meaning anything - Dry Feet is eight
-/// seconds long and spent all of them in a storm. The sim's own surge is
-/// left alone: it drives gull spawns and tide events, and moving it would
+/// Not [`crate::sim::Board::in_surge`], which is a flat 30 s: no level file
+/// asks for a round longer than that, so every timed board heaves from its
+/// first frame and the swell means nothing. The sim's own surge is left
+/// alone, since it drives gull spawns and tide events and moving it would
 /// move every recorded round.
 fn heaving(board: &crate::sim::Board, remaining: u64) -> bool {
     // A board with no clock has no closing stretch to be in. Both callers
-    // check that before they get here, so this changes nothing today - but
-    // the question this answers is "is the tide coming in", and with no
-    // tide at all the honest answer is no rather than whatever the band
-    // arithmetic happens to make of an absent round length.
+    // check that first, so this changes nothing today, but the question is
+    // "is the tide coming in" and with no tide the answer is no.
     board.round_length().is_some()
         && !board.round_over()
         && remaining <= crate::app::hud::urgency_band(board.round_length(), crate::sim::SURGE_TICKS)
@@ -35,9 +31,9 @@ fn heaving(board: &crate::sim::Board, remaining: u64) -> bool {
 
 /// How far the water reaches out from the sand's edge, in pixels.
 ///
-/// The one place the tide's width is worked out. The bars and the foam lip
-/// riding them were computing it separately from the same three inputs,
-/// which is two chances for the lip to come adrift of the water it sits on.
+/// The one place the tide's width is worked out: the bars and the foam lip
+/// riding them computed it separately from the same three inputs, which is
+/// two chances for the lip to come adrift of the water it sits on.
 fn tide_depth(board: &crate::sim::Board, remaining: u64, seconds: f32) -> f32 {
     let total = board.ticks() + remaining;
     let elapsed = 1.0 - remaining as f32 / total.max(1) as f32;

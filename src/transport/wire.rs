@@ -1,16 +1,10 @@
 //! Names and lines of chat, as they travel.
 //!
-//! Fixed-width and NUL-padded, because a length prefix is one more thing
-//! a stranger on the LAN could lie about, and because a field of known
-//! width is one the decoder reads at a fixed offset rather than off a
-//! number the sender chose. Everything read back off the wire goes
-//! through here, so a name is tidied in exactly one place no matter which
-//! message carried it.
-//!
-//! These were once `Copy` for [`NetMsg`]'s sake, which relayed by copying.
-//! It has not been `Copy` since a `Start` grew a handmade beach to carry,
-//! and the widths stayed for the reason above, which is the one that was
-//! ever load-bearing.
+//! Fixed-width and NUL-padded, because a length prefix is one more thing a
+//! stranger on the LAN could lie about, and because a field of known width
+//! is one the decoder reads at a fixed offset rather than off a number the
+//! sender chose. Everything read back off the wire goes through here, so a
+//! name is tidied in one place whichever message carried it.
 
 /// A player name on the wire: UTF-8, NUL-padded, truncated to fit at a
 /// character boundary. 24 bytes carries the full 12-char name cap for
@@ -83,9 +77,8 @@ pub fn wire_chat(line: &str) -> WireChat {
 }
 
 /// A line of chat back into text, distrusting the sender: invalid UTF-8 is
-/// dropped rather than replaced, and control characters are stripped,
-/// since they are not text a child typed and a newline or an escape in a
-/// UI label is nobody's idea of a good time.
+/// dropped rather than replaced, and control characters are stripped, a
+/// newline or an escape in a UI label being nothing anybody typed.
 ///
 /// Unlike a name this keeps `|` and `:`, which no save file will ever see
 /// and which people actually type.
@@ -129,15 +122,13 @@ mod name_tests {
     use super::*;
 
     /// A name goes onto the wire in 24 bytes and comes back off it from a
-    /// stranger. Wide scripts are cut at a character boundary so what
-    /// comes back is always valid UTF-8; a name that fills all 24 bytes
-    /// has no NUL terminator and still reads back whole; the save-file
-    /// separators are stripped *before* the 12-character cap so a name
-    /// padded with them cannot smuggle an empty one past it; and a name
-    /// with nothing left after trimming is the empty string, which every
-    /// caller treats as "no name given" (the roster stops at it, a table
-    /// slot keeps what it had). The default name is the caller's business,
-    /// not this layer's.
+    /// stranger. Wide scripts are cut at a character boundary so what comes
+    /// back is valid UTF-8; a name that fills all 24 bytes has no NUL
+    /// terminator and still reads back whole; the save-file separators are
+    /// stripped *before* the 12-character cap, so a name padded with them
+    /// cannot smuggle an empty one past it; and a name with nothing left
+    /// after trimming is the empty string, which every caller treats as "no
+    /// name given".
     #[test]
     fn a_wide_name_is_cut_at_a_character_and_read_back() {
         // Twelve three-byte characters is 36 bytes: only eight fit.

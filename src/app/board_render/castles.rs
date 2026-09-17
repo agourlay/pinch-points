@@ -19,8 +19,8 @@ pub struct CastleSprite {
     tier: u8,
     /// Whose it is. Kept because the castle wears its owner's colour and a
     /// tide event can hand it to somebody else without its tier moving: on
-    /// tier alone the sprite was left standing in the old owner's colour
-    /// until the new one happened to score across a threshold.
+    /// tier alone the sprite stands in the old owner's colour until the new
+    /// one scores across a threshold.
     owner: u8,
 }
 
@@ -90,9 +90,6 @@ pub fn sync_castles(
                 if tier >= 1 {
                     // The curtain wall the first tier throws up: a
                     // battlemented ring, hollow, with the keep inside it.
-                    // It was a plain coloured square until the castles
-                    // started being looked at, which is a shame for the
-                    // one sprite on the board that *is* the scoreboard.
                     parent.spawn((
                         image_sprite(&art.keep_ring, color.darker(0.12), Vec2::splat(TILE * 0.99)),
                         Transform::from_translation(Vec3::new(0.0, 0.0, -0.1)),
@@ -163,9 +160,8 @@ pub struct CastleKick(pub f32);
 const FLIGHT: f32 = 1.1;
 
 /// How much bigger a castle looks at the top of its flight. The path is a
-/// straight line, so this is the only thing saying it is off the ground,
-/// and it is worth having: without it the castles read as sliding along
-/// the sand rather than crossing over it.
+/// straight line, so this is the only thing saying it is off the ground
+/// rather than sliding along the sand.
 const RISE: f32 = 0.30;
 
 /// The swap animation: how long is left, and where each castle is flying
@@ -190,11 +186,9 @@ pub struct Flight {
 /// The swap detector's memory: the castles as they stood last frame, and
 /// the board clock they stood on.
 ///
-/// The clock is what tells a new board from the old one. Without it the
-/// memory outlived the round: a match that ended on a CastleSwap left the
-/// swapped layout here, and the next round on the same map, whose castles
-/// stand the other way about, read as a swap on its first frame and flew
-/// them all from where the last round left them.
+/// The clock is what tells a new board from the old one. Without it a match
+/// that ended on a CastleSwap leaves the swapped layout here, and the next
+/// round on the same map reads as a swap on its first frame.
 #[derive(Default)]
 pub struct Detector {
     ticks: u64,
@@ -218,9 +212,8 @@ impl Detector {
 /// A castle as the swap detector sees it: whose it is, and where.
 ///
 /// Named because the comparison that spots a swap is about which of these
-/// changed and which did not, and `(u8, u8, u8)` says none of that: the
-/// two coordinates and the owner are the same type and read the same way
-/// round.
+/// changed and which did not, and in `(u8, u8, u8)` the two coordinates and
+/// the owner are the same type.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Held {
     x: u8,
@@ -231,8 +224,7 @@ pub struct Held {
 /// Where a castle is, and how big it looks, `progress` of the way from
 /// `from` to `home`.
 ///
-/// Split out because it is the whole animation and the only part of it
-/// worth testing: it has to start exactly on one tile and finish exactly
+/// Split out because it has to start exactly on one tile and finish exactly
 /// on the other, or a castle lands off its own sand.
 fn hop(from: Vec2, home: Vec2, progress: f32) -> (Vec2, f32) {
     // A straight line between the two tiles, eased out of the launch and
@@ -249,28 +241,24 @@ fn hop(from: Vec2, home: Vec2, progress: f32) -> (Vec2, f32) {
 ///
 /// The sim hands each castle to the next owner where it stands: nothing
 /// moves, the colours change. That is right for the round and wrong for
-/// the eye, which sees the castles blink into other colours and has to
-/// work out what happened. So the render layer says it the other way
-/// about: your castle *travels* to where the next one was, over the sand,
-/// and lands wearing the colour it took off in.
+/// the eye, so the render layer says it the other way about: your castle
+/// *travels* to where the next one was, over the sand, and lands wearing
+/// the colour it took off in.
 ///
 /// The swap is spotted by watching the board rather than by listening for
-/// the tide event, and that is the whole trick. The event is raised by the
-/// snapshot comparison a tick behind the board it describes, so by the
-/// time it arrives the layout it was announcing is already the current
-/// one, and a castle asked where it came from answers "here". Watching for
-/// the same castles on the same tiles under different owners cannot be
-/// mistimed, because it *is* the thing being animated.
+/// the tide event. The event is raised by the snapshot comparison a tick
+/// behind the board it describes, so by the time it arrives a castle asked
+/// where it came from answers "here"; watching for the same castles on the
+/// same tiles under different owners cannot be mistimed.
 ///
 /// Runs after [`kick_castles`], which also writes scale: a bank landing in
 /// the same frame as a swap should not fight the flight for the transform.
 ///
 /// A fresh board (see [`Detector::is_fresh`]) empties both the memory and
-/// any flight still in the air, so a round that ends mid-swap, or a screen
-/// left mid-swap, leaves nothing to land on the next beach. Done here
-/// rather than on screen exit because every board swap must do it, not
-/// only the ones that pass through a screen change (a rematch on the
-/// same map does not).
+/// any flight still in the air, so a round that ends mid-swap leaves
+/// nothing to land on the next beach. Done here rather than on screen exit
+/// because a rematch on the same map is a board swap with no screen change
+/// in it.
 pub fn fly_castles(
     time: Res<Time>,
     sim: Res<Sim>,
@@ -347,9 +335,9 @@ pub fn fly_castles(
 /// Whether the castles changed hands: the same tiles holding the same
 /// owners between them, dealt out differently.
 ///
-/// Deliberately narrow. A castle built, a castle lost or a score crossing
-/// a tier all change this list too, and none of them is a swap; only a
-/// permutation of who holds what is.
+/// Deliberately narrow: a castle built, a castle lost or a score crossing a
+/// tier all change this list too, and only a permutation of who holds what
+/// is a swap.
 fn swapped(before: &[Held], now: &[Held]) -> bool {
     if before.len() < 2 || before.len() != now.len() || before == now {
         return false;
@@ -370,15 +358,12 @@ fn swapped(before: &[Held], now: &[Held]) -> bool {
 /// What each seat banked over one frame's events, added up.
 ///
 /// The sim reports a bank per crab, and a castle can take several on one
-/// tick - eight, measured over a set of six-seat rounds, with two or three
-/// a few hundred times in sixty thousand. [`score_pip`] has no jitter in
-/// it: same place, same speed, same life. So a pip per crab put eight
-/// identical `+1`s pixel on pixel, rising as one, and the player who had
-/// just banked eight read a single `+1` drawn a little too dark.
+/// tick: eight, measured over a set of six-seat rounds. [`score_pip`] has
+/// no jitter in it, so a pip per crab puts eight identical `+1`s pixel on
+/// pixel and the player who banked eight reads one `+1` drawn too dark.
 ///
-/// Summed instead, which is not merely quieter but truer: `+8` is the
-/// number that happened, and it is the only place that number is ever
-/// shown.
+/// Summed instead: `+8` is the number that happened, and this is the only
+/// place it is ever shown.
 ///
 /// [`score_pip`]: crate::app::effects::score_pip
 fn gains<'a>(
@@ -447,11 +432,9 @@ pub fn kick_castles(
 
 /// A castle that just grew says so.
 ///
-/// [`castle_tier`] is the whole scoreboard (spec §3.4), and
-/// until this existed a castle crossing a threshold changed shape between
-/// one frame and the next with nothing to mark it: the loudest good news a
-/// player gets, delivered by a sprite swap. `TierUp` was one of the events
-/// the effects layer read and threw away.
+/// [`castle_tier`] is the whole scoreboard (spec §3.4), and without this a
+/// castle crossing a threshold changes shape between one frame and the next
+/// with nothing to mark it.
 ///
 /// Runs after [`sync_castles`], and must: the sprite being cheered is the
 /// one built at the *new* tier, and the events reaching this frame are the
@@ -549,10 +532,9 @@ mod tests {
     /// The floating number is the only place a bank's worth is ever shown,
     /// so on a frame that banked eight it has to say eight.
     ///
-    /// It used to say `+1`, eight times, in the same place at the same
-    /// speed: `score_pip` has no jitter, so the copies land pixel on pixel
-    /// and rise as one. Nothing looked broken - the number was simply the
-    /// wrong number, drawn a little too dark.
+    /// Said as `+1` eight times it lands in the same place at the same
+    /// speed, since `score_pip` has no jitter: the copies rise as one and
+    /// the number is simply wrong, drawn a little too dark.
     #[test]
     fn a_frame_of_banks_floats_one_number_and_it_is_the_total() {
         assert_eq!(gains([]), [0; MAX_PLAYERS], "a quiet frame gains nobody");

@@ -71,10 +71,10 @@ pub(crate) fn tide_pool_levels() -> (Vec<Level>, usize) {
 /// Give every level on the list a name of its own. Progress is filed by
 /// name, and so are the translated names and the hints, so a player's
 /// puzzle called "Welcome Ashore" would share the shipped one's tick, its
-/// French name and its hint. The shipped list is unique already (a test
-/// below says so); the player's levels are renamed on the way in, in
-/// list order, with a count after the name: the file on disk keeps the
-/// name it was saved under, only the list reads it apart.
+/// French name and its hint. The shipped list is unique already; the
+/// player's levels are renamed on the way in, in list order, with a count
+/// after the name, and the file on disk keeps the name it was saved
+/// under.
 pub(crate) fn disambiguate(levels: &mut [Level], builtins: usize) {
     let mut taken: std::collections::HashSet<String> = levels[..builtins.min(levels.len())]
         .iter()
@@ -96,9 +96,9 @@ pub(crate) fn disambiguate(levels: &mut [Level], builtins: usize) {
 }
 
 /// The player's levels that are stages: the ones they built as puzzles, and
-/// that have somebody to route. A beach they built for a match is not a
-/// stage with an unusual number of castles, and putting it on the list made
-/// the campaign end on someone's versus arena.
+/// that have somebody to route. A beach built for a match is not a stage
+/// with an unusual number of castles, and on the list it ends the
+/// campaign.
 pub fn custom_puzzles(levels: Vec<Level>) -> Vec<Level> {
     levels
         .into_iter()
@@ -126,8 +126,8 @@ pub(crate) fn load_custom_levels() -> Vec<Level> {
 
 /// [`load_custom_levels`] with both places named outright: the old single
 /// save slot and the shelf directory. The real ones hang off the data
-/// directory, which is read from the process environment, and a test that
-/// changed that would race every other test in the binary.
+/// directory, read from the process environment, which a test cannot change
+/// without racing every other test in the binary.
 pub fn load_custom_levels_in(legacy: &std::path::Path, custom: &std::path::Path) -> Vec<Level> {
     let mut paths = vec![legacy.to_path_buf()];
     if let Ok(dir) = std::fs::read_dir(custom) {

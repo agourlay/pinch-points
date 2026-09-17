@@ -39,9 +39,8 @@ pub struct PauseMenu {
     /// Whether the round was already stopped when the card was raised.
     ///
     /// A replay can be paused from its own transport before the card is
-    /// opened, and the card used to hand the round back running whatever
-    /// it found: you stopped the recording to look at the board, checked
-    /// the menu, backed out, and it was playing again with no key pressed.
+    /// opened, and a card that handed the round back running whatever it
+    /// found would start the recording again with no key pressed.
     held: bool,
     selected: usize,
 }
@@ -307,10 +306,9 @@ mod tests {
     }
 
     /// A running puzzle, with the running-phase input beside the card as
-    /// the schedule has it. Escape used to be read by both: the phase
-    /// input froze the round, and the card then took that frozen state as
-    /// what to hand back on Continue, so the round stayed frozen with no
-    /// card up. One reader now; Continue unfreezes.
+    /// the schedule has it. Read by both, the phase input froze the round
+    /// and the card took that frozen state as what to hand back on
+    /// Continue. One reader now; Continue unfreezes.
     #[test]
     fn continue_unfreezes_a_running_puzzle() {
         let mut app = App::new();

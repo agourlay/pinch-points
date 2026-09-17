@@ -29,10 +29,8 @@ impl Cursor {
     /// A cursor for `player`, parked at the origin until something centres
     /// it on a board.
     ///
-    /// A constructor because the repeat timer is private to this module
-    /// and one seat's cursor is now built from two of them: here, and the
-    /// pad code's tests, which need a seated table to decide whose
-    /// controller a raid belongs to.
+    /// A constructor because the repeat timer is private to this module and
+    /// two places build one: here, and the pad code's tests.
     pub(crate) fn seated(player: u8) -> Cursor {
         Cursor {
             player,
@@ -106,19 +104,15 @@ fn bracket_color(player: u8) -> Color {
 /// a local match, and precisely the local seat online. Bots have none, and
 /// neither do rivals down a wire.
 ///
-/// So it is the question "is this one mine?", and it is the question the
-/// beach needs asked before it makes a noise: a knock for every post a bot
-/// puts down is a click track, and hearing a rival's placements online is
-/// hearing something that did not happen in this room.
+/// So it is the question "is this one mine?", which the beach asks before
+/// it makes a noise: a knock for every post a bot puts down is a click
+/// track, and hearing a rival's placements online is hearing something
+/// that did not happen in this room.
 ///
 /// A **replay** and a **spectated** match answer `false` for every seat,
-/// because neither spawns a cursor at all - there is no chair here to
-/// place from. That is deliberate rather than incidental: a recording of
-/// a six-seat round has exactly the density that made the knock worth
-/// removing, and it is nobody's beach to be told about. Banks, raids,
-/// gulls and the horn still sound; posts go in and out in silence, and
-/// their rings and puffs stand down with them so the picture and the
-/// sound agree about what a replay is.
+/// because neither spawns a cursor at all. Banks, raids, gulls and the
+/// horn still sound; posts go in and out in silence, and their rings and
+/// puffs stand down with them.
 pub fn seated_here(cursors: &Query<&Cursor>, seat: u8) -> bool {
     cursors.iter().any(|cursor| cursor.player == seat)
 }
@@ -126,12 +120,10 @@ pub fn seated_here(cursors: &Query<&Cursor>, seat: u8) -> bool {
 /// Tint flashing (denied) cursors red, and dim a cursor standing on a tile
 /// that will refuse it.
 ///
-/// The refusal used to be told *after* the fact and only then: you pressed,
-/// the brackets went red for a quarter of a second, and you worked out
-/// why. A rock, a rival's post, or an empty inventory is knowable before
-/// the press, and a cursor that has gone quiet says so without a word.
-/// Only where placing is the verb: in the editor the cursor paints tiles,
-/// and a refusal there would mean nothing.
+/// A rock, a rival's post or an empty inventory is knowable before the
+/// press, and a cursor that has gone quiet says so without a word; told
+/// only afterwards, the brackets flash red and the player works out why.
+/// Only where placing is the verb: in the editor the cursor paints tiles.
 pub fn flash_cursors(
     time: Res<Time>,
     sim: Res<Sim>,
@@ -157,9 +149,8 @@ pub fn flash_cursors(
         }
         // Only when it is the *tile* refusing. An empty inventory refuses
         // every tile on the beach, and a cursor dimmed everywhere reads as
-        // a broken cursor rather than as a message - the arrow count in
-        // the header is already saying that one, and `out_of_signposts`
-        // exists to tell the two refusals apart.
+        // broken rather than as a message; the arrow count in the header
+        // says that one, and `out_of_signposts` tells the two apart.
         let tile_refuses = placing
             && !board.can_place_signpost(cursor.player, cursor.x, cursor.y)
             && !board.out_of_signposts(cursor.player, cursor.x, cursor.y);
@@ -173,14 +164,12 @@ pub fn flash_cursors(
 
 /// The post a seat has committed but the board has not taken yet.
 ///
-/// Placing is two stages - move the cursor, commit a direction - and the
-/// commit is instant, so there is no aiming to preview. What there *is*,
+/// Placing is two stages, move the cursor and commit a direction, and the
+/// commit is instant, so there is nothing to preview. What there *is*,
 /// between the press and the post, is a queue: a placement sits in
 /// [`crate::app::PendingActions`] until the sim takes it. Locally that is
-/// at most one fixed step, which is a frame or two of confirmation. Online
-/// it is until the lockstep commits the frame, which on a stalled peer is
-/// as long as the stall - and that is exactly when a player most needs
-/// telling that their press was heard and is on its way.
+/// at most one fixed step; online it is until the lockstep commits the
+/// frame, which on a stalled peer is as long as the stall.
 #[derive(Component)]
 pub struct PostGhost;
 
@@ -234,11 +223,10 @@ pub fn ghost_pending_posts(
 
 /// Carry each cursor to the tile it now sits on, and breathe.
 ///
-/// The cursor used to be teleported by whichever input system moved it,
-/// which is correct to the tile and wrong to the eye: at the hold-repeat
-/// rate it reads as a thing being redrawn rather than a thing being
-/// steered. It is placed here instead, once, from the tile the input
-/// systems agreed on.
+/// Teleported by whichever input system moved it, the cursor is correct to
+/// the tile and wrong to the eye: at the hold-repeat rate it reads as a
+/// thing being redrawn rather than steered. It is placed here instead,
+/// once, from the tile the input systems agreed on.
 ///
 /// Long jumps still snap. A round starting, a level loading and a board
 /// changing size all move a cursor halfway across the beach, and sliding
@@ -339,9 +327,9 @@ pub fn spawn_versus_cursors(
         &*config
     };
     // A replay has no cursor, for the same reason a spectator has none:
-    // there is no seat here to place from. Cursor movement is live input
-    // and was never recorded, so one drawn over a replay simply sits in the
-    // middle of the board for the whole round looking broken.
+    // there is no seat here to place from. Cursor movement was never
+    // recorded, so one drawn over a replay sits in the middle of the board
+    // looking broken.
     if playback.0.is_some() {
         return;
     }
@@ -496,11 +484,10 @@ mod tests {
             .expect("seat has a cursor")
     }
 
-    /// `seated_here` is the rule three separate systems now ask before
-    /// they act: whether a post knocks, whether its ring is drawn, and
-    /// whose pad a raid reaches. It answers for the seats with a cursor
-    /// and no others, and the seats without one are exactly the bots, the
-    /// rivals down a wire, and a replay.
+    /// `seated_here` is the rule three systems ask before they act:
+    /// whether a post knocks, whether its ring is drawn, and whose pad a
+    /// raid reaches. It answers for the seats with a cursor and no others,
+    /// which leaves out the bots, the rivals down a wire, and a replay.
     #[test]
     fn only_the_seats_with_a_cursor_are_ours() {
         #[derive(Resource, Default)]
@@ -760,11 +747,10 @@ mod tests {
         *app.world().resource::<State<Screen>>().get()
     }
 
-    /// The end of a lobby match is a door back to the lobby, not out to
-    /// the menu. The table came in together and goes back together, still
+    /// The end of a lobby match is a door back to the lobby, not out to the
+    /// menu. The table came in together and goes back together, still
     /// connected, so the next game is a keypress rather than a
-    /// rediscovery - which is the whole reason the session is handed over
-    /// whole rather than dropped.
+    /// rediscovery.
     #[test]
     fn the_end_of_a_lobby_match_walks_the_table_back_to_the_lobby() {
         use crate::app::lobby::Homecoming;
@@ -830,14 +816,12 @@ mod tests {
     /// The Enter that ends the match must not also start the next one.
     ///
     /// A host lands back in the lobby with its peers still aboard, and
-    /// there Enter is the launch key: one press that both left the
-    /// results card and reached `host_tick` would deal a fresh round
-    /// before anybody had read the scores. Nothing in this file prevents
-    /// that - what does is the order the engine runs in, so that is what
-    /// this checks, with the real input plugin rather than a hand-set
-    /// resource: a press is cleared in `PreUpdate`, the state transition
-    /// lands after it, and the screen a keypress arrives on is therefore
-    /// the only screen that ever sees it.
+    /// there Enter is the launch key: one press that both left the results
+    /// card and reached `host_tick` would deal a fresh round before anybody
+    /// had read the scores. What prevents it is the order the engine runs
+    /// in, so that is what this checks, with the real input plugin: a press
+    /// is cleared in `PreUpdate` and the state transition lands after it,
+    /// so the screen a keypress arrives on is the only one that sees it.
     #[test]
     fn one_press_is_only_ever_read_by_one_screen() {
         use bevy::input::ButtonState;

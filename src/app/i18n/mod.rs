@@ -216,8 +216,8 @@ struct Tr {
     // The first-boot language picker
     /// The screen the game opens on the very first run, before any
     /// settings file exists. Every line of it is written in the language
-    /// the cursor is resting on, which is the whole point: the player
-    /// reads the one they want and stops there.
+    /// the cursor is resting on, so the player reads the one they want and
+    /// stops there.
     pub title_pick_language: &'static str,
     /// Header and prompt of the new-version page.
     pub title_new_version: &'static str,
@@ -281,8 +281,7 @@ struct Tr {
     pub waiting_peer: &'static str,
     /// The round has stopped because one seat's input has not arrived.
     /// Lockstep runs a frame only when every seat has spoken, so a still
-    /// picture is somebody else's trouble, and a table that is not told
-    /// whose assumes the game has crashed.
+    /// picture is somebody else's trouble, and the table is told whose.
     pub waiting_for: &'static str,
     pub saved_count: &'static str,
     pub signposts_count: &'static str,
@@ -665,10 +664,9 @@ mod tests {
     /// every language: a translation that drops one silently loses data
     /// (a lure banner without its {p}, a score line without its {b}).
     ///
-    /// Both lists come from declarations rather than by hand - the fields
-    /// from the struct, the languages from [`ALL_LANGS`] - so this covers
-    /// the whole table in every language, and keeps covering both as they
-    /// grow.
+    /// Both lists come from declarations rather than by hand (the fields
+    /// from the struct, the languages from [`ALL_LANGS`]), so this keeps
+    /// covering the whole table as both grow.
     #[test]
     fn placeholders_agree_across_languages() {
         fn markers(s: &str) -> std::collections::BTreeSet<String> {
@@ -700,10 +698,10 @@ mod tests {
     /// Reword a Japanese string and this is the test that says to run
     /// `tools/gen_jp_font.py` again.
     ///
-    /// That face is a subset - a whole CJK font is twenty megabytes for
-    /// the few hundred characters this game says - and a character left
-    /// out of it draws as nothing at all, with no warning anywhere. So
-    /// this reads the `cmap` of the very bytes that ship and asks it.
+    /// That face is a subset, a whole CJK font being twenty megabytes for
+    /// the few hundred characters this game says, and a character left out
+    /// draws as nothing with no warning. So this reads the `cmap` of the
+    /// very bytes that ship.
     ///
     /// Only the characters DejaVu cannot draw are asked for, which is the
     /// line the tool cuts on too: the Latin and the digits in a Japanese

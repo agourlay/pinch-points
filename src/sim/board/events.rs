@@ -72,10 +72,8 @@ impl Board {
         // Not while the last event is still running. The wheel is spun by
         // banking a Sparkling crab, and several of the faces it lands on
         // put more crabs on the beach, so without this the events feed
-        // themselves: three Crab Manias inside fourteen seconds was
-        // measured on a kept round. The crab still banks and still scores;
-        // what it does not do is stack a second event on the one the
-        // player is already watching.
+        // themselves: three Crab Manias inside fourteen seconds, measured.
+        // The crab still banks and still scores.
         if self.event_cooldown > 0 {
             return;
         }
@@ -86,11 +84,9 @@ impl Board {
     }
 
     /// The surge already doubles the flock, so the roulette keeps off the
-    /// gull events for the last 30 seconds. Observed once live: Gull Mania
-    /// on top of the surge left fifteen gulls and almost no crabs with half
-    /// a minute to play, which is the tensest stretch of a round with
-    /// nothing left to route. Swapped rather than re-rolled, so the draw
-    /// count stays fixed.
+    /// gull events for the last 30 seconds: Gull Mania on top of the surge
+    /// left fifteen gulls and almost no crabs with half a minute to play.
+    /// Swapped rather than re-rolled, so the draw count stays fixed.
     pub(super) fn surge_safe(&self, event: TideEvent) -> TideEvent {
         if !self.in_surge() {
             return event;
@@ -110,8 +106,8 @@ impl Board {
     /// Start a lure for `owner`, as banking a molting crab does.
     ///
     /// Same reason as [`Self::force_tide_event`]: the dev hook and the
-    /// tests need one on demand, and waiting for a molt to turn up and be
-    /// banked is not a thing a screenshot can do.
+    /// tests need one on demand, and a screenshot cannot wait for a molt to
+    /// turn up and be banked.
     pub fn force_lure(&mut self, owner: PlayerId) {
         self.lure = Some((owner, LURE_TICKS));
     }

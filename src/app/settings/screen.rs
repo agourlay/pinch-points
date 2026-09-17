@@ -201,25 +201,24 @@ pub struct SettingsUi;
 
 /// Label gutter and value gutter, the value including the `< >` the
 /// selected row wears. Two columns of these have to fit in
-/// [`DESIGN_W`](crate::app::settings::DESIGN_W), which is what keeps them
-/// honest - `the_card_fits_the_window_it_was_drawn_for` holds them to it.
+/// [`DESIGN_W`](crate::app::settings::DESIGN_W), which
+/// `the_card_fits_the_window_it_was_drawn_for` holds them to.
 ///
 /// Both cells clip what overruns rather than wrapping it, so a row that
-/// does not fit loses its tail with no warning anywhere -
-/// `every_row_fits_its_cell_in_every_language` is what says so instead.
-/// That check measures pixels rather than characters, because two faces
-/// draw these rows: DejaVu Sans Mono at 0.602 em and the Japanese subset
-/// at a full one.
+/// does not fit loses its tail with no warning;
+/// `every_row_fits_its_cell_in_every_language` says so instead. That check
+/// measures pixels rather than characters, because two faces draw these
+/// rows: DejaVu Sans Mono at 0.602 em and the Japanese subset at a full
+/// one.
 const LABEL_W: f32 = 252.0;
 const VALUE_W: f32 = 322.0;
 /// A point under [`menu_ui::type_scale::ROW`], and the only list card in
 /// the game that is.
 ///
-/// Not drift: it is the size at which two columns of rows fit a
-/// 1280-wide window in every language. At the scale's 19 the German duos
-/// value runs 332px into a 322px cell, and the ten pixels the cell would
-/// need are twenty on the card, which has eighteen to give. Both halves
-/// are held by tests below; this line is the third thing they hold.
+/// Not drift: it is the size at which two columns of rows fit a 1280-wide
+/// window in every language. At the scale's 19 the German duos value runs
+/// 332px into a 322px cell, and the ten pixels the cell would need are
+/// twenty on the card, which has eighteen to give.
 const ROW_FONT: f32 = 18.0;
 
 /// The language row's flag chip: 3:2, the ratio the art is drawn at, and
@@ -253,9 +252,7 @@ pub fn enter_settings(
         ))
         .with_children(|wrap| {
             // The shared card, laid out sideways: this one holds columns
-            // of rows rather than a single run of them. Built by hand
-            // before, which is how it came to be the only list card in the
-            // game standing flat on the sand with no shadow under it.
+            // of rows rather than a single run of them.
             let (mark, mut node, fill, edge, shadow) = menu_ui::screen_card();
             node.flex_direction = FlexDirection::Row;
             node.align_items = AlignItems::FlexStart;
@@ -274,9 +271,7 @@ pub fn enter_settings(
                             // heading wants air above it is a question
                             // about its own column. Asked of the row
                             // counter, the right column's first heading
-                            // was never the first anything, so it took the
-                            // 10px meant to separate two groups and the
-                            // two columns started ten pixels apart.
+                            // took the 10px meant to separate two groups.
                             for (at, (group, rows)) in column.iter().enumerate() {
                                 side.spawn(menu_ui::heading(group.label(tr), at == 0));
                                 for row in *rows {
@@ -318,9 +313,8 @@ pub fn enter_settings(
 ///
 /// The language row is the one exception: its value carries a flag chip in
 /// front of the name, which pushes that one value right by the width of the
-/// chip. A blank slot on every other row would keep the column
-/// perfectly straight and cost every one of them the same width for
-/// nothing, so the indent stands.
+/// chip. A blank slot on every other row would straighten the column and
+/// cost every one of them that width, so the indent stands.
 fn spawn_setting_row(side: &mut ChildSpawnerCommands, index: usize, flag: Option<Handle<Image>>) {
     side.spawn((
         SettingsRow(index),
@@ -491,22 +485,19 @@ pub fn settings_input(
     }
 }
 
-/// What one row reads as: its label and the value beside it, or the whole
-/// line for the rows that are doors rather than dials.
-///
-/// Whether the cursor puts `< >` around this row's value. Doors do not
-/// step through anything, so they wear none - and the widest a value ever
-/// draws depends on the answer, which is why this is one rule rather than
-/// one in the screen and another in the test that measures it.
+/// Whether the cursor puts `< >` around this row's value. Doors do not step
+/// through anything, so they wear none, and the widest a value ever draws
+/// depends on the answer: one rule rather than one in the screen and
+/// another in the test that measures it.
 fn has_arrows(row: Row) -> bool {
     !matches!(row, Row::KeyBindings | Row::ResetProgress)
 }
 
-/// Pure, so the wording of every setting can be checked without a window -
-/// this is the screen a player spends the most time reading.
 /// A row's name and its current value, undecorated. The screen adds the
-/// `< >` arrows to the row the cursor is on, so the arrows read as "these
-/// keys, on this row" rather than as part of every value.
+/// `< >` arrows to the row the cursor is on, so they read as "these keys,
+/// on this row" rather than as part of every value.
+///
+/// Pure, so the wording of every setting can be checked without a window.
 pub(super) fn row_text(
     tr: &crate::app::i18n::Tr,
     settings: &GameSettings,
@@ -642,13 +633,10 @@ mod tests {
     use super::*;
     use crate::app::i18n::EN;
 
-    /// Every row says what it is and what it is set to, in every language.
-    /// A row added without wording would otherwise show an empty dial.
     /// The card is built by walking [`SECTIONS`] with a running index, and
     /// every row's label is looked up by that index in [`Row::ALL`]. If the
-    /// two ever disagree the screen shows one dial's name over another's
-    /// value, silently. The comment on `Row::ALL` says a test keeps them in
-    /// step; this is it.
+    /// two disagree the screen shows one dial's name over another's value,
+    /// silently.
     #[test]
     fn the_sections_are_the_row_order() {
         let flat: Vec<Row> = SECTIONS
@@ -659,6 +647,8 @@ mod tests {
         assert_eq!(flat, Row::ALL.to_vec());
     }
 
+    /// Every row says what it is and what it is set to, in every language.
+    /// A row added without wording would show an empty dial.
     #[test]
     fn every_settings_row_reads_as_a_setting() {
         for lang in crate::app::i18n::ALL_LANGS {
@@ -684,11 +674,9 @@ mod tests {
     /// every stop of every dial.
     ///
     /// Both cells clip rather than wrap, so a row that overruns loses its
-    /// tail with no warning anywhere - the widest of them lost the closing
-    /// bracket off the paired team mode in five languages, and had done
-    /// since the mode was added, with a budget written in characters and
-    /// nothing to check it against ([`LABEL_W`] says why characters were
-    /// the wrong unit besides).
+    /// tail with no warning: under a budget written in characters, the
+    /// widest of them lost the closing bracket off the paired team mode in
+    /// five languages ([`LABEL_W`] says why characters were the wrong unit).
     ///
     /// Every dial is walked to its widest stop rather than read at its
     /// default, because the default is not what a player leaves it on.
@@ -771,10 +759,8 @@ mod tests {
     }
 
     /// The cells are the card, and the card has to fit the window the
-    /// interface was drawn for. This is the other half of the budget: a
-    /// row too long for its cell clips, and a cell too wide for the card
-    /// runs the whole thing off the edge of a 1280-wide screen. Widening
-    /// one to fix the first is what would cause the second.
+    /// interface was drawn for: a row too long for its cell clips, and a
+    /// cell widened to fix that runs the card off a 1280-wide screen.
     #[test]
     fn the_card_fits_the_window_it_was_drawn_for() {
         // Two columns of rows, each row a label and a value inside its own
@@ -845,8 +831,7 @@ mod tests {
     /// Exactly one `update()`, and that is load-bearing: this app has no
     /// `InputPlugin`, so nothing clears `just_pressed` between frames and a
     /// second update would press Enter again, confirm the reset, and write
-    /// over the real `progress.txt` in the tester's data directory. The
-    /// seeded mark below is the tripwire if anyone adds one.
+    /// over the real `progress.txt`. The seeded mark below is the tripwire.
     #[test]
     fn arming_the_reset_does_not_leave_the_screen() {
         use crate::app::CampaignKind;

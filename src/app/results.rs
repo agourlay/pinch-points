@@ -348,9 +348,9 @@ pub fn spawn_puzzle_won(
 /// The puzzle loss card: which level, and Enter to try again.
 ///
 /// A loss stops the sim on the tick the crab was lost, and the board holds
-/// still under whatever it was doing - a gull mid-tile with its meal. With
-/// no card that stop read as the game hanging; the prompt pill along the
-/// bottom was the only word of it. Now the loss is said where the win is.
+/// still under whatever it was doing, a gull mid-tile with its meal. With
+/// no card that reads as the game hanging, the prompt pill along the bottom
+/// being the only word of it.
 pub fn spawn_puzzle_lost(
     mut commands: Commands,
     campaign: Res<Campaign>,

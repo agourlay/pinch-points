@@ -11,9 +11,8 @@
 //! the two settings switches (music and effects, each with its own volume
 //! underneath), the master mute on M ([`Muted`]), and the pause card, which
 //! puts the music down for as long as it is up. Everything reads them
-//! through [`sfx_gain`] and [`music_audible`], so there is one answer to
-//! "should this be heard" and no sink is left holding an opinion of its
-//! own.
+//! through [`sfx_gain`] and [`music_audible`], so no sink is left holding
+//! an opinion of its own.
 
 use crate::app::sim_events::SimEvent;
 use crate::app::{PlacementDenied, Screen, Sim};
@@ -31,9 +30,8 @@ pub struct Music;
 ///
 /// Deliberately not a setting. The two switches on the settings card are
 /// preferences and are written to disk; this is the key you hit when
-/// somebody walks in, and the game comes back the way you left it. Which
-/// also settles what M means when the music is already switched off in
-/// settings: unmuting restores the settings, and they still say off.
+/// somebody walks in, and the game comes back the way you left it. So
+/// unmuting restores the settings, which may still say off.
 #[derive(Resource, Default)]
 pub struct Muted(pub bool);
 
@@ -47,11 +45,8 @@ pub(crate) fn sfx_gain(settings: &crate::app::settings::GameSettings, muted: &Mu
 /// third voice here, and the one that is not a player preference: it holds
 /// the music down for as long as it is up and gives back exactly that.
 ///
-/// Deriving the sink's state from all three every frame is what lets the
-/// answer be this short. The card used to *do* something to the sink and
-/// so had to remember whether the silence was its to lift - M could have
-/// got there first, and a muted round must not come back singing. Nothing
-/// pushes at the sink any more, so there is nothing to remember.
+/// Derived from all three every frame rather than pushed at the sink, so
+/// nothing has to remember whether a silence is its to lift.
 fn music_audible(
     settings: &crate::app::settings::GameSettings,
     muted: &Muted,
@@ -101,19 +96,15 @@ const SPATIAL_GAIN: f32 = 1.4;
 
 /// Whether a post going down at `owner`'s hand is one to be heard here.
 ///
-/// The seat rule and the whole of its exception. `seated_here` reads
-/// correctly wherever this machine answers for a seat: alone in a puzzle
-/// it is your seat, at a table it is every human seat sharing the speaker,
-/// online it is your seat and nobody else's.
+/// `seated_here` reads correctly wherever this machine answers for a seat:
+/// alone in a puzzle it is your seat, at a table every human seat sharing
+/// the speaker, online your seat and nobody else's.
 ///
-/// Where it does not read correctly is where this machine answers for *no*
-/// seat, because then it says "nobody" and means it. An online spectator
-/// and a replay both spawn no cursor at all (see
-/// `cursor::spawn_versus_cursors`: there is no seat to place from), so
-/// every post on the beach fell silent while the banks, the gulls and the
-/// horn played on - a replay of your own round with all the arrows taken
-/// out of it. A machine holding no seat is watching, and a watcher is
-/// there to hear the whole beach.
+/// Where this machine answers for *no* seat it says "nobody" and means it.
+/// An online spectator and a replay both spawn no cursor at all (see
+/// `cursor::spawn_versus_cursors`), so every post on the beach fell silent
+/// while the banks, the gulls and the horn played on. A machine holding no
+/// seat is watching, and a watcher hears the whole beach.
 pub(crate) fn post_is_heard(cursors: &Query<&crate::app::cursor::Cursor>, owner: u8) -> bool {
     cursors.is_empty() || crate::app::cursor::seated_here(cursors, owner)
 }
@@ -206,10 +197,9 @@ fn play_at(commands: &mut Commands, sound: &Handle<AudioSource>, gain: f32, at: 
 /// The sim reports per tile and per crab, so one frame can hold a great
 /// many of a kind: every seat may act on the same tick, posts placed
 /// together wear out together, and a castle can take a whole stream of
-/// crabs at once. Sample-aligned copies of one sound do not read as
-/// several things happening; they read as one louder, dirtier version of
-/// it, and four of them at full gain clip. This is the rule the denial
-/// knock has always used, applied where the volume actually is.
+/// crabs at once. Sample-aligned copies do not read as several things
+/// happening, they read as one louder, dirtier version of it, and four at
+/// full gain clip.
 ///
 /// What `used` counts is the caller's to choose, and it is the axis a
 /// listener could tell apart: one flag for all the posts, since they knock
@@ -258,17 +248,12 @@ pub fn play_events(
     let pan = |pos: &Vec2| pan_pos(half_width, *pos);
     let (mut placed, mut removed, mut evicted) = (false, false, false);
     // Banks are the busiest thing on the beach, and the one cue the sim
-    // raises per crab rather than per act. Twelve six-seat rounds of bots,
-    // counted through the differ itself: eight into one castle on a single
-    // tick, and two to four of them a couple of hundred times over sixty
-    // thousand ticks. Sample-aligned copies at the spatial gain are not
-    // eight sounds, they are one loud dirty one and eight sinks to mix it
-    // from.
+    // raises per crab rather than per act: twelve six-seat rounds of bots
+    // put eight into one castle on a single tick.
     //
     // Per seat rather than one flag for the lot, because unlike posts these
     // are distinguishable: a seat's crabs walk into that seat's castle, so
-    // each flag stands for one place on the beach and six castles filling
-    // at once still read as six.
+    // six castles filling at once still read as six.
     let mut banked = [false; crate::sim::MAX_PLAYERS];
     let mut goldened = [false; crate::sim::MAX_PLAYERS];
     for event in events.read() {
@@ -297,25 +282,17 @@ pub fn play_events(
             }
             SimEvent::GullArrived => play(&mut commands, &sounds.screech, gain),
             SimEvent::GullTookOff => play(&mut commands, &sounds.takeoff, gain),
-            // Only your own posts knock.
-            //
-            // The sound was right when a beach held one or two people and
-            // wrong the moment it held six: the bots place far more often
-            // than the players do, and every one of them was a click. And
-            // online it was announcing arrows that went down in somebody
-            // else's room.
-            //
-            // Unless nobody here holds one, which is what watching is.
-            // [`post_is_heard`] is the whole rule, and it reads correctly
-            // in every mode without being told which one it is in.
+            // Only your own posts knock: the bots place far more often
+            // than the players do, and online this was announcing arrows
+            // that went down in somebody else's room. Unless nobody here
+            // holds a seat, which is what watching is: see `post_is_heard`.
             SimEvent::SignpostPlaced { owner, pos } => {
                 if post_is_heard(&cursors, *owner) {
                     once(&mut commands, &mut placed, &sounds.place, gain, pan(pos));
                 }
             }
             // The other end of the same rule. In versus a post wears out
-            // on its own, so leaving this ungated let every bot post knock
-            // on the way out and the beach kept its click track.
+            // on its own, so ungated every bot post knocks on the way out.
             SimEvent::SignpostRemoved { owner, pos } => {
                 if post_is_heard(&cursors, *owner) {
                     once(&mut commands, &mut removed, &sounds.remove, gain, pan(pos));
@@ -326,11 +303,9 @@ pub fn play_events(
             // sound of a refusal told the player the opposite of what
             // happened. The placement sounds too, from the new tile.
             SimEvent::SignpostEvicted { owner, pos, .. } => {
-                // The third and last end of the same rule. `CapPolicy`
-                // defaults to `Evict` in versus, so every bot placement
-                // past the cap raises one of these: gating the placement
-                // and the removal but not this left five bots knocking
-                // almost continuously on a six-seat beach.
+                // The third end of the same rule. `CapPolicy` defaults to
+                // `Evict` in versus, so every bot placement past the cap
+                // raises one of these.
                 if post_is_heard(&cursors, *owner) {
                     once(&mut commands, &mut evicted, &sounds.evict, gain, pan(pos));
                 }
@@ -429,14 +404,10 @@ pub fn rotate_music(
 
 /// M mutes the game: the cap that says M, on whatever keyboard this is.
 ///
-/// It used to stop the music alone, which was never what a player reaching
-/// for it wants - the beach is noisier than the theme is. Now it is the
-/// master mute, and the effects go quiet with it.
-///
-/// Works while the pause card is up, which the music-only toggle could
-/// not: the two no longer touch the same sink, so there is nothing to
-/// fight over. Held off only while a name or a chat line is being typed,
-/// where the M is a letter the player meant to write.
+/// The master mute: the effects go quiet with the music, since the beach
+/// is noisier than the theme is. Works while the pause card is up, the two
+/// no longer touching the same sink, and is held off only while a name or
+/// a chat line is being typed, where M is a letter.
 pub fn toggle_mute(
     keys: Res<ButtonInput<KeyCode>>,
     caps: Res<crate::app::keycaps::KeyCaps>,
@@ -504,10 +475,8 @@ mod tests {
     /// Everything `events` sets off on one frame, counted, with the stage
     /// swept clear for the next call.
     ///
-    /// Every test below is some version of "how many sounds did that make",
-    /// and each used to carry its own copy of this: write, update, count,
-    /// despawn. One of them is enough, and a test that says only what it is
-    /// about is a test that can be read.
+    /// Every test below is some version of "how many sounds did that
+    /// make": write, update, count, despawn.
     fn heard(app: &mut App, events: impl IntoIterator<Item = SimEvent>) -> usize {
         for event in events {
             app.world_mut().write_message(event);
@@ -545,9 +514,8 @@ mod tests {
     }
 
     /// The rule the whole beach turns on: a post knocks when the seat that
-    /// put it down is one this machine answers for, and stays quiet
-    /// otherwise. One human of six is the shape that matters - five bots
-    /// placing all round used to be five clicks a second.
+    /// put it down is one this machine answers for. One human of six is the
+    /// shape that matters: five bots placing was five clicks a second.
     #[test]
     fn only_the_seats_at_this_machine_are_heard() {
         let mut app = table(1);
@@ -558,9 +526,8 @@ mod tests {
         }
     }
 
-    /// Both ends of a post's life follow the same rule. A post wearing
-    /// out is the half that used to leak: in versus every one of them
-    /// expires on its own, so gating the placement and not the removal
+    /// Both ends of a post's life follow the same rule. In versus every
+    /// post expires on its own, so gating the placement and not the removal
     /// left the click track running at nearly its old rate.
     #[test]
     fn a_post_leaving_is_as_quiet_as_a_post_arriving() {
@@ -602,11 +569,9 @@ mod tests {
         assert_eq!(heard(&mut app, [placed(2)]), 0, "the bot is not");
     }
 
-    /// A machine that answers for no seat is watching - an online
-    /// spectator, or a replay - and hears the whole beach rather than
-    /// none of it. The seat rule read "nobody" there, which took every
-    /// post out of a replay of your own round while the banks, the gulls
-    /// and the horn played on.
+    /// A machine that answers for no seat is watching, an online spectator
+    /// or a replay, and hears the whole beach rather than none of it: the
+    /// seat rule read "nobody" there and took every post out of a replay.
     #[test]
     fn a_watcher_hears_every_seat_because_it_holds_none() {
         let mut app = table(0);
@@ -616,13 +581,9 @@ mod tests {
     }
 
     /// Banks are the one cue the sim raises per crab, and a castle can take
-    /// a stream of them on one tick: twelve six-seat rounds of bots put
-    /// eight into one castle on a single tick. Sample-aligned copies are
-    /// not eight sounds, so a seat's castle filling is one sound.
-    ///
-    /// Per seat, though, and not one for the lot: six castles filling at
-    /// once is six things happening in six places, and the beach should say
-    /// so. This is the axis the flag is kept on.
+    /// a stream of them on one tick, so a seat's castle filling is one
+    /// sound. Per seat, though, and not one for the lot: six castles
+    /// filling at once is six things happening in six places.
     #[test]
     fn a_castle_taking_a_stream_of_crabs_banks_once_for_it() {
         use crate::sim::CrabKind;
@@ -683,9 +644,8 @@ mod tests {
         assert!(!audible(true, 45, false, true), "the card still holds it");
     }
 
-    /// The master mute takes the effects with it, which is the whole point
-    /// of it: reaching for M because someone walked in and still hearing
-    /// every gull on the beach is the bug it was named for.
+    /// The master mute takes the effects with it: reaching for M because
+    /// someone walked in should not leave every gull on the beach audible.
     #[test]
     fn the_master_mute_silences_the_effects_too() {
         let settings = GameSettings {
@@ -708,11 +668,9 @@ mod tests {
 
     /// The playlist walks, and it only walks when somebody could hear it.
     ///
-    /// A track that is merely down - muted, paused, switched off - is
-    /// still alive and still the same song, so nothing new starts over the
-    /// top of it. And nothing starts at all while none of it would be
-    /// audible: a silenced game that kept the playlist rolling would sit
-    /// there decoding one theme after another for nobody.
+    /// A track that is merely down (muted, paused, switched off) is still
+    /// alive and still the same song, so nothing new starts over the top of
+    /// it, and nothing starts at all while none of it would be audible.
     #[test]
     fn the_playlist_walks_only_while_somebody_could_hear_it() {
         let mut app = App::new();

@@ -234,9 +234,9 @@ impl Default for MatchConfig {
 
 impl MatchConfig {
     /// The daily challenge's table: today's arena, three fierce bots, a
-    /// standard round. Its own value rather than a write into the
-    /// player's config, which used to come back from the daily set to
-    /// this and show it on the setup screen as what they had chosen.
+    /// standard round. Its own value rather than a write into the player's
+    /// config, which would come back from the daily showing this on the
+    /// setup screen as what they had chosen.
     pub fn daily() -> Self {
         MatchConfig {
             seats: 4,
@@ -306,10 +306,9 @@ pub fn config_from_terms(terms: &MatchTerms) -> (MatchConfig, crate::app::teams:
 ///
 /// `seats` is the table as it sits, which the terms themselves do not
 /// carry: it is what keeps a table of five off the four-castle beaches.
-/// The shelf is not consulted, because online the beach a handmade round
-/// is played on rides in the invitation itself, unchanged from round to
-/// round (`net/rounds.rs` resends it), so `Custom` is not a stop the terms
-/// can step onto: with no shelf the stepper walks past it.
+/// The shelf is not consulted, because online a handmade beach rides in
+/// the invitation itself (`net/rounds.rs` resends it), so with no shelf
+/// the stepper walks past the `Custom` stop.
 pub fn next_round_terms(terms: MatchTerms, seats: u8, seed: u64) -> MatchTerms {
     let mut config = MatchConfig {
         map: MapChoice::from_index(usize::from(terms.map)),
@@ -340,10 +339,9 @@ pub fn holds(map: MapChoice, seats: u8) -> bool {
 /// The one place a series and the dial differ: the dial, turned onto a
 /// small beach by hand, drops the seats it cannot hold, because the hand
 /// on it asked for that beach. A series asked for nobody to leave the
-/// table, so it keeps the seats and skips the beach. Before this the
-/// series stepped with a plain `cycled(Turn::Right)`, and a table of five went
-/// from the open ocean onto `Custom` with nothing on the shelf, then onto
-/// the classic arena with two of them castle-less.
+/// table, so it keeps the seats and skips the beach. Stepped with a plain
+/// `cycled(Turn::Right)`, a table of five landed on the classic arena with
+/// two of them castle-less.
 pub fn next_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
     // Bounded by the number of stops there are: every wide beach holds
     // every table, so this returns well before the bound, but a loop over
@@ -360,9 +358,9 @@ pub fn next_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
 /// the dial moved: the seat count, or the shelf between two visits to the
 /// screen. Off `Custom` when no beach seats everyone (onto the stop after
 /// it, as the dial itself steps), onto the widest beach when five or six
-/// are seated and the map holds four. Without this the row kept reading a
-/// beach the match would not be played on: `Custom` with nothing fitting
-/// launched a generated 20x13 arena under the classic arena's name.
+/// are seated and the map holds four. Without it the row reads a beach the
+/// match will not be played on: `Custom` with nothing fitting launched a
+/// generated 20x13 arena under the classic arena's name.
 pub fn settle_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
     if config.map == MapChoice::Custom {
         match beaches.fitting(config.seats).len() {
@@ -385,9 +383,8 @@ mod tests {
     /// Every row fits the two cells that hold it, in every language, on
     /// every stop of every dial.
     ///
-    /// Measured in the same pixels the two cells are declared in, which
-    /// is the whole reason they are declared that way: [`LABEL_W`]
-    /// carries what a character-counted budget did to this card.
+    /// Measured in the same pixels the two cells are declared in, which is
+    /// why they are declared that way: see [`LABEL_W`].
     #[test]
     fn every_row_fits_its_cell_in_every_language() {
         use crate::app::i18n::metrics::text_px;
@@ -459,10 +456,9 @@ mod tests {
         }
     }
 
-    /// The card has to fit the window the interface was drawn for, the
-    /// same as the settings card does. One column here rather than two, so
-    /// there is room, but not so much that a cell can be widened without
-    /// looking.
+    /// The card has to fit the window the interface was drawn for, as the
+    /// settings card does. One column rather than two, so there is room,
+    /// but not enough to widen a cell without looking.
     #[test]
     fn the_card_fits_the_window_it_was_drawn_for() {
         let card = LABEL_W + VALUE_W + 2.0 * 10.0 + 2.0 * 22.0;
@@ -500,9 +496,9 @@ mod tests {
     /// biggest sensible one has to travel, and the biggest possible one has
     /// to be refused rather than truncated on arrival.
     ///
-    /// The wire test can only check the number [`MAX_BEACH_BYTES`] promises;
-    /// this checks that the promise is about beaches a player can actually
-    /// paint, which is what an assumed four hundred bytes never did.
+    /// The wire test can only check the number [`MAX_BEACH_BYTES`]
+    /// promises; this checks the promise covers beaches a player can
+    /// actually paint.
     #[test]
     fn the_biggest_beaches_the_editor_builds_are_sent_or_refused() {
         use crate::sim::{Board, CrabKind, Direction, Handedness, LevelKind, Spawner, TileKind};
@@ -612,12 +608,11 @@ mod tests {
     /// And the same beach refused again at the far end, where the round is
     /// actually built. The launch drops one that cannot seat the table, but
     /// the round *after* it does not: `call_next_round` re-sends the beach
-    /// it played on and works out `seats` afresh, and the queue admitted
-    /// between rounds makes that number bigger. Without this the two
-    /// players let in sat at a beach with no castle for them and banked
-    /// nothing all round, with nothing on any screen to say why.
+    /// and works out `seats` afresh, and the queue admitted between rounds
+    /// makes that number bigger, seating players at a beach with no castle
+    /// for them.
     ///
-    /// Both ends run this same check on the same bytes, so they fall back
+    /// Both ends run this check on the same bytes, so they fall back
     /// together and no peer desyncs over it.
     #[test]
     fn a_beach_too_small_for_the_table_is_not_played_on_either() {
@@ -658,10 +653,9 @@ mod tests {
     /// Which chairs the AI holds under a set of terms.
     ///
     /// Host and joiner each work this out from the same wire terms rather
-    /// than being told, so it has to answer the same for both or the two
-    /// play different tables. It also indexes a per-seat array straight
-    /// off a byte a peer chose, so a `bots` count larger than the table
-    /// must fill what is there and reach no further.
+    /// than being told, so it has to answer the same for both. It also
+    /// indexes a per-seat array straight off a byte a peer chose, so a
+    /// `bots` count larger than the table must reach no further.
     #[test]
     fn the_ai_holds_the_top_seats_and_reaches_no_further() {
         let terms = |bots| MatchTerms {
@@ -733,8 +727,7 @@ mod tests {
 
     /// A beach that fits nobody at this table is not silently absent: the
     /// dial skips its stop, and the row beside it says why. Two castles
-    /// stop being offered the moment a third player sits down, and that
-    /// used to read as a beach the game had lost.
+    /// stop being offered the moment a third player sits down.
     #[test]
     fn the_map_row_says_why_a_beach_is_not_on_offer() {
         use crate::app::i18n::EN;
@@ -861,10 +854,8 @@ mod tests {
 
     use crate::app::settings::GameSettings;
 
-    /// Open ocean is the one beach with no edges. The sim has supported
-    /// wrapping since the campaign started teaching it (level 26), but
-    /// nothing in versus ever turned it on, and every other map choice has
-    /// to stay walled, or a beach changes shape under everyone.
+    /// Open ocean is the one beach with no edges. Every other map choice
+    /// stays walled, or a beach changes shape under everyone.
     #[test]
     fn only_the_open_ocean_has_no_edges() {
         for map in MapChoice::ALL {
@@ -936,10 +927,9 @@ mod tests {
             app.update();
         };
 
-        // Tab opens the name box. Enter must not, or the name rows become
-        // a room with no door: they are last on the list, so a player who
-        // has just named everybody presses Enter to start and gets the
-        // name box again, and again.
+        // Tab opens the name box. Enter must not: the name rows are last
+        // on the list, so a player who has just named everybody presses
+        // Enter to start and would get the name box again.
         tap(&mut app, KeyCode::Tab);
         assert_eq!(app.world().resource::<MatchMenu>().naming, Some(0));
         assert!(

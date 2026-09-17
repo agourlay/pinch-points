@@ -133,16 +133,14 @@ pub fn all_distinct(binds: &[SeatBinds; BOUND_SEATS]) -> bool {
 /// bindings are live: M toggles the music anywhere; on a puzzle H asks for
 /// the hint, N and P step between stages and R restarts the run; in a
 /// versus round C copies the round code. Bound to a seat, such a key would
-/// do both jobs on one press - place a signpost *and* skip the stage - so
-/// none of them is offered. Escape is kept out the same way (it is how a
-/// capture is cancelled) but never sat in the list to begin with.
+/// do both jobs on one press, so none is offered. Escape is kept out the
+/// same way, being how a capture is cancelled.
 ///
 /// Not here, on purpose: W and S, which walk the menus but are stock
-/// bindings, and only ever read as menu keys on screens where the seats
-/// are not playing (the menus, the lobby, a paused round's card); S also
-/// steps a replay's speed, while nobody is playing; V pastes a code on the
-/// menu and the replay shelf and validates in the editor, T opens the
-/// lobby's chat - none of them a play screen either.
+/// bindings and only read as menu keys where the seats are not playing (the
+/// menus, the lobby, a paused round's card); S also steps a replay's speed;
+/// V pastes a code on the menu and the replay shelf and validates in the
+/// editor; T opens the lobby's chat.
 pub const GLOBAL_KEYS: [KeyCode; 6] = [
     KeyCode::KeyM,
     KeyCode::KeyH,

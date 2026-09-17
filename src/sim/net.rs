@@ -114,10 +114,9 @@ pub struct Lockstep {
     pause_at: Option<u32>,
     /// The highest pause frame ever lifted here, by our own resume or a
     /// peer's. A `Pause` naming that frame or an earlier one is an echo of
-    /// a pause that is over, still in flight from before the resume, and
-    /// is ignored. Without this the pause flapped: peers repeat `Pause`
-    /// every tick, so the last echoes always cross the `Resume`, re-paused
-    /// whoever had just resumed, who then echoed it back, for good.
+    /// a pause that is over and is ignored. Without this the pause flapped:
+    /// peers repeat `Pause` every tick, so the last echoes cross the
+    /// `Resume` and re-pause whoever had just resumed.
     lifted: Option<u32>,
 }
 
@@ -130,10 +129,8 @@ pub struct Lockstep {
 /// back is something they may still be missing. [`Lockstep::recent_commits`]
 /// therefore keeps every commit from `frame - span` on, which with commits
 /// running up to `frame + span - 1` is `2 * span` messages at most. A fixed
-/// window of forty was once used, on the reasoning that only `span` (33)
-/// commits can be outstanding, and it deadlocked under a one-way loss
-/// burst: the peer's frame had fallen `span` behind ours, ours had run
-/// `span` ahead of that, and the commit it needed had scrolled out.
+/// window of forty deadlocked under a one-way loss burst, with the commit
+/// the stalled peer needed already scrolled out.
 fn resend_span(delay: u32) -> u32 {
     delay + MAX_COMMIT_LEAD
 }
@@ -212,19 +209,15 @@ impl Lockstep {
     /// broadcast to the peers; a pause already in flight wins if it lands
     /// earlier, so two players hitting Escape together agree. `None` for a
     /// spectator, who does not get to stop everyone else's match and has
-    /// nothing to broadcast: it used to answer `u32::MAX` there, a frame
-    /// number a caller could mistake for one to send.
+    /// nothing to broadcast.
     pub fn request_pause(&mut self) -> Option<u32> {
         if self.watching() {
             return None;
         }
         // Past every pause already lifted, or the proposal would be read as
-        // an echo of one of them (see `lifted`) by every peer, this one
-        // included. That only bites when a pause is lifted before the sim
-        // reached it and this peer's commits sit more than a lead behind
-        // the frame it named; a frame the others may already have committed
-        // past is still a sound pause frame, they simply stop committing
-        // and the sim comes to rest a beat later than usual.
+        // an echo of one of them (see `lifted`). A frame the others may
+        // already have committed past is still a sound pause frame: they
+        // stop committing and the sim comes to rest a beat later.
         let mut frame = self.next_commit + PAUSE_LEAD;
         if let Some(lifted) = self.lifted {
             frame = frame.max(lifted + 1);
@@ -365,10 +358,9 @@ impl Lockstep {
     /// Which players the next frame is still waiting on. Empty means it is
     /// ready to simulate; anything else is who everybody is held up by.
     ///
-    /// Read-only, because the shell asks this to put a name on screen while
-    /// the picture is still, and a question the HUD asks every frame must
-    /// not be one that writes. Only seated players can hold a frame up; an
-    /// absent seat is filled at the moment its frame is made.
+    /// Read-only, because the HUD asks it every frame to put a name on
+    /// screen. Only seated players can hold a frame up; an absent seat is
+    /// filled at the moment its frame is made.
     pub fn awaiting(&self) -> Vec<PlayerId> {
         let Some(slot) = self.pending.get(&self.frame) else {
             // No frame made yet means nothing has arrived for it, so
@@ -386,21 +378,17 @@ impl Lockstep {
     ///
     /// Every frame from there fills their slot the way an absent seat is
     /// filled, including the frames already waiting on it, which unsticks
-    /// the round in the same breath. What moves into the empty
-    /// chair is not this layer's business: the shell puts an AI there, and
-    /// every peer derives the same moves for it from the same board.
+    /// the round in the same breath. What moves into the empty chair is not
+    /// this layer's business: the shell puts an AI there, and every peer
+    /// derives the same moves for it from the same board.
     ///
-    /// The frame is the one the decider was held up on, and it travels
-    /// with the decision, because the peers do not all hold the same
-    /// inputs from a player who has gone quiet: the host relays each input
-    /// as it arrives, and a peer that missed the relay of frame `n` may
-    /// well hold `n + 2`. Filling only the empty slots had that peer play
-    /// `n + 2` as sent while the host, which never got `n` and stopped
-    /// there, played it empty. Every slot from `frame` on is emptied
-    /// instead, whatever it held, and every peer applies the same frame.
-    /// A peer cannot have simulated past `frame` already: the decider had
-    /// no input for it, and no peer hears from a player except through
-    /// the decider.
+    /// The frame travels with the decision, because the peers do not all
+    /// hold the same inputs from a player who has gone quiet: a peer that
+    /// missed the relay of frame `n` may well hold `n + 2`, and filling
+    /// only the empty slots had it play `n + 2` as sent while the host
+    /// played it empty. Every slot from `frame` on is emptied instead,
+    /// whatever it held. No peer can have simulated past `frame`, since
+    /// none hears from a player except through the decider.
     pub fn abandon(&mut self, player: PlayerId, frame: u32) {
         debug_assert!(
             usize::from(player) < MAX_PLAYERS,
@@ -414,15 +402,6 @@ impl Lockstep {
         }
     }
 
-    /// Feed a peer's message (duplicates and already-simulated frames are
-    /// ignored, so resends are harmless).
-    ///
-    /// A frame further ahead than any peer still in step could have
-    /// committed is ignored too: their commits run at most a lead past
-    /// their frame, and their frame at most a lead past ours (see
-    /// [`resend_span`]). Every frame accepted here makes a slot, and a peer
-    /// naming frames up to `u32::MAX` would otherwise grow the table
-    /// without bound.
     /// The furthest frame a peer may name: as far ahead of the frame being
     /// simulated as a resend span twice over. Frame numbers arrive off the
     /// wire, and one past this is either a peer that has run away from the
@@ -431,6 +410,12 @@ impl Lockstep {
         self.frame + 2 * resend_span(self.delay)
     }
 
+    /// Feed a peer's message (duplicates and already-simulated frames are
+    /// ignored, so resends are harmless).
+    ///
+    /// A frame past the [`horizon`](Self::horizon) is ignored too: every
+    /// frame accepted here makes a slot, and a peer naming frames up to
+    /// `u32::MAX` would grow the table without bound.
     pub fn receive(&mut self, msg: InputMsg) {
         let horizon = self.horizon();
         if msg.frame < self.frame || msg.frame > horizon || !self.players.contains(&msg.player) {
@@ -844,8 +829,8 @@ mod abandon_tests {
     /// A player that stops sending holds up everybody, because a frame
     /// simulates only when every seat's action is known. Giving up on them
     /// has to unstick the frame already waiting, not merely the ones after
-    /// it. Otherwise the round stays frozen on the very frame that proved
-    /// they were gone.
+    /// it, or the round stays frozen on the frame that proved they had
+    /// gone.
     #[test]
     fn abandoning_a_player_unsticks_the_frame_they_were_holding() {
         let mut session = Lockstep::new(0, vec![0, 1], 0);
@@ -885,8 +870,8 @@ mod abandon_tests {
         assert_eq!(actions[1], PlayerAction::None);
     }
 
-    /// Everyone else is untouched. Giving up on one player must not drop
-    /// the round for the rest, which would be a rout rather than a rescue.
+    /// Everyone else is untouched: giving up on one player must not drop
+    /// the round for the rest.
     #[test]
     fn the_others_are_still_waited_for() {
         let mut session = Lockstep::new(0, vec![0, 1, 2], 0);
@@ -937,11 +922,10 @@ mod loss_tests {
     }
 
     /// One direction of the link goes dark for longer than a lead, while
-    /// the other keeps flowing. The peer that kept hearing runs a whole
-    /// lead past the one that did not, which itself ran a lead past its
-    /// stalled frame; the commit the quiet peer is stuck on is two leads
-    /// old on the loud one, and a fixed forty-deep tail had let it go. The
-    /// session then sat frozen for good, both peers "still talking".
+    /// the other keeps flowing. The commit the quiet peer is stuck on is
+    /// then two leads old on the loud one, which a fixed forty-deep tail
+    /// had already let go, freezing the session for good with both peers
+    /// "still talking".
     #[test]
     fn a_one_way_loss_burst_does_not_deadlock_the_session() {
         let blackout = 20..90;
@@ -970,9 +954,8 @@ mod pause_echo_tests {
 
     /// A peer that hears the resume, then a `Pause` echo still in flight
     /// from before it, must not pause again: peers repeat their pause frame
-    /// every tick, so those echoes always cross the resume, and taking
-    /// them at face value re-paused whoever had just resumed, who repeated
-    /// it back, and the two flapped between paused and playing for good.
+    /// every tick, so those echoes always cross the resume, and taken at
+    /// face value the two flap between paused and playing for good.
     #[test]
     fn a_stale_pause_echo_after_the_resume_is_ignored() {
         let mut a = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
@@ -1033,10 +1016,9 @@ mod pause_echo_tests {
 
     /// A resume names a frame off the wire, and the next local pause is
     /// proposed one past it. A peer naming the last frame there is made
-    /// that addition overflow: a panic in debug, and in release a
-    /// proposal that wrapped to zero, was dropped as an echo, and was
-    /// broadcast anyway, stopping every other table at a frame this one
-    /// never honoured. Bounded to the horizon like every input frame.
+    /// that addition overflow: a panic in debug, and in release a proposal
+    /// that wrapped to zero and was broadcast anyway. Bounded to the
+    /// horizon like every input frame.
     #[test]
     fn a_resume_from_the_end_of_time_cannot_break_the_next_pause() {
         let mut a = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);

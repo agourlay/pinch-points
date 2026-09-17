@@ -1,10 +1,8 @@
 //! What one datagram says, and the bytes it says it in.
 //!
 //! Byte 0 tags the message and byte 1 is the [`PROTOCOL_VERSION`], frozen
-//! there for all time so a build can tell "I cannot read this" from "I
-//! disagree with this". Adding a tag is a version bump exactly as much as
-//! changing a layout is, and it is the half that gets forgotten, because
-//! nothing stops compiling when you do.
+//! across versions so a build can tell "I cannot read this" from "I
+//! disagree with this".
 
 use super::*;
 
@@ -19,18 +17,14 @@ pub enum NetMsg {
     /// Every input the sender can still be holding for a peer: the newest
     /// commit and the resend tail behind it, in one datagram.
     ///
-    /// One datagram and not thirty-four, which is what this was until
-    /// version 11. The tail is repeated in full every tick, so at a
-    /// six-seat table the host was writing 850 datagrams a tick between
-    /// its own commits and the ones it relays: 25,500 a second, each
-    /// carrying ten bytes of input behind sixty-six of framing. Batched it
-    /// is 25 a tick, and the bytes fall eightfold with them.
+    /// One datagram a tick, not one per seat-frame: at a six-seat table
+    /// that took the host from 850 datagrams a tick to 25, and the bytes
+    /// fell eightfold with them.
     ///
-    /// Nothing about the redundancy changed, and that is deliberate: the
-    /// whole tail still goes out every tick, so a lost datagram is made
-    /// good by the next one 33 ms later exactly as a lost input was. What
-    /// did change is that a peer now gets all of a tick's tail or none of
-    /// it, rather than the ragged subset a burst of loss used to leave.
+    /// The whole tail still goes out every tick, so a lost datagram is
+    /// made good by the next one 33 ms later. A peer now gets all of a
+    /// tick's tail or none of it, rather than the ragged subset a burst of
+    /// loss used to leave.
     Inputs(Vec<InputMsg>),
     /// State fingerprint after `frame`, for loud desync detection.
     Hash { frame: u32, hash: u64 },
@@ -41,24 +35,20 @@ pub enum NetMsg {
         seats: u8,
         /// The seat this peer is given, or `None` for a peer that came to
         /// watch. On the wire that `None` is [`SPECTATOR_SEAT`], a number
-        /// outside the range of real seats. In memory it is an absence,
-        /// which is what a watcher is, and what the launch plan beside it
-        /// has called one all along.
+        /// outside the range of real seats.
         seat: Option<u8>,
         terms: MatchTerms,
         names: [WireName; crate::sim::MAX_PLAYERS],
         /// Where the series stands as this round begins, or `None` for a
         /// single round. On the wire the absence is a round number of
-        /// zero, a number no series ever reaches, the way a watcher's seat
-        /// is [`SPECTATOR_SEAT`]; in memory it is an absence.
+        /// zero, which no series ever reaches.
         ///
         /// The host says, because seats move: a peer that leaves between
         /// rounds frees its chair and everyone behind it moves up one, so
-        /// a tally each peer kept by seat number credited the departed
-        /// player's rounds to whoever moved into the seat. The host holds
-        /// the mapping and re-deals the tally with the chairs; a peer
-        /// admitted from the queue mid-series learns the standings the
-        /// same way, rather than starting a series of its own.
+        /// a tally kept by seat number credited the departed player's
+        /// rounds to whoever moved in. The host re-deals the tally with
+        /// the chairs, and a peer admitted from the queue mid-series
+        /// learns the standings the same way.
         standing: Option<SeriesStanding>,
         /// The beach itself, when the host picked one it built rather than
         /// one both peers already have. A generated arena travels as a
@@ -89,12 +79,10 @@ pub enum NetMsg {
     /// no way to recover from.
     ///
     /// `frame` is the one the host was held up on, and every peer empties
-    /// the seat from there: they do not all hold the same inputs from a
-    /// player who has gone quiet (the host relays each as it arrives, and
-    /// a peer that missed the relay of one may hold a later one), so
-    /// "from the frame you are stuck on" is not the same frame everywhere.
-    /// Repeated for the rest of the round, since a lost one leaves that
-    /// peer frozen while the others play on.
+    /// the seat from there: peers do not all hold the same inputs from a
+    /// player who has gone quiet, so "from the frame you are stuck on" is
+    /// not the same frame everywhere. Repeated for the rest of the round,
+    /// since a lost one leaves that peer frozen while the others play on.
     Abandoned { seat: u8, frame: u32 },
     /// Host → the lobby: who is at the table right now, in seat order.
     ///
@@ -122,10 +110,10 @@ pub enum NetMsg {
     /// way and cannot take you, but you are in line for the next one, with
     /// `ahead` people in front of you.
     ///
-    /// The answer to a greeting that used to be met with a spectator seat,
-    /// which was worse than useless: lockstep replays from frame zero, so
-    /// such a peer built a board nobody would ever send it inputs for and
-    /// sat there, apparently connected, forever.
+    /// The answer to a greeting that used to be met with a spectator seat:
+    /// lockstep replays from frame zero, so such a peer built a board
+    /// nobody would ever send it inputs for and sat there, apparently
+    /// connected, forever.
     Queued { ahead: u8 },
     /// "I speak protocol `version`, and what you sent me is not it." The
     /// answer to a datagram from another build, so a mismatched joiner is
@@ -176,24 +164,17 @@ impl NetMsg {
 
 // Byte 0 of every datagram.
 //
-// Adding a line here is a `PROTOCOL_VERSION` bump, exactly as much as
-// changing the layout of an existing message is, and it is the half that
-// gets forgotten, because nothing stops compiling when you do. Two builds
-// both claiming the same version, one of them sending a tag the other has
-// never heard of, is the silent disagreement that byte exists to prevent:
-// the older one reads it as noise and simply never acts on it.
-// Chat, the roster and the abandonment notice all shipped under version 4
-// before anybody noticed.
-//
-// So a new tag is three lines, not one: the tag, `HIGHEST_TAG` below it,
-// and the version.
+// A new tag is three lines, not one: the tag, `HIGHEST_TAG` below it, and
+// a `PROTOCOL_VERSION` bump. Nothing stops compiling if you skip the bump,
+// and then two builds claim the same version while one sends a tag the
+// other reads as noise: chat, the roster and the abandonment notice all
+// shipped under version 4 before anybody noticed.
 const TAG_HELLO: u8 = 0;
 /// Retired in version 11, when a tick's inputs became one datagram rather
 /// than thirty-four. The number stays spoken for and is never handed to
 /// another message: a version 10 peer still sends it, and `peek_version`
 /// only answers `Incompatible` for a tag inside the range, which is what
-/// tells that peer why its round never starts. Reusing the number would
-/// have this build read those datagrams as whatever took its place.
+/// tells that peer why its round never starts.
 const TAG_RETIRED_INPUT: u8 = 1;
 const TAG_HASH: u8 = 2;
 const TAG_START: u8 = 3;
@@ -207,28 +188,24 @@ const TAG_ROSTER: u8 = 10;
 const TAG_ABANDONED: u8 = 11;
 const TAG_INPUTS: u8 = 12;
 /// The last of them, which `peek_version` uses to tell one of ours from
-/// stray traffic on the port. Kept here rather than written into that
-/// check, so the line to update sits directly under the line being added.
+/// stray traffic on the port.
 const HIGHEST_TAG: u8 = TAG_INPUTS;
 
 /// Inputs one datagram may carry.
 ///
 /// The cap is the buffer: `2 + 1 + 127 * INPUT_BYTES` is 1019 bytes, inside
-/// [`MAX_DATAGRAM`] and inside any MTU worth worrying about, which matters
-/// more than the buffer does. A datagram past the path MTU is fragmented,
-/// and a fragment lost is the whole datagram lost, so a batch that grew to
-/// need two IP packets would be a resend tail that fails twice as often as
-/// the thing it exists to repair.
+/// [`MAX_DATAGRAM`] and inside any MTU worth worrying about. A datagram past
+/// the path MTU is fragmented, and a fragment lost is the whole datagram
+/// lost, so a batch that needed two IP packets would be a resend tail that
+/// fails twice as often as the thing it repairs.
 ///
 /// A tail never comes close: `2 * resend_span(DEFAULT_DELAY)` is 66. The
 /// host's relay does, at a full table, and chunks.
 pub const MAX_INPUTS_PER_DATAGRAM: usize = 127;
 
 /// How a peer that came to watch is written down in a `Start`: outside
-/// the range of real seats, so it cannot collide with one.
-///
-/// A wire detail and nothing more. Everything above this file says `None`,
-/// and the two are only ever exchanged in the codec below.
+/// the range of real seats, so it cannot collide with one. A wire detail:
+/// everything above this file says `None`.
 const SPECTATOR_SEAT: u8 = u8::MAX;
 
 /// Everything about a match that every peer has to agree on, or the boards
@@ -249,8 +226,7 @@ pub struct MatchTerms {
     /// Round length index.
     pub round: u8,
     /// How the round is scored, as a team-mode index (free-for-all, pairs,
-    /// trios). A byte rather than a flag since 2026-07-30, when teams stopped
-    /// being only 2v2.
+    /// trios).
     pub teams: u8,
     /// The board's PRNG seed, so every peer builds the same beach. Also
     /// what tells a fresh `Start` from the stale one a host re-answers a
@@ -260,20 +236,15 @@ pub struct MatchTerms {
     /// best of three, best of five. Every peer keeps its own tally, and
     /// they agree because they are counting the same deterministic boards,
     /// but only if they all know how many rounds take it.
-    ///
-    /// An index rather than a flag since 2026-08-22, when best-of-three
-    /// joined the dial - which is why the protocol version moved with it:
-    /// a build that read this as a flag would take a 2 for "not a series"
-    /// and stop after one round while the rest of the table played on.
     pub series: u8,
 }
 
 impl MatchTerms {
     /// Whether these terms call for a series at all. Index 0 is the dial's
-    /// "single round"; every other index is some best-of. This is the only
-    /// reading of the byte the app should make: comparing it against a
-    /// particular index once left best-of-five launching as a single round
-    /// on every joiner, because `== 1` is best-of-three and nothing else.
+    /// "single round"; every other index is some best-of. The only reading
+    /// of the byte the app should make: comparing against a particular
+    /// index once left best-of-five launching as a single round on every
+    /// joiner.
     pub fn is_series(self) -> bool {
         self.series != 0
     }
@@ -386,9 +357,9 @@ impl NetMsg {
             NetMsg::Hello { name } => bytes.extend_from_slice(&name),
             NetMsg::Inputs(ref inputs) => {
                 // Count first, then that many fixed-width inputs. A batch
-                // past the cap is truncated rather than sent whole, the way
-                // an oversized beach is: the alternative is a datagram the
-                // receiver never sees. Senders chunk, so nothing here does.
+                // past the cap is truncated rather than sent whole: the
+                // alternative is a datagram the receiver never sees.
+                // Senders chunk, so nothing here does.
                 debug_assert!(
                     inputs.len() <= MAX_INPUTS_PER_DATAGRAM,
                     "{} inputs in one datagram",
@@ -486,10 +457,8 @@ impl NetMsg {
                         .collect(),
                 ))
             }
-            // Spoken for and unread. A peer on this version never sends
-            // it; one on an older version is answered by the caller, which
-            // is the whole reason the number stays inside the tag range
-            // rather than being handed to something else.
+            // Spoken for and unread: a peer on this version never sends
+            // it, and one on an older version is answered by the caller.
             TAG_RETIRED_INPUT => None,
             TAG_HASH => {
                 let frame = u32::from_le_bytes(body.get(..4)?.try_into().ok()?);
@@ -501,19 +470,14 @@ impl NetMsg {
                 let names = read_table(body.get(2 + MatchTerms::BYTES..)?)?;
                 let (seats, seat) = (*body.first()?, *body.get(1)?);
                 // A table this build cannot sit at is refused outright
-                // rather than squeezed into range. Every per-seat array is
-                // `MAX_PLAYERS` long and the seat number goes on to index
-                // the lockstep's own slots, so a `Start` naming more seats
-                // than there are chairs, or seating us at one that is not
-                // at the table, is not a message to act on. Watching is the
-                // one seat legitimately outside the range.
+                // rather than squeezed into range: the seat number goes on
+                // to index the lockstep's own slots. Watching is the one
+                // seat legitimately outside the range.
                 //
-                // The AI holds the top seats, so the humans are the low
-                // `seats - bots` of them, and that is the range the joiner
-                // builds its lockstep from: a `Start` seating us in an AI's
-                // chair would have it play a session it is not a player of,
-                // which the lockstep refuses with a panic. Refused here
-                // instead, with the rest of the unplayable tables.
+                // The AI holds the top seats, so the joiner builds its
+                // lockstep over the low `seats - bots`. A `Start` seating
+                // us in an AI's chair would have it play a session it is
+                // not a player of, which the lockstep meets with a panic.
                 let humans = terms.humans(seats);
                 if !(2..=crate::sim::MAX_PLAYERS as u8).contains(&seats)
                     || (seat != SPECTATOR_SEAT && seat >= humans)
@@ -653,10 +617,8 @@ mod tests {
     /// twice the span is the most [`Lockstep::recent_commits`] can answer,
     /// and it is nowhere near the cap.
     ///
-    /// If this ever fails the fix is not a larger buffer: a datagram past
-    /// the path MTU fragments, and a resend tail that needs two IP packets
-    /// to arrive is one that fails twice as often as the loss it repairs.
-    /// Chunk instead, as the host's relay already does.
+    /// If this ever fails the fix is not a larger buffer but chunking, as
+    /// the host's relay already does. See [`MAX_INPUTS_PER_DATAGRAM`].
     #[test]
     fn a_full_resend_tail_is_one_datagram() {
         let span = (crate::sim::DEFAULT_DELAY + crate::sim::MAX_COMMIT_LEAD) as usize;
@@ -713,8 +675,7 @@ mod tests {
     /// The retired tag earns its keep at exactly one moment: a version 10
     /// peer dials in, sends the inputs it has always sent, and has to be
     /// told why nothing happens. That answer only goes out for a tag
-    /// inside the range, so the number stays spoken for and is never handed
-    /// to a message this build would then read those datagrams as.
+    /// inside the range, so the number stays spoken for.
     #[test]
     fn a_version_ten_input_is_refused_and_answered() {
         let mut old = vec![TAG_RETIRED_INPUT, 10];
@@ -752,10 +713,8 @@ mod tests {
     /// The series byte is an *index*, and every index but zero names some
     /// best-of. Read any narrower and it lies: `== 1` is best-of-three and
     /// nothing else, which once launched every best-of-five as a single
-    /// round on each joiner while the host went on counting a series.
-    ///
-    /// The whole byte, because a peer on another build picks the number and
-    /// this side has to answer the same way for all of them.
+    /// round on each joiner while the host went on counting a series. The
+    /// whole byte, because a peer on another build picks the number.
     #[test]
     fn every_series_index_but_zero_names_a_series() {
         let dialled = |series| MatchTerms {
@@ -1091,10 +1050,8 @@ mod wire_fuzz_probe {
                 }
             }
             let _ = NetMsg::peek_version(&bytes);
-            // The beacon decoder shares the port with none of that, but
-            // shares the network with all of it.
-            // Both names it carries: the beach's, and the host's behind it,
-            // which is the one that runs off the end of a short packet.
+            // Both names the beacon carries: the beach's, and the host's
+            // behind it, which is the one that runs off a short packet.
             let _ = beacon_name(&bytes, bytes.len(), BEACON_NAME_AT);
             let _ = beacon_name(&bytes, bytes.len(), BEACON_HOST_AT);
         }

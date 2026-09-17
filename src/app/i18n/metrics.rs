@@ -2,13 +2,12 @@
 //! faces takes each character, and how wide that face draws it.
 //!
 //! Test-only, and it exists because the cards lay their columns out in
-//! pixels while the obvious way to guard one is to count characters. Those
-//! are not the same question. The Japanese face draws a full em where
-//! DejaVu Sans Mono draws 0.602, so a fifteen-character Japanese label is
-//! not fifteen columns of anything, and the ratio between them - 1.66 - is
-//! not a whole number of spaces either. A width guard written in `chars()`
-//! passes a row that runs off the end of its cell and fails one that does
-//! not.
+//! pixels while the obvious way to guard one is to count characters. The
+//! Japanese face draws a full em where DejaVu Sans Mono draws 0.602, so a
+//! fifteen-character Japanese label is not fifteen columns of anything, and
+//! the ratio between them, 1.66, is not a whole number of spaces either. A
+//! width guard written in `chars()` passes a row that runs off its cell and
+//! fails one that does not.
 //!
 //! Which face takes a character is settled by what DejaVu has: every
 //! `TextFont` in the game asks for DejaVu, and `boot::teach_the_kanji_fallback`
@@ -120,12 +119,11 @@ static JP: LazyLock<Face> = LazyLock::new(|| Face {
 
 /// How wide `line` draws at `font_px`, in the faces the shell installs.
 ///
-/// A character neither face has draws as nothing at all - Bevy loads no
-/// system fonts, so there is no font of last resort - and that is a hole in
-/// the screen, not a width. It is counted at the UI face's advance so the
-/// caller measuring a cell gets an answer, and
-/// `the_japanese_font_carries_every_character_the_tables_use` is what
-/// actually catches it.
+/// A character neither face has draws as nothing at all, Bevy loading no
+/// system fonts, which is a hole in the screen rather than a width. It is
+/// counted at the UI face's advance so the caller measuring a cell gets an
+/// answer, and `the_japanese_font_carries_every_character_the_tables_use`
+/// is what catches it.
 pub fn text_px(line: &str, font_px: f32) -> f32 {
     line.chars()
         .map(|ch| {
@@ -144,9 +142,8 @@ mod tests {
     use super::*;
 
     /// The two numbers every width guard in the shell rests on. Written out
-    /// here so that re-subsetting a face to a different em fails one small
-    /// test with the reason in it, rather than a handful of card widths
-    /// with no clue why.
+    /// here so re-subsetting a face to a different em fails one small test
+    /// with the reason in it, rather than a handful of card widths.
     #[test]
     fn the_shipped_faces_measure_what_they_always_have() {
         assert!(
@@ -177,10 +174,9 @@ mod tests {
     }
 
     /// The curly quotes German and Dutch write are above the Japanese
-    /// tables' `\u{4ff}` cut but are drawn by DejaVu all the same. Measuring
-    /// them at a full em would overstate two languages' rows by a third of
-    /// a character each, which is exactly the kind of quiet wrongness a
-    /// codepoint threshold buys.
+    /// tables' `\u{4ff}` cut but are drawn by DejaVu all the same. Measured
+    /// at a full em they would overstate two languages' rows by a third of
+    /// a character each.
     #[test]
     fn a_curly_quote_is_measured_in_the_face_that_draws_it() {
         for quote in ['\u{201c}', '\u{201d}', '\u{201e}'] {

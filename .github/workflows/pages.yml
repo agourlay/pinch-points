@@ -30,12 +30,11 @@ jobs:
       - name: Assemble the site
         run: site/build.sh
       # Plain git rather than a third-party publish action: this pushes to
-      # our own repository with the token the runner already has, and the
-      # whole of it is five commands. gh-pages is a build artifact, not a
-      # history, so each run replaces it outright.
-      # The token arrives as an environment variable rather than being
-      # pasted into the script text, so it is never part of the command
-      # this step is built from.
+      # our own repository with the token the runner already has, in five
+      # commands. gh-pages is a build artifact, not a history, so each run
+      # replaces it outright. The token arrives as an environment variable
+      # rather than pasted into the script text, so it is never part of the
+      # command this step is built from.
       - name: Push the branch
         working-directory: _site
         env:

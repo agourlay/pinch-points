@@ -7,9 +7,7 @@
 //! Run: `cargo run --release --example verify_levels`. **Release, and not by
 //! preference**: this is an exhaustive-per-level search and a debug solver
 //! is tens of times slower (the whole run is `Board::tick`, ~86% by perf) —
-//! a minute in release across every core, far more unoptimised. It lived as
-//! `#[ignore]`d test `no_campaign_level_grants_a_post_it_does_not_need`, run
-//! in debug, which is the cost this binary exists to shed.
+//! a minute in release across every core, far more unoptimised.
 //!
 //! It is deliberately not in CI: a minute of solving on every push is too
 //! much for a check on data that changes far less often than code. Run it by
@@ -22,16 +20,14 @@
 //! It doubles as the calibration check for the budget: nothing else searches
 //! a real level under the shipped ceiling.
 //!
-//! It reads no arguments but `--lanes`: the levels are independent and share
-//! no state, so the run is split across the cores the machine admits to
-//! (a batch job, unlike `author`, which leaves half the machine for the
-//! person authoring on it). `--lanes N` (or `--lanes=N`) pins the count;
-//! `--lanes 0` means every core, which is the default here anyway.
+//! It reads no arguments but `--lanes`: the levels are independent, so the
+//! run is split across every core (a batch job, unlike `author`, which
+//! leaves half the machine for the person authoring on it). `--lanes N` (or
+//! `--lanes=N`) pins the count; `--lanes 0` means every core, the default.
 //!
-//! A progress bar counts the levels as they clear, so a run of a minute or
-//! more is not a silent terminal; a level that fails prints above the bar as
-//! it lands. Exits non-zero, and names every offending level, if any post
-//! proves unnecessary or any level slips past the budget.
+//! A progress bar counts the levels as they clear, and a level that fails
+//! prints above it. Exits non-zero, naming every offending level, if any
+//! post proves unnecessary or any level slips past the budget.
 
 mod common;
 
@@ -105,11 +101,10 @@ fn main() {
 
     // One bar for the whole run, ticked as each level clears. It counts
     // levels, not solver nodes: the levels are wildly uneven (a four-post
-    // board is minutes, a two-post one is instant), so the bar is honest
-    // about how many are done and no more - the ETA it shows is indicatif's,
-    // and it wanders while a slow level holds the count still. A failing
-    // level prints its complaint above the bar via `println`, so the bar is
-    // not corrupted by a stray line and the failures are visible as they land.
+    // board is minutes, a two-post one is instant), so the ETA is
+    // indicatif's and wanders while a slow level holds the count still. A
+    // failing level prints above the bar, so a stray line cannot corrupt
+    // it.
     let bar = common::bar(total, "levels");
 
     let complaints: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -126,10 +121,9 @@ fn main() {
                         let mut out = complaints.lock().expect("complaint lock");
                         // Through `suspend` so a failure shows the moment it
                         // lands even when the run is redirected to a file
-                        // (`bar.println` would drop it into a hidden target);
-                        // the same line is also kept for the final roll-up
-                        // below, which is what the exit code and a piped run
-                        // ultimately rely on.
+                        // (`bar.println` would drop it into a hidden
+                        // target). The same line is kept for the roll-up
+                        // below, which is what a piped run relies on.
                         bar.suspend(|| eprintln!("FAIL  {line}"));
                         out.push(line);
                     }

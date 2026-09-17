@@ -8,24 +8,20 @@
 //!
 //! Searches under [`DEFAULT_NODE_BUDGET`] rather than exhaustively, because
 //! that ceiling *is* the shipping constraint: `examples/verify_levels.rs`
-//! proves minimality under it, and the editor gives up there too. A level the
-//! budget cannot answer is a level that cannot ship, so hearing "gave up"
-//! while authoring is the useful answer and not a limitation. Pass
+//! proves minimality under it, and the editor gives up there too, so "gave
+//! up" while authoring is an answer rather than a limitation. Pass
 //! `--exhaustive` to wait for the truth instead.
 //!
-//! Files are searched in parallel: a batch of candidates is the everyday
-//! way this is used and each one is independent. Half the cores by
-//! default, because this is an authoring tool and not a batch job: it
-//! runs for tens of minutes at a time and the machine it runs on belongs
-//! to somebody who is also using it. `--lanes N` (or `--lanes=N`) sets it
-//! explicitly, and `--lanes 0` means every core.
+//! Files are searched in parallel, each being independent. Half the cores
+//! by default, because this is an authoring tool and not a batch job: it
+//! runs for tens of minutes at a time on a machine somebody is also using.
+//! `--lanes N` (or `--lanes=N`) sets it explicitly, and `--lanes 0` means
+//! every core.
 //!
 //! Results print as they land rather than in the order given, above a
-//! progress bar that counts the files off: a batch of a few hundred boards
-//! can run for half an hour, and a bar is how you tell "still solving" from
-//! "wedged" while the next slow level holds its lane. Each report is written
-//! in one `println` on the bar, so two lanes cannot interleave halfway
-//! through a level and the bar is never left corrupted by a stray line.
+//! progress bar that counts the files off, so a half-hour batch is not a
+//! silent terminal. Each report is written in one `println` on the bar, so
+//! two lanes cannot interleave halfway through a level.
 
 mod common;
 
@@ -55,12 +51,11 @@ fn main() {
             scope.spawn(move || {
                 for path in mine {
                     let line = report(path, effort);
-                    // `suspend` prints to real stdout - lifting the bar first
-                    // on a terminal, and simply running the closure when the
+                    // `suspend` prints to real stdout, lifting the bar first
+                    // on a terminal and simply running the closure when the
                     // output is redirected, where `bar.println` would drop
-                    // the line into a hidden draw target and lose the report
-                    // entirely. It also serialises the lanes, so two reports
-                    // cannot interleave.
+                    // the line into a hidden draw target. It also
+                    // serialises the lanes.
                     bar.suspend(|| {
                         use std::io::Write;
                         print!("{line}");
@@ -89,12 +84,11 @@ fn report(path: &str, effort: Effort) -> String {
             return out;
         }
     };
-    // Written out and read back before anything else is said about it. A
-    // level that does not survive that is a level whose stored crabs are
-    // not the crabs it starts with, and a recorded round stores its
-    // starting board *as a level*, so the replay would diverge. It caught
-    // `Castle On High`, whose crab faced a rock: the sim turns it on the
-    // first tick, so the file said Right and the board meant Up.
+    // Written out and read back before anything else is said about it: a
+    // level that does not survive that has stored crabs that are not the
+    // crabs it starts with, and a recorded round stores its starting board
+    // *as a level*. It caught `Castle On High`, whose crab faced a rock, so
+    // the file said Right and the board meant Up.
     match Level::parse(&level.to_text()) {
         Ok(back) if back.board().state_hash() == level.board().state_hash() => {}
         Ok(_) => {

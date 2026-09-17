@@ -118,10 +118,10 @@ pub(super) struct RoundOutcome {
 
 /// Tally a finished round for the local seat and clear the round scratch.
 ///
-/// A win with no raid taken is the Dry Castle trophy, the rule here that is
-/// easy to get subtly wrong, since the raid counter has to be read before
-/// it is cleared and cleared whatever the result. The round's banked count is
-/// the same shape: read for the best-round record, then reset either way.
+/// A win with no raid taken is the Dry Castle trophy: the raid counter has
+/// to be read before it is cleared, and cleared whatever the result. The
+/// round's banked count is the same shape, read for the best-round record
+/// and then reset either way.
 fn credit_round(stats: &mut Stats, scratch: &mut RoundScratch, outcome: RoundOutcome) {
     stats.best_round = stats.best_round.max(scratch.banked);
     if outcome.won {
@@ -260,10 +260,9 @@ pub fn reset_round_scratch(mut scratch: ResMut<RoundScratch>) {
 /// A puzzle was solved.
 ///
 /// Ordered after `progress::record_cleared` so the stage just finished is
-/// already counted: the last stage of a campaign is exactly the one this
-/// would otherwise miss, and it is the one the trophy is for. Only the
-/// built-in stages count, so a player who saved a level in the editor has
-/// not thereby unfinished the campaign.
+/// already counted: the last stage of a campaign is the one this would
+/// otherwise miss, and the one the trophy is for. Only the built-in stages
+/// count, so saving a level in the editor does not unfinish the campaign.
 #[allow(clippy::too_many_arguments)]
 pub fn record_puzzle(
     mut commands: Commands,
@@ -399,10 +398,9 @@ fn unlock_new(
             play_chime(commands, sounds, sfx_gain(settings, muted));
         }
     }
-    // Saved by the caller, once: every one of them writes the stats it
-    // just changed anyway, and a save is a sync to disk on the frame
-    // thread. This used to save here as well, per trophy, so an unlock
-    // mid-round cost two of them and a double unlock three.
+    // Saved by the caller, once: every one of them writes the stats it just
+    // changed anyway, and a save is a sync to disk on the frame thread.
+    // Saving here as well cost two per unlock and three for a double.
 }
 
 #[cfg(test)]

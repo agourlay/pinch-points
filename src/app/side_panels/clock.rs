@@ -4,8 +4,7 @@
 //! Both go through `hud::clock_into` and `hud::clock_color`, so they say
 //! the same thing and turn red together. What they do not share is the
 //! type: this one is the headline of a narrow column with nothing else in
-//! its card, where the header's has a whole strip to sit in. The doc used
-//! to claim "the same digits", which read as the same size and was not.
+//! its card, where the header's has a whole strip to sit in.
 
 use super::card;
 use crate::app::Sim;
@@ -61,10 +60,8 @@ pub(super) fn spawn_clock(root: &mut ChildSpawnerCommands) {
                     font_size: FontSize::Px(CLOCK_PX),
                     ..default()
                 },
-                // The calm colour, which is what `update_side_clock` will
-                // write on the first frame anyway. It used to spawn in a
-                // `SIDE_CLOCK` of its own - a second calm ink, a percent
-                // away from this one, that no frame ever drew.
+                // The calm colour, which is what `update_side_clock` writes
+                // on the first frame anyway.
                 TextColor(crate::app::palette::CLOCK_CALM),
             ));
         });

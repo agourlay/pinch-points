@@ -55,14 +55,13 @@ impl Level {
     }
 
     /// Serialize back to the text format `parse` reads. Round-trips exactly
-    /// for an un-ticked board that `parse` built (creature sub-tile state
-    /// is not representable, by design, since levels describe starting
-    /// states). A board edited by hand is a little different: placing a
-    /// gull draws twice from the board's PRNG, and the text carries the
-    /// seed, not the stream's position, so a board that placed and erased
-    /// gulls reads back with the survivors rolled afresh. That is why the
-    /// editor certifies the text it will save rather than the board it
-    /// edited (`level_here`).
+    /// for an un-ticked board that `parse` built (creature sub-tile state is
+    /// not representable, since levels describe starting states). A board
+    /// edited by hand differs: placing a gull draws twice from the board's
+    /// PRNG and the text carries the seed rather than the stream's
+    /// position, so one that placed and erased gulls reads back with the
+    /// survivors rolled afresh. Hence the editor certifies the text it will
+    /// save rather than the board it edited (`level_here`).
     pub fn to_text(&self) -> String {
         use std::fmt::Write;
         let board = &self.board;
@@ -114,9 +113,9 @@ impl Level {
             let _ = writeln!(out, "wrap: on");
         }
         // Written only when they are off, being on by default. An
-        // editor-made puzzle states its rule and so keeps whatever raids
-        // the board had: without this line it played, was checked and was
-        // hinted with raids on, while every campaign puzzle plays without.
+        // editor-made puzzle states its rule and keeps whatever raids the
+        // board had, so without this line it plays, is checked and is
+        // hinted with raids on while every campaign puzzle plays without.
         if !board.castle_raids() {
             let _ = writeln!(out, "raids: off");
         }
@@ -415,10 +414,10 @@ fn parse_lattice<'a>(lines: impl Iterator<Item = &'a str>, seed: u64) -> Result<
     }
     // A lattice spends `2n + 1` lines on `n` tiles, so three is the
     // narrowest that holds one and `2·255 + 1` the widest a `u8` dimension
-    // can name. Odd-sized alone let both ends through: a lone border line
-    // made a zero-sized board, which `Board::new` refuses with a panic, and
-    // an over-wide one wrapped the cast: a 300-tile beach loading silently
-    // as 44, which is worse than any rejection.
+    // can name. Checking odd-sized alone let both ends through: a lone
+    // border line made a zero-sized board, which `Board::new` refuses with
+    // a panic, and an over-wide one wrapped the cast, loading a 300-tile
+    // beach as 44.
     if lat_w < 3 || lat_h < 3 {
         return Err(format!(
             "map lattice must hold at least one tile, got {lat_w}×{lat_h}"
@@ -557,10 +556,9 @@ fn tile_glyph(tile: TileKind) -> char {
         TileKind::Empty | TileKind::Spawner(_) => '.',
         TileKind::Rock => '#',
         TileKind::Castle(owner) => (b'0' + owner) as char,
-        // Upper case is a log about to deflect right, lower case one about to
-        // deflect left. The pivot has to survive: generated arenas mirror
-        // their logs (a reflection swaps left and right), and a replay stores
-        // its starting board *as* a level.
+        // Upper case is a log about to deflect right, lower case one about
+        // to deflect left. The pivot has to survive: generated arenas mirror
+        // their logs, and a replay stores its starting board *as* a level.
         TileKind::Turnstile { next_right: true } => 'T',
         TileKind::Turnstile { next_right: false } => 't',
         TileKind::Kelp => 'K',
@@ -602,12 +600,12 @@ mod tests {
         Level::parse(&text)
     }
 
-    /// Placement is the last thing `parse` checks, and each refusal has to
-    /// name its reason: these files are hand-edited and pasted as codes,
-    /// and "invalid level" tells the author nothing. A spawner with period
-    /// 0 would divide the sim's tick by zero; a crab on a rock is standing
-    /// where nothing walks; an entity off the board would index past the
-    /// tile vector, which `spawn_crab` meets with a panic.
+    /// Placement is the last thing `parse` checks, and each refusal names
+    /// its reason: these files are hand-edited and pasted as codes, and
+    /// "invalid level" tells the author nothing. A spawner with period 0
+    /// divides the sim's tick by zero; a crab on a rock stands where
+    /// nothing walks; an entity off the board indexes past the tile
+    /// vector.
     #[test]
     fn placing_an_entity_where_it_cannot_go_is_refused_with_the_reason() {
         let err = level_with("spawner: 0,0 R 0").unwrap_err();

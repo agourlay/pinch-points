@@ -218,11 +218,10 @@ pub fn update_tide_clock(
             crate::sim::PUZZLE_TICK_LIMIT.saturating_sub(sim.0.ticks()),
         )),
         // A timed level shows its deadline while the signposts are still
-        // going down. Dry Feet is decided in eight seconds and the player
-        // was choosing where to spend their one post with nothing on screen
-        // saying so. Only levels that carry a round: the campaign tick
-        // limit is a backstop, not a deadline, and counting it down over an
-        // untimed puzzle would invent a pressure that is not there.
+        // going down: Dry Feet is decided in eight seconds, with the player
+        // choosing where to spend their one post. Only levels that carry a
+        // round, since the campaign tick limit is a backstop rather than a
+        // deadline.
         Screen::Puzzle if *phase.get() == Phase::Setup => sim.0.remaining_ticks(),
         Screen::Puzzle
         | Screen::Menu
@@ -335,14 +334,11 @@ pub fn update_hud(
     }
 }
 
-/// The menu is a full-bleed postcard: the header backdrop gets out of
-/// the way there and returns on every other screen.
 /// The crab field guide: each kind in its colour with what it banks.
 ///
-/// It used to live on the landing menu, which is the one screen where you
-/// are not looking at a crab. It sits at the foot of the play screens
-/// instead, opposite the prompt, where the thing it explains is on the
-/// board in front of you.
+/// At the foot of the play screens, opposite the prompt, where the thing it
+/// explains is on the board in front of you, rather than on the landing
+/// menu, which is the one screen with no crab on it.
 #[derive(Component)]
 pub struct FieldGuide;
 
@@ -396,8 +392,7 @@ fn spawn_field_guide(
 ) {
     // Its own row, in the band between the foot of the board and the
     // prompt. It cannot share the prompt's line: with the traits on it the
-    // two come to more than the window is wide in every language, and most
-    // of a crab is what it does, not what it banks.
+    // two come to more than the window is wide in every language.
     commands
         .spawn((
             FieldGuide,
@@ -483,6 +478,8 @@ pub fn field_guide_visibility(
     }
 }
 
+/// The menu is a full-bleed postcard: the header backdrop gets out of the
+/// way there and returns on every other screen.
 pub fn header_backdrop(
     screen: Res<State<Screen>>,
     mut bars: Query<&mut BackgroundColor, With<HeaderBar>>,

@@ -30,8 +30,8 @@ fn four_hard_bots_finish_a_round_with_a_result() {
 /// A bot must never propose something the board would refuse.
 ///
 /// The sim simply drops an illegal action, so a bot that produced them
-/// would not crash - it would quietly play a worse game than its level
-/// claims, on some maps and not others, and nothing would ever say so.
+/// would not crash: it would play a worse game than its level claims, on
+/// some maps and not others, with nothing to say so.
 #[test]
 fn a_bot_never_proposes_a_placement_the_board_refuses() {
     for (seats, seed) in [(2u8, 1u64), (4, 2), (6, 3)] {
@@ -65,10 +65,10 @@ fn a_bot_never_proposes_a_placement_the_board_refuses() {
 
 /// And never holds more posts than the rules allow it.
 ///
-/// The cap is the whole of the versus economy: a seat that could quietly
-/// keep a fourth post would be playing a different game from the players
-/// beside it, and the board enforces the cap rather than the bot, so the
-/// bot asking for too many would show up only as a bot that wastes turns.
+/// The cap is the whole of the versus economy: a seat that kept a fourth
+/// post would be playing a different game from the players beside it. The
+/// board enforces the cap rather than the bot, so a bot asking for too many
+/// shows up only as one that wastes turns.
 #[test]
 fn a_bot_never_holds_more_posts_than_the_rules_allow() {
     let mut board = classic_arena_seeded(0xB0_7CA9, false, 4);
@@ -91,9 +91,9 @@ fn a_bot_never_holds_more_posts_than_the_rules_allow() {
 
 /// Every beach the game ships plays out under bots and reaches the wave.
 ///
-/// A map that stalled - no route from a spawner to any castle, a seat
-/// walled off from the sand - would look fine in the editor and be a dead
-/// round in the living room. The bots are the only thing that walks every
+/// A map that stalled (no route from a spawner to any castle, a seat walled
+/// off from the sand) would look fine in the editor and be a dead round in
+/// the living room, and the bots are the only thing that walks every
 /// shipped arena end to end.
 #[test]
 fn every_shipped_arena_plays_out_under_bots() {

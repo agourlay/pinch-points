@@ -99,10 +99,9 @@ fn first_live(from: usize, live: &[bool]) -> Option<usize> {
         .find(|&row| live[row])
 }
 
-/// Enter, from either key that says it: the main one or the numpad's.
-/// One question rather than a per-screen pair of `just_pressed` checks,
-/// because the screens disagreed on whether the numpad counted, and a
-/// player whose Enter is on the numpad should be heard everywhere.
+/// Enter, from either key that says it: the main one or the numpad's. One
+/// question rather than a per-screen pair of `just_pressed` checks, which
+/// disagreed on whether the numpad counted.
 pub fn enter(keys: &ButtonInput<KeyCode>) -> bool {
     keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter)
 }
@@ -160,9 +159,8 @@ pub fn screen_card() -> (ShoreCard, Node, BackgroundColor, BorderColor, BoxShado
 
 /// How tall the HUD's header strip is. Lives here rather than in `hud`,
 /// beside [`BAR_H`], which is derived from it: the bar and the space kept
-/// clear for it are one measurement, and they were two numbers in two
-/// files with nothing between them. A header grown to 56 would have
-/// tucked itself under every card on every list screen, silently.
+/// clear for it are one measurement, and as two numbers in two files a
+/// header grown to 56 tucks itself under every card on every list screen.
 pub const HEADER_H: f32 = 42.0;
 
 /// The first row clear of the header, for the in-round chrome that hangs
@@ -175,10 +173,9 @@ const BAR_AIR: f32 = 10.0;
 
 /// What [`between_bars`] keeps clear at each end.
 ///
-/// One inset, used top and bottom, so a card sits centred in what is
-/// left. Above it that is the header exactly, plus the air; below it the
-/// prompt pill is shorter than the header, so the same number is more
-/// room than the pill needs and the card clears it comfortably.
+/// One inset, used top and bottom, so a card sits centred in what is left.
+/// Above it that is the header exactly, plus the air; below it the prompt
+/// pill is shorter, so the card clears it comfortably.
 pub const BAR_H: f32 = HEADER_H + BAR_AIR;
 
 /// The frame a card is centred in: everything between the header bar and
@@ -230,8 +227,8 @@ pub fn band(picked: bool) -> Color {
 
 /// A card row's height and the air between two of them. Public because a
 /// card that hides rows cannot size itself to its contents and has to do
-/// the arithmetic: doing it with its own guess at these numbers is how the
-/// match setup card came out an inch too short for a full table.
+/// the arithmetic, and its own guess at these numbers left the match setup
+/// card an inch too short for a full table.
 pub const ROW_H: f32 = 25.0;
 pub const ROW_GAP: f32 = 2.0;
 /// A group heading with the margin under it.
@@ -258,9 +255,8 @@ pub fn card_row() -> (Node, BackgroundColor) {
 /// Which side of a two-column card row a cell is: what the row sets, and
 /// what it is set to.
 ///
-/// One enum rather than one per screen. The settings card and the key
-/// bindings card each declared an identical `Half { Label, Value }`, which
-/// is two names for one idea and two places to change it.
+/// One enum rather than one per screen: the settings card and the key
+/// bindings card each declared an identical `Half { Label, Value }`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Half {
     Label,
@@ -351,10 +347,9 @@ pub fn spawn_rows<M: Component>(
 ///
 /// Takes the query's `Mut` rather than a plain `&mut Text`, and that is the
 /// whole trick: `Mut`'s `DerefMut` flags the component changed the instant
-/// it is taken, so a helper reached through one would announce a change
-/// before it had looked at whether there was one, and `bevy_ui` would
-/// re-measure the text anyway. Reading through `Deref` to compare is free;
-/// only the write inside the branch reaches for `DerefMut`.
+/// it is taken, so a helper reached through one announces a change before
+/// looking at whether there was one. Reading through `Deref` to compare is
+/// free; only the write inside the branch reaches for `DerefMut`.
 ///
 /// Generic over the string-shaped text components, because a [`TextSpan`],
 /// half of a line that is two colours, costs as much to write blindly as
@@ -446,8 +441,7 @@ fn tide_bundle(foam: &Handle<Image>) -> (ImageNode, Node) {
             flip_y: true,
             // Stretched, not tiled: tiling scales the sprite down to the
             // strip's height first, and six scallops inside twenty pixels
-            // come out as a dotted line. Pulled across the card instead,
-            // the same six read as slow, wide breakers.
+            // come out as a dotted line.
             image_mode: NodeImageMode::Stretch,
             ..default()
         },
@@ -535,13 +529,11 @@ pub fn paint_row(selected: bool, line: &str, text: &mut Mut<Text>, color: &mut M
 mod tests {
     use super::*;
 
-    /// The guard has to survive the trip through `Mut`. Bevy flags a
-    /// component the moment `DerefMut` is taken, so a helper that accepted
-    /// a plain `&mut Text` announced every write as a change before it had
-    /// compared anything, and `bevy_ui` re-measures and re-rasterizes on
-    /// `Changed<Text>`, which is the cost the guard exists to dodge.
-    /// The check is on the flag, not the string: both spellings write the
-    /// same bytes and only one of them is free.
+    /// The guard has to survive the trip through `Mut`: Bevy flags a
+    /// component the moment `DerefMut` is taken, and `bevy_ui` re-measures
+    /// and re-rasterizes on `Changed<Text>`, which is the cost the guard
+    /// exists to dodge. The check is on the flag, not the string: both
+    /// spellings write the same bytes and only one is free.
     #[test]
     fn rewriting_the_same_text_flags_nothing() {
         let mut world = World::new();

@@ -22,9 +22,8 @@ pub struct Replay {
     /// seat that was never named.
     ///
     /// Not derivable from anything else in the file, and not the watcher's
-    /// business to supply: a round played online was played by whoever the
-    /// table agreed on, and a replay that fell back to the local couch
-    /// names put this machine's P1 on somebody else's crabs.
+    /// business to supply: a replay that fell back to the local couch names
+    /// would put this machine's P1 on somebody else's crabs.
     pub names: [String; MAX_PLAYERS],
 }
 

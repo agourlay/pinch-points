@@ -46,7 +46,7 @@ img { display: block; width: 100%; height: auto; }
 
 /* The name and what it is are the headline: a reader who takes in one line
    of this page should come away knowing both. Three steps down from here,
-   each a clear size apart so the eye can order them at a glance. */
+   each a clear size apart. */
 .hero h1 {
   margin: 0 0 16px;
   font-size: clamp(2.5rem, 6.6vw, 4.2rem);

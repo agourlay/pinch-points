@@ -74,10 +74,9 @@ pub fn file_name(stamp: u64, winner: &str) -> String {
 
 /// Drop the oldest rounds until at most `cap` are kept.
 ///
-/// Called after a round is filed, so the shelf is trimmed at the one moment
-/// it can have grown. Best-effort like every other write here: a file that
-/// will not delete stays on the shelf rather than stopping the game, and
-/// the next round tries again.
+/// Called after a round is filed, the one moment the shelf can have grown.
+/// Best-effort like every other write here: a file that will not delete
+/// stays on the shelf, and the next round tries again.
 ///
 /// Only rounds are counted and only rounds are removed. `last.txt` and the
 /// highlight reel live in the same directory and belong to the menu, not to
@@ -154,17 +153,14 @@ fn label_of(path: &std::path::Path) -> String {
 /// the daily challenge already uses, and the offset to add first comes from
 /// the system zone (see [`crate::app::clock::local_offset`]).
 ///
-/// The offset is taken at the stamp rather than now, so a round kept in
-/// August and one kept in January are each shown on the clock that was on
-/// the wall when they were played, not on today's.
+/// The offset is taken at the stamp rather than now, so a round is shown on
+/// the clock that was on the wall when it was played.
 fn clock(stamp: u64) -> String {
     stamp_text(stamp, crate::app::clock::local_offset(stamp))
 }
 
-/// The same, with the offset handed in: what the shelf renders is a
-/// function of the stamp and the zone, and only the zone needs a file to
-/// answer it. Split so the format can be tested on a machine in any zone,
-/// which is every machine.
+/// The same, with the offset handed in, so the format can be tested on a
+/// machine in any zone.
 fn stamp_text(stamp: u64, offset: i64) -> String {
     // A clock set before 1970 already reads as zero (`clock::now_secs`);
     // west of Greenwich the offset can push such a stamp below it, and the
@@ -204,11 +200,10 @@ pub fn enter_library(
             wrap.spawn(menu_ui::screen_card()).with_children(|card| {
                 menu_ui::heading_row(card, tr.replays_heading, None);
                 // The empty-shelf line, which the rows cannot carry: a row
-                // cell is one shelf-wide column that does not wrap, and this
-                // sentence is wider than it, so squeezed in there it ran off
-                // the side of the card. Its own line, the shelf's width and
-                // free to wrap, keeps it inside. Blank, and out of the way,
-                // the moment there is a round to show.
+                // cell is one shelf-wide column that does not wrap, and
+                // this sentence is wider than it. Its own line, free to
+                // wrap, keeps it inside, and it goes the moment there is a
+                // round to show.
                 card.spawn((
                     EmptyShelfNote,
                     Text::new(""),
@@ -339,9 +334,8 @@ pub fn library_input(
 /// The selected round as a share code on the clipboard.
 ///
 /// A round is thirty kilobytes of text and compresses to about eight
-/// thousand characters, which is a paste rather than a thing anyone types,
-/// so the message says how long it is and the player decides whether that
-/// goes in a chat window or a file.
+/// thousand characters, so the message says how long it is and the player
+/// decides whether that goes in a chat window or a file.
 fn copy_selected(
     clipboard: &mut Clipboard,
     tr: &crate::app::i18n::Tr,
@@ -366,10 +360,10 @@ fn copy_selected(
 /// The round a pasted code carries, and the text to file it under, or what
 /// to say about why not.
 ///
-/// Parsed before anything is written, so what lands in the library is a round
-/// this build can actually play back: a file that only fails when someone
-/// presses Enter on it is worse than no file. Takes the pasted code rather
-/// than the clipboard so it can be tested without touching the real one.
+/// Parsed before anything is written, so what lands in the library is a
+/// round this build can play back rather than a file that fails when
+/// somebody presses Enter on it. Takes the pasted code rather than the
+/// clipboard so it can be tested without touching the real one.
 fn round_from(
     pasted: Option<(crate::share::Kind, Vec<u8>)>,
     tr: &crate::app::i18n::Tr,
@@ -384,8 +378,7 @@ fn round_from(
 /// other round. The file carries the inputs and not the result, so the
 /// round is played through to its last tick; it carries no team mode
 /// either, so it is read as a free-for-all. Named as the recording named
-/// the seat, or by its number. It used to be filed under the beach's
-/// name, next to rounds filed under a player's.
+/// the seat, or by its number.
 fn winner_of(replay: &Replay, tr: &crate::app::i18n::Tr) -> String {
     let board = replay.playback();
     let leaders = crate::app::side_panels::leading_seats(
@@ -540,8 +533,7 @@ mod tests {
     /// A round survives being carried as a share code and comes back as the
     /// same text, filed under whoever took it, which for forty ticks of
     /// nobody banking anything is nobody. The clipboard itself is not
-    /// touched: with `system_clipboard` on it is the real one, and a test
-    /// has no business sitting on what someone just copied.
+    /// touched: with `system_clipboard` on it is the real one.
     #[test]
     fn a_round_travels_as_a_code_and_comes_back() {
         let tr = &crate::app::i18n::EN;
@@ -656,9 +648,7 @@ mod tests {
 /// The row of controls under a replay: where the round has got to, whether
 /// it is running, and how fast.
 ///
-/// A recording used to be a thing you started and then watched go past,
-/// with the speed hidden in the status slot and no way to stop it. This is
-/// the shape people already know from every video player: a track that
+/// The shape people already know from every video player: a track that
 /// fills, a state, and a clock.
 #[derive(Component)]
 pub struct ReplayBar;
@@ -808,7 +798,7 @@ pub fn update_replay_bar(
 /// Space stops and starts a recording.
 ///
 /// Only while one is playing: in a live match the same key pulls a
-/// signpost, and a round nobody can pause is the point of a live match.
+/// signpost.
 pub fn playback_pause_input(
     keys: Res<ButtonInput<KeyCode>>,
     playback: Res<Playback>,

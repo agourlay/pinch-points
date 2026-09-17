@@ -1,13 +1,10 @@
 //! One reading of the keyboard as text.
 //!
-//! Three screens take typed input: a level's name, a seat's name, a line
-//! of chat. Each drained the keystroke events itself, and each had its own
-//! copy of the same ladder: skip releases, Backspace and Delete erase, a
-//! handful of keys finish, everything else is the text the keystroke
-//! produces, so the player's own layout and their shift key decide what a
-//! key means. The copies had already grown three different ideas of
-//! "finished"; here the ladder is written once and the finishing keys are
-//! the caller's list.
+//! Three screens take typed input: a level's name, a seat's name, a line of
+//! chat. As a copy of the ladder apiece (skip releases, Backspace and
+//! Delete erase, a handful of keys finish, everything else is the text the
+//! keystroke produces) they had grown three ideas of "finished". Here the
+//! ladder is written once and the finishing keys are the caller's list.
 
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;

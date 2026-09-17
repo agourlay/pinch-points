@@ -14,11 +14,9 @@ pub(super) const HOST_TTL: f32 = 5.0;
 /// that a table showing five players has five players at it.
 pub(super) const PEER_TTL: f32 = 4.0;
 
-/// The three timers have to stay in this order, and it is cheaper to say
-/// so to the compiler than to test it: a peer must outlive a burst of lost
-/// greetings, and must be given up before the beach it is sitting at is,
-/// or a table would empty itself one player at a time while the beach it
-/// belongs to is still being listed as open.
+/// The three timers have to stay in this order, and it is cheaper to say so
+/// to the compiler than to test it: a peer must outlive a burst of lost
+/// greetings, and must be given up before the beach it is sitting at is.
 const _: () = {
     assert!(PEER_TTL > 3.0 * ANNOUNCE_EVERY);
     assert!(PEER_TTL < HOST_TTL);
@@ -35,8 +33,7 @@ pub struct HostEntry {
     pub name: String,
     /// The player who put the beach up, from the same beacon. Empty from a
     /// build that announced none. "Room 3" is a good name for a game and
-    /// says nothing about whose it is, which in a hall of eight is what
-    /// somebody looking for their friend actually wants.
+    /// says nothing about whose it is.
     pub host: String,
     /// The table as its host last described it. `seats` is 0 from a build
     /// that announced no occupancy, which the list reads as "unknown"
@@ -56,9 +53,8 @@ impl HostEntry {
     }
 
     /// What the beach is called. One that announced no name falls back to
-    /// its host's, and one that announced neither to its address. That is
-    /// what the whole list showed before names existed, and is now a column
-    /// of its own, so it is the last thing worth repeating here.
+    /// its host's, and one that announced neither to its address, which has
+    /// a column of its own.
     pub fn who(&self) -> String {
         match (self.name.is_empty(), self.host.is_empty()) {
             (false, _) => self.name.clone(),
@@ -106,10 +102,9 @@ impl HostEntry {
 /// at once, and one that has gone quiet for [`HOST_TTL`] drops off: a host
 /// that quit should not sit in the join list forever.
 ///
-/// The timeout is the backstop, not the mechanism. A host that leaves
-/// properly says so and is gone within the frame; the ageing is for the
-/// ones that cannot say anything: a killed process, a pulled cable, a
-/// laptop lid.
+/// The timeout is the backstop, not the mechanism: a host that leaves
+/// properly says so and is gone within the frame, and the ageing is for a
+/// killed process, a pulled cable, a laptop lid.
 ///
 /// Pure, so both rules are testable without sockets.
 pub(super) fn refresh_hosts(
@@ -127,9 +122,8 @@ pub(super) fn refresh_hosts(
         match beacon {
             Beacon::Closing { id } => hosts.retain(|host| !same_beach(host, *id, addr)),
             // Everything the beacon carries is refreshed along with the
-            // age: a beach fills up, empties, and starts its round while
-            // the list is watching, and a host first heard before it had a
-            // name should not keep the gap.
+            // age: a beach fills up, empties and starts its round while the
+            // list is watching.
             Beacon::Here {
                 id,
                 name,
@@ -165,8 +159,8 @@ pub(super) fn refresh_hosts(
     hosts.retain(|host| host.age < HOST_TTL);
     // A stable order, so the list does not reshuffle under a player's
     // finger as beaches come and go. By name first, because that is what
-    // the list shows and what someone is looking for; by address to break
-    // ties, because two children will both call their beach "Sam".
+    // the list shows; by address to break ties, because two children will
+    // both call their beach "Sam".
     hosts.sort_by(|a, b| {
         fold_case(&a.name)
             .cmp(fold_case(&b.name))
@@ -190,13 +184,11 @@ pub(super) fn same_beach(host: &HostEntry, id: u64, addr: SocketAddr) -> bool {
 /// Case-insensitive order over a name, without building a lowercased copy
 /// of it to get there.
 ///
-/// This is a comparator, and a comparator on a list of `n` runs `n log n`
-/// times, every frame, because the list is refreshed every frame. The
-/// obvious `to_lowercase().cmp(&to_lowercase())` allocates twice each time
-/// it is asked, which costs nothing at two beaches and some fifty thousand
-/// allocations a second at forty. The address is compared as `(ip, port)`
-/// for the same reason: `SocketAddr` has no `Ord`, and `to_string` on one
-/// is another two.
+/// A comparator on a list of `n` runs `n log n` times every frame, because
+/// the list is refreshed every frame, and `to_lowercase().cmp(&to_lowercase())`
+/// allocates twice each time: fifty thousand allocations a second at forty
+/// beaches. The address is compared as `(ip, port)` for the same reason,
+/// `SocketAddr` having no `Ord`.
 fn fold_case(name: &str) -> impl Iterator<Item = char> + '_ {
     name.chars().flat_map(char::to_lowercase)
 }
@@ -215,9 +207,8 @@ pub fn discover(time: Res<Time>, mut state: ResMut<LobbyState>) {
 }
 
 /// A browser's arrows walk the beach list. Enter takes the one under the
-/// cursor, and the digit keys stay as a shortcut to the first nine,
-/// because "press 3" is the fastest thing in the world to shout across a
-/// room.
+/// cursor, and the digit keys stay as a shortcut to the first nine, since
+/// "press 3" is a fast thing to shout across a room.
 ///
 /// Arrows only, not the W/S pairing the other menus also accept: W is the
 /// watch toggle here, and has been since before there was a list to walk.
@@ -326,10 +317,9 @@ mod list_tests {
         assert_eq!(old.creator(), "");
     }
 
-    /// A school hall can have more games than the list has rows, and they
-    /// come and go while a child is reading it. The cursor holds onto the
-    /// beach it names, not the row it sat in. Otherwise pressing Enter
-    /// joins whichever game happened to slide into that row.
+    /// A hall can have more games than the list has rows, and they come and
+    /// go while somebody is reading it, so the cursor holds onto the beach
+    /// it names rather than the row it sat in.
     #[test]
     fn the_cursor_follows_the_beach_not_the_row() {
         let mut state = LobbyState::default();
@@ -385,10 +375,9 @@ mod list_tests {
         assert_eq!(order, ["Anna", "Bo", "Cy"]);
     }
 
-    /// The order does not depend on case, and putting a name in a
-    /// different case does not let a beach jump the queue. Compared
-    /// without lowercasing anything, so the assertion is also a check that
-    /// the allocation-free comparator agrees with the obvious one.
+    /// The order does not depend on case. Compared without lowercasing
+    /// anything, so this also checks the allocation-free comparator against
+    /// the obvious one.
     #[test]
     fn names_sort_without_regard_to_case() {
         let mut hosts = Vec::new();
@@ -450,13 +439,11 @@ mod list_tests {
         assert!(at < state.hosts.len());
     }
 
-    /// The bug this was reported as: one game, listed twice. Every beacon
-    /// goes out to the broadcast address *and* to loopback, because real
-    /// broadcast does not reliably come back round to the machine that
-    /// sent it and same-machine play has to work. A second instance on the
-    /// host's own machine therefore hears both copies, one sourced from
-    /// 127.0.0.1 and one from the LAN address, and keying the list by
-    /// address made them two beaches.
+    /// One game, listed twice. Every beacon goes out to the broadcast
+    /// address *and* to loopback, since real broadcast does not reliably
+    /// come back round to the machine that sent it, so a second instance on
+    /// the host's own machine hears both copies and keying the list by
+    /// address makes them two beaches.
     #[test]
     fn one_beach_heard_from_two_addresses_is_one_row() {
         let mut hosts = Vec::new();

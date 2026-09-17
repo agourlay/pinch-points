@@ -4,10 +4,10 @@
 //!
 //! Capture is deliberately narrow: only [`binds::bindable`] keys count, so
 //! Escape always means "never mind" and the keys the game reads on its own
-//! during play ([`binds::GLOBAL_KEYS`]: music, hint, stage skip, restart,
-//! round code) stay theirs; and a key already doing another job is refused
-//! rather than silently stolen: the two keyboard seats share one keyboard,
-//! and a shadowed action is a seat that cannot move.
+//! during play ([`binds::GLOBAL_KEYS`]) stay theirs. A key already doing
+//! another job is refused rather than silently stolen: the two keyboard
+//! seats share one keyboard, and a shadowed action is a seat that cannot
+//! move.
 
 use crate::app::Screen;
 use crate::app::binds::{self, Action, BOUND_SEATS, SeatBinds};
@@ -54,9 +54,9 @@ pub struct ControlsCell(usize, Half);
 
 /// Action gutter and key gutter, sized in pixels for the widest thing
 /// either ever holds in any language: the French "remove all your arrows"
-/// on the left, its "press a key" prompt on the right. Measured, and held
-/// to, by `every_row_fits_its_cell_in_every_language`; the cells clip
-/// silently, and at the old 268 and 196 seven strings did.
+/// on the left, its "press a key" prompt on the right. Held to by
+/// `every_row_fits_its_cell_in_every_language`, since the cells clip
+/// silently: at 268 and 196 seven strings did.
 const LABEL_W: f32 = 304.0;
 const VALUE_W: f32 = 280.0;
 /// The row font, which the measurement has to be taken at.

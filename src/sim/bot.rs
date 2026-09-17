@@ -76,9 +76,9 @@ impl BotLevel {
     /// One placement in this many is aimed the wrong way: the easy bot's
     /// hand slips. Zero means it never blunders.
     ///
-    /// Derived from the tick and the seat rather than a random draw: the bot
-    /// must stay a pure function of the board so every peer of an online
-    /// match derives the same move for an AI seat.
+    /// Derived from the tick and the seat rather than a random draw, so the
+    /// bot stays a pure function of the board and every peer derives the
+    /// same move for an AI seat.
     fn blunder_every(self) -> u64 {
         match self {
             BotLevel::Easy => 4,
@@ -124,9 +124,9 @@ impl BotLevel {
     ///
     /// Every seat decides once per cadence window (an unequal rate simply
     /// lets the faster thinker play more) at a moment drawn from the window
-    /// and the seat. Drawn rather than a fixed grid of slots because
-    /// the spawner holes fire on even ticks, so a seat parked on an odd slot
-    /// would meet every new crab a beat before a seat on an even one.
+    /// and the seat. Drawn rather than a fixed grid of slots because the
+    /// spawner holes fire on even ticks, so a seat parked on an odd slot
+    /// meets every new crab a beat before a seat on an even one.
     ///
     /// Ties inside a single tick are the sim's business, not the bot's:
     /// see [`Board::action_order`](Board).
@@ -181,9 +181,9 @@ pub fn bot_action(board: &Board, player: PlayerId, level: BotLevel) -> PlayerAct
 /// key's high bits down over its low ones. Shared by the two draws this file
 /// makes from state that is not itself random.
 ///
-/// It does not make every bit as good as every other - a multiply carries
-/// upwards only, so the lowest bits stay the least mixed. Whoever reads the
-/// result has to know which end to read from; see [`slips`].
+/// It does not make every bit as good as every other: a multiply carries
+/// upwards only, so the lowest bits stay the least mixed and the reader has
+/// to know which end to read from. See [`slips`].
 fn avalanche(mut z: u64) -> u64 {
     z ^= z >> 31;
     z = z.wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -221,18 +221,17 @@ fn fumble(
 /// Whether the hand slips on a placement made by `player` at `ticks` on the
 /// board `seed` built: one in `every`, and the same one on every peer.
 ///
-/// The board's seed is in the draw, and both of the other two are why. This
-/// was `(ticks ^ player).is_multiple_of(every)`, which put each seat on a
+/// Written `(ticks ^ player).is_multiple_of(every)`, each seat sat on a
 /// residue of its own mod `every`, while [`BotLevel::acts_on`] only offers
-/// a seat the chance to place every `cadence` ticks - and 20 and 8 share a
-/// factor, so the residues were not sampled evenly. The rates came out
-/// 8.9% to 13.7% against an intended 12.5%: a standing handicap on three
-/// seats in four, worth about 4 sigma of seat drift on a 3000-game sweep.
+/// a seat the chance to place every `cadence` ticks; 20 and 8 share a
+/// factor, so the residues were not sampled evenly and the rates came out
+/// 8.9% to 13.7% against an intended 12.5%, worth about 4 sigma of seat
+/// drift on a 3000-game sweep. As a function of the tick alone it was the
+/// same handicap in every round ever played, so averaging could not find
+/// it.
 ///
-/// Being a function of the tick alone, it was also the *same* handicap in
-/// every round ever played, so no amount of averaging could find it. The
-/// seed is what varies it from board to board; it is fixed for the life of
-/// a board, consumes no PRNG state, and travels in the snapshot, so peers
+/// The seed is what varies it from board to board: fixed for the life of a
+/// board, consuming no PRNG state, and travelling in the snapshot, so peers
 /// and pasted rounds still agree to the tick.
 fn slips(ticks: u64, player: PlayerId, seed: u64, every: u64) -> bool {
     let z = avalanche(
@@ -243,10 +242,9 @@ fn slips(ticks: u64, player: PlayerId, seed: u64, every: u64) -> bool {
     // The draw is `z` scaled into `0..every`, and a slip is the first
     // bucket. Scaled from the top of the hash rather than taken as
     // `z % every`, because every blunder rate here is a power of two and
-    // `%` on one of those reads the lowest bits - the bits a multiplying
-    // hash never carries into. Written that way the seat bias survived the
-    // rewrite at Easy's one-in-four: rates 23.7% to 26.3%, where reading
-    // the top bits gives 24.9% to 25.2%.
+    // `%` on one of those reads the lowest bits, which a multiplying hash
+    // never carries into: at Easy's one-in-four that gives 23.7% to 26.3%
+    // where the top bits give 24.9% to 25.2%.
     (u128::from(z) * u128::from(every)) >> 64 == 0
 }
 
@@ -256,9 +254,9 @@ fn slips(ticks: u64, player: PlayerId, seed: u64, every: u64) -> bool {
 /// the bank. Chasing a rival across the board is not: the walk is dead time
 /// that costs more than the raid pays. Offence has to be on the way.
 ///
-/// Deliberately not a rule about evicting its own posts: churn helps rather
-/// than hurts, because a crab walks a tile every twenty ticks and a post
-/// aimed where one was four seconds ago is aimed at nothing.
+/// Deliberately not a rule about evicting its own posts: a crab walks a
+/// tile every twenty ticks, so a post aimed where one was four seconds ago
+/// is aimed at nothing and the churn helps.
 fn worth_the_walk(
     board: &Board,
     player: PlayerId,
@@ -286,9 +284,9 @@ fn hand_arrived(board: &Board, player: PlayerId, level: BotLevel, x: u8, y: u8) 
     };
     let steps = u64::from(x.abs_diff(from_x)) + u64::from(y.abs_diff(from_y));
     // Charged the way a player's hand works: the first tap moves a tile at
-    // once, and only a held key waits for the repeat to kick in. So a
-    // neighbouring tile is free, and a trip across the beach costs about what
-    // it costs a human.
+    // once and only a held key waits for the repeat, so a neighbouring tile
+    // is free and a trip across the beach costs about what it costs a
+    // human.
     let walk = match steps {
         0 | 1 => 0,
         far => CURSOR_LIFT + (far - 1) * level.cursor_ticks_per_tile(),
@@ -335,8 +333,7 @@ fn defend(
         }
         // A gull walking away is no threat, and a post that turns it round
         // would make one: only a bird whose next step closes on the castle
-        // is worth a signpost, the way recruit and attack leave alone a
-        // creature already heading the right way.
+        // is worth a signpost.
         let closing = board
             .step(gull.tile, gull.dir)
             .is_some_and(|next| manhattan(board, next, castle) < d);

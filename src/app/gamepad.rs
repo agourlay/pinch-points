@@ -29,7 +29,7 @@ pub struct PadSeats(pub Vec<Entity>);
 ///
 /// Split from [`nth_pad`] because reading a pad wants the component and
 /// rumbling one wants the entity, and the rule for *which* pad an index
-/// means must not be written down twice.
+/// means is written down once.
 fn nth_pad_entity(
     pads: &Query<(Entity, &Gamepad)>,
     claims: &PadSeats,
@@ -184,9 +184,9 @@ pub fn pad_move_cursor(
             continue;
         }
         // The zero-length timer is the one a fresh press starts on. Asking
-        // whether the timer's elapsed equals its duration said yes for
-        // every finished timer, since Bevy clamps a finished one to its
-        // duration, so the hold never got past the first-step delay.
+        // whether elapsed equals duration says yes for every finished timer,
+        // since Bevy clamps a finished one, so the hold never gets past the
+        // first-step delay.
         let first_step = repeat.0.duration().is_zero();
         repeat.0 = Timer::from_seconds(
             if first_step {
@@ -305,13 +305,11 @@ pub fn pad_setup_input(
 /// Right in a round).
 ///
 /// East is the exception, and [`Screen::Menu`] is where it bites: Escape
-/// means "back" on every screen the bridge runs on except the landing
-/// menu, which has nowhere back to go and leaves the game instead
-/// (`menu_scene::menu_input`). A player holding a pad reads East as back,
-/// presses it expecting the previous screen, and the game closes with
-/// nothing asked. So the menu gets the other five and not that one: the
-/// keyboard keeps its Escape, which is deliberate and is spelled out in
-/// the prompt line, and the pad keeps every way *in* it had.
+/// means "back" on every screen the bridge runs on except the landing menu,
+/// which has nowhere back to go and leaves the game instead
+/// (`menu_scene::menu_input`). So the menu gets the other five: the
+/// keyboard keeps its Escape, spelled out in the prompt line, and the pad
+/// keeps every way *in* it had.
 pub fn pad_menu_bridge(
     pads: Query<&Gamepad>,
     screen: Res<State<Screen>>,
@@ -329,12 +327,10 @@ pub fn pad_menu_bridge(
     for pad in &pads {
         for (button, key) in MAP {
             // The press is what is suppressed, never the release. A press
-            // that changes the screen is let go of on the screen it
-            // opened, so suppressing the release too would strand the
-            // synthesized key in `pressed` for ever - and
-            // `ButtonInput::press` reports `just_pressed` only for a key it
-            // was not already holding, so the next real Escape would be
-            // swallowed in silence.
+            // that changes the screen is let go of on the screen it opened,
+            // so suppressing the release would strand the synthesized key
+            // in `pressed` for ever, and `ButtonInput::press` reports
+            // `just_pressed` only for a key it was not already holding.
             let muted = quits && button == GamepadButton::East;
             if pad.just_pressed(button) && !muted {
                 keys.press(key);
@@ -383,17 +379,11 @@ const RAID_RUMBLE_SECS: f32 = 0.32;
 
 /// A gull on your castle, in your hands.
 ///
-/// The `rumble` setting has been in the menu, saved to disk and translated
-/// into eight languages since before this existed, and nothing anywhere
-/// read it: the switch turned nothing on or off. This is the first thing
-/// it does.
-///
 /// Only the seat that was raided, and only if that seat is sitting at
 /// *this* machine holding a pad. `pad_index_of` answers over the live
-/// cursor set, which is what makes that true without a special case:
-/// online there is one local cursor and the rivals have none here, and in
-/// local play the AI seats have none either, so a bot losing a castle
-/// buzzes nobody's hands.
+/// cursor set, which makes that true without a special case: online there
+/// is one local cursor and the rivals have none here, and in local play the
+/// AI seats have none either, so a bot losing a castle buzzes nobody.
 pub fn rumble_on_raid(
     mut events: MessageReader<crate::app::sim_events::SimEvent>,
     settings: Res<GameSettings>,
@@ -420,13 +410,11 @@ pub fn rumble_on_raid(
         let SimEvent::CastleRaided { owner, .. } = event else {
             continue;
         };
-        // `pad_index_of` answers for any seat when that seat named a
-        // controller outright, without ever consulting the cursor set: it
-        // short-circuits on `SeatInput::Pad(n)`. So the "is this seat here"
-        // question has to be asked first, or a player who bound P2 to a pad
-        // for couch play feels every raid on seat two for ever after -
-        // including online, where seat two is a stranger, and against AI,
-        // where seat two is a bot.
+        // `pad_index_of` answers for any seat that named a controller
+        // outright, without consulting the cursor set. So "is this seat
+        // here" is asked first, or a player who bound P2 to a pad for couch
+        // play feels every raid on seat two: online, where seat two is a
+        // stranger, and against AI, where it is a bot.
         if seated.binary_search(owner).is_err() {
             continue;
         }
@@ -575,9 +563,8 @@ mod tests {
     }
 
     /// Once the join ceremony has claimed pads, claim order decides which
-    /// controller an index means - not the order the operating system
-    /// happened to hand them over in. Reversing the claims must reverse
-    /// which hands feel the raid.
+    /// controller an index means, not the order the operating system handed
+    /// them over in.
     #[test]
     fn a_claimed_pad_beats_the_order_it_was_plugged_in() {
         let mut app = table(2, 2);
@@ -596,11 +583,9 @@ mod tests {
         );
     }
 
-    /// A seat that named a controller in settings still has to be *here*
-    /// to feel anything. `pad_index_of` answers for a named pad whoever
-    /// holds the seat, so this is the case the cursor set has to veto:
-    /// binding P2 to a pad on the couch must not buzz for seat two in an
-    /// online match, where seat two is somebody else entirely.
+    /// A seat that named a controller in settings still has to be *here* to
+    /// feel anything: binding P2 to a pad on the couch must not buzz for
+    /// seat two in an online match, where seat two is somebody else.
     #[test]
     fn a_bound_pad_still_only_answers_for_a_seat_that_is_here() {
         // Two pads, one player. Seat two has named the first pad from some
@@ -699,11 +684,9 @@ mod tests {
     }
 
     /// Leaving a sub-screen with B lands on the menu, where East is
-    /// suppressed. If the suppression also swallowed the *release*, the
-    /// synthesized Escape would stay pressed for ever, and
-    /// `ButtonInput::press` only reports `just_pressed` for a key it was
-    /// not already holding: the next real Escape on the menu would do
-    /// nothing at all.
+    /// suppressed. Swallowing the *release* too leaves the synthesized
+    /// Escape pressed for ever, and `ButtonInput::press` only reports
+    /// `just_pressed` for a key it was not already holding.
     #[test]
     fn a_press_that_changes_screen_still_releases_its_key() {
         let mut app = bridged(Screen::Settings);

@@ -1,10 +1,9 @@
 #!/usr/bin/env sh
 # Assemble the landing page into ./_site, ready to serve or publish.
 #
-# The screenshots are not duplicated in this directory: they live in
-# docs/screenshots, where the README and the guide already point at them,
-# and are copied in here so the published site has its own copy at a path
-# that does not climb out of the site root.
+# The screenshots live in docs/screenshots, where the README and the guide
+# point at them, and are copied in so the published site has its own copy at
+# a path that does not climb out of the site root.
 #
 # Used by .github/workflows/pages.yml and by hand:
 #
@@ -22,13 +21,12 @@ cp "$root/docs/screenshots/"*.png "$out/screenshots/"
 
 # Stamp the stylesheet link with a digest of the stylesheet.
 #
-# Pages serves everything with `cache-control: max-age=600`, and the page
-# and its styles expire independently, so for up to ten minutes after a
-# deploy a browser can hold new markup against the old stylesheet. That is
-# not a cosmetic window: markup written for a rule that is not there yet
-# falls back to default layout, and a heading built from a block-level
-# child renders as one run-on line. Naming the file after its contents
-# means new markup always asks for a URL no cache has.
+# Pages serves everything with `cache-control: max-age=600`, and the page and
+# its styles expire independently, so for up to ten minutes after a deploy a
+# browser can hold new markup against the old stylesheet: markup written for
+# a rule that is not there yet falls back to default layout, and a heading
+# built from a block-level child renders as one run-on line. Naming the file
+# after its contents means new markup always asks for a URL no cache has.
 v=$(cksum "$out/style.css" | cut -d' ' -f1)
 sed "s|href=\"style.css\"|href=\"style.css?v=$v\"|" "$out/index.html" > "$out/index.html.tmp"
 mv "$out/index.html.tmp" "$out/index.html"

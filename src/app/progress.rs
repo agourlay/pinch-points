@@ -19,9 +19,8 @@ fn save_path() -> std::path::PathBuf {
 }
 
 /// Kept as one set of names per list rather than one set of `kind:name`
-/// keys: the stage list asks after every tile every frame, and a key
-/// built for each lookup was a hundred-odd allocations a frame on a
-/// screen where nothing moves.
+/// keys: the stage list asks after every tile every frame, and a key built
+/// per lookup is a hundred-odd allocations a frame.
 #[derive(Resource, Default)]
 pub struct Progress {
     cleared: HashMap<CampaignKind, HashSet<String>>,
@@ -73,8 +72,7 @@ impl Progress {
 
     /// How many of this list's stages are cleared, over one shelf of it.
     /// The stage select counts the shipped campaign and the player's own
-    /// levels separately: they are two lists on one screen, and one bar
-    /// over both of them measured nothing in particular.
+    /// levels separately: they are two lists on one screen.
     pub fn cleared_in(&self, campaign: &Campaign, range: std::ops::Range<usize>) -> usize {
         campaign
             .levels

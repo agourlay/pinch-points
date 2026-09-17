@@ -413,10 +413,10 @@ pub fn update_side_panels(
         if font.font_size != base {
             font.font_size = base;
         }
-        // The pop is scale, not size. Bevy keys its glyph atlas by font
+        // The pop is scale, not size: Bevy keys its glyph atlas by font
         // size, so animating the size allocates a fresh atlas and
-        // re-rasterizes the digits on every frame of the bump: 4.4% of the
-        // game's whole CPU, for something the GPU does for nothing.
+        // re-rasterizes the digits on every frame of the bump, which came
+        // to 4.4% of the game's whole CPU.
         let pop = Vec2::splat(1.0 + 0.22 * chip.bump);
         if transform.scale != pop {
             transform.scale = pop;
@@ -451,8 +451,7 @@ mod tests {
     /// The score chip pops by *scale*, never by font size.
     ///
     /// Animating the size instead re-rasterizes the digits every frame of
-    /// the bump, at the cost the code beside it records. The size here
-    /// follows rank alone, which takes six fixed values.
+    /// the bump. The size here follows rank alone, six fixed values.
     #[test]
     fn the_score_pop_is_scale_and_never_a_new_font_size() {
         let mut app = App::new();

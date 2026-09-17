@@ -86,10 +86,9 @@ pub fn setup_input(
 
 /// Puzzle running phase: R resets to setup (keeping placed posts).
 ///
-/// Esc is the pause card's key, as it is in setup and in versus. This
-/// used to toggle `Paused` on it as well, which the card then read as the
-/// state to hand back on closing: Continue left the round frozen with no
-/// card up, and the next Esc pair unfroze it.
+/// Esc is the pause card's key, as it is in setup and in versus. Toggling
+/// `Paused` on it as well, the card read that as the state to hand back on
+/// closing, so Continue left the round frozen with no card up.
 pub fn running_input(
     keys: Res<ButtonInput<KeyCode>>,
     caps: Res<crate::app::keycaps::KeyCaps>,
@@ -120,11 +119,11 @@ pub fn done_input(
             load.write(LoadLevel { keep_posts: true });
             return;
         }
-        // The end of the list is the end of the list. Wrapping to level one
-        // read as the game not having noticed: the card says "that was the
-        // last level" and then puts you back on the first. The shipped
-        // campaign ends with its last shipped stage too, rather than
-        // walking on into the player's own levels behind it.
+        // The end of the list is the end of the list: wrapping to level one
+        // reads as the game not having noticed, the card saying "that was
+        // the last level" and then putting you back on the first. The
+        // shipped campaign ends with its last shipped stage too, rather
+        // than walking on into the player's own levels.
         if campaign.index + 1 == campaign.levels.len() || campaign.index + 1 == campaign.builtins {
             next_screen.set(Screen::Menu);
             return;
@@ -207,9 +206,8 @@ pub fn versus_input(
 /// Online, the host's Enter calls the next round for the whole table,
 /// admitting anyone who queued while this one played, and every peer is
 /// walked back into the arena when the invitation lands. Mid-series a
-/// joiner's Enter is its own way out, since the series plays on without
-/// it; once the match is over there is nothing left to leave, and Enter
-/// takes everyone back to the lobby they came from, ready for another.
+/// joiner's Enter is its own way out, since the series plays on without it;
+/// once the match is over, Enter takes everyone back to the lobby.
 pub fn versus_over_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut tournament: ResMut<crate::app::tournament::Tournament>,
@@ -239,10 +237,9 @@ pub fn versus_over_input(
         return;
     }
     if session.is_host() && series_on {
-        // The host re-deals the seats for the next round and, with
-        // them, the series tally: the returned standing is the same
-        // wins moved onto the chairs their holders now sit in, which
-        // this machine adopts so its own card agrees with the table.
+        // The host re-deals the seats for the next round and the series
+        // tally with them: the returned standing is the same wins on the
+        // chairs their holders now sit in.
         let standing = session.call_next_round(
             crate::app::match_setup::next_round_terms(
                 session.terms,

@@ -7,12 +7,10 @@ use pinch_points::sim::{
     classic_arena, generate_arena,
 };
 
-/// parse(to_text(level)) must reach a fixed point (identical text and an
-/// identical starting board) for the whole shipped corpus.
 /// The format has to carry as many castles as the sim seats. It did not:
 /// the writer emitted '4' and '5' for a six-seat board and the reader
 /// rejected them, so every six-player replay was a parse error waiting to
-/// happen: replays are stored as levels.
+/// happen, replays being stored as levels.
 #[test]
 fn a_board_with_every_seat_survives_the_format() {
     use pinch_points::sim::{MAX_PLAYERS, TileKind, generate_arena};
@@ -44,6 +42,8 @@ fn a_board_with_every_seat_survives_the_format() {
     assert_eq!(castles(&parsed), before, "every castle came back");
 }
 
+/// parse(to_text(level)) must reach a fixed point (identical text and an
+/// identical starting board) for the whole shipped corpus.
 #[test]
 fn every_shipped_level_round_trips() {
     let mut corpus = campaign_levels();
@@ -112,10 +112,9 @@ fn replays_round_trip_through_text() {
 /// panic, and never as a board silently different from the one described.
 ///
 /// Mutating real files rather than throwing random bytes at it: a corrupt
-/// save is a good file with something wrong in it, and that is the shape
-/// that finds the interesting bugs. A lone map border line, odd-sized and
-/// so past the only size check there was, used to reach `Board::new` as a
-/// zero-row board and panic.
+/// save is a good file with something wrong in it. A lone map border line,
+/// odd-sized and so past the only size check there was, reached
+/// `Board::new` as a zero-row board and panicked.
 #[test]
 fn mangled_text_is_refused_rather_than_followed() {
     use pinch_points::sim::{Board, Pcg32};
@@ -159,9 +158,8 @@ fn mangled_text_is_refused_rather_than_followed() {
 ///
 /// Every online match sends its board to the peers as text, and the map
 /// dial can generate one at any of the shipped sizes for any seat count.
-/// The shipped levels are authored by hand and exercise what a person
-/// thought to write; the generator reaches combinations nobody typed -
-/// which is the half of the space a hand-written corpus cannot cover.
+/// The shipped levels exercise what a person thought to write; the
+/// generator reaches combinations nobody typed.
 #[test]
 fn every_generated_beach_survives_the_wire_format() {
     for seed in 0..24u64 {

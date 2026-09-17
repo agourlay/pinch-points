@@ -101,11 +101,10 @@ impl Cycle for TeamMode {
 
 /// How this round is scored.
 ///
-/// Online the answer is the host's, carried in the agreed terms. Were it
-/// each peer's own setting, two people could watch the same round and be
-/// shown different winners. Offline it is this machine's setting. Either way
-/// a mode that does not fit the seat count falls back to free-for-all rather
-/// than inventing a lopsided team.
+/// Online the answer is the host's, carried in the agreed terms: as each
+/// peer's own setting, two people could watch the same round and be shown
+/// different winners. Offline it is this machine's setting. Either way a
+/// mode that does not fit the seat count falls back to free-for-all.
 pub(crate) fn in_play(settings: &GameSettings, online: &net::Online, seats: u8) -> TeamMode {
     let wanted = match &online.0 {
         Some(session) => TeamMode::from_index(usize::from(session.terms.teams)),

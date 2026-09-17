@@ -1,9 +1,8 @@
 //! The frame, in order: what the app is built from, what each screen puts
 //! up and takes down, and which systems run when.
 //!
-//! Split from `mod.rs`, which keeps the types the whole shell shares. The
-//! two answer different questions, what a thing *is* and when it *runs*,
-//! and only this half changes when a system moves.
+//! Split from `mod.rs`, which keeps the types the whole shell shares: only
+//! this half changes when a system moves.
 
 use super::*;
 
@@ -24,13 +23,11 @@ pub fn run() {
             })
             .set(bevy::log::LogPlugin {
                 // Japanese has no word spaces, so a line of it is broken
-                // with a dictionary - and the one baked into the text
-                // stack's segmenter does not carry the CJK model. The
-                // lines still lay out (they break between characters,
-                // which is how Japanese wraps anyway); what it does is
-                // warn, from deep inside a layout pass, once per line
-                // per frame. Sixty of those a second is not a report of
-                // anything, so this one target is turned off.
+                // with a dictionary, and the one baked into the text
+                // stack's segmenter does not carry the CJK model. The lines
+                // still lay out (they break between characters, which is
+                // how Japanese wraps anyway); what it does is warn once per
+                // line per frame, so this one target is turned off.
                 filter: format!(
                     "{},icu_provider=off",
                     bevy::log::LogPlugin::default().filter
@@ -46,8 +43,7 @@ pub fn run() {
                     // systems, and a `perf` profile of a six-seat XL round
                     // is then mostly the workers finding each other: queue
                     // pops, work stealing and a contended mutex come to
-                    // about 18% of samples, with this game's own code
-                    // nowhere near the top of the list.
+                    // about 18% of samples.
                     //
                     // Swept on that machine with `PINCH_THREADS`, 30 s of
                     // that round each, CPU seconds (user + sys):
@@ -58,17 +54,13 @@ pub fn run() {
                     //
                     // Nothing else moves: every one of those runs holds the
                     // fixed tick exactly, and the round clock reads 2:30 in
-                    // all of them. The engine is spending more to coordinate
-                    // this game's systems than the systems spend working,
-                    // and it spends it per worker.
+                    // all of them.
                     //
-                    // Two rather than one, because a cap is not a count and
-                    // the machines this has to be right on are not this one:
-                    // the second worker costs 0.4 CPU-seconds here and is
-                    // the one that absorbs a heavy frame on a slow laptop,
-                    // where the systems really do take long enough to want
-                    // splitting. A two-core machine gets what its own core
-                    // count allows either way.
+                    // Two rather than one, because the machines this has to
+                    // be right on are not this one: the second worker costs
+                    // 0.4 CPU-seconds here and is the one that absorbs a
+                    // heavy frame on a slow laptop. A two-core machine gets
+                    // what its own core count allows either way.
                     compute: TaskPoolThreadAssignmentPolicy {
                         // `PINCH_THREADS=n` sweeps the cap, and `=0` puts
                         // Bevy's own default back, which is how the table
@@ -101,12 +93,11 @@ pub fn run() {
     add_phase_transitions(&mut app);
     add_frame_systems(&mut app);
     // Dev hook: `PINCH_ST_EXEC=1` swaps every main-world schedule to the
-    // single-threaded executor, for the backlog's CPU measurement: the
-    // engine spends more coordinating this game's hundred small systems
-    // than the systems spend working. The render sub-app keeps its own
-    // schedules and its parallelism. `new()` rather than `default()`: the
-    // derived default leaves `apply_final_deferred` false, and the app
-    // dies on the first frame missing every command-queued resource.
+    // single-threaded executor, for the backlog's CPU measurement. The
+    // render sub-app keeps its own schedules and its parallelism. `new()`
+    // rather than `default()`: the derived default leaves
+    // `apply_final_deferred` false, and the app dies on the first frame
+    // missing every command-queued resource.
     if dev::single_threaded_executor() {
         use bevy::ecs::schedule::{Schedules, SingleThreadedExecutor};
         let mut schedules = app.world_mut().resource_mut::<Schedules>();
@@ -654,11 +645,10 @@ fn add_play_systems(app: &mut App) {
             // limit. Both only do anything with their variable set.
             (dev::debug_tide, dev::debug_lure).run_if(versus_running.or_else(puzzle_running)),
             // A player who stops sending holds the whole table on one
-            // frame. The host gives up on them after a while and hands the
-            // seat to an AI; every peer does it on the host's word, so they
-            // all do it on the same frame and stay in step. And when it is
-            // the *host* that has gone, no word is coming and no seat can
-            // be filled: the round is over and the joiners are told so
+            // frame. The host gives up on them and hands the seat to an AI;
+            // every peer does it on the host's word, so they all do it on
+            // the same frame. When it is the *host* that has gone, no word
+            // is coming and no seat can be filled, so the joiners are told
             // rather than left watching a still beach. Paired into tuple
             // slots because the list around it is at Bevy's limit.
             (
@@ -672,10 +662,10 @@ fn add_play_systems(app: &mut App) {
             // and when the host's next-round invitation arrives. Chained
             // ahead of the input, so an invitation that lands this frame is
             // acted on this frame.
+            //
             // The host can vanish while the card is up as easily as during
-            // a round, and the card is where a table sits longest. Last in
-            // the chain, so its notice is the one that survives a frame
-            // where the player was pressing Enter anyway.
+            // a round, and the card is where a table sits longest, so that
+            // watch goes last in the chain.
             (
                 net::poll_between_rounds,
                 play_input::versus_over_input,

@@ -24,8 +24,8 @@ pub enum Pick {
 /// What a frame knows about joining.
 ///
 /// A struct rather than three bools in a row behind two `Option<usize>`s,
-/// for the reason its sibling [`HostAsk`] is one: `which_beach(JoinAsk { digit: Some(1), enter_on: /// None, , ..asking() }, &hosts)` says nothing at the call site,
-/// and any two of those could be swapped without the compiler noticing.
+/// for the reason its sibling [`HostAsk`] is one: any two of them could be
+/// swapped without the compiler noticing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct JoinAsk {
     /// A number key, as a row of the list.
@@ -51,8 +51,7 @@ pub(super) struct JoinAsk {
 ///
 /// Split from the socket work so the decision can be tested: which row a
 /// key means, that a name is asked for first, that a beach already left
-/// behind is not dialled again, and that a full one is refused rather than
-/// queued for.
+/// behind is not dialled again, and that a full one is refused.
 pub(super) fn which_beach(ask: JoinAsk, hosts: &[HostEntry]) -> Pick {
     let JoinAsk {
         digit,
@@ -94,8 +93,6 @@ pub(super) fn which_beach(ask: JoinAsk, hosts: &[HostEntry]) -> Pick {
 }
 /// Take a beach: by its number, by Enter on the cursor, or because a name
 /// was just given on the way to one.
-///
-/// The last of `lobby_input`'s eight jobs to come out of it.
 pub(super) fn take_a_beach(
     keys: &ButtonInput<KeyCode>,
     settings: &GameSettings,
@@ -184,11 +181,10 @@ pub(super) const NO_ANSWER_AFTER: f32 = 6.0;
 /// Whether anybody is actually there, said out loud.
 ///
 /// A dialled socket is not a connection, since UDP tells nobody anything,
-/// so until the host says a word this peer is *calling*, not aboard. Saying
-/// "aboard" from the first frame is what made a mistyped address, a
-/// firewall and a host who quit thirty seconds ago all look like a beach
-/// that was simply slow to start: the screen said everything was fine and
-/// nothing ever happened.
+/// so until the host says a word this peer is *calling*, not aboard. Said
+/// "aboard" from the first frame, a mistyped address, a firewall and a host
+/// who quit thirty seconds ago all look like a beach that is slow to
+/// start.
 ///
 /// Returns whether the call was given up on, in which case the frame is
 /// over: there is no socket left to read.
@@ -284,10 +280,9 @@ pub(super) fn accept_the_invitation(
             unreachable!("an invitation for a lobby that greeted nobody");
         };
         let transport = joined.transport;
-        // The host's invitation says whether this is a series, and where
-        // it stands: a joiner that assumed otherwise would stop after one
-        // round, and one admitted mid-series would start its own tally at
-        // zero and disagree with the table for the rest of the match.
+        // The host's invitation says whether this is a series, and where it
+        // stands: a joiner that assumed otherwise would stop after one
+        // round, and one admitted mid-series would start its own tally.
         *tournament =
             crate::app::tournament::Tournament::from_terms(invitation.terms, invitation.standing);
         let mut session = OnlineSession::invited(transport, invitation);
@@ -430,10 +425,9 @@ pub fn join_tick(
 mod tests {
     use super::*;
 
-    /// A frame in which somebody with a name on file is choosing a beach
-    /// and nothing else is going on. Every field named once here, so a new
-    /// one cannot be silently defaulted into the tests below, which then
-    /// say only what they change.
+    /// A frame in which somebody with a name on file is choosing a beach and
+    /// nothing else is going on, so the tests below say only what they
+    /// change.
     fn asking() -> JoinAsk {
         JoinAsk {
             digit: None,
@@ -468,10 +462,9 @@ mod tests {
     }
 
     /// A beach dialled by hand is greeted exactly as one picked off the
-    /// list, because it is the same greeting down the same road: the
-    /// beacon is how a beach is found, never how it is entered. Over a
-    /// real socket, since the point of the whole feature is that no
-    /// broadcast was involved in getting here.
+    /// list: the beacon is how a beach is found, never how it is entered.
+    /// Over a real socket, since the point is that no broadcast was
+    /// involved in getting here.
     #[test]
     fn a_dialled_beach_hears_the_same_greeting_as_a_listed_one() {
         let mut host = UdpTransport::host(0).expect("bind");
@@ -686,10 +679,9 @@ mod tests {
     /// A beach that never answers is given up on and said so, rather than
     /// called forever under a screen that claims you are aboard.
     ///
-    /// This is what a mistyped address looks like, and a firewall, and a
-    /// friend who quit thirty seconds ago, and on UDP all three look just
-    /// like a host who has not started the round yet. Silence is
-    /// the only evidence there is, so it has to be worth something.
+    /// A mistyped address, a firewall and a friend who quit thirty seconds
+    /// ago all look on UDP like a host who has not started the round yet,
+    /// so silence has to be worth something.
     #[test]
     fn a_beach_that_never_answers_is_given_up_on() {
         // Nothing is listening at this address; that is the point.
@@ -749,10 +741,9 @@ mod tests {
         assert!(state.joined().is_some());
     }
 
-    /// Nor is a dialled address. It names no row of this list, which is
-    /// why it was typed at all, and reading it as one would take whatever
-    /// happened to be under the cursor instead: the beach the player could
-    /// already see and did not ask for.
+    /// Nor is a dialled address: it names no row of this list, which is why
+    /// it was typed at all, and reading it as one takes whatever is under
+    /// the cursor instead.
     #[test]
     fn a_dialled_address_is_not_a_row_of_the_list() {
         let hosts = open();
@@ -788,9 +779,8 @@ mod tests {
     /// A host sitting on its results card re-answers every greeting with
     /// that round's `Start`, which is right for a latecomer and wrong for
     /// the peers that were in it: they greet the moment they are back in
-    /// the lobby, hear the repeat, and would bounce straight back into
-    /// the finished round. The seed is what tells a fresh round from a
-    /// repeat, the same mark the session reads mid-match.
+    /// the lobby and would bounce straight into the finished round. The
+    /// seed is what tells a fresh round from a repeat.
     #[test]
     fn the_round_just_played_is_not_an_invitation_back_into_it() {
         let invitation = |seed| Invitation {

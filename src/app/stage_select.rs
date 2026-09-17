@@ -17,18 +17,15 @@ pub const COLS: usize = 10;
 /// Height the grid may take inside the card, in pixels: what is left of the
 /// gap between the header and the prompt once the count, its bar, the
 /// caption and the hint have had theirs. The rows live in a container of
-/// their own so this is the only vertical gap that applies to them; when
-/// they were direct children of the card they picked up its wider one and
-/// the grid came out taller than this number allows for.
+/// their own so this is the only vertical gap that applies to them.
 const GRID_ROOM: f32 = 430.0;
 
 const GAP: f32 = 6.0;
 
-/// Vertical room the player's-own-levels heading takes out of the grid.
-/// Counted out rather than guessed at, because what it under-counts the
-/// tiles quietly take back: 6 of margin, the 1-pixel rule, 4 between rule
-/// and label, an 18-pixel line of text, and one more [`GAP`] for the row it
-/// stands in.
+/// Vertical room the player's-own-levels heading takes out of the grid,
+/// counted out rather than guessed at: 6 of margin, the 1-pixel rule, 4
+/// between rule and label, an 18-pixel line of text, and one more [`GAP`]
+/// for the row it stands in.
 const HEADING_ROOM: f32 = 6.0 + 1.0 + 4.0 + 18.0 + GAP;
 
 /// Which of the two lines under the grid is being built. The loop that
@@ -86,8 +83,7 @@ pub struct StageList {
     pub selected: usize,
     /// The grid as it was drawn, one range per row. Kept rather than
     /// recomputed: the tiles are spawned once on entering and nothing
-    /// reshuffles them while the screen is up, so rebuilding the layout
-    /// sixty times a second would be sixty answers to a settled question.
+    /// reshuffles them while the screen is up.
     rows: Vec<std::ops::Range<usize>>,
 }
 
@@ -128,8 +124,7 @@ pub enum TileState {
 /// The key under the grid draws one swatch per value in [`KEY_POSTS`];
 /// `the_key_reaches_the_hardest_stage` keeps that range and this match in
 /// step with the campaign, because the fallback arm is silent: the first
-/// five-post levels shipped drawn in the four-post red, and nobody could
-/// have told from the grid.
+/// five-post levels shipped drawn in the four-post red.
 pub fn difficulty_ink(posts: u8) -> Color {
     match posts {
         0 => palette::INK_TIDE,
@@ -283,8 +278,6 @@ pub fn enter_stage_select(
             .with_children(|line| {
                 // The shared card, holding a grid rather than a list, so
                 // it wants more air around it than a run of rows does.
-                // Built by hand before, and so the only one of the three
-                // big list screens with no shadow under it.
                 // `bg` and not `fill`: this file's `fill` is the one that
                 // puts words into a translated string.
                 let (mark, mut node, bg, edge, shadow) = menu_ui::screen_card();
@@ -417,11 +410,10 @@ pub fn enter_stage_select(
                             });
                     });
             });
-            // Both lines sit under the card, not in it. They change with
-            // every cursor move, and inside the card they would size it:
-            // the box would breathe as you walked across the grid. Out here
-            // they get the whole screen's width, which the longest German
-            // caption needs, and their own fixed rows, so nothing moves.
+            // Both lines sit under the card, not in it: inside they would
+            // size it, and the box would breathe as you walked across the
+            // grid. Out here they get the whole screen's width, which the
+            // longest German caption needs, and their own fixed rows.
             wrap.spawn(Node {
                 width: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
@@ -595,10 +587,8 @@ pub fn update_stage_tiles(
         if border.top != target {
             *border = BorderColor::all(target);
         }
-        // The cursor also lifts the tile it stands on. A ring alone reads as
-        // one more colour in a grid that already has three of them, and the
-        // stage you are about to press Enter on should not be something you
-        // have to hunt for.
+        // The cursor also lifts the tile it stands on: a ring alone reads as
+        // one more colour in a grid that already has three.
         let ground = if picked {
             palette::SELECTED_ROW.with_alpha(0.55)
         } else {
@@ -878,8 +868,8 @@ mod tests {
     /// The key under the grid must explain every edge the grid can draw.
     /// `difficulty_ink` falls through to one colour for anything above its
     /// last named arm, so a harder tier than the key knows about ships in
-    /// the colour of the tier below it, silently: that is how the first
-    /// five-signpost levels appeared tagged as four.
+    /// the colour of the tier below: the first five-signpost levels
+    /// appeared tagged as four.
     #[test]
     fn the_key_reaches_the_hardest_stage() {
         let hardest = campaign().levels.iter().map(|l| l.posts).max().unwrap();

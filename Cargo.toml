@@ -1,7 +1,3 @@
-# A workspace of one: nothing else lives here, but `[workspace.lints]`
-# below is where this crate's lint table is kept.
-[workspace]
-
 [package]
 name = "pinch-points"
 version = "0.4.0"
@@ -11,19 +7,12 @@ repository = "https://github.com/agourlay/pinch-points"
 license = "Apache-2.0"
 keywords = ["game", "bevy", "puzzle", "multiplayer", "chuchu-rocket"]
 categories = ["games"]
-# The crate tarball needs what the build embeds (assets, levels,
-# challenges) but not the repo's paperwork, all of which lives in docs/;
-# the screenshots are the bulk and would not render on crates.io anyway.
 exclude = ["docs/", ".github/"]
 
 [dependencies]
 bevy = { version = "0.19.1", features = ["wav", "vorbis", "system_clipboard"] }
 include_dir = "0.7.4"
 semver = "1.0.28"
-# The start-up release check (`app::update`): one HTTPS GET to GitHub and
-# the JSON it answers with. serde_json is already in the tree under Bevy;
-# ureq brings rustls and a bundled root store, so the check works the same
-# on every desktop without asking the OS for certificates.
 serde_json = "1.0.51"
 ureq = "3.4.2"
 # One type, `Script`, for one call: telling the text stack which face to
@@ -58,11 +47,10 @@ icu_provider = { version = "2.3.1", features = ["logging"] }
 x11rb = { version = "0.13.2", default-features = false }
 
 [dev-dependencies]
-# A progress bar for `examples/verify_levels`, the campaign minimality
-# proof: a release run of it is minutes of otherwise-silent solving, and a
-# bar is how you tell "still working" from "wedged". Examples build against
-# dev-dependencies, and nothing the game ships links this.
 indicatif = "0.18.6"
+
+
+[workspace]
 
 [lints]
 workspace = true
@@ -95,23 +83,8 @@ wildcard_enum_match_arm = "warn"
 [profile.release]
 lto = "fat"
 codegen-units = 1
-# The symbol table is most of what a release binary carries that is not
-# code: 106 MiB to 75 MiB, measured 2026-09-17. There is no middle setting
-# worth taking, since `strip = "debuginfo"` saves 0.1 MiB of the 31 (a
-# release build carries almost no debug info to begin with) and all the
-# rest is the 196k names.
-#
-# The cost is real and accepted: a backtrace out of a shipped build comes
-# back unsymbolicated, so a crash a player reports is addresses rather than
-# function names. Panic messages still carry their own file and line, which
-# is what a bug report usually quotes, and anyone who needs the names can
-# reproduce under `profile.profiling` below.
 strip = true
 
-# Release speed with the symbols a profiler needs. `debug` costs nothing at
-# run time; it only stops `perf` reporting the whole solver as one
-# unnamed frame. `strip` has to be undone by hand, because inheriting
-# release would otherwise throw away the symbols `debug` just asked for.
 [profile.profiling]
 inherits = "release"
 debug = true

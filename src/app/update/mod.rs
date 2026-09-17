@@ -5,10 +5,10 @@
 //! release page in the browser; no is no, until next start-up.
 //!
 //! Open, not install: the game is one binary that came from the release
-//! page or from `cargo install`, and the honest thing a running binary can
-//! do about a newer one is show the player where it is. The page is
-//! reached from the menu and nowhere else, so an answer arriving mid-round
-//! never lands on top of a beach.
+//! page or from `cargo install`, so the most a running binary can do about
+//! a newer one is show the player where it is. The page is reached from the
+//! menu and nowhere else, so an answer arriving mid-round never lands on
+//! top of a beach.
 //!
 //! The check is the one thing the game says to the wider internet, so it
 //! is a setting (on by default). Nothing waits on it: a machine with no
@@ -120,9 +120,8 @@ pub fn start_check(settings: Res<GameSettings>, mut check: ResMut<UpdateCheck>) 
 /// interrupting a round or the first-run language picker.
 ///
 /// The setting is read here as well as at start-up: a player who went
-/// straight to Settings and turned the check off has answered the
-/// question before it was asked, and a reply that landed meanwhile is
-/// dropped rather than shown.
+/// straight to Settings and turned the check off has answered before being
+/// asked, and a reply that landed meanwhile is dropped.
 pub fn poll_check(
     settings: Res<GameSettings>,
     mut check: ResMut<UpdateCheck>,
@@ -279,11 +278,11 @@ pub fn new_version_input(
     let Some(choice) = choice else {
         return;
     };
-    // Yes opens the page whatever the menu was saying. What the menu had
-    // to say before the detour then comes first: a round that failed to
-    // save outranks news that a browser was handed a page. A browser
-    // that could not be opened still wins the line, though, since that
-    // notice carries the address to type by hand and nothing else does.
+    // Yes opens the page whatever the menu was saying, and what the menu
+    // had to say before the detour comes first: a round that failed to save
+    // outranks news that a browser was handed a page. A browser that could
+    // not be opened still wins the line, since that notice carries the
+    // address to type by hand.
     let mut said = std::mem::take(&mut check.stashed_notice);
     if choice == Choice::Yes
         && let Some(release) = &check.offer

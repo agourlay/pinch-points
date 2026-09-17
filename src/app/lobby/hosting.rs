@@ -19,9 +19,8 @@ pub enum HostStep {
 
 /// What a frame knows about hosting.
 ///
-/// A struct rather than four bools in a row, because `host_step(false,
-/// true, false, false)` says nothing at the call site and any two of them
-/// could be swapped without the compiler noticing.
+/// A struct rather than four bools in a row: `host_step(false, true,
+/// false, false)` says nothing at the call site.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct HostAsk {
     /// The beach has a name, which is the last thing the asking waits on.
@@ -36,12 +35,9 @@ pub(super) struct HostAsk {
 }
 
 /// A frame in which nothing is pressed, nowhere has been reached and
-/// nobody is automating. Every field named once, in one place, so a field
-/// added later cannot be silently defaulted into tests that never mention
-/// it, and so the tests say only what they change.
-///
-/// Beside the struct rather than inside a test module, because two test
-/// modules want it and each had grown its own identical copy.
+/// nobody is automating, so the tests say only what they change. Beside
+/// the struct rather than in a test module, because two test modules want
+/// it.
 #[cfg(test)]
 pub(super) fn idle() -> HostAsk {
     HostAsk {
@@ -194,9 +190,8 @@ pub fn host_tick(
 /// Put the match on: seat everyone who came to play, agree the terms, and
 /// walk the whole table into the arena.
 ///
-/// Lifted out of `host_tick`, which had grown to nine jobs and two hundred
-/// and fifty lines by accretion, a feature at a time, each reasonable on
-/// its own. This is the one of them with a beginning and an end.
+/// Lifted out of `host_tick`, which had grown to nine jobs: this is the
+/// one of them with a beginning and an end.
 #[allow(clippy::too_many_arguments)]
 fn launch_the_match(
     state: &mut LobbyState,
@@ -314,8 +309,7 @@ fn launch_the_match(
 /// arrived, and who has stopped answering.
 ///
 /// Both are news for the feed and for every peer, and both are the same
-/// kind of bookkeeping, which is why they sit together rather than at
-/// opposite ends of a two-hundred-line system.
+/// kind of bookkeeping, so they sit together.
 fn note_arrivals_and_departures(
     state: &mut LobbyState,
     tr: &'static crate::app::i18n::Tr,
@@ -366,10 +360,9 @@ fn note_arrivals_and_departures(
     }
 }
 
-/// What one tick on the socket picked up: whether the beacon went out,
-/// who named themselves, and what was said. Bundled because they travel
-/// together and a function with eight arguments is a function asking to
-/// be given a noun.
+/// What one tick on the socket picked up: whether the beacon went out, who
+/// named themselves, and what was said. Bundled because they travel
+/// together.
 #[derive(Default)]
 struct Picked {
     /// The once-a-second tick fell this frame, so the roster goes out too.
@@ -430,9 +423,8 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             //
             // Unchecked, a peer could speak under a rival's name, or under
             // the empty one, which is worse: an empty name is the room
-            // itself talking (`Said::is_notice`), the channel that says who
-            // joined and who left. So an empty name is refused outright
-            // whoever sends it - that voice is the host's.
+            // itself talking (`Said::is_notice`). So an empty name is
+            // refused whoever sends it.
             //
             // The claim stands only where there is nothing to check it
             // against: a watcher greets with a bare `Watch` and never says
@@ -502,10 +494,9 @@ pub(super) fn gathering_feedback(
 /// Whether this frame starts the match.
 ///
 /// Not while a line is being typed, which is the entire job of this: the
-/// host is the one player who both talks and starts, `host_tick` runs
-/// ahead of the input that owns the keyboard, and Enter therefore launched
-/// the match out from under a half-written sentence. It could not send a
-/// message at all.
+/// host is the one player who both talks and starts, and `host_tick` runs
+/// ahead of the input that owns the keyboard, so Enter launched the match
+/// out from under a half-written sentence.
 ///
 /// The unattended quota is exempt: nothing is being typed on a machine
 /// nobody is sitting at.
@@ -595,10 +586,9 @@ mod tests {
         assert_eq!(seat_plan(&table(3, &[0, 1, 2])), vec![None, None, None]);
     }
 
-    /// Every answer `host_step` can give. It asks who is asking before
+    /// Every answer `host_step` can give: it asks who is asking before
     /// anything goes on the air, does nothing once there is already a
-    /// beach, and never stops the dev hook to ask a question nobody is
-    /// sitting there to answer.
+    /// beach, and never stops the dev hook to ask a question.
     #[test]
     fn hosting_asks_before_it_announces() {
         assert_eq!(host_step(idle()), HostStep::Nothing);
@@ -685,9 +675,8 @@ mod tests {
     }
 
     /// Enter means two things to a host, say this and start the match, and
-    /// it cannot mean both. `host_tick` runs before the input that owns
-    /// the keyboard, so an Enter meant to send a line used to launch the
-    /// round instead, which left the host unable to say anything at all.
+    /// it cannot mean both. `host_tick` runs before the input that owns the
+    /// keyboard, so an Enter meant to send a line launched the round.
     #[test]
     fn a_half_written_sentence_does_not_start_the_match() {
         // The everyday case: rivals aboard, nothing being typed, Enter goes.
@@ -714,11 +703,9 @@ mod tests {
 
     /// Chat is the one message that names its own sender, and the host is
     /// the only peer that can check the claim. A line comes back under the
-    /// name its sender greeted with, whatever the datagram says: a peer
-    /// wearing a rival's name is put back in its own, and one wearing no
-    /// name at all - the room's own voice, which is what says who joined
-    /// and who left - is put back in its own too, so a forged notice comes
-    /// out as somebody saying something odd rather than as the room.
+    /// name its sender greeted with, whatever the datagram says, including
+    /// the empty name that is the room's own voice, so a forged notice
+    /// comes out as somebody saying something odd.
     ///
     /// Over a real socket, because the whole point is which end of it the
     /// line arrived on.
@@ -810,9 +797,7 @@ mod tests {
 
     /// The one peer the host has no name for: a watcher greets with a bare
     /// `Watch` and never says what to call it, so its own word is all there
-    /// is to go on. Its word may not be the empty one, though - that is the
-    /// room talking, and a peer is not the room, however little is known
-    /// about it.
+    /// is to go on. Not the empty one, though: that is the room talking.
     #[test]
     fn a_nameless_peer_may_name_itself_but_not_the_room() {
         let mut state = LobbyState {

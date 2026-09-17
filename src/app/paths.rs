@@ -24,10 +24,9 @@ pub fn config_dir() -> PathBuf {
 /// A player's own words made safe to use as a file name: the level they
 /// named, the winner a replay is filed under.
 ///
-/// One rule in one place because it is a safety rule, not a formatting
-/// one. Both callers wrote their own, and the reason either exists is that
-/// a name like `Crab/../etc` must not become a path: a level name and a
-/// player name are both typed by whoever is at the keyboard.
+/// One rule in one place because it is a safety rule, not a formatting one:
+/// a name like `Crab/../etc` must not become a path, and both a level name
+/// and a player name are typed by whoever is at the keyboard.
 ///
 /// `keep` bounds the result so a long name cannot make an absurd path, and
 /// `fallback` covers a name with nothing usable left in it, which is a
@@ -70,11 +69,10 @@ pub fn ensure_parent(path: &Path) {
 /// the lenient parsers would read as a fresh start.
 ///
 /// The `sync_all` is what extends that to a *crash* rather than merely a
-/// failed write. Without it the rename can reach the disk while the bytes
-/// it published are still in the page cache, and a power loss then leaves
-/// exactly the truncated file the whole dance is here to avoid. A failed
-/// write takes its half-finished `.tmp` with it rather than leaving it to
-/// sit beside the save forever.
+/// failed write: without it the rename can reach the disk while the bytes
+/// it published are still in the page cache, and a power loss leaves the
+/// truncated file this exists to avoid. A failed write takes its
+/// half-finished `.tmp` with it.
 pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
     ensure_parent(path);
     let mut tmp = path.as_os_str().to_owned();

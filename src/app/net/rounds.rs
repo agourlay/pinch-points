@@ -12,11 +12,10 @@ use super::*;
 /// chair (or none, for a watcher), the terms, who else is at it, where
 /// the series stands, and the host's own beach when it sent one.
 ///
-/// Named rather than left the tuple it was, because a tuple is read by
-/// counting: `(seats, seat, ..)` is a count and an index next to each
-/// other, and the only thing keeping them apart was their order. Taken up
-/// by [`OnlineSession::take_up`] whether it arrives in the lobby, mid-round
-/// or on the results card, so there is one way to begin a round.
+/// Named rather than a tuple: `(seats, seat, ..)` is a count and an index
+/// next to each other, kept apart only by their order. Taken up by
+/// [`OnlineSession::take_up`] whether it arrives in the lobby, mid-round or
+/// on the results card, so there is one way to begin a round.
 pub struct Invitation {
     pub seats: u8,
     pub seat: Option<u8>,
@@ -83,9 +82,8 @@ impl OnlineSession {
     /// Membership is the launch plan, not the seat: a peer seated as a
     /// spectator in the lobby is `Watching` in the plan, while a stranger
     /// who greeted mid-round is `Queued`. Both answer `None` to `seat_of`,
-    /// so the plan is the only thing that tells them apart. Admitting the
-    /// second as a spectator was how a latecomer used to end up staring at
-    /// frame zero forever.
+    /// so the plan is the only thing that tells them apart, and admitting
+    /// the second as a spectator leaves it staring at frame zero forever.
     pub(super) fn queue_place(&self, peer: usize) -> Option<NetMsg> {
         debug_assert!(
             self.is_host() || self.peers.planned() == 0,
@@ -111,18 +109,15 @@ impl OnlineSession {
     ///
     /// A joiner also keeps greeting, which is not for the host's benefit:
     /// the answer is what proves the host is still there. Nothing else is
-    /// sent between rounds, so without it the silence clock would grow on
-    /// a table where everybody is present and simply reading the scores,
-    /// and [`Self::host_gone`] would call the round off under them.
+    /// sent between rounds, so without it [`Self::host_gone`] would call
+    /// the round off under a table that is simply reading the scores.
     pub fn poll_between_rounds(&mut self, delta: f32) {
         let host = self.is_host();
         self.age_the_silence(delta);
         if !host && crate::app::lobby::once_a_second(&mut self.home.greet_in, delta) {
-            // The same greeting the lobby sends, wish to watch included: a
-            // watcher on the results card used to greet as a nameless
-            // player, which the host reads the same way between rounds
-            // (a watcher's chair is in the launch plan already) but is
-            // not what the peer means.
+            // The same greeting the lobby sends, wish to watch included,
+            // so a watcher on the card does not greet as a nameless
+            // player.
             let me = self
                 .session
                 .seat()
@@ -215,10 +210,7 @@ impl OnlineSession {
     /// the results card (`poll_between_rounds`): a peer in line is told
     /// so, and one in the plan is told its place again, in case the Start
     /// went astray. The name and the wish to watch are written down either
-    /// way, because they are what the next round's plan is dealt from. The
-    /// card path once answered without writing either, so a player who
-    /// turned up while the scores were being read was seated nameless
-    /// next round, and a would-be watcher was dealt a chair.
+    /// way, because they are what the next round's plan is dealt from.
     pub(super) fn answer_greeting(&mut self, from: usize, told: &str, watch: bool) -> NetMsg {
         debug_assert!(self.is_host(), "only the host answers greetings");
         if !told.is_empty() {
@@ -276,8 +268,7 @@ impl OnlineSession {
     /// folds back into its `Tournament`. Seats are re-dealt in peer order
     /// every round (they have to stay the contiguous `0..humans` the sim
     /// fills the top of with AI), so a peer that leaves shifts everyone
-    /// behind it up a chair; carrying the wins across by hand is what
-    /// keeps a survivor's rounds its own rather than the next player's.
+    /// behind it up a chair and the wins have to move with them.
     pub fn call_next_round(
         &mut self,
         mut terms: MatchTerms,
@@ -438,11 +429,9 @@ mod tests {
         session
     }
 
-    /// The launch plan is what membership means, not the seat number. A
-    /// peer seated as a spectator in the lobby and a stranger who greeted
-    /// mid-round both answer `None` to `seat_of`, and only one of them can
-    /// be served: lockstep replays from frame zero, so the stranger would
-    /// build a board nobody will ever send it inputs for.
+    /// The launch plan is what membership means, not the seat number: a
+    /// lobby spectator and a stranger who greeted mid-round both answer
+    /// `None` to `seat_of`, and only one of them can be served.
     #[test]
     fn a_latecomer_is_queued_and_a_lobby_spectator_is_not() {
         // Two peers at launch: one seated, one watching.
@@ -565,11 +554,8 @@ mod next_round_tests {
     }
 
     /// A greeting on the results card carries the same two things it
-    /// carries in the lobby, a name and a wish to watch, and the host
-    /// has to keep both: they are what the next round's table is dealt
-    /// from. The card path once answered without writing either down, so
-    /// Bo was seated nameless and Dee, who asked for the rail, was dealt a
-    /// chair.
+    /// carries in the lobby, a name and a wish to watch, and the host has
+    /// to keep both: they are what the next round's table is dealt from.
     #[test]
     fn a_greeting_on_the_results_card_keeps_its_name_and_its_wish() {
         let mut host = OnlineSession::new(
@@ -661,10 +647,9 @@ mod next_round_tests {
     }
 
     /// A peer that leaves while the scores are being read leaves nothing
-    /// stalled, so the round never notices; the host has to. One that has
-    /// said nothing for as long as the round waits before giving a seat
-    /// up is forgotten before the next table is dealt, so the ghost is
-    /// not dealt a chair that every table then freezes on.
+    /// stalled, so the host has to notice: one silent for as long as the
+    /// round waits before giving a seat up is forgotten before the next
+    /// table is dealt, rather than dealt a chair that freezes it.
     #[test]
     fn a_peer_silent_on_the_results_card_is_not_dealt_a_chair() {
         let mut host = OnlineSession::new(
@@ -748,10 +733,9 @@ mod next_round_tests {
     /// between rounds frees its chair and everyone behind it shuffles up
     /// one, so the host re-deals the wins along with the chairs.
     ///
-    /// Without that, a tally each peer kept by seat number handed the
-    /// departed player's rounds to whoever moved into their seat: Cy walks
-    /// into the next round holding Bo's two wins and its own three lost,
-    /// and the table crowns the wrong champion.
+    /// Without that, a tally kept by seat number hands the departed
+    /// player's rounds to whoever moved into their seat, and the table
+    /// crowns the wrong champion.
     #[test]
     fn the_wins_follow_the_chairs_when_a_peer_leaves() {
         let mut host = OnlineSession::new(
@@ -797,9 +781,8 @@ mod next_round_tests {
     ///
     /// It is not simulating anything: it is sitting in the lobby looking at
     /// the terms card, and the frames it would be sent are frames it cannot
-    /// use. Measured before this held: a six-seat table ran at 930
-    /// datagrams a second, and four people waiting in line took it to 1657,
-    /// because the host sent the whole lockstep to every peer it had.
+    /// use. Unheld, four people in line took a six-seat table from 930
+    /// datagrams a second to 1657.
     #[test]
     fn a_peer_in_line_is_not_sent_the_round() {
         let mut host = OnlineSession::new(
@@ -846,10 +829,9 @@ mod next_round_tests {
     /// only one that can catch a peer speaking for somebody else's seat.
     ///
     /// It matters because of the relay: the spokes of the star hear each
-    /// other only through the hub, so an input the hub believes is an
-    /// input the whole table believes. One unchecked datagram and every
-    /// peer that heard the relay is playing a different round from the one
-    /// that did not - which is a desync lockstep has no way back from.
+    /// other only through the hub, so an input the hub believes is an input
+    /// the whole table believes, and one unchecked datagram is a desync
+    /// lockstep has no way back from.
     #[test]
     fn a_peer_speaks_only_for_the_seat_it_holds() {
         let mut host = OnlineSession::new(

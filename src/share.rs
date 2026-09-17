@@ -7,10 +7,10 @@
 //! refused rather than half-loaded.
 //!
 //! The alphabet is Crockford's base32: ten digits and twenty-two letters,
-//! with `I`, `L`, `O` and `U` left out: the first three because they are
-//! the ones people confuse with `1` and `0`, and the last because leaving
-//! it out means no code ever spells anything unfortunate. Decoding maps the
-//! confusable characters back, so a code someone typed as `IL0` still reads.
+//! with `I`, `L`, `O` and `U` left out, the first three because people
+//! confuse them with `1` and `0` and the last so no code spells anything
+//! unfortunate. Decoding maps the confusable characters back, so a code
+//! someone typed as `IL0` still reads.
 
 use crate::lzw;
 
@@ -72,11 +72,10 @@ pub fn encode(kind: Kind, payload: &[u8]) -> String {
 /// character that is not in the alphabet, or a checksum that does not match
 /// what was typed.
 ///
-/// Deliberately forgiving about everything that does not change the
-/// meaning (case, spaces, hyphens, line breaks, and the four letters the
-/// alphabet leaves out) because a code is something a person retypes from
-/// another screen, or pastes off a clipboard that carries whatever the
-/// textarea or the mail client wrapped it in.
+/// Deliberately forgiving about everything that does not change the meaning
+/// (case, spaces, hyphens, line breaks, and the four letters the alphabet
+/// leaves out), because a code is retyped from another screen or pasted off
+/// a clipboard that carries whatever wrapped it.
 pub fn decode(code: &str) -> Option<(Kind, Vec<u8>)> {
     let mut chars = code
         .chars()
@@ -111,21 +110,17 @@ fn tidy(ch: char) -> char {
 /// is the right price for that.
 ///
 /// Two details carry the guarantee that *every* single wrong character is
-/// caught. The sum is over each character's **alphabet index**, not its byte:
-/// the byte values are not contiguous, and `'0'` and `'P'` happen to sit 32
+/// caught. The sum is over each character's **alphabet index**, not its
+/// byte: the byte values are not contiguous, and `'0'` and `'P'` sit 32
 /// apart, so a swap between them would vanish under the modulus. And the
-/// weights are **odd**, which makes them invertible modulo 32, so one wrong
-/// character always moves the sum, where an even weight can be cancelled
-/// by a difference that shares its factors of two.
+/// weights are **odd**, hence invertible modulo 32, so one wrong character
+/// always moves the sum where an even weight can be cancelled.
 ///
-/// The cost of that choice, and it is the right way round: adjacent
-/// transpositions move the sum by twice the difference of the two indices,
-/// so the one pair this misses is two characters exactly 16 apart in the
-/// alphabet. Both guarantees at once are beyond a single base-32 check
-/// character by a weighted sum: full substitution cover needs odd weights,
-/// and the difference of two odd weights is always even. Mistyping one
-/// character is the common error; transposing a pair that happens to be 16
-/// apart is not.
+/// The cost: adjacent transpositions move the sum by twice the difference
+/// of the two indices, so the one pair this misses is two characters
+/// exactly 16 apart. Both guarantees at once are beyond a single base-32
+/// check character by a weighted sum, full substitution cover needing odd
+/// weights and the difference of two odd weights being even.
 fn checksum(body: &str) -> u8 {
     let mut sum = 0u32;
     for (i, ch) in body.chars().enumerate() {
@@ -227,10 +222,8 @@ mod tests {
     }
 
     /// A code more often arrives on the clipboard than through the
-    /// keyboard, and a clipboard carries whatever wrapped it: the trailing
-    /// newline of a copied line, the CRLF of a Windows mail client, the
-    /// break a textarea folded it at. None of those change what the code
-    /// says, so none of them may refuse it.
+    /// keyboard, and a clipboard carries whatever wrapped it: a trailing
+    /// newline, a CRLF, the break a textarea folded it at.
     #[test]
     fn a_pasted_code_still_reads() {
         let code = encode(Kind::Level, b"a small beach");
@@ -249,9 +242,9 @@ mod tests {
     /// The checksum earns its character: a typo is refused, not half-loaded.
     ///
     /// Every position of the code is mistyped as every other letter of the
-    /// alphabet: the body, and the checksum character itself. Testing only
-    /// the last character would have missed that the old checksum let a
-    /// wrong body character through whenever the two bytes sat 32 apart.
+    /// alphabet, the body and the checksum character alike: testing only the
+    /// last character misses a wrong body character whenever the two bytes
+    /// sit 32 apart.
     #[test]
     fn a_typo_is_refused() {
         for payload in [b"seed 12345".as_slice(), b"a", b"wrap: on\n"] {

@@ -52,9 +52,7 @@ pub struct Stats {
     /// 1 once every Beach Day stage has been cleared.
     pub beach_done: u32,
     /// Rounds hosted on the local network, counted per round rather than
-    /// per match because that is where a round is tallied. The busy-LAN
-    /// case is the point of the game, and somebody has to be the one who
-    /// opens the beach.
+    /// per match because that is where a round is tallied.
     pub hosted: u32,
     /// The most seats a round the local player was in has ever filled.
     pub crowd: u32,
@@ -80,8 +78,7 @@ pub struct Stats {
 
 /// What this round has done to the local seat so far: read when the round
 /// ends, then thrown away. Its own resource rather than two fields in
-/// [`Stats`], so that the save file is exactly `Stats` and nothing has to
-/// remember to leave these out of it, or to zero them on the way in.
+/// [`Stats`], so the save file is exactly `Stats`.
 #[derive(Resource, Default, Debug)]
 pub struct RoundScratch {
     /// Raids on the local castle this round.
@@ -542,10 +539,9 @@ mod tests {
 
     /// The description column is what is left of a 580px row once the mark,
     /// the fixed name column, the gaps and the progress count have taken
-    /// theirs, and it clips like the name column does. Deliberately, so a
-    /// long description never pushes the count off the end of the row; but
-    /// a description clipped mid-word still reads as a bug, and nothing
-    /// short of measuring it says which ones are.
+    /// theirs, and it clips so a long description never pushes the count
+    /// off the end. A description clipped mid-word still reads as a bug,
+    /// and only measuring says which ones are.
     #[test]
     fn every_trophy_description_fits_what_is_left_of_its_row() {
         use crate::app::i18n::metrics::text_px;
@@ -599,10 +595,9 @@ mod tests {
     }
 
     /// The name column is a fixed 204px with `clip_x`, so a name too long
-    /// for it loses its tail with nothing anywhere to say so. Measured in
-    /// pixels rather than characters: Japanese draws about two-thirds wider
-    /// per character than Latin, so a character count passes the very
-    /// language most likely to overrun.
+    /// for it loses its tail silently. Measured in pixels rather than
+    /// characters: Japanese draws about two-thirds wider per character, so
+    /// a character count passes the language most likely to overrun.
     #[test]
     fn every_trophy_name_fits_its_column() {
         // The row's own numbers, from `ui::spawn_trophy`.

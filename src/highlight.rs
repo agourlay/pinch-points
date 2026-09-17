@@ -1,12 +1,11 @@
 //! The highlight reel: the last fifteen seconds of a finished round, zoomed
 //! on the castle that decided it, written out as an animated GIF.
 //!
-//! It is built by re-simulating the round's [`Replay`] rather than by
-//! capturing the screen: determinism means the recording *is* the round, so
-//! the reel needs no render pipeline, no window, and no timing luck. It is
-//! also why this lives beside the sim rather than in the Bevy shell: a
-//! headless little rasterizer over board state (see [`crate::gif`] for the
-//! encoder underneath).
+//! Built by re-simulating the round's [`Replay`] rather than by capturing
+//! the screen: determinism means the recording *is* the round, so the reel
+//! needs no render pipeline, no window and no timing luck, and lives beside
+//! the sim as a headless rasterizer over board state (see [`crate::gif`]
+//! for the encoder underneath).
 
 use crate::gif::Gif;
 use crate::sim::{
@@ -298,9 +297,8 @@ mod tests {
     use crate::sim::{Level, PlayerAction, classic_arena_seeded};
 
     /// The reel wears the same flags the match did. It cannot share the
-    /// palette outright, since that one is `bevy::Color` and this module is
-    /// engine-free, so the two copies are held together here instead of by
-    /// hoping nobody restyles one of them.
+    /// palette outright, that one being `bevy::Color` where this module is
+    /// engine-free, so the two copies are held together here.
     #[test]
     fn the_reel_flies_the_games_own_flags() {
         for seat in 0..MAX_PLAYERS as u8 {

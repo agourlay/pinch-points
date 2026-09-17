@@ -2,11 +2,9 @@
 //!
 //! Written for the highlight reel's GIF writer (see [`crate::gif`]) and kept
 //! general because share codes want the same thing: a round of Pinch Points
-//! is thirty kilobytes of mostly-repeated text, and a code nobody can carry
-//! is not a share code. The decoder lived in the GIF tests for a year,
-//! proving the encoder round-tripped; share codes are the first thing to
-//! decode bytes a *stranger* wrote, so it moved out here and learned to
-//! refuse rather than panic.
+//! is thirty kilobytes of mostly-repeated text. Share codes are the first
+//! thing to decode bytes a *stranger* wrote, so the decoder refuses rather
+//! than panics.
 //!
 //! Hand-rolled rather than pulled in as a dependency, for the same reason
 //! the PRNG is (see [`Pcg32`](crate::sim::Pcg32)).
@@ -107,9 +105,8 @@ pub fn compress(symbols: &[u8], min_code_bits: u8) -> Vec<u8> {
 }
 
 /// How much a single stream may expand to. A few hundred bytes of LZW can
-/// name megabytes of output, and the streams reaching this decoder are typed
-/// in by hand from somewhere else, and a share code that is nonsense should
-/// cost a rejection, not the machine's memory.
+/// name megabytes of output, and the streams reaching this decoder are
+/// typed in by hand from somewhere else.
 const MAX_OUTPUT: usize = 1 << 22;
 
 /// Decode a stream, the way a GIF viewer does, including the one-entry lag
@@ -231,13 +228,10 @@ mod tests {
     }
 
     /// The dictionary-full path: at 4096 entries both sides must start over,
-    /// independently and in step. It is the subtlest branch in the encoder
-    /// and the easiest to believe you have covered: the repetitive cases
-    /// above never get past 400 entries, because LZW learns long phrases
-    /// from them and stops adding new ones. Only high-entropy data fills the
-    /// table, so this feeds it noise from the sim's own PRNG (no
-    /// dependency, and the same bytes every run) and *asserts the restart
-    /// happened*, so the coverage cannot lapse again unnoticed.
+    /// independently and in step. The repetitive cases above never get past
+    /// 400 entries, because LZW learns long phrases from them and stops
+    /// adding new ones, so this feeds it noise from the sim's own PRNG and
+    /// asserts the restart happened.
     #[test]
     fn survives_a_full_dictionary() {
         let mut rng = crate::sim::Pcg32::new(0x1ADE_C0DE, 0x9971);
@@ -334,13 +328,12 @@ mod tests {
     /// A few kilobytes that name megabytes are refused rather than
     /// obeyed.
     ///
-    /// The one stream this decoder reads that a stranger wrote: a share
-    /// code typed in from somewhere else, and the handmade beach riding in
-    /// a host's `Start`. LZW grows a dictionary entry by one symbol per
-    /// code, so a stream that walks its own tail names an entry longer
-    /// each time and a small input can ask for all the memory there is.
-    /// [`MAX_OUTPUT`] is the answer, and until now nothing checked that it
-    /// was ever consulted.
+    /// The streams this decoder reads that a stranger wrote: a share code
+    /// typed in from somewhere else, and the handmade beach riding in a
+    /// host's `Start`. LZW grows a dictionary entry by one symbol per code,
+    /// so a stream that walks its own tail names an entry longer each time
+    /// and a small input can ask for all the memory there is;
+    /// [`MAX_OUTPUT`] is the answer.
     ///
     /// The stream is written by hand, since `compress` cannot produce one:
     /// its output only ever names what it was given.

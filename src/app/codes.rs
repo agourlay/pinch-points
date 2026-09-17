@@ -1,9 +1,9 @@
 //! Share codes at the keyboard: put one on the clipboard, take one off it.
 //!
-//! The codec is [`share`]; this is the half that touches the machine.
-//! It exists so the editor and the replay library ask the same question the
-//! same way, and so the one awkward detail (that a clipboard read is a
-//! promise on the web and an answer everywhere else) is written down once.
+//! The codec is [`share`]; this is the half that touches the machine, so
+//! the editor and the replay library ask the same question the same way and
+//! the one awkward detail (a clipboard read is a promise on the web and an
+//! answer everywhere else) is written down once.
 
 use crate::app::i18n::fill;
 use crate::share::{self, Kind};
@@ -23,8 +23,8 @@ pub fn copy(clipboard: &mut Clipboard, kind: Kind, payload: &[u8]) -> Result<Str
 
 /// Copy a payload as a share code and say how it went: `ok` (with its `{n}`
 /// slot filled by the code's length) on success, the shared failure
-/// sentence otherwise. The one feedback for the one gesture: three screens
-/// had each written their own copy of this match.
+/// sentence otherwise. One feedback for one gesture, where three screens
+/// had each written their own copy of the match.
 pub fn copy_feedback(
     clipboard: &mut Clipboard,
     tr: &crate::app::i18n::Tr,
@@ -66,9 +66,8 @@ pub fn paste(clipboard: &mut Clipboard) -> Option<(Kind, Vec<u8>)> {
 /// that can go wrong: nothing readable on the clipboard, a code of the wrong
 /// sort, or a code that will not load.
 ///
-/// Kept apart from the screens because "that is a level, not a round" is the
-/// message people actually need, and it is easy to collapse all three into
-/// "bad code" and leave someone guessing.
+/// Kept apart from the screens because "that is a level, not a round" is
+/// the message people need, where "bad code" leaves someone guessing.
 pub fn wrong_kind(tr: &crate::app::i18n::Tr, wanted: Kind, got: Kind) -> String {
     let name = |kind: Kind| match kind {
         Kind::Beach => tr.code_kind_beach,
@@ -103,12 +102,12 @@ pub fn payload_text(
 mod tests {
     use super::*;
 
-    /// Nothing here opens a [`Clipboard`]. With `system_clipboard` on, that
+    /// Nothing here opens a [`Clipboard`]. With `system_clipboard` on that
     /// resource is the *real* one, so a test that read and wrote it would
-    /// sit on whatever the person running the suite had just copied, and
-    /// two such tests would hand each other their payloads. The codec is tested
-    /// in [`share`]; what is worth testing here is the sentence a
-    /// player gets when a paste is not what the screen wanted.
+    /// sit on whatever the person running the suite had copied, and two
+    /// such tests would hand each other their payloads. The codec is tested
+    /// in [`share`]; what is worth testing here is the sentence a player
+    /// gets when a paste is not what the screen wanted.
     #[test]
     fn the_wrong_sort_of_code_says_which_sort_it_is() {
         let complaint = wrong_kind(&crate::app::i18n::EN, Kind::Round, Kind::Level);

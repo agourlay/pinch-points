@@ -118,9 +118,8 @@ fn duel(a: BotLevel, b: BotLevel, rounds: u64, bar: &ProgressBar) -> (f64, f64, 
 ///
 /// Provisional, and deliberately just past a coin flip: a difficulty step
 /// that cannot win more than half its rounds is not a step, but the three
-/// levels are close enough at the bottom that demanding a wide margin would
-/// fail on sampling noise at the default 40 rounds. Confirm against a run
-/// at a large `ROUNDS` before scheduling anything on it.
+/// levels are close enough at the bottom that a wide margin would fail on
+/// sampling noise at the default 40 rounds.
 const LADDER_EDGE: f64 = 0.52;
 
 fn main() {
@@ -149,9 +148,8 @@ fn main() {
     let bar = common::bar(pairings.len() as u64 * rounds * 4, "rounds");
     // Every pairing is listed weaker-first, so the second name must take
     // more than half. The ladder inverting is the regression this harness
-    // has actually caught, and catching it meant a person reading two
-    // percentages and noticing they were the wrong way round: the program
-    // printed them and never compared them.
+    // has actually caught, and printed without comparing it took a person
+    // noticing two percentages were the wrong way round.
     let mut inverted: Vec<String> = Vec::new();
     for (a, b) in pairings {
         let (lo, hi, habits) = duel(a, b, rounds, &bar);
@@ -167,10 +165,9 @@ fn main() {
         }
         let per = (rounds * 8) as f64; // seats-worth of rounds per side
         // Through `suspend` onto real stdout: it lifts the bar first on a
-        // terminal, and just prints when the output is redirected, where
-        // `bar.println` would drop the line into a hidden draw target -
-        // these result lines are the whole point of the run and must survive
-        // a `> ladder.txt`.
+        // terminal and just prints when the output is redirected, where
+        // `bar.println` would drop the line into a hidden draw target.
+        // These result lines have to survive a `> ladder.txt`.
         bar.suspend(|| {
             println!(
                 "{:>6} vs {:<6} {:5.1}% / {:5.1}%   placements {:5.0} / {:5.0}   \

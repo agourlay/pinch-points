@@ -1,11 +1,9 @@
 //! The tide coming in on a finished round.
 //!
-//! At zero the sim stops and the scores lock, and until now that was the
-//! whole of it: the board froze, the card came up, and a round that had
-//! been four players shouting at each other ended on an accountant's note.
-//! The original washes the beach flat, and this is that - one wave off the
-//! sea, over the sand, and away again, with everything the round built
-//! under it.
+//! At zero the sim stops and the scores lock, which on its own is a board
+//! that freezes and a card that comes up. The original washes the beach
+//! flat, and this is that: one wave off the sea, over the sand, and away
+//! again, with everything the round built under it.
 //!
 //! Render-only and frozen-safe. Nothing here reads or writes the sim, the
 //! clock or the phase machine: the wave plays over whatever the board was
@@ -40,12 +38,11 @@ const DRAIN: f32 = 0.7;
 
 /// How far the wave is built past the board, in world units.
 ///
-/// Sized from the world rather than from the board, and it has to be:
-/// `boot::fit_camera` clamps the zoom at 0.8, so a board smaller than the
-/// window leaves a great deal of beach visible around it, and a wave cut
-/// to the board's own width ends in two hard vertical edges with dry sand
-/// beyond them. `spawn_dusk_shore` reaches this far for the same reason,
-/// and reads it from here.
+/// Sized from the world rather than from the board: `boot::fit_camera`
+/// clamps the zoom at 0.8, so a board smaller than the window leaves a
+/// great deal of beach visible around it, and a wave cut to the board's
+/// width ends in two hard vertical edges with dry sand beyond them.
+/// `spawn_dusk_shore` reads it from here for the same reason.
 pub(super) const REACH: f32 = 9000.0;
 
 /// Send the wave in when the round ends.
@@ -109,16 +106,13 @@ pub fn start_tide_wash(
 /// of the sand.
 ///
 /// The body is the board's own height and a bit, not a slab reaching off
-/// the top of the world. A wave wants a shoulder that thins away behind
-/// the crest, and a shoulder taller than the window is a shoulder nobody
-/// can see: it drew as a flat sheet of colour sliding down the glass.
+/// the top of the world: a shoulder taller than the window draws as a flat
+/// sheet of colour sliding down the glass.
 fn wave(age: f32, half_height: f32) -> (f32, f32, f32) {
-    // Every one of the three measured against the *view*, not the board.
-    // The shoulder was, and the two ends were not, which left the sea
-    // materialising over visible sand at the top of a tall window and
-    // stopping short of the bottom with dry sand still under it: the
-    // camera stops zooming in at 0.8, so a small board sits in a much
-    // larger visible beach (see `REACH`).
+    // Every one of the three measured against the *view*, not the board:
+    // the camera stops zooming in at 0.8, so a small board sits in a much
+    // larger visible beach (see `REACH`), and the sea materialised over
+    // visible sand at the top of a tall window.
     let reach = half_height.max(REACH / 4.0);
     let body = half_height * 2.0 + REACH / 2.0;
     let sky = reach + TILE;

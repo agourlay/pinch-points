@@ -245,10 +245,9 @@ tile centre plus how far each has walked out of it. Resolved in fixed
 iteration order, never hash-map or query order, so every machine agrees.
 
 Measuring within a tile is not enough, and shipped that way until it was
-found in play: two creatures walking head-on close the gap while still
-filed under *different* tiles, so a same-tile test never sees the contact,
-and by the time they share a tile they have passed each other. A gull and
-a crab meeting in a corridor went through each other every time.
+found in play: two creatures walking head-on close the gap while still filed
+under *different* tiles, so a same-tile test never sees the contact, and by
+the time they share a tile they have passed each other.
 
 ### 4.4 Tick order (frozen)
 
@@ -280,9 +279,8 @@ its own): **bank N** crabs, **survive** with none eaten until the tide, or
 bank a **golden** crab. Every stage ends inside a sixty-second tick limit
 even without a tide, which a survive stage runs out to win and every other
 goal loses to. Deterministic and short, so failures are readable and retries
-instant. Exercises the whole core sim while postponing caps, degradation,
-tiers, and networking. If the movement rules are wrong, this is where it
-shows.
+instant, and it exercises the whole core sim while postponing caps,
+degradation, tiers and networking.
 
 ### 5.2 Beach Day (challenge)
 
@@ -319,9 +317,9 @@ store art has to say "cheerful crab puzzler" immediately.
 
 ### 7.1 Stack
 
-**Rust + Bevy 0.19.** Third-party Bevy crates trail each release by weeks
-or months, so compatibility is worth checking before depending on anything,
-netcode especially (§9 risk 6).
+**Rust + Bevy 0.19.** Third-party Bevy crates trail each release by weeks or
+months, so check compatibility before depending on one, netcode especially
+(§9 risk 6).
 
 ### 7.2 The simulation lives outside the ECS
 
@@ -415,11 +413,11 @@ Each action packs into **3 bytes**:
 (A full byte per axis: the nibble this spec first called for caps boards at
 16 wide, and the XL beach is 20. 3 bytes × 6 players × 30 Hz is trivial.)
 
-**Rollback remains available**, and is unbuilt for want of a need rather
-than a dependency: the delay it would give back is three frames on a link
-whose round trip is a millisecond. The packed input and `Board` snapshots
-are the groundwork that keeps the swap contained if that ever changes; see
-`backlog.md`, which also says why the Bevy wrappers are the wrong way in.
+**Rollback remains available**, unbuilt for want of a need rather than a
+dependency: the delay it would give back is three frames on a link whose
+round trip is a millisecond. The packed input and `Board` snapshots keep the
+swap contained if that changes; see `backlog.md`, which also says why the
+Bevy wrappers are the wrong way in.
 
 ### 7.7 Replays
 
@@ -489,6 +487,6 @@ How each design risk was settled. Remaining ideas live in `backlog.md`.
 | 3 | Original's roulette trigger conditions | Not reproduced; the tide-event set and its tuning are our own (§3.6) |
 | 4 | Gull steerability tuning | Playtested to the dials in §3.5; steering gulls is the offensive game, not the whole game |
 | 5 | Handedness + directional castle gates | Gates dropped. Handedness alone carries the sorting puzzles, and the pair was unreadable in the player's head |
-| 6 | Bevy 0.19 ecosystem maturity for netcode | Overtaken (re-checked 2026-09-17): `bevy_ggrs` 0.22 takes 0.19, and raw `ggrs` never wanted an engine at all, so the wrappers were never the obstacle they looked like. Online ships as deterministic lockstep because a 100 ms delay over a 1 ms LAN does not need prediction, not because rollback is blocked (§7.6, `backlog.md`) |
+| 6 | Bevy 0.19 ecosystem maturity for netcode | Overtaken (re-checked 2026-09-17): `bevy_ggrs` 0.22 takes 0.19, and raw `ggrs` never wanted an engine at all. Online ships as deterministic lockstep because a 100 ms delay over a 1 ms LAN does not need prediction, not because rollback is blocked (§7.6, `backlog.md`) |
 | 7 | Title SEO collision | Accepted; revisit before a store page |
 | 8 | Board wrap-around edges | The original wraps. Per-level flag, taught at campaign level 26, and the open-ocean versus map turns it on |

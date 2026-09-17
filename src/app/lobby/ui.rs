@@ -22,10 +22,8 @@ pub struct LobbyRow(pub usize);
 
 /// The four things a row of the beach list says, left to right.
 ///
-/// The middle two are the ones an address alone never answered: a hall of
-/// eight beaches all called something sensible still leaves "which one is
-/// Bo's?" and "which of these is the machine by the window?" unanswered,
-/// and the answers used to live only in the beacon.
+/// The middle two are the ones an address alone never answered: "which one
+/// is Bo's?" and "which of these is the machine by the window?".
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ListCol {
     /// What the beach is called, behind its number.
@@ -110,8 +108,7 @@ pub enum LobbyCard {
 ///
 /// Copied handles rather than a borrowed [`crate::app::art::Art`], and a
 /// `Default` of empty ones, so the lobby can still be built in a test app
-/// with no asset server behind it, which is where the prompt-row test
-/// builds it.
+/// with no asset server behind it.
 #[derive(Default)]
 pub struct LobbyArt {
     boat: Handle<Image>,
@@ -290,14 +287,12 @@ fn fixed_row_text(px: f32) -> (Text, TextFont, TextColor, TextLayout) {
 /// One column of the beach list: a fixed width so the four line up down the
 /// whole list, and clipped rather than wrapped.
 ///
-/// Both halves of that matter. A ragged middle column is unreadable at a
-/// dozen rows, since the eye scans a column and not a row. And a name too
-/// long for its width would otherwise wrap and make its row twice as tall
-/// as its neighbours, which is worse than losing a letter off the end. Names are
-/// capped at [`crate::transport::WIRE_NAME`] on the wire and the widths
-/// below are cut to hold that many characters of this font, so in practice
-/// nothing is clipped at all; the clip is for a window narrower than the
-/// list wants, where every column gives up the same fraction.
+/// Both halves matter: a ragged middle column is unreadable at a dozen
+/// rows, and a name too long for its width would wrap and make its row
+/// twice as tall as its neighbours. Names are capped at
+/// [`crate::transport::WIRE_NAME`] on the wire and the widths below hold
+/// that many characters of this font, so the clip is only for a window
+/// narrower than the list wants.
 fn list_cell(px: f32, width: Val, grow: f32) -> impl Bundle {
     (
         Text::new(""),
@@ -319,13 +314,11 @@ fn list_cell(px: f32, width: Val, grow: f32) -> impl Bundle {
 /// `6/6  (en cours)`, and for the first column a name with a two-figure
 /// row number in front of it.
 ///
-/// Which name, whose beach and where it is are the three that answer "is
-/// this the game I am looking for", and they sit in a block together; the
-/// slack of a wide window goes into the gap before the last column, which
-/// answers the different question of whether there is a way in. The name
-/// column is fixed like the rest rather than taking the slack itself,
-/// which left the host's name stranded an inch to the right of the beach
-/// it belongs to.
+/// Which name, whose beach and where it is answer "is this the game I am
+/// looking for", so they sit in a block together; the slack of a wide
+/// window goes into the gap before the last column, which answers whether
+/// there is a way in. The name column is fixed like the rest rather than
+/// taking the slack, which stranded the host's name away from its beach.
 const NAME_COL: f32 = 380.0;
 const HOST_COL: f32 = 250.0;
 const WHERE_COL: f32 = 215.0;
@@ -335,9 +328,8 @@ const TABLE_COL: f32 = 190.0;
 /// the smaller print beside it does.
 ///
 /// Under the cursor both come up; a beach with no way in goes down in
-/// both, so a full one reads as unavailable at a glance rather than after
-/// reading its count. In between, the name carries the row and the details
-/// sit behind it. Four columns all in parchment is a wall of text.
+/// both, so a full one reads as unavailable at a glance. In between, the
+/// name carries the row and the details sit behind it.
 fn row_ink(picked: bool, room: bool) -> (Color, Color) {
     match (picked, room) {
         (true, _) => (palette::SELECTED_ROW, palette::PARCHMENT),
@@ -391,9 +383,8 @@ pub fn update_lobby_list(
 }
 
 /// Say why the map dial is offering none of the host's own beaches, under
-/// the terms it belongs to. A system of its own rather than another pair of
-/// queries on [`update_lobby_terms`]: that one already reaches for `Text`
-/// twice, and a third would have to spell out what it is not.
+/// the terms it belongs to. A system of its own because
+/// [`update_lobby_terms`] already reaches for `Text` twice.
 pub fn update_lobby_beach_note(
     settings: Res<GameSettings>,
     config: Res<MatchConfig>,
@@ -658,13 +649,11 @@ fn spawn_table_face(
                                 ))
                                 .with_children(|line| {
                                     // A gutter for the name and the rest for
-                                    // the value, both told not to wrap. Left
-                                    // to themselves the longest map name
-                                    // wraps in German, which makes the row
-                                    // two lines tall, the card taller, and
-                                    // the whole column jump every time the
-                                    // host turns the dial. It also lands the
-                                    // value on top of the name.
+                                    // the value, both told not to wrap: the
+                                    // longest map name wraps in German,
+                                    // which makes the row two lines tall and
+                                    // jumps the whole column every time the
+                                    // host turns the dial.
                                     line.spawn((
                                         Node {
                                             flex_shrink: 0.0,
@@ -687,12 +676,10 @@ fn spawn_table_face(
                             }
                             // Under the dials, in a row that keeps its
                             // height empty or not, so the card does not
-                            // grow a line as the table fills up.
-                            //
-                            // The row text's own ink is dropped for a
-                            // quieter one - passed as a fourth component it
-                            // would be a second `TextColor` on the entity,
-                            // which Bevy refuses outright.
+                            // grow a line as the table fills up. The row
+                            // text's own ink is dropped for a quieter one:
+                            // a fourth component would be a second
+                            // `TextColor`, which Bevy refuses.
                             let (text, font, _, layout) = fixed_row_text(14.0);
                             body.spawn((
                                 Node {
@@ -753,9 +740,9 @@ fn spawn_table_face(
 /// The line being typed, which belongs to neither face: a name is asked
 /// for while browsing, before there is a beach to be at.
 ///
-/// It used to live inside the chat card, on the face that is hidden then,
-/// so pressing H opened a question nobody could see and turned every other
-/// key into text. It sits under both faces now.
+/// Inside the chat card, on the face that is hidden then, pressing H
+/// opened a question nobody could see and turned every other key into
+/// text. It sits under both faces instead.
 fn spawn_entry_bar(commands: &mut Commands) {
     commands
         .spawn((
@@ -837,11 +824,10 @@ mod list_row_tests {
     /// The whole of a row, as somebody scanning the hall reads it: which
     /// game, whose it is, where it is, and whether there is a way in.
     ///
-    /// The middle two are the ones an address in the corner of a screen
-    /// never answered. "Room 3" does not say it is Anna's, and "Anna's
-    /// beach" does not say which of the eight machines in the room it is
-    /// running on, which is the thing a friend on a LAN with no broadcast
-    /// has to type in by hand.
+    /// The middle two are the ones an address never answered: "Room 3" does
+    /// not say it is Anna's, and "Anna's beach" does not say which of the
+    /// eight machines it runs on, which is what a friend on a LAN with no
+    /// broadcast has to type in by hand.
     #[test]
     fn a_row_says_which_game_whose_and_where() {
         let hosts = vec![
@@ -881,8 +867,8 @@ mod list_row_tests {
 
     /// The row under the cursor comes up, a beach with no way in goes down,
     /// and the small print follows its row rather than holding its own
-    /// colour. Otherwise a full beach still reads as an invitation in
-    /// three columns out of four.
+    /// colour, so a full beach does not read as an invitation in three
+    /// columns out of four.
     #[test]
     fn the_details_take_the_colour_of_the_row_they_are_on() {
         let hosts = vec![

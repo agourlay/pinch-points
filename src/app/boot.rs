@@ -15,11 +15,10 @@ pub(super) fn setup_camera(mut commands: Commands) {
 /// The slanted face of the UI font, for the few lines that are the game
 /// speaking rather than a player: the lobby's arrivals and departures.
 ///
-/// A fixed handle rather than a resource because a `TextFont` is written
-/// from systems all over the shell, and asking each of them to carry a
-/// resource for one italic line is a lot of plumbing for one font. Bevy
-/// resolves a handle to the exact face, so asking for this one is asking
-/// for the slant. There is no synthetic italic to fall back on.
+/// A fixed handle rather than a resource, because a `TextFont` is written
+/// from systems all over the shell and none of them should have to carry a
+/// resource for one italic line. There is no synthetic italic to fall back
+/// on.
 pub const ITALIC_FONT: Handle<Font> = uuid_handle!("9b451db2-8b49-4ad5-9794-ac1ce2ac943e");
 
 /// The Japanese face, which DejaVu cannot stand in for: it has no kana
@@ -78,13 +77,12 @@ pub(super) fn install_ui_font(mut fonts: ResMut<Assets<Font>>) {
 /// kanji.
 ///
 /// Every `TextFont::default()` in the game asks for DejaVu, and a glyph it
-/// has not got draws as nothing whatever - Bevy loads no system fonts, so
-/// there is no font of last resort behind it. Registering the subset as
-/// the fallback for the three Japanese scripts is what makes a Japanese
-/// line legible without every `Text` in the shell having to know which
-/// language it is in. It also means a line that is half Japanese and half
-/// not - which most of the prompts are, with their WASD and their Enter -
-/// draws each half in the face that has it.
+/// has not got draws as nothing at all, Bevy loading no system fonts.
+/// Registering the subset as the fallback for the three Japanese scripts is
+/// what makes a Japanese line legible without every `Text` in the shell
+/// knowing which language it is in, and a line that is half Japanese (most
+/// prompts, with their WASD and their Enter) draws each half in the face
+/// that has it.
 ///
 /// Runs until it lands rather than once: Bevy registers a font asset with
 /// the collection in its own system, and the family is not there to be
@@ -136,10 +134,10 @@ pub(super) fn fit_camera(
     let menu = crate::app::postcard_screen(*screen.get());
     let chrome = screen.get().chrome();
     // The chrome is UI, so it takes whatever the global UI scale makes of
-    // it; the board does not. Reserving the unscaled width here would slide
-    // a big grid under the sidebars as soon as the interface grew. Read the
-    // applied scale rather than the setting: the interface also shrinks to
-    // fit a small window, and the reserve has to shrink with it.
+    // it; the board does not, and the unscaled width would slide a big grid
+    // under the sidebars as soon as the interface grew. Read the applied
+    // scale rather than the setting: the interface also shrinks to fit a
+    // small window.
     let ui = ui_scale.0;
     let (chrome_w, chrome_top, chrome_bottom) =
         (chrome.width * ui, chrome.top * ui, chrome.bottom * ui);
@@ -153,11 +151,10 @@ pub(super) fn fit_camera(
     // than divide by nothing.
     let fit_w = (window.width() - chrome_w).max(layout::TILE);
     let fit_h = (window.height() - chrome_h).max(layout::TILE);
-    // The menu has no board: its decoration is laid out 1:1 with the window.
-    // Small boards zoom in a little rather than floating in their margins:
-    // a five-row puzzle at 1:1 fills a third of the window and reads as
-    // lost. 0.8 is a quarter over life size, gentle enough that the flat
-    // sprite art stays crisp.
+    // The menu has no board: its decoration is laid out 1:1 with the
+    // window. Small boards zoom in a little rather than floating in their
+    // margins, a five-row puzzle at 1:1 filling a third of the window. 0.8
+    // is a quarter over life size, gentle enough to stay crisp.
     let scale = if menu {
         1.0
     } else {
@@ -193,9 +190,8 @@ pub(super) fn fit_camera(
 /// After [`fit_camera`], and it has to be: the fit writes the camera's
 /// resting place every frame, so the shake is an offset from wherever the
 /// fit just put it and nothing accumulates. The fit's own half-pixel
-/// deadband is what keeps the two from fighting - it sees the shaken
-/// camera as moved and puts it back, which is exactly the reset this
-/// wants.
+/// deadband sees the shaken camera as moved and puts it back, which is the
+/// reset this wants.
 ///
 /// The throw is in screen pixels, so it is multiplied by the projection's
 /// scale: a zoomed-out board would otherwise be shaken by a fraction of

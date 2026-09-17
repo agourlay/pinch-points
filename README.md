@@ -20,7 +20,7 @@ take everything back.
   cargo install --locked pinch-points
   ```
   `--locked` builds against the dependency versions this game was tested
-  and released with, rather than re-resolving to whatever is newest.
+  and released with.
 - **From source**:
   ```sh
   git clone https://github.com/agourlay/pinch-points
@@ -74,7 +74,7 @@ one still in progress.
 
 Pads are plug-and-play and fill seats from the highest player down, so
 keyboard-plus-pad, two pads and two keyboards all work with no setup. Every
-menu is navigable from a pad. The interface speaks eight languages.
+menu is navigable from a pad, and the interface speaks eight languages.
 
 ## Documentation
 

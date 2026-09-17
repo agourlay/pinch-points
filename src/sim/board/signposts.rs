@@ -35,10 +35,10 @@ impl Board {
     /// rather than evicts.
     ///
     /// The one branch of [`Board::can_place_signpost`] a player can fix by
-    /// picking up a signpost instead of by aiming somewhere else, and the
-    /// UI says so differently. Read off the same rule so the two cannot
-    /// drift: under `Evict` this is never true, because the placement
-    /// succeeds and takes the oldest in trade.
+    /// picking up a signpost instead of by aiming somewhere else, which the
+    /// UI says differently. Read off the same rule so the two cannot drift:
+    /// under `Evict` it is never true, the placement succeeding and taking
+    /// the oldest in trade.
     pub fn out_of_signposts(&self, player: PlayerId, x: u8, y: u8) -> bool {
         if self.rules.cap_policy != CapPolicy::Reject
             || seat(player).is_none()
@@ -47,10 +47,9 @@ impl Board {
             return false;
         }
         let t = self.index(i32::from(x), i32::from(y)) as usize;
-        // The inventory has to be the *only* thing in the way. A rock with
-        // a spent inventory refuses for two reasons at once, and "you have
-        // none left" is the wrong one to say: a post in hand would not have
-        // gone there either.
+        // The inventory has to be the *only* thing in the way: a rock with
+        // a spent inventory refuses for two reasons, and a post in hand
+        // would not have gone there either.
         self.grid.tiles[t] == TileKind::Empty
             && self.signposts[t].is_none()
             && self.signpost_count(player) >= self.rules.signpost_cap as usize
@@ -133,11 +132,10 @@ impl Board {
     /// Where a player's most recent signpost stands and when they placed it:
     /// `(x, y, tick)`.
     ///
-    /// This is the anchor for a bot's cursor (see [`crate::sim::bot_action`]):
-    /// the last tile it reached, so the walk to the next one can be charged
-    /// for. Reading it from the board keeps the bot a pure function of the
-    /// state, so every peer of an online match derives the same move for an
-    /// AI seat.
+    /// The anchor for a bot's cursor (see [`crate::sim::bot_action`]): the
+    /// last tile it reached, so the walk to the next can be charged for.
+    /// Read from the board, so the bot stays a pure function of the state
+    /// and every peer derives the same move for an AI seat.
     pub fn newest_signpost_of(&self, player: PlayerId) -> Option<(u8, u8, u64)> {
         self.signposts
             .iter()
