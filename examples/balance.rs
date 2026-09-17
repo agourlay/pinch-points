@@ -73,7 +73,16 @@ fn probe(board: Board, seats: u8) {
 /// `count` is the number of games the iterator will yield, so the bar has a
 /// length before the first slow round is played; it is trusted, not checked
 /// against the iterator.
-fn tally(label: &str, count: u64, games: impl Iterator<Item = [u32; MAX_PLAYERS]>, seats: usize) {
+/// Returns the worst seat deviation seen, in units of standard error, so
+/// the caller can hold it to a budget. Printing it and dropping it was how
+/// a seat handicap in the bot's blunder draw sat in every round ever played
+/// until somebody happened to read the output.
+fn tally(
+    label: &str,
+    count: u64,
+    games: impl Iterator<Item = [u32; MAX_PLAYERS]>,
+    seats: usize,
+) -> f64 {
     let mut wins = [0u32; MAX_PLAYERS];
     let mut ties = 0u32;
     let mut totals = [0f64; MAX_PLAYERS];
@@ -125,56 +134,164 @@ fn tally(label: &str, count: u64, games: impl Iterator<Item = [u32; MAX_PLAYERS]
         );
     }
     println!("worst {worst:.1}s");
+    worst
 }
+
+/// One sweep's result, and the drift it is allowed before the run fails.
+struct Sweep {
+    label: &'static str,
+    worst: f64,
+    /// `None` for the `classic` sweeps, which are reported and never gated.
+    /// Those play a single handmade board a hundred times with only the
+    /// warm-up offset or the seed varying, which is a small and heavily
+    /// correlated sample: their sigmas swing several points between runs
+    /// that change nothing they measure, so a gate on them would fail on
+    /// nights when nothing happened.
+    budget: Option<f64>,
+}
+
+/// Run one sweep and record it against its budget.
+fn sweep(
+    out: &mut Vec<Sweep>,
+    label: &'static str,
+    budget: Option<f64>,
+    count: u64,
+    games: impl Iterator<Item = [u32; MAX_PLAYERS]>,
+    seats: usize,
+) {
+    let worst = tally(label, count, games, seats);
+    out.push(Sweep {
+        label,
+        worst,
+        budget,
+    });
+}
+
+/// Fail the run if any gated sweep drifted past what it is allowed.
+///
+/// This is the whole point of running the harness unattended: the figures
+/// were last read by hand on 2026-08-11 and not again until 2026-08-22, by
+/// which time every one of them had moved and one had gone from 3.2 sigma
+/// to 5.9. A printed number nobody compares is not a check.
+fn verdict(sweeps: &[Sweep]) {
+    let over: Vec<(&str, f64, f64)> = sweeps
+        .iter()
+        .filter_map(|s| {
+            s.budget
+                .filter(|budget| s.worst > *budget)
+                .map(|budget| (s.label, s.worst, budget))
+        })
+        .collect();
+    if over.is_empty() {
+        let gated = sweeps.iter().filter(|s| s.budget.is_some()).count();
+        println!("\n{gated} gated sweep(s), all inside budget");
+        return;
+    }
+    eprintln!("\n{} sweep(s) past the seat-drift budget:", over.len());
+    for (label, worst, budget) in &over {
+        eprintln!("  {label}: worst {worst:.1}s, budget {budget:.1}s");
+    }
+    std::process::exit(1);
+}
+
+/// Seat-drift budgets, in units of standard error, one per gated sweep.
+///
+/// The sweeps are not comparable to each other, which is why there is no
+/// single number: on 2026-09-17 two seats sat at 0.7 and six at 2.7.
+///
+/// Measured, budgeted:
+///
+/// | sweep | 2026-08-22 | 2026-09-17 | budget |
+/// |---|---|---|---|
+/// | generated 2p 12x9  | 0.3 | 0.7 | 2.0 |
+/// | generated 4p 12x9  | 1.3 | 1.0 | 2.5 |
+/// | generated 4p 16x11 | 1.2 | 1.3 | 3.0 |
+/// | generated 6p 21x13 | 2.5 | 2.7 | 3.5 |
+///
+/// The six-seat budget is the uncomfortable one, and its headroom is the
+/// thinnest on purpose. `tally` says anything past about two is worth
+/// investigating; six seats was already at 2.5 and is now 2.7, so this
+/// budget accepts a drift the harness itself calls suspicious. It is set to
+/// catch that figure getting worse, not to bless where it stands.
+const BUDGET_2P_12X9: f64 = 2.0;
+const BUDGET_4P_12X9: f64 = 2.5;
+/// 200 games against the others' 3000, so the noisiest of the four.
+const BUDGET_4P_16X11: f64 = 3.0;
+const BUDGET_6P_21X13: f64 = 3.5;
 
 fn main() {
     probe(classic_arena(false, 2), 2);
     probe(classic_arena(false, 4), 4);
-    tally(
+
+    // Budgets are per sweep because the sweeps are not comparable: two
+    // seats sit a third of a sigma apart and six sit two and a half, so one
+    // global number would either miss real drift at two seats or fail every
+    // night at six. Each is the figure measured on the date in the comment
+    // beside it, plus room for the noise a re-run shows.
+    let mut sweeps: Vec<Sweep> = Vec::new();
+
+    sweep(
+        &mut sweeps,
         "classic 2p x100 warmups",
+        None,
         100,
         (0..100).map(|k| play_after(classic_arena(false, 2), 2, k)),
         2,
     );
-    tally(
+    sweep(
+        &mut sweeps,
         "classic 4p x100 warmups",
+        None,
         100,
         (0..100).map(|k| play_after(classic_arena(false, 4), 4, k)),
         4,
     );
-    tally(
+    sweep(
+        &mut sweeps,
         "classic 2p x100 seeds",
+        None,
         100,
         (0..100u64).map(|seed| play(classic_arena_seeded(seed, false, 2), 2)),
         2,
     );
-    tally(
+    sweep(
+        &mut sweeps,
         "classic 4p x100 seeds",
+        None,
         100,
         (0..100u64).map(|seed| play(classic_arena_seeded(seed, false, 4), 4)),
         4,
     );
     if std::env::var("BALANCE_FULL").is_err() {
+        // The generated sweeps are the gated ones, so a short run has
+        // nothing to rule on. Say so rather than printing a pass.
+        println!("\nclassic sweeps only; set BALANCE_FULL=1 for the gated ones");
         return;
     }
     println!("classic 2p: {:?}", play(classic_arena(false, 2), 2));
     println!("classic 4p: {:?}", play(classic_arena(false, 4), 4));
     // The generated-map seat spread is the one balance number still moving,
     // so it gets the sample size that makes it readable (see `tally`).
-    tally(
+    sweep(
+        &mut sweeps,
         "generated 4p 12x9",
+        Some(BUDGET_4P_12X9),
         3000,
         (0..3000u64).map(|seed| play(generate_arena(seed, 4, 12, 9), 4)),
         4,
     );
-    tally(
+    sweep(
+        &mut sweeps,
         "generated 2p 12x9",
+        Some(BUDGET_2P_12X9),
         300,
         (0..300u64).map(|seed| play(generate_arena(seed, 2, 12, 9), 2)),
         2,
     );
-    tally(
+    sweep(
+        &mut sweeps,
         "generated 4p 16x11",
+        Some(BUDGET_4P_16X11),
         200,
         (0..200u64).map(|seed| play(generate_arena(seed, 4, 16, 11), 4)),
         4,
@@ -184,10 +301,14 @@ fn main() {
     // the score. The XL beach is the one a six-player match is played on, and
     // it generates one column wider than it is asked for so the edge castles
     // have a centre to share (see `castle_spots`).
-    tally(
+    sweep(
+        &mut sweeps,
         "generated 6p 21x13",
+        Some(BUDGET_6P_21X13),
         3000,
         (0..3000u64).map(|seed| play(generate_arena(seed, 6, 20, 13), 6)),
         6,
     );
+
+    verdict(&sweeps);
 }

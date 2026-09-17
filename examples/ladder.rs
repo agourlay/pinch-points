@@ -113,6 +113,16 @@ fn duel(a: BotLevel, b: BotLevel, rounds: u64, bar: &ProgressBar) -> (f64, f64, 
     (a_total, b_total, habits)
 }
 
+/// The share of head-to-head rounds the stronger bot has to take for the
+/// ladder to count as climbing.
+///
+/// Provisional, and deliberately just past a coin flip: a difficulty step
+/// that cannot win more than half its rounds is not a step, but the three
+/// levels are close enough at the bottom that demanding a wide margin would
+/// fail on sampling noise at the default 40 rounds. Confirm against a run
+/// at a large `ROUNDS` before scheduling anything on it.
+const LADDER_EDGE: f64 = 0.52;
+
 fn main() {
     let rounds: u64 = std::env::var("ROUNDS")
         .ok()
@@ -137,8 +147,24 @@ fn main() {
     // large ROUNDS shows it is still going rather than hung. Result lines
     // print above it as each pairing finishes.
     let bar = common::bar(pairings.len() as u64 * rounds * 4, "rounds");
+    // Every pairing is listed weaker-first, so the second name must take
+    // more than half. The ladder inverting is the regression this harness
+    // has actually caught, and catching it meant a person reading two
+    // percentages and noticing they were the wrong way round: the program
+    // printed them and never compared them.
+    let mut inverted: Vec<String> = Vec::new();
     for (a, b) in pairings {
         let (lo, hi, habits) = duel(a, b, rounds, &bar);
+        let share = hi / (lo + hi);
+        if share < LADDER_EDGE {
+            inverted.push(format!(
+                "{} vs {}: the stronger bot took {:.1}%, wanted {:.0}% or better",
+                name(a),
+                name(b),
+                share * 100.0,
+                LADDER_EDGE * 100.0,
+            ));
+        }
         let per = (rounds * 8) as f64; // seats-worth of rounds per side
         // Through `suspend` onto real stdout: it lifts the bar first on a
         // terminal, and just prints when the output is redirected, where
@@ -161,4 +187,17 @@ fn main() {
         });
     }
     bar.finish_and_clear();
+
+    if inverted.is_empty() {
+        println!("\nthe ladder climbs: every pairing went to the stronger bot");
+        return;
+    }
+    eprintln!(
+        "\n{} pairing(s) came out the wrong way round:",
+        inverted.len()
+    );
+    for line in &inverted {
+        eprintln!("  {line}");
+    }
+    std::process::exit(1);
 }
