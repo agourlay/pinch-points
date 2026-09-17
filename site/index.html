@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pinch Points</title>
+<meta name="description" content="A fast, kid-friendly crab-routing game for 1-6 players. Place arrows in the sand to route streams of crabs into your castle before the tide comes in.">
+<meta property="og:title" content="Pinch Points">
+<meta property="og:description" content="A fast, kid-friendly crab-routing game for 1-6 players, built in Rust with Bevy.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="screenshots/turf_war.png">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%F0%9F%A6%80</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="#top">🦀 Pinch Points</a>
+  <nav>
+    <a href="#modes">Modes</a>
+    <a href="#shots">Screenshots</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/agourlay/pinch-points">GitHub</a>
+  </nav>
+</header>
+
+<main id="top">
+
+<section class="hero">
+  <div class="hero-copy">
+    <h1>Route the crabs.<br>Beat the tide.</h1>
+    <p class="lede">
+      A fast, kid-friendly crab-routing game for <strong>1 to 6 players</strong>.
+      The tide is out: place arrows in the sand to steer streams of crabs into
+      your castle before the sea, and the gulls, take everything back.
+    </p>
+    <p class="cta">
+      <a class="button primary" href="https://github.com/agourlay/pinch-points/releases">Download</a>
+      <a class="button" href="https://github.com/agourlay/pinch-points">Source on GitHub</a>
+    </p>
+    <p class="meta">Free and open source, Apache-2.0 · Linux, macOS, Windows · Built in Rust with Bevy</p>
+  </div>
+  <figure class="hero-shot">
+    <img src="screenshots/turf_war.png" alt="Four-player Turf War: the ranked leaderboard, growing castles, and the tide clock over a live event feed" loading="eager">
+  </figure>
+</section>
+
+<section class="band">
+  <h2>One verb, and a beach that fights back</h2>
+  <p class="section-lede">
+    Built on the mechanical skeleton of <em>ChuChu Rocket!</em> (1999): creatures
+    walk forward, turn at walls by a fixed rule, and arrows are the only thing
+    you get to place. Everything below is what this one does differently.
+  </p>
+  <div class="grid">
+    <article class="card">
+      <h3>Six players, not four</h3>
+      <p>Four corner castles plus two mid-edge on the wider arenas, with team
+      play that grows with the table: 2v2 at four, 2v2v2 or 3v3 at six.</p>
+    </article>
+    <article class="card">
+      <h3>Every crab has a handedness</h3>
+      <p>Left-clawed crabs try left first, right-clawed right, with the
+      oversized claw as the tell. One bit of state that turns herding puzzles
+      into <em>sorting</em> ones: the same corridor routes two crabs to two
+      destinations.</p>
+    </article>
+    <article class="card">
+      <h3>The score is on the board</h3>
+      <p>Castles grow through four tiers as they bank. The HUD is the
+      redundancy, not the readout.</p>
+    </article>
+    <article class="card">
+      <h3>A raid costs half, and hands some back</h3>
+      <p>A gull carries off half a castle's bank and spills live crabs onto the
+      sand for everyone to scramble over. A raid drains the flock instead of
+      compounding it.</p>
+    </article>
+    <article class="card">
+      <h3>The tide is the clock</h3>
+      <p>The sea closing in around the board is the timer. The last 30 seconds
+      double the gull spawn rate; the wave stops everything where it stands.</p>
+    </article>
+    <article class="card">
+      <h3>Deterministic to the bit</h3>
+      <p>The simulation is engine-free and integer-only, which is what lets
+      lockstep netcode, replays, a serverless daily challenge and the level
+      solver all share one implementation.</p>
+    </article>
+  </div>
+</section>
+
+<section class="band alt" id="modes">
+  <h2>Eight ways to play</h2>
+  <div class="modes">
+    <article>
+      <h3>Tide Pool</h3>
+      <p>A 100-level solo puzzle campaign. The test suite proves every level
+      solvable with the arrows it grants, and unsolvable without them.</p>
+    </article>
+    <article>
+      <h3>Turf War</h3>
+      <p>Local versus for 2 to 6 on one keyboard plus gamepads. Six maps, team
+      play, a best-of-3 or 5 series, and AI at three levels that walks a cursor
+      to the tile the way you do.</p>
+    </article>
+    <article>
+      <h3>Beach Lobby</h3>
+      <p>Up to six players over LAN on deterministic UDP lockstep, with
+      host-relay star and state-hash desync detection. Hosts announce
+      themselves; the lobby lists every beach it can hear.</p>
+    </article>
+    <article>
+      <h3>Driftwood</h3>
+      <p>A level editor with a built-in solver that proves a level beatable
+      before it ships. Saved levels join the campaign and can be played as
+      versus beaches.</p>
+    </article>
+    <article>
+      <h3>Beach Day</h3>
+      <p>Eight score-attack challenge stages: timed goals under versus rules.</p>
+    </article>
+    <article>
+      <h3>Replay</h3>
+      <p>Every finished round is kept and watchable at 1x, 2x or 4x. Rounds
+      copy out as checksummed share codes, including one still in progress.</p>
+    </article>
+    <article>
+      <h3>Daily Challenge</h3>
+      <p>One date-seeded arena per day, identical worldwide, with a local best.
+      No server: the simulation is the same everywhere.</p>
+    </article>
+    <article>
+      <h3>Achievements</h3>
+      <p>Fifty trophies and lifetime stats, on a shelf that scrolls.</p>
+    </article>
+  </div>
+</section>
+
+<section class="band" id="shots">
+  <h2>The beach</h2>
+  <div class="shots">
+    <figure>
+      <img src="screenshots/lure.png" alt="The lure: banking a molting crab turns every loose crab the luring player's colour and pulls it home" loading="lazy">
+      <figcaption><strong>The lure.</strong> Banking a molting crab turns every
+      loose crab on the beach your colour and pulls it home for ten seconds,
+      overriding every arrow on the sand.</figcaption>
+    </figure>
+    <figure>
+      <img src="screenshots/old_mill.png" alt="The Old Mill: a turnstile splits the stream between a kelp lane and a pool road" loading="lazy">
+      <figcaption><strong>Terrain.</strong> A turnstile log splits each stream
+      right and left in turn. Kelp lets crabs through but stops gulls dead.
+      Tide pools halve the speed of anything wading them.</figcaption>
+    </figure>
+    <figure>
+      <img src="screenshots/stages.png" alt="The stage list: cleared stages filled gold, and every tile edged by how many arrows it grants" loading="lazy">
+      <figcaption><strong>The campaign.</strong> A hundred stages, cleared ones
+      filled gold, each tile edged by how many arrows it hands you.</figcaption>
+    </figure>
+    <figure>
+      <img src="screenshots/menu.png" alt="The landing menu: a still postcard with ambient beach critters" loading="lazy">
+      <figcaption><strong>The menu.</strong> A still postcard of the beach, with
+      the interface in any of eight languages.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="band alt" id="install">
+  <h2>Play it</h2>
+  <div class="install">
+    <article>
+      <h3>Prebuilt binary</h3>
+      <p>Linux, macOS and Windows, on x86_64 and arm64. Unpack and run; there
+      is no installer and no launcher.</p>
+      <p><a class="button primary" href="https://github.com/agourlay/pinch-points/releases">Latest release</a></p>
+    </article>
+    <article>
+      <h3>From crates.io</h3>
+      <p>With a Rust toolchain installed:</p>
+      <pre><code>cargo install --locked pinch-points</code></pre>
+    </article>
+    <article>
+      <h3>From source</h3>
+      <pre><code>git clone https://github.com/agourlay/pinch-points
+cd pinch-points
+cargo build --release</code></pre>
+      <p class="fineprint">The last two need Bevy's Linux build dependencies:
+      <code>libudev-dev</code>, <code>libasound2-dev</code> and
+      <code>libwayland-dev</code> or the X11 equivalents.</p>
+    </article>
+  </div>
+  <p class="readmore">
+    The <a href="https://github.com/agourlay/pinch-points/blob/master/docs/guide.md">full guide</a>
+    has the rules, every mode in depth, all the controls and settings, and the
+    development hooks. The
+    <a href="https://github.com/agourlay/pinch-points/blob/master/docs/pinch-points-spec.md">design document</a>
+    explains why the game is shaped the way it is.
+  </p>
+</section>
+
+</main>
+
+<footer>
+  <p>
+    <a href="https://github.com/agourlay/pinch-points">github.com/agourlay/pinch-points</a>
+    · <a href="https://github.com/agourlay/pinch-points/blob/master/LICENSE">Apache-2.0</a>
+  </p>
+  <p class="fineprint">
+    Pinch Points is an original game. It is not affiliated with Sega or Sonic
+    Team, and <em>ChuChu Rocket!</em> is named only to credit the design its
+    mechanics descend from.
+  </p>
+</footer>
+
+</body>
+</html>

@@ -78,6 +78,8 @@ menu is navigable from a pad. The interface speaks eight languages.
 
 ## Documentation
 
+- [pinch-points on the web](https://agourlay.github.io/pinch-points/): the
+  landing page, built from [`site/`](site/).
 - [`docs/guide.md`](docs/guide.md): the full guide. Rules, every mode in
   depth, all the controls and settings, LAN troubleshooting, and the
   development hooks.
