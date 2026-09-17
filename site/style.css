@@ -52,6 +52,16 @@ img { display: block; width: 100%; height: auto; }
   letter-spacing: 0.02em;
 }
 
+/* The name is the loud half; the genre beside it is what a first-time
+   reader actually needs, so it is dark rather than red and keeps its own
+   weight. The dot is drawn here so the markup stays two plain words. */
+.eyebrow span { color: var(--ink); }
+
+.eyebrow span::before {
+  content: "· ";
+  color: var(--ink-soft);
+}
+
 .hero h1 {
   margin: 0 0 20px;
   font-size: clamp(2.6rem, 7vw, 4.4rem);
