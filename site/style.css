@@ -58,17 +58,8 @@ img { display: block; width: 100%; height: auto; }
   margin-top: 10px;
   font-size: clamp(1.2rem, 3.2vw, 1.8rem);
   font-weight: 700;
-  color: var(--crab);
-  letter-spacing: 0;
-}
-
-/* The slogan, which is flavour rather than information, so it sits under
-   the two lines that actually tell a stranger what they are looking at. */
-.tagline {
-  margin: 0 0 10px;
-  font-size: clamp(1.1rem, 2.2vw, 1.25rem);
-  font-weight: 600;
   color: var(--ink);
+  letter-spacing: 0;
 }
 
 .lede {
