@@ -328,10 +328,15 @@ pub fn pad_menu_bridge(
     let quits = *screen.get() == Screen::Menu;
     for pad in &pads {
         for (button, key) in MAP {
-            if quits && button == GamepadButton::East {
-                continue;
-            }
-            if pad.just_pressed(button) {
+            // The press is what is suppressed, never the release. A press
+            // that changes the screen is let go of on the screen it
+            // opened, so suppressing the release too would strand the
+            // synthesized key in `pressed` for ever - and
+            // `ButtonInput::press` reports `just_pressed` only for a key it
+            // was not already holding, so the next real Escape would be
+            // swallowed in silence.
+            let muted = quits && button == GamepadButton::East;
+            if pad.just_pressed(button) && !muted {
                 keys.press(key);
             }
             if pad.just_released(button) {
@@ -691,6 +696,51 @@ mod tests {
                 "B is the way back from {screen:?}"
             );
         }
+    }
+
+    /// Leaving a sub-screen with B lands on the menu, where East is
+    /// suppressed. If the suppression also swallowed the *release*, the
+    /// synthesized Escape would stay pressed for ever, and
+    /// `ButtonInput::press` only reports `just_pressed` for a key it was
+    /// not already holding: the next real Escape on the menu would do
+    /// nothing at all.
+    #[test]
+    fn a_press_that_changes_screen_still_releases_its_key() {
+        let mut app = bridged(Screen::Settings);
+        let pad = app
+            .world_mut()
+            .query_filtered::<Entity, With<Gamepad>>()
+            .single(app.world())
+            .expect("one pad");
+        // B on the settings screen: the bridge sends Escape, which is how
+        // that screen goes back.
+        app.world_mut()
+            .get_mut::<Gamepad>(pad)
+            .expect("the pad")
+            .digital_mut()
+            .press(GamepadButton::East);
+        app.update();
+        assert!(
+            app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .just_pressed(KeyCode::Escape),
+            "B goes back from a sub-screen"
+        );
+        // The screen it asked for arrives, and only then does the finger
+        // come off the button.
+        app.insert_resource(State::new(Screen::Menu));
+        app.world_mut()
+            .get_mut::<Gamepad>(pad)
+            .expect("the pad")
+            .digital_mut()
+            .release(GamepadButton::East);
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::Escape),
+            "the synthesized Escape must not be left held on the menu"
+        );
     }
 
     /// The menu keeps every other button: the exception is East alone,

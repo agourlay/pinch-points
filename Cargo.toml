@@ -95,9 +95,17 @@ wildcard_enum_match_arm = "warn"
 [profile.release]
 lto = "fat"
 codegen-units = 1
-# Nothing reads a symbol out of a shipped build: a panic here reports its
-# own location and the profiler has its own profile below. The names are
-# most of what a release binary carries that is not code.
+# The symbol table is most of what a release binary carries that is not
+# code: 106 MiB to 75 MiB, measured 2026-09-17. There is no middle setting
+# worth taking, since `strip = "debuginfo"` saves 0.1 MiB of the 31 (a
+# release build carries almost no debug info to begin with) and all the
+# rest is the 196k names.
+#
+# The cost is real and accepted: a backtrace out of a shipped build comes
+# back unsymbolicated, so a crash a player reports is addresses rather than
+# function names. Panic messages still carry their own file and line, which
+# is what a bug report usually quotes, and anyone who needs the names can
+# reproduce under `profile.profiling` below.
 strip = true
 
 # Release speed with the symbols a profiler needs. `debug` costs nothing at
