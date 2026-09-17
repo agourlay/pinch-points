@@ -44,34 +44,37 @@ img { display: block; width: 100%; height: auto; }
 
 .hero-inner { max-width: var(--wrap); margin: 0 auto; }
 
-.eyebrow {
-  margin: 0 0 18px;
-  font-size: 1.05rem;
+/* The name and what it is are the headline: a reader who takes in one line
+   of this page should come away knowing both. Three steps down from here,
+   each a clear size apart so the eye can order them at a glance. */
+.hero h1 {
+  margin: 0 0 16px;
+  font-size: clamp(2.5rem, 6.6vw, 4.2rem);
+  font-weight: 800;
+}
+
+.hero h1 .genre {
+  display: block;
+  margin-top: 10px;
+  font-size: clamp(1.2rem, 3.2vw, 1.8rem);
   font-weight: 700;
   color: var(--crab);
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
 }
 
-/* The name is the loud half; the genre beside it is what a first-time
-   reader actually needs, so it is dark rather than red and keeps its own
-   weight. The dot is drawn here so the markup stays two plain words. */
-.eyebrow span { color: var(--ink); }
-
-.eyebrow span::before {
-  content: "· ";
-  color: var(--ink-soft);
-}
-
-.hero h1 {
-  margin: 0 0 20px;
-  font-size: clamp(2.6rem, 7vw, 4.4rem);
-  font-weight: 800;
+/* The slogan, which is flavour rather than information, so it sits under
+   the two lines that actually tell a stranger what they are looking at. */
+.tagline {
+  margin: 0 0 10px;
+  font-size: clamp(1.1rem, 2.2vw, 1.25rem);
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .lede {
   margin: 0 auto 30px;
-  max-width: 30ch;
-  font-size: clamp(1.1rem, 2.4vw, 1.3rem);
+  max-width: 42ch;
+  font-size: 1rem;
   color: var(--ink-soft);
 }
 
