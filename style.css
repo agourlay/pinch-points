@@ -1,0 +1,224 @@
+/* Daylight on a beach: sky above, wet sand below, sea blue for anything
+   you can press, and the crab's own red for emphasis. */
+:root {
+  --sand: #fbf3e2;
+  --sand-deep: #f2e4c9;
+  --sky: #d8eef7;
+  --ink: #2a2118;
+  --ink-soft: #6b5c48;
+  --sea: #0d7ea6;
+  --sea-dark: #0a6183;
+  --crab: #bd3319;
+  --line: rgba(42, 33, 24, 0.12);
+  --wrap: 1060px;
+  --sans: ui-rounded, "SF Pro Rounded", ui-sans-serif, system-ui,
+          -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--ink);
+  background: var(--sand);
+}
+
+h1, h2 { line-height: 1.12; letter-spacing: -0.02em; }
+
+a { color: var(--sea-dark); }
+
+img { display: block; width: 100%; height: auto; }
+
+/* ---- hero ---- */
+
+.hero {
+  padding: 56px 24px 0;
+  text-align: center;
+  /* Sky at the top, sand underneath it. */
+  background: linear-gradient(180deg, var(--sky) 0%, var(--sand) 62%);
+}
+
+.hero-inner { max-width: var(--wrap); margin: 0 auto; }
+
+/* The name and what it is are the headline: a reader who takes in one line
+   of this page should come away knowing both. Three steps down from here,
+   each a clear size apart. */
+.hero h1 {
+  margin: 0 0 16px;
+  font-size: clamp(2.5rem, 6.6vw, 4.2rem);
+  font-weight: 800;
+}
+
+.hero h1 .genre {
+  display: block;
+  margin-top: 10px;
+  font-size: clamp(1.2rem, 3.2vw, 1.8rem);
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0;
+}
+
+.lede {
+  margin: 0 auto 30px;
+  max-width: 42ch;
+  font-size: 1rem;
+  color: var(--ink-soft);
+}
+
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
+  margin: 0 0 16px;
+}
+
+.button {
+  display: inline-block;
+  padding: 14px 30px;
+  border-radius: 999px;
+  font-size: 1.02rem;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.75);
+  border: 2px solid var(--line);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.button.primary {
+  color: #fff;
+  background: var(--sea);
+  border-color: var(--sea);
+  box-shadow: 0 6px 0 var(--sea-dark);
+}
+
+.button:hover { transform: translateY(-2px); }
+.button.primary:hover { box-shadow: 0 8px 0 var(--sea-dark); }
+.button.primary:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--sea-dark); }
+
+.meta {
+  margin: 0 0 44px;
+  font-size: 0.92rem;
+  color: var(--ink-soft);
+}
+
+.shot, .gallery img {
+  border-radius: 14px;
+  border: 3px solid #fff;
+  box-shadow: 0 14px 34px rgba(42, 33, 24, 0.18);
+}
+
+/* ---- sections ---- */
+
+main > section {
+  max-width: var(--wrap);
+  margin: 0 auto;
+  padding: 72px 24px;
+}
+
+main h2 {
+  font-size: clamp(1.4rem, 3vw, 1.85rem);
+  margin: 0 0 12px;
+}
+
+/* ---- three beats ---- */
+
+.beats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 36px;
+  text-align: center;
+}
+
+.beats > div { flex: 1 1 240px; max-width: 320px; }
+
+.beats h2 { color: var(--crab); }
+.beats p { margin: 0; color: var(--ink-soft); }
+
+/* ---- gallery ---- */
+
+.gallery {
+  display: grid;
+  gap: 44px 32px;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+}
+
+.gallery figure { margin: 0; }
+
+.gallery figcaption {
+  margin: 14px auto 0;
+  max-width: 44ch;
+  font-size: 1rem;
+  text-align: center;
+  color: var(--ink-soft);
+}
+
+/* ---- modes ---- */
+
+.modes { text-align: center; }
+
+.modes ul {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.modes li {
+  padding: 9px 18px;
+  border-radius: 999px;
+  background: var(--sand-deep);
+  font-size: 0.97rem;
+  color: var(--ink-soft);
+}
+
+.modes b { color: var(--ink); }
+
+/* ---- get ---- */
+
+.get {
+  text-align: center;
+  border-top: 1px solid var(--line);
+}
+
+.get p:last-child { color: var(--ink-soft); font-size: 0.97rem; }
+
+code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--sand-deep);
+  color: var(--ink);
+}
+
+/* ---- footer ---- */
+
+footer {
+  padding: 34px 24px 52px;
+  text-align: center;
+  background: var(--sand-deep);
+}
+
+footer p { margin: 0 auto 8px; max-width: 58ch; }
+
+.fineprint { font-size: 0.85rem; color: var(--ink-soft); }
+
+@media (max-width: 720px) {
+  .hero { padding-top: 40px; }
+  main > section { padding: 52px 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button { transition: none; }
+  .button:hover { transform: none; }
+}
