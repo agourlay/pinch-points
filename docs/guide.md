@@ -118,9 +118,9 @@ surge doubles; when the tide comes in, the highest bank wins.
   gamepads. Six built-in maps, from the handcrafted classic beach to
   generated arenas up to 20×13 and an edgeless **open ocean** (five and
   six seats need one of the wide beaches, 16 tiles across or more), plus
-  any beach you built yourself that has a castle for every seat. Dials for gull
-  pressure and round length, **team play**, a **best of 3 or 5** series
-  with rotating maps and nameable seats. AI comes at three levels:
+  any beach you built yourself that has a castle for every seat. Dials for
+  gull pressure and round length, **team play**, a **best of 3 or 5**
+  series with rotating maps and nameable seats. AI comes at three levels:
   easy fumbles, fierce reads the terrain and shoves gulls at the leader,
   and every AI walks a cursor at a capped speed rather than reaching
   across the board for free (`cargo run --example ladder` plays them off).
@@ -284,12 +284,13 @@ deliberately.
   `PINCH_CONTROLS`, `PINCH_LANGUAGE`, `PINCH_STAGES=tide|beach`, and
   `PINCH_LOBBY_HOST`/`PINCH_LOBBY_JOIN`/`PINCH_LOBBY_WATCH` open the rest;
   `PINCH_AUTOPLAY` with `PINCH_NOSOLVE=1` starts each level's run without
-  placing anything, so a timed level runs out. `PINCH_BANNER=lure|surge|<0-7>`
-  raises an announcement, `PINCH_TIDE=<0-7>` fires the tide event itself,
-  which is how what an event *does* gets watched, and `PINCH_LURE=<seat>`
-  starts a lure a few seconds in. `PINCH_PAUSE=1`, `PINCH_OVER=1` and
-  `PINCH_INTERLUDE=1` raise the pause card, the results card and the series
-  interlude a couple of seconds into a versus round, for shooting them.
+  placing anything, so a timed level runs out.
+  `PINCH_BANNER=lure|surge|<0-7>` raises an announcement, `PINCH_TIDE=<0-7>`
+  fires the tide event itself, which is how what an event *does* gets
+  watched, and `PINCH_LURE=<seat>` starts a lure a few seconds in.
+  `PINCH_PAUSE=1`, `PINCH_OVER=1` and `PINCH_INTERLUDE=1` raise the pause
+  card, the results card and the series interlude a couple of seconds into
+  a versus round, for shooting them.
   `PINCH_NET_PROBE=1` submits one scripted signpost mid-round over the wire,
   and `PINCH_ST_EXEC` runs every schedule on the single-threaded executor,
   for the CPU measurement. `PINCH_WINDOW=<w>x<h>` opens at a given size,

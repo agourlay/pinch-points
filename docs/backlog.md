@@ -64,12 +64,12 @@ Nothing blocks these. They want the work and no more.
   and the Deck is 1280x800, so `fit_ratio` stays at 1.0 and nothing
   shrinks.
 
-- **An itch.io page**, with the shots in `docs/screenshots`. The binaries exist to
-  put on it: `v0.4.0` is tagged and `release.yml` builds six targets across
-  Linux, Windows and macOS. A Steam build is a longer road and has a
-  section of its own below; the update check is the one place the two
-  disagree, since it wants to be on for a downloaded build and off for a
-  store one.
+- **An itch.io page**, with the shots in `docs/screenshots`. The binaries
+  exist to put on it: `v0.4.0` is tagged and `release.yml` builds six
+  targets across Linux, Windows and macOS. A Steam build is a longer road
+  and has a section of its own below; the update check is the one place
+  the two disagree, since it wants to be on for a downloaded build and off
+  for a store one.
 
 ## Waiting on a machine
 
@@ -89,10 +89,11 @@ and neither can be judged on the machine they were written on.
 - **Single-threaded executor for the main world.** Behind the
   `PINCH_ST_EXEC=1` dev hook (`schedule.rs`), which swaps every main-world
   schedule and leaves the render sub-app parallel, so any machine can A/B
-  it against the shipped binary. The hook uses `SingleThreadedExecutor::new()`
-  and never `::default()`: the derived default leaves `apply_final_deferred`
-  false, so queued commands are dropped and the app dies on the first frame
-  complaining that a resource does not exist.
+  it against the shipped binary. The hook uses
+  `SingleThreadedExecutor::new()` and never `::default()`: the derived
+  default leaves `apply_final_deferred` false, so queued commands are
+  dropped and the app dies on the first frame complaining that a resource
+  does not exist.
 
   Measured 2026-08-12 on the release build (fat LTO), interleaved runs,
   45 s windows, vsync held on both sides. Versus (six seats, XL beach):
