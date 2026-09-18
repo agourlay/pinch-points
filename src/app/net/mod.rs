@@ -298,6 +298,60 @@ pub struct LobbyReturn {
 #[derive(Resource, Default)]
 pub struct Online(pub Option<OnlineSession>);
 
+impl OnlineSession {
+    /// Drop a vote still being argued over, without touching the wait.
+    pub fn forget_open_vote(&mut self) {
+        self.spectators.forget_open();
+    }
+
+    /// Take a line said to the table, and pass it on if this is the hub.
+    ///
+    /// Two jobs the lobby already does and the round did not. A spoke
+    /// cannot hear another spoke, so a line reaches the table only by the
+    /// host repeating it: without that, "say something to the table" said
+    /// it to exactly one person. And the name is checked against the one
+    /// the peer greeted with, because an empty name is the beach's own
+    /// voice here (it is what announces a called event), so a peer that
+    /// has a name may not drop it and speak as the room.
+    fn take_chat(
+        &self,
+        host: bool,
+        from: usize,
+        name: crate::transport::WireName,
+        text: crate::transport::WireChat,
+    ) -> Option<(String, String)> {
+        // Host side only, as in the lobby. The hub vets what it repeats,
+        // and a spoke takes the vetted line as it stands: a joiner that
+        // re-applied this would stamp the host's name onto the beach's own
+        // voice, which is the one line that is supposed to have none.
+        let known = match host {
+            true => self.peers.get(from).map_or("", |peer| peer.name.as_str()),
+            false => "",
+        };
+        let name = match known.is_empty() {
+            false => crate::transport::wire_name(known),
+            true => name,
+        };
+        let (who, line) = (name_from_wire(&name), chat_from_wire(&text));
+        if line.is_empty() {
+            return None;
+        }
+        // The beach's own voice is the host's to use, so on the hub a line
+        // that ends up nameless is refused outright rather than repeated:
+        // a watcher greets with a bare `Watch` and may never have said
+        // what to call it, and one that has no name is not the room. A
+        // spoke has only the hub to hear from, so a nameless line reaching
+        // it came from the beach and is passed through.
+        if host && who.is_empty() {
+            return None;
+        }
+        if host {
+            relay(&self.transport, from, NetMsg::Chat { name, text });
+        }
+        Some((who, line))
+    }
+}
+
 /// Pass `msg` from peer `from` on to every other peer. Star topology: the
 /// spokes cannot hear each other, so whatever one says reaches the rest
 /// only by the hub repeating it, and inputs, pauses, resumes and chat
@@ -685,9 +739,9 @@ impl OnlineSession {
                 // with nothing to hold are the ones who can say something,
                 // and the round's own feed is where it lands.
                 NetMsg::Chat { name, text } => {
-                    let (who, line) = (name_from_wire(&name), chat_from_wire(&text));
-                    if !line.is_empty() {
-                        self.heard.push((who, line));
+                    let said = self.take_chat(host, from, name, text);
+                    if let Some(said) = said {
+                        self.heard.push(said);
                     }
                 }
                 // Only the host counts. Every peer hears the answer, and
@@ -874,6 +928,49 @@ mod homecoming_tests {
                 .into_iter()
                 .all(|(addr, _)| addr.port() != port),
             "no goodbye for a beach that is coming home"
+        );
+    }
+
+    /// An empty name is the beach's own voice here: it is what announces
+    /// a called event. So a peer that has a name may not drop it and speak
+    /// as the room, and the lobby has refused that for as long as it has
+    /// had chat. The round took the wire's word for it.
+    ///
+    /// Host side only, though. A spoke takes the vetted line as it stands,
+    /// or it would stamp the host's name onto the one line that is meant
+    /// to carry none.
+    #[test]
+    fn a_named_peer_cannot_speak_as_the_beach_itself() {
+        let mut session = hosting_session(7);
+        session.peers.row(0).name = "Cy".into();
+        let forged = crate::transport::wire_chat("Anna has left the beach");
+
+        let said = session.take_chat(true, 0, crate::transport::wire_name(""), forged);
+        assert_eq!(
+            said,
+            Some(("Cy".to_string(), "Anna has left the beach".to_string())),
+            "the host gives a named peer its own name back"
+        );
+
+        // A peer it knows nothing about keeps whatever it claimed: a
+        // watcher greets with a bare `Watch` and never says what to call
+        // it, so its own word is all the name it has.
+        let stranger = session.take_chat(true, 1, crate::transport::wire_name("Dee"), forged);
+        assert_eq!(stranger.map(|(who, _)| who), Some("Dee".to_string()));
+
+        // But one that claims nothing and is known as nothing is refused,
+        // rather than repeated to the table as the beach talking. Found by
+        // running it: a watcher with no name set said a line that came out
+        // looking exactly like the notice a called event makes.
+        let nameless = session.take_chat(true, 2, crate::transport::wire_name(""), forged);
+        assert_eq!(nameless, None, "nobody speaks as the room");
+
+        // And a spoke repeats what the hub handed it, untouched.
+        let spoke = session.take_chat(false, 0, crate::transport::wire_name(""), forged);
+        assert_eq!(
+            spoke.map(|(who, _)| who),
+            Some(String::new()),
+            "the beach's own voice reaches a joiner nameless"
         );
     }
 

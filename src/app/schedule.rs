@@ -369,6 +369,7 @@ fn add_screen_transitions(app: &mut App) {
             menu_ui::despawn_marked::<effects::Hop>,
             announce::clear_announcements,
             pause::reset_pause,
+            spectators::forget_spectating,
             achievements::save_now,
             |mut daily: ResMut<Daily>| daily.active = false,
         ),

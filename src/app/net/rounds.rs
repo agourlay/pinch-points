@@ -160,15 +160,23 @@ impl OnlineSession {
                         self.next_round = true;
                     }
                 }
+                // The results card is where a table talks most, and the
+                // spectators' prompt offers it there: a line dropped here
+                // was a key that did nothing for anyone but its sender.
+                NetMsg::Chat { name, text } => {
+                    if let Some(said) = self.take_chat(host, from, name, text) {
+                        self.heard.push(said);
+                    }
+                }
                 NetMsg::Inputs(_)
                 | NetMsg::Hash { .. }
                 | NetMsg::Pause { .. }
                 | NetMsg::Resume { .. }
                 | NetMsg::Queued { .. }
-                | NetMsg::Chat { .. }
                 | NetMsg::Roster { .. }
                 | NetMsg::Abandoned { .. }
-                // Between rounds there is no beach to call anything onto.
+                // There is no beach here to call anything onto, which is
+                // why the key is not offered between rounds either.
                 | NetMsg::SpectatorVote { .. }
                 | NetMsg::Incompatible { .. } => {}
             }

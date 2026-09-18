@@ -283,7 +283,7 @@ deliberately.
   placing anything, so a timed level runs out.
   `PINCH_BANNER=lure|surge|<0-8>` raises an announcement, `PINCH_TIDE=<0-8>`
   fires the tide event itself, and `PINCH_LURE=<seat>` starts a lure a few
-  seconds in. `PINCH_SPECTATOR=card|<0-6>` works a watching peer's
+  seconds in. `PINCH_SPECTATOR=card|say|<0-6>` works a watching peer's
   spectator keys,
   opening its event list or casting that vote, which is otherwise a thing
   only a person standing behind a chair can do. `PINCH_PAUSE=1`,

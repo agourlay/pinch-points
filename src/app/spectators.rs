@@ -113,6 +113,12 @@ impl SpectatorVotes {
         (*votes > 0).then(|| SPECTATOR_EVENTS[at])
     }
 
+    /// Drop an open window without settling it, leaving any wait alone.
+    pub fn forget_open(&mut self) {
+        self.open_for = 0.0;
+        self.tally = [0; SPECTATOR_EVENTS.len()];
+    }
+
     /// Whether a vote is open, and how long there is left to join it.
     pub fn open(&self) -> Option<f32> {
         (self.open_for > 0.0).then_some(self.open_for)
@@ -251,6 +257,33 @@ mod tests {
         assert_eq!(pick([late, early]), Some(early), "whichever arrived first");
     }
 
+    /// A window still open when the tide comes in settles onto nothing.
+    /// It used to settle into a call held in hand, which then rode out on
+    /// the first frame of the *next* round: an event nobody watching had
+    /// voted for, in a round that had not started when they voted.
+    #[test]
+    fn a_vote_still_open_at_the_wave_is_dropped_rather_than_held() {
+        let mut votes = SpectatorVotes::default();
+        votes.cast(TideEvent::FreshSand.index() as u8);
+        assert!(votes.open().is_some());
+
+        votes.forget_open();
+        assert!(votes.open().is_none(), "nothing left to settle");
+        assert_eq!(votes.settle(WINDOW), None, "and nothing settles");
+        assert!(
+            votes.waiting().is_none(),
+            "a vote that never happened costs no wait"
+        );
+
+        // The wait itself is left alone, so dropping a window mid-cooldown
+        // does not hand the next one back early.
+        let mut votes = SpectatorVotes::default();
+        votes.cast(TideEvent::FreshSand.index() as u8);
+        assert!(votes.settle(WINDOW).is_some());
+        votes.forget_open();
+        assert!(votes.waiting().is_some(), "still waiting");
+    }
+
     /// Two of the nine hand a player something, and spectators have no seat
     /// to be handed anything: a crowd that could bank for you is a crowd
     /// worth lobbying.
@@ -296,12 +329,21 @@ mod tests {
 pub fn settle_spectator_vote(
     time: Res<Time>,
     settings: Res<crate::app::settings::GameSettings>,
+    phase: Res<State<crate::app::VersusPhase>>,
     mut online: ResMut<Online>,
 ) {
     let Some(session) = &mut online.0 else {
         return;
     };
     if !session.is_host() {
+        return;
+    }
+    if *phase.get() != crate::app::VersusPhase::Running {
+        // The tide is in and the board is frozen. A window still open when
+        // it came in settles onto nothing, rather than waiting in hand for
+        // a frame and firing at the start of the next round, called by
+        // nobody who is still watching.
+        session.forget_open_vote();
         return;
     }
     let Some(event) = session.spectators.settle(time.delta_secs()) else {
@@ -337,6 +379,7 @@ pub fn spectator_vote_input(
     caps: Res<crate::app::keycaps::KeyCaps>,
     settings: Res<crate::app::settings::GameSettings>,
     chat: Res<SpectatorChat>,
+    phase: Res<State<crate::app::VersusPhase>>,
     mut card: ResMut<SpectatorCard>,
     mut online: ResMut<Online>,
     ui: Query<Entity, With<SpectatorCardUi>>,
@@ -347,8 +390,10 @@ pub fn spectator_vote_input(
             commands.entity(entity).despawn();
         }
     };
-    // Typing takes the keyboard, and losing a seat takes the job.
-    if !is_spectating(&online) || chat.open() {
+    // Typing takes the keyboard, losing a seat takes the job, and a round
+    // that is over has no beach to call anything onto.
+    let playing = *phase.get() == crate::app::VersusPhase::Running;
+    if !is_spectating(&online) || chat.open() || !playing {
         if card.0 {
             shut(&mut commands, &mut card);
         }
@@ -379,13 +424,12 @@ pub fn spectator_vote_input(
             continue;
         }
         if let Some(session) = &mut online.0 {
-            let event = SPECTATOR_EVENTS[at].index() as u8;
-            session.transport.send(NetMsg::SpectatorVote { event });
-            // The host counts its own vote too, and a host that is
-            // watching is a host all the same.
-            if session.is_host() {
-                session.spectators.cast(event);
-            }
+            // Straight to the host, which is the only peer that counts.
+            // Never counted here on the way past: the host holds seat 0
+            // and so is never a spectator, so this is always a spoke.
+            session.transport.send(NetMsg::SpectatorVote {
+                event: SPECTATOR_EVENTS[at].index() as u8,
+            });
         }
         shut(&mut commands, &mut card);
         return;
@@ -423,4 +467,28 @@ pub(super) fn spawn_card(commands: &mut Commands, settings: &crate::app::setting
                 }
             });
         });
+}
+
+/// Put the spectators' things away with the round.
+///
+/// The card is an overlay like the pause card, so like the pause card it
+/// has to be taken down by hand: left to itself it floats over the menu
+/// of whoever walked out with it open. The half-typed line and the
+/// settled-but-unsent call go the same way, for the same reason.
+pub fn forget_spectating(
+    mut commands: Commands,
+    mut chat: ResMut<SpectatorChat>,
+    mut card: ResMut<SpectatorCard>,
+    mut online: ResMut<Online>,
+    ui: Query<Entity, With<SpectatorCardUi>>,
+) {
+    chat.0 = None;
+    card.0 = false;
+    for entity in &ui {
+        commands.entity(entity).despawn();
+    }
+    if let Some(session) = &mut online.0 {
+        session.pending_call = None;
+        session.forget_open_vote();
+    }
 }

@@ -359,7 +359,7 @@ pub(super) fn debug_lure(mut sim: ResMut<Sim>, mut hook: Local<OneShot>) {
         .force_lure(seat.min(crate::sim::MAX_PLAYERS as u8 - 1));
 }
 
-/// Dev hook: `PINCH_SPECTATOR=card|<0-6>` works the spectator keys for a watcher that
+/// Dev hook: `PINCH_SPECTATOR=card|say|<0-6>` works the spectator keys for a watcher that
 /// has no hands: `card` opens the event list for a screenshot, and a
 /// number casts that vote a few seconds in, which is otherwise a thing
 /// only a person standing behind a chair can do.
@@ -379,6 +379,20 @@ pub(super) fn debug_spectator(
         return;
     };
     if !crate::app::spectators::is_spectating(&online) {
+        return;
+    }
+    if which == "say" {
+        // A line from a spoke, which is the path the hub has to repeat:
+        // what a spectator says reaches the table only by the host passing
+        // it on, and for a while it did not.
+        if let Some(session) = &mut online.0 {
+            let me = settings.names[0].clone();
+            let line = "hello from the back row";
+            session
+                .transport
+                .send(crate::transport::NetMsg::chat(&me, line));
+            session.heard.push((me, line.to_string()));
+        }
         return;
     }
     if which == "card" {

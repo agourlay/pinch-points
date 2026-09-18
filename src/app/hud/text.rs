@@ -368,6 +368,15 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
                 ),
             }
         }
+        // The tide is in: the board is frozen and there is nothing to call
+        // onto it, but the table is still talking, and this is where it
+        // talks most.
+        VersusPhase::Over if online.0.as_ref().is_some_and(|s| s.session.watching()) => {
+            match r.spectator_typing {
+                Some(line) => format!("> {line}_"),
+                None => format!("{} | {}", tr.lobby_chat_hint, tr.prompt_enter_menu),
+            }
+        }
         VersusPhase::Running if online.0.is_some() || bots.0.iter().any(Option::is_some) => {
             tr.prompt_versus_short.to_string()
         }
