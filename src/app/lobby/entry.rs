@@ -236,7 +236,9 @@ pub(super) fn name_myself(
     caps: &crate::app::keycaps::KeyCaps,
     name: String,
 ) {
-    settings.names[0] = name;
+    // Through the gate, not around it: this is a name the player typed,
+    // and `type_a_line` only holds it to the chat line's length.
+    settings.set_name(0, &name);
     settings.tidy_name(0);
     settings.save(caps);
 }

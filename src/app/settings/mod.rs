@@ -321,6 +321,24 @@ impl GameSettings {
         }
     }
 
+    /// Set a seat's name from a whole string, through the same gate one
+    /// typed character goes through.
+    ///
+    /// Assigning the field directly is what the lobby used to do, and it
+    /// skipped all three of [`push_name_char`](Self::push_name_char)'s
+    /// rules at once: a lobby name could be any length, and could carry
+    /// the `|` that separates names in the save file, which on the next
+    /// launch handed everything after it to the seats behind.
+    pub fn set_name(&mut self, seat: u8, name: &str) {
+        let Some(slot) = self.names.get_mut(usize::from(seat)) else {
+            return;
+        };
+        slot.clear();
+        for ch in name.chars() {
+            self.push_name_char(seat, ch);
+        }
+    }
+
     /// Rub out the last character of a seat's name.
     pub fn pop_name_char(&mut self, seat: u8) {
         if let Some(name) = self.names.get_mut(usize::from(seat)) {
@@ -507,11 +525,7 @@ impl GameSettings {
                 // fields simply stay unnamed.
                 "names" => {
                     for (seat, name) in value.split('|').take(MAX_PLAYERS).enumerate() {
-                        let name = name.trim();
-                        settings.names[seat] = String::new();
-                        for ch in name.chars() {
-                            settings.push_name_char(seat as u8, ch);
-                        }
+                        settings.set_name(seat as u8, name.trim());
                     }
                 }
                 // Only kept if it still parses as an address: the file is
@@ -711,6 +725,36 @@ mod tests {
         assert_eq!(ui_scale_cap(1024.0, 576.0), 100);
         // But asking for smaller still works there: that only adds room.
         assert!(applied_ui_ratio(0.8, 1024.0, 576.0) < small);
+    }
+
+    /// A name goes through one gate however it was typed.
+    ///
+    /// The lobby used to assign the field outright, so a name could be any
+    /// length and could carry the `|` that separates names in the save
+    /// file. "Ann|Bob" was written as two seats: on the next launch the
+    /// player was "Ann", seat two was called "Bob", and whoever really sat
+    /// there had been pushed along one.
+    #[test]
+    fn a_name_cannot_carry_the_save_files_own_punctuation() {
+        let caps = crate::app::keycaps::KeyCaps::default();
+        let mut settings = GameSettings::default();
+        settings.set_name(0, "Ann|Bob");
+        settings.set_name(1, "Cass");
+        assert_eq!(settings.names[0], "AnnBob", "the separator is not a name");
+
+        let (back, _) = GameSettings::parse(&settings.to_text(&caps));
+        assert_eq!(back.names[0], "AnnBob");
+        assert_eq!(back.names[1], "Cass", "still in their own seat");
+        assert_eq!(back.names[2], "", "and nobody invented behind them");
+
+        // The colon that separates the file's keys goes the same way.
+        settings.set_name(0, "a: b");
+        assert_eq!(settings.names[0], "a b");
+
+        // And the length cap holds, so what the player sees is what the
+        // wire carries and what survives a restart.
+        settings.set_name(0, &"W".repeat(48));
+        assert_eq!(settings.names[0].chars().count(), NAME_MAX);
     }
 
     #[test]
