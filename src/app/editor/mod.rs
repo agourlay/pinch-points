@@ -46,6 +46,18 @@ pub fn custom_dir() -> std::path::PathBuf {
 /// The name also has to survive being a file name, and every level is
 /// identified by its name (that is what progress is keyed on), so two
 /// levels sharing one would share their gold star.
+/// Write a level out, and say whether that brought it into being.
+///
+/// The answer is read before the write, which would make it true either
+/// way. The trophies over this count levels, and they say so: "save 10
+/// levels in the editor". Counting every F2 counted keystrokes instead,
+/// so ten presses on one level took all three of them.
+fn write_level(path: &std::path::Path, text: &str) -> std::io::Result<bool> {
+    let is_new = !path.exists();
+    crate::app::paths::write_atomic(path, text)?;
+    Ok(is_new)
+}
+
 pub fn save_path(name: &str) -> std::path::PathBuf {
     custom_dir().join(format!(
         "{}.txt",
@@ -481,9 +493,11 @@ pub fn editor_commands(
     if keys.just_pressed(KeyCode::F2) {
         let level = level_here(&state, board, &state.name);
         let path = save_path(&state.name);
-        state.feedback = match crate::app::paths::write_atomic(&path, level.to_text()) {
-            Ok(()) => {
-                saved.write(crate::app::LevelSaved);
+        state.feedback = match write_level(&path, &level.to_text()) {
+            Ok(is_new) => {
+                if is_new {
+                    saved.write(crate::app::LevelSaved);
+                }
                 let filed = fill(tr.ed_saved_to, &[("path", &path.display().to_string())]);
                 match orphan_warning(&state, &level, tr) {
                     Some(complaint) => format!("{filed} - {complaint}"),
@@ -681,6 +695,38 @@ mod tests {
         let back = Level::parse(&arena.to_text()).expect("round trip");
         assert_eq!(back.kind, LevelKind::Arena);
         assert_eq!(back.board().signpost_rule(), arena.board().signpost_rule());
+    }
+
+    /// A level counts once, when it comes into being. The trophies over
+    /// this say "save 10 levels", and every F2 used to raise one, so ten
+    /// presses on a single level took all three of them.
+    #[test]
+    fn saving_the_same_level_again_does_not_build_a_second_one() {
+        let dir = std::env::temp_dir().join(format!("pinch-built-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a directory to save into");
+        let path = dir.join("my-beach.txt");
+
+        assert!(write_level(&path, "one").expect("wrote"), "a new level");
+        assert!(
+            !write_level(&path, "two").expect("wrote"),
+            "the same level again"
+        );
+        assert!(
+            !write_level(&path, "three").expect("wrote"),
+            "and again, however long the key is held"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("reads"),
+            "three",
+            "every save still lands; only the counting stops"
+        );
+
+        // A level deleted and rebuilt is a level built again.
+        std::fs::remove_file(&path).expect("removed");
+        assert!(write_level(&path, "four").expect("wrote"), "built afresh");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The posts dial is a puzzle's rule, so it is inert on a beach - and
