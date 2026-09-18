@@ -585,6 +585,10 @@ struct Tr {
     /// with `{n}` people ahead.
     pub lobby_queued_next: &'static str,
     pub lobby_queued_behind: &'static str,
+    /// The same news for somebody who came to watch. No place in the
+    /// queue, because a watcher is not in one: the crowd has room
+    /// whoever is playing, so there is nobody ahead of them.
+    pub lobby_queued_watching: &'static str,
     /// Every chair at that beach is taken, this round and the next.
     pub lobby_beach_full: &'static str,
     pub lobby_join_list: &'static str,
@@ -598,7 +602,14 @@ struct Tr {
     pub lobby_watching_prompt: &'static str,
     /// And for a peer in line for the next round, which has not started
     /// when the host launches: it started without them.
+    ///
+    /// It says where they are standing rather than what they will get: a
+    /// chair is free next round only if one of the players does not come
+    /// back, which nobody knows yet (see `OnlineSession::next_plan`).
     pub lobby_queued_prompt: &'static str,
+    /// The same line for one of those who came to watch, who *can* be
+    /// promised what comes next: the crowd always has room.
+    pub lobby_queued_watch_prompt: &'static str,
     pub lobby_could_not_host: &'static str,
     pub lobby_could_not_join: &'static str,
     pub lobby_version_clash: &'static str,

@@ -296,6 +296,26 @@ pub(super) fn accept_the_invitation(
 }
 /// Joining: keep greeting the host until our seat assignment arrives
 /// (Start rides UDP; hellos are re-answered until one lands).
+/// What to tell a peer the host has just put in line.
+///
+/// The host answers everyone who turns up mid-round with the same
+/// `Queued`, because a place in line is all it is deciding. Which *kind*
+/// of peer is waiting is this machine's own business, and only this
+/// machine knows it: somebody who armed W is not in line for a chair at
+/// all, and was being told it was next up for one it never asked for.
+///
+/// Its own function because the rule is the part worth being able to
+/// test, the path to it being a socket and a running round.
+fn queued_feedback(tr: &'static crate::app::i18n::Tr, watching: bool, ahead: u8) -> String {
+    match (watching, ahead) {
+        // No place to report: the crowd has room whoever is playing, so
+        // there is nobody ahead of them and nothing to be next after.
+        (true, _) => tr.lobby_queued_watching.to_string(),
+        (false, 0) => tr.lobby_queued_next.to_string(),
+        (false, n) => fill(tr.lobby_queued_behind, &[("n", &n.to_string())]),
+    }
+}
+
 pub fn join_tick(
     time: Res<Time>,
     settings: Res<GameSettings>,
@@ -405,11 +425,8 @@ pub fn join_tick(
         state.hear(&name, &text);
     }
     if let Some(ahead) = queued {
-        let tr = settings.tr();
-        state.feedback = match ahead {
-            0 => tr.lobby_queued_next.to_string(),
-            n => fill(tr.lobby_queued_behind, &[("n", &n.to_string())]),
-        };
+        let watching = state.joined().is_some_and(|joined| joined.watching);
+        state.feedback = queued_feedback(settings.tr(), watching, ahead);
         // Kept as well as said, so the prompt under that line can agree
         // with it. A queued peer is not waiting for the host to launch:
         // the host launched without it.
@@ -716,6 +733,39 @@ mod tests {
         assert!(
             !state.standing().at_a_beach(),
             "and the lobby is back to browsing"
+        );
+    }
+
+    /// Somebody who came to watch is not in line for a chair.
+    ///
+    /// The host puts everyone who turns up mid-round in the same queue and
+    /// says so with the same `Queued`, so the only machine that knows a
+    /// peer armed W is that peer. Found by dialling into a running round
+    /// as a spectator: the screen said "you are next up", over a prompt
+    /// saying it would play the next round, to somebody who had asked for
+    /// neither.
+    #[test]
+    fn a_watcher_in_the_queue_is_not_waiting_for_a_chair() {
+        let tr = &crate::app::i18n::EN;
+        assert_eq!(queued_feedback(tr, false, 0), tr.lobby_queued_next);
+        assert_eq!(
+            queued_feedback(tr, false, 3),
+            fill(tr.lobby_queued_behind, &[("n", "3")]),
+            "a player is told where in the line it stands"
+        );
+
+        // A watcher is told the same thing wherever it stands, because
+        // where it stands does not decide anything: the crowd has room.
+        for ahead in [0, 1, 9] {
+            assert_eq!(
+                queued_feedback(tr, true, ahead),
+                tr.lobby_queued_watching,
+                "with {ahead} ahead"
+            );
+        }
+        assert_ne!(
+            tr.lobby_queued_watching, tr.lobby_queued_next,
+            "and it is not the line a player is given"
         );
     }
 

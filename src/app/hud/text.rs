@@ -118,8 +118,13 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
         // about, since it changes what picking a beach does.
         Standing::Choosing { watching: true } => tr.lobby_watch_armed.to_string(),
         // A peer in line is not waiting for a launch either: the round it
-        // is queued for is the one already being played without it.
-        Standing::Joining(joined) if joined.queued.is_some() => tr.lobby_queued_prompt.to_string(),
+        // is queued for is the one already being played without it. And
+        // one that came to watch is not in line for a chair, so it is not
+        // told it will be sitting in one.
+        Standing::Joining(joined) if joined.queued.is_some() => match joined.watching {
+            true => tr.lobby_queued_watch_prompt.to_string(),
+            false => tr.lobby_queued_prompt.to_string(),
+        },
         // "Aboard" is the joiner's word, and a spectator is not: the
         // status line right above this one says "watching", and the two
         // of them describing the same peer differently is the whole of
@@ -813,18 +818,21 @@ mod tests {
         assert_eq!(joined(false, None), EN.lobby_aboard_prompt);
         assert_eq!(joined(true, None), EN.lobby_watching_prompt);
         // And a peer in line is waiting for a round that has already
-        // started, which is not what either of the other two say.
+        // started, which is not what either of the other two say. Two of
+        // those as well: somebody who armed W and dialled in mid-round is
+        // queued like anybody else, and is not in line for a chair.
         assert_eq!(joined(false, Some(0)), EN.lobby_queued_prompt);
-        assert_eq!(joined(true, Some(2)), EN.lobby_queued_prompt);
+        assert_eq!(joined(true, Some(2)), EN.lobby_queued_watch_prompt);
         let all = [
             EN.lobby_aboard_prompt,
             EN.lobby_watching_prompt,
             EN.lobby_queued_prompt,
+            EN.lobby_queued_watch_prompt,
         ];
         for (at, line) in all.iter().enumerate() {
             assert!(
                 !all[at + 1..].contains(line),
-                "three standings want three lines: {line}"
+                "four standings want four lines: {line}"
             );
         }
     }
