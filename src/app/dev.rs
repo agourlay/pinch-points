@@ -300,13 +300,41 @@ fn debug_map() -> Option<match_setup::MapChoice> {
     })
 }
 
+/// Whether a hook that reaches straight into the local board has to stand
+/// down, which in an online round it does.
+///
+/// Peers agree by running the same frames from the same inputs. These two
+/// hooks run on one machine and put something on one board, so the very
+/// next hash is a desync: a real one, reported honestly, a few seconds
+/// into a round that was started to watch something else entirely. It
+/// looks exactly like the netcode having gone wrong, and it costs
+/// somebody the time to prove it has not. `PINCH_SPECTATOR` already
+/// refuses to echo a line the table was not given, for the same reason.
+///
+/// The online way to call an event down on a table is `PINCH_SPECTATOR`
+/// with an event number: it goes through the vote the host counts and
+/// comes back as an action on a frame, which every peer runs.
+fn only_off_the_wire(online: &net::Online, var: &str) -> bool {
+    if online.0.is_some() {
+        warn!(
+            "{var}: ignored in an online round, where one peer's board is \
+             not its own to change; use PINCH_SPECTATOR=<event> instead"
+        );
+        return true;
+    }
+    false
+}
+
 /// Dev hook: `PINCH_TIDE=<0-8>` fires a real tide event a few seconds in,
 /// rather than the banner alone, so what the event *does* can be watched.
 /// Seven is the castle swap.
-pub(super) fn debug_tide(mut sim: ResMut<Sim>, mut hook: Local<OneShot>) {
+pub(super) fn debug_tide(mut sim: ResMut<Sim>, online: Res<net::Online>, mut hook: Local<OneShot>) {
     let Some(which) = hook.due("PINCH_TIDE", sim.0.ticks()) else {
         return;
     };
+    if only_off_the_wire(&online, "PINCH_TIDE") {
+        return;
+    }
     let index = which.parse::<usize>().unwrap_or(0) % TideEvent::ALL.len();
     sim.0.force_tide_event(TideEvent::ALL[index], 0);
 }
@@ -350,10 +378,13 @@ impl OneShot {
 
 /// Dev hook: `PINCH_LURE=<seat>` starts a lure a few seconds in, which is
 /// otherwise something you wait for a molting crab to do.
-pub(super) fn debug_lure(mut sim: ResMut<Sim>, mut hook: Local<OneShot>) {
+pub(super) fn debug_lure(mut sim: ResMut<Sim>, online: Res<net::Online>, mut hook: Local<OneShot>) {
     let Some(which) = hook.due("PINCH_LURE", sim.0.ticks()) else {
         return;
     };
+    if only_off_the_wire(&online, "PINCH_LURE") {
+        return;
+    }
     let seat = which.parse::<u8>().unwrap_or(0);
     sim.0
         .force_lure(seat.min(crate::sim::MAX_PLAYERS as u8 - 1));
