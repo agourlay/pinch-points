@@ -8,8 +8,8 @@
 
 use crate::sim::{HASH_INTERVAL, Lockstep, MAX_PLAYERS, PlayerAction};
 use crate::transport::{
-    Announcer, MatchTerms, NetMsg, SeriesStanding, UdpTransport, name_from_wire, table_from_wire,
-    wire_table,
+    Announcer, MatchTerms, NetMsg, SeriesStanding, UdpTransport, chat_from_wire, name_from_wire,
+    table_from_wire, wire_table,
 };
 use bevy::prelude::*;
 pub use peers::{Peer, PeerBook, Place};
@@ -60,6 +60,12 @@ pub struct OnlineSession {
     /// from, so the shell can put an AI in each and say so once rather
     /// than every frame, and the host can keep telling the table.
     pub abandoned: Vec<(u8, u32)>,
+    /// Lines said to the table since the shell last read them, each with
+    /// who said it.
+    ///
+    /// Drained rather than kept: the round's own feed is where a line is
+    /// shown, and the feed keeps its own history.
+    pub heard: Vec<(String, String)>,
     /// The beach this session came from, and what it owes it.
     pub home: Home,
     /// A next round has been agreed and the session is armed for it; the
@@ -331,6 +337,7 @@ impl OnlineSession {
             hashes: HashCheck::default(),
             stall: StallWatch::default(),
             abandoned: Vec::new(),
+            heard: Vec::new(),
             home: Home::nowhere(),
             next_round: false,
             series_standing: None,
@@ -416,6 +423,7 @@ impl OnlineSession {
             hashes: _,
             stall: _,
             abandoned: _,
+            heard: _,
             home,
             next_round: _,
             series_standing: _,
@@ -661,10 +669,16 @@ impl OnlineSession {
                 // Only a host hands these out, and a host never receives
                 // one: a joiner in the queue is still in the lobby.
                 NetMsg::Queued { .. } => {}
-                // Chat is a lobby thing. A line that arrives mid-round is
-                // from a peer still sitting on its lobby screen, and there
-                // is nowhere here to show it.
-                NetMsg::Chat { .. } => {}
+                // The rail talking. Players have both hands on the keys
+                // and no way to answer, which is the point: the people
+                // with nothing to hold are the ones who can say something,
+                // and the round's own feed is where it lands.
+                NetMsg::Chat { name, text } => {
+                    let (who, line) = (name_from_wire(&name), chat_from_wire(&text));
+                    if !line.is_empty() {
+                        self.heard.push((who, line));
+                    }
+                }
                 NetMsg::Abandoned { seat, frame } => {
                     // The host's word, not our own patience. Idempotent,
                     // because it is repeated against packet loss.

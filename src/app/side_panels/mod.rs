@@ -6,7 +6,7 @@ mod clock;
 mod feed;
 
 pub use clock::update_side_clock;
-pub use feed::{EventLog, collect_log, update_log};
+pub use feed::{EventLog, collect_chat, collect_log, update_log};
 
 use crate::app::net::Online;
 use crate::app::settings::GameSettings;

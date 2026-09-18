@@ -249,7 +249,11 @@ pub(super) fn name_myself(
 /// decide what a keystroke means, the same way a name is typed.
 ///
 /// Returns the finished line, if Enter finished one.
-pub(super) fn type_a_line(
+///
+/// `pub(crate)` because the rail types during a round too, which is a
+/// fourth caller of the same act: type, Enter, Esc, capped at the length a
+/// chat line goes onto the wire at.
+pub(crate) fn type_a_line(
     typed: &mut MessageReader<bevy::input::keyboard::KeyboardInput>,
     line: &mut String,
 ) -> Option<String> {

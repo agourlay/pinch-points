@@ -154,6 +154,7 @@ fn insert_resources(app: &mut App) {
     app.init_resource::<effects::VisualRng>();
     app.init_resource::<effects::Trauma>();
     app.init_resource::<pause::PauseMenu>();
+    app.init_resource::<rail::RailChat>();
     app.init_resource::<audio::Muted>();
     app.init_resource::<Daily>();
     app.init_resource::<SeatNames>();
@@ -572,6 +573,7 @@ fn add_ui_systems(app: &mut App) {
                 .run_if(in_state(Screen::Language)),
             (replays::playback_speed_input, replays::playback_pause_input)
                 .run_if(in_state(Screen::Versus).and_then(keys_are_free)),
+            rail::rail_chat_input.run_if(in_state(Screen::Versus).and_then(keys_are_free)),
             (
                 gamepad::pad_claim_seats,
                 match_setup::match_setup_input,
@@ -811,7 +813,9 @@ fn add_chrome_systems(app: &mut App) {
             hud::update_field_guide,
             side_panels::update_side_panels,
             side_panels::update_side_clock.run_if(in_state(Screen::Versus)),
-            side_panels::collect_log.run_if(in_state(Screen::Versus)),
+            (side_panels::collect_log, side_panels::collect_chat)
+                .chain()
+                .run_if(in_state(Screen::Versus)),
             side_panels::update_log,
             hud::update_tide_clock,
             hud::update_hint,

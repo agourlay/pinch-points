@@ -75,6 +75,23 @@ impl EventLog {
 
 const LOG_LINES: usize = 9;
 
+/// Fold what the rail said into the same feed the round's own events use.
+///
+/// Drained from the session rather than read: a line is shown once and
+/// then belongs to the feed, which keeps its own history and its own
+/// nine-line window.
+///
+/// Idle ink, not a seat colour. The voice has no castle on the board, and
+/// a line in a player's colour reads as that player having said it.
+pub fn collect_chat(mut online: ResMut<crate::app::net::Online>, mut log: ResMut<EventLog>) {
+    let Some(session) = &mut online.0 else {
+        return;
+    };
+    for (who, line) in session.heard.drain(..) {
+        log.push(format!("{who}: {line}"), palette::IDLE_ROW);
+    }
+}
+
 /// Fold notable sim events into the log: raids, gold, lures, tier-ups,
 /// tide events, gull arrivals, and the surge. Common banks are too chatty
 /// to list.

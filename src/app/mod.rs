@@ -65,6 +65,7 @@ pub mod palette;
 mod paths;
 mod pause;
 pub mod progress;
+mod rail;
 pub mod replays;
 mod results;
 mod schedule;

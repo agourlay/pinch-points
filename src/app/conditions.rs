@@ -65,8 +65,9 @@ pub(super) fn text_entry_open(
     lobby: Res<lobby::LobbyState>,
     setup: Res<match_setup::MatchMenu>,
     editor: Res<editor::EditorState>,
+    rail: Res<crate::app::rail::RailChat>,
 ) -> bool {
-    lobby.typing.is_some() || setup.naming.is_some() || editor.is_naming()
+    lobby.typing.is_some() || setup.naming.is_some() || editor.is_naming() || rail.open()
 }
 
 /// Whether the round on screen is being played rather than watched: a
@@ -144,6 +145,7 @@ mod tests {
         world.insert_resource(lobby::LobbyState::default());
         world.insert_resource(match_setup::MatchMenu::default());
         world.insert_resource(Playback::default());
+        world.insert_resource(crate::app::rail::RailChat::default());
         world
     }
 
@@ -353,9 +355,9 @@ mod tests {
 
     /// While a player is typing, a letter is a letter.
     ///
-    /// Three screens can have a name half-written on them, and each is a
+    /// Four places can have a line half-written in them, and each is a
     /// separate latch: miss one and the master mute fires in the middle of
-    /// typing a name.
+    /// typing.
     #[test]
     fn any_half_typed_name_takes_the_keyboard() {
         let mut world = world(Screen::Lobby, Phase::Setup, VersusPhase::Running);
@@ -377,6 +379,13 @@ mod tests {
             "a beach being named holds the keyboard"
         );
         world.resource_mut::<editor::EditorState>().mode = editor::Mode::Painting;
+
+        world.resource_mut::<crate::app::rail::RailChat>().0 = Some(String::new());
+        assert!(
+            world.run_system_once(text_entry_open).expect("ran"),
+            "and a line the rail is saying to the table holds it too"
+        );
+        world.resource_mut::<crate::app::rail::RailChat>().0 = None;
 
         assert!(
             !world.run_system_once(text_entry_open).expect("ran"),
