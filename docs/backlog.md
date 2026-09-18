@@ -27,10 +27,13 @@ Nothing blocks these. They want the work and no more.
 
   That second regression is the argument for the nightly: the figures here
   were taken 2026-08-11 and not read again until 2026-08-22, by which time
-  every one of them had moved, one from 3.2 sigma to 5.9. Standing at
-  2026-08-22 (`BALANCE_FULL=1`), worst seat deviation per generated sweep:
-  two seats 0.3 sigma, four 1.3 on the 12x9 beach and 1.2 on the 16x11, six
-  2.5. The 16x11 run is 200 games against the others' 3000, so its figure is
+  every one of them had moved, one from 3.2 sigma to 5.9. This entry then
+  quoted the 2026-08-22 figures as current through a 2026-09-17 run that
+  had already moved them, which is the same lapse one paragraph smaller.
+  The numbers live with the budgets they are judged against now, in
+  `examples/balance.rs`, and this entry does not repeat them. Standing at
+  2026-09-18 (`BALANCE_FULL=1`), all four gated sweeps are inside budget.
+  The 16x11 run is 200 games against the others' 3000, so its figure is
   the noisy one; a nightly job should even the sample sizes first.
 
   Read the generated sweeps and not the `classic` ones, which play a single

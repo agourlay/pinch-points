@@ -194,21 +194,29 @@ fn verdict(sweeps: &[Sweep]) {
 /// Seat-drift budgets, in units of standard error, one per gated sweep.
 ///
 /// The sweeps are not comparable to each other, which is why there is no
-/// single number: on 2026-09-17 two seats sat at 0.7 and six at 2.7.
+/// single number.
 ///
 /// Measured, budgeted:
 ///
-/// | sweep | 2026-08-22 | 2026-09-17 | budget |
-/// |---|---|---|---|
-/// | generated 2p 12x9  | 0.3 | 0.7 | 2.0 |
-/// | generated 4p 12x9  | 1.3 | 1.0 | 2.5 |
-/// | generated 4p 16x11 | 1.2 | 1.3 | 3.0 |
-/// | generated 6p 21x13 | 2.5 | 2.7 | 3.5 |
+/// | sweep | 2026-08-22 | 2026-09-17 | 2026-09-18 | budget |
+/// |---|---|---|---|---|
+/// | generated 2p 12x9  | 0.3 | 0.7 | 1.2 | 2.0 |
+/// | generated 4p 12x9  | 1.3 | 1.0 | 1.0 | 2.5 |
+/// | generated 4p 16x11 | 1.2 | 1.3 | 1.0 | 3.0 |
+/// | generated 6p 21x13 | 2.5 | 2.7 | 1.4 | 3.5 |
 ///
-/// The six-seat budget is the uncomfortable one, and its headroom is the
-/// thinnest on purpose: `tally` calls anything past about two worth
-/// investigating, and six seats is at 2.7. It is set to catch that figure
-/// getting worse, not to bless where it stands.
+/// The 2026-09-18 column is a different experiment, not a better reading
+/// of the old one: Right Claws put a ninth face on the roulette, so every
+/// draw moved and all 3000 rounds of each sweep are different rounds. Read
+/// it as a re-roll. What it says is that nothing about that change biased
+/// a seat, and that the six-seat figure which had been sitting at 2.7 has
+/// come back to the middle, which is what a run of noise does and what a
+/// real asymmetry would not.
+///
+/// The six-seat budget is still the uncomfortable one and its headroom is
+/// the thinnest on purpose: `tally` calls anything past about two worth
+/// investigating. It is set to catch that figure getting worse, not to
+/// bless where it stands, and one run at 1.4 does not retire it.
 const BUDGET_2P_12X9: f64 = 2.0;
 const BUDGET_4P_12X9: f64 = 2.5;
 /// 200 games against the others' 3000, so the noisiest of the four.
