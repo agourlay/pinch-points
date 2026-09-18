@@ -238,7 +238,7 @@ pub fn update_library(
     library: Res<Library>,
     settings: Res<GameSettings>,
     mut cells: Query<(&LibraryRow, &mut Text, &mut TextColor), Without<EmptyShelfNote>>,
-    mut rows: Query<(&LibraryRow, &mut BackgroundColor)>,
+    mut rows: Query<(&LibraryRow, &mut BackgroundColor, &mut Node), Without<EmptyShelfNote>>,
     mut empty_note: Query<(&mut Text, &mut Node), With<EmptyShelfNote>>,
 ) {
     let tr = settings.tr();
@@ -273,9 +273,15 @@ pub fn update_library(
             },
         );
     }
-    for (row, mut fill) in &mut rows {
+    for (row, mut fill, mut node) in &mut rows {
         let ground = menu_ui::band(at(row.0) == library.selected && !library.kept.is_empty());
         menu_ui::set_bg(&mut fill, ground);
+        // A slot with nothing in it still holds its height, so pasting a
+        // round does not resize the card under the cursor. An empty shelf
+        // has no cursor and nothing to keep still, and twelve blank slots
+        // under one sentence is the first thing a new player sees here, so
+        // there the note really does stand in place of the rows.
+        menu_ui::set_shown(&mut node, !empty);
     }
 }
 
