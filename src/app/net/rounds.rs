@@ -637,7 +637,7 @@ mod next_round_tests {
     /// A seated peer that arms W between rounds is told it is watching,
     /// and the wish is kept for the next deal.
     #[test]
-    fn a_watch_from_a_seated_peer_is_told_the_rail() {
+    fn a_watch_from_a_seated_peer_is_told_to_watch() {
         let mut host = OnlineSession::new(
             UdpTransport::host(0).expect("socket"),
             Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),

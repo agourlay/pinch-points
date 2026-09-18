@@ -1034,7 +1034,7 @@ mod homecoming_tests {
     /// A joiner's way back: no beacon to carry, but the socket, the seed
     /// it played on, and whether it was watching all come home with it.
     #[test]
-    fn a_watching_joiner_comes_home_to_the_rail() {
+    fn a_watching_joiner_comes_home_still_watching() {
         let session = OnlineSession::new(
             UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
             Lockstep::observer(vec![0, 1], DEFAULT_DELAY),

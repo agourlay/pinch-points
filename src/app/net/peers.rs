@@ -251,7 +251,7 @@ mod tests {
     /// Who the round's inputs are for. A peer in line is not simulating
     /// anything and used to be sent the lot anyway.
     #[test]
-    fn only_the_table_and_the_rail_follow_the_round() {
+    fn only_the_table_and_the_watchers_follow_the_round() {
         let mut peers = PeerBook::default();
         peers.reach(4);
         peers.deal(&[Some(1), None]);
