@@ -364,19 +364,18 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         }
         VersusPhase::Running if settings.custom_binds() => tr.prompt_versus_custom.to_string(),
         VersusPhase::Running => tr.prompt_versus_local.to_string(),
-        // A finished lobby match goes back to the lobby, together; the
-        // prompt must not promise the menu it will not reach. Mid-series
-        // the card's own "Enter: next round" hint speaks instead.
-        VersusPhase::Over
-            if online
-                .0
-                .as_ref()
-                .is_some_and(|session| session.home.from_lobby)
-                && !tournament.is_running() =>
-        {
-            tr.prompt_enter_lobby.to_string()
+        // Whatever Enter actually does here, named by the one function the
+        // key itself reads: a finished lobby match goes back to the lobby
+        // together, a series plays on, and the prompt must not promise a
+        // door the key does not open.
+        VersusPhase::Over => {
+            use crate::app::play_input::AfterRound;
+            match crate::app::play_input::after_round(online, tournament.is_running()) {
+                AfterRound::NextRound => tr.tour_next.to_string(),
+                AfterRound::Lobby => tr.prompt_enter_lobby.to_string(),
+                AfterRound::Menu => tr.prompt_enter_menu.to_string(),
+            }
         }
-        VersusPhase::Over => tr.prompt_enter_menu.to_string(),
     };
     HudText::new(mode, status, prompt)
 }
@@ -718,6 +717,61 @@ mod tests {
 
         lobby.feedback = "hosting on port 47777".into();
         assert_eq!(lobby_text(&EN, &lobby).status, "hosting on port 47777");
+    }
+
+    /// And the prompt line says so too. The screen census below builds its
+    /// readout with a single round, so the mid-series arm is one it cannot
+    /// reach.
+    #[test]
+    fn the_prompt_carries_a_local_series_on_rather_than_offering_the_menu() {
+        use crate::app::tournament::{SeriesLength, Tournament};
+        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+
+        let levels = campaign_levels();
+        let builtins = levels.len();
+        let campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        };
+        let settings = GameSettings::default();
+        let said = |tournament: &Tournament| {
+            versus_text(&Readout {
+                tr: &EN,
+                lang: Lang::En,
+                sim: &Sim(Board::new(9, 7, 1)),
+                campaign: &campaign,
+                phase: &State::new(Phase::Setup),
+                vphase: &State::new(VersusPhase::Over),
+                editor: &EditorState::default(),
+                online: &Online::default(),
+                playback: &Playback::default(),
+                lobby: &LobbyState::default(),
+                tournament,
+                seats: &Seats(2),
+                settings: &settings,
+                keycaps: &crate::app::keycaps::KeyCaps::default(),
+                names: &crate::app::SeatNames::default(),
+                bots: &Bots::default(),
+                library: &crate::app::replays::Library::default(),
+                notice: &crate::app::RoundNotice::default(),
+                match_menu: &crate::app::match_setup::MatchMenu::default(),
+                speed: 1,
+            })
+            .prompt
+        };
+
+        assert_eq!(
+            said(&Tournament::start(SeriesLength::BestOfThree)),
+            EN.tour_next
+        );
+        // A single round is done with, and a decided series too.
+        assert_eq!(said(&Tournament::default()), EN.prompt_enter_menu);
+        let mut decided = Tournament::start(SeriesLength::BestOfThree);
+        decided.wins[0] = 2;
+        decided.state = crate::app::tournament::SeriesState::Decided;
+        assert_eq!(said(&decided), EN.prompt_enter_menu);
     }
 
     /// The player's own levels are a shelf behind the shipped list, not

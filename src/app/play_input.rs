@@ -216,56 +216,86 @@ pub fn versus_over_input(
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     let series_on = tournament.is_running();
-    let Some(session) = &mut online.0 else {
-        if crate::app::menu_ui::enter(&keys) {
-            match series_on {
-                true => next_screen.set(Screen::Interlude),
-                false => next_screen.set(Screen::Menu),
-            }
-        }
-        return;
-    };
     // The invitation may already have arrived, in which case nobody
     // pressed anything here: the host decided and this peer follows.
-    if session.next_round {
-        // Left set on purpose: `end_versus` reads it as "keep me", and
-        // the interlude clears it once the session is safely through.
+    //
+    // Left set on purpose: `end_versus` reads it as "keep me", and the
+    // interlude clears it once the session is safely through.
+    if online.0.as_ref().is_some_and(|session| session.next_round) {
         next_screen.set(Screen::Interlude);
         return;
     }
     if !crate::app::menu_ui::enter(&keys) {
         return;
     }
-    if session.is_host() && series_on {
-        // The host re-deals the seats for the next round and the series
-        // tally with them: the returned standing is the same wins on the
-        // chairs their holders now sit in.
-        let standing = session.call_next_round(
-            crate::app::match_setup::next_round_terms(
-                session.terms,
-                session.seats,
-                crate::app::clock::fresh_seed(),
-            ),
-            tournament.standing(),
-        );
-        if let Some(crate::transport::SeriesStanding { round, wins }) = standing {
-            tournament.round = round;
-            tournament.wins = wins;
+    match after_round(&online, series_on) {
+        AfterRound::NextRound => {
+            // Online, that is the host, and only the host: the seats are
+            // re-dealt for the next round and the series tally with them,
+            // the returned standing being the same wins on the chairs
+            // their holders now sit in.
+            if let Some(session) = &mut online.0 {
+                let standing = session.call_next_round(
+                    crate::app::match_setup::next_round_terms(
+                        session.terms,
+                        session.seats,
+                        crate::app::clock::fresh_seed(),
+                    ),
+                    tournament.standing(),
+                );
+                if let Some(crate::transport::SeriesStanding { round, wins }) = standing {
+                    tournament.round = round;
+                    tournament.wins = wins;
+                }
+            }
+            next_screen.set(Screen::Interlude);
         }
-        next_screen.set(Screen::Interlude);
-        return;
+        AfterRound::Menu => next_screen.set(Screen::Menu),
+        AfterRound::Lobby => {
+            // The match is over and it was formed in the lobby: the whole
+            // table goes back there together, sockets and all.
+            let session = online.0.take().expect("the lobby door needs a session");
+            homecoming.0 = Some(session.back_to_the_lobby());
+            next_screen.set(Screen::Lobby);
+        }
     }
-    // Mid-series a joiner's Enter still means leaving, and a direct
-    // `PINCH_HOST` pair has no lobby to go back to.
-    if series_on || !session.home.from_lobby {
-        next_screen.set(Screen::Menu);
-        return;
+}
+
+/// Where Enter leads once a versus round is over.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AfterRound {
+    /// On into the next round of a series, through the interlude.
+    NextRound,
+    /// Back to the lobby the whole table came from.
+    Lobby,
+    Menu,
+}
+
+/// Which door Enter opens when the tide has come in.
+///
+/// A function of its own because two readers need the answer: the key
+/// itself, and the prompt line that tells the player what the key does.
+/// Spelled out twice, they disagreed - mid-series the card said "Enter:
+/// next round" over a prompt line promising the menu, which is the game
+/// arguing with itself.
+pub fn after_round(online: &crate::app::net::Online, series_on: bool) -> AfterRound {
+    let Some(session) = &online.0 else {
+        // Local: a series plays on, a single round is done with.
+        return match series_on {
+            true => AfterRound::NextRound,
+            false => AfterRound::Menu,
+        };
+    };
+    if session.is_host() && series_on {
+        return AfterRound::NextRound;
     }
-    // The match is over and it was formed in the lobby: the whole table
-    // goes back there together, sockets and all.
-    let session = online.0.take().expect("matched Some above");
-    homecoming.0 = Some(session.back_to_the_lobby());
-    next_screen.set(Screen::Lobby);
+    // Mid-series a joiner's Enter still means leaving, since the series
+    // plays on without it, and a direct `PINCH_HOST` pair has no lobby to
+    // go back to.
+    match series_on || !session.home.from_lobby {
+        true => AfterRound::Menu,
+        false => AfterRound::Lobby,
+    }
 }
 
 #[cfg(test)]
@@ -274,6 +304,16 @@ mod tests {
     use crate::app::campaign::CampaignKind;
     use crate::app::progress::Progress;
     use crate::sim::{Level, campaign_levels};
+
+    /// The prompt line and the key have to name the same door. At a local
+    /// table Enter carries a series on into the next round, and the prompt
+    /// used to say "Enter: menu" under a card reading "Enter: next round".
+    #[test]
+    fn a_local_series_carries_enter_on_to_the_next_round() {
+        let alone = crate::app::net::Online::default();
+        assert_eq!(after_round(&alone, true), AfterRound::NextRound);
+        assert_eq!(after_round(&alone, false), AfterRound::Menu);
+    }
 
     /// Three shipped stages, and one of the player's own behind them when
     /// asked for.
