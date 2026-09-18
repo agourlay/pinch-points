@@ -123,7 +123,7 @@ pub static EN: Tr = Tr {
         "win 10 rounds online",
         "host a game on the local network",
         "play a round with four seats filled",
-        "win from all four seats",
+        "win from four different seats",
         "clear a stage with a spare signpost",
         "clear 10 stages first try",
         "clear a five-signpost stage",

@@ -123,7 +123,7 @@ pub static ES: Tr = Tr {
         "ganar 10 rondas en línea",
         "alojar una partida en la red local",
         "jugar una ronda entre cuatro",
-        "ganar desde los cuatro asientos",
+        "ganar desde cuatro asientos distintos",
         "completar una fase con señal de sobra",
         "completar 10 fases al primer intento",
         "completar una fase de cinco señales",

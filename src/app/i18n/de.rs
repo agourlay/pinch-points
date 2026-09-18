@@ -123,7 +123,7 @@ pub static DE: Tr = Tr {
         "10 Runden online gewinnen",
         "ein Spiel im lokalen Netz hosten",
         "eine Runde zu viert spielen",
-        "von allen vier Plätzen gewinnen",
+        "von vier verschiedenen Plätzen siegen",
         "eine Stufe mit Schild übrig schaffen",
         "10 Stufen im ersten Versuch schaffen",
         "eine Stufe mit fünf Schildern schaffen",

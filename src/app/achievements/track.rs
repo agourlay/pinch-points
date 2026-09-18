@@ -522,7 +522,7 @@ mod tests {
                 RoundOutcome { seat, ..win() },
             );
         }
-        assert_eq!(stats.seats_won.count_ones(), 4, "the whole table");
+        assert_eq!(stats.seats_won.count_ones(), 4, "four of the six chairs");
 
         // A loss lights nothing, whatever chair it was in.
         credit_round(

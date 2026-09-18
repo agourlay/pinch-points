@@ -123,7 +123,7 @@ pub static NL: Tr = Tr {
         "10 rondes online winnen",
         "een spel op het lokale netwerk hosten",
         "een ronde met z'n vieren spelen",
-        "vanaf alle vier de plaatsen winnen",
+        "op vier verschillende plaatsen winnen",
         "een level halen met een bordje over",
         "10 levels in één poging halen",
         "een level halen dat vijf bordjes geeft",

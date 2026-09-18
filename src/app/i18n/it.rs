@@ -123,7 +123,7 @@ pub static IT: Tr = Tr {
         "vincere 10 round online",
         "ospitare una partita sulla rete locale",
         "giocare un round in quattro",
-        "vincere da tutti e quattro i posti",
+        "vincere da quattro posti diversi",
         "finire uno stage, un cartello in più",
         "10 stage al primo tentativo",
         "finire uno stage da cinque cartelli",

@@ -333,7 +333,10 @@ pub const ACHIEVEMENTS: [Achievement; 50] = [
         threshold: 4,
     },
     Achievement {
-        // Variety again, like the roulette: four bits, not four wins.
+        // Variety again, like the roulette: four bits, not four wins. Four
+        // of the six, not all of them: the table grew to six and this
+        // stayed where it was, so the line under it asks for four
+        // different seats rather than every seat there is.
         id: "all_seats",
         stat: |s| s.seats_won.count_ones(),
         threshold: 4,

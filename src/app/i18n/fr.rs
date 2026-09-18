@@ -123,7 +123,7 @@ pub static FR: Tr = Tr {
         "gagner 10 manches en ligne",
         "héberger une partie sur le réseau",
         "jouer une manche à quatre places",
-        "gagner depuis les quatre places",
+        "gagner sur quatre places différentes",
         "finir une étape sans tout poser",
         "terminer 10 étapes du premier coup",
         "terminer une étape à cinq panneaux",
