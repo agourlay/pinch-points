@@ -37,6 +37,24 @@ pub(super) fn play_screens(screen: Res<State<Screen>>) -> bool {
     matches!(screen.get(), Screen::Puzzle | Screen::Versus)
 }
 
+/// Whether the keyboard still belongs to the beach, rather than to the
+/// pause card in front of it.
+///
+/// The card is an overlay and not a `Screen`, and it freezes the sim
+/// through a resource of its own, so neither the screen nor the phase
+/// changes when it opens: every input system's own condition stays true
+/// and it keeps reading keys behind the card. That let W and S move the
+/// board cursor while they walked the card's rows, let an arrow queue a
+/// placement that fired the moment the round resumed, and let N load a
+/// different stage under a card still saying PAUSED.
+///
+/// `playback_pause_input` found this first and refused the card by hand;
+/// this is that rule, once, for everything that reads a key while a round
+/// is up.
+pub(super) fn keys_are_free(menu: Res<crate::app::pause::PauseMenu>) -> bool {
+    !menu.open
+}
+
 /// Whether a player is typing words rather than pressing keys: a seat's
 /// name, a beach's name, an address, a line of chat.
 ///
@@ -84,7 +102,7 @@ pub(super) fn sim_should_run(
     }
 }
 
-/// The pause card is up, on any screen that can raise one.
+/// A versus round in play, as against one already over.
 pub(super) fn versus_running(screen: Res<State<Screen>>, phase: Res<State<VersusPhase>>) -> bool {
     *screen.get() == Screen::Versus && *phase.get() == VersusPhase::Running
 }

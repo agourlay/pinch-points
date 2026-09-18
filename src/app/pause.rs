@@ -270,6 +270,92 @@ mod tests {
         assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
     }
 
+    /// The card takes the keyboard while it is up.
+    ///
+    /// It is an overlay and not a `Screen`, and it freezes the sim through
+    /// a resource of its own, so every input system's own run condition
+    /// stays true while it is open. Before `keys_are_free` gated them, the
+    /// same W that walked these rows moved the board cursor behind the
+    /// card, and an arrow key queued a placement that fired on resume.
+    #[test]
+    fn the_card_takes_the_keyboard_while_it_is_up() {
+        use crate::app::conditions::keys_are_free;
+        use crate::app::cursor::{Cursor, move_cursor};
+        use crate::app::play_input::versus_input;
+        use crate::app::{PendingActions, PlacementDenied, Sim, VersusPhase};
+        use crate::sim::classic_arena;
+
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_state::<Phase>();
+        app.init_state::<VersusPhase>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.insert_resource(Sim(classic_arena(false, 2)));
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<Time>();
+        app.init_resource::<PendingActions>();
+        app.init_resource::<PauseMenu>();
+        app.init_resource::<Paused>();
+        app.init_resource::<Online>();
+        app.add_message::<PlacementDenied>();
+        app.add_message::<AppExit>();
+        app.world_mut()
+            .spawn((Cursor::seated(0), Transform::default()));
+        // The schedule's own conditions, so this cannot pass while the real
+        // ones let the keys through.
+        app.add_systems(
+            Update,
+            (
+                pause_input,
+                (move_cursor, versus_input).run_if(keys_are_free),
+            )
+                .chain(),
+        );
+
+        let tap = |app: &mut App, key: KeyCode| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(key);
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+        };
+        let cursor = |app: &mut App| {
+            let mut q = app.world_mut().query::<&Cursor>();
+            let c = q.iter(app.world()).next().expect("one cursor");
+            (c.x, c.y)
+        };
+
+        tap(&mut app, KeyCode::Escape);
+        assert!(app.world().resource::<PauseMenu>().open, "the card opened");
+        let parked = cursor(&mut app);
+
+        // S walks the card's rows and nothing else.
+        tap(&mut app, KeyCode::KeyS);
+        assert_eq!(
+            PauseAction::ALL[app.world().resource::<PauseMenu>().selected],
+            PauseAction::ToMenu
+        );
+        assert_eq!(cursor(&mut app), parked, "the cursor stayed put");
+
+        // And an arrow key queues nothing for the resume to play out.
+        tap(&mut app, KeyCode::ArrowUp);
+        assert_eq!(
+            app.world().resource::<PendingActions>().0[0],
+            crate::sim::PlayerAction::None,
+            "no placement waiting behind the card"
+        );
+
+        // Closing it hands the keys back.
+        tap(&mut app, KeyCode::Escape);
+        assert!(!app.world().resource::<PauseMenu>().open, "the card closed");
+        tap(&mut app, KeyCode::KeyS);
+        assert_ne!(cursor(&mut app), parked, "the cursor moves again");
+    }
+
     /// On a puzzle's won or lost card Escape is the way back to the stage
     /// list, read by the card's own input; the pause card stays out of it
     /// rather than opening underneath for a frame.

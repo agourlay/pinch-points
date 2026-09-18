@@ -571,7 +571,7 @@ fn add_ui_systems(app: &mut App) {
                 .chain()
                 .run_if(in_state(Screen::Language)),
             (replays::playback_speed_input, replays::playback_pause_input)
-                .run_if(in_state(Screen::Versus)),
+                .run_if(in_state(Screen::Versus).and_then(keys_are_free)),
             (
                 gamepad::pad_claim_seats,
                 match_setup::match_setup_input,
@@ -616,11 +616,14 @@ fn add_play_systems(app: &mut App) {
                 achievements::track_puzzle_attempt.run_if(in_state(Screen::Puzzle)),
             )
                 .run_if(on_message::<LoadLevel>),
-            cursor::move_cursor
-                .run_if(not(in_state(Screen::Menu)).and_then(not(editor::editor_naming))),
-            play_input::setup_input.run_if(puzzle_setup),
+            cursor::move_cursor.run_if(
+                not(in_state(Screen::Menu))
+                    .and_then(not(editor::editor_naming))
+                    .and_then(keys_are_free),
+            ),
+            play_input::setup_input.run_if(puzzle_setup.and_then(keys_are_free)),
             dev::debug_autoplay.run_if(puzzle_setup),
-            hint::hint_input.run_if(puzzle_setup.or_else(puzzle_done)),
+            hint::hint_input.run_if(puzzle_setup.or_else(puzzle_done).and_then(keys_are_free)),
             // One nested group so the tuple stays inside Bevy's arity limit
             // of 20, which this list was already sitting on. The chain still
             // runs them in written order, and that order matters: the note
@@ -631,11 +634,11 @@ fn add_play_systems(app: &mut App) {
                 hint::tick_denied_note,
                 hint::note_denials,
             ),
-            play_input::running_input.run_if(puzzle_running),
+            play_input::running_input.run_if(puzzle_running.and_then(keys_are_free)),
             play_input::done_input.run_if(puzzle_done),
             check_outcome.run_if(puzzle_running),
-            play_input::versus_input.run_if(versus_running),
-            suspend::copy_round_code.run_if(versus_running),
+            play_input::versus_input.run_if(versus_running.and_then(keys_are_free)),
+            suspend::copy_round_code.run_if(versus_running.and_then(keys_are_free)),
             (dev::debug_net_probe, dev::debug_autopilot).run_if(versus_running),
             (
                 dev::debug_banner.run_if(versus_running.or_else(puzzle_running)),
@@ -699,10 +702,15 @@ fn add_play_systems(app: &mut App) {
     app.add_systems(
         Update,
         (
-            gamepad::pad_move_cursor
-                .run_if(not(in_state(Screen::Menu)).and_then(not(editor::editor_naming))),
-            gamepad::pad_setup_input.run_if(puzzle_setup),
-            gamepad::pad_versus_input.run_if(versus_running),
+            // The pad walks the card's rows with the same stick the board
+            // cursor answers to, so it needs the gate as much as the keys.
+            gamepad::pad_move_cursor.run_if(
+                not(in_state(Screen::Menu))
+                    .and_then(not(editor::editor_naming))
+                    .and_then(keys_are_free),
+            ),
+            gamepad::pad_setup_input.run_if(puzzle_setup.and_then(keys_are_free)),
+            gamepad::pad_versus_input.run_if(versus_running.and_then(keys_are_free)),
             (pause::pause_input, pause::update_pause_rows)
                 .chain()
                 .run_if(play_screens),

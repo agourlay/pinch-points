@@ -805,16 +805,18 @@ pub fn update_replay_bar(
 ///
 /// Only while one is playing: in a live match the same key pulls a
 /// signpost.
+///
+/// The pause card is kept off this by `keys_are_free` in the schedule,
+/// which this system used to do for itself: the card sets `Paused` once,
+/// on opening, and never re-asserts it, so a Space pressed under it would
+/// start the recording running again with the card still up saying it is
+/// stopped. Every other key on a play screen wanted the same rule.
 pub fn playback_pause_input(
     keys: Res<ButtonInput<KeyCode>>,
     playback: Res<Playback>,
-    menu: Res<crate::app::pause::PauseMenu>,
     mut paused: ResMut<crate::app::Paused>,
 ) {
-    // Not behind the pause card. That card sets `Paused` once, on opening,
-    // and never re-asserts it, so a Space pressed under it would start the
-    // recording running again with the card still up saying it is stopped.
-    if menu.open || playback.0.is_none() {
+    if playback.0.is_none() {
         return;
     }
     if keys.just_pressed(KeyCode::Space) {
