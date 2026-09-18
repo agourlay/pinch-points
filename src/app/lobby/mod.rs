@@ -139,9 +139,10 @@ impl Hosted {
     }
 
     /// Peers here to play, the ones who fill the seats. Capped at the five
-    /// chairs beside the host's: seats run out before the socket does (it
-    /// takes nine), and `seat_plan` turns the surplus into onlookers, so a
-    /// table of eight would-be rivals reads as "5 aboard".
+    /// chairs beside the host's: seats run out long before the socket
+    /// does, which takes [`MAX_PEERS`](crate::transport::MAX_PEERS), and
+    /// `seat_plan` turns the surplus into onlookers, so a table of eight
+    /// would-be rivals reads as "5 aboard".
     pub fn players_aboard(&self) -> usize {
         let seatable = MAX_PLAYERS - 1;
         self.peers

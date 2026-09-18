@@ -527,9 +527,16 @@ pub(super) fn announce_to_table(state: &LobbyState, who: &str, line: &str) {
 
 /// Which peers get a seat, in peer order, and which are watching (`None`).
 ///
-/// Seats run out before connections do: the socket takes nine peers and the
-/// table has six chairs. The surplus is seated as onlookers rather than
-/// handed a seat number the sim has no slot for.
+/// Seats run out before connections do: the socket takes
+/// [`MAX_PEERS`](crate::transport::MAX_PEERS) and the table has
+/// [`MAX_PLAYERS`] chairs, one of them the host's. The surplus is seated
+/// as onlookers rather than handed a seat number the sim has no slot for,
+/// so a beach holds the host and sixteen others in any mix: five rivals
+/// and eleven watching, or one AI and sixteen watching.
+///
+/// Named rather than counted, because the count moved: this said nine
+/// from before the socket was raised to sixteen, which is the change that
+/// made a peer in line cheap enough to allow more of them.
 pub(super) fn seat_plan(peers: &PeerBook) -> Vec<Option<u8>> {
     let mut next = 1u8; // seat 0 is the host's
     peers
