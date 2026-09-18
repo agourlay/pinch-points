@@ -54,7 +54,11 @@ pub struct PauseRow(usize);
 fn spawn_card(commands: &mut Commands, settings: &GameSettings) {
     let tr = settings.tr();
     commands
-        .spawn((PauseUi, GlobalZIndex(20), menu_ui::centred_overlay()))
+        .spawn((
+            PauseUi,
+            GlobalZIndex(menu_ui::layer::CARD),
+            menu_ui::centred_overlay(),
+        ))
         .with_children(|wrap| {
             wrap.spawn(menu_ui::screen_card()).with_children(|card| {
                 card.spawn((

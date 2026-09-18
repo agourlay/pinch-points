@@ -117,6 +117,41 @@ pub fn left_right(keys: &ButtonInput<KeyCode>) -> Option<Turn> {
     }
 }
 
+/// What sits over what, when two of these are on screen at once.
+///
+/// One list rather than a number spelled into each of the five files that
+/// spawn one, because the order is the only thing about these numbers
+/// that means anything, and the order is exactly what cannot be seen from
+/// any one of them. A tide event's banner was above the card the crowd
+/// picks tide events from, and above the pause card, both of which
+/// somebody had opened and was in the middle of reading.
+pub mod layer {
+    /// The scoreboard at the end of a round. Under everything, being the
+    /// thing the rest is shown against.
+    pub const RESULTS: i32 = 10;
+    /// An event announcing itself in the middle of the screen. Transient,
+    /// and nobody's to work, so it goes under the cards that are: it has
+    /// the middle to itself unless somebody wants that space more.
+    pub const BANNER: i32 = 15;
+    /// A card somebody opened and is reading or choosing from. Above a
+    /// banner, because they are using this one.
+    pub const CARD: i32 = 20;
+    /// A toast in its own corner. Over everything, and overlapping
+    /// nothing, which is what a corner is for.
+    pub const TOAST: i32 = 30;
+
+    /// The order is the whole of what these numbers are for, so it is
+    /// checked where it cannot be run past: a card somebody opened is not
+    /// covered by an announcement that is only passing through, an
+    /// announcement still clears the board behind it, and the corner is
+    /// over everything and in nobody's way.
+    ///
+    /// Found by opening the spectators' event list while a tide event was
+    /// announcing itself: the banner held the middle, and the list nobody
+    /// could read was underneath it. The pause card sat under one too.
+    const _: () = assert!(RESULTS < BANNER && BANNER < CARD && CARD < TOAST);
+}
+
 /// A full-window node whose only job is to centre its child, so a card can
 /// size itself to its contents instead of doing absolute-position maths.
 /// Override the extras with struct update syntax:

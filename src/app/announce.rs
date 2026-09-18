@@ -230,7 +230,11 @@ fn spawn_banner(
     // point. It only holds the middle for two seconds.
     let card_fill = palette::CARD_BG;
     commands
-        .spawn((Banner, GlobalZIndex(25), menu_ui::centred_overlay()))
+        .spawn((
+            Banner,
+            GlobalZIndex(menu_ui::layer::BANNER),
+            menu_ui::centred_overlay(),
+        ))
         .with_children(|wrap| {
             wrap.spawn((
                 BannerPart {

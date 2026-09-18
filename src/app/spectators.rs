@@ -368,7 +368,7 @@ pub(super) fn spawn_card(commands: &mut Commands, settings: &crate::app::setting
     commands
         .spawn((
             SpectatorCardUi,
-            GlobalZIndex(20),
+            GlobalZIndex(menu_ui::layer::CARD),
             menu_ui::centred_overlay(),
         ))
         .with_children(|wrap| {

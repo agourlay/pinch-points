@@ -29,7 +29,7 @@ pub(super) fn spawn_toast(commands: &mut Commands, name: &str, desc: &str) {
     commands
         .spawn((
             Toast { age: 0.0 },
-            GlobalZIndex(30),
+            GlobalZIndex(crate::app::menu_ui::layer::TOAST),
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(TOAST_TOP),
