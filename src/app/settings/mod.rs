@@ -590,14 +590,38 @@ impl GameSettings {
 pub const DESIGN_W: f32 = 1280.0;
 pub const DESIGN_H: f32 = 720.0;
 
-/// How much the interface has to shrink to fit `window`. Never above 1: a
-/// larger window is given more room rather than a bigger interface, which
-/// is also what the board does, and the UI scale setting is there for
-/// anyone who wants it bigger anyway.
-pub fn fit_ratio(window: &Window) -> f32 {
-    (window.width() / DESIGN_W)
-        .min(window.height() / DESIGN_H)
-        .clamp(0.1, 1.0)
+/// The highest UI scale, as a percentage, this window has the room for.
+///
+/// Every card, gutter and offset is a number of design pixels and nothing
+/// reflows, so the applied scale divides the window down into those units:
+/// at 150 on a 1280x720 window the interface has 853x480 in which to draw
+/// 1280x720, and the settings card leaves the screen on all four sides. A
+/// window has to be that much bigger than the design before the dial has
+/// anything to spend.
+///
+/// A window *smaller* than the design is already shrunk to fit by
+/// [`fit_ratio`], so there the answer is 100: turning the dial up buys
+/// nothing there either.
+pub fn ui_scale_cap(width: f32, height: f32) -> u8 {
+    let headroom = (width / DESIGN_W).min(height / DESIGN_H).max(1.0);
+    let pct = (headroom * 100.0).floor();
+    // Through i32 rather than a bare `as u8`, which wraps a 4K window's
+    // 300 round to 44 and caps the dial below its own minimum.
+    (pct as i32).clamp(i32::from(UI_SCALE_MIN), i32::from(UI_SCALE_MAX)) as u8
+}
+
+/// The UI scale actually applied.
+///
+/// Two things at once. A window smaller than the design shrinks the whole
+/// interface to fit rather than letting the cards run off the edges, which
+/// is the `clamp(0.1, 1.0)`: never above 1, because a larger window is
+/// given more room rather than a bigger interface, as the board is, and
+/// the UI scale dial is there for anyone who wants it bigger anyway. Then
+/// the player's ratio, held to the headroom the window actually has, which
+/// is what [`ui_scale_cap`] says in percent.
+pub fn applied_ui_ratio(ui_ratio: f32, width: f32, height: f32) -> f32 {
+    let headroom = (width / DESIGN_W).min(height / DESIGN_H).max(0.01);
+    (ui_ratio * headroom.clamp(0.1, 1.0)).min(headroom)
 }
 
 /// Push the accessibility choices that live outside this resource: the
@@ -612,8 +636,9 @@ pub fn apply_accessibility(
     if settings.is_changed() {
         palette::set_colorblind(settings.colorblind);
     }
-    let fit = windows.iter().next().map_or(1.0, fit_ratio);
-    let scale = settings.ui_ratio() * fit;
+    let scale = windows.iter().next().map_or(settings.ui_ratio(), |window| {
+        applied_ui_ratio(settings.ui_ratio(), window.width(), window.height())
+    });
     if (ui_scale.0 - scale).abs() > f32::EPSILON {
         ui_scale.0 = scale;
     }
@@ -652,6 +677,41 @@ pub fn apply_sim_speed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The interface is laid out in design pixels and nothing reflows, so
+    /// the applied scale may never leave it less than the design size to
+    /// draw in. At 150 on the 1280x720 window the game launches in, the
+    /// settings card left the screen on all four sides and its whole left
+    /// column of labels was cut away.
+    #[test]
+    fn the_scale_never_asks_for_more_room_than_the_window_has() {
+        // The design window itself has no headroom: the dial does nothing
+        // there, and says so by stopping at 100.
+        assert_eq!(ui_scale_cap(DESIGN_W, DESIGN_H), 100);
+        assert_eq!(applied_ui_ratio(1.5, DESIGN_W, DESIGN_H), 1.0);
+        assert_eq!(applied_ui_ratio(1.25, DESIGN_W, DESIGN_H), 1.0);
+
+        // A window with the room spends it, exactly.
+        assert_eq!(ui_scale_cap(1920.0, 1080.0), 150);
+        assert_eq!(applied_ui_ratio(1.5, 1920.0, 1080.0), 1.5);
+        assert_eq!(ui_scale_cap(1600.0, 900.0), 125);
+        assert_eq!(applied_ui_ratio(1.5, 1600.0, 900.0), 1.25);
+        // Wide but short is short: the smaller side decides.
+        assert_eq!(ui_scale_cap(3840.0, 800.0), 111);
+
+        // Past the dial's own maximum the cap is the dial's maximum.
+        assert_eq!(ui_scale_cap(3840.0, 2160.0), UI_SCALE_MAX);
+
+        // A window smaller than the design still shrinks to fit, which is
+        // what keeps the cards inside it, and asking for bigger there buys
+        // nothing.
+        let small = applied_ui_ratio(1.0, 1024.0, 576.0);
+        assert!((small - 0.8).abs() < 1e-6, "{small}");
+        assert_eq!(applied_ui_ratio(1.5, 1024.0, 576.0), small, "capped");
+        assert_eq!(ui_scale_cap(1024.0, 576.0), 100);
+        // But asking for smaller still works there: that only adds room.
+        assert!(applied_ui_ratio(0.8, 1024.0, 576.0) < small);
+    }
 
     #[test]
     fn settings_round_trip_through_text() {

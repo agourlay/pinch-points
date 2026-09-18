@@ -366,12 +366,14 @@ fn spawn_setting_row(side: &mut ChildSpawnerCommands, index: usize, flag: Option
 
 pub fn settings_input(
     keys: Res<ButtonInput<KeyCode>>,
+    windows: Query<&Window>,
     mut menu: ResMut<SettingsMenu>,
     mut settings: ResMut<GameSettings>,
     mut caps: ResMut<crate::app::keycaps::KeyCaps>,
     mut progress: ResMut<crate::app::progress::Progress>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
+    let scale_cap = window_scale_cap(&windows);
     // Enter works the doors, the key-binding screen and the reset; on every
     // dial it means the same as Escape: done here.
     if menu_ui::enter(&keys) {
@@ -460,7 +462,9 @@ pub fn settings_input(
         }
         Row::Palette => settings.colorblind = !settings.colorblind,
         Row::UiScale => {
-            settings.ui_scale = dial(settings.ui_scale, turn, 10, UI_SCALE_MIN..=UI_SCALE_MAX);
+            // The dial stops where the window does, so it never sits on a
+            // number the interface is not being drawn at.
+            settings.ui_scale = dial(settings.ui_scale, turn, 10, UI_SCALE_MIN..=scale_cap);
         }
         Row::ReducedMotion => settings.reduced_motion = !settings.reduced_motion,
         Row::ReplayCap => {
@@ -498,12 +502,21 @@ fn has_arrows(row: Row) -> bool {
 /// on this row" rather than as part of every value.
 ///
 /// Pure, so the wording of every setting can be checked without a window.
+/// The highest scale the one window can hold, or the plain maximum when
+/// there is no window to ask (a test world, a headless run).
+fn window_scale_cap(windows: &Query<&Window>) -> u8 {
+    windows.iter().next().map_or(UI_SCALE_MAX, |window| {
+        crate::app::settings::ui_scale_cap(window.width(), window.height())
+    })
+}
+
 pub(super) fn row_text(
     tr: &crate::app::i18n::Tr,
     settings: &GameSettings,
     caps: &crate::app::keycaps::KeyCaps,
     row: Row,
     reset: ResetPrompt,
+    scale_cap: u8,
 ) -> (String, String) {
     let on_off = |on: bool| if on { tr.val_on } else { tr.val_off }.to_string();
     let (label, value) = match row {
@@ -553,7 +566,13 @@ pub(super) fn row_text(
             }
             .to_string(),
         ),
-        Row::UiScale => (tr.set_ui_scale, format!("{}%", settings.ui_scale)),
+        // What the interface is actually being drawn at, which on a window
+        // with no room for the chosen scale is less than it: a row saying
+        // 150% over an interface at 100% is the dial lying about itself.
+        Row::UiScale => (
+            tr.set_ui_scale,
+            format!("{}%", settings.ui_scale.min(scale_cap)),
+        ),
         Row::ReducedMotion => (tr.set_reduced_motion, on_off(settings.reduced_motion)),
         Row::ReplayCap => (tr.set_replay_cap, settings.replay_cap.to_string()),
         Row::Language => (tr.set_language, settings.language.native_name().to_string()),
@@ -581,11 +600,13 @@ pub(super) fn row_text(
     (label.to_string(), value)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_settings_ui(
     settings: Res<GameSettings>,
     caps: Res<crate::app::keycaps::KeyCaps>,
     menu: Res<SettingsMenu>,
     art: Res<crate::app::art::Art>,
+    windows: Query<&Window>,
     mut cells: Query<(&SettingsCell, &mut Text, &mut TextColor)>,
     mut rows: Query<(&SettingsRow, &mut BackgroundColor)>,
     mut flags: Query<&mut ImageNode, With<LanguageFlag>>,
@@ -600,10 +621,11 @@ pub fn update_settings_ui(
             flag.image = wanted.clone();
         }
     }
+    let scale_cap = window_scale_cap(&windows);
     for (cell, mut text, mut color) in &mut cells {
         let row = Row::ALL[cell.0];
         let picked = cell.0 == menu.selected;
-        let (label, value) = row_text(tr, &settings, &caps, row, menu.reset);
+        let (label, value) = row_text(tr, &settings, &caps, row, menu.reset, scale_cap);
         let line = match cell.1 {
             Half::Label => label,
             Half::Value if picked && has_arrows(row) => format!("< {value} >"),
@@ -663,6 +685,7 @@ mod tests {
                     &crate::app::keycaps::KeyCaps::default(),
                     row,
                     ResetPrompt::Idle,
+                    UI_SCALE_MAX,
                 );
                 assert!(!label.trim().is_empty(), "{row:?} in {lang:?} has no name");
                 assert!(!value.trim().is_empty(), "{row:?} in {lang:?} has no value");
@@ -724,6 +747,7 @@ mod tests {
                                 &crate::app::keycaps::KeyCaps::default(),
                                 row,
                                 reset,
+                                UI_SCALE_MAX,
                             );
                             let label_w = text_px(&label, ROW_FONT);
                             assert!(
@@ -784,7 +808,8 @@ mod tests {
             ..GameSettings::default()
         };
         let caps = crate::app::keycaps::KeyCaps::default();
-        let at = |s: &GameSettings, row| row_text(&EN, s, &caps, row, ResetPrompt::Idle).1;
+        let at =
+            |s: &GameSettings, row| row_text(&EN, s, &caps, row, ResetPrompt::Idle, UI_SCALE_MAX).1;
         assert!(at(&settings, Row::Music).contains("42%"));
         settings.ui_scale = 130;
         assert!(at(&settings, Row::UiScale).contains("130%"));
@@ -806,7 +831,17 @@ mod tests {
 
         let settings = GameSettings::default();
         let caps = crate::app::keycaps::KeyCaps::default();
-        let line = |reset| row_text(&EN, &settings, &caps, Row::ResetProgress, reset).1;
+        let line = |reset| {
+            row_text(
+                &EN,
+                &settings,
+                &caps,
+                Row::ResetProgress,
+                reset,
+                UI_SCALE_MAX,
+            )
+            .1
+        };
         assert!(line(ResetPrompt::Idle).contains(EN.val_reset));
         assert!(line(ResetPrompt::Armed).contains(EN.val_reset_confirm));
         assert!(line(ResetPrompt::Done).contains(EN.val_reset_done));
@@ -818,7 +853,17 @@ mod tests {
                 language: lang,
                 ..GameSettings::default()
             };
-            let say = |reset| row_text(tr, &settings, &caps, Row::ResetProgress, reset).1;
+            let say = |reset| {
+                row_text(
+                    tr,
+                    &settings,
+                    &caps,
+                    Row::ResetProgress,
+                    reset,
+                    UI_SCALE_MAX,
+                )
+                .1
+            };
             assert_ne!(say(ResetPrompt::Idle), say(ResetPrompt::Armed), "{lang:?}");
             assert_ne!(say(ResetPrompt::Armed), say(ResetPrompt::Done), "{lang:?}");
         }
