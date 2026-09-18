@@ -451,6 +451,8 @@ pub static DE: Tr = Tr {
     ed_naming: "gib ihm einen Namen, dann Enter",
     ed_saved_to: "gespeichert in {path}",
     ed_save_failed: "Speichern fehlgeschlagen: {e}",
+    ed_saved_over: "hat das Level ersetzt, das schon so hieß",
+    ed_resize_confirm: "F5 nochmal für einen leeren {w}x{h} Strand - dieser geht",
     code_kind_beach: "eine laufende Runde",
     code_kind_level: "ein Level",
     code_kind_round: "eine Runde",

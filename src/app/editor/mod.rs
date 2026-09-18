@@ -46,6 +46,27 @@ pub fn custom_dir() -> std::path::PathBuf {
 /// The name also has to survive being a file name, and every level is
 /// identified by its name (that is what progress is keyed on), so two
 /// levels sharing one would share their gold star.
+/// Whether anything has been built on this board yet.
+///
+/// Asked by comparing the level here against the one a fresh board of the
+/// same size would give, which is cheaper to be sure of than a list of
+/// every way a beach can be marked: a wall, a rock, a pool, a crab, a
+/// castle, a gull, the flock, the wrap. A blank beach is worth nothing, so
+/// F5 cycles straight past it and only stops to ask once there is a level.
+fn has_work(state: &EditorState, board: &Board) -> bool {
+    // The same seed, so the comparison is about what has been built and
+    // not about where the board came from: a level's text carries its
+    // seed, and a blank board with a different one reads as a difference.
+    let blank = Board::new(board.width(), board.height(), board.seed());
+    level_here(state, board, "x").to_text() != level_here(state, &blank, "x").to_text()
+}
+
+/// Whether no level is filed under this path yet. Read before a write,
+/// which would make it true either way.
+fn is_new_here(path: &std::path::Path) -> bool {
+    !path.exists()
+}
+
 /// Write a level out, and say whether that brought it into being.
 ///
 /// The answer is read before the write, which would make it true either
@@ -84,6 +105,16 @@ pub struct EditorState {
     pub gull_period_idx: usize,
     pub feedback: String,
     pub(super) solver: Option<SolverSlot>,
+    /// Names this session has already saved under.
+    ///
+    /// The save path is the name, so F2 writes over whatever is there, and
+    /// the editor opens on the same default name every time: two levels
+    /// both left unnamed become one, with nothing said. Re-saving your own
+    /// work is an overwrite too, and the common one, so the notice is kept
+    /// for a name this session did not put there.
+    mine: std::collections::HashSet<String>,
+    /// Whether F5 has been offered once and is waiting to be taken up.
+    resize_armed: bool,
     /// Statics need a rebuild after a tile/wall edit.
     dirty: bool,
 }
@@ -236,13 +267,33 @@ pub fn editor_input(
     // keys, the prompt named keys a non-US keyboard does not have; F5 is F5
     // everywhere, and one key that wraps is enough for four sizes.
     //
+    // Anything else said this frame takes the resize offer back with it,
+    // the way stepping off the settings row takes back the reset.
+    if state.resize_armed && keys.get_just_pressed().any(|&k| k != KeyCode::F5) {
+        state.resize_armed = false;
+    }
     // Resizing starts a fresh beach: there is no honest way to keep a
     // 20-wide layout when it becomes 9 wide.
+    //
+    // Which is why it asks twice once there is a beach to lose. One press
+    // of a key the prompt calls "size" threw away an unsaved level with no
+    // warning and nothing to undo it with, while wiping a campaign in
+    // Settings, which at least only costs stars, takes two.
     if keys.just_pressed(KeyCode::F5) {
         let board = &sim.0;
         let now = (board.width(), board.height());
         let at = EDITOR_SIZES.iter().position(|&s| s == now).unwrap_or(1);
         let (w, h) = EDITOR_SIZES[(at + 1) % EDITOR_SIZES.len()];
+        let tr = settings.tr();
+        if !state.resize_armed && has_work(&state, board) {
+            state.resize_armed = true;
+            state.feedback = fill(
+                tr.ed_resize_confirm,
+                &[("w", &w.to_string()), ("h", &h.to_string())],
+            );
+            return;
+        }
+        state.resize_armed = false;
         replace_board(
             Board::new(w, h, 0xED17),
             &mut sim,
@@ -252,7 +303,7 @@ pub fn editor_input(
             &mut cursors,
         );
         state.feedback = fill(
-            settings.tr().ed_resized,
+            tr.ed_resized,
             &[("w", &w.to_string()), ("h", &h.to_string())],
         );
         return;
@@ -493,16 +544,21 @@ pub fn editor_commands(
     if keys.just_pressed(KeyCode::F2) {
         let level = level_here(&state, board, &state.name);
         let path = save_path(&state.name);
+        let stranger = !is_new_here(&path) && !state.mine.contains(&state.name);
         state.feedback = match write_level(&path, &level.to_text()) {
             Ok(is_new) => {
                 if is_new {
                     saved.write(crate::app::LevelSaved);
                 }
+                let named = state.name.clone();
+                state.mine.insert(named);
                 let filed = fill(tr.ed_saved_to, &[("path", &path.display().to_string())]);
-                match orphan_warning(&state, &level, tr) {
-                    Some(complaint) => format!("{filed} - {complaint}"),
-                    None => filed,
-                }
+                let orphans = orphan_warning(&state, &level, tr);
+                let notes = [stranger.then_some(tr.ed_saved_over), orphans.as_deref()];
+                notes
+                    .iter()
+                    .flatten()
+                    .fold(filed, |line, note| format!("{line} - {note}"))
             }
             Err(e) => fill(tr.ed_save_failed, &[("e", &e.to_string())]),
         };
@@ -727,6 +783,67 @@ mod tests {
         assert!(write_level(&path, "four").expect("wrote"), "built afresh");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// F5 throws the beach away, so once there is one it asks twice. One
+    /// press of a key the prompt calls "size" used to take an unsaved
+    /// level with it, and the editor has no undo and no load.
+    #[test]
+    fn resizing_a_beach_with_a_level_on_it_asks_twice() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.add_message::<crate::app::LevelSaved>();
+        app.add_message::<crate::app::CodeShared>();
+        app.add_message::<crate::app::CodeTaken>();
+        app.insert_resource(Sim(sand()));
+        app.init_resource::<EditorState>();
+        app.init_resource::<GameSettings>();
+        app.init_resource::<Clipboard>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        // F5 is read by the painting system, beside the cursor it moves,
+        // not by the command keys.
+        app.add_systems(Update, editor_input);
+
+        let tap = |app: &mut App, key: KeyCode| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(key);
+            app.update();
+        };
+        let size = |app: &mut App| {
+            let board = &app.world().resource::<Sim>().0;
+            (board.width(), board.height())
+        };
+
+        // A blank beach is worth nothing, so the dial just turns.
+        let first = size(&mut app);
+        tap(&mut app, KeyCode::F5);
+        assert_ne!(size(&mut app), first, "an empty beach cycles straight");
+
+        // Put something on it: now the first press only offers.
+        app.world_mut().resource_mut::<Sim>().0.set_wrap(true);
+        let built = size(&mut app);
+        tap(&mut app, KeyCode::F5);
+        assert_eq!(size(&mut app), built, "the level is still there");
+        assert!(app.world().resource::<EditorState>().resize_armed);
+        tap(&mut app, KeyCode::F5);
+        assert_ne!(size(&mut app), built, "and the second press takes it");
+        assert!(!app.world().resource::<EditorState>().resize_armed);
+
+        // An offer not taken up goes away when anything else is pressed.
+        app.world_mut().resource_mut::<Sim>().0.set_wrap(true);
+        let built = size(&mut app);
+        tap(&mut app, KeyCode::F5);
+        assert!(app.world().resource::<EditorState>().resize_armed);
+        tap(&mut app, KeyCode::KeyO);
+        assert!(
+            !app.world().resource::<EditorState>().resize_armed,
+            "another key takes the offer back"
+        );
+        tap(&mut app, KeyCode::F5);
+        assert_eq!(size(&mut app), built, "so this press only offers again");
     }
 
     /// The posts dial is a puzzle's rule, so it is inert on a beach - and

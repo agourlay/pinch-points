@@ -597,6 +597,13 @@ struct Tr {
     pub ed_naming: &'static str,
     pub ed_saved_to: &'static str,
     pub ed_save_failed: &'static str,
+    /// Said when the save landed on a level this session did not put
+    /// there: the editor opens on the same default name every time, so
+    /// two levels left unnamed would quietly become one.
+    pub ed_saved_over: &'static str,
+    /// The first of the two presses that start a fresh beach, said when
+    /// there is a level on the board to lose.
+    pub ed_resize_confirm: &'static str,
     pub code_kind_beach: &'static str,
     pub code_kind_level: &'static str,
     pub code_kind_round: &'static str,

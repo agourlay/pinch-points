@@ -444,6 +444,8 @@ pub static NL: Tr = Tr {
     ed_naming: "geef het een naam en druk op Enter",
     ed_saved_to: "bewaard in {path}",
     ed_save_failed: "bewaren mislukt: {e}",
+    ed_saved_over: "verving het level dat al zo heette",
+    ed_resize_confirm: "F5 nogmaals voor een leeg {w}x{h} strand - dit gaat weg",
     code_kind_beach: "een lopende ronde",
     code_kind_level: "een level",
     code_kind_round: "een ronde",

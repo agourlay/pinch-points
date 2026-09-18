@@ -444,6 +444,8 @@ pub static FR: Tr = Tr {
     ed_naming: "donne-lui un nom, puis Entrée",
     ed_saved_to: "gardé dans {path}",
     ed_save_failed: "échec de la sauvegarde : {e}",
+    ed_saved_over: "a remplacé le niveau qui portait déjà ce nom",
+    ed_resize_confirm: "F5 encore pour une plage {w}x{h} vierge - celle-ci part",
     code_kind_beach: "une partie en cours",
     code_kind_level: "un niveau",
     code_kind_round: "une manche",

@@ -444,6 +444,8 @@ pub static ES: Tr = Tr {
     ed_naming: "ponle nombre y pulsa Intro",
     ed_saved_to: "guardado en {path}",
     ed_save_failed: "no se pudo guardar: {e}",
+    ed_saved_over: "ha reemplazado el nivel que ya se llamaba así",
+    ed_resize_confirm: "F5 otra vez para una playa {w}x{h} nueva - esta se va",
     code_kind_beach: "una ronda en curso",
     code_kind_level: "un nivel",
     code_kind_round: "una ronda",

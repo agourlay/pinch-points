@@ -440,6 +440,8 @@ pub static JA: Tr = Tr {
     ed_naming: "名前を書いてEnter",
     ed_saved_to: "{path} に保存した",
     ed_save_failed: "保存できなかった: {e}",
+    ed_saved_over: "同じ名前の面を置きかえた",
+    ed_resize_confirm: "もう一度F5で まっさらな{w}x{h}の浜 いまのは消える",
     code_kind_beach: "とちゅうの試合",
     code_kind_level: "ステージ",
     code_kind_round: "試合",
