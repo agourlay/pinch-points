@@ -329,6 +329,13 @@ struct Tr {
     pub spectator_call_title: &'static str,
     pub spectator_call_hint: &'static str,
     pub spectator_called: &'static str,
+    /// What the crowd is told while a vote runs: how long is left to join
+    /// one, and how long until the next may be called. Both in seconds.
+    pub spectator_vote_open: &'static str,
+    pub spectator_wait: &'static str,
+    /// How many are watching, said to the whole table so a called event
+    /// is not the first anyone hears of a crowd.
+    pub spectator_count: &'static str,
     /// Said on the versus screen when a round is copied as a code.
     pub round_copied: &'static str,
     pub round_code_bad: &'static str,

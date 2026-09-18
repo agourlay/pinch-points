@@ -106,6 +106,15 @@ pub enum NetMsg {
     /// Relayed by the host to the rest of the table, like an input: the
     /// spokes of the star cannot hear each other.
     Chat { name: WireName, text: WireChat },
+    /// Host → everyone, once a second while it changes: how many are
+    /// watching, how long a vote has left to join, and how long until the
+    /// next one may be called. All in whole seconds, zero for none.
+    ///
+    /// Only the host counts, so only the host can say. Without it a
+    /// spectator presses a key into silence: it cannot tell whether a vote
+    /// is open, how many of them there are to out-vote, or why nothing
+    /// happened when the crowd is still waiting.
+    SpectatorTally { watching: u8, open: u8, wait: u8 },
     /// A spectator's pick for the next tide event the spectators call.
     ///
     /// Only the host counts these. It is the one peer everybody waits on
@@ -194,6 +203,7 @@ const TAG_ROSTER: u8 = 10;
 const TAG_ABANDONED: u8 = 11;
 const TAG_INPUTS: u8 = 12;
 const TAG_SPECTATOR_VOTE: u8 = 13;
+const TAG_SPECTATOR_TALLY: u8 = 14;
 /// The last of them, which `peek_version` uses to tell one of ours from
 /// stray traffic on the port.
 const HIGHEST_TAG: u8 = TAG_INPUTS;
@@ -335,6 +345,7 @@ impl NetMsg {
             NetMsg::Start { .. } => vec![TAG_START],
             NetMsg::Pause { .. } => vec![TAG_PAUSE],
             NetMsg::SpectatorVote { .. } => vec![TAG_SPECTATOR_VOTE],
+            NetMsg::SpectatorTally { .. } => vec![TAG_SPECTATOR_TALLY],
             NetMsg::Resume { .. } => vec![TAG_RESUME],
             NetMsg::Incompatible { version } => return vec![TAG_INCOMPATIBLE, version],
         };
@@ -413,6 +424,11 @@ impl NetMsg {
             }
             NetMsg::Pause { frame } => bytes.extend_from_slice(&frame.to_le_bytes()),
             NetMsg::SpectatorVote { event } => bytes.push(event),
+            NetMsg::SpectatorTally {
+                watching,
+                open,
+                wait,
+            } => bytes.extend_from_slice(&[watching, open, wait]),
         }
         bytes
     }
@@ -523,6 +539,11 @@ impl NetMsg {
             }),
             TAG_SPECTATOR_VOTE => Some(NetMsg::SpectatorVote {
                 event: *body.first()?,
+            }),
+            TAG_SPECTATOR_TALLY => Some(NetMsg::SpectatorTally {
+                watching: *body.first()?,
+                open: *body.get(1)?,
+                wait: *body.get(2)?,
             }),
             TAG_RESUME => Some(NetMsg::Resume {
                 frame: u32::from_le_bytes(body.get(..4)?.try_into().ok()?),
@@ -788,6 +809,11 @@ mod tests {
             NetMsg::Resume { frame: 70_000 },
             NetMsg::Pause { frame: 7 },
             NetMsg::SpectatorVote { event: 8 },
+            NetMsg::SpectatorTally {
+                watching: 3,
+                open: 2,
+                wait: 0,
+            },
             NetMsg::Inputs(vec![InputMsg {
                 player: 1,
                 frame: 42,

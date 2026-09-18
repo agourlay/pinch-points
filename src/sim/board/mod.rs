@@ -694,11 +694,19 @@ impl Board {
             PlayerAction::Remove { x, y } => {
                 let _ = self.remove_signpost(player, x, y);
             }
-            // The spectators', not this seat's: the host carries it because the
-            // host is the one every peer waits on anyway. It fires whatever
-            // the wheel's own cooldown says, because their call is not
-            // a spin of the wheel and should not be refused by one.
-            PlayerAction::CallEvent(event) => self.force_tide_event(event, player),
+            // The spectators', not this seat's: the host carries it because
+            // the host is the one every peer waits on anyway. It fires
+            // whatever the wheel's own cooldown says, because their call is
+            // not a spin of the wheel and should not be refused by one.
+            //
+            // Through `surge_safe` all the same. The swap it makes is not
+            // the wheel's bookkeeping but a rule about the beach, measured:
+            // Gull Mania on top of the surge leaves fifteen gulls and
+            // almost no crabs with half a minute to play. A crowd calling
+            // it down is the surge's worst case, not its exception.
+            PlayerAction::CallEvent(event) => {
+                self.force_tide_event(self.surge_safe(event), player);
+            }
         }
     }
 

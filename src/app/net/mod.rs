@@ -62,6 +62,13 @@ pub struct OnlineSession {
     pub abandoned: Vec<(u8, u32)>,
     /// How the spectators' vote stands, counted by the host and nobody else.
     pub spectators: crate::app::spectators::SpectatorVotes,
+    /// The last tally the host said: how many are watching, seconds left
+    /// of an open vote, seconds until the next may be called.
+    ///
+    /// Only the host counts, so every other peer keeps the host's word
+    /// here rather than a guess of its own. On the host it is what it is
+    /// about to say.
+    pub spectator_tally: (u8, u8, u8),
     /// An event the spectators settled on, waiting for a frame to ride out on.
     ///
     /// Held rather than sent: it goes out as this seat's action, which is
@@ -304,6 +311,11 @@ impl OnlineSession {
         self.spectators.forget_open();
     }
 
+    /// Forget the vote and the wait both, the round being over.
+    pub fn forget_spectator_votes(&mut self) {
+        self.spectators.forget_all();
+    }
+
     /// Take a line said to the table, and pass it on if this is the hub.
     ///
     /// Two jobs the lobby already does and the round did not. A spoke
@@ -399,6 +411,7 @@ impl OnlineSession {
             stall: StallWatch::default(),
             abandoned: Vec::new(),
             spectators: crate::app::spectators::SpectatorVotes::default(),
+            spectator_tally: (0, 0, 0),
             pending_call: None,
             heard: Vec::new(),
             home: Home::nowhere(),
@@ -487,6 +500,7 @@ impl OnlineSession {
             stall: _,
             abandoned: _,
             spectators: _,
+            spectator_tally: _,
             pending_call: _,
             heard: _,
             home,
@@ -748,6 +762,17 @@ impl OnlineSession {
                 // hears it as an action on a frame rather than as a claim
                 // about one, so there is nothing here for anyone else to
                 // agree with or miss.
+                // The host's word on where the vote stands. It counts, so
+                // it says; nobody else has anything to compare it against.
+                NetMsg::SpectatorTally {
+                    watching,
+                    open,
+                    wait,
+                } => {
+                    if !host {
+                        self.spectator_tally = (watching, open, wait);
+                    }
+                }
                 NetMsg::SpectatorVote { event } => {
                     if host {
                         self.spectators.cast(event);
@@ -1007,6 +1032,7 @@ mod homecoming_tests {
                         | NetMsg::Resume { .. }
                         | NetMsg::Queued { .. }
                         | NetMsg::SpectatorVote { .. }
+                        | NetMsg::SpectatorTally { .. }
                         | NetMsg::Chat { .. }
                         | NetMsg::Roster { .. }
                         | NetMsg::Abandoned { .. }

@@ -351,8 +351,8 @@ pub fn join_tick(
                 // `Start` when the next round comes round.
                 NetMsg::Queued { ahead } => queued = Some(ahead),
                 NetMsg::Chat { name, text } => said.push((name, text)),
-                // A round thing, and this screen has no round.
-                NetMsg::SpectatorVote { .. } => {}
+                // Round things, and this screen has no round.
+                NetMsg::SpectatorVote { .. } | NetMsg::SpectatorTally { .. } => {}
                 // Who else is here. A joiner has spoken to nobody but the
                 // host and would otherwise sit at an apparently empty beach.
                 NetMsg::Roster { names, terms, .. } => {

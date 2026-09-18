@@ -1280,6 +1280,37 @@ fn a_called_event_fires_from_a_seats_input() {
     assert_eq!(event, TideEvent::FreshSand);
 }
 
+/// A called event goes through the surge guard, the same as a spun one.
+///
+/// The guard is not the wheel's bookkeeping but a rule about the beach,
+/// and a measured one: Gull Mania on top of the surge leaves fifteen gulls
+/// and almost no crabs with half a minute to play. A crowd calling it down
+/// is that case at its worst, not an exception to it.
+#[test]
+fn a_called_event_is_held_to_the_surge_guard_too() {
+    let mut board = party_board();
+    board.set_round_length(Some(crate::sim::SURGE_TICKS));
+    assert!(board.in_surge(), "inside the last stretch");
+
+    let mut actions = [PlayerAction::None; MAX_PLAYERS];
+    actions[0] = PlayerAction::CallEvent(TideEvent::GullMania);
+    board.tick(&actions);
+
+    let (event, _) = board.last_event().expect("something fired");
+    assert_eq!(
+        event,
+        TideEvent::CrabMania,
+        "swapped, exactly as the wheel's own draw would be"
+    );
+
+    // And outside the surge the call stands as made.
+    let mut calm = party_board();
+    let mut actions = [PlayerAction::None; MAX_PLAYERS];
+    actions[0] = PlayerAction::CallEvent(TideEvent::GullMania);
+    calm.tick(&actions);
+    assert_eq!(calm.last_event().expect("fired").0, TideEvent::GullMania);
+}
+
 /// Right Claws: while it runs, the claw a crab leads with decides whether
 /// banking it is worth doing at all.
 #[test]

@@ -380,6 +380,10 @@ pub fn update_hud(
             match_menu: &match_menu,
             paused: pause_menu.open,
             spectator_typing: spectators.0.as_deref(),
+            spectator_tally: online
+                .0
+                .as_ref()
+                .map_or((0, 0, 0), |session| session.spectator_tally),
             speed: speed.0,
         },
     );

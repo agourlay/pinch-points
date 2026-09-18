@@ -119,6 +119,18 @@ impl SpectatorVotes {
         self.tally = [0; SPECTATOR_EVENTS.len()];
     }
 
+    /// Forget the vote and the wait both: the round they belonged to is
+    /// over.
+    ///
+    /// The wait only ever ran while a round did, so carrying it into the
+    /// next one meant carrying a clock that had stopped: a call made in
+    /// the last seconds cost the crowd most of the following round,
+    /// having sat through a results card and an interlude that cost it
+    /// nothing. Each round hands them their call back.
+    pub fn forget_all(&mut self) {
+        *self = SpectatorVotes::default();
+    }
+
     /// Whether a vote is open, and how long there is left to join it.
     pub fn open(&self) -> Option<f32> {
         (self.open_for > 0.0).then_some(self.open_for)
@@ -218,6 +230,31 @@ pub fn settle_spectator_vote(
         // nobody who is still watching.
         session.forget_open_vote();
         return;
+    }
+    // What the crowd is told, before anything settles: how many of them
+    // there are, how long a vote has left, and how long the wait is. Said
+    // only when it changes, which is a few times a round rather than
+    // thirty times a second.
+    let watching = session.peers.iter().filter(|peer| peer.watches()).count();
+    let tally = (
+        watching.min(u8::MAX as usize) as u8,
+        session
+            .spectators
+            .open()
+            .map_or(0, |left| left.ceil() as u8),
+        session
+            .spectators
+            .waiting()
+            .map_or(0, |left| left.ceil() as u8),
+    );
+    if tally != session.spectator_tally {
+        session.spectator_tally = tally;
+        let (watching, open, wait) = tally;
+        session.transport.send(NetMsg::SpectatorTally {
+            watching,
+            open,
+            wait,
+        });
     }
     let Some(event) = session.spectators.settle(time.delta_secs()) else {
         return;
@@ -362,7 +399,7 @@ pub fn forget_spectating(
     }
     if let Some(session) = &mut online.0 {
         session.pending_call = None;
-        session.forget_open_vote();
+        session.forget_spectator_votes();
     }
 }
 
@@ -783,6 +820,28 @@ mod tests {
                 .pending_call;
             assert_eq!(call, expected, "seat {seat}");
         }
+    }
+
+    /// The wait belongs to the round it was earned in. It only ever ran
+    /// while a round did, so carrying it meant carrying a clock that had
+    /// stopped: a call made in the last seconds cost the crowd most of the
+    /// next round, having sat out a results card and an interlude that
+    /// cost it nothing.
+    #[test]
+    fn the_wait_ends_with_the_round_rather_than_freezing_into_the_next() {
+        let mut votes = SpectatorVotes::default();
+        votes.cast(TideEvent::FreshSand.index() as u8);
+        assert_eq!(votes.settle(WINDOW), Some(TideEvent::FreshSand));
+        assert!(votes.waiting().is_some(), "a wait was earned");
+
+        // Within the round it stands: a second window may not jump it.
+        votes.forget_open();
+        assert!(votes.waiting().is_some(), "still waiting mid-round");
+
+        votes.forget_all();
+        assert!(votes.waiting().is_none(), "and the round takes it away");
+        votes.cast(TideEvent::FreshSand.index() as u8);
+        assert!(votes.open().is_some(), "the next round starts them fresh");
     }
 
     /// Leaving the round puts everything away. The list is an overlay like

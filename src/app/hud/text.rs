@@ -349,23 +349,37 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
             status = fill(tr.waiting_for, &[("p", &names.label(tr, seat))]);
         }
     }
+    // The crowd, in whatever room the banners leave: a table that never
+    // hears anyone is watching learns it has an audience from the moment
+    // that audience calls a tide event down on it. Last, so a gull, a tide
+    // event or a desync always has the slot instead.
+    let watching = r.spectator_tally.0;
+    if status.is_empty() && watching > 0 {
+        status = fill(tr.spectator_count, &[("n", &watching.to_string())]);
+    }
     let prompt = match vphase.get() {
         // A recording is watched, not played, but it *is* driven: the
         // transport bar at the foot of the board takes a pause and a
         // speed, and keys nobody is told about are keys nobody presses.
         VersusPhase::Running if playback.0.is_some() => tr.prompt_replay_transport.to_string(),
-        // Someone else's live match has no transport and no seat here:
-        // no control legend at all.
         // Someone else's live match has no seat here, so no control
-        // legend: a spectator holds nothing and places nothing. What they do
-        // have is free hands, which is why it is the one that can talk.
+        // legend: a spectator holds nothing and places nothing. What they
+        // do have is free hands, which is why they are the ones who talk.
         VersusPhase::Running if online.0.as_ref().is_some_and(|s| s.session.watching()) => {
             match r.spectator_typing {
                 Some(line) => format!("> {line}_"),
-                None => format!(
-                    "{} | {} | {}",
-                    tr.spectator_call_hint, tr.lobby_chat_hint, tr.prompt_enter_menu
-                ),
+                // What the key does right now, in the crowd's own terms: a
+                // vote open to join, a wait to sit out, or the offer. A
+                // spectator pressing into silence could not tell which.
+                None => {
+                    let (_, open, wait) = r.spectator_tally;
+                    let call = match (open, wait) {
+                        (0, 0) => tr.spectator_call_hint.to_string(),
+                        (0, wait) => fill(tr.spectator_wait, &[("n", &wait.to_string())]),
+                        (open, _) => fill(tr.spectator_vote_open, &[("n", &open.to_string())]),
+                    };
+                    format!("{call} | {} | {}", tr.lobby_chat_hint, tr.prompt_enter_menu)
+                }
             }
         }
         // The tide is in: the board is frozen and there is nothing to call
@@ -436,6 +450,9 @@ pub(super) struct Readout<'a> {
     pub paused: bool,
     /// The line a spectator is saying to the table, while one is open.
     pub spectator_typing: Option<&'a str>,
+    /// The host's word on the crowd: how many are watching, seconds left
+    /// of an open vote, seconds until the next may be called.
+    pub spectator_tally: (u8, u8, u8),
     pub speed: u8,
 }
 
@@ -595,6 +612,7 @@ mod tests {
             match_menu: &crate::app::match_setup::MatchMenu::default(),
             paused: false,
             spectator_typing: None,
+            spectator_tally: (0, 0, 0),
             speed: 1,
         };
         for screen in Screen::ALL {
@@ -665,6 +683,7 @@ mod tests {
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
                 paused: false,
                 spectator_typing: None,
+                spectator_tally: (0, 0, 0),
                 speed: 1,
             };
             let prompt = screen_text(Screen::Versus, &readout).prompt;
@@ -753,6 +772,69 @@ mod tests {
         assert_eq!(lobby_text(&EN, &lobby).status, "hosting on port 47777");
     }
 
+    /// The table is told there is a crowd, in whatever room the banners
+    /// leave. Without it a called tide event is the first anyone at the
+    /// table hears that anyone is watching, and it arrives together with
+    /// its own consequences.
+    #[test]
+    fn the_table_is_told_it_has_an_audience_when_nothing_louder_is_saying_anything() {
+        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+
+        let levels = campaign_levels();
+        let builtins = levels.len();
+        let campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        };
+        let settings = GameSettings::default();
+        let status = |watching: u8, surging: bool| {
+            let mut board = Board::new(9, 7, 1);
+            if surging {
+                board.set_round_length(Some(crate::sim::SURGE_TICKS));
+            }
+            versus_text(&Readout {
+                tr: &EN,
+                lang: Lang::En,
+                sim: &Sim(board),
+                campaign: &campaign,
+                phase: &State::new(Phase::Setup),
+                vphase: &State::new(VersusPhase::Running),
+                editor: &EditorState::default(),
+                online: &Online::default(),
+                playback: &Playback::default(),
+                lobby: &LobbyState::default(),
+                tournament: &crate::app::tournament::Tournament::default(),
+                seats: &Seats(2),
+                settings: &settings,
+                keycaps: &crate::app::keycaps::KeyCaps::default(),
+                names: &crate::app::SeatNames::default(),
+                bots: &Bots::default(),
+                library: &crate::app::replays::Library::default(),
+                notice: &crate::app::RoundNotice::default(),
+                match_menu: &crate::app::match_setup::MatchMenu::default(),
+                paused: false,
+                spectator_typing: None,
+                spectator_tally: (watching, 0, 0),
+                speed: 1,
+            })
+            .status
+        };
+
+        assert_eq!(status(0, false), "", "nobody watching, nothing said");
+        assert_eq!(
+            status(3, false),
+            fill(EN.spectator_count, &[("n", "3")]),
+            "three at the back, and room to say so"
+        );
+        assert_eq!(
+            status(3, true),
+            EN.the_gulls,
+            "and the flock coming in always has the slot instead"
+        );
+    }
+
     /// While the pause card holds the keyboard, the prompt names the
     /// card's keys. It used to go on listing the beach's, offering "Esc
     /// pause" to a player already paused and saying nothing about the
@@ -795,6 +877,7 @@ mod tests {
                     match_menu: &crate::app::match_setup::MatchMenu::default(),
                     paused,
                     spectator_typing: None,
+                    spectator_tally: (0, 0, 0),
                     speed: 1,
                 },
             )
@@ -851,6 +934,7 @@ mod tests {
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
                 paused: false,
                 spectator_typing: None,
+                spectator_tally: (0, 0, 0),
                 speed: 1,
             })
             .prompt

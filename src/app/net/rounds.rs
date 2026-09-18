@@ -178,6 +178,7 @@ impl OnlineSession {
                 // There is no beach here to call anything onto, which is
                 // why the key is not offered between rounds either.
                 | NetMsg::SpectatorVote { .. }
+                | NetMsg::SpectatorTally { .. }
                 | NetMsg::Incompatible { .. } => {}
             }
         }
