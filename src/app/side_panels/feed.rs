@@ -88,7 +88,13 @@ pub fn collect_chat(mut online: ResMut<crate::app::net::Online>, mut log: ResMut
         return;
     };
     for (who, line) in session.heard.drain(..) {
-        log.push(format!("{who}: {line}"), palette::IDLE_ROW);
+        // A nameless speaker is the beach itself, which is how the lobby
+        // already spells a notice that came from nobody.
+        let said = match who.is_empty() {
+            true => line,
+            false => format!("{who}: {line}"),
+        };
+        log.push(said, palette::IDLE_ROW);
     }
 }
 

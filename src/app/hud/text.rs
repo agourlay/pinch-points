@@ -362,7 +362,10 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         VersusPhase::Running if online.0.as_ref().is_some_and(|s| s.session.watching()) => {
             match r.rail_typing {
                 Some(line) => format!("> {line}_"),
-                None => format!("{} | {}", tr.lobby_chat_hint, tr.prompt_enter_menu),
+                None => format!(
+                    "{} | {} | {}",
+                    tr.rail_call_hint, tr.lobby_chat_hint, tr.prompt_enter_menu
+                ),
             }
         }
         VersusPhase::Running if online.0.is_some() || bots.0.iter().any(Option::is_some) => {

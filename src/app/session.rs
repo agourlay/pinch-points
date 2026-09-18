@@ -398,7 +398,15 @@ pub(super) fn advance_sim(
         // A spectator has no seat: it commits nothing and simply simulates
         // the frames the players agree on.
         let local = session.session.seat().map(usize::from);
-        let action = local.map_or(PlayerAction::None, |seat| pending.0[seat]);
+        // A frame the rail has spoken for belongs to the rail. The host
+        // has one action a frame like everybody else, so a call takes the
+        // frame its own placement would have had, and that placement waits
+        // rather than being thrown away.
+        let call = session.pending_call;
+        let action = match call {
+            Some(event) => PlayerAction::CallEvent(event),
+            None => local.map_or(PlayerAction::None, |seat| pending.0[seat]),
+        };
         // Borrowed past change detection: a mutable borrow marks the
         // resource changed whether or not a frame runs, and while a peer is
         // stalled none does. `observe_sim` reads the flag to skip a board
@@ -424,7 +432,14 @@ pub(super) fn advance_sim(
             sim.set_changed();
             recorder.set_changed();
         }
-        if let Some(seat) = local
+        if call.is_some() {
+            // Only a committed call is done with: a stalled or paused
+            // commit leaves it for the next frame, or the rail would have
+            // voted for nothing.
+            if committed {
+                session.pending_call = None;
+            }
+        } else if let Some(seat) = local
             && (committed || session.session.paused())
         {
             // Only a committed action leaves the queue; at the commit lead

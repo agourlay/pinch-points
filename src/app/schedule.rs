@@ -155,6 +155,7 @@ fn insert_resources(app: &mut App) {
     app.init_resource::<effects::Trauma>();
     app.init_resource::<pause::PauseMenu>();
     app.init_resource::<rail::RailChat>();
+    app.init_resource::<rail::RailCard>();
     app.init_resource::<audio::Muted>();
     app.init_resource::<Daily>();
     app.init_resource::<SeatNames>();
@@ -573,7 +574,13 @@ fn add_ui_systems(app: &mut App) {
                 .run_if(in_state(Screen::Language)),
             (replays::playback_speed_input, replays::playback_pause_input)
                 .run_if(in_state(Screen::Versus).and_then(keys_are_free)),
-            rail::rail_chat_input.run_if(in_state(Screen::Versus).and_then(keys_are_free)),
+            (
+                rail::rail_chat_input,
+                rail::rail_vote_input,
+                rail::settle_rail_vote,
+            )
+                .chain()
+                .run_if(in_state(Screen::Versus).and_then(keys_are_free)),
             (
                 gamepad::pad_claim_seats,
                 match_setup::match_setup_input,
@@ -641,7 +648,7 @@ fn add_play_systems(app: &mut App) {
             check_outcome.run_if(puzzle_running),
             play_input::versus_input.run_if(versus_running.and_then(keys_are_free)),
             suspend::copy_round_code.run_if(versus_running.and_then(keys_are_free)),
-            (dev::debug_net_probe, dev::debug_autopilot).run_if(versus_running),
+            (dev::debug_net_probe, dev::debug_autopilot, dev::debug_rail).run_if(versus_running),
             (
                 dev::debug_banner.run_if(versus_running.or_else(puzzle_running)),
                 dev::debug_moments,

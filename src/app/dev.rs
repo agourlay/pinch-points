@@ -359,6 +359,42 @@ pub(super) fn debug_lure(mut sim: ResMut<Sim>, mut hook: Local<OneShot>) {
         .force_lure(seat.min(crate::sim::MAX_PLAYERS as u8 - 1));
 }
 
+/// Dev hook: `PINCH_RAIL=card|<0-6>` works the rail for a spectator that
+/// has no hands: `card` opens the event list for a screenshot, and a
+/// number casts that vote a few seconds in, which is otherwise a thing
+/// only a person standing behind a chair can do.
+///
+/// The whole point of it is the chain it exercises: a vote leaves the
+/// watcher, the host counts it, settles on it, and puts it into an action
+/// on a frame, and the event fires on every screen at once.
+pub(super) fn debug_rail(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    settings: Res<crate::app::settings::GameSettings>,
+    mut card: ResMut<crate::app::rail::RailCard>,
+    mut online: ResMut<net::Online>,
+    mut hook: Local<OneShot>,
+) {
+    let Some(which) = hook.due("PINCH_RAIL", sim.0.ticks()) else {
+        return;
+    };
+    if !crate::app::rail::at_the_rail(&online) {
+        return;
+    }
+    if which == "card" {
+        card.0 = true;
+        crate::app::rail::spawn_card(&mut commands, &settings);
+        return;
+    }
+    let at = which.parse::<usize>().unwrap_or(0);
+    let event = crate::app::rail::RAIL_EVENTS[at % crate::app::rail::RAIL_EVENTS.len()];
+    if let Some(session) = &mut online.0 {
+        session.transport.send(crate::transport::NetMsg::RailVote {
+            event: event.index() as u8,
+        });
+    }
+}
+
 /// Dev hook: `PINCH_BANNER=lure|surge|<0-8>` raises one centre-screen
 /// announcement a few seconds into the round, so the banner can be
 /// screenshotted over a board with something on it, rather than waiting for

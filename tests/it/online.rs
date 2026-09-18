@@ -45,7 +45,7 @@ impl Peer {
             .send_inputs(self.session.recent_commits(), |_| true);
         for (msg, _) in self.transport.recv_all() {
             match msg {
-                NetMsg::Hello { .. } | NetMsg::Watch => {}
+                NetMsg::Hello { .. } | NetMsg::Watch | NetMsg::RailVote { .. } => {}
                 NetMsg::Inputs(inputs) => {
                     for input in inputs {
                         self.session.receive(input);

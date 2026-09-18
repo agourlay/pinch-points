@@ -60,6 +60,13 @@ pub struct OnlineSession {
     /// from, so the shell can put an AI in each and say so once rather
     /// than every frame, and the host can keep telling the table.
     pub abandoned: Vec<(u8, u32)>,
+    /// How the rail's vote stands, counted by the host and nobody else.
+    pub rail: crate::app::rail::RailVotes,
+    /// An event the rail settled on, waiting for a frame to ride out on.
+    ///
+    /// Held rather than sent: it goes out as this seat's action, which is
+    /// the only carriage a peer cannot advance past without.
+    pub pending_call: Option<crate::sim::TideEvent>,
     /// Lines said to the table since the shell last read them, each with
     /// who said it.
     ///
@@ -337,6 +344,8 @@ impl OnlineSession {
             hashes: HashCheck::default(),
             stall: StallWatch::default(),
             abandoned: Vec::new(),
+            rail: crate::app::rail::RailVotes::default(),
+            pending_call: None,
             heard: Vec::new(),
             home: Home::nowhere(),
             next_round: false,
@@ -423,6 +432,8 @@ impl OnlineSession {
             hashes: _,
             stall: _,
             abandoned: _,
+            rail: _,
+            pending_call: _,
             heard: _,
             home,
             next_round: _,
@@ -679,6 +690,15 @@ impl OnlineSession {
                         self.heard.push((who, line));
                     }
                 }
+                // Only the host counts. Every peer hears the answer, and
+                // hears it as an action on a frame rather than as a claim
+                // about one, so there is nothing here for anyone else to
+                // agree with or miss.
+                NetMsg::RailVote { event } => {
+                    if host {
+                        self.rail.cast(event);
+                    }
+                }
                 NetMsg::Abandoned { seat, frame } => {
                     // The host's word, not our own patience. Idempotent,
                     // because it is repeated against packet loss.
@@ -889,6 +909,7 @@ mod homecoming_tests {
                         | NetMsg::Pause { .. }
                         | NetMsg::Resume { .. }
                         | NetMsg::Queued { .. }
+                        | NetMsg::RailVote { .. }
                         | NetMsg::Chat { .. }
                         | NetMsg::Roster { .. }
                         | NetMsg::Abandoned { .. }

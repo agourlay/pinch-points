@@ -168,6 +168,8 @@ impl OnlineSession {
                 | NetMsg::Chat { .. }
                 | NetMsg::Roster { .. }
                 | NetMsg::Abandoned { .. }
+                // Between rounds there is no beach to call anything onto.
+                | NetMsg::RailVote { .. }
                 | NetMsg::Incompatible { .. } => {}
             }
         }

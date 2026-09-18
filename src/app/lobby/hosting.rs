@@ -408,6 +408,8 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
         peers.heard(from);
         match msg {
             NetMsg::Watch => peers.row(from).watch = true,
+            // A round thing, and the lobby has no round to call one in.
+            NetMsg::RailVote { .. } => {}
             NetMsg::Hello { name } => {
                 let told = crate::transport::name_from_wire(&name);
                 if !told.is_empty() {
