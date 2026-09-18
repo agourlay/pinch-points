@@ -365,6 +365,58 @@ pub(crate) fn fill_bot_actions(
     }
 }
 
+/// The same thing for a round being played over the wire, where a seat can
+/// become an AI part-way through.
+///
+/// [`Bots`] carries no frame. It is set when the notice reaches the shell,
+/// which is a different instant on every peer: the host's own decision,
+/// and a datagram on everybody else, landing on a peer that may still have
+/// frames in hand it has not simulated yet. Filling from it alone put a
+/// bot's move into frames the departed player's own inputs had already
+/// arrived for, starting at a different frame on every screen, and the
+/// round came apart within seconds of anyone dropping out.
+///
+/// The frame the seat was given up on travels with the notice, so it is
+/// the one thing about the handover every peer does agree on. Read it,
+/// and the chair turns AI in the same place everywhere.
+fn fill_online_bots(
+    board: &Board,
+    bots: &Bots,
+    abandoned: &[(u8, u32)],
+    level: BotLevel,
+    frame: u32,
+    actions: &mut [PlayerAction; MAX_PLAYERS],
+) {
+    for (seat, action) in actions.iter_mut().enumerate() {
+        if let Some(level) = ai_holding(bots, abandoned, level, seat, frame)
+            && matches!(action, PlayerAction::None)
+        {
+            *action = bot_action(board, seat as u8, level);
+        }
+    }
+}
+
+/// Which level, if any, is playing `seat` on `frame`.
+///
+/// A seat dealt to the AI at the launch is one every peer has had since
+/// before frame zero. One given up on mid-round is an AI from the frame
+/// the notice named, and a human with a human's inputs before it.
+fn ai_holding(
+    bots: &Bots,
+    abandoned: &[(u8, u32)],
+    level: BotLevel,
+    seat: usize,
+    frame: u32,
+) -> Option<BotLevel> {
+    match abandoned
+        .iter()
+        .find(|(gone, _)| usize::from(*gone) == seat)
+    {
+        Some((_, at)) => (frame >= *at).then_some(level),
+        None => bots.0[seat],
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn advance_sim(
     mut sim: ResMut<Sim>,
@@ -414,12 +466,28 @@ pub(super) fn advance_sim(
         let sim_board = &mut sim.bypass_change_detection().0;
         let recording = &mut recorder.bypass_change_detection().0;
         let bots = &*bots;
+        // The level every peer gives an abandoned seat, from the terms the
+        // table agreed on, so the chair plays the same on all of them.
+        let level = {
+            use crate::app::cycle::Cycle;
+            BotLevel::from_index(usize::from(session.terms.bot_level))
+        };
         let mut advanced = false;
         let committed = session.pump(action, |net| {
             if let Some(mut frame_actions) = net.session.advance() {
                 // The lockstep carries only the humans; the AI seats are
-                // derived from the frame every peer has just agreed on.
-                fill_bot_actions(sim_board, bots, &mut frame_actions);
+                // derived from the frame every peer has just agreed on,
+                // which is also the frame that says whether a seat given
+                // up on mid-round was an AI yet.
+                let at = net.session.frame().saturating_sub(1);
+                fill_online_bots(
+                    sim_board,
+                    bots,
+                    &net.abandoned,
+                    level,
+                    at,
+                    &mut frame_actions,
+                );
                 sim_board.tick(&frame_actions);
                 if let Some(replay) = recording {
                     replay.record(frame_actions);
@@ -885,6 +953,43 @@ mod tests {
             app.world().get_entity(survivor).is_ok(),
             "the teardown took something that was not a board sprite"
         );
+    }
+
+    /// A seat given up on mid-round turns AI on the frame the table
+    /// agreed on, and not one frame sooner.
+    ///
+    /// Found by killing a real joiner: every peer desynced within a second
+    /// of the drop. `Bots` says which seats the AI holds and nothing about
+    /// when it took them, so `fill_bot_actions` filled the chair from the
+    /// instant the notice reached each shell. That instant is the host's
+    /// own decision on the host and a datagram everywhere else, and a peer
+    /// still working through frames it already had the departed player's
+    /// inputs for wrote a bot's move over each of them. `PlayerAction::None`
+    /// is what a player pressing nothing sends, so this was most of them.
+    #[test]
+    fn an_abandoned_seat_turns_ai_on_the_frame_the_table_agreed_on() {
+        let bots = Bots([None, None, Some(BotLevel::Normal), None, None, None]);
+        // Seat 1 walked out, and the round agreed to empty it from 300.
+        let abandoned = [(1u8, 300u32)];
+        let at = |seat, frame| ai_holding(&bots, &abandoned, BotLevel::Hard, seat, frame);
+
+        assert_eq!(at(1, 299), None, "299 was still theirs to play");
+        assert_eq!(at(1, 300), Some(BotLevel::Hard), "and 300 is the AI's");
+        assert_eq!(at(1, 900), Some(BotLevel::Hard), "and every frame after");
+
+        // A seat dealt to the AI at the launch was never anyone's, so the
+        // frame has nothing to say about it, and a human seat stays human.
+        assert_eq!(
+            at(2, 0),
+            Some(BotLevel::Normal),
+            "the launch AI, from the start"
+        );
+        assert_eq!(
+            at(2, 900),
+            Some(BotLevel::Normal),
+            "and all the way through"
+        );
+        assert_eq!(at(0, 900), None, "and a seat nobody left is left be");
     }
 
     /// A round nobody is watching still stops when it is paused.
