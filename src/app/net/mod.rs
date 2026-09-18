@@ -305,15 +305,25 @@ pub struct LobbyReturn {
 pub struct Online(pub Option<OnlineSession>);
 
 impl OnlineSession {
-    /// Whether `peer` is watching this round: in it, and holding no chair
-    /// in it.
+    /// Whether `peer` was dealt a place watching this round.
     ///
-    /// Not `Peer::watches`, which is a wish as much as a place. That one
-    /// is true of somebody in line for the *next* round, who is sent no
-    /// frames and sees nothing, and of a seated player that has asked to
-    /// watch next time while still playing this one.
+    /// The place itself, and nothing derived from it. Not `Peer::watches`,
+    /// which is a wish as much as a place: true of somebody in line for
+    /// the *next* round, who is sent no frames and sees nothing, and of a
+    /// seated player that has asked to watch next time while still
+    /// playing this one.
+    ///
+    /// And not "follows the round without a chair" either, which is what
+    /// this asked first. That reads right until the book holds no plan,
+    /// which `follows_the_round` treats as "everybody hears" so that a
+    /// joiner and the direct `PINCH_HOST` pair keep talking to the one
+    /// peer they have. In a direct pair the host then had its opponent
+    /// down as a spectator: counted in the audience, and allowed to call
+    /// tide events onto the game it was playing.
     pub fn watching_this_round(&self, peer: usize) -> bool {
-        self.peers.follows_the_round(peer) && self.peers.seat_of(peer).is_none()
+        self.peers
+            .get(peer)
+            .is_some_and(|peer| peer.place == Place::Watching)
     }
 
     /// How many are watching this round.
@@ -331,6 +341,24 @@ impl OnlineSession {
     /// Forget the vote and the wait both, the round being over.
     pub fn forget_spectator_votes(&mut self) {
         self.spectators.forget_all();
+    }
+
+    /// Take a pick for the next tide event, from someone entitled to make
+    /// one.
+    ///
+    /// Counted only from a peer watching this round. The sender used to go
+    /// unread, so a seated player could call tide events down on the table
+    /// it was playing at, and a peer in line for the next round, sent no
+    /// frames and with no board on screen, could vote on this one. With
+    /// nobody watching at all, one stray datagram had the beach announcing
+    /// what the spectators had called.
+    ///
+    /// Its own function, like [`Self::take_chat`], because the rule about
+    /// who may be heard is the part worth being able to test.
+    fn take_vote(&mut self, host: bool, from: usize, event: u8) {
+        if host && self.watching_this_round(from) {
+            self.spectators.cast(event);
+        }
     }
 
     /// Take a line said to the table, and pass it on if this is the hub.
@@ -802,11 +830,7 @@ impl OnlineSession {
                 // on this one. With nobody watching at all, one stray
                 // datagram had the beach announcing what the spectators
                 // had called.
-                NetMsg::SpectatorVote { event } => {
-                    if host && self.watching_this_round(from) {
-                        self.spectators.cast(event);
-                    }
-                }
+                NetMsg::SpectatorVote { event } => self.take_vote(host, from, event),
                 NetMsg::Abandoned { seat, frame } => {
                     // The host's word, not our own patience. Idempotent,
                     // because it is repeated against packet loss.
@@ -1017,6 +1041,103 @@ mod homecoming_tests {
             "in line, sent no frames, watching nothing"
         );
         assert_eq!(session.watchers_in_round(), 1, "one of the four");
+    }
+
+    /// A pick is counted only from someone watching this round, and only
+    /// by the host, which is the only peer that counts anything.
+    #[test]
+    fn a_vote_is_taken_only_from_someone_watching() {
+        let sand = crate::sim::TideEvent::FreshSand.index() as u8;
+        let open = |session: &OnlineSession| session.spectators.open().is_some();
+
+        // Seated: a player may not call the tide down on its own table.
+        let mut session = hosting_session(1);
+        session.peers.row(0).place = Place::Seated(1);
+        session.take_vote(true, 0, sand);
+        assert!(!open(&session), "a player at the table");
+
+        // In line for the next round: sent no frames, sees no board.
+        let mut session = hosting_session(2);
+        session.peers.row(0).place = Place::Queued;
+        session.take_vote(true, 0, sand);
+        assert!(!open(&session), "a peer in the queue");
+
+        // Watching: heard.
+        let mut session = hosting_session(3);
+        session.peers.row(0).place = Place::Watching;
+        session.take_vote(true, 0, sand);
+        assert!(open(&session), "a spectator");
+
+        // And a spoke counts nothing, whoever sent it: only the hub tallies.
+        let mut session = hosting_session(4);
+        session.peers.row(0).place = Place::Watching;
+        session.take_vote(false, 0, sand);
+        assert!(!open(&session), "not the host");
+    }
+
+    /// A direct `PINCH_HOST` pair keeps no launch plan, and
+    /// `follows_the_round` reads an empty plan as "everybody hears" so the
+    /// two keep talking to the one peer they have. Spectating is the place
+    /// a peer was dealt, not something derived from that: read the other
+    /// way, the host had its opponent down as a spectator, counted in the
+    /// audience and allowed to vote on the game it was playing.
+    #[test]
+    fn a_direct_pair_has_no_spectators_in_it() {
+        let mut session = hosting_session(5);
+        // No plan was ever dealt, so the one peer keeps the default place.
+        session.peers.reach(1);
+        assert_eq!(session.peers.planned(), 0, "no plan at all");
+        assert!(
+            session.peers.follows_the_round(0),
+            "and it is sent the round regardless, which is the point"
+        );
+
+        assert!(!session.watching_this_round(0), "it is the other player");
+        assert_eq!(session.watchers_in_round(), 0, "an audience of nobody");
+
+        session.take_vote(true, 0, crate::sim::TideEvent::FreshSand.index() as u8);
+        assert!(
+            session.spectators.open().is_none(),
+            "and it cannot call the tide onto the game it is playing"
+        );
+    }
+
+    /// A spectator that walks away is forgotten, which nothing used to do:
+    /// the round gives up only on *seats*, through `awaiting`, and a
+    /// spectator is awaited by nobody. Left on the socket it was fed the
+    /// round for the rest of it and counted in the audience on screen.
+    #[test]
+    fn a_spectator_that_goes_quiet_is_forgotten_and_the_rest_are_left_alone() {
+        let mut session = hosting_session(6);
+        session.peers.row(0).place = Place::Seated(1);
+        session.peers.row(1).place = Place::Watching;
+        session.peers.row(2).place = Place::Watching;
+        session.peers.row(3).place = Place::Queued;
+        // Everyone quiet a long while, and one of the watchers talking.
+        for peer in 0..4 {
+            session.peers.row(peer).silence = 60.0;
+        }
+        session.peers.row(1).silence = 0.0;
+        let before = session.peers.len();
+
+        session.forget_gone_watchers();
+
+        assert_eq!(session.peers.len(), before - 1, "one of the four went");
+        assert_eq!(
+            session.peers.get(0).map(|p| p.place),
+            Some(Place::Seated(1)),
+            "the seat is the round's own business, not this sweep's"
+        );
+        assert_eq!(
+            session.peers.get(1).map(|p| p.place),
+            Some(Place::Watching),
+            "the watcher that is still talking stays"
+        );
+        assert_eq!(
+            session.peers.get(2).map(|p| p.place),
+            Some(Place::Queued),
+            "and the one in line costs nothing, so it waits for the card"
+        );
     }
 
     /// An empty name is the beach's own voice here: it is what announces

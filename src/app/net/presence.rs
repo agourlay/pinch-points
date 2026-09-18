@@ -23,6 +23,20 @@ use crate::sim::BotLevel;
 /// table is not left staring at a still beach.
 pub(super) const ABANDON_AFTER: f32 = 5.0;
 
+/// How long a spectator may say nothing before the round forgets it.
+///
+/// Longer than [`ABANDON_AFTER`] on purpose. A silent seat holds the whole
+/// table up, so five seconds is already generous; a silent spectator holds
+/// up nothing at all, and the only thing gained by dropping it quickly is
+/// the bandwidth of feeding a ghost. Ten seconds rides out a hiccup that
+/// would be rude to eject somebody for when they are only watching.
+///
+/// Dropping them at all is the point: the round gives up only on *seats*,
+/// through `awaiting`, and a spectator is awaited by nobody, so before
+/// this one that walked away was fed the round for the rest of it and
+/// counted in the audience the table was shown.
+const WATCHER_GONE_AFTER: f32 = 10.0;
+
 /// How long a joiner waits on a host that has stopped speaking before it
 /// calls the round off.
 ///
@@ -134,6 +148,9 @@ impl OnlineSession {
             self.stall.reset(self.session.frame());
             return Vec::new();
         }
+        if self.is_host() {
+            self.forget_gone_watchers();
+        }
         // Never itself. The local slot is empty whenever this peer has not
         // committed the frame yet, which is an ordinary moment and not a
         // departure. A host that gave its own castle to an AI would be
@@ -235,6 +252,24 @@ impl OnlineSession {
             self.peers.len() <= self.transport.peer_count(),
             "a peer's row outlived the peer it was kept for"
         );
+    }
+
+    /// Host, during the round: drop every spectator that has gone quiet.
+    ///
+    /// Only spectators. A seat is the round's own business and is given up
+    /// on through `awaiting` when it holds a frame up; a peer in line is
+    /// sent nothing and costs nothing, and is swept between rounds by
+    /// [`Self::forget_the_silent`].
+    pub(super) fn forget_gone_watchers(&mut self) {
+        for peer in (0..self.peers.len()).rev() {
+            let gone = self.peers.get(peer).is_some_and(|row| {
+                row.place == crate::app::net::Place::Watching && row.silence >= WATCHER_GONE_AFTER
+            });
+            if gone {
+                self.transport.forget(peer);
+                self.peers.forget(peer);
+            }
+        }
     }
 
     /// Host, between rounds: drop every peer that has said nothing for

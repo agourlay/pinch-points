@@ -769,6 +769,101 @@ mod tests {
         assert_eq!(lobby_text(&EN, &lobby).status, "hosting on port 47777");
     }
 
+    /// What the key does right now, in the crowd's own terms. A spectator
+    /// pressing E into silence could not tell whether a vote was open, how
+    /// long was left to join it, or why nothing happened while the crowd
+    /// was waiting; all three read the same.
+    #[test]
+    fn a_spectators_prompt_says_what_the_tide_key_will_do() {
+        use crate::app::spectators::Crowd;
+        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+
+        let levels = campaign_levels();
+        let builtins = levels.len();
+        let campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        };
+        let settings = GameSettings::default();
+        // A watching session: no seat, so the spectator's arm is the one
+        // the prompt takes.
+        let watching = Online(Some(crate::app::net::OnlineSession::new(
+            crate::transport::UdpTransport::host(0).expect("socket"),
+            crate::sim::Lockstep::observer(vec![0, 1], crate::sim::DEFAULT_DELAY),
+            2,
+            crate::transport::MatchTerms::default(),
+        )));
+        let said = |crowd: Crowd| {
+            versus_text(&Readout {
+                tr: &EN,
+                lang: Lang::En,
+                sim: &Sim(Board::new(9, 7, 1)),
+                campaign: &campaign,
+                phase: &State::new(Phase::Setup),
+                vphase: &State::new(VersusPhase::Running),
+                editor: &EditorState::default(),
+                online: &watching,
+                playback: &Playback::default(),
+                lobby: &LobbyState::default(),
+                tournament: &crate::app::tournament::Tournament::default(),
+                seats: &Seats(2),
+                settings: &settings,
+                keycaps: &crate::app::keycaps::KeyCaps::default(),
+                names: &crate::app::SeatNames::default(),
+                bots: &Bots::default(),
+                library: &crate::app::replays::Library::default(),
+                notice: &crate::app::RoundNotice::default(),
+                match_menu: &crate::app::match_setup::MatchMenu::default(),
+                paused: false,
+                spectator_typing: None,
+                crowd,
+                speed: 1,
+            })
+            .prompt
+        };
+
+        let idle = said(Crowd::default());
+        assert!(
+            idle.starts_with(EN.spectator_call_hint),
+            "the offer: {idle}"
+        );
+
+        let open = said(Crowd {
+            open: 2,
+            ..Default::default()
+        });
+        assert!(
+            open.starts_with(&fill(EN.spectator_vote_open, &[("n", "2")])),
+            "a vote to join: {open}"
+        );
+
+        let wait = said(Crowd {
+            wait: 9,
+            ..Default::default()
+        });
+        assert!(
+            wait.starts_with(&fill(EN.spectator_wait, &[("n", "9")])),
+            "a wait to sit out: {wait}"
+        );
+
+        // An open vote wins over a wait, since one is running right now.
+        let both = said(Crowd {
+            open: 2,
+            wait: 9,
+            watching: 3,
+        });
+        assert!(
+            both.starts_with(&fill(EN.spectator_vote_open, &[("n", "2")])),
+            "the open one: {both}"
+        );
+
+        for state in [idle, open, wait, both] {
+            assert!(state.contains(EN.lobby_chat_hint), "and T is always there");
+        }
+    }
+
     /// The table is told there is a crowd, in whatever room the banners
     /// leave. Without it a called tide event is the first anyone at the
     /// table hears that anyone is watching, and it arrives together with

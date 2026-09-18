@@ -385,8 +385,14 @@ pub(super) fn debug_spectator(
         // A line from a spoke, which is the path the hub has to repeat:
         // what a spectator says reaches the table only by the host passing
         // it on, and for a while it did not.
-        if let Some(session) = &mut online.0 {
-            let me = settings.names[0].clone();
+        // The same refusal the real path makes: the host drops a line
+        // that resolves to no name, so echoing one here would show this
+        // screen something nobody else was given. The hook had the bug it
+        // was used to find, which is a poor thing for a hook to have.
+        let me = settings.names[0].clone();
+        if let Some(session) = &mut online.0
+            && !me.is_empty()
+        {
             let line = "hello from the back row";
             session
                 .transport
