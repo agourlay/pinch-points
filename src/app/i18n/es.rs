@@ -410,6 +410,7 @@ pub static ES: Tr = Tr {
     lobby_card_beaches: "PLAYAS EN EL AIRE",
     lobby_card_chat: "SALA",
     lobby_joined: "{p} llega",
+    lobby_watching_joined: "{p} mira",
     lobby_left: "{p} se va",
     lobby_card_players: "EN ESTA PLAYA",
     lobby_card_terms: "LA RONDA",

@@ -417,6 +417,7 @@ pub static DE: Tr = Tr {
     lobby_card_beaches: "STRÄNDE AUF SENDUNG",
     lobby_card_chat: "TREFFPUNKT",
     lobby_joined: "{p} ist da",
+    lobby_watching_joined: "{p} schaut zu",
     lobby_left: "{p} ist weg",
     lobby_card_players: "AN DIESEM STRAND",
     lobby_card_terms: "DIE RUNDE",

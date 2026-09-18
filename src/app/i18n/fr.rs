@@ -410,6 +410,7 @@ pub static FR: Tr = Tr {
     lobby_card_beaches: "PLAGES EN LIGNE",
     lobby_card_chat: "SALON",
     lobby_joined: "{p} arrive",
+    lobby_watching_joined: "{p} regarde",
     lobby_left: "{p} s'en va",
     lobby_card_players: "SUR CETTE PLAGE",
     lobby_card_terms: "LA MANCHE",

@@ -410,6 +410,7 @@ pub static IT: Tr = Tr {
     lobby_card_beaches: "SPIAGGE IN ONDA",
     lobby_card_chat: "SALA",
     lobby_joined: "{p} arriva",
+    lobby_watching_joined: "{p} guarda",
     lobby_left: "{p} se ne va",
     lobby_card_players: "SU QUESTA SPIAGGIA",
     lobby_card_terms: "IL ROUND",

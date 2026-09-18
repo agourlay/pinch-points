@@ -323,9 +323,17 @@ fn note_arrivals_and_departures(
         // of mind about the name, is news worth putting in the feed.
         let row = hosted.peers.row(from);
         let arrived = row.name != told;
+        // Said of whoever turned up, in their own terms: the table counts
+        // its rivals, so announcing a spectator as one more of them would
+        // have every player looking for a chair that was never taken.
+        let watching = row.watch;
         row.name.clone_from(&told);
         if arrived {
-            let notice = fill(tr.lobby_joined, &[("p", &told)]);
+            let line = match watching {
+                true => tr.lobby_watching_joined,
+                false => tr.lobby_joined,
+            };
+            let notice = fill(line, &[("p", &told)]);
             state.say("", &notice);
             announce_to_table(state, "", &notice);
         }
@@ -407,7 +415,16 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
         peers.reach(transport.peer_count());
         peers.heard(from);
         match msg {
-            NetMsg::Watch => peers.row(from).watch = true,
+            // A spectator greets with its name too, so the room can be
+            // told who turned up to watch and the host has something to
+            // check a spectator's chat line against.
+            NetMsg::Watch { name } => {
+                peers.row(from).watch = true;
+                let told = crate::transport::name_from_wire(&name);
+                if !told.is_empty() {
+                    picked.greeted.push((from, told));
+                }
+            }
             // Round things, and the lobby has no round to call one in.
             NetMsg::SpectatorVote { .. } | NetMsg::SpectatorTally { .. } => {}
             NetMsg::Hello { name } => {
@@ -429,8 +446,9 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             // refused whoever sends it.
             //
             // The claim stands only where there is nothing to check it
-            // against: a watcher greets with a bare `Watch` and never says
-            // what to call it, so its own word is all the name it has.
+            // against, which is now a peer whose greeting has not been
+            // written down yet: a tick at most, and the same tick for a
+            // watcher as for a player, since both greet by name.
             NetMsg::Chat { name, text } => {
                 let known = peers.get(from).map_or("", |peer| peer.name.as_str());
                 let who = match known.is_empty() {
@@ -804,11 +822,17 @@ mod tests {
         );
     }
 
-    /// The one peer the host has no name for: a watcher greets with a bare
-    /// `Watch` and never says what to call it, so its own word is all there
-    /// is to go on. Not the empty one, though: that is the room talking.
+    /// A spectator is announced in its own words and then held to its
+    /// name like anybody else.
+    ///
+    /// Both halves were missing while `Watch` carried no name: the feed
+    /// announced every player and no spectator at all, so a host on a busy
+    /// beach could not tell who had turned up to watch, and the check on
+    /// who a chat line claims to be from had nothing to check against, so
+    /// the one kind of peer nobody can see was the one kind that could
+    /// speak under a rival's name.
     #[test]
-    fn a_nameless_peer_may_name_itself_but_not_the_room() {
+    fn a_spectator_is_announced_by_name_and_then_held_to_it() {
         let mut state = LobbyState {
             standing: Standing::hosting(
                 Announcer::new(0xDECAF).expect("announcer"),
@@ -824,10 +848,35 @@ mod tests {
             .expect("addr")
             .port();
         let watcher = UdpTransport::join(("127.0.0.1", port)).expect("join");
-        watcher.send(NetMsg::Watch);
+        watcher.send(NetMsg::watch("Dee"));
+
+        // Drain until the greeting lands, then write it down the way the
+        // lobby's own tick does.
+        let mut greeted = Vec::new();
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let hosted = state.hosted_mut().expect("hosting");
+            greeted
+                .extend(work_the_socket(hosted, 0.0, crate::transport::OnAir::default()).greeted);
+            if !greeted.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(
+            greeted,
+            [(0, "Dee".to_string())],
+            "a spectator says what to call it, like everybody else"
+        );
+        note_arrivals_and_departures(&mut state, &crate::app::i18n::EN, greeted);
+        assert!(
+            state.chat.iter().any(|said| said.line == "Dee is watching"),
+            "and the room is told, in the words for watching rather than \
+             for taking a chair: {:?}",
+            state.chat
+        );
+
         watcher.send(NetMsg::chat("", "Anna has left the beach"));
         watcher.send(NetMsg::chat("Cy", "good luck!"));
-
         let mut said = Vec::new();
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -848,9 +897,14 @@ mod tests {
             .collect();
         assert_eq!(
             heard,
-            [("Cy".to_string(), "good luck!".to_string())],
-            "the watcher names itself, and the forged notice is dropped \
-             rather than carried under a name nobody has"
+            [
+                ("Dee".to_string(), "Anna has left the beach".to_string()),
+                ("Dee".to_string(), "good luck!".to_string()),
+            ],
+            "both lines under the name it greeted with: no rival's name to \
+             wear, and the room's own voice no longer on offer either, \
+             which it was for as long as a spectator had no name to give \
+             back"
         );
     }
 }

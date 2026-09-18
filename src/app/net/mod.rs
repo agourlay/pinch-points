@@ -688,7 +688,7 @@ impl OnlineSession {
                         self.transport.send_to(from, answer);
                     }
                 }
-                NetMsg::Watch => {
+                NetMsg::Watch { name } => {
                     if host {
                         // Watching is no more possible than playing once the
                         // round is under way: a spectator simulates the same
@@ -696,7 +696,7 @@ impl OnlineSession {
                         // The wish is remembered, so a peer that armed W and
                         // dialled in mid-round is seated as an onlooker next
                         // round rather than dealt a chair it never asked for.
-                        let answer = self.answer_greeting(from, "", true);
+                        let answer = self.answer_greeting(from, &name_from_wire(&name), true);
                         self.transport.send_to(from, answer);
                     }
                 }
@@ -1161,9 +1161,9 @@ mod homecoming_tests {
             "the host gives a named peer its own name back"
         );
 
-        // A peer it knows nothing about keeps whatever it claimed: a
-        // watcher greets with a bare `Watch` and never says what to call
-        // it, so its own word is all the name it has.
+        // A peer it knows nothing about keeps whatever it claimed. There
+        // is one left: a greeting the host never received, which is a peer
+        // it is about to learn the name of anyway.
         let stranger = session.take_chat(true, 1, crate::transport::wire_name("Dee"), forged);
         assert_eq!(stranger.map(|(who, _)| who), Some("Dee".to_string()));
 
@@ -1183,6 +1183,29 @@ mod homecoming_tests {
         );
     }
 
+    /// A spectator is vetted like anybody else, which it could not be
+    /// while its greeting carried no name.
+    ///
+    /// Found by watching a real one: `Watch` was the one greeting with
+    /// nothing in it, so the host had no name to check a spectator's chat
+    /// against and took the line's own word for who said it. That is the
+    /// whole of what the check exists to stop, and it was open to exactly
+    /// the peers nobody at the table can see.
+    #[test]
+    fn a_spectator_cannot_speak_under_a_players_name() {
+        let mut session = hosting_session(7);
+        // As the host writes it down from the greeting, watcher or not.
+        session.remember_peer_name(0, "Dee");
+        let forged = crate::transport::wire_chat("I fold, take my castle");
+
+        let said = session.take_chat(true, 0, crate::transport::wire_name("Bo"), forged);
+        assert_eq!(
+            said,
+            Some(("Dee".to_string(), "I fold, take my castle".to_string())),
+            "the crowd speaks under the name it turned up with"
+        );
+    }
+
     /// What the lobby gets back to seat people with: each peer's name as
     /// its greeting carried it, and the watchers by the same rule the next
     /// round would have used - a spectator's `None` in the launch plan, or
@@ -1198,7 +1221,7 @@ mod homecoming_tests {
         let watcher = UdpTransport::join(("127.0.0.1", port)).expect("join");
         for want in [1, 2] {
             if want == 2 {
-                watcher.send(NetMsg::Watch);
+                watcher.send(NetMsg::watch("Dee"));
             }
             for _ in 0..40 {
                 std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1208,7 +1231,7 @@ mod homecoming_tests {
                             let told = name_from_wire(&name);
                             session.remember_peer_name(from, &told);
                         }
-                        NetMsg::Watch => session.note_watch_wish(from),
+                        NetMsg::Watch { .. } => session.note_watch_wish(from),
                         NetMsg::Inputs(_)
                         | NetMsg::Hash { .. }
                         | NetMsg::Start { .. }

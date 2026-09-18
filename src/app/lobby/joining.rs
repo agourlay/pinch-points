@@ -367,7 +367,7 @@ pub fn join_tick(
                     host_terms = Some(terms);
                 }
                 NetMsg::Hello { .. }
-                | NetMsg::Watch
+                | NetMsg::Watch { .. }
                 | NetMsg::Inputs(_)
                 | NetMsg::Hash { .. }
                 | NetMsg::Pause { .. }

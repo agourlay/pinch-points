@@ -68,7 +68,7 @@ pub(crate) fn once_a_second(clock: &mut f32, delta: f32) -> bool {
 /// wish to watch the same way wherever it was greeted from.
 pub(crate) fn greeting(watching: bool, name: &str) -> NetMsg {
     match watching {
-        true => NetMsg::Watch,
+        true => NetMsg::watch(name),
         false => NetMsg::hello(name),
     }
 }
@@ -691,6 +691,27 @@ mod tests {
 
     fn addr(last: u8) -> SocketAddr {
         format!("10.0.0.{last}:47777").parse().expect("addr")
+    }
+
+    /// Both greetings say who is greeting. The watcher's did not, and the
+    /// host has two uses for a name it never got: the feed, which
+    /// announced every player and no spectator at all, and the check on
+    /// who a chat line claims to be from, which a nameless peer walks
+    /// straight through.
+    #[test]
+    fn a_spectator_greets_by_name_like_everybody_else() {
+        assert_eq!(
+            greeting(true, "Dee"),
+            NetMsg::Watch {
+                name: crate::transport::wire_name("Dee")
+            },
+        );
+        assert_eq!(
+            greeting(false, "Bo"),
+            NetMsg::Hello {
+                name: crate::transport::wire_name("Bo")
+            },
+        );
     }
 
     /// A beach on the air, as `refresh_hosts` hears it.

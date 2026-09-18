@@ -13,7 +13,13 @@ pub enum NetMsg {
     Hello { name: WireName },
     /// Handshake ping from a peer that wants to watch, not play. Repeated
     /// like `Hello` until a `Start` lands.
-    Watch,
+    ///
+    /// It carries a name for the same reason `Hello` does, and the reason
+    /// is sharper here: the host vets a chat line against the name it
+    /// knows the sender by (see `OnlineSession::take_chat`), and a
+    /// spectator it has no name for is a peer whose claim about who is
+    /// talking nobody can check.
+    Watch { name: WireName },
     /// Every input the sender can still be holding for a peer: the newest
     /// commit and the resend tail behind it, in one datagram.
     ///
@@ -163,6 +169,15 @@ impl NetMsg {
     /// A greeting carrying `name` in wire form.
     pub fn hello(name: &str) -> NetMsg {
         NetMsg::Hello {
+            name: wire_name(name),
+        }
+    }
+
+    /// The same greeting from somebody who came to watch. Named, because
+    /// the host has to be able to call the crowd something and to check
+    /// what the crowd says it is called.
+    pub fn watch(name: &str) -> NetMsg {
+        NetMsg::Watch {
             name: wire_name(name),
         }
     }
@@ -335,7 +350,7 @@ impl NetMsg {
         // starts at byte 2.
         let mut bytes = match self {
             NetMsg::Hello { .. } => vec![TAG_HELLO],
-            NetMsg::Watch => vec![TAG_WATCH],
+            NetMsg::Watch { .. } => vec![TAG_WATCH],
             NetMsg::Queued { .. } => vec![TAG_QUEUED],
             NetMsg::Chat { .. } => vec![TAG_CHAT],
             NetMsg::Roster { .. } => vec![TAG_ROSTER],
@@ -351,7 +366,7 @@ impl NetMsg {
         };
         bytes.push(PROTOCOL_VERSION);
         match self {
-            NetMsg::Watch | NetMsg::Incompatible { .. } => {}
+            NetMsg::Incompatible { .. } => {}
             NetMsg::Resume { frame } => bytes.extend_from_slice(&frame.to_le_bytes()),
             NetMsg::Queued { ahead } => bytes.push(ahead),
             NetMsg::Abandoned { seat, frame } => {
@@ -373,7 +388,7 @@ impl NetMsg {
                 }
                 bytes.extend_from_slice(&terms.encode());
             }
-            NetMsg::Hello { name } => bytes.extend_from_slice(&name),
+            NetMsg::Hello { name } | NetMsg::Watch { name } => bytes.extend_from_slice(&name),
             NetMsg::Inputs(ref inputs) => {
                 // Count first, then that many fixed-width inputs. A batch
                 // past the cap is truncated rather than sent whole: the
@@ -462,7 +477,9 @@ impl NetMsg {
             TAG_HELLO => Some(NetMsg::Hello {
                 name: body.get(..WIRE_NAME)?.try_into().ok()?,
             }),
-            TAG_WATCH => Some(NetMsg::Watch),
+            TAG_WATCH => Some(NetMsg::Watch {
+                name: body.get(..WIRE_NAME)?.try_into().ok()?,
+            }),
             TAG_INPUTS => {
                 // A count past the cap is refused rather than clamped: the
                 // encoder would write back fewer than it read, and a message
@@ -804,7 +821,7 @@ mod tests {
         for msg in [
             NetMsg::hello("Anna"),
             NetMsg::hello("Überlang-Name-über-die-Kappe-hinaus"),
-            NetMsg::Watch,
+            NetMsg::watch("Dee"),
             NetMsg::Resume { frame: 0 },
             NetMsg::Resume { frame: 70_000 },
             NetMsg::Pause { frame: 7 },
@@ -1013,7 +1030,7 @@ mod wire_fuzz_probe {
         // Seed with real messages, so mutations land near valid ones.
         let mut seeds: Vec<Vec<u8>> = vec![
             NetMsg::hello("Anna").encode(),
-            NetMsg::Watch.encode(),
+            NetMsg::watch("Dee").encode(),
             NetMsg::Queued { ahead: 3 }.encode(),
             NetMsg::Chat {
                 name: wire_name("Bo"),

@@ -406,6 +406,7 @@ pub static JA: Tr = Tr {
     lobby_card_beaches: "ひらいている浜辺",
     lobby_card_chat: "ロビー",
     lobby_joined: "{p} が来た",
+    lobby_watching_joined: "{p} が見物に来た",
     lobby_left: "{p} が帰った",
     lobby_card_players: "この浜辺の人",
     lobby_card_terms: "しあい",

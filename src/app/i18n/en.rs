@@ -410,6 +410,7 @@ pub static EN: Tr = Tr {
     lobby_card_beaches: "BEACHES ON THE AIR",
     lobby_card_chat: "LOBBY",
     lobby_joined: "{p} joined",
+    lobby_watching_joined: "{p} is watching",
     lobby_left: "{p} left",
     lobby_card_players: "AT THIS BEACH",
     lobby_card_terms: "THE ROUND",

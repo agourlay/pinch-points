@@ -558,6 +558,10 @@ struct Tr {
     pub lobby_card_chat: &'static str,
     /// Said in the feed by the lobby itself, not by a player.
     pub lobby_joined: &'static str,
+    /// The same news for somebody who came to watch rather than to play.
+    /// Its own line because "{p} joined" over a spectator reads as one
+    /// more rival, and the table counts its rivals.
+    pub lobby_watching_joined: &'static str,
     pub lobby_left: &'static str,
     /// Heading over the table, once you are at one.
     pub lobby_card_players: &'static str,

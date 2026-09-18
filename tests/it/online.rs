@@ -46,7 +46,7 @@ impl Peer {
         for (msg, _) in self.transport.recv_all() {
             match msg {
                 NetMsg::Hello { .. }
-                | NetMsg::Watch
+                | NetMsg::Watch { .. }
                 | NetMsg::SpectatorVote { .. }
                 | NetMsg::SpectatorTally { .. } => {}
                 NetMsg::Inputs(inputs) => {
@@ -419,7 +419,7 @@ fn a_spectator_sees_the_same_round_without_holding_it_up() {
     let mut boards: Vec<Board> = (0..3).map(|_| arena(0x5EA7)).collect();
     let mut hashes: Vec<Vec<(u32, u64)>> = vec![vec![]; 3];
     let watch_transport = UdpTransport::join(("127.0.0.1", port)).expect("watch");
-    watch_transport.send(NetMsg::Watch);
+    watch_transport.send(NetMsg::watch("Dee"));
     let mut watcher = Some(OnlineSession::new(
         watch_transport,
         Lockstep::observer(players.clone(), DEFAULT_DELAY),

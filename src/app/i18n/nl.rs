@@ -410,6 +410,7 @@ pub static NL: Tr = Tr {
     lobby_card_beaches: "STRANDEN IN DE LUCHT",
     lobby_card_chat: "LOBBY",
     lobby_joined: "{p} komt erbij",
+    lobby_watching_joined: "{p} kijkt mee",
     lobby_left: "{p} gaat weg",
     lobby_card_players: "OP DIT STRAND",
     lobby_card_terms: "DE RONDE",

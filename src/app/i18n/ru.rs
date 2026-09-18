@@ -417,6 +417,7 @@ pub static RU: Tr = Tr {
     lobby_card_beaches: "ПЛЯЖИ В ЭФИРЕ",
     lobby_card_chat: "ЛОББИ",
     lobby_joined: "{p} пришёл",
+    lobby_watching_joined: "{p} смотрит",
     lobby_left: "{p} ушёл",
     lobby_card_players: "НА ЭТОМ ПЛЯЖЕ",
     lobby_card_terms: "РАУНД",

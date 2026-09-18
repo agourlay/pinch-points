@@ -27,8 +27,9 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// `Resume` and `Abandoned` each grew a frame number and gulls started
 /// catching crabs across the seam of a wrapping board, 10 is where a
 /// handmade beach that cannot seat the table gave way to the generated
-/// arena the terms name, and 11 is where a tick's inputs became one
-/// datagram.
+/// arena the terms name, 11 is where a tick's inputs became one
+/// datagram, and 12 is where a spectator's greeting started carrying its
+/// name.
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in
@@ -38,7 +39,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// frozen for all time**: it is how a build tells "I cannot read this"
 /// apart from "I disagree with this", however the rest of the format
 /// moves.
-pub const PROTOCOL_VERSION: u8 = 11;
+pub const PROTOCOL_VERSION: u8 = 12;
 
 /// Connections a host accepts: five rivals (a six-seat table) and everyone
 /// else who turned up. How many of them get a seat is the lobby's

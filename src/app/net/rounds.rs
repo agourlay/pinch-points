@@ -134,9 +134,10 @@ impl OnlineSession {
                         self.transport.send_to(from, answer);
                     }
                 }
-                NetMsg::Watch => {
+                NetMsg::Watch { name } => {
                     if host {
-                        let answer = self.answer_greeting(from, "", true);
+                        let answer =
+                            self.answer_greeting(from, &name_from_wire(&name), true);
                         self.transport.send_to(from, answer);
                     }
                 }
