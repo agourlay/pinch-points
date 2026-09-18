@@ -584,6 +584,10 @@ struct Tr {
     pub lobby_join_list_one: &'static str,
     pub lobby_broadcasting: &'static str,
     pub lobby_aboard_prompt: &'static str,
+    /// The same line for a spectator, who is not aboard: the status line
+    /// above it already says "watching", and two lines disagreeing about
+    /// which of those you are is worse than either.
+    pub lobby_watching_prompt: &'static str,
     pub lobby_could_not_host: &'static str,
     pub lobby_could_not_join: &'static str,
     pub lobby_version_clash: &'static str,

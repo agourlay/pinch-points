@@ -423,6 +423,7 @@ pub static ES: Tr = Tr {
     lobby_join_list_one: "1 playa en el aire | Intro: entrar | H: abrir | J: por dirección | W: mirar | Esc: menú",
     lobby_broadcasting: "En el aire - teclas de flecha: la ronda | T: hablar | Intro: empezar (hasta 5 rivales) | Esc: menú",
     lobby_aboard_prompt: "A bordo - la partida empieza cuando el anfitrión lance | T: hablar | Esc: menú",
+    lobby_watching_prompt: "Mirando - la partida empieza cuando el anfitrión lance | T: hablar | Esc: menú",
     lobby_could_not_host: "no se pudo abrir: {e}",
     lobby_could_not_join: "no se pudo entrar: {e}",
     lobby_version_clash: "esa playa usa otra versión del juego (la suya {t}, la tuya {o})",

@@ -117,6 +117,11 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
         // W armed is the one bit of lobby state a player has to be told
         // about, since it changes what picking a beach does.
         Standing::Choosing { watching: true } => tr.lobby_watch_armed.to_string(),
+        // "Aboard" is the joiner's word, and a spectator is not: the
+        // status line right above this one says "watching", and the two
+        // of them describing the same peer differently is the whole of
+        // what a player has to go on before the round starts.
+        Standing::Joining(joined) if joined.watching => tr.lobby_watching_prompt.to_string(),
         Standing::Joining(_) => tr.lobby_aboard_prompt.to_string(),
         Standing::Hosting(_) => tr.lobby_broadcasting.to_string(),
         Standing::Choosing { watching: false } if lobby.hosts.is_empty() => {
@@ -767,6 +772,34 @@ mod tests {
 
         lobby.feedback = "hosting on port 47777".into();
         assert_eq!(lobby_text(&EN, &lobby).status, "hosting on port 47777");
+    }
+
+    /// Aboard is the joiner's word, and a spectator is not aboard.
+    ///
+    /// Found by putting a spectator on a real beach: the status line said
+    /// "watching" and the prompt under it said "Aboard", both about the
+    /// same peer at the same moment, because the prompt matched on
+    /// `Joining` without reading the flag that says which kind it is.
+    #[test]
+    fn a_spectator_in_the_lobby_is_not_told_it_is_aboard() {
+        use crate::app::lobby::{Joined, Standing};
+        use crate::transport::UdpTransport;
+
+        let joined = |watching| {
+            let mut lobby = LobbyState::default();
+            lobby.standing = Standing::Joining(Joined::returned(
+                UdpTransport::host(0).expect("socket"),
+                watching,
+                0,
+            ));
+            lobby_text(&EN, &lobby).prompt
+        };
+        assert_eq!(joined(false), EN.lobby_aboard_prompt);
+        assert_eq!(joined(true), EN.lobby_watching_prompt);
+        assert_ne!(
+            EN.lobby_watching_prompt, EN.lobby_aboard_prompt,
+            "and they are two lines, not one said twice"
+        );
     }
 
     /// What the key does right now, in the crowd's own terms. A spectator

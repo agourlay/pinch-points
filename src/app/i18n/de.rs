@@ -430,6 +430,7 @@ pub static DE: Tr = Tr {
     lobby_join_list_one: "1 Strand auf Sendung | Enter: mitspielen | H: eröffnen | J: per Adresse | W: zuschauen | Esc: Menü",
     lobby_broadcasting: "Auf Sendung - Pfeiltasten: die Runde | T: reden | Enter: starten (bis zu 5 Rivalen) | Esc: Menü",
     lobby_aboard_prompt: "An Bord - das Match startet, wenn der Gastgeber loslegt | T: reden | Esc: Menü",
+    lobby_watching_prompt: "Zuschauer - das Match startet, wenn der Gastgeber loslegt | T: reden | Esc: Menü",
     lobby_could_not_host: "Eröffnen fehlgeschlagen: {e}",
     lobby_could_not_join: "Beitreten fehlgeschlagen: {e}",
     lobby_version_clash: "dieser Strand läuft mit einer anderen Spielversion (dort {t}, hier {o})",
