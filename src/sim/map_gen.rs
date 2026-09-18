@@ -747,4 +747,72 @@ mod tests {
             assert!(board.gulls().iter().all(|g| g.tile < tiles), "seed {seed}");
         }
     }
+
+    /// Whatever it is asked, the draw hands back a permutation: every spot
+    /// used once and no spot twice. Two seats on one spot is two castles
+    /// on one tile, and a spot left out is a seat with nowhere to sit.
+    #[test]
+    fn the_seat_draw_is_always_a_permutation_of_the_spots() {
+        for seats in 0..=(MAX_PLAYERS as u8 + 2) {
+            for seed in [0u64, 1, 7, 42, 0xDECAF, u64::MAX] {
+                let spots = seat_spots(seed, seats);
+                let mut sorted = spots;
+                sorted.sort_unstable();
+                assert_eq!(
+                    sorted,
+                    std::array::from_fn::<usize, MAX_PLAYERS, _>(|i| i),
+                    "{seats} seats on seed {seed} drew {spots:?}"
+                );
+            }
+        }
+    }
+
+    /// The same seed draws the same beach, every time and on every
+    /// machine: it is what lets a host send a number instead of a board,
+    /// and what a replay leans on to lay the arena out again.
+    #[test]
+    fn a_seed_draws_the_same_seats_every_time_and_a_different_one_does_not() {
+        for seats in 2..=MAX_PLAYERS as u8 {
+            assert_eq!(
+                seat_spots(0xC0FFEE, seats),
+                seat_spots(0xC0FFEE, seats),
+                "{seats} seats moved between two draws of one seed"
+            );
+        }
+        // Not every seed differs from every other at a two-seat table,
+        // where there are only two arrangements, but over a spread of them
+        // the draw has to be doing something.
+        let drawn: std::collections::HashSet<_> =
+            (0..64u64).map(|seed| seat_spots(seed, 6)).collect();
+        assert!(drawn.len() > 1, "every seed drew the same six seats");
+    }
+
+    /// A mirror group is four copies of one spot, one per quadrant, and
+    /// all of them on the board: the generator paints through this, so a
+    /// corner that ran off the edge would paint off the end of the tiles.
+    #[test]
+    fn a_mirror_group_is_four_places_on_the_board() {
+        for (w, h) in [(9u8, 7u8), (12, 9), (21, 13), (2, 2)] {
+            for y in 0..h {
+                for x in 0..w {
+                    let four = quad(w, h, x, y);
+                    assert!(
+                        four.iter().all(|&(qx, qy)| qx < w && qy < h),
+                        "{w}x{h} at ({x},{y}) left the board: {four:?}"
+                    );
+                    assert!(
+                        four.contains(&(x, y)),
+                        "the spot itself is in its own group"
+                    );
+                    // Mirroring twice is where you started, so the group of
+                    // any member is the same group.
+                    let mut a = four;
+                    let mut b = quad(w, h, four[3].0, four[3].1);
+                    a.sort_unstable();
+                    b.sort_unstable();
+                    assert_eq!(a, b, "{w}x{h} at ({x},{y}) mirrors to another group");
+                }
+            }
+        }
+    }
 }

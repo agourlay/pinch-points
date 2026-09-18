@@ -323,4 +323,196 @@ mod tests {
             }
         }
     }
+
+    /// A step off any edge lands where it would on a loop, however far
+    /// out the arithmetic goes. The `%` on its own answers negatively for
+    /// a negative left-hand side, which is a crab leaving the west side
+    /// and arriving at tile minus one.
+    #[test]
+    fn a_step_off_any_edge_folds_back_onto_the_beach() {
+        let board = Board::new(5, 3, 1);
+        assert_eq!(board.wrap_coords(-1, -1), (4, 2), "off the top-left corner");
+        assert_eq!(board.wrap_coords(5, 3), (0, 0), "and off the bottom-right");
+        assert_eq!(board.wrap_coords(2, 1), (2, 1), "somewhere in the middle");
+        // Several laps out, which the gull's flight arithmetic can reach.
+        assert_eq!(board.wrap_coords(-11, -7), (4, 2));
+        assert_eq!(board.wrap_coords(17, 10), (2, 1));
+    }
+
+    /// One wall, two tiles: the edge to the right of a tile is the edge to
+    /// the left of its neighbour, and `wall_edge` is the only statement of
+    /// which slot that is. Were the two to disagree, a crab would walk
+    /// through a wall from one side and bounce off it from the other.
+    #[test]
+    fn a_wall_is_the_same_wall_from_either_side_of_it() {
+        let mut board = Board::new(4, 4, 1);
+        board.set_wall(1, 2, Direction::Right, true);
+        assert!(board.edge_blocked(1, 2, Direction::Right));
+        assert!(
+            board.edge_blocked(2, 2, Direction::Left),
+            "the neighbour is up against the same wall"
+        );
+        assert!(
+            !board.edge_blocked(1, 2, Direction::Left),
+            "and only that one"
+        );
+
+        board.set_wall(1, 2, Direction::Down, true);
+        assert!(board.edge_blocked(1, 2, Direction::Down));
+        assert!(
+            board.edge_blocked(1, 3, Direction::Up),
+            "the tile below is under the same wall"
+        );
+
+        // And taking it away from the far side takes away the only wall.
+        board.set_wall(2, 2, Direction::Left, false);
+        assert!(!board.edge_blocked(1, 2, Direction::Right));
+    }
+
+    /// Rock stops everybody; kelp is the one tile that tells a crab from a
+    /// gull on foot, which is why `Walker` exists at all.
+    #[test]
+    fn rock_stops_everyone_and_kelp_stops_only_a_walking_gull() {
+        let mut board = Board::new(3, 1, 1);
+        board.set_tile(1, 0, TileKind::Rock);
+        let from = board.index_of(0, 0);
+        assert!(!board.passable_for(from, Direction::Right, Walker::Crab));
+        assert!(!board.passable_for(from, Direction::Right, Walker::Gull));
+
+        board.set_tile(1, 0, TileKind::Kelp);
+        assert!(
+            board.passable_for(from, Direction::Right, Walker::Crab),
+            "a crab slips through the kelp"
+        );
+        assert!(
+            !board.passable_for(from, Direction::Right, Walker::Gull),
+            "and a gull on foot does not"
+        );
+
+        board.set_tile(1, 0, TileKind::Pool);
+        assert!(board.passable_for(from, Direction::Right, Walker::Crab));
+        assert!(board.passable_for(from, Direction::Right, Walker::Gull));
+    }
+
+    /// The edge of a closed beach is a wall; the edge of an open one is
+    /// the far side. Both answers come from the same call, which is what
+    /// keeps the bot planning on the beach the crabs actually walk.
+    #[test]
+    fn the_rim_is_a_wall_until_the_beach_wraps() {
+        let mut board = Board::new(4, 3, 1);
+        let west = board.index_of(0, 1);
+        assert!(!board.passable(west, Direction::Left), "closed at the rim");
+        assert_eq!(board.step(west, Direction::Left), None);
+
+        board.set_wrap(true);
+        assert!(
+            board.passable(west, Direction::Left),
+            "and open once it wraps"
+        );
+        assert_eq!(
+            board.step(west, Direction::Left),
+            Some(board.index_of(3, 1)),
+            "straight across to the far side of the same row"
+        );
+        assert_eq!(
+            board.step(board.index_of(1, 0), Direction::Up),
+            Some(board.index_of(1, 2)),
+            "and the same over the top"
+        );
+    }
+
+    /// A turnstile turns whoever crosses it, and turns the other way for
+    /// the next one. The flip is the whole of the thing: a turnstile that
+    /// forgot to alternate would send every crab the same way for ever.
+    #[test]
+    fn a_turnstile_turns_the_other_way_for_the_next_walker() {
+        let mut board = Board::new(3, 3, 1);
+        board.set_tile(1, 1, TileKind::Turnstile { next_right: true });
+        let tile = board.index_of(1, 1);
+
+        let mut dir = Direction::Up;
+        assert!(board.turnstile_deflect(tile, &mut dir, Handedness::Right, Walker::Crab));
+        assert_eq!(dir, Direction::Up.right(), "the first one is sent right");
+
+        let mut dir = Direction::Up;
+        assert!(board.turnstile_deflect(tile, &mut dir, Handedness::Right, Walker::Crab));
+        assert_eq!(dir, Direction::Up.left(), "and the next one the other way");
+
+        // Any other tile is not a turnstile and deflects nobody.
+        let mut dir = Direction::Up;
+        assert!(!board.turnstile_deflect(
+            board.index_of(0, 0),
+            &mut dir,
+            Handedness::Right,
+            Walker::Crab
+        ));
+        assert_eq!(dir, Direction::Up, "left exactly as it was");
+    }
+
+    /// Spec 4.1 step 3, in order: straight on, then the big claw's side,
+    /// then the other side, then back the way it came. Handedness only
+    /// picks which side is tried first, so the mirror of a board sends a
+    /// mirrored crab the mirrored way.
+    #[test]
+    fn a_blocked_crab_tries_its_big_claw_before_its_small_one() {
+        let mut board = Board::new(3, 3, 1);
+        let tile = board.index_of(1, 1);
+        let mut dir = Direction::Up;
+        board.resolve_walls_for(tile, &mut dir, Handedness::Right, Walker::Crab);
+        assert_eq!(dir, Direction::Up, "nothing in the way, so straight on");
+
+        board.set_wall(1, 1, Direction::Up, true);
+        let mut right = Direction::Up;
+        board.resolve_walls_for(tile, &mut right, Handedness::Right, Walker::Crab);
+        assert_eq!(
+            right,
+            Direction::Up.right(),
+            "the right-clawed one goes right"
+        );
+        let mut left = Direction::Up;
+        board.resolve_walls_for(tile, &mut left, Handedness::Left, Walker::Crab);
+        assert_eq!(left, Direction::Up.left(), "and the left-clawed one left");
+
+        // Its own side shut too, so it takes the other.
+        board.set_wall(1, 1, Direction::Up.right(), true);
+        let mut dir = Direction::Up;
+        board.resolve_walls_for(tile, &mut dir, Handedness::Right, Walker::Crab);
+        assert_eq!(dir, Direction::Up.left(), "the small claw's side");
+
+        // Boxed in on three sides: back the way it came.
+        board.set_wall(1, 1, Direction::Up.left(), true);
+        let mut dir = Direction::Up;
+        board.resolve_walls_for(tile, &mut dir, Handedness::Right, Walker::Crab);
+        assert_eq!(dir, Direction::Down, "nothing left but the way it came");
+    }
+
+    /// The castle-ring walk offers open sand and nothing else: not a tile
+    /// off the board, and not one with anything standing on it. Every
+    /// spill and every castle scatter is placed through this.
+    #[test]
+    fn a_ring_offers_only_the_open_sand_that_is_really_there() {
+        let mut board = Board::new(3, 3, 1);
+        board.set_tile(0, 0, TileKind::Rock);
+        board.set_tile(2, 0, TileKind::Castle(0));
+        let ring = [(-1, -1), (0, -1), (1, -1), (1, 0), (1, 1)];
+
+        let open = board.ring_openings(1, 1, &ring);
+        let places: Vec<(i32, i32)> = open.iter().map(|&(x, y, _, _)| (x, y)).collect();
+        assert_eq!(
+            places,
+            [(1, 0), (2, 1), (2, 2)],
+            "the rock and the castle are not sand, and nothing off the board is offered"
+        );
+        // The offset each one sits at travels with it, in ring order.
+        assert_eq!(open[0], (1, 0, 0, -1));
+
+        // From a corner, most of the ring is off the beach.
+        let corner = board.ring_openings(0, 0, &ring);
+        assert!(
+            corner
+                .iter()
+                .all(|&(x, y, _, _)| (0..3).contains(&x) && (0..3).contains(&y)),
+            "nothing off the board: {corner:?}"
+        );
+    }
 }

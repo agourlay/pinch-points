@@ -637,3 +637,100 @@ mod tests {
         assert_eq!(nav(&keys, 4, 5), 0, "down from the bottom wraps to the top");
     }
 }
+
+#[cfg(test)]
+mod nav_tests {
+    use super::*;
+
+    /// A row that is not there to pick is stepped over, not landed on.
+    ///
+    /// Every list with rows that come and go reads this: the settings that
+    /// only apply in one mode, the stage list's locked levels, the match
+    /// dials that a chosen map has no use for. Landing on one puts the
+    /// cursor on a blank line where Enter does nothing.
+    #[test]
+    fn the_cursor_steps_over_a_row_that_is_not_there_to_pick() {
+        let live = [true, false, false, true, true];
+        assert_eq!(
+            nav_live_steps(Nav::Down, 0, &live),
+            3,
+            "over the two dark ones"
+        );
+        assert_eq!(nav_live_steps(Nav::Up, 3, &live), 0, "and back over them");
+        assert_eq!(nav_live_steps(Nav::Down, 3, &live), 4, "the next one along");
+    }
+
+    /// The ends of the list join up, which is the only way to reach the
+    /// last row from the first without walking the whole list.
+    #[test]
+    fn the_ends_of_the_list_join_up() {
+        let all = [true, true, true];
+        assert_eq!(
+            nav_live_steps(Nav::Up, 0, &all),
+            2,
+            "off the top to the bottom"
+        );
+        assert_eq!(
+            nav_live_steps(Nav::Down, 2, &all),
+            0,
+            "and off the bottom to the top"
+        );
+
+        // With dark rows at the seam, the wrap keeps walking past them.
+        let live = [true, false, false];
+        assert_eq!(
+            nav_live_steps(Nav::Down, 0, &live),
+            0,
+            "the only row there is"
+        );
+        assert_eq!(nav_live_steps(Nav::Up, 0, &live), 0);
+    }
+
+    /// A list with nothing live leaves the cursor exactly where it was.
+    /// The walk gives up after one lap rather than spinning, which is what
+    /// an empty custom-beach shelf looks like from here.
+    #[test]
+    fn a_list_with_nothing_to_pick_leaves_the_cursor_alone() {
+        let none = [false, false, false];
+        for nav in [Nav::Up, Nav::Down, Nav::Stay] {
+            assert_eq!(
+                nav_live_steps(nav, 1, &none),
+                1,
+                "the cursor moved to nowhere"
+            );
+        }
+    }
+
+    /// Standing still still moves, when the row underneath has just gone
+    /// dark: a dial answered somewhere else can take the row the cursor is
+    /// on out of the list, and the cursor has to come off it without
+    /// anybody pressing anything.
+    #[test]
+    fn standing_still_comes_off_a_row_that_has_just_gone_dark() {
+        let live = [false, false, true, true];
+        assert_eq!(
+            nav_live_steps(Nav::Stay, 0, &live),
+            2,
+            "the next one that is there"
+        );
+        assert_eq!(
+            nav_live_steps(Nav::Stay, 2, &live),
+            2,
+            "and a live row stays put"
+        );
+        // Past the end, the search wraps like the walk does.
+        let live = [true, false, false];
+        assert_eq!(nav_live_steps(Nav::Stay, 2, &live), 0);
+    }
+
+    /// The plain walk, for a list with no dark rows in it at all: up and
+    /// down by one, wrapping at both ends.
+    #[test]
+    fn the_plain_walk_wraps_at_both_ends() {
+        assert_eq!(step(Nav::Down, 0, 3), 1);
+        assert_eq!(step(Nav::Down, 2, 3), 0, "off the bottom");
+        assert_eq!(step(Nav::Up, 0, 3), 2, "off the top");
+        assert_eq!(step(Nav::Stay, 1, 3), 1);
+        assert_eq!(step(Nav::Down, 0, 1), 0, "a list of one goes nowhere");
+    }
+}

@@ -840,4 +840,119 @@ mod tests {
             );
         }
     }
+
+    /// Replace the value of `key` in a snapshot, leaving the rest alone.
+    fn bend(text: &str, key: &str, value: &str) -> String {
+        text.lines()
+            .map(|line| match line.starts_with(&format!("{key}:")) {
+                true => format!("{key}: {value}"),
+                false => line.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// A creature standing off the end of the board is refused where it
+    /// arrives rather than where it is used, which would be the next tick,
+    /// indexing a tile array that has no such tile.
+    #[test]
+    fn a_creature_standing_off_the_board_is_refused() {
+        let good = awkward_board().to_snapshot();
+        // 5x4, so tile 20 is one past the last one there is.
+        for (what, from, to) in [
+            ("crab", "crab: 4 8 ", "crab: 4 20 "),
+            ("gull", "gull: 2 9 ", "gull: 2 20 "),
+        ] {
+            assert!(
+                good.contains(from),
+                "{what} is not where the fixture puts it:\n{good}"
+            );
+            let refused = Board::parse_snapshot(&good.replace(from, to))
+                .expect_err("took a creature off the board");
+            assert!(
+                refused.contains("off the board"),
+                "{what}: complained about something else: {refused}"
+            );
+        }
+    }
+
+    /// A number that is not one is not a zero. Read as a default, a code
+    /// saying `tick: soon` would hand back a board that parses, plays, and
+    /// disagrees with the one that was saved.
+    #[test]
+    fn a_number_that_is_not_one_is_refused_rather_than_defaulted() {
+        let good = awkward_board().to_snapshot();
+        for (key, junk) in [
+            ("seed", "soon"),
+            ("tick", "-1"),
+            ("gull_period", "lots"),
+            ("size", "5 wide"),
+            ("rng", "1"),
+            ("counters", "99 7 3 12"),
+            ("scores", "17 0 0 x 0 0"),
+        ] {
+            let bent = bend(&good, key, junk);
+            assert_ne!(bent, good, "{key}: no such line to bend");
+            assert!(
+                Board::parse_snapshot(&bent).is_err(),
+                "{key}: took {junk:?} for a number"
+            );
+        }
+    }
+
+    /// The wall lattices travel as hex, four bits a digit, so a lattice
+    /// whose length is not a multiple of four has a tail of padding that
+    /// both halves have to agree to ignore.
+    #[test]
+    fn a_wall_lattice_survives_the_trip_through_hex() {
+        for len in [0usize, 1, 3, 4, 5, 8, 17, 64] {
+            let bits: Vec<bool> = (0..len).map(|i| i % 3 == 0).collect();
+            let hex = bits_to_hex(&bits);
+            let back = hex_to_bits(&hex).expect("its own hex reads back");
+            assert!(back.len() >= len, "{len} bits came back as {}", back.len());
+            assert_eq!(back[..len], bits[..], "{len} bits came back changed");
+            assert!(
+                back[len..].iter().all(|bit| !bit),
+                "{len} bits padded with something other than sand: {hex}"
+            );
+        }
+        assert!(hex_to_bits("nothex").is_err(), "took letters for digits");
+    }
+
+    /// Every tile kind writes a token only it writes and reads back as
+    /// itself. A castle carries its owner in the token, so one that came
+    /// back as another seat's would hand the round's points to a stranger.
+    #[test]
+    fn every_tile_kind_survives_its_own_token() {
+        let mut kinds = vec![
+            TileKind::Empty,
+            TileKind::Rock,
+            TileKind::Kelp,
+            TileKind::Pool,
+            TileKind::Turnstile { next_right: true },
+            TileKind::Turnstile { next_right: false },
+        ];
+        for owner in 0..MAX_PLAYERS as u8 {
+            kinds.push(TileKind::Castle(owner));
+        }
+        let mut seen: Vec<String> = Vec::new();
+        for kind in kinds {
+            let token = tile_token(kind);
+            assert_eq!(
+                tile_from_token(&token).expect("its own token reads back"),
+                kind,
+                "{kind:?} came back as something else"
+            );
+            assert!(
+                !seen.contains(&token),
+                "{kind:?} shares the token {token:?} with something else"
+            );
+            seen.push(token);
+        }
+        assert!(
+            tile_from_token("~~~").is_err(),
+            "took a token nobody writes"
+        );
+        assert!(tile_from_token("").is_err(), "took an empty token");
+    }
 }

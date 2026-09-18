@@ -636,4 +636,141 @@ mod tests {
         assert_eq!(level.board.gulls().len(), 1);
         assert!(matches!(level.board.tile_at(0, 0), TileKind::Spawner(_)));
     }
+
+    /// Every glyph the writer puts on a map row reads back as the tile it
+    /// was written for. A replay stores its starting board *as* a level
+    /// and generated arenas mirror their logs, so a turnstile that came
+    /// back facing the other way would deflect every crab the wrong side
+    /// on the second play of the same round.
+    #[test]
+    fn every_tile_glyph_reads_back_as_the_tile_it_was_written_for() {
+        let mut kinds = vec![
+            TileKind::Empty,
+            TileKind::Rock,
+            TileKind::Kelp,
+            TileKind::Pool,
+            TileKind::Turnstile { next_right: true },
+            TileKind::Turnstile { next_right: false },
+        ];
+        for owner in 0..crate::sim::MAX_PLAYERS as u8 {
+            kinds.push(TileKind::Castle(owner));
+        }
+        for kind in kinds {
+            let glyph = tile_glyph(kind);
+            assert_eq!(
+                tile_from_glyph(glyph),
+                Some(kind),
+                "{kind:?} was written {glyph:?} and came back as something else"
+            );
+        }
+        // A blank is sand, so a row may be padded with spaces.
+        assert_eq!(tile_from_glyph(' '), Some(TileKind::Empty));
+        // And a spawner is the one tile the lattice does not carry: it is
+        // declared in the header, with the period and facing a glyph has
+        // nowhere to put, so the map row under it is plain sand.
+        assert_eq!(
+            tile_glyph(TileKind::Spawner(Spawner {
+                dir: Direction::Right,
+                period: 4,
+            })),
+            '.',
+        );
+    }
+
+    /// A glyph nobody writes is refused rather than read as sand. These
+    /// files are hand-edited, and a typo quietly becoming empty beach is a
+    /// level that loads and is not the one that was drawn.
+    #[test]
+    fn a_glyph_nobody_writes_is_refused_rather_than_read_as_sand() {
+        for stray in ['x', '@', '9', '?', '\t'] {
+            assert_eq!(tile_from_glyph(stray), None, "{stray:?} meant something");
+        }
+        let text = "name: T\nposts: 1\nmap:\n+-+-+\n|.|x|\n+-+-+\n|.|.|\n+-+-+\n";
+        let err = Level::parse(text).expect_err("read a stray glyph as a tile");
+        assert!(err.contains('x'), "the refusal says which glyph: {err}");
+    }
+
+    /// A coordinate that is not one is refused with the reason, since
+    /// every entity line in the format starts with a pair.
+    #[test]
+    fn a_coordinate_that_is_not_a_pair_of_numbers_is_refused() {
+        assert!(parse_xy("1,1").is_ok(), "the plain form");
+        assert_eq!(parse_xy("2,3 rest").expect("a pair"), (2, 3, "rest"));
+        for bad in ["11", "1;1", "a,1", "1,b", "1,", ",1", "300,1", "-1,0", ""] {
+            assert!(parse_xy(bad).is_err(), "{bad:?} was taken for a coordinate");
+        }
+    }
+
+    /// The header is `key: value` up to the map, and a line that is not
+    /// that is a file this reader cannot be sure it understands.
+    #[test]
+    fn a_header_line_that_is_not_a_key_and_a_value_is_refused() {
+        let err = Level::parse("name T\nmap:\n+-+\n|.|\n+-+\n")
+            .expect_err("read a header line with no key");
+        assert!(err.contains("key: value"), "{err}");
+
+        // A key this build does not know is refused too, rather than
+        // skipped: it means something to whoever wrote it.
+        let err = Level::parse("name: T\nweather: fog\nmap:\n+-+\n|.|\n+-+\n")
+            .expect_err("read a key it does not know");
+        assert!(err.contains("weather"), "{err}");
+
+        // Comments and blank lines before the map are not header lines.
+        let commented = Level::parse(
+            "# drawn on a train\n\nname: T\nposts: 1\nmap:\n+-+-+\n|.|.|\n+-+-+\n|.|.|\n+-+-+\n",
+        );
+        assert!(
+            commented.is_ok(),
+            "a comment before the map is not a bad key: {commented:?}"
+        );
+    }
+
+    /// A map section has to be a lattice: a wall row, then alternating
+    /// tile and wall rows, all the same width. Anything else describes no
+    /// board, and read loosely it describes the wrong one.
+    #[test]
+    fn a_map_that_is_not_a_lattice_is_refused() {
+        let cases = [
+            ("no map at all", "name: T\nposts: 1\n"),
+            ("a map section with nothing in it", "name: T\nmap:\n"),
+            (
+                "rows of different widths",
+                "name: T\nmap:\n+-+-+\n|.|.|\n+-+\n|.|\n+-+\n",
+            ),
+            ("an even number of rows", "name: T\nmap:\n+-+\n|.|\n"),
+        ];
+        for (what, text) in cases {
+            assert!(
+                Level::parse(text).is_err(),
+                "{what}: parsed into a board anyway"
+            );
+        }
+    }
+
+    /// What a level is for, when its file does not say: a board with
+    /// castles for two is somebody's arena, and a board with one or none
+    /// is a puzzle. The stage lists are built by this.
+    #[test]
+    fn a_level_with_no_kind_of_its_own_is_told_by_its_castles() {
+        let puzzle = "name: T\nposts: 1\nmap:\n+-+-+\n|0|.|\n+-+-+\n|.|.|\n+-+-+\n";
+        assert_eq!(
+            Level::parse(puzzle).expect("a one-castle board").kind,
+            LevelKind::Puzzle,
+            "one castle is a puzzle"
+        );
+        let arena = "name: T\nposts: 1\nmap:\n+-+-+\n|0|1|\n+-+-+\n|.|.|\n+-+-+\n";
+        assert_eq!(
+            Level::parse(arena).expect("a two-castle board").kind,
+            LevelKind::Arena,
+            "two castles is somewhere to play"
+        );
+        // And a file that says so is taken at its word.
+        let told = "name: T\nkind: puzzle\nposts: 1\nmap:\n+-+-+\n|0|1|\n+-+-+\n|.|.|\n+-+-+\n";
+        assert_eq!(
+            Level::parse(told)
+                .expect("a level that names its kind")
+                .kind,
+            LevelKind::Puzzle,
+        );
+    }
 }
