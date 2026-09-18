@@ -205,7 +205,7 @@ pub struct MatchConfig {
     pub bot_levels: [BotLevel; MAX_PLAYERS],
     pub map: MapChoice,
     /// Which handmade beach, when `map` is [`MapChoice::Custom`]. An index
-    /// into [`custom_beaches`], which is read fresh each time the dial is
+    /// into [`CustomBeaches`], which is read fresh each time the dial is
     /// turned: the editor may have saved another one since.
     pub custom: usize,
     pub gulls: GullPressure,
