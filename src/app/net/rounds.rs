@@ -31,7 +31,7 @@ pub struct Invitation {
 }
 
 /// The lockstep a peer plays a round over: the `humans` low seats, from
-/// the given chair, or from the rail for a watcher.
+/// the given chair, or from no chair at all for a watcher.
 pub(crate) fn lockstep_for(seat: Option<u8>, humans: u8) -> Lockstep {
     let players: Vec<u8> = (0..humans).collect();
     match seat {
@@ -169,7 +169,7 @@ impl OnlineSession {
                 | NetMsg::Roster { .. }
                 | NetMsg::Abandoned { .. }
                 // Between rounds there is no beach to call anything onto.
-                | NetMsg::RailVote { .. }
+                | NetMsg::SpectatorVote { .. }
                 | NetMsg::Incompatible { .. } => {}
             }
         }
@@ -192,7 +192,7 @@ impl OnlineSession {
         let mut next = 1u8; // the host keeps seat 0
         (0..peers)
             .map(|peer| {
-                // A watcher, whether it sat out the launch (at the rail in
+                // A watcher, whether it sat out the launch (watching in
                 // the plan) or queued mid-round with W armed (a remembered
                 // wish), keeps no chair.
                 let watches = self.peers.get(peer).is_some_and(Peer::watches);
@@ -586,7 +586,7 @@ mod next_round_tests {
         assert_eq!(
             host.peers.seat_of(1),
             None,
-            "Dee gets the rail it asked for"
+            "Dee gets the watching place it asked for"
         );
         assert!(host.peers.get(1).is_some_and(Peer::watches));
     }
@@ -645,7 +645,11 @@ mod next_round_tests {
         );
         assert!(host.peers.get(0).is_some_and(Peer::watches));
         host.call_next_round(terms(2), None);
-        assert_eq!(host.peers.seat_of(0), None, "dealt the rail it asked for");
+        assert_eq!(
+            host.peers.seat_of(0),
+            None,
+            "dealt the watching place it asked for"
+        );
     }
 
     /// A peer that leaves while the scores are being read leaves nothing

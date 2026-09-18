@@ -168,7 +168,7 @@ impl UdpTransport {
     /// allows, to every peer `hears` says is following the round.
     ///
     /// The audience is the caller's business and not the socket's: who is
-    /// at the table, who is at the rail and who is in line for the next
+    /// at the table, who is watching and who is in line for the next
     /// round is the lobby's bookkeeping.
     ///
     /// Encodes once per datagram rather than once per peer, and into the

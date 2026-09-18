@@ -11,7 +11,7 @@
 pub enum Place {
     /// At the table since the launch, holding this chair.
     Seated(u8),
-    /// At the rail since the launch: in step from frame zero like every
+    /// Watching since the launch: in step from frame zero like every
     /// player, but holding no chair.
     Watching,
     /// Not in the launch plan: turned up mid-round and is in line for the
@@ -45,7 +45,7 @@ impl Peer {
         }
     }
 
-    /// Whether it watches rather than plays: dealt the rail at the
+    /// Whether it watches rather than plays: dealt no chair at the
     /// launch, or asked for it since.
     pub fn watches(&self) -> bool {
         self.place == Place::Watching || self.watch
@@ -125,7 +125,7 @@ impl PeerBook {
         }
     }
 
-    /// Deal a launch plan, one place per peer: a chair, or the rail for a
+    /// Deal a launch plan, one place per peer: a chair, or a watching place for a
     /// `None`. The plan covers everyone on the socket, so a row past it is
     /// a peer that has gone, and is dropped with the old plan.
     pub fn deal(&mut self, plan: &[Option<u8>]) {
@@ -150,7 +150,7 @@ impl PeerBook {
     }
 
     /// Whether `peer` is following the round and so needs its inputs: at
-    /// the table, or at the rail in step from frame zero. A peer in line for
+    /// the table, or watching in step from frame zero. A peer in line for
     /// the next round is not, and sent the whole lockstep anyway costs about
     /// 180 datagrams a second for frames it cannot use: four people waiting
     /// turned a table's 930 a second into 1657.
@@ -177,7 +177,7 @@ impl PeerBook {
     }
 
     /// Back in the lobby nobody holds a chair, and a peer that was at the
-    /// rail is one that asked to watch: the next launch deals from the
+    /// watcher is one that asked to watch: the next launch deals from the
     /// wish alone.
     pub fn unseat(&mut self) {
         for peer in &mut self.0 {
@@ -256,7 +256,7 @@ mod tests {
         peers.reach(4);
         peers.deal(&[Some(1), None]);
         peers.reach(4);
-        assert_eq!(peers.planned(), 2, "a seat and a place at the rail");
+        assert_eq!(peers.planned(), 2, "a seat and a watching place");
         assert!(peers.follows_the_round(0), "the seated peer");
         assert!(peers.follows_the_round(1), "the watcher, in step from zero");
         assert!(!peers.follows_the_round(2), "the one in line");

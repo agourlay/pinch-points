@@ -180,7 +180,7 @@ pub enum PlayerAction {
         x: u8,
         y: u8,
     },
-    /// The rail called a tide event, relayed by the host.
+    /// The spectators called a tide event, relayed by the host.
     ///
     /// An action rather than a message of its own, and that is the whole
     /// point: a peer cannot simulate a frame without every seat's input
@@ -694,9 +694,9 @@ impl Board {
             PlayerAction::Remove { x, y } => {
                 let _ = self.remove_signpost(player, x, y);
             }
-            // The rail's, not this seat's: the host carries it because the
+            // The spectators', not this seat's: the host carries it because the
             // host is the one every peer waits on anyway. It fires whatever
-            // the wheel's own cooldown says, because the rail's call is not
+            // the wheel's own cooldown says, because their call is not
             // a spin of the wheel and should not be refused by one.
             PlayerAction::CallEvent(event) => self.force_tide_event(event, player),
         }

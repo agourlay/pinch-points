@@ -75,7 +75,7 @@ impl EventLog {
 
 const LOG_LINES: usize = 9;
 
-/// Fold what the rail said into the same feed the round's own events use.
+/// Fold what the spectators said into the same feed the round's own events use.
 ///
 /// Drained from the session rather than read: a line is shown once and
 /// then belongs to the feed, which keeps its own history and its own

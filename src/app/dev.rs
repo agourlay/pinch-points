@@ -31,7 +31,7 @@ pub(super) fn auto_join() -> bool {
     std::env::var("PINCH_LOBBY_JOIN").is_ok()
 }
 
-/// `PINCH_LOBBY_WATCH`: the same, but at the rail as a spectator.
+/// `PINCH_LOBBY_WATCH`: the same, but as a spectator.
 pub(super) fn auto_watch() -> bool {
     std::env::var("PINCH_LOBBY_WATCH").is_ok()
 }
@@ -359,7 +359,7 @@ pub(super) fn debug_lure(mut sim: ResMut<Sim>, mut hook: Local<OneShot>) {
         .force_lure(seat.min(crate::sim::MAX_PLAYERS as u8 - 1));
 }
 
-/// Dev hook: `PINCH_RAIL=card|<0-6>` works the rail for a spectator that
+/// Dev hook: `PINCH_SPECTATOR=card|<0-6>` works the spectator keys for a watcher that
 /// has no hands: `card` opens the event list for a screenshot, and a
 /// number casts that vote a few seconds in, which is otherwise a thing
 /// only a person standing behind a chair can do.
@@ -367,31 +367,34 @@ pub(super) fn debug_lure(mut sim: ResMut<Sim>, mut hook: Local<OneShot>) {
 /// The whole point of it is the chain it exercises: a vote leaves the
 /// watcher, the host counts it, settles on it, and puts it into an action
 /// on a frame, and the event fires on every screen at once.
-pub(super) fn debug_rail(
+pub(super) fn debug_spectator(
     mut commands: Commands,
     sim: Res<Sim>,
     settings: Res<crate::app::settings::GameSettings>,
-    mut card: ResMut<crate::app::rail::RailCard>,
+    mut card: ResMut<crate::app::spectators::SpectatorCard>,
     mut online: ResMut<net::Online>,
     mut hook: Local<OneShot>,
 ) {
-    let Some(which) = hook.due("PINCH_RAIL", sim.0.ticks()) else {
+    let Some(which) = hook.due("PINCH_SPECTATOR", sim.0.ticks()) else {
         return;
     };
-    if !crate::app::rail::at_the_rail(&online) {
+    if !crate::app::spectators::is_spectating(&online) {
         return;
     }
     if which == "card" {
         card.0 = true;
-        crate::app::rail::spawn_card(&mut commands, &settings);
+        crate::app::spectators::spawn_card(&mut commands, &settings);
         return;
     }
     let at = which.parse::<usize>().unwrap_or(0);
-    let event = crate::app::rail::RAIL_EVENTS[at % crate::app::rail::RAIL_EVENTS.len()];
+    let event = crate::app::spectators::SPECTATOR_EVENTS
+        [at % crate::app::spectators::SPECTATOR_EVENTS.len()];
     if let Some(session) = &mut online.0 {
-        session.transport.send(crate::transport::NetMsg::RailVote {
-            event: event.index() as u8,
-        });
+        session
+            .transport
+            .send(crate::transport::NetMsg::SpectatorVote {
+                event: event.index() as u8,
+            });
     }
 }
 

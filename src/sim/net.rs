@@ -45,7 +45,7 @@ pub fn encode_action(action: PlayerAction) -> [u8; 3] {
         PlayerAction::Place { x, y, dir } => [x, y, 1 | (dir.id() << 2)],
         PlayerAction::Remove { x, y } => [x, y, 2],
         // Tag 3 was free and the other two bytes are unused here, so the
-        // rail's call costs the wire nothing. An older build decodes tag 3
+        // spectators' call costs the wire nothing. An older build decodes tag 3
         // as `None`, which is why the replay header moved to v2.
         PlayerAction::CallEvent(event) => [event.index() as u8, 0, 3],
     }
@@ -699,7 +699,7 @@ mod tests {
         assert_eq!(format!("{action:?}"), format!("{decoded:?}"));
     }
 
-    /// The rail's call rides in a seat's input, and that is the whole
+    /// The spectators' call rides in a seat's input, and that is the whole
     /// reason it is an action at all: a peer cannot simulate a frame
     /// without every seat's input for it, so the call arrives with the
     /// frame it belongs to or the frame does not run. A side channel would

@@ -398,7 +398,7 @@ pub(super) fn advance_sim(
         // A spectator has no seat: it commits nothing and simply simulates
         // the frames the players agree on.
         let local = session.session.seat().map(usize::from);
-        // A frame the rail has spoken for belongs to the rail. The host
+        // A frame the spectators have spoken for belongs to them. The host
         // has one action a frame like everybody else, so a call takes the
         // frame its own placement would have had, and that placement waits
         // rather than being thrown away.
@@ -434,7 +434,7 @@ pub(super) fn advance_sim(
         }
         if call.is_some() {
             // Only a committed call is done with: a stalled or paused
-            // commit leaves it for the next frame, or the rail would have
+            // commit leaves it for the next frame, or they would have
             // voted for nothing.
             if committed {
                 session.pending_call = None;

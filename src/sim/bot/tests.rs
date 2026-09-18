@@ -215,7 +215,7 @@ fn bot_blocks_an_incoming_gull() {
         match bot_action(&board, 1, BotLevel::Normal) {
             PlayerAction::None => board.tick_idle(),
             act @ (PlayerAction::Place { .. } | PlayerAction::Remove { .. }) => break act,
-            // Never a bot's: the rail calls events, and a bot has a seat.
+            // Never a bot's: spectators call events, and a bot has a seat.
             PlayerAction::CallEvent(_) => unreachable!("a bot does not call the tide"),
         }
     };

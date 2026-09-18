@@ -65,9 +65,9 @@ pub(super) fn text_entry_open(
     lobby: Res<lobby::LobbyState>,
     setup: Res<match_setup::MatchMenu>,
     editor: Res<editor::EditorState>,
-    rail: Res<crate::app::rail::RailChat>,
+    spectators: Res<crate::app::spectators::SpectatorChat>,
 ) -> bool {
-    lobby.typing.is_some() || setup.naming.is_some() || editor.is_naming() || rail.open()
+    lobby.typing.is_some() || setup.naming.is_some() || editor.is_naming() || spectators.open()
 }
 
 /// Whether the round on screen is being played rather than watched: a
@@ -145,7 +145,7 @@ mod tests {
         world.insert_resource(lobby::LobbyState::default());
         world.insert_resource(match_setup::MatchMenu::default());
         world.insert_resource(Playback::default());
-        world.insert_resource(crate::app::rail::RailChat::default());
+        world.insert_resource(crate::app::spectators::SpectatorChat::default());
         world
     }
 
@@ -380,12 +380,16 @@ mod tests {
         );
         world.resource_mut::<editor::EditorState>().mode = editor::Mode::Painting;
 
-        world.resource_mut::<crate::app::rail::RailChat>().0 = Some(String::new());
+        world
+            .resource_mut::<crate::app::spectators::SpectatorChat>()
+            .0 = Some(String::new());
         assert!(
             world.run_system_once(text_entry_open).expect("ran"),
-            "and a line the rail is saying to the table holds it too"
+            "and a line a spectator is saying to the table holds it too"
         );
-        world.resource_mut::<crate::app::rail::RailChat>().0 = None;
+        world
+            .resource_mut::<crate::app::spectators::SpectatorChat>()
+            .0 = None;
 
         assert!(
             !world.run_system_once(text_entry_open).expect("ran"),

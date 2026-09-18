@@ -409,7 +409,7 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
         match msg {
             NetMsg::Watch => peers.row(from).watch = true,
             // A round thing, and the lobby has no round to call one in.
-            NetMsg::RailVote { .. } => {}
+            NetMsg::SpectatorVote { .. } => {}
             NetMsg::Hello { name } => {
                 let told = crate::transport::name_from_wire(&name);
                 if !told.is_empty() {
@@ -816,10 +816,10 @@ mod tests {
             .local_addr()
             .expect("addr")
             .port();
-        let rail = UdpTransport::join(("127.0.0.1", port)).expect("join");
-        rail.send(NetMsg::Watch);
-        rail.send(NetMsg::chat("", "Anna has left the beach"));
-        rail.send(NetMsg::chat("Cy", "good luck!"));
+        let watcher = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        watcher.send(NetMsg::Watch);
+        watcher.send(NetMsg::chat("", "Anna has left the beach"));
+        watcher.send(NetMsg::chat("Cy", "good luck!"));
 
         let mut said = Vec::new();
         for _ in 0..40 {

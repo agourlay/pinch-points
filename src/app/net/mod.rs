@@ -60,9 +60,9 @@ pub struct OnlineSession {
     /// from, so the shell can put an AI in each and say so once rather
     /// than every frame, and the host can keep telling the table.
     pub abandoned: Vec<(u8, u32)>,
-    /// How the rail's vote stands, counted by the host and nobody else.
-    pub rail: crate::app::rail::RailVotes,
-    /// An event the rail settled on, waiting for a frame to ride out on.
+    /// How the spectators' vote stands, counted by the host and nobody else.
+    pub spectators: crate::app::spectators::SpectatorVotes,
+    /// An event the spectators settled on, waiting for a frame to ride out on.
     ///
     /// Held rather than sent: it goes out as this seat's action, which is
     /// the only carriage a peer cannot advance past without.
@@ -285,7 +285,7 @@ pub struct LobbyReturn {
     /// the next round would have seated it. Nobody holds a chair any
     /// more: the lobby deals them again at the launch.
     pub peers: PeerBook,
-    /// Joiner side: this peer was at the rail, and greets with `Watch`.
+    /// Joiner side: this peer came to watch, and greets with `Watch`.
     pub watching: bool,
     pub host: bool,
     /// The seed of the round just played. A host still on its results
@@ -344,7 +344,7 @@ impl OnlineSession {
             hashes: HashCheck::default(),
             stall: StallWatch::default(),
             abandoned: Vec::new(),
-            rail: crate::app::rail::RailVotes::default(),
+            spectators: crate::app::spectators::SpectatorVotes::default(),
             pending_call: None,
             heard: Vec::new(),
             home: Home::nowhere(),
@@ -362,7 +362,7 @@ impl OnlineSession {
     /// `taken` counts the humans, not the table: an AI seat gives way to a
     /// player who wants it. The humans in line for the next round count
     /// too, since the chair each will take is spoken for, and a beacon that
-    /// left the queue out let a sixth player in to be dealt the rail with
+    /// left the queue out let a sixth player in to be dealt a watching place with
     /// no notice.
     pub fn keep_announcing(&mut self, delta: f32) {
         if self.home.announcer.aboard().is_none()
@@ -432,7 +432,7 @@ impl OnlineSession {
             hashes: _,
             stall: _,
             abandoned: _,
-            rail: _,
+            spectators: _,
             pending_call: _,
             heard: _,
             home,
@@ -523,7 +523,7 @@ impl OnlineSession {
         let committed = self.session.commit_local(local_action).is_some();
         // The newest commit and the whole resend tail behind it, in one
         // datagram: see `NetMsg::Inputs` for what that is worth at a full
-        // table. To the table and the rail, never to the queue: a peer in
+        // table. To the table and the watchers, never to the queue: a peer in
         // line is not simulating anything (`PeerBook::follows_the_round`).
         let peers = &self.peers;
         self.transport
@@ -680,7 +680,7 @@ impl OnlineSession {
                 // Only a host hands these out, and a host never receives
                 // one: a joiner in the queue is still in the lobby.
                 NetMsg::Queued { .. } => {}
-                // The rail talking. Players have both hands on the keys
+                // A spectator talking. Players have both hands on the keys
                 // and no way to answer, which is the point: the people
                 // with nothing to hold are the ones who can say something,
                 // and the round's own feed is where it lands.
@@ -694,9 +694,9 @@ impl OnlineSession {
                 // hears it as an action on a frame rather than as a claim
                 // about one, so there is nothing here for anyone else to
                 // agree with or miss.
-                NetMsg::RailVote { event } => {
+                NetMsg::SpectatorVote { event } => {
                     if host {
-                        self.rail.cast(event);
+                        self.spectators.cast(event);
                     }
                 }
                 NetMsg::Abandoned { seat, frame } => {
@@ -886,13 +886,13 @@ mod homecoming_tests {
         let mut session = hosting_session(0);
         let port = session.transport.local_addr().expect("addr").port();
         // Two peers, registered one at a time so their indices are known:
-        // Bo plays, and somebody nameless watches from the rail.
+        // Bo plays, and somebody nameless watches.
         let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
         bo.send(NetMsg::hello("Bo"));
-        let rail = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        let watcher = UdpTransport::join(("127.0.0.1", port)).expect("join");
         for want in [1, 2] {
             if want == 2 {
-                rail.send(NetMsg::Watch);
+                watcher.send(NetMsg::Watch);
             }
             for _ in 0..40 {
                 std::thread::sleep(std::time::Duration::from_millis(5));
@@ -909,7 +909,7 @@ mod homecoming_tests {
                         | NetMsg::Pause { .. }
                         | NetMsg::Resume { .. }
                         | NetMsg::Queued { .. }
-                        | NetMsg::RailVote { .. }
+                        | NetMsg::SpectatorVote { .. }
                         | NetMsg::Chat { .. }
                         | NetMsg::Roster { .. }
                         | NetMsg::Abandoned { .. }
@@ -931,7 +931,7 @@ mod homecoming_tests {
             "each chair keeps the name its greeting carried"
         );
         let watching: Vec<bool> = returned.peers.iter().map(Peer::watches).collect();
-        assert_eq!(watching, [false, true], "and the rail stays the rail");
+        assert_eq!(watching, [false, true], "and a watcher stays a watcher");
     }
 
     /// A joiner's way back: no beacon to carry, but the socket, the seed
@@ -949,7 +949,7 @@ mod homecoming_tests {
         );
         let returned = session.back_to_the_lobby();
         assert!(!returned.host);
-        assert!(returned.watching, "the rail is remembered");
+        assert!(returned.watching, "the watcher is remembered");
         assert!(returned.announcer.is_none(), "a joiner has no beacon");
         assert_eq!(returned.played_seed, 7);
     }

@@ -1,11 +1,11 @@
-//! The rail: what the people with no seat can do while a round is played.
+//! Spectators: what the people with no seat can do while a round is played.
 //!
 //! A table seats six and a room holds more, so at a real beach there are
 //! people standing behind the chairs. They already watch the round in step
 //! with everyone else; this is what they can say about it.
 //!
 //! Only a spectator types. A player has both hands on the keys and a
-//! letter key would be taken out of the round; the rail has free hands,
+//! letter key would be taken out of the round; a spectator has free hands,
 //! which is the whole reason the job falls to them.
 
 use crate::app::net::Online;
@@ -13,27 +13,27 @@ use crate::sim::TideEvent;
 use crate::transport::NetMsg;
 use bevy::prelude::*;
 
-/// The line the rail is typing, if one is open.
+/// The line a spectator is typing, if one is open.
 ///
 /// Its own resource rather than a field on the session: the session is
 /// rebuilt between rounds and a half-typed line is not worth carrying
 /// across, and the shell reads this to know the keyboard is spoken for.
 #[derive(Resource, Default)]
-pub struct RailChat(pub Option<String>);
+pub struct SpectatorChat(pub Option<String>);
 
-impl RailChat {
+impl SpectatorChat {
     pub fn open(&self) -> bool {
         self.0.is_some()
     }
 }
 
-/// Events the rail may call.
+/// Events spectators may call.
 ///
 /// Seven of the nine. Crab Monopoly sends half the loose crabs to a
-/// banker and Gull Attack spares one castle, and the rail has no castle to
+/// banker and Gull Attack spares one castle, and spectators have no castle to
 /// spare and no bank to fill: a crowd that could hand a player points is
 /// a crowd worth lobbying. What is left stirs the beach for everybody.
-pub const RAIL_EVENTS: [TideEvent; 7] = [
+pub const SPECTATOR_EVENTS: [TideEvent; 7] = [
     TideEvent::CrabMania,
     TideEvent::GullMania,
     TideEvent::SpeedUp,
@@ -46,7 +46,7 @@ pub const RAIL_EVENTS: [TideEvent; 7] = [
 /// Seconds a vote stays open once the first pick lands.
 const WINDOW: f32 = 3.0;
 
-/// Seconds the rail waits between calls, however many of them there are.
+/// Seconds spectators wait between calls, however many of them there are.
 ///
 /// Shared, not one apiece: a bigger crowd should be louder, not more
 /// interrupting, and a three-minute round has room for a handful.
@@ -54,43 +54,43 @@ const COOLDOWN: f32 = 25.0;
 
 /// The vote as the host counts it.
 ///
-/// Host side only, and deliberately outside the sim: what the rail is
+/// Host side only, and deliberately outside the sim: what the spectators are
 /// arguing about is nobody else's business and never has to agree
 /// anywhere. Only the answer enters the round, and it enters as an action
 /// on a frame, where it cannot be lost.
 #[derive(Default)]
-pub struct RailVotes {
-    /// Picks since the window opened, one count per `RAIL_EVENTS` seat.
-    tally: [u16; RAIL_EVENTS.len()],
+pub struct SpectatorVotes {
+    /// Picks since the window opened, one count per `SPECTATOR_EVENTS` seat.
+    tally: [u16; SPECTATOR_EVENTS.len()],
     /// Seconds left of an open window, or zero when none is open.
     open_for: f32,
-    /// Seconds until the rail may call again.
+    /// Seconds until spectators may call again.
     cooldown: f32,
 }
 
-impl RailVotes {
+impl SpectatorVotes {
     /// Take a spectator's pick. The first one inside a quiet stretch opens
     /// the window; the rest fall into it.
     pub fn cast(&mut self, event: u8) {
-        let Some(at) = RAIL_EVENTS
+        let Some(at) = SPECTATOR_EVENTS
             .iter()
             .position(|e| e.index() == usize::from(event))
         else {
-            return; // not one of the rail's, or not an event at all
+            return; // not one of theirs, or not an event at all
         };
         if self.cooldown > 0.0 {
             return;
         }
         if self.open_for <= 0.0 {
-            self.tally = [0; RAIL_EVENTS.len()];
+            self.tally = [0; SPECTATOR_EVENTS.len()];
             self.open_for = WINDOW;
         }
         self.tally[at] = self.tally[at].saturating_add(1);
     }
 
-    /// Run the window down; the event the rail settled on, once it closes.
+    /// Run the window down; the event the spectators settled on, once it closes.
     ///
-    /// The tie-break is the earlier seat in [`RAIL_EVENTS`], which is
+    /// The tie-break is the earlier seat in [`SPECTATOR_EVENTS`], which is
     /// arbitrary but fixed: a tie broken by whichever vote the socket
     /// happened to hand over first would make the same room's same vote
     /// come out differently twice.
@@ -110,22 +110,22 @@ impl RailVotes {
             .iter()
             .enumerate()
             .max_by_key(|(at, votes)| (**votes, std::cmp::Reverse(*at)))?;
-        (*votes > 0).then(|| RAIL_EVENTS[at])
+        (*votes > 0).then(|| SPECTATOR_EVENTS[at])
     }
 
-    /// Whether a vote is open, and how long the rail has left to join it.
+    /// Whether a vote is open, and how long there is left to join it.
     pub fn open(&self) -> Option<f32> {
         (self.open_for > 0.0).then_some(self.open_for)
     }
 
-    /// Seconds until the rail may call again, if it is waiting.
+    /// Seconds until spectators may call again, if they are waiting.
     pub fn waiting(&self) -> Option<f32> {
         (self.cooldown > 0.0).then_some(self.cooldown)
     }
 }
 
-/// Whether this peer is at the rail: online, in a round, holding no seat.
-pub fn at_the_rail(online: &Online) -> bool {
+/// Whether this peer is a spectator: online, in a round, holding no seat.
+pub fn is_spectating(online: &Online) -> bool {
     online
         .0
         .as_ref()
@@ -134,17 +134,17 @@ pub fn at_the_rail(online: &Online) -> bool {
 
 /// T opens a line, Enter says it, Esc drops it.
 ///
-/// The key is read only at the rail, so a player's T is still a player's
+/// The key is read only for a spectator, so a player's T is still a player's
 /// T: nothing here can take a letter out of a round being played.
-pub fn rail_chat_input(
+pub fn spectator_chat_input(
     keys: Res<ButtonInput<KeyCode>>,
     caps: Res<crate::app::keycaps::KeyCaps>,
     mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
     settings: Res<crate::app::settings::GameSettings>,
-    mut chat: ResMut<RailChat>,
+    mut chat: ResMut<SpectatorChat>,
     mut online: ResMut<Online>,
 ) {
-    if !at_the_rail(&online) {
+    if !is_spectating(&online) {
         // A seat was handed out mid-round, or the session ended under a
         // half-typed line. Either way the line is not going anywhere.
         chat.0 = None;
@@ -204,7 +204,7 @@ mod tests {
     /// The window, the majority, the tie-break and the cooldown.
     #[test]
     fn the_rail_settles_on_one_event_and_then_waits() {
-        let mut votes = RailVotes::default();
+        let mut votes = SpectatorVotes::default();
         assert!(votes.open().is_none(), "nothing open to begin with");
         assert_eq!(votes.settle(1.0), None, "and nothing to settle");
 
@@ -220,7 +220,7 @@ mod tests {
         assert_eq!(votes.settle(1.0), None, "still open");
         assert_eq!(votes.settle(WINDOW), Some(TideEvent::CastleSwap));
 
-        // And then the rail waits, however many of them there are.
+        // And then they wait, however many of them there are.
         assert!(votes.waiting().is_some());
         votes.cast(fresh);
         assert!(
@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(votes.settle(COOLDOWN), None);
         assert!(votes.waiting().is_none(), "the wait is over");
         votes.cast(fresh);
-        assert!(votes.open().is_some(), "and the rail may call again");
+        assert!(votes.open().is_some(), "and they may call again");
     }
 
     /// A tie goes to the earlier event on the list, which is arbitrary but
@@ -239,48 +239,51 @@ mod tests {
     #[test]
     fn a_tied_vote_breaks_the_same_way_every_time() {
         let pick = |order: [TideEvent; 2]| {
-            let mut votes = RailVotes::default();
+            let mut votes = SpectatorVotes::default();
             for event in order {
                 votes.cast(event.index() as u8);
             }
             votes.settle(WINDOW)
         };
-        let early = RAIL_EVENTS[1];
-        let late = RAIL_EVENTS[5];
+        let early = SPECTATOR_EVENTS[1];
+        let late = SPECTATOR_EVENTS[5];
         assert_eq!(pick([early, late]), Some(early));
         assert_eq!(pick([late, early]), Some(early), "whichever arrived first");
     }
 
-    /// Two of the nine hand a player something, and the rail has no seat
+    /// Two of the nine hand a player something, and spectators have no seat
     /// to be handed anything: a crowd that could bank for you is a crowd
     /// worth lobbying.
     #[test]
     fn the_rail_cannot_call_an_event_that_favours_a_seat() {
         for event in [TideEvent::Monopoly, TideEvent::GullAttack] {
-            assert!(!RAIL_EVENTS.contains(&event), "{event:?}");
-            let mut votes = RailVotes::default();
+            assert!(!SPECTATOR_EVENTS.contains(&event), "{event:?}");
+            let mut votes = SpectatorVotes::default();
             votes.cast(event.index() as u8);
             assert!(votes.open().is_none(), "{event:?} is not on the list");
         }
         assert_eq!(
-            RAIL_EVENTS.len() + 2,
+            SPECTATOR_EVENTS.len() + 2,
             TideEvent::ALL.len(),
             "and the rest are"
         );
     }
 
-    /// The rail is the people with no seat, and only they type: a player's
+    /// Spectators are the people with no seat, and only they type: a player's
     /// hands are on the keys and a letter taken for a chat line is a
     /// letter taken out of the round.
     #[test]
-    fn only_a_seatless_peer_is_at_the_rail() {
-        assert!(!at_the_rail(&Online::default()), "nobody is online at all");
+    fn only_a_seatless_peer_is_is_spectating() {
         assert!(
-            !at_the_rail(&Online(Some(session(Some(0))))),
+            !is_spectating(&Online::default()),
+            "nobody is online at all"
+        );
+        assert!(
+            !is_spectating(&Online(Some(session(Some(0))))),
             "a player holds a seat"
         );
         assert!(
-            at_the_rail(&Online(Some(session(None)))),
+            is_spectating(&Online(Some(session(None)))),
             "a watcher holds none"
         );
     }
@@ -289,8 +292,8 @@ mod tests {
 /// Run the host's open vote down and hand the answer to the next frame.
 ///
 /// Only the host does this, because only the host counts: every other
-/// peer learns what the rail decided when the frame carrying it arrives.
-pub fn settle_rail_vote(
+/// peer learns what the spectators decided when the frame carrying it arrives.
+pub fn settle_spectator_vote(
     time: Res<Time>,
     settings: Res<crate::app::settings::GameSettings>,
     mut online: ResMut<Online>,
@@ -301,7 +304,7 @@ pub fn settle_rail_vote(
     if !session.is_host() {
         return;
     }
-    let Some(event) = session.rail.settle(time.delta_secs()) else {
+    let Some(event) = session.spectators.settle(time.delta_secs()) else {
         return;
     };
     session.pending_call = Some(event);
@@ -309,18 +312,18 @@ pub fn settle_rail_vote(
     // beach's own voice, which is how the lobby already spells "this is
     // not a person talking".
     let tr = settings.tr();
-    let line = crate::app::i18n::fill(tr.rail_called, &[("e", tr.events[event.index()])]);
+    let line = crate::app::i18n::fill(tr.spectator_called, &[("e", tr.events[event.index()])]);
     session.transport.send(NetMsg::chat("", &line));
     session.heard.push((String::new(), line));
 }
 
-/// The rail's event list, while a spectator has it open.
+/// The spectators' event list, while one has it open.
 #[derive(Component)]
-pub struct RailCardUi;
+pub struct SpectatorCardUi;
 
-/// Whether the rail's event list is on screen.
+/// Whether the spectators' event list is on screen.
 #[derive(Resource, Default)]
-pub struct RailCard(pub bool);
+pub struct SpectatorCard(pub bool);
 
 /// Open the list, pick from it, or put it away.
 ///
@@ -328,24 +331,24 @@ pub struct RailCard(pub bool);
 /// behind it wants one press, not four. The keys are the same ones the
 /// menu already numbers its modes with.
 #[allow(clippy::too_many_arguments)]
-pub fn rail_vote_input(
+pub fn spectator_vote_input(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     caps: Res<crate::app::keycaps::KeyCaps>,
     settings: Res<crate::app::settings::GameSettings>,
-    chat: Res<RailChat>,
-    mut card: ResMut<RailCard>,
+    chat: Res<SpectatorChat>,
+    mut card: ResMut<SpectatorCard>,
     mut online: ResMut<Online>,
-    ui: Query<Entity, With<RailCardUi>>,
+    ui: Query<Entity, With<SpectatorCardUi>>,
 ) {
-    let shut = |commands: &mut Commands, card: &mut RailCard| {
+    let shut = |commands: &mut Commands, card: &mut SpectatorCard| {
         card.0 = false;
         for entity in &ui {
             commands.entity(entity).despawn();
         }
     };
     // Typing takes the keyboard, and losing a seat takes the job.
-    if !at_the_rail(&online) || chat.open() {
+    if !is_spectating(&online) || chat.open() {
         if card.0 {
             shut(&mut commands, &mut card);
         }
@@ -376,12 +379,12 @@ pub fn rail_vote_input(
             continue;
         }
         if let Some(session) = &mut online.0 {
-            let event = RAIL_EVENTS[at].index() as u8;
-            session.transport.send(NetMsg::RailVote { event });
-            // The host counts its own rail too, and a host that is
+            let event = SPECTATOR_EVENTS[at].index() as u8;
+            session.transport.send(NetMsg::SpectatorVote { event });
+            // The host counts its own vote too, and a host that is
             // watching is a host all the same.
             if session.is_host() {
-                session.rail.cast(event);
+                session.spectators.cast(event);
             }
         }
         shut(&mut commands, &mut card);
@@ -393,18 +396,22 @@ pub(super) fn spawn_card(commands: &mut Commands, settings: &crate::app::setting
     use crate::app::{menu_ui, palette};
     let tr = settings.tr();
     commands
-        .spawn((RailCardUi, GlobalZIndex(20), menu_ui::centred_overlay()))
+        .spawn((
+            SpectatorCardUi,
+            GlobalZIndex(20),
+            menu_ui::centred_overlay(),
+        ))
         .with_children(|wrap| {
             wrap.spawn(menu_ui::screen_card()).with_children(|card| {
                 card.spawn((
-                    Text::new(tr.rail_call_title),
+                    Text::new(tr.spectator_call_title),
                     TextFont {
                         font_size: FontSize::Px(menu_ui::type_scale::HEADING),
                         ..default()
                     },
                     TextColor(palette::GOLD),
                 ));
-                for (at, event) in RAIL_EVENTS.into_iter().enumerate() {
+                for (at, event) in SPECTATOR_EVENTS.into_iter().enumerate() {
                     card.spawn((
                         Text::new(format!("{}  {}", at + 1, tr.events[event.index()])),
                         TextFont {

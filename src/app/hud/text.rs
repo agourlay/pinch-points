@@ -357,14 +357,14 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         // Someone else's live match has no transport and no seat here:
         // no control legend at all.
         // Someone else's live match has no seat here, so no control
-        // legend: the rail holds nothing and places nothing. What it does
+        // legend: a spectator holds nothing and places nothing. What they do
         // have is free hands, which is why it is the one that can talk.
         VersusPhase::Running if online.0.as_ref().is_some_and(|s| s.session.watching()) => {
-            match r.rail_typing {
+            match r.spectator_typing {
                 Some(line) => format!("> {line}_"),
                 None => format!(
                     "{} | {} | {}",
-                    tr.rail_call_hint, tr.lobby_chat_hint, tr.prompt_enter_menu
+                    tr.spectator_call_hint, tr.lobby_chat_hint, tr.prompt_enter_menu
                 ),
             }
         }
@@ -425,8 +425,8 @@ pub(super) struct Readout<'a> {
     pub match_menu: &'a crate::app::match_setup::MatchMenu,
     /// Whether the pause card is up and holding the keyboard.
     pub paused: bool,
-    /// The line the rail is saying to the table, while one is open.
-    pub rail_typing: Option<&'a str>,
+    /// The line a spectator is saying to the table, while one is open.
+    pub spectator_typing: Option<&'a str>,
     pub speed: u8,
 }
 
@@ -585,7 +585,7 @@ mod tests {
             notice: &crate::app::RoundNotice::default(),
             match_menu: &crate::app::match_setup::MatchMenu::default(),
             paused: false,
-            rail_typing: None,
+            spectator_typing: None,
             speed: 1,
         };
         for screen in Screen::ALL {
@@ -655,7 +655,7 @@ mod tests {
                 notice: &crate::app::RoundNotice::default(),
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
                 paused: false,
-                rail_typing: None,
+                spectator_typing: None,
                 speed: 1,
             };
             let prompt = screen_text(Screen::Versus, &readout).prompt;
@@ -785,7 +785,7 @@ mod tests {
                     notice: &crate::app::RoundNotice::default(),
                     match_menu: &crate::app::match_setup::MatchMenu::default(),
                     paused,
-                    rail_typing: None,
+                    spectator_typing: None,
                     speed: 1,
                 },
             )
@@ -841,7 +841,7 @@ mod tests {
                 notice: &crate::app::RoundNotice::default(),
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
                 paused: false,
-                rail_typing: None,
+                spectator_typing: None,
                 speed: 1,
             })
             .prompt

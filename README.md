@@ -59,9 +59,8 @@ one still in progress.
 - **Turf War**: local versus for 2-6 on one keyboard plus gamepads, with
   team play, series, and AI at three levels.
 - **Beach Lobby**: up to 6 over LAN, on deterministic lockstep with
-  desync detection. Anyone past the sixth chair watches from the rail,
-  where they can talk to the table and vote on a tide event to call down
-  on it.
+  desync detection. Anyone past the sixth chair watches instead,
+  and can talk to the table and vote on a tide event to call down on it.
 - **Driftwood**: a level editor whose solver proves a level beatable
   before it ships.
 - **Beach Day**, **Replay**, **Daily Challenge**, **Achievements**.

@@ -324,11 +324,11 @@ struct Tr {
     /// The prompt line while the pause card has the keyboard: its keys,
     /// not the beach's.
     pub prompt_paused: &'static str,
-    /// The heading on the rail's event list, and the two lines its prompt
+    /// The heading on the spectators' event list, and the two lines their prompt
     /// carries: the offer to call one, and the wait after it has.
-    pub rail_call_title: &'static str,
-    pub rail_call_hint: &'static str,
-    pub rail_called: &'static str,
+    pub spectator_call_title: &'static str,
+    pub spectator_call_hint: &'static str,
+    pub spectator_called: &'static str,
     /// Said on the versus screen when a round is copied as a code.
     pub round_copied: &'static str,
     pub round_code_bad: &'static str,

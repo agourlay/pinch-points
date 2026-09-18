@@ -477,7 +477,7 @@ pub struct Homecoming(pub Option<LobbyReturn>);
 
 /// Stand the beach back up from what the match handed back: the host goes
 /// straight back on the air as open, a joiner back to its chair (or the
-/// rail), both on the sockets the round was played over.
+/// watching), both on the sockets the round was played over.
 fn settle_back_in(
     state: &mut LobbyState,
     returned: LobbyReturn,
@@ -926,7 +926,7 @@ mod homecoming_tests {
         assert_eq!(
             state.roster(&EN, "Anna"),
             ["Anna", "Bo"],
-            "the table as it stood, minus the one at the rail"
+            "the table as it stood, minus the one watching"
         );
     }
 
@@ -979,7 +979,7 @@ mod homecoming_tests {
             &EN,
         );
         let joined = state.joined().expect("joining");
-        assert!(joined.watching, "still at the rail");
+        assert!(joined.watching, "still watching");
         assert_eq!(joined.played_seed(), Some(42));
         assert!(joined.host_answered, "the host was talking a moment ago");
         assert_eq!(state.feedback, EN.lobby_watching);

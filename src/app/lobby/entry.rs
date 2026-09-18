@@ -250,7 +250,7 @@ pub(super) fn name_myself(
 ///
 /// Returns the finished line, if Enter finished one.
 ///
-/// `pub(crate)` because the rail types during a round too, which is a
+/// `pub(crate)` because a spectator types during a round too, which is a
 /// fourth caller of the same act: type, Enter, Esc, capped at the length a
 /// chat line goes onto the wire at.
 pub(crate) fn type_a_line(

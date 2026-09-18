@@ -106,12 +106,12 @@ pub enum NetMsg {
     /// Relayed by the host to the rest of the table, like an input: the
     /// spokes of the star cannot hear each other.
     Chat { name: WireName, text: WireChat },
-    /// A spectator's pick for the next tide event the rail calls.
+    /// A spectator's pick for the next tide event the spectators call.
     ///
     /// Only the host counts these. It is the one peer everybody waits on
     /// anyway, so it is the one that can put the result where nobody can
     /// miss it: into an action, on a frame.
-    RailVote { event: u8 },
+    SpectatorVote { event: u8 },
     /// Host → a peer that turned up after the launch: the round is under
     /// way and cannot take you, but you are in line for the next one, with
     /// `ahead` people in front of you.
@@ -193,7 +193,7 @@ const TAG_CHAT: u8 = 9;
 const TAG_ROSTER: u8 = 10;
 const TAG_ABANDONED: u8 = 11;
 const TAG_INPUTS: u8 = 12;
-const TAG_RAIL_VOTE: u8 = 13;
+const TAG_SPECTATOR_VOTE: u8 = 13;
 /// The last of them, which `peek_version` uses to tell one of ours from
 /// stray traffic on the port.
 const HIGHEST_TAG: u8 = TAG_INPUTS;
@@ -334,7 +334,7 @@ impl NetMsg {
             NetMsg::Hash { .. } => vec![TAG_HASH],
             NetMsg::Start { .. } => vec![TAG_START],
             NetMsg::Pause { .. } => vec![TAG_PAUSE],
-            NetMsg::RailVote { .. } => vec![TAG_RAIL_VOTE],
+            NetMsg::SpectatorVote { .. } => vec![TAG_SPECTATOR_VOTE],
             NetMsg::Resume { .. } => vec![TAG_RESUME],
             NetMsg::Incompatible { version } => return vec![TAG_INCOMPATIBLE, version],
         };
@@ -412,7 +412,7 @@ impl NetMsg {
                 bytes.extend_from_slice(&beach[..usize::from(len)]);
             }
             NetMsg::Pause { frame } => bytes.extend_from_slice(&frame.to_le_bytes()),
-            NetMsg::RailVote { event } => bytes.push(event),
+            NetMsg::SpectatorVote { event } => bytes.push(event),
         }
         bytes
     }
@@ -521,7 +521,7 @@ impl NetMsg {
             TAG_PAUSE => Some(NetMsg::Pause {
                 frame: u32::from_le_bytes(body.get(..4)?.try_into().ok()?),
             }),
-            TAG_RAIL_VOTE => Some(NetMsg::RailVote {
+            TAG_SPECTATOR_VOTE => Some(NetMsg::SpectatorVote {
                 event: *body.first()?,
             }),
             TAG_RESUME => Some(NetMsg::Resume {
@@ -787,7 +787,7 @@ mod tests {
             NetMsg::Resume { frame: 0 },
             NetMsg::Resume { frame: 70_000 },
             NetMsg::Pause { frame: 7 },
-            NetMsg::RailVote { event: 8 },
+            NetMsg::SpectatorVote { event: 8 },
             NetMsg::Inputs(vec![InputMsg {
                 player: 1,
                 frame: 42,
