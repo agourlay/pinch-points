@@ -99,6 +99,13 @@ pub struct PuzzleAttempt {
     /// the retries of the last visit.
     stage: String,
     pub retries: u32,
+    /// Whether the stage was still unbeaten when this attempt began.
+    ///
+    /// Two trophies count stages rather than clears: "clear 10 stages with
+    /// one to spare" and "clear 10 stages first try". Counting every clear
+    /// made ten goes at stage one into ten stages, so they ask for a stage
+    /// that had not been beaten yet when the attempt started.
+    pub unbeaten: bool,
 }
 
 /// Ids of unlocked achievements.

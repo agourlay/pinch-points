@@ -276,18 +276,25 @@ pub fn record_puzzle(
     mut stats: ResMut<Stats>,
     mut unlocked: ResMut<Unlocked>,
 ) {
+    // A solve is a solve, and the trophies over this one say "solve 100
+    // puzzles": re-solving a stage is one of those.
     stats.puzzles += 1;
-    // How it was cleared, not merely that it was. Read before the campaign
-    // sweep below, which is about the whole list rather than this stage.
+    // How it was cleared, not merely that it was, and only on a stage that
+    // was still unbeaten when the attempt began: these three say "stages",
+    // and a stage already in the book is not another one. Read before the
+    // campaign sweep below, which is about the whole list rather than this
+    // stage.
     let level = campaign.current();
-    if sim.0.signpost_count(0) < usize::from(level.posts) {
-        stats.under_par += 1;
-    }
-    if level.posts >= DEEP_POSTS {
-        stats.deep_solves += 1;
-    }
-    if attempt.retries == 0 {
-        stats.clean_solves += 1;
+    if attempt.unbeaten {
+        if sim.0.signpost_count(0) < usize::from(level.posts) {
+            stats.under_par += 1;
+        }
+        if level.posts >= DEEP_POSTS {
+            stats.deep_solves += 1;
+        }
+        if attempt.retries == 0 {
+            stats.clean_solves += 1;
+        }
     }
     let builtins = &campaign.levels[..campaign.builtins.min(campaign.levels.len())];
     if !builtins.is_empty()
@@ -324,6 +331,7 @@ const DEEP_POSTS: u8 = 5;
 pub fn track_puzzle_attempt(
     mut loads: MessageReader<crate::app::LoadLevel>,
     campaign: Res<crate::app::Campaign>,
+    progress: Res<crate::app::progress::Progress>,
     mut attempt: ResMut<PuzzleAttempt>,
 ) {
     let mut loads = loads.read().count() as u32;
@@ -332,6 +340,10 @@ pub fn track_puzzle_attempt(
     }
     let name = &campaign.current().name;
     if attempt.stage != *name {
+        // Read here rather than at the clear, which is the moment it stops
+        // being true: the stage trophies ask what this attempt walked up
+        // to, not what it left behind.
+        attempt.unbeaten = !progress.is_cleared(campaign.kind, name);
         attempt.stage = name.clone();
         attempt.retries = 0;
         loads -= 1;
@@ -457,6 +469,53 @@ mod tests {
         assert_eq!(stats.best_round, 51);
     }
 
+    /// Two trophies count stages and say so: "clear 10 stages with one to
+    /// spare", "clear 10 stages first try". They used to count clears, so
+    /// ten goes at stage one were ten stages, and both fell to the easiest
+    /// stage in the campaign played over and over.
+    #[test]
+    fn a_stage_already_beaten_is_not_another_stage() {
+        use crate::app::progress::Progress;
+        use crate::app::{Campaign, CampaignKind, LoadLevel};
+        let mut levels = crate::sim::campaign_levels();
+        levels.truncate(2);
+        let builtins = levels.len();
+        let first = levels[0].name.clone();
+        let mut app = App::new();
+        app.add_message::<LoadLevel>();
+        app.init_resource::<PuzzleAttempt>();
+        app.init_resource::<Progress>();
+        app.insert_resource(Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        });
+        app.add_systems(Update, track_puzzle_attempt);
+        let load = |app: &mut App| {
+            app.world_mut()
+                .write_message(LoadLevel { keep_posts: false });
+            app.update();
+        };
+        let unbeaten = |app: &App| app.world().resource::<PuzzleAttempt>().unbeaten;
+
+        load(&mut app);
+        assert!(unbeaten(&app), "nothing cleared yet");
+
+        // Clear it, leave, and come back: the same stage, no longer a new one.
+        app.world_mut()
+            .resource_mut::<Progress>()
+            .mark(CampaignKind::TidePool, &first);
+        let _ = app.world_mut().run_system_once(reset_puzzle_attempt);
+        load(&mut app);
+        assert!(!unbeaten(&app), "a stage already in the book");
+
+        // The one behind it is still its own stage.
+        app.world_mut().resource_mut::<Campaign>().index = 1;
+        load(&mut app);
+        assert!(unbeaten(&app), "a stage never played");
+    }
+
     /// Entering a stage sends the same message that restarting it does, so
     /// the first-try trophy hangs entirely on telling them apart. Backwards
     /// either way it is worthless: it would go to everybody, or to nobody.
@@ -469,6 +528,7 @@ mod tests {
         let mut app = App::new();
         app.add_message::<LoadLevel>();
         app.init_resource::<PuzzleAttempt>();
+        app.init_resource::<crate::app::progress::Progress>();
         app.insert_resource(Campaign {
             kind: CampaignKind::TidePool,
             levels,
