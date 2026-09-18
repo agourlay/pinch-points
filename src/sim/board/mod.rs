@@ -282,6 +282,12 @@ pub struct Board {
     mania: Option<(Mania, u32)>,
     /// Active tempo shift and the ticks left of it.
     tempo: Option<(Tempo, u32)>,
+    /// Ticks left of a Right Claws event, zero when none is running.
+    ///
+    /// A bare count rather than an `Option`, because unlike a mania or a
+    /// tempo shift there is nothing to say but how long is left: the claw
+    /// it favours never changes.
+    claw_call: u32,
     /// The most recent tide event and the tick it fired (HUD banner).
     last_event: Option<(TideEvent, u64)>,
     /// Open edges: creatures walking (or flying) off one side re-enter on
@@ -371,6 +377,7 @@ impl Board {
             events_enabled: false,
             mania: None,
             tempo: None,
+            claw_call: 0,
             last_event: None,
             wrap: false,
             event_queue: Vec::new(),
@@ -417,6 +424,7 @@ impl Board {
             events_enabled,
             mania,
             tempo,
+            claw_call,
             last_event,
             wrap,
             event_queue,
@@ -442,6 +450,7 @@ impl Board {
         self.events_enabled = *events_enabled;
         self.mania = *mania;
         self.tempo = *tempo;
+        self.claw_call = *claw_call;
         self.last_event = *last_event;
         self.wrap = *wrap;
         refill(&mut self.event_queue, event_queue);
@@ -599,6 +608,7 @@ impl Board {
                 self.mania = None;
             }
         }
+        self.claw_call = self.claw_call.saturating_sub(1);
         if let Some((_, ticks)) = &mut self.tempo {
             *ticks -= 1;
             if *ticks == 0 {
@@ -675,6 +685,32 @@ impl Board {
             PlayerAction::Remove { x, y } => {
                 let _ = self.remove_signpost(player, x, y);
             }
+        }
+    }
+
+    /// Credit a banked crab to `owner`, under whatever the tide is asking
+    /// for right now.
+    ///
+    /// Every bank goes through here, the ordinary walk into a castle and
+    /// Crab Monopoly's sweep alike: the two used to add the crab's value
+    /// each in their own line, and a rule that arrived later would have
+    /// landed on one of them.
+    ///
+    /// Right Claws is that rule. While it runs, a right-clawed crab is
+    /// worth twice what it says and a left-clawed one costs the same
+    /// again, down to nothing and no further: a score that has gone
+    /// negative is a player who has stopped playing, and this game is for
+    /// children.
+    pub(super) fn credit_bank(&mut self, owner: PlayerId, crab: &Crab) {
+        let value = crab.kind.value();
+        let score = &mut self.scores[owner as usize];
+        if self.claw_call == 0 {
+            *score += value;
+            return;
+        }
+        match crab.handed {
+            Handedness::Right => *score += value * 2,
+            Handedness::Left => *score = score.saturating_sub(value),
         }
     }
 
@@ -761,6 +797,25 @@ impl Board {
     /// Active molting lure, if any: (luring player, ticks left).
     pub fn lure(&self) -> Option<(PlayerId, u32)> {
         self.lure
+    }
+
+    /// Whether Right Claws is running: a right-clawed crab banks double
+    /// and a left-clawed one costs. Read by the bots, who would otherwise
+    /// go on herding whatever is nearest and hand their points back.
+    pub fn in_claw_call(&self) -> bool {
+        self.claw_call > 0
+    }
+
+    /// What a crab is worth to whoever banks it right now, which is not
+    /// always what its kind says. `None` for one that would cost.
+    pub fn bank_worth(&self, crab: &Crab) -> Option<u32> {
+        if !self.in_claw_call() {
+            return Some(crab.kind.value());
+        }
+        match crab.handed {
+            Handedness::Right => Some(crab.kind.value() * 2),
+            Handedness::Left => None,
+        }
     }
 
     /// Crabs banked since the start, all players combined.

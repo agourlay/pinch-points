@@ -353,10 +353,10 @@ struct Tr {
     /// Short seat label: "P1" / "J1" / "S1".
     pub player_label: &'static str,
     // Tide events
-    pub events: [&'static str; 8],
+    pub events: [&'static str; 9],
     /// What each event actually does, in event order: the line under the
     /// headline on the centre-screen announcement.
-    pub event_blurbs: [&'static str; 8],
+    pub event_blurbs: [&'static str; 9],
     // Centre-screen announcements
     pub ann_lure: &'static str,
     pub ann_lure_sub: &'static str,

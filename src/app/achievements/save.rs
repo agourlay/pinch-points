@@ -112,7 +112,7 @@ pub fn parse(text: &str) -> (Stats, Unlocked) {
             "daily_best" => stats.daily_best = num,
             "giants" => stats.giants = num,
             // A bitmask, so anything past a byte is not ours.
-            "events_seen" => stats.events_seen = u8::try_from(num).unwrap_or(0),
+            "events_seen" => stats.events_seen = u16::try_from(num).unwrap_or(0),
             "best_round" => stats.best_round = num,
             "series_wins" => stats.series_wins = num,
             "online_wins" => stats.online_wins = num,

@@ -18,6 +18,7 @@ fn name(event: TideEvent) -> &'static str {
         TideEvent::SlowDown => "Slow Down",
         TideEvent::FreshSand => "Fresh Sand",
         TideEvent::CastleSwap => "Castle Swap",
+        TideEvent::RightClaws => "Right Claws",
     }
 }
 

@@ -376,6 +376,11 @@ fn chase_jackpot(
             CrabKind::Giant => 10,
             CrabKind::Common | CrabKind::Juvenile | CrabKind::Sparkling => continue,
         };
+        // A jackpot on the wrong claw is not a jackpot: under Right Claws
+        // a left-clawed golden crab costs fifty to bank.
+        if board.bank_worth(crab).is_none() {
+            continue;
+        }
         let d = manhattan(board, crab.tile, castle);
         if d == 0 || d > level.jackpot_reach() || crab.dir == toward(board, crab.tile, castle) {
             continue;
@@ -408,9 +413,15 @@ fn recruit(
             continue; // already coming to us
         }
         // The easy bot cannot tell a jackpot from a common crab and simply
-        // grabs at whatever is closest.
+        // grabs at whatever is closest. It cannot read the tide either, so
+        // under Right Claws it goes on fetching crabs that cost it points,
+        // which is the sort of mistake the easy bot is for.
         let value = if level.values_the_catch() {
-            crab.kind.value()
+            match board.bank_worth(crab) {
+                Some(worth) => worth,
+                // Costs points to bank: leave it where it is.
+                None => continue,
+            }
         } else {
             1
         };

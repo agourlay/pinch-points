@@ -300,7 +300,7 @@ fn debug_map() -> Option<match_setup::MapChoice> {
     })
 }
 
-/// Dev hook: `PINCH_TIDE=<0-7>` fires a real tide event a few seconds in,
+/// Dev hook: `PINCH_TIDE=<0-8>` fires a real tide event a few seconds in,
 /// rather than the banner alone, so what the event *does* can be watched.
 /// Seven is the castle swap.
 pub(super) fn debug_tide(mut sim: ResMut<Sim>, mut hook: Local<OneShot>) {
@@ -359,7 +359,7 @@ pub(super) fn debug_lure(mut sim: ResMut<Sim>, mut hook: Local<OneShot>) {
         .force_lure(seat.min(crate::sim::MAX_PLAYERS as u8 - 1));
 }
 
-/// Dev hook: `PINCH_BANNER=lure|surge|<0-7>` raises one centre-screen
+/// Dev hook: `PINCH_BANNER=lure|surge|<0-8>` raises one centre-screen
 /// announcement a few seconds into the round, so the banner can be
 /// screenshotted over a board with something on it, rather than waiting for
 /// a sparkling crab to be banked, which may not happen for minutes.

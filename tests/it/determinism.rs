@@ -100,6 +100,12 @@ const TICKS: u64 = 10_000;
 ///
 /// Why it has moved, most recent first:
 ///
+/// - 2026-09-18: a ninth face on the roulette (Right Claws). The draw is
+///   one modulo over `TideEvent::ALL`, so a face changes every spin from
+///   the first one onward, and the new event's own countdown joins the
+///   fingerprint. Recordings do not survive this: the replay header went
+///   to `replay-v2` the same day, so a v1 file is refused rather than
+///   played out as a different round.
 /// - 2026-08-27: `EVENT_COOLDOWN` holds the tide roulette to one event per
 ///   `EVENT_TICKS`, which moves this round, and `event_cooldown` joins the
 ///   fingerprint as live state that decides what happens next.
@@ -120,7 +126,7 @@ const TICKS: u64 = 10_000;
 ///   rules moved that day too: the lure stopped stacking, the roulette
 ///   stopped rolling gull events into the surge, and the spawners took a
 ///   crab cap.
-const EXPECTED_HASH: u64 = 0x509a_9e6e_cf97_32c5;
+const EXPECTED_HASH: u64 = 0x9d19_3838_8cb8_f8f5;
 
 #[test]
 fn ten_thousand_ticks_reproduce_exactly() {

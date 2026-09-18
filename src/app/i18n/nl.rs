@@ -238,6 +238,7 @@ pub static NL: Tr = Tr {
         "Trager",
         "Vers zand",
         "Kastelenruil",
+        "Rechtse scharen",
     ],
     event_blurbs: [
         "de meeuwen spoelen weg en uit de gaten stromen krabben",
@@ -248,6 +249,7 @@ pub static NL: Tr = Tr {
         "elke krab kruipt nog maar net vooruit",
         "elke pijl op het strand spoelt weg",
         "de kastelen wisselen van eigenaar - let op welk de jouwe is",
+        "rechtse scharen tellen dubbel, linkse kosten",
     ],
     ann_lure: "LOKROEP!",
     ann_lure_sub: "tien seconden lang rent elke losse krab naar {p}",

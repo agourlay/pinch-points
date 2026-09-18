@@ -281,7 +281,7 @@ deliberately.
   `PINCH_LOBBY_HOST`/`PINCH_LOBBY_JOIN`/`PINCH_LOBBY_WATCH` open the rest;
   `PINCH_AUTOPLAY` with `PINCH_NOSOLVE=1` starts each level's run without
   placing anything, so a timed level runs out.
-  `PINCH_BANNER=lure|surge|<0-7>` raises an announcement, `PINCH_TIDE=<0-7>`
+  `PINCH_BANNER=lure|surge|<0-8>` raises an announcement, `PINCH_TIDE=<0-8>`
   fires the tide event itself, and `PINCH_LURE=<seat>` starts a lure a few
   seconds in. `PINCH_PAUSE=1`, `PINCH_OVER=1` and `PINCH_INTERLUDE=1` raise
   the pause card, the results card and the series interlude a couple of

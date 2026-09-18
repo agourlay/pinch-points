@@ -27,7 +27,14 @@ pub struct Replay {
     pub names: [String; MAX_PLAYERS],
 }
 
-const HEADER: &str = "replay-v1";
+/// The rules a recording was played under, not just the shape of the file.
+///
+/// A replay is inputs, and inputs only mean what the rules say they mean:
+/// the roulette picks a face with one draw over `TideEvent::ALL`, so
+/// adding a face in v2 (Right Claws) moved every draw after it. A v1
+/// recording fed to these rules would not diverge loudly, it would quietly
+/// play out a different round. Refused instead.
+const HEADER: &str = "replay-v2";
 const INPUTS_MARK: &str = "inputs:";
 /// Seat names, one line, `|` between them. Read before the level text
 /// rather than inside it: the level format knows nothing about who was
@@ -85,7 +92,7 @@ impl Replay {
     pub fn parse(text: &str) -> Result<Replay, String> {
         let rest = text
             .strip_prefix(HEADER)
-            .ok_or("not a replay-v1 file")?
+            .ok_or("not a replay this build can play")?
             .trim_start_matches(['\r', '\n']);
         // A file written before names were kept simply has no such line,
         // and reads exactly as it always did.

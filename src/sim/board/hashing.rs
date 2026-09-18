@@ -50,6 +50,7 @@ impl Board {
             events_enabled: _,
             mania: _,
             tempo: _,
+            claw_call: _,
             last_event: _,
             wrap: _,
             // Outside the fingerprint, each for a reason of its own: the
@@ -206,6 +207,7 @@ impl Board {
                 h.u32(t);
             }
         }
+        h.u32(self.claw_call);
         match self.last_event {
             None => h.u8(0),
             Some((event, tick)) => {

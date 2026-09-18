@@ -238,6 +238,7 @@ pub static ES: Tr = Tr {
         "Ralentí",
         "Arena nueva",
         "Cambio de castillos",
+        "Pinzas derechas",
     ],
     event_blurbs: [
         "las gaviotas se van y los agujeros escupen cangrejos",
@@ -248,6 +249,7 @@ pub static ES: Tr = Tr {
         "todos los cangrejos se arrastran despacio",
         "todas las flechas de la playa se las lleva el agua",
         "los castillos cambian de dueño - ojo con cuál es el tuyo",
+        "la pinza derecha vale doble, la izquierda cuesta",
     ],
     ann_lure: "¡SEÑUELO!",
     ann_lure_sub: "durante diez segundos los cangrejos sueltos corren hacia {p}",

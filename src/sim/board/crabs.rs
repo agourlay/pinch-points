@@ -175,7 +175,7 @@ impl Board {
     pub(super) fn resolve_arrival(&mut self, crab: &mut Crab, lure_target: Option<u16>) -> bool {
         let t = crab.tile as usize;
         if let TileKind::Castle(owner) = self.grid.tiles[t] {
-            self.scores[owner as usize] += crab.kind.value();
+            self.credit_bank(owner, crab);
             self.crabs_banked += 1;
             match crab.kind {
                 // A molt banked during a lure (anyone's) or in the quiet

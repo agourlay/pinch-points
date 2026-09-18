@@ -238,6 +238,7 @@ pub static FR: Tr = Tr {
         "Ralenti",
         "Sable neuf",
         "Échange de châteaux",
+        "Pinces droites",
     ],
     event_blurbs: [
         "les mouettes sont balayées et les trous crachent des crabes",
@@ -248,6 +249,7 @@ pub static FR: Tr = Tr {
         "tous les crabes avancent au ralenti",
         "toutes les flèches de la plage sont emportées",
         "les châteaux changent de propriétaire - attention !",
+        "la pince droite rapporte double, la gauche coûte",
     ],
     ann_lure: "APPÂT !",
     ann_lure_sub: "pendant dix secondes tous les crabes libres filent chez {p}",

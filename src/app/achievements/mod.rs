@@ -34,7 +34,7 @@ pub struct Stats {
     pub giants: u32,
     /// One bit per tide event ever spun (see [`TideEvent::index`]), so the
     /// roulette trophy needs *variety* rather than volume.
-    pub events_seen: u8,
+    pub events_seen: u16,
     /// Most crabs banked in a single round.
     pub best_round: u32,
     /// Series taken, of either length.

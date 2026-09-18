@@ -238,6 +238,7 @@ pub static EN: Tr = Tr {
         "Slow Down",
         "Fresh Sand",
         "Castle Swap",
+        "Right Claws",
     ],
     event_blurbs: [
         "the gulls wash away and the holes flood with crabs",
@@ -248,6 +249,7 @@ pub static EN: Tr = Tr {
         "every crab slows to a crawl",
         "every arrow on the beach washes away",
         "the castles trade owners - mind whose is whose",
+        "right claws bank double, left claws cost",
     ],
     ann_lure: "LURE!",
     ann_lure_sub: "for ten seconds every loose crab runs for {p}",

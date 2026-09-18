@@ -238,6 +238,7 @@ pub static IT: Tr = Tr {
         "Rallentata",
         "Sabbia nuova",
         "Scambio di castelli",
+        "Chele destre",
     ],
     event_blurbs: [
         "i gabbiani sono spazzati via e dai buchi escono granchi",
@@ -248,6 +249,7 @@ pub static IT: Tr = Tr {
         "tutti i granchi rallentano fino a strisciare",
         "tutte le frecce della spiaggia vengono spazzate via",
         "i castelli cambiano padrone - occhio a quale è il tuo",
+        "la chela destra vale il doppio, la sinistra costa",
     ],
     ann_lure: "RICHIAMO!",
     ann_lure_sub: "per dieci secondi ogni granchio libero corre da {p}",

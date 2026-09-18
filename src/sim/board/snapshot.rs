@@ -79,6 +79,9 @@ impl Board {
             };
             let _ = writeln!(out, "mania: {name} {ticks}");
         }
+        if self.claw_call > 0 {
+            let _ = writeln!(out, "claw_call: {}", self.claw_call);
+        }
         if let Some((tempo, ticks)) = self.tempo {
             let name = match tempo {
                 Tempo::Fast => "fast",
@@ -204,6 +207,7 @@ struct Fields {
     event_cooldown: u32,
     mania: Option<(Mania, u32)>,
     tempo: Option<(Tempo, u32)>,
+    claw_call: u32,
     last_event: Option<(TideEvent, u64)>,
     h_walls: Option<Vec<bool>>,
     v_walls: Option<Vec<bool>>,
@@ -290,6 +294,7 @@ impl Fields {
                 };
                 self.tempo = Some((shift, ticks_left(&mut words, "tempo")?));
             }
+            "claw_call" => self.claw_call = next_num::<u32>(&mut words, "claw_call")?,
             "last_event" => {
                 let index = next_num::<usize>(&mut words, "last_event index")?;
                 let event = *TideEvent::ALL
@@ -394,6 +399,7 @@ impl Fields {
             events_enabled: self.events_enabled,
             mania: self.mania,
             tempo: self.tempo,
+            claw_call: self.claw_call,
             last_event: self.last_event,
             wrap: self.wrap,
             // Drained within the tick that fills it, so a snapshot taken

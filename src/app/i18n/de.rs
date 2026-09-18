@@ -245,6 +245,7 @@ pub static DE: Tr = Tr {
         "Langsamer!",
         "Frischer Sand",
         "Burgen-Tausch",
+        "Rechte Scheren",
     ],
     event_blurbs: [
         "die Möwen werden weggespült, aus den Löchern strömen Krabben",
@@ -255,6 +256,7 @@ pub static DE: Tr = Tr {
         "alle Krabben kriechen nur noch",
         "alle Pfeile am Strand werden weggespült",
         "die Burgen tauschen die Besitzer - Vorsicht!",
+        "rechte Scheren zählen doppelt, linke kosten",
     ],
     ann_lure: "LOCKRUF!",
     ann_lure_sub: "zehn Sekunden lang laufen alle freien Krabben zu {p}",

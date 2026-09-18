@@ -36,11 +36,18 @@ pub enum TideEvent {
     FreshSand,
     /// Castles trade owners (rockets swap places!).
     CastleSwap,
+    /// The tide calls a claw: for a while, a right-clawed crab banks for
+    /// double and a left-clawed one costs what it was worth.
+    ///
+    /// Always the right claw, never drawn: the rule falls on the whole
+    /// beach at once, so a fixed one is as fair as a coin and is learned
+    /// once instead of read off the banner every time.
+    RightClaws,
 }
 
 impl TideEvent {
     /// Every event, in the order the roulette and the string tables use.
-    pub const ALL: [TideEvent; 8] = [
+    pub const ALL: [TideEvent; 9] = [
         TideEvent::CrabMania,
         TideEvent::GullMania,
         TideEvent::Monopoly,
@@ -49,6 +56,9 @@ impl TideEvent {
         TideEvent::SlowDown,
         TideEvent::FreshSand,
         TideEvent::CastleSwap,
+        // Appended, never inserted: the index is the string table's row and
+        // the bit in the seen-it mask, so an older save keeps its meaning.
+        TideEvent::RightClaws,
     ];
 
     /// Position in [`TideEvent::ALL`]: the index of this event's name in the
@@ -99,7 +109,11 @@ impl Board {
             | TideEvent::SpeedUp
             | TideEvent::SlowDown
             | TideEvent::FreshSand
-            | TideEvent::CastleSwap) => kept,
+            | TideEvent::CastleSwap
+            // Kept through the surge: it puts nothing on the beach, and a
+            // scramble over which claw is worth banking is exactly what the
+            // last thirty seconds are for.
+            | TideEvent::RightClaws) => kept,
         }
     }
 
@@ -140,8 +154,12 @@ impl Board {
                 // into the banker's castle.
                 let take = self.crabs.len() / 2;
                 let at = self.tick;
-                for crab in self.crabs.drain(..take) {
-                    self.scores[banker as usize] += crab.kind.value();
+                // Drained first: `credit_bank` takes `&mut self`, and the
+                // sweep is a fixed-order loop over a list that is being
+                // emptied anyway.
+                let swept: Vec<Crab> = self.crabs.drain(..take).collect();
+                for crab in swept {
+                    self.credit_bank(banker, &crab);
                     self.crabs_banked += 1;
                     if crab.kind == CrabKind::Golden {
                         self.golden_banked += 1;
@@ -186,6 +204,7 @@ impl Board {
                     }
                 }
             }
+            TideEvent::RightClaws => self.claw_call = EVENT_TICKS,
             TideEvent::SpeedUp => self.tempo = Some((Tempo::Fast, EVENT_TICKS)),
             TideEvent::SlowDown => self.tempo = Some((Tempo::Slow, EVENT_TICKS)),
             TideEvent::FreshSand => self.signposts.fill(None),

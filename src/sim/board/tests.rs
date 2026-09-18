@@ -1048,7 +1048,14 @@ fn the_beach_fills_to_a_cap_and_mania_to_twice_it() {
     // A castle in the middle of the lane, so the population cycles and the
     // cap is a standing level rather than a one-way fill.
     board.set_tile(4, 4, TileKind::Castle(0));
-    board.set_events_enabled(true);
+    // The roulette stays off for the fill: what this measures is the cap
+    // and the mania, and a sparkling crab banking into that castle would
+    // spin a wheel whose faces move the population around. It was left on,
+    // and the flood was measured from wherever the last event had put the
+    // beach: adding a ninth face moved the draws and the peak landed one
+    // crab under the bound. `apply_tide_event` fires regardless, which is
+    // what the mania below is started with.
+    board.set_events_enabled(false);
     for _ in 0..1200 {
         board.tick_idle();
     }
@@ -1240,7 +1247,8 @@ fn sparkling_bank_spins_events_only_when_enabled() {
         | TideEvent::Monopoly
         | TideEvent::GullAttack
         | TideEvent::FreshSand
-        | TideEvent::CastleSwap => {}
+        | TideEvent::CastleSwap
+        | TideEvent::RightClaws => {}
     }
 }
 
@@ -1252,6 +1260,66 @@ fn party_board() -> Board {
     board.set_tile(1, 1, TileKind::Castle(0));
     board.set_tile(5, 3, TileKind::Castle(1));
     board
+}
+
+/// Right Claws: while it runs, the claw a crab leads with decides whether
+/// banking it is worth doing at all.
+#[test]
+fn event_right_claws_pays_one_hand_and_charges_the_other() {
+    let mut board = party_board();
+    // Walk a crab of each hand into seat 0's castle at (1,1), from the
+    // tile to its right.
+    // Ticked until the beach is empty rather than for a fixed count: a
+    // giant walks at a tenth of a common crab's pace, and a budget that
+    // suited one left the other still on the sand.
+    let bank = |board: &mut Board, handed: Handedness, kind: CrabKind| {
+        board.spawn_crab(2, 1, Left, handed, kind);
+        for _ in 0..ticks_to_cross(1, 12) * 16 {
+            board.tick_idle();
+            if board.crabs().is_empty() {
+                return;
+            }
+        }
+        panic!("the crab never reached the castle");
+    };
+
+    // Off, a crab is worth what it says, whichever claw it leads with.
+    bank(&mut board, Handedness::Right, CrabKind::Common);
+    bank(&mut board, Handedness::Left, CrabKind::Common);
+    assert_eq!(board.scores()[0], 2, "two common crabs, two points");
+
+    board.apply_tide_event(TideEvent::RightClaws, 0);
+    bank(&mut board, Handedness::Right, CrabKind::Common);
+    assert_eq!(board.scores()[0], 4, "the right claw pays twice over");
+    bank(&mut board, Handedness::Left, CrabKind::Common);
+    assert_eq!(board.scores()[0], 3, "and the left one costs the same");
+
+    // Down to nothing and no further: a child staring at a minus sign has
+    // stopped playing.
+    bank(&mut board, Handedness::Left, CrabKind::Giant);
+    assert_eq!(board.scores()[0], 0, "a giant costs 10 into a score of 3");
+
+    // What a bot reads before it goes fetching, which has to be the same
+    // answer the bank will give: a jackpot on the wrong claw is not a
+    // jackpot. Read off crabs standing still, well away from the castle.
+    board.spawn_crab(5, 0, Up, Handedness::Right, CrabKind::Golden);
+    board.spawn_crab(5, 4, Down, Handedness::Left, CrabKind::Golden);
+    let worths: Vec<Option<u32>> = board.crabs().iter().map(|c| board.bank_worth(c)).collect();
+    assert_eq!(
+        worths,
+        vec![Some(100), None],
+        "the right claw doubles, the left one is worth leaving alone"
+    );
+
+    // And it lifts, leaving the ordinary rule behind it.
+    for _ in 0..EVENT_TICKS {
+        board.tick_idle();
+    }
+    let worths: Vec<Option<u32>> = board.crabs().iter().map(|c| board.bank_worth(c)).collect();
+    assert!(
+        worths.iter().all(|&w| w == Some(50)),
+        "worth what they say again: {worths:?}"
+    );
 }
 
 #[test]
