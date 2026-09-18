@@ -58,12 +58,28 @@ pub fn spawn_hud(
             BackgroundColor(palette::HEADER_FILL),
         ))
         .with_children(|bar| {
+            // The title in a box of its own, because a node does not clip
+            // its own text: the clip has to come from a parent. How wide
+            // the box is `update_hud_text`'s business, one screen at a
+            // time. No wrapping inside it either, since the bar is one
+            // line tall and a second row would be drawn over the board.
             bar.spawn((
-                LevelLabel,
-                Text::new(""),
-                font.clone(),
-                TextColor(palette::HUD_INK),
-            ));
+                TitleBox,
+                Node {
+                    overflow: Overflow::clip_x(),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+            ))
+            .with_children(|box_| {
+                box_.spawn((
+                    LevelLabel,
+                    Text::new(""),
+                    font.clone(),
+                    TextColor(palette::HUD_INK),
+                    TextLayout::no_wrap(),
+                ));
+            });
             bar.spawn((
                 PostsLabel,
                 Text::new(""),
@@ -145,6 +161,48 @@ pub fn spawn_hud(
             ));
         });
     spawn_field_guide(&mut commands, settings.tr(), &art);
+}
+
+/// The box the title is written in, which is what holds it clear of the
+/// clock: a node does not clip its own text, so the width lives out here
+/// rather than on the label itself.
+#[derive(Component)]
+pub struct TitleBox;
+
+/// How much of the header bar the title may take, on a screen that has a
+/// clock centred in that same bar.
+///
+/// The clock is absolutely positioned in a full-width centring wrapper, so
+/// flexbox cannot hold the two apart: a long level name simply ran under
+/// the digits. At the editor's own 28-character limit a name overflowed
+/// the room before the clock in every one of the eight languages, by 28px
+/// in Japanese and 178px in Spanish, and the two painted over each other.
+///
+/// 44% of the bar leaves the clock its middle with room to spare at the
+/// design width and more at any larger one, since both are measured from
+/// the same centre.
+const TITLE_SHARE_WITH_CLOCK: f32 = 44.0;
+
+/// How wide the title may be on `screen`: held clear of the clock where
+/// there is one, and otherwise left alone, since the editor's header is
+/// the longest in the game and has the whole bar to itself.
+fn title_width(screen: Screen) -> Val {
+    match screen {
+        Screen::Puzzle => Val::Percent(TITLE_SHARE_WITH_CLOCK),
+        Screen::Menu
+        | Screen::Versus
+        | Screen::Editor
+        | Screen::Lobby
+        | Screen::Settings
+        | Screen::Controls
+        | Screen::MatchSetup
+        | Screen::Achievements
+        | Screen::StageSelect
+        | Screen::Replays
+        | Screen::Interlude
+        | Screen::Language
+        | Screen::NewVersion => Val::Auto,
+    }
 }
 
 /// Teaching-hint line under the header (puzzle setup only).
@@ -292,6 +350,7 @@ pub fn update_hud(
         Query<&mut Text, With<LevelLabel>>,
         Query<&mut Text, With<PostsLabel>>,
         Query<(&mut Text, &mut Node), With<PromptLabel>>,
+        Query<&mut Node, With<TitleBox>>,
     )>,
 ) {
     let tr = settings.tr();
@@ -324,6 +383,14 @@ pub fn update_hud(
     );
     if let Ok(mut text) = labels.p0().single_mut() {
         menu_ui::set_text(&mut text, &said.title);
+    }
+    if let Ok(mut node) = labels.p3().single_mut() {
+        // A definite width rather than a maximum: the box is sized by the
+        // text inside it, which a maximum does not reach.
+        let wanted = title_width(*screen.get());
+        if node.width != wanted {
+            node.width = wanted;
+        }
     }
     if let Ok(mut text) = labels.p1().single_mut() {
         menu_ui::set_text(&mut text, &said.status);
@@ -500,6 +567,59 @@ pub fn header_backdrop(
 mod tests {
     use super::*;
     use crate::app::i18n::Lang;
+
+    /// The title stops before the clock, on the one screen that puts a
+    /// clock in the same bar.
+    ///
+    /// The clock floats over the bar rather than sitting in it, so nothing
+    /// but this number keeps them apart. A level name may be 28 characters
+    /// (`editor::NAME_MAX`), and at that length the header overran the room
+    /// before the clock in all eight languages and the two painted over
+    /// each other.
+    #[test]
+    fn a_long_level_name_stops_before_the_clock() {
+        use crate::app::i18n::metrics::text_px;
+        use crate::app::settings::DESIGN_W;
+
+        // Where the clock's left edge falls at the design width: it is
+        // centred, so half of its widest reading sits left of the middle.
+        // "10:00" rather than "0:59", since a long round counts in tens.
+        let clock = text_px("10:00", menu_ui::type_scale::DISPLAY);
+        let clock_left = DESIGN_W / 2.0 - clock / 2.0;
+
+        let Val::Percent(share) = title_width(Screen::Puzzle) else {
+            panic!("the puzzle title is held to a share of the bar");
+        };
+        let title_right = DESIGN_W * share / 100.0;
+        assert!(
+            title_right < clock_left,
+            "the title reaches {title_right:.0}px and the clock starts at {clock_left:.0}px"
+        );
+
+        // And the longest header the game can produce does overrun that,
+        // which is what the limit is for: without it this is what ran under
+        // the digits.
+        let name = "W".repeat(28);
+        let worst = crate::app::i18n::ALL_LANGS
+            .into_iter()
+            .map(|lang| {
+                let tr = lang.tr();
+                [tr.title_tide_pool, tr.title_beach_day, tr.stage_custom]
+                    .into_iter()
+                    .map(|section| text_px(&format!("{section} 100/100 - {name}"), 22.0))
+                    .fold(0.0f32, f32::max)
+            })
+            .fold(0.0f32, f32::max);
+        assert!(
+            worst > title_right,
+            "nothing to clip: the longest header is {worst:.0}px into {title_right:.0}px"
+        );
+
+        // Every other screen keeps the whole bar: the editor's header is
+        // the longest in the game and has no clock to share it with.
+        assert_eq!(title_width(Screen::Editor), Val::Auto);
+        assert_eq!(title_width(Screen::Versus), Val::Auto);
+    }
 
     /// The level whose hint is withheld under rebound keys is the one that
     /// names keys, and the only one: the others teach the beach, and stay
