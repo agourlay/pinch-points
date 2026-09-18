@@ -530,6 +530,7 @@ pub fn enter_lobby(
     mut commands: Commands,
     mut state: ResMut<LobbyState>,
     mut homecoming: ResMut<Homecoming>,
+    mut notice: ResMut<crate::app::RoundNotice>,
     settings: Res<GameSettings>,
     art: Res<crate::app::art::Art>,
 ) {
@@ -537,6 +538,20 @@ pub fn enter_lobby(
     spawn_lobby_ui(&mut commands, settings.tr(), &LobbyArt::from_art(&art));
     if let Some(returned) = homecoming.0.take() {
         settle_back_in(&mut state, returned, settings.tr());
+    }
+    // Word of the round just left, for somebody the round put out rather
+    // than let go: the host walked off, or this peer was dropped. The
+    // menu's own slot for it is no use to a player who was never sent
+    // there, and taken rather than read, so it is not still hanging about
+    // the next time the menu comes up.
+    let why = std::mem::take(&mut notice.0);
+    if !why.is_empty() {
+        // The status line, and not the feed: the feed panel is not even
+        // on screen while a player is browsing, and a line about the
+        // beach they were thrown out of would surface inside the next
+        // beach's conversation. Nothing on the browsing path writes this
+        // slot, so the reason stays put until they pick something.
+        state.feedback = why;
     }
     // A host does not listen while it hosts (see the module doc), which a
     // table walking back in together arrives already doing.

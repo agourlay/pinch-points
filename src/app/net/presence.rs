@@ -368,6 +368,13 @@ pub(crate) fn abandon_the_departed(
 /// is the hub of the star: it relays every input, decides who has left,
 /// and calls the next round. Without this the table waits on a still beach
 /// forever, with nothing on screen to suggest Escape is the way out.
+///
+/// Out to *where* is the lobby, when that is where the beach was found.
+/// The round is over; the hall it was found in is not, and on a busy
+/// evening there are other beaches on the air in it. Dropping the player
+/// at the main menu made them walk back in through the lobby door to
+/// reach the game next door. A direct `PINCH_HOST` pair has no hall to be
+/// put back in, and goes to the menu as before.
 pub(crate) fn leave_a_hostless_round(
     settings: Res<GameSettings>,
     online: Res<Online>,
@@ -378,15 +385,22 @@ pub(crate) fn leave_a_hostless_round(
         return;
     };
     let tr = settings.tr();
-    // The menu drops the session on its way in, and reads the notice
-    // once it is there.
-    if session.dropped() {
-        notice.0 = tr.online_dropped.to_string();
-        next_screen.set(Screen::Menu);
+    let why = if session.dropped() {
+        tr.online_dropped
     } else if session.host_gone() {
-        notice.0 = tr.online_host_gone.to_string();
-        next_screen.set(Screen::Menu);
-    }
+        tr.online_host_gone
+    } else {
+        return;
+    };
+    // Read by whichever screen takes them, and taken there rather than
+    // left to linger. The session itself needs no dropping here: nothing
+    // armed it for another round, so `end_versus` lets it go on the way
+    // out of the arena.
+    notice.0 = why.to_string();
+    next_screen.set(match session.home.from_lobby {
+        true => Screen::Lobby,
+        false => Screen::Menu,
+    });
 }
 
 #[cfg(test)]
@@ -512,6 +526,52 @@ mod tests {
         host.peers.deal(&[Some(1)]);
         host.abandon_stalled(HOST_GONE_AFTER * 2.0, false);
         assert!(!host.host_gone(), "the host is the host");
+    }
+
+    /// A round that falls apart puts the player back in the hall it was
+    /// found in, not out at the front door.
+    ///
+    /// The hall is where the other beaches are, and on a busy evening
+    /// there are some: dropping the player at the main menu made them walk
+    /// back in through the lobby door to reach the game next door. A pair
+    /// wired up by hand has no hall to be put back in, so that one still
+    /// goes to the menu.
+    #[test]
+    fn a_round_without_a_host_hands_the_player_back_to_the_lobby() {
+        let walked_out = |from_lobby| {
+            let mut app = App::new();
+            app.add_plugins(bevy::state::app::StatesPlugin);
+            app.init_state::<Screen>();
+            app.insert_resource(State::new(Screen::Versus));
+            app.insert_resource(GameSettings::default());
+            app.init_resource::<RoundNotice>();
+
+            let mut joiner = OnlineSession::new(
+                UdpTransport::host(0).expect("game socket"),
+                Lockstep::new(1, vec![0, 1], 0),
+                2,
+                MatchTerms::default(),
+            );
+            joiner.home.from_lobby = from_lobby;
+            joiner.mark_heard(0);
+            joiner.abandon_stalled(HOST_GONE_AFTER + 1.0, false);
+            assert!(joiner.host_gone(), "the host really is gone");
+            app.insert_resource(Online(Some(joiner)));
+
+            app.add_systems(Update, leave_a_hostless_round);
+            app.update();
+            app.update(); // the state change lands
+            let screen = *app.world().resource::<State<Screen>>().get();
+            (screen, app.world().resource::<RoundNotice>().0.clone())
+        };
+
+        let (screen, why) = walked_out(true);
+        assert_eq!(screen, Screen::Lobby, "back to the hall it came from");
+        assert_eq!(why, crate::app::i18n::EN.online_host_gone, "and told why");
+
+        let (screen, why) = walked_out(false);
+        assert_eq!(screen, Screen::Menu, "a hand-wired pair has no hall");
+        assert_eq!(why, crate::app::i18n::EN.online_host_gone);
     }
 
     /// A table reading the scores together is not a table whose host has
