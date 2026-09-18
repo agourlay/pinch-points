@@ -323,11 +323,17 @@ fn note_arrivals_and_departures(
         // of mind about the name, is news worth putting in the feed.
         let row = hosted.peers.row(from);
         let arrived = row.name != told;
+        // The first greeting that names them, as against a later one that
+        // changes the name: only the first has a room to be shown.
+        let newcomer = row.name.is_empty();
         // Said of whoever turned up, in their own terms: the table counts
         // its rivals, so announcing a spectator as one more of them would
         // have every player looking for a chair that was never taken.
         let watching = row.watch;
         row.name.clone_from(&told);
+        if newcomer {
+            catch_up_on_the_feed(state, from);
+        }
         if arrived {
             let line = match watching {
                 true => tr.lobby_watching_joined,
@@ -532,6 +538,27 @@ pub(super) fn should_launch(
     match quota {
         Some(quota) if joined >= quota => true,
         _ => enter && !typing,
+    }
+}
+
+/// Show a newcomer what the room has already said.
+///
+/// The host relays a line at the moment it is said and never again, so
+/// somebody who turns up later walks into a beach that looks as though
+/// nobody has ever spoken in it: the arrivals before theirs, the host's
+/// word about the terms, every plan anyone made. Sent once, on the
+/// greeting that first names them, and no longer than the feed itself,
+/// which keeps [`CHAT_LINES`](crate::app::lobby::ui::CHAT_LINES).
+///
+/// To that peer alone, not to the table: everyone else was there.
+fn catch_up_on_the_feed(state: &LobbyState, peer: usize) {
+    let Some(hosted) = state.hosted() else {
+        return;
+    };
+    for said in &state.chat {
+        hosted
+            .transport
+            .send_to(peer, NetMsg::chat(&said.who, &said.line));
     }
 }
 
@@ -819,6 +846,76 @@ mod tests {
             ],
             "every line under the name Bo greeted with: no rival's name to \
              wear, and no forging the room's"
+        );
+    }
+
+    /// Somebody who turns up late is shown the room, not an empty one.
+    ///
+    /// The host relays a line as it is said and never again, so everything
+    /// said before a peer arrived was said to a beach that peer could not
+    /// see. On a busy evening that is the whole conversation: who else
+    /// turned up, what the host said about the terms, who is waiting for
+    /// whom. Found by joining a beach two peers had already been talking
+    /// on and finding the feed blank but for my own arrival.
+    #[test]
+    fn a_late_arrival_is_shown_what_the_room_already_said() {
+        let mut state = LobbyState {
+            standing: Standing::hosting(
+                Announcer::new(0xC0FFEE).expect("announcer"),
+                UdpTransport::host(0).expect("game socket"),
+            ),
+            ..LobbyState::default()
+        };
+        // What the room said before anybody new was listening.
+        state.say("Ann", "anyone up for a round?");
+        state.say("", "Bo joined");
+        let port = state
+            .hosted()
+            .expect("hosting")
+            .transport
+            .local_addr()
+            .expect("addr")
+            .port();
+
+        let mut latecomer = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        latecomer.send(NetMsg::hello("Cy"));
+
+        let mut greeted = Vec::new();
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let hosted = state.hosted_mut().expect("hosting");
+            greeted
+                .extend(work_the_socket(hosted, 0.0, crate::transport::OnAir::default()).greeted);
+            if !greeted.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(greeted, [(0, "Cy".to_string())], "Cy is at the door");
+        note_arrivals_and_departures(&mut state, &crate::app::i18n::EN, greeted);
+
+        let mut heard = Vec::new();
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            for (msg, _) in latecomer.recv_all() {
+                if let NetMsg::Chat { name, text } = msg {
+                    heard.push((
+                        crate::transport::name_from_wire(&name),
+                        crate::transport::chat_from_wire(&text),
+                    ));
+                }
+            }
+            if heard.len() >= 3 {
+                break;
+            }
+        }
+        assert_eq!(
+            heard,
+            [
+                ("Ann".to_string(), "anyone up for a round?".to_string()),
+                (String::new(), "Bo joined".to_string()),
+                (String::new(), "Cy joined".to_string()),
+            ],
+            "the room as it stands, oldest first, and then their own arrival"
         );
     }
 
