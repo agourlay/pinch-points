@@ -220,6 +220,7 @@ pub static RU: Tr = Tr {
     pause_continue: "Продолжить",
     pause_to_menu: "Назад в меню",
     pause_quit: "Выйти из игры",
+    prompt_paused: "W/S: выбор | Enter: подтвердить | Esc: продолжить",
     round_copied: "раунд скопирован кодом ({n} символов)",
     round_code_bad: "этот код - не начатый раунд",
     update_title: "Вышла новая версия: {v}",

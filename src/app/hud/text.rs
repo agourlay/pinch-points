@@ -414,6 +414,8 @@ pub(super) struct Readout<'a> {
     /// Which row the match setup is on: Enter means something else on the
     /// name rows, and the prompt line has to say so.
     pub match_menu: &'a crate::app::match_setup::MatchMenu,
+    /// Whether the pause card is up and holding the keyboard.
+    pub paused: bool,
     pub speed: u8,
 }
 
@@ -426,6 +428,14 @@ pub(super) struct Readout<'a> {
 pub(super) fn screen_text(screen: Screen, r: &Readout) -> HudText {
     let mut said = screen_text_for(screen, r);
     if matches!(screen, Screen::Versus | Screen::Puzzle) {
+        // The pause card has the keyboard while it is up, so the line
+        // names its keys rather than the beach's: Escape is the way on
+        // there, not the way to a pause the player is already in. The
+        // card is an overlay and not a screen of its own, which is why
+        // this is a coat of paint over the screen's own answer.
+        if r.paused {
+            said.prompt = r.tr.prompt_paused.to_string();
+        }
         said.prompt = format!("{} | {}", said.prompt, r.tr.prompt_mute);
     }
     // Spelled in this keyboard's caps here, once, rather than in each of
@@ -563,6 +573,7 @@ mod tests {
             library: &crate::app::replays::Library::default(),
             notice: &crate::app::RoundNotice::default(),
             match_menu: &crate::app::match_setup::MatchMenu::default(),
+            paused: false,
             speed: 1,
         };
         for screen in Screen::ALL {
@@ -631,6 +642,7 @@ mod tests {
                 library: &crate::app::replays::Library::default(),
                 notice: &crate::app::RoundNotice::default(),
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
+                paused: false,
                 speed: 1,
             };
             let prompt = screen_text(Screen::Versus, &readout).prompt;
@@ -719,6 +731,63 @@ mod tests {
         assert_eq!(lobby_text(&EN, &lobby).status, "hosting on port 47777");
     }
 
+    /// While the pause card holds the keyboard, the prompt names the
+    /// card's keys. It used to go on listing the beach's, offering "Esc
+    /// pause" to a player already paused and saying nothing about the
+    /// rows in front of them.
+    #[test]
+    fn the_prompt_names_the_pause_cards_keys_while_it_is_up() {
+        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+
+        let levels = campaign_levels();
+        let builtins = levels.len();
+        let campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        };
+        let settings = GameSettings::default();
+        let said = |screen, paused| {
+            screen_text(
+                screen,
+                &Readout {
+                    tr: &EN,
+                    lang: Lang::En,
+                    sim: &Sim(Board::new(9, 7, 1)),
+                    campaign: &campaign,
+                    phase: &State::new(Phase::Setup),
+                    vphase: &State::new(VersusPhase::Running),
+                    editor: &EditorState::default(),
+                    online: &Online::default(),
+                    playback: &Playback::default(),
+                    lobby: &LobbyState::default(),
+                    tournament: &crate::app::tournament::Tournament::default(),
+                    seats: &Seats(2),
+                    settings: &settings,
+                    keycaps: &crate::app::keycaps::KeyCaps::default(),
+                    names: &crate::app::SeatNames::default(),
+                    bots: &Bots::default(),
+                    library: &crate::app::replays::Library::default(),
+                    notice: &crate::app::RoundNotice::default(),
+                    match_menu: &crate::app::match_setup::MatchMenu::default(),
+                    paused,
+                    speed: 1,
+                },
+            )
+            .prompt
+        };
+
+        for screen in [Screen::Puzzle, Screen::Versus] {
+            let playing = said(screen, false);
+            let paused = said(screen, true);
+            assert_ne!(playing, paused, "{screen:?}");
+            assert!(paused.starts_with(EN.prompt_paused), "{screen:?}: {paused}");
+            // The mute key is global and still works, so it stays on the end.
+            assert!(paused.ends_with(EN.prompt_mute), "{screen:?}: {paused}");
+        }
+    }
+
     /// And the prompt line says so too. The screen census below builds its
     /// readout with a single round, so the mid-series arm is one it cannot
     /// reach.
@@ -757,6 +826,7 @@ mod tests {
                 library: &crate::app::replays::Library::default(),
                 notice: &crate::app::RoundNotice::default(),
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
+                paused: false,
                 speed: 1,
             })
             .prompt

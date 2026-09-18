@@ -213,6 +213,7 @@ pub static EN: Tr = Tr {
     pause_continue: "Continue",
     pause_to_menu: "Back to menu",
     pause_quit: "Quit game",
+    prompt_paused: "W/S: choose | Enter: confirm | Esc: continue",
     round_copied: "round copied as a code ({n} characters)",
     round_code_bad: "that code is not a round in progress",
     update_title: "A new version is out: {v}",

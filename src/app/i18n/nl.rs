@@ -213,6 +213,7 @@ pub static NL: Tr = Tr {
     pause_continue: "Doorgaan",
     pause_to_menu: "Terug naar het menu",
     pause_quit: "Spel afsluiten",
+    prompt_paused: "W/S: kiezen | Enter: bevestigen | Esc: doorgaan",
     round_copied: "ronde gekopieerd als code ({n} tekens)",
     round_code_bad: "die code is geen lopende ronde",
     update_title: "Nieuwe versie beschikbaar: {v}",

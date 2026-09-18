@@ -321,6 +321,9 @@ struct Tr {
     pub pause_continue: &'static str,
     pub pause_to_menu: &'static str,
     pub pause_quit: &'static str,
+    /// The prompt line while the pause card has the keyboard: its keys,
+    /// not the beach's.
+    pub prompt_paused: &'static str,
     /// Said on the versus screen when a round is copied as a code.
     pub round_copied: &'static str,
     pub round_code_bad: &'static str,

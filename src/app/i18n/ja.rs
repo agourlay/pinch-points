@@ -213,6 +213,7 @@ pub static JA: Tr = Tr {
     pause_continue: "つづける",
     pause_to_menu: "メニューへ戻る",
     pause_quit: "ゲームをやめる",
+    prompt_paused: "W/S: 選ぶ | Enter: 決定 | Esc: つづける",
     round_copied: "試合を合言葉に写した ({n}文字)",
     round_code_bad: "この合言葉はとちゅうの試合じゃない",
     update_title: "新しい版が出たよ: {v}",

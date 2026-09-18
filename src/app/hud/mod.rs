@@ -283,9 +283,10 @@ pub fn update_hud(
         Res<crate::app::match_setup::MatchMenu>,
     ),
     // Tupled for the same reason again: sixteen is the limit.
-    (speed, tournament): (
+    (speed, tournament, pause_menu): (
         Res<crate::app::replays::PlaybackSpeed>,
         Res<crate::app::tournament::Tournament>,
+        Res<crate::app::pause::PauseMenu>,
     ),
     mut labels: ParamSet<(
         Query<&mut Text, With<LevelLabel>>,
@@ -317,6 +318,7 @@ pub fn update_hud(
             library: &library,
             notice: &notice,
             match_menu: &match_menu,
+            paused: pause_menu.open,
             speed: speed.0,
         },
     );

@@ -220,6 +220,7 @@ pub static DE: Tr = Tr {
     pause_continue: "Weiter",
     pause_to_menu: "Zurück zum Menü",
     pause_quit: "Spiel beenden",
+    prompt_paused: "W/S: wählen | Enter: bestätigen | Esc: weiter",
     round_copied: "Runde als Code kopiert ({n} Zeichen)",
     round_code_bad: "dieser Code ist keine laufende Runde",
     update_title: "Neue Version verfügbar: {v}",
