@@ -262,6 +262,22 @@ pub fn standings(
         .collect()
 }
 
+/// "Round 2 of 3": where the series has got to, over how long it runs.
+///
+/// One function for the interlude and the results card, which draw the
+/// same line two screens apart. The length used to be spelled into the
+/// translated string itself, so every series counted its rounds out of
+/// five however long it actually was.
+pub fn round_line(tr: &crate::app::i18n::Tr, tournament: &Tournament) -> String {
+    fill(
+        tr.tour_round,
+        &[
+            ("n", &tournament.round.to_string()),
+            ("b", &tournament.length.rounds().to_string()),
+        ],
+    )
+}
+
 /// The champion's name for the headline, and the seat whose colour it wears.
 pub fn champion_name(
     settings: &GameSettings,
@@ -343,7 +359,7 @@ pub fn enter_interlude(
         .with_children(|overlay| {
             overlay.spawn(menu_ui::screen_card()).with_children(|card| {
                 card.spawn((
-                    Text::new(fill(tr.tour_round, &[("n", &tournament.round.to_string())])),
+                    Text::new(round_line(tr, &tournament)),
                     TextFont {
                         font_size: FontSize::Px(menu_ui::type_scale::DISPLAY),
                         ..default()
@@ -388,6 +404,42 @@ pub fn reset_on_menu(mut tournament: ResMut<Tournament>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The round line counts out of the series actually being played. The
+    /// length lived inside the translated string for a while, so a
+    /// best-of-three read "Round 1 of 5" and then stopped at three.
+    #[test]
+    fn the_round_line_counts_out_of_this_series_not_the_longest_one() {
+        use crate::app::i18n::ALL_LANGS;
+
+        for (length, rounds) in [
+            (SeriesLength::BestOfThree, "3"),
+            (SeriesLength::BestOfFive, "5"),
+        ] {
+            let mut t = Tournament::start(length);
+            t.round = 2;
+            let line = round_line(&crate::app::i18n::EN, &t);
+            assert!(line.contains(rounds), "{length:?}: {line}");
+            assert!(line.contains('2'), "{length:?}: {line}");
+        }
+
+        // And in every language: a total spelled into the string itself
+        // rather than left as a placeholder is the bug, so the check is
+        // that no translation still carries a bare five.
+        let mut t = Tournament::start(SeriesLength::BestOfThree);
+        t.round = 1;
+        for lang in ALL_LANGS {
+            let line = round_line(lang.tr(), &t);
+            assert!(
+                !line.contains('5'),
+                "{lang:?} still counts out of five: {line}"
+            );
+            assert!(
+                line.contains('3'),
+                "{lang:?} does not say how long it is: {line}"
+            );
+        }
+    }
 
     /// Both members of the leading pair hold the same tally, so a per-seat
     /// search sees a tie and only the team search finds the winner.

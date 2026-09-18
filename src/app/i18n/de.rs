@@ -360,7 +360,7 @@ pub static DE: Tr = Tr {
     match_name_empty: "- (Tab zum Benennen)",
     match_name_typing: "(Enter zum Behalten)",
     mode_names: ["Einzelrunde", "Best of 3", "Best of 5"],
-    tour_round: "Runde {n} von 5",
+    tour_round: "Runde {n} von {b}",
     tour_champion: "{p} gewinnt die Serie!",
     tour_next: "Enter: nächste Runde",
     log_raid: "{p} geplündert! -{n}",

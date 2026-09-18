@@ -353,7 +353,7 @@ pub static IT: Tr = Tr {
     match_name_empty: "- (Tab per il nome)",
     match_name_typing: "(Invio per tenerlo)",
     mode_names: ["round singolo", "al meglio di 3", "al meglio di 5"],
-    tour_round: "Round {n} di 5",
+    tour_round: "Round {n} di {b}",
     tour_champion: "{p} si prende la serie!",
     tour_next: "Invio: round successivo",
     log_raid: "{p} derubato! -{n}",

@@ -353,7 +353,7 @@ pub static NL: Tr = Tr {
     match_name_empty: "- (Tab voor een naam)",
     match_name_typing: "(Enter om te houden)",
     mode_names: ["losse ronde", "best of 3", "best of 5"],
-    tour_round: "Ronde {n} van 5",
+    tour_round: "Ronde {n} van {b}",
     tour_champion: "{p} pakt de serie!",
     tour_next: "Enter: volgende ronde",
     log_raid: "{p} beroofd! -{n}",

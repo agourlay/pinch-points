@@ -230,7 +230,7 @@ pub fn spawn_versus_results(
                 });
                 let round = card_text(17.0, CARD_TEXT.darker(0.15));
                 card.spawn((
-                    Text::new(fill(tr.tour_round, &[("n", &tournament.round.to_string())])),
+                    Text::new(crate::app::tournament::round_line(tr, &tournament)),
                     round.0,
                     round.1,
                 ));

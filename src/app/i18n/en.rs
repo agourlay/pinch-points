@@ -353,7 +353,7 @@ pub static EN: Tr = Tr {
     match_name_empty: "- (Tab to name)",
     match_name_typing: "(Enter to keep)",
     mode_names: ["single round", "best of 3", "best of 5"],
-    tour_round: "Round {n} of 5",
+    tour_round: "Round {n} of {b}",
     tour_champion: "{p} takes the series!",
     tour_next: "Enter: next round",
     log_raid: "{p} raided! -{n}",

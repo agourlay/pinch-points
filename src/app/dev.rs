@@ -470,7 +470,20 @@ pub(super) fn debug_moments(
         let mut wins = [0; crate::sim::MAX_PLAYERS];
         wins[0] = 1;
         wins[1] = 1;
-        *tournament = Tournament::taken_up(SeriesLength::BestOfFive, 3, wins);
+        // The length `PINCH_SERIES` asked for, so the card can be shot at
+        // either. Hardcoding the long one here left the best-of-three card
+        // unreachable, and it read "Round 3 of 5" for a year. Bare
+        // `PINCH_INTERLUDE=1`, with no series in play, still demos the
+        // long one, which is what it always did.
+        let length = match tournament.length.is_series() {
+            true => tournament.length,
+            false => SeriesLength::BestOfFive,
+        };
+        // Two rounds are on the tally, so the card should read as the
+        // third. One less than that, because `enter_interlude` counts the
+        // round on the way in and this screen is being entered.
+        let round = 3.min(length.rounds()) - 1;
+        *tournament = Tournament::taken_up(length, round, wins);
         next_screen.set(Screen::Interlude);
     }
 }

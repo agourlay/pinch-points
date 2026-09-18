@@ -349,7 +349,7 @@ pub static JA: Tr = Tr {
     match_name_empty: "- (Tabで名前)",
     match_name_typing: "(Enterで決定)",
     mode_names: ["1試合だけ", "3本勝負", "5本勝負"],
-    tour_round: "第{n}試合 / 全5試合",
+    tour_round: "第{n}試合 / 全{b}試合",
     tour_champion: "{p} が優勝!",
     tour_next: "Enter: 次の試合",
     log_raid: "{p} が奪われた! -{n}",

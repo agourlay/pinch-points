@@ -360,7 +360,7 @@ pub static RU: Tr = Tr {
     match_name_empty: "- (Tab: назвать)",
     match_name_typing: "(Enter: оставить)",
     mode_names: ["один раунд", "серия из 3", "серия из 5"],
-    tour_round: "Раунд {n} из 5",
+    tour_round: "Раунд {n} из {b}",
     tour_champion: "{p} берёт серию!",
     tour_next: "Enter: следующий раунд",
     log_raid: "{p} обокрали! -{n}",
