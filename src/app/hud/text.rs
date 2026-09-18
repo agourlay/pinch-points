@@ -189,13 +189,17 @@ pub(super) fn puzzle_text(
         CampaignKind::TidePool => tr.title_tide_pool,
         CampaignKind::BeachDay => tr.title_beach_day,
     };
-    let title = format!(
-        "{} {}/{} - {}",
-        campaign_title,
-        campaign.index + 1,
-        campaign.levels.len(),
-        lang.level_name(&level.name)
-    );
+    // The player's own levels take the stage list's own label for them in
+    // place of the list's name, so driftwood three is never read as stage
+    // three. In place of, and not as well as: the header bar runs from the
+    // window's edge to the clock in its middle, and the longest shipped
+    // level name already reaches most of the way there.
+    let (place, of, custom) = campaign.place();
+    let section = match custom {
+        true => tr.stage_custom,
+        false => campaign_title,
+    };
+    let title = format!("{section} {place}/{of} - {}", lang.level_name(&level.name));
     let used = sim.0.signpost_count(0);
     let saved = fill(
         tr.saved_count,
@@ -246,7 +250,7 @@ pub(super) fn puzzle_text(
         // On the last level the card says the run is over and Enter goes
         // home; a prompt line still offering "next level" under it is the
         // game arguing with itself.
-        Phase::Won if campaign.index + 1 == campaign.levels.len() => tr.last_level.to_string(),
+        Phase::Won if campaign.is_last() => tr.last_level.to_string(),
         Phase::Won => tr.prompt_won.to_string(),
         Phase::Lost => tr.prompt_lost.to_string(),
     };
@@ -714,6 +718,56 @@ mod tests {
 
         lobby.feedback = "hosting on port 47777".into();
         assert_eq!(lobby_text(&EN, &lobby).status, "hosting on port 47777");
+    }
+
+    /// The player's own levels are a shelf behind the shipped list, not
+    /// stages a hundred and one and up. The header counts them from one
+    /// under the stage list's own label for them, and the shipped campaign
+    /// ends at its last shipped stage even with driftwood saved behind it:
+    /// the results card says the run is over and Enter goes home there, so
+    /// a prompt still offering the next level is the game arguing with
+    /// itself.
+    #[test]
+    fn driftwood_is_a_shelf_behind_the_campaign_not_more_of_it() {
+        let shipped = campaign_levels();
+        let builtins = shipped.len();
+        let mut levels = shipped.clone();
+        levels.extend([shipped[0].clone(), shipped[1].clone()]);
+        let mut campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        };
+        let said = |campaign: &Campaign, phase| {
+            let sim = Sim(campaign.current().board());
+            puzzle_text(&EN, Lang::En, campaign, &sim, &State::new(phase), false)
+        };
+
+        // A shipped stage counts against the shipped list, not against the
+        // list plus whatever the player has built.
+        let title = said(&campaign, Phase::Setup).title;
+        assert!(title.contains(&format!("1/{builtins}")), "{title}");
+        assert!(!title.contains(EN.stage_custom), "{title}");
+
+        campaign.index = builtins - 1;
+        assert_eq!(said(&campaign, Phase::Won).prompt, EN.last_level);
+
+        // The first of the player's own is one of two, under its own label.
+        campaign.index = builtins;
+        let HudText { title, prompt, .. } = said(&campaign, Phase::Won);
+        assert!(title.contains(EN.stage_custom), "{title}");
+        assert!(title.contains("1/2"), "{title}");
+        // The label stands in for the list's name rather than joining it:
+        // the header bar ends at the clock in the middle of the window.
+        assert!(!title.contains(EN.title_tide_pool), "{title}");
+        assert_eq!(prompt, EN.prompt_won);
+
+        // And the last of them ends the list.
+        campaign.index = builtins + 1;
+        let HudText { title, prompt, .. } = said(&campaign, Phase::Won);
+        assert!(title.contains("2/2"), "{title}");
+        assert_eq!(prompt, EN.last_level);
     }
 
     /// The puzzle header counts what the level asks for, and the prompt

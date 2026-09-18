@@ -124,7 +124,7 @@ pub fn done_input(
         // the last level" and then putting you back on the first. The
         // shipped campaign ends with its last shipped stage too, rather
         // than walking on into the player's own levels.
-        if campaign.index + 1 == campaign.levels.len() || campaign.index + 1 == campaign.builtins {
+        if campaign.is_last() {
             next_screen.set(Screen::Menu);
             return;
         }

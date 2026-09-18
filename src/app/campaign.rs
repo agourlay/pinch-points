@@ -45,6 +45,31 @@ impl Campaign {
         &self.levels[self.index]
     }
 
+    /// Where the current level sits in its own section, and whether that
+    /// section is the player's own: their levels are a shelf behind the
+    /// shipped list rather than stage a hundred and one, so both the
+    /// hundredth stage and the first driftwood read as one of their own
+    /// count. The stage list draws the two sections apart the same way.
+    pub fn place(&self) -> (usize, usize, bool) {
+        match self.index < self.builtins {
+            true => (self.index + 1, self.builtins, false),
+            false => (
+                self.index - self.builtins + 1,
+                self.levels.len() - self.builtins,
+                true,
+            ),
+        }
+    }
+
+    /// Whether the current level ends the run Enter is walking. Both
+    /// sections end one: the shipped campaign stops at its last shipped
+    /// stage rather than walking on into the player's own levels, and
+    /// those stop at the end of the list.
+    pub fn is_last(&self) -> bool {
+        let (place, of, _) = self.place();
+        place == of
+    }
+
     /// Swap in a fresh level list and start from its first level.
     /// A whole struct literal, so a new field cannot survive a reset unseen.
     pub(crate) fn reset(&mut self, kind: CampaignKind, levels: Vec<Level>, builtins: usize) {

@@ -313,9 +313,12 @@ pub fn spawn_puzzle_won(
         .to_string();
     // The shipped campaign ends with its last shipped stage; the player's
     // own levels behind it are a shelf, not stage eighty-three, and the
-    // last of those ends only the list.
-    let last_shipped = campaign.index + 1 == campaign.builtins;
-    let last = last_shipped || campaign.index + 1 == campaign.levels.len();
+    // last of those ends only the list. So the card counts this level
+    // within whichever of the two it belongs to, and only the shipped
+    // section's end is the campaign's end.
+    let (place, of, custom) = campaign.place();
+    let last = campaign.is_last();
+    let last_shipped = last && !custom;
     let card = results_card(&mut commands);
     commands.entity(card).with_children(|wrap| {
         wrap.spawn(menu_ui::screen_card()).with_children(|card| {
@@ -326,12 +329,12 @@ pub fn spawn_puzzle_won(
             };
             card.spawn((Text::new(title), head.0, head.1));
             let sub = card_text(21.0, CARD_TEXT);
+            let shelf = match custom {
+                true => format!("{}  ", tr.stage_custom),
+                false => String::new(),
+            };
             card.spawn((
-                Text::new(format!(
-                    "{} / {}  -  {name}",
-                    campaign.index + 1,
-                    campaign.levels.len()
-                )),
+                Text::new(format!("{shelf}{place} / {of}  -  {name}")),
                 sub.0,
                 sub.1,
             ));
