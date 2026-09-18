@@ -106,6 +106,12 @@ pub struct StageCaption;
 #[derive(Component)]
 pub struct StageHint;
 
+/// The hint line and the pill it rides. A named type because it wants both
+/// the text and the node, and a `Without` to stay disjoint from the
+/// caption's query over the same two components.
+type HintLine<'w, 's> =
+    Query<'w, 's, (&'static mut Text, &'static mut Node), (With<StageHint>, Without<StageCaption>)>;
+
 /// How a stage reads on the grid. Locked stages are shown, not hidden:
 /// seeing what is still ahead is half the point of a stage list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -421,10 +427,14 @@ pub fn enter_stage_select(
                 ..default()
             })
             .with_children(|lines| {
+                // Four pixels taller apiece than the line they hold, which
+                // is the room the pill's own padding takes: the row clips,
+                // and a pill that does not fit is a pill with its ends cut
+                // off.
                 for (height, font, color, tag) in [
-                    (26.0, 20.0, palette::SELECTED_ROW, Caption::Stage),
+                    (30.0, 20.0, palette::SELECTED_ROW, Caption::Stage),
                     (
-                        22.0,
+                        26.0,
                         17.0,
                         palette::SELECTED_ROW.with_alpha(0.8),
                         Caption::Hint,
@@ -440,6 +450,10 @@ pub fn enter_stage_select(
                             ..default()
                         })
                         .with_children(|line| {
+                            // Both lines ride a pill, for the reason the
+                            // prompt's own does: out here they are over the
+                            // open beach, and pale text on bright sand is
+                            // the one place this interface goes illegible.
                             let mut text = line.spawn((
                                 Text::new(String::new()),
                                 TextFont {
@@ -448,6 +462,12 @@ pub fn enter_stage_select(
                                 },
                                 TextLayout::no_wrap(),
                                 TextColor(color),
+                                Node {
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(3.0)),
+                                    border_radius: BorderRadius::all(Val::Px(11.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(palette::PILL_FILL),
                             ));
                             match tag {
                                 Caption::Stage => text.insert(StageCaption),
@@ -573,8 +593,8 @@ pub fn update_stage_tiles(
     caps: Res<crate::app::keycaps::KeyCaps>,
     mut tiles: Query<(&StageTile, &mut BorderColor, &mut BackgroundColor)>,
     mut numbers: Query<(&StageNumber, &mut TextColor)>,
-    mut captions: Query<&mut Text, With<StageCaption>>,
-    mut hints: Query<&mut Text, (With<StageHint>, Without<StageCaption>)>,
+    mut captions: Query<(&mut Text, &mut Node), With<StageCaption>>,
+    mut hints: HintLine,
 ) {
     for (tile, mut border, mut fill) in &mut tiles {
         let state = TileState::of(&progress, &campaign, tile.0);
@@ -608,7 +628,7 @@ pub fn update_stage_tiles(
         menu_ui::set_color(&mut color, target);
     }
     let state = TileState::of(&progress, &campaign, list.selected);
-    if let Ok(mut text) = captions.single_mut() {
+    if let Ok((mut text, mut node)) = captions.single_mut() {
         let line = caption(
             settings.tr(),
             settings.language,
@@ -617,10 +637,13 @@ pub fn update_stage_tiles(
             list.selected,
         );
         menu_ui::set_text(&mut text, &line);
+        menu_ui::set_shown(&mut node, !line.is_empty());
     }
     // A locked stage keeps its lesson to itself; the caption already says
-    // what to do about it.
-    if let Ok(mut text) = hints.single_mut() {
+    // what to do about it. Two thirds of the campaign has no hint either,
+    // so the line is empty more often than not - and the pill goes with
+    // it, rather than sitting on the sand as an empty lozenge.
+    if let Ok((mut text, mut node)) = hints.single_mut() {
         let hint = match state {
             TileState::Locked => String::new(),
             TileState::Cleared | TileState::Open => caps.legend(
@@ -631,6 +654,7 @@ pub fn update_stage_tiles(
             ),
         };
         menu_ui::set_text(&mut text, &hint);
+        menu_ui::set_shown(&mut node, !hint.is_empty());
     }
 }
 
