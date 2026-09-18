@@ -173,9 +173,9 @@ pub fn spawn_versus_results(
         }
     }
 
-    let local = online.0.as_ref().and_then(|s| s.session.seat());
+    let local = crate::app::side_panels::local_seat(&online, playback.0.is_some());
     let rows = standings_rows(&settings, &names, scores, count, mode, |seat| {
-        crate::app::side_panels::seat_tag(tr, &bots, local, playback.0.is_some(), seat)
+        crate::app::side_panels::seat_tag(tr, &bots, local, seat)
     });
     let haul = board.crabs_banked();
 

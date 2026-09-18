@@ -271,10 +271,10 @@ pub fn spawn_side_panels(
 ) {
     log.0.clear();
     let tr = settings.tr();
-    let local = online.0.as_ref().and_then(|s| s.session.seat());
+    let local = local_seat(&online, playback.0.is_some());
     let labels: Vec<String> = (0..seats.0.max(2))
         .map(|seat| {
-            let tag = seat_tag(tr, &bots, local, playback.0.is_some(), seat);
+            let tag = seat_tag(tr, &bots, local, seat);
             format!("{}{tag}", names.label(tr, seat))
         })
         .collect();
@@ -319,18 +319,35 @@ pub fn leading_seats(
     leaders
 }
 
+/// The seat the person at this keyboard is playing, and `None` when
+/// nobody is: a spectator at somebody else's beach, or a recording.
+///
+/// Offline the answer is seat 0, because the person at the keyboard is
+/// always P1 there. [`seat_tag`] used to make that guess itself, from a
+/// local seat of `None`, and a spectator has one of those too: every
+/// watcher on a beach was shown the host's chair marked as its own, on
+/// the panels and on the results card both.
+pub fn local_seat(online: &Online, playback_active: bool) -> Option<u8> {
+    match &online.0 {
+        Some(session) => session.session.seat(),
+        // A recording is watched, not played, so nobody at this keyboard
+        // holds a chair in it either.
+        None if playback_active => None,
+        None => Some(0),
+    }
+}
+
 /// The "(you)" / "(AI)" tag for a seat, shared by the panels and the
 /// results card.
 pub fn seat_tag(
     tr: &crate::app::i18n::Tr,
     bots: &Bots,
     local: Option<u8>,
-    playback_active: bool,
     seat: u8,
 ) -> &'static str {
     if bots.0[seat as usize].is_some() {
         tr.tag_ai
-    } else if local == Some(seat) || (local.is_none() && !playback_active && seat == 0) {
+    } else if local == Some(seat) {
         tr.tag_you
     } else {
         ""
@@ -538,5 +555,63 @@ mod tests {
         assert_eq!(ranks(&[0, 7, 0, 0, 0, 0], 2), [1, 0, 0, 0, 0, 0]);
         // A full table of six ranks all of them.
         assert_eq!(ranks(&[1, 6, 2, 5, 3, 4], 6), [5, 0, 4, 1, 3, 2]);
+    }
+}
+#[cfg(test)]
+mod seat_tag_tests {
+    use super::*;
+    use crate::app::i18n::EN;
+    use crate::sim::{DEFAULT_DELAY, Lockstep};
+    use crate::transport::{MatchTerms, UdpTransport};
+
+    fn session(local: Option<u8>) -> crate::app::net::OnlineSession {
+        let step = match local {
+            Some(seat) => Lockstep::new(seat, vec![0, 1], DEFAULT_DELAY),
+            None => Lockstep::observer(vec![0, 1], DEFAULT_DELAY),
+        };
+        crate::app::net::OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            step,
+            2,
+            MatchTerms::default(),
+        )
+    }
+
+    /// Who "(you)" belongs to, which is not the same question as "is
+    /// there a local seat".
+    ///
+    /// Offline the person at the keyboard is always P1, and that guess
+    /// used to be made from a local seat of `None`. A spectator has one of
+    /// those too, so every watcher on a beach was shown the host's chair
+    /// marked as its own, on the panels and the results card both.
+    #[test]
+    fn a_spectator_is_nobody_at_the_table_rather_than_seat_zero() {
+        assert_eq!(
+            local_seat(&Online::default(), false),
+            Some(0),
+            "offline, the keyboard is P1"
+        );
+        assert_eq!(
+            local_seat(&Online::default(), true),
+            None,
+            "a recording is watched, not played"
+        );
+        assert_eq!(
+            local_seat(&Online(Some(session(Some(1)))), false),
+            Some(1),
+            "online, whatever chair the host dealt"
+        );
+        assert_eq!(
+            local_seat(&Online(Some(session(None))), false),
+            None,
+            "and a spectator holds none"
+        );
+
+        let bots = Bots::default();
+        let tag = |local, seat| seat_tag(&EN, &bots, local, seat);
+        assert_eq!(tag(Some(0), 0), EN.tag_you);
+        assert_eq!(tag(Some(0), 1), "");
+        assert_eq!(tag(None, 0), "", "nobody's chair is the spectator's");
+        assert_eq!(tag(None, 1), "");
     }
 }
