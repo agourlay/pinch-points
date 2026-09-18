@@ -257,7 +257,7 @@ impl OnlineSession {
     fn roster_msg(&self) -> NetMsg {
         NetMsg::Roster {
             seats: self.seats,
-            names: crate::transport::wire_table(&self.names),
+            names: wire_table(&self.names),
             terms: self.terms,
         }
     }

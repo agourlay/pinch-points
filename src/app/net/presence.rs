@@ -263,7 +263,7 @@ impl OnlineSession {
     pub(super) fn forget_gone_watchers(&mut self) {
         for peer in (0..self.peers.len()).rev() {
             let gone = self.peers.get(peer).is_some_and(|row| {
-                row.place == crate::app::net::Place::Watching && row.silence >= WATCHER_GONE_AFTER
+                row.place == Place::Watching && row.silence >= WATCHER_GONE_AFTER
             });
             if gone {
                 self.transport.forget(peer);

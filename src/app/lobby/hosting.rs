@@ -548,7 +548,7 @@ pub(super) fn should_launch(
 /// nobody has ever spoken in it: the arrivals before theirs, the host's
 /// word about the terms, every plan anyone made. Sent once, on the
 /// greeting that first names them, and no longer than the feed itself,
-/// which keeps [`CHAT_LINES`](crate::app::lobby::ui::CHAT_LINES).
+/// which keeps [`CHAT_LINES`](CHAT_LINES).
 ///
 /// To that peer alone, not to the table: everyone else was there.
 fn catch_up_on_the_feed(state: &LobbyState, peer: usize) {

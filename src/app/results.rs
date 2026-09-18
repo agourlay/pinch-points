@@ -57,7 +57,7 @@ fn results_card(commands: &mut Commands) -> Entity {
         .spawn((
             ResultsPanel,
             // Above the header/prompt bars in the UI stack.
-            GlobalZIndex(crate::app::menu_ui::layer::RESULTS),
+            GlobalZIndex(menu_ui::layer::RESULTS),
             menu_ui::centred_overlay(),
         ))
         .id()

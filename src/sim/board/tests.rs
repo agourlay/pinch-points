@@ -1289,7 +1289,7 @@ fn a_called_event_fires_from_a_seats_input() {
 #[test]
 fn a_called_event_is_held_to_the_surge_guard_too() {
     let mut board = party_board();
-    board.set_round_length(Some(crate::sim::SURGE_TICKS));
+    board.set_round_length(Some(SURGE_TICKS));
     assert!(board.in_surge(), "inside the last stretch");
 
     let mut actions = [PlayerAction::None; MAX_PLAYERS];

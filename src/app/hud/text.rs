@@ -280,7 +280,7 @@ pub(super) fn puzzle_text(
 /// spectators' used to spell it out for itself: a flat "Enter: menu",
 /// while `versus_over_input` walked a spectator that came from a lobby
 /// back to the lobby with everybody else.
-fn enter_door(tr: &Tr, online: &crate::app::net::Online, series_on: bool) -> &'static str {
+fn enter_door(tr: &Tr, online: &Online, series_on: bool) -> &'static str {
     use crate::app::play_input::AfterRound;
     match crate::app::play_input::after_round(online, series_on) {
         AfterRound::NextRound => tr.tour_next,
