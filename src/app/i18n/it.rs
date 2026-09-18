@@ -206,6 +206,7 @@ pub static IT: Tr = Tr {
     prompt_versus_custom: "i tuoi tasti (Impostazioni) | Esc pausa",
     prompt_enter_menu: "Invio: menu",
     prompt_enter_lobby: "Invio: sala",
+    prompt_esc_menu: "Esc: menu",
     prompt_achievements: "W/S: scorrere | Esc: menu",
     prompt_mute: "M: muto",
     replay_draw: "pareggio",

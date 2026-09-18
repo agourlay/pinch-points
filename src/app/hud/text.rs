@@ -268,6 +268,22 @@ pub(super) fn puzzle_text(
 /// The busiest screen there is, and the one that reads off the most: it
 /// takes the whole [`Readout`] rather than ten of its fields, where the
 /// order of two `&Res`es of the same shape was checked by eyesight.
+/// What Enter does when the tide is in, named by the one function the key
+/// itself reads.
+///
+/// Both the players' card and the spectators' want this line, and the
+/// spectators' used to spell it out for itself: a flat "Enter: menu",
+/// while `versus_over_input` walked a spectator that came from a lobby
+/// back to the lobby with everybody else.
+fn enter_door(tr: &Tr, online: &crate::app::net::Online, series_on: bool) -> &'static str {
+    use crate::app::play_input::AfterRound;
+    match crate::app::play_input::after_round(online, series_on) {
+        AfterRound::NextRound => tr.tour_next,
+        AfterRound::Lobby => tr.prompt_enter_lobby,
+        AfterRound::Menu => tr.prompt_enter_menu,
+    }
+}
+
 pub(super) fn versus_text(r: &Readout) -> HudText {
     let Readout {
         tr,
@@ -384,7 +400,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
                         (0, wait) => fill(tr.spectator_wait, &[("n", &wait.to_string())]),
                         (open, _) => fill(tr.spectator_vote_open, &[("n", &open.to_string())]),
                     };
-                    format!("{call} | {} | {}", tr.lobby_chat_hint, tr.prompt_enter_menu)
+                    format!("{call} | {} | {}", tr.lobby_chat_hint, tr.prompt_esc_menu)
                 }
             }
         }
@@ -394,7 +410,11 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         VersusPhase::Over if online.0.as_ref().is_some_and(|s| s.session.watching()) => {
             match r.spectator_typing {
                 Some(line) => format!("> {line}_"),
-                None => format!("{} | {}", tr.lobby_chat_hint, tr.prompt_enter_menu),
+                None => format!(
+                    "{} | {}",
+                    tr.lobby_chat_hint,
+                    enter_door(tr, online, tournament.is_running())
+                ),
             }
         }
         VersusPhase::Running if online.0.is_some() || bots.0.iter().any(Option::is_some) => {
@@ -406,14 +426,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         // key itself reads: a finished lobby match goes back to the lobby
         // together, a series plays on, and the prompt must not promise a
         // door the key does not open.
-        VersusPhase::Over => {
-            use crate::app::play_input::AfterRound;
-            match crate::app::play_input::after_round(online, tournament.is_running()) {
-                AfterRound::NextRound => tr.tour_next.to_string(),
-                AfterRound::Lobby => tr.prompt_enter_lobby.to_string(),
-                AfterRound::Menu => tr.prompt_enter_menu.to_string(),
-            }
-        }
+        VersusPhase::Over => enter_door(tr, online, tournament.is_running()).to_string(),
     };
     HudText::new(mode, status, prompt)
 }
@@ -909,6 +922,89 @@ mod tests {
         for state in [idle, open, wait, both] {
             assert!(state.contains(EN.lobby_chat_hint), "and T is always there");
         }
+    }
+
+    /// A spectator is told which key gets it out, and it is not the key
+    /// the line used to name.
+    ///
+    /// Two of them, both found by watching a real round end. Mid-round the
+    /// line said "Enter: menu", but Enter does nothing while watching: it
+    /// is Escape that opens the card, since a spectator cannot pause a
+    /// table it is not playing at. And on the results card it still said
+    /// "Enter: menu" while `versus_over_input` walked that spectator back
+    /// to the lobby with the rest of the table, which is the one thing
+    /// `after_round` exists to keep every reader agreeing on.
+    #[test]
+    fn a_spectator_is_told_the_key_that_actually_lets_it_out() {
+        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+
+        let levels = campaign_levels();
+        let builtins = levels.len();
+        let campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        };
+        let settings = GameSettings::default();
+        let mut session = crate::app::net::OnlineSession::new(
+            crate::transport::UdpTransport::host(0).expect("socket"),
+            crate::sim::Lockstep::observer(vec![0, 1], crate::sim::DEFAULT_DELAY),
+            2,
+            crate::transport::MatchTerms::default(),
+        );
+        // Came in through a lobby, which is where Enter sends it back to.
+        session.home.from_lobby = true;
+        let watching = Online(Some(session));
+        let said = |phase| {
+            versus_text(&Readout {
+                tr: &EN,
+                lang: Lang::En,
+                sim: &Sim(Board::new(9, 7, 1)),
+                campaign: &campaign,
+                phase: &State::new(Phase::Setup),
+                vphase: &State::new(phase),
+                editor: &EditorState::default(),
+                online: &watching,
+                playback: &Playback::default(),
+                lobby: &LobbyState::default(),
+                tournament: &crate::app::tournament::Tournament::default(),
+                seats: &Seats(2),
+                settings: &settings,
+                keycaps: &crate::app::keycaps::KeyCaps::default(),
+                names: &crate::app::SeatNames::default(),
+                bots: &Bots::default(),
+                library: &crate::app::replays::Library::default(),
+                notice: &crate::app::RoundNotice::default(),
+                match_menu: &crate::app::match_setup::MatchMenu::default(),
+                paused: false,
+                spectator_typing: None,
+                crowd: Default::default(),
+                speed: 1,
+            })
+            .prompt
+        };
+
+        let running = said(VersusPhase::Running);
+        assert!(
+            running.contains(EN.prompt_esc_menu),
+            "Escape is the way out of a round you are watching: {running}"
+        );
+        assert!(
+            !running.contains(EN.prompt_enter_menu),
+            "and Enter is not, so it must not be offered: {running}"
+        );
+
+        let over = said(VersusPhase::Over);
+        assert!(
+            over.contains(EN.prompt_enter_lobby),
+            "and the card names the door the key opens: {over}"
+        );
+        assert_eq!(
+            crate::app::play_input::after_round(&watching, false),
+            crate::app::play_input::AfterRound::Lobby,
+            "which is the lobby, as the key itself reads it"
+        );
     }
 
     /// The table is told there is a crowd, in whatever room the banners

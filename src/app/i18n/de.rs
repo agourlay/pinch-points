@@ -213,6 +213,7 @@ pub static DE: Tr = Tr {
     prompt_versus_custom: "deine Tasten (Einstellungen) | Esc Pause",
     prompt_enter_menu: "Enter: Menü",
     prompt_enter_lobby: "Enter: Lobby",
+    prompt_esc_menu: "Esc: Menü",
     prompt_achievements: "W/S: blättern | Esc: Menü",
     prompt_mute: "M: stumm",
     replay_draw: "unentschieden",

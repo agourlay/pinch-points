@@ -308,6 +308,10 @@ struct Tr {
     /// The way off an online results card: the whole table returns to the
     /// lobby it was formed in, still connected.
     pub prompt_enter_lobby: &'static str,
+    /// The way out for somebody who is only watching a round: Escape
+    /// opens their own card, since a spectator cannot pause a table it is
+    /// not playing at, and Enter does nothing at all.
+    pub prompt_esc_menu: &'static str,
     /// The trophy shelf: it scrolls now that it is longer than the screen,
     /// so its prompt says so rather than only how to leave. The last reader
     /// of the old read-out-only `prompt_esc_menu`, which went with it.
