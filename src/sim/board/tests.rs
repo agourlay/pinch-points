@@ -1262,6 +1262,24 @@ fn party_board() -> Board {
     board
 }
 
+/// A called event fires from the action stream, the same way a placement
+/// does, so every peer runs it on the frame it arrived with.
+#[test]
+fn a_called_event_fires_from_a_seats_input() {
+    let mut board = party_board();
+    board.spawn_crab(3, 2, Right, Handedness::Right, CrabKind::Common);
+    board.place_signpost(0, 3, 1, Right);
+    assert_eq!(board.signpost_count(0), 1, "an arrow to wash away");
+
+    let mut actions = [PlayerAction::None; MAX_PLAYERS];
+    actions[0] = PlayerAction::CallEvent(TideEvent::FreshSand);
+    board.tick(&actions);
+
+    assert_eq!(board.signpost_count(0), 0, "fresh sand took it");
+    let (event, _) = board.last_event().expect("the call fired");
+    assert_eq!(event, TideEvent::FreshSand);
+}
+
 /// Right Claws: while it runs, the claw a crab leads with decides whether
 /// banking it is worth doing at all.
 #[test]

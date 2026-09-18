@@ -180,6 +180,15 @@ pub enum PlayerAction {
         x: u8,
         y: u8,
     },
+    /// The rail called a tide event, relayed by the host.
+    ///
+    /// An action rather than a message of its own, and that is the whole
+    /// point: a peer cannot simulate a frame without every seat's input
+    /// for it, so an event carried this way arrives with the frame it
+    /// belongs to or the frame does not run. A side channel would have
+    /// been echoed and hoped for, and a peer that missed every echo would
+    /// have played a different round without ever knowing.
+    CallEvent(TideEvent),
 }
 
 /// What happens when a player places a signpost at their cap.
@@ -685,6 +694,11 @@ impl Board {
             PlayerAction::Remove { x, y } => {
                 let _ = self.remove_signpost(player, x, y);
             }
+            // The rail's, not this seat's: the host carries it because the
+            // host is the one every peer waits on anyway. It fires whatever
+            // the wheel's own cooldown says, because the rail's call is not
+            // a spin of the wheel and should not be refused by one.
+            PlayerAction::CallEvent(event) => self.force_tide_event(event, player),
         }
     }
 

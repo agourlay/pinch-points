@@ -14,7 +14,7 @@
 //! stalls; on jitter it waits rather than desyncs. Peers exchange state
 //! hashes every [`HASH_INTERVAL`] frames to detect desync loudly.
 
-use crate::sim::board::{MAX_PLAYERS, PlayerAction, PlayerId};
+use crate::sim::board::{MAX_PLAYERS, PlayerAction, PlayerId, TideEvent};
 use crate::sim::direction::Direction;
 use std::collections::BTreeMap;
 
@@ -44,6 +44,10 @@ pub fn encode_action(action: PlayerAction) -> [u8; 3] {
         PlayerAction::None => [0, 0, 0],
         PlayerAction::Place { x, y, dir } => [x, y, 1 | (dir.id() << 2)],
         PlayerAction::Remove { x, y } => [x, y, 2],
+        // Tag 3 was free and the other two bytes are unused here, so the
+        // rail's call costs the wire nothing. An older build decodes tag 3
+        // as `None`, which is why the replay header moved to v2.
+        PlayerAction::CallEvent(event) => [event.index() as u8, 0, 3],
     }
 }
 
@@ -56,6 +60,10 @@ pub fn decode_action(bytes: [u8; 3]) -> PlayerAction {
             dir: Direction::from_id((bytes[2] >> 2) & 0b11),
         },
         2 => PlayerAction::Remove { x, y },
+        3 => TideEvent::ALL
+            .get(usize::from(x))
+            .copied()
+            .map_or(PlayerAction::None, PlayerAction::CallEvent),
         _ => PlayerAction::None,
     }
 }
@@ -689,6 +697,52 @@ mod tests {
     fn roundtrip(action: PlayerAction) {
         let decoded = decode_action(encode_action(action));
         assert_eq!(format!("{action:?}"), format!("{decoded:?}"));
+    }
+
+    /// The rail's call rides in a seat's input, and that is the whole
+    /// reason it is an action at all: a peer cannot simulate a frame
+    /// without every seat's input for it, so the call arrives with the
+    /// frame it belongs to or the frame does not run. A side channel would
+    /// have been echoed and hoped for, and a peer that missed every echo
+    /// would have played a different round without knowing.
+    #[test]
+    fn a_called_event_travels_in_the_frame_it_belongs_to() {
+        for event in TideEvent::ALL {
+            roundtrip(PlayerAction::CallEvent(event));
+        }
+
+        // Two peers, one frame, the call in seat 0's slot: both run it.
+        let mut a = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
+        let mut b = Lockstep::new(1, vec![0, 1], DEFAULT_DELAY);
+        let called = PlayerAction::CallEvent(TideEvent::FreshSand);
+        for frame in 0..=DEFAULT_DELAY {
+            let from_a = a.commit_local(if frame == DEFAULT_DELAY {
+                called
+            } else {
+                PlayerAction::None
+            });
+            let from_b = b.commit_local(PlayerAction::None);
+            if let Some(msg) = from_a {
+                b.receive(msg);
+            }
+            if let Some(msg) = from_b {
+                a.receive(msg);
+            }
+        }
+        let mut seen = Vec::new();
+        while let (Some(one), Some(two)) = (a.advance(), b.advance()) {
+            assert_eq!(
+                format!("{one:?}"),
+                format!("{two:?}"),
+                "both peers run the same frame"
+            );
+            seen.push(one[0]);
+        }
+        assert!(
+            seen.iter()
+                .any(|a| format!("{a:?}") == format!("{called:?}")),
+            "the call came out of the frame it went into: {seen:?}"
+        );
     }
 
     #[test]
