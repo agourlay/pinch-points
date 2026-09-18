@@ -248,9 +248,10 @@ pub fn settle_spectator_vote(
         session.forget_open_vote();
         return;
     }
-    // What the crowd is told, before anything settles. Said only when it
-    // changes, which is a few times a round rather than thirty times a
-    // second.
+    // What the crowd is told, before anything settles. Said when it
+    // changes and once a second besides, rather than thirty times a
+    // second: the change alone is one datagram UDP may keep, and this is
+    // the only word anyone but the host has on the matter.
     let crowd = Crowd {
         watching: session.watchers_in_round().min(u8::MAX as usize) as u8,
         open: session
@@ -262,7 +263,8 @@ pub fn settle_spectator_vote(
             .waiting()
             .map_or(0, |left| left.ceil() as u8),
     };
-    if crowd != session.crowd {
+    let again = crate::app::lobby::once_a_second(&mut session.crowd_said, time.delta_secs());
+    if crowd != session.crowd || again {
         session.crowd = crowd;
         session.transport.send(NetMsg::SpectatorTally {
             watching: crowd.watching,
@@ -930,5 +932,52 @@ mod tests {
         let session = online.0.as_ref().expect("a session");
         assert_eq!(session.pending_call, None, "no call waiting on a frame");
         assert!(session.spectators.open().is_none(), "no vote still open");
+    }
+
+    /// The crowd's size is said again on a clock, not only when it moves.
+    ///
+    /// Found by watching three real processes: the count settles at the
+    /// launch and never changes again, so it travelled in exactly one
+    /// datagram, sent on the first running frame - the frame a spectator
+    /// is still walking out of the lobby on, where `work_the_socket`
+    /// drops round business on the floor. The players saw "1 watching"
+    /// and the spectator, alone in a crowd of one, saw nothing at all.
+    #[test]
+    fn the_crowd_is_told_its_size_again_without_being_asked() {
+        let mut app = beach(Some(0));
+        let port = {
+            let online = app.world().resource::<Online>();
+            let session = online.0.as_ref().expect("a session");
+            session.transport.local_addr().expect("addr").port()
+        };
+        // Someone on the other end of the wire, so there is a peer to say
+        // it to and a socket to read it off.
+        let mut ear = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        ear.send(NetMsg::watch("Dee"));
+        let mut tallies = 0;
+        for _ in 0..3 {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            // The socket registers a peer from the datagram it sent, and
+            // nothing is broadcast to a peer the socket has never met.
+            {
+                let mut online = app.world_mut().resource_mut::<Online>();
+                let session = online.0.as_mut().expect("a session");
+                let _ = session.transport.recv_all();
+            }
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(1.1));
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            tallies += ear
+                .recv_all()
+                .into_iter()
+                .filter(|(msg, _)| matches!(msg, NetMsg::SpectatorTally { .. }))
+                .count();
+        }
+        assert!(
+            tallies >= 2,
+            "the crowd hears where it stands more than once, got {tallies}"
+        );
     }
 }

@@ -68,6 +68,17 @@ pub struct OnlineSession {
     /// here rather than a guess of its own. On the host it is what it is
     /// about to say.
     pub crowd: crate::app::spectators::Crowd,
+    /// Host: how long since it last said so.
+    ///
+    /// The word is repeated on a clock as well as on a change, because a
+    /// count that only changes once a round travels in exactly one
+    /// datagram, and UDP owes nobody that datagram. Worse than a lost
+    /// pause, which the next tick makes good: the crowd's size is settled
+    /// at the launch and never changes again, so the one send goes out
+    /// while a spectator is still walking out of the lobby, where the
+    /// lobby drops it as round business (`joining::work_the_socket`).
+    /// That left the crowd unable to see itself for the whole round.
+    pub(crate) crowd_said: f32,
     /// An event the spectators settled on, waiting for a frame to ride out on.
     ///
     /// Held rather than sent: it goes out as this seat's action, which is
@@ -457,6 +468,7 @@ impl OnlineSession {
             abandoned: Vec::new(),
             spectators: crate::app::spectators::SpectatorVotes::default(),
             crowd: crate::app::spectators::Crowd::default(),
+            crowd_said: 0.0,
             pending_call: None,
             heard: Vec::new(),
             home: Home::nowhere(),
@@ -546,6 +558,7 @@ impl OnlineSession {
             abandoned: _,
             spectators: _,
             crowd: _,
+            crowd_said: _,
             pending_call: _,
             heard: _,
             home,
