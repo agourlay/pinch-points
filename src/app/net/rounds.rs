@@ -232,6 +232,13 @@ impl OnlineSession {
             self.note_watch_wish(from);
         }
         if let Some(queued) = self.queue_place(from) {
+            // And shown the table it is waiting for. The roster is the
+            // lobby's own message and the round sends nobody one, so a
+            // peer that turned up mid-round sat in front of an empty
+            // beach panel, told it was next up for a match it could see
+            // nothing of, with a terms card falling back to its own
+            // machine's settings as though they were the host's.
+            self.transport.send_to(from, self.roster_msg());
             return queued;
         }
         // A watcher is told it is watching, so the seat it gets is not one.
@@ -242,6 +249,17 @@ impl OnlineSession {
             *slot = told.to_string();
         }
         self.start_msg(seat)
+    }
+
+    /// The table as it stands, for a peer that has none: who holds which
+    /// seat, and the terms they are playing. The same message the lobby
+    /// sends while it is gathering, from the round's own copy of both.
+    fn roster_msg(&self) -> NetMsg {
+        NetMsg::Roster {
+            seats: self.seats,
+            names: crate::transport::wire_table(&self.names),
+            terms: self.terms,
+        }
     }
 
     /// Host: write down a peer's name against its socket index, growing the

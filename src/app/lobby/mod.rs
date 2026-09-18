@@ -163,6 +163,10 @@ pub struct Joined {
     pub transport: UdpTransport,
     /// We asked to watch, so we greet with `Watch` and expect no seat back.
     pub watching: bool,
+    /// How many are in front of us in line for the next round, once the
+    /// host has said we are in one. `None` while there is still a lobby
+    /// to be in: a round has to be under way before anybody queues.
+    pub queued: Option<u8>,
     hello_in: f32,
     /// Seconds since the host last said anything, and whether it has ever
     /// said anything at all.
@@ -194,6 +198,7 @@ impl Joined {
         Joined {
             transport,
             watching,
+            queued: None,
             hello_in: ANNOUNCE_EVERY,
             host_silence: 0.0,
             host_answered: false,
@@ -209,6 +214,7 @@ impl Joined {
         Joined {
             transport,
             watching,
+            queued: None,
             hello_in: 0.0,
             host_silence: 0.0,
             host_answered: true,

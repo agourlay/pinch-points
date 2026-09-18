@@ -592,6 +592,9 @@ struct Tr {
     /// above it already says "watching", and two lines disagreeing about
     /// which of those you are is worse than either.
     pub lobby_watching_prompt: &'static str,
+    /// And for a peer in line for the next round, which has not started
+    /// when the host launches: it started without them.
+    pub lobby_queued_prompt: &'static str,
     pub lobby_could_not_host: &'static str,
     pub lobby_could_not_join: &'static str,
     pub lobby_version_clash: &'static str,

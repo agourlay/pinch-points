@@ -425,6 +425,7 @@ pub static EN: Tr = Tr {
     lobby_broadcasting: "On the air - arrow keys: set the round | T: talk | Enter: start (up to 5 rivals) | Esc: menu",
     lobby_aboard_prompt: "Aboard - the match starts when the host launches | T: talk | Esc: menu",
     lobby_watching_prompt: "Watching - the match starts when the host launches | T: talk | Esc: menu",
+    lobby_queued_prompt: "In line - you play the next round | T: talk | Esc: menu",
     lobby_could_not_host: "could not host: {e}",
     lobby_could_not_join: "could not join: {e}",
     lobby_version_clash: "that beach runs a different version of the game (theirs {t}, yours {o})",

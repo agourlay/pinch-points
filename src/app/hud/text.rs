@@ -117,6 +117,9 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
         // W armed is the one bit of lobby state a player has to be told
         // about, since it changes what picking a beach does.
         Standing::Choosing { watching: true } => tr.lobby_watch_armed.to_string(),
+        // A peer in line is not waiting for a launch either: the round it
+        // is queued for is the one already being played without it.
+        Standing::Joining(joined) if joined.queued.is_some() => tr.lobby_queued_prompt.to_string(),
         // "Aboard" is the joiner's word, and a spectator is not: the
         // status line right above this one says "watching", and the two
         // of them describing the same peer differently is the whole of
@@ -774,32 +777,43 @@ mod tests {
         assert_eq!(lobby_text(&EN, &lobby).status, "hosting on port 47777");
     }
 
-    /// Aboard is the joiner's word, and a spectator is not aboard.
+    /// Three ways to be at somebody else's beach, and three lines.
     ///
-    /// Found by putting a spectator on a real beach: the status line said
-    /// "watching" and the prompt under it said "Aboard", both about the
-    /// same peer at the same moment, because the prompt matched on
-    /// `Joining` without reading the flag that says which kind it is.
+    /// Aboard is the joiner's word. A spectator is not aboard, and a peer
+    /// in line is not waiting for a launch: the round it is queued for
+    /// started without it. The prompt matched on `Joining` alone and told
+    /// all three they were aboard and the match would start when the host
+    /// launched, while the status line an inch above said "watching" or
+    /// "Round in progress". Found by putting each of them on a real beach.
     #[test]
-    fn a_spectator_in_the_lobby_is_not_told_it_is_aboard() {
+    fn each_way_of_being_at_a_beach_gets_its_own_prompt() {
         use crate::app::lobby::{Joined, Standing};
         use crate::transport::UdpTransport;
 
-        let joined = |watching| {
+        let joined = |watching, queued| {
             let mut lobby = LobbyState::default();
-            lobby.standing = Standing::Joining(Joined::returned(
-                UdpTransport::host(0).expect("socket"),
-                watching,
-                0,
-            ));
+            let mut aboard = Joined::returned(UdpTransport::host(0).expect("socket"), watching, 0);
+            aboard.queued = queued;
+            lobby.standing = Standing::Joining(aboard);
             lobby_text(&EN, &lobby).prompt
         };
-        assert_eq!(joined(false), EN.lobby_aboard_prompt);
-        assert_eq!(joined(true), EN.lobby_watching_prompt);
-        assert_ne!(
-            EN.lobby_watching_prompt, EN.lobby_aboard_prompt,
-            "and they are two lines, not one said twice"
-        );
+        assert_eq!(joined(false, None), EN.lobby_aboard_prompt);
+        assert_eq!(joined(true, None), EN.lobby_watching_prompt);
+        // And a peer in line is waiting for a round that has already
+        // started, which is not what either of the other two say.
+        assert_eq!(joined(false, Some(0)), EN.lobby_queued_prompt);
+        assert_eq!(joined(true, Some(2)), EN.lobby_queued_prompt);
+        let all = [
+            EN.lobby_aboard_prompt,
+            EN.lobby_watching_prompt,
+            EN.lobby_queued_prompt,
+        ];
+        for (at, line) in all.iter().enumerate() {
+            assert!(
+                !all[at + 1..].contains(line),
+                "three standings want three lines: {line}"
+            );
+        }
     }
 
     /// What the key does right now, in the crowd's own terms. A spectator

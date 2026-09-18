@@ -425,6 +425,7 @@ pub static NL: Tr = Tr {
     lobby_broadcasting: "In de lucht - pijltjestoetsen: de ronde | T: praten | Enter: starten (tot 5 rivalen) | Esc: menu",
     lobby_aboard_prompt: "Aan boord - het spel begint als de host start | T: praten | Esc: menu",
     lobby_watching_prompt: "Kijkt mee - het spel begint als de host start | T: praten | Esc: menu",
+    lobby_queued_prompt: "In de rij - jij speelt de volgende ronde | T: praten | Esc: menu",
     lobby_could_not_host: "openen lukte niet: {e}",
     lobby_could_not_join: "meedoen lukte niet: {e}",
     lobby_version_clash: "dat strand draait een andere versie van het spel (die van hen {t}, die van jou {o})",

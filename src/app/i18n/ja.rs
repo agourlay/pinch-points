@@ -421,6 +421,7 @@ pub static JA: Tr = Tr {
     lobby_broadcasting: "公開中 - 矢印キー: 試合の決まり | T: 話す | Enter: 開始 (相手5人まで) | Esc: メニュー",
     lobby_aboard_prompt: "着席ずみ - ホストが始めたら試合開始 | T: 話す | Esc: メニュー",
     lobby_watching_prompt: "見物中 - ホストが始めたら試合開始 | T: 話す | Esc: メニュー",
+    lobby_queued_prompt: "次の番 - この試合のあとで遊べる | T: 話す | Esc: メニュー",
     lobby_could_not_host: "浜辺を立てられなかった: {e}",
     lobby_could_not_join: "入れなかった: {e}",
     lobby_version_clash: "あの浜辺はゲームの版がちがう (むこう {t}、きみ {o})",

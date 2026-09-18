@@ -410,6 +410,12 @@ pub fn join_tick(
             0 => tr.lobby_queued_next.to_string(),
             n => fill(tr.lobby_queued_behind, &[("n", &n.to_string())]),
         };
+        // Kept as well as said, so the prompt under that line can agree
+        // with it. A queued peer is not waiting for the host to launch:
+        // the host launched without it.
+        if let Some(joined) = state.joined_mut() {
+            joined.queued = Some(ahead);
+        }
     }
     let played = state.joined().and_then(Joined::played_seed);
     let started = started.filter(|invitation| a_fresh_invitation(played, invitation));
