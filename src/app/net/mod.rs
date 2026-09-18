@@ -62,13 +62,12 @@ pub struct OnlineSession {
     pub abandoned: Vec<(u8, u32)>,
     /// How the spectators' vote stands, counted by the host and nobody else.
     pub spectators: crate::app::spectators::SpectatorVotes,
-    /// The last tally the host said: how many are watching, seconds left
-    /// of an open vote, seconds until the next may be called.
+    /// The last word the host said about the crowd.
     ///
     /// Only the host counts, so every other peer keeps the host's word
     /// here rather than a guess of its own. On the host it is what it is
     /// about to say.
-    pub spectator_tally: (u8, u8, u8),
+    pub crowd: crate::app::spectators::Crowd,
     /// An event the spectators settled on, waiting for a frame to ride out on.
     ///
     /// Held rather than sent: it goes out as this seat's action, which is
@@ -306,6 +305,24 @@ pub struct LobbyReturn {
 pub struct Online(pub Option<OnlineSession>);
 
 impl OnlineSession {
+    /// Whether `peer` is watching this round: in it, and holding no chair
+    /// in it.
+    ///
+    /// Not `Peer::watches`, which is a wish as much as a place. That one
+    /// is true of somebody in line for the *next* round, who is sent no
+    /// frames and sees nothing, and of a seated player that has asked to
+    /// watch next time while still playing this one.
+    pub fn watching_this_round(&self, peer: usize) -> bool {
+        self.peers.follows_the_round(peer) && self.peers.seat_of(peer).is_none()
+    }
+
+    /// How many are watching this round.
+    pub fn watchers_in_round(&self) -> usize {
+        (0..self.peers.len())
+            .filter(|&peer| self.watching_this_round(peer))
+            .count()
+    }
+
     /// Drop a vote still being argued over, without touching the wait.
     pub fn forget_open_vote(&mut self) {
         self.spectators.forget_open();
@@ -411,7 +428,7 @@ impl OnlineSession {
             stall: StallWatch::default(),
             abandoned: Vec::new(),
             spectators: crate::app::spectators::SpectatorVotes::default(),
-            spectator_tally: (0, 0, 0),
+            crowd: crate::app::spectators::Crowd::default(),
             pending_call: None,
             heard: Vec::new(),
             home: Home::nowhere(),
@@ -500,7 +517,7 @@ impl OnlineSession {
             stall: _,
             abandoned: _,
             spectators: _,
-            spectator_tally: _,
+            crowd: _,
             pending_call: _,
             heard: _,
             home,
@@ -770,11 +787,23 @@ impl OnlineSession {
                     wait,
                 } => {
                     if !host {
-                        self.spectator_tally = (watching, open, wait);
+                        self.crowd = crate::app::spectators::Crowd {
+                            watching,
+                            open,
+                            wait,
+                        };
                     }
                 }
+                // Counted only from someone who is actually watching this
+                // round. The sender was never looked at, so a seated
+                // player could call tide events down on the table it was
+                // playing at, and a peer in line for the next round, which
+                // is sent no frames and has no board on screen, could vote
+                // on this one. With nobody watching at all, one stray
+                // datagram had the beach announcing what the spectators
+                // had called.
                 NetMsg::SpectatorVote { event } => {
-                    if host {
+                    if host && self.watching_this_round(from) {
                         self.spectators.cast(event);
                     }
                 }
@@ -954,6 +983,40 @@ mod homecoming_tests {
                 .all(|(addr, _)| addr.port() != port),
             "no goodbye for a beach that is coming home"
         );
+    }
+
+    /// Who counts as watching this round, which decides both whose vote
+    /// the host takes and what number the table is shown.
+    ///
+    /// Not `Peer::watches`, which is a wish as much as a place: it is true
+    /// of somebody in line for the *next* round, who is sent no frames and
+    /// sees nothing, and of a seated player that has asked to watch next
+    /// time while still playing this one. Counting either had a player in
+    /// the audience for its own round, and let a peer with no board vote
+    /// on what happened on it.
+    #[test]
+    fn only_someone_in_the_round_without_a_chair_is_watching_it() {
+        let mut session = hosting_session(11);
+        // Three peers in the launch plan: one seated, one watching, one
+        // seated but asking to watch next round. Then a fourth in line.
+        session.peers.row(0).place = Place::Seated(1);
+        session.peers.row(1).place = Place::Watching;
+        session.peers.row(2).place = Place::Seated(2);
+        session.peers.row(2).watch = true;
+        session.peers.row(3).place = Place::Queued;
+        session.peers.row(3).watch = true;
+
+        assert!(!session.watching_this_round(0), "a player");
+        assert!(session.watching_this_round(1), "a watcher");
+        assert!(
+            !session.watching_this_round(2),
+            "still playing, however it means to spend the next round"
+        );
+        assert!(
+            !session.watching_this_round(3),
+            "in line, sent no frames, watching nothing"
+        );
+        assert_eq!(session.watchers_in_round(), 1, "one of the four");
     }
 
     /// An empty name is the beach's own voice here: it is what announces

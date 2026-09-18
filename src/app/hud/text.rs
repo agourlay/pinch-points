@@ -353,9 +353,8 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
     // hears anyone is watching learns it has an audience from the moment
     // that audience calls a tide event down on it. Last, so a gull, a tide
     // event or a desync always has the slot instead.
-    let watching = r.spectator_tally.0;
-    if status.is_empty() && watching > 0 {
-        status = fill(tr.spectator_count, &[("n", &watching.to_string())]);
+    if status.is_empty() && r.crowd.watching > 0 {
+        status = fill(tr.spectator_count, &[("n", &r.crowd.watching.to_string())]);
     }
     let prompt = match vphase.get() {
         // A recording is watched, not played, but it *is* driven: the
@@ -372,8 +371,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
                 // vote open to join, a wait to sit out, or the offer. A
                 // spectator pressing into silence could not tell which.
                 None => {
-                    let (_, open, wait) = r.spectator_tally;
-                    let call = match (open, wait) {
+                    let call = match (r.crowd.open, r.crowd.wait) {
                         (0, 0) => tr.spectator_call_hint.to_string(),
                         (0, wait) => fill(tr.spectator_wait, &[("n", &wait.to_string())]),
                         (open, _) => fill(tr.spectator_vote_open, &[("n", &open.to_string())]),
@@ -450,9 +448,8 @@ pub(super) struct Readout<'a> {
     pub paused: bool,
     /// The line a spectator is saying to the table, while one is open.
     pub spectator_typing: Option<&'a str>,
-    /// The host's word on the crowd: how many are watching, seconds left
-    /// of an open vote, seconds until the next may be called.
-    pub spectator_tally: (u8, u8, u8),
+    /// The host's word on the crowd.
+    pub crowd: crate::app::spectators::Crowd,
     pub speed: u8,
 }
 
@@ -612,7 +609,7 @@ mod tests {
             match_menu: &crate::app::match_setup::MatchMenu::default(),
             paused: false,
             spectator_typing: None,
-            spectator_tally: (0, 0, 0),
+            crowd: Default::default(),
             speed: 1,
         };
         for screen in Screen::ALL {
@@ -683,7 +680,7 @@ mod tests {
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
                 paused: false,
                 spectator_typing: None,
-                spectator_tally: (0, 0, 0),
+                crowd: Default::default(),
                 speed: 1,
             };
             let prompt = screen_text(Screen::Versus, &readout).prompt;
@@ -816,7 +813,10 @@ mod tests {
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
                 paused: false,
                 spectator_typing: None,
-                spectator_tally: (watching, 0, 0),
+                crowd: crate::app::spectators::Crowd {
+                    watching,
+                    ..Default::default()
+                },
                 speed: 1,
             })
             .status
@@ -877,7 +877,7 @@ mod tests {
                     match_menu: &crate::app::match_setup::MatchMenu::default(),
                     paused,
                     spectator_typing: None,
-                    spectator_tally: (0, 0, 0),
+                    crowd: Default::default(),
                     speed: 1,
                 },
             )
@@ -934,7 +934,7 @@ mod tests {
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
                 paused: false,
                 spectator_typing: None,
-                spectator_tally: (0, 0, 0),
+                crowd: Default::default(),
                 speed: 1,
             })
             .prompt

@@ -380,10 +380,10 @@ pub fn update_hud(
             match_menu: &match_menu,
             paused: pause_menu.open,
             spectator_typing: spectators.0.as_deref(),
-            spectator_tally: online
+            crowd: online
                 .0
                 .as_ref()
-                .map_or((0, 0, 0), |session| session.spectator_tally),
+                .map_or_else(Default::default, |session| session.crowd),
             speed: speed.0,
         },
     );

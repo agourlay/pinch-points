@@ -13,6 +13,23 @@ use crate::sim::TideEvent;
 use crate::transport::NetMsg;
 use bevy::prelude::*;
 
+/// What the host says about the crowd, and the only word anyone else has
+/// on it.
+///
+/// A struct and not a `(u8, u8, u8)`: with nothing but position to say
+/// which is which, a reader that swapped the count for a countdown would
+/// compile and run, and all three are seconds-or-a-number. The same
+/// argument `HudText` makes about its own three strings.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Crowd {
+    /// How many are watching this round, holding no chair in it.
+    pub watching: u8,
+    /// Seconds left to join an open vote, or zero when none is open.
+    pub open: u8,
+    /// Seconds until the next call may be made, or zero when none is owed.
+    pub wait: u8,
+}
+
 /// The line a spectator is typing, if one is open.
 ///
 /// Its own resource rather than a field on the session: the session is
@@ -231,29 +248,26 @@ pub fn settle_spectator_vote(
         session.forget_open_vote();
         return;
     }
-    // What the crowd is told, before anything settles: how many of them
-    // there are, how long a vote has left, and how long the wait is. Said
-    // only when it changes, which is a few times a round rather than
-    // thirty times a second.
-    let watching = session.peers.iter().filter(|peer| peer.watches()).count();
-    let tally = (
-        watching.min(u8::MAX as usize) as u8,
-        session
+    // What the crowd is told, before anything settles. Said only when it
+    // changes, which is a few times a round rather than thirty times a
+    // second.
+    let crowd = Crowd {
+        watching: session.watchers_in_round().min(u8::MAX as usize) as u8,
+        open: session
             .spectators
             .open()
             .map_or(0, |left| left.ceil() as u8),
-        session
+        wait: session
             .spectators
             .waiting()
             .map_or(0, |left| left.ceil() as u8),
-    );
-    if tally != session.spectator_tally {
-        session.spectator_tally = tally;
-        let (watching, open, wait) = tally;
+    };
+    if crowd != session.crowd {
+        session.crowd = crowd;
         session.transport.send(NetMsg::SpectatorTally {
-            watching,
-            open,
-            wait,
+            watching: crowd.watching,
+            open: crowd.open,
+            wait: crowd.wait,
         });
     }
     let Some(event) = session.spectators.settle(time.delta_secs()) else {
@@ -400,6 +414,10 @@ pub fn forget_spectating(
     if let Some(session) = &mut online.0 {
         session.pending_call = None;
         session.forget_spectator_votes();
+        // The last word about a crowd that has gone home, which would
+        // otherwise be carried into the next round until the host's first
+        // send happened to differ from it.
+        session.crowd = Crowd::default();
     }
 }
 
@@ -820,6 +838,30 @@ mod tests {
                 .pending_call;
             assert_eq!(call, expected, "seat {seat}");
         }
+    }
+
+    /// The crowd's three numbers are told apart by name, not by where they
+    /// sit. They are all small numbers and two of them are seconds, so a
+    /// reader that took the count for a countdown would compile and run,
+    /// which is the argument `HudText` makes about its own three strings.
+    #[test]
+    fn the_crowds_numbers_are_told_apart_by_name() {
+        let crowd = Crowd {
+            watching: 3,
+            open: 2,
+            wait: 0,
+        };
+        assert_eq!(crowd.watching, 3, "three at the back");
+        assert_eq!(crowd.open, 2, "two seconds to join them");
+        assert_eq!(crowd.wait, 0, "and nothing owed");
+        assert_eq!(
+            Crowd::default(),
+            Crowd {
+                watching: 0,
+                open: 0,
+                wait: 0
+            }
+        );
     }
 
     /// The wait belongs to the round it was earned in. It only ever ran
