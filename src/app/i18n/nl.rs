@@ -414,7 +414,7 @@ pub static NL: Tr = Tr {
     lobby_join_list: "{n} stranden in de lucht | pijltjestoetsen: kiezen | Enter: meedoen | H: openen | J: op adres | W: kijken | Esc: menu",
     lobby_join_list_one: "1 strand in de lucht | Enter: meedoen | H: openen | J: op adres | W: kijken | Esc: menu",
     lobby_broadcasting: "In de lucht - pijltjestoetsen: de ronde | T: praten | Enter: starten (tot 5 rivalen) | Esc: menu",
-    lobby_aboard_prompt: "Aan boord - het spel begint als de host start | Esc: menu",
+    lobby_aboard_prompt: "Aan boord - het spel begint als de host start | T: praten | Esc: menu",
     lobby_could_not_host: "openen lukte niet: {e}",
     lobby_could_not_join: "meedoen lukte niet: {e}",
     lobby_version_clash: "dat strand draait een andere versie van het spel (die van hen {t}, die van jou {o})",

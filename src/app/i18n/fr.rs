@@ -414,7 +414,7 @@ pub static FR: Tr = Tr {
     lobby_join_list: "{n} plages en ligne | touches fléchées : choisir | Entrée : rejoindre | H : ouvrir | J : par adresse | W : regarder | Échap : menu",
     lobby_join_list_one: "1 plage en ligne | Entrée : rejoindre | H : ouvrir | J : par adresse | W : regarder | Échap : menu",
     lobby_broadcasting: "En ligne - touches fléchées : la manche | T : parler | Entrée : lancer (jusqu'à 5 rivaux) | Échap : menu",
-    lobby_aboard_prompt: "À bord - la partie démarre quand l'hôte lance | Échap : menu",
+    lobby_aboard_prompt: "À bord - la partie démarre quand l'hôte lance | T : parler | Échap : menu",
     lobby_could_not_host: "impossible d'ouvrir : {e}",
     lobby_could_not_join: "impossible de rejoindre : {e}",
     lobby_version_clash: "cette plage utilise une autre version du jeu (la sienne {t}, la tienne {o})",

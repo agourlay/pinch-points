@@ -414,7 +414,7 @@ pub static EN: Tr = Tr {
     lobby_join_list: "{n} beaches on the air | arrow keys: pick | Enter: join | H: host | J: by address | W: watch | Esc: menu",
     lobby_join_list_one: "1 beach on the air | Enter: join | H: host | J: by address | W: watch | Esc: menu",
     lobby_broadcasting: "On the air - arrow keys: set the round | T: talk | Enter: start (up to 5 rivals) | Esc: menu",
-    lobby_aboard_prompt: "Aboard - the match starts when the host launches | Esc: menu",
+    lobby_aboard_prompt: "Aboard - the match starts when the host launches | T: talk | Esc: menu",
     lobby_could_not_host: "could not host: {e}",
     lobby_could_not_join: "could not join: {e}",
     lobby_version_clash: "that beach runs a different version of the game (theirs {t}, yours {o})",

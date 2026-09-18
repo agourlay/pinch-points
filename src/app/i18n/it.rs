@@ -414,7 +414,7 @@ pub static IT: Tr = Tr {
     lobby_join_list: "{n} spiagge in onda | tasti freccia: scegli | Invio: entra | H: apri | J: per indirizzo | W: guarda | Esc: menu",
     lobby_join_list_one: "1 spiaggia in onda | Invio: entra | H: apri | J: per indirizzo | W: guarda | Esc: menu",
     lobby_broadcasting: "In onda - tasti freccia: il round | T: parla | Invio: avvia (fino a 5 rivali) | Esc: menu",
-    lobby_aboard_prompt: "A bordo - la partita parte quando l'host avvia | Esc: menu",
+    lobby_aboard_prompt: "A bordo - la partita parte quando l'host avvia | T: parla | Esc: menu",
     lobby_could_not_host: "non si è potuto aprire: {e}",
     lobby_could_not_join: "non si è potuto entrare: {e}",
     lobby_version_clash: "quella spiaggia usa un'altra versione del gioco (la loro {t}, la tua {o})",
