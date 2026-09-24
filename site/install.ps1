@@ -1,6 +1,11 @@
 # Install the latest Pinch Points release on Windows.
 #
-#   irm https://agourlay.github.io/pinch-points/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/agourlay/pinch-points/master/site/install.ps1 | iex
+#
+# Fetched from raw.githubusercontent.com rather than from the landing page:
+# GitHub Pages serves .ps1 as application/octet-stream, and irm hands iex
+# bytes rather than text for that type on some PowerShell versions. Raw
+# serves it as text/plain.
 #
 # Downloads the release archive for this machine from GitHub, puts
 # pinch-points.exe in %LOCALAPPDATA%\Programs\pinch-points (or in

@@ -193,7 +193,7 @@ main h2 {
 .get p:last-child { color: var(--ink-soft); font-size: 0.97rem; }
 
 .install {
-  max-width: 780px;
+  max-width: 920px;
   margin: 26px auto 34px;
   text-align: left;
 }
