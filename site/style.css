@@ -87,7 +87,7 @@ img { display: block; width: 100%; height: auto; }
 
 .lede {
   margin: 0 auto 30px;
-  max-width: 42ch;
+  max-width: 52ch;
   font-size: 1rem;
   color: var(--ink-soft);
 }
@@ -240,12 +240,41 @@ main > .modes { padding-bottom: 0; }
 .install-note code { font-size: 0.85em; }
 
 .alt {
-  margin: 0 0 44px;
+  margin: 0 0 10px;
   font-size: 0.92rem;
   color: var(--ink-soft);
 }
 
 .alt code { font-size: 0.85em; white-space: nowrap; }
+
+/* Closed by default: most visitors never need it, and the screenshot
+   below should stay near the top. */
+.trouble {
+  max-width: 640px;
+  margin: 0 auto 44px;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.trouble summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--sea-dark);
+}
+
+.trouble dl {
+  margin: 14px 0 0;
+  padding: 16px 20px;
+  text-align: left;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--line);
+}
+
+.trouble dt { font-weight: 700; color: var(--ink); }
+.trouble dd { margin: 2px 0 12px; }
+.trouble dd:last-child { margin-bottom: 0; }
+.trouble code { font-size: 0.85em; }
 
 code {
   font-family: var(--mono);

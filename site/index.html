@@ -25,7 +25,9 @@
   <div class="hero-inner">
   <h1>🦀 Pinch Points 🦀
     <span class="genre">a crab-routing video game</span></h1>
-  <p class="lede">One to six players, on the couch or over the wire.</p>
+  <p class="lede">Place arrows in the sand and steer streams of crabs into
+    your castle before the tide comes in. One to six players, on the couch
+    or over the wire.</p>
   <!-- Without script both commands show, each under its own label; with
        it, the labels become tabs and the visitor's own system is picked. -->
   <div class="install" id="install">
@@ -56,6 +58,27 @@
     Or <a href="https://github.com/agourlay/pinch-points/releases">download a release</a>,
     or with Rust: <code>cargo install --locked pinch-points</code>
   </p>
+  <details class="trouble">
+    <summary>Trouble installing?</summary>
+    <dl>
+      <dt>Linux</dt>
+      <dd>The prebuilt game needs glibc 2.39 or newer: Ubuntu 24.04,
+        Debian 13, Fedora 40 or later. On an older system it stops with
+        <code>GLIBC_2.39 not found</code>; <code>cargo install</code> builds
+        one that fits. If it stops on <code>error while loading shared
+        libraries</code>, install the one it names (ALSA, udev, xkbcommon)
+        from your distribution.</dd>
+      <dt>macOS</dt>
+      <dd>The game is not signed, so a copy downloaded in the browser is
+        blocked on first launch. Allow it under System Settings, Privacy
+        &amp; Security, Open Anyway, or run
+        <code>xattr -d com.apple.quarantine pinch-points</code>.
+        The curl command avoids this.</dd>
+      <dt>Windows</dt>
+      <dd>SmartScreen may warn about a downloaded copy: choose More info,
+        then Run anyway. The PowerShell command avoids this.</dd>
+    </dl>
+  </details>
   <img class="shot" src="screenshots/turf_war.png" width="1280" height="720"
        alt="Four players, four castles, crabs streaming across the sand" loading="eager">
   </div>
