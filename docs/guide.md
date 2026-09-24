@@ -90,7 +90,7 @@ tiles, ignoring walls and arrows, so no corner is ever fully safe.
 live event feed on the right. A lure, a tide event or the gull surge is
 announced across the centre of the screen as well.
 
-![The lure: banking a molting crab turns every loose crab the luring player's colour and pulls it home - here, to green P3](screenshots/lure.png)
+![The lure: banking a molting crab turns every loose crab the luring player's colour and pulls it home - here, to P2](screenshots/lure.png)
 
 **The tide.** The clock turns red for the last 30 seconds and the gull
 surge doubles; when the tide comes in, the highest bank wins.
