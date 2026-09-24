@@ -54,6 +54,7 @@
         <a href="install.ps1">Read the script</a></p>
     </div>
   </div>
+  <p class="release" hidden></p>
   <p class="alt">
     Or <a href="https://github.com/agourlay/pinch-points/releases">download a release</a>,
     or with Rust: <code>cargo install --locked pinch-points</code>
@@ -79,8 +80,15 @@
         then Run anyway. The PowerShell command avoids this.</dd>
     </dl>
   </details>
-  <img class="shot" src="screenshots/turf_war.png" width="1280" height="720"
-       alt="Four players, four castles, crabs streaming across the sand" loading="eager">
+  <!-- Ten seconds of a real round: Crab Mania floods the holes, then a
+       lure pulls the whole beach to one castle. Muted, so browsers let it
+       play on its own; the poster is its first frame. -->
+  <video class="shot" width="1280" height="720" autoplay muted loop playsinline
+         preload="auto" poster="media/hero-poster.webp"
+         aria-label="Four players, four castles, crabs streaming across the sand">
+    <source src="media/hero.webm" type="video/webm">
+    <source src="media/hero.mp4" type="video/mp4">
+  </video>
   </div>
 </header>
 
@@ -100,24 +108,37 @@
   </ul>
 </section>
 
+<section class="together">
+  <img src="media/lobby.webp" width="1280" height="720" loading="lazy"
+       alt="The Beach Lobby: five friends at one beach, the round's settings, and the lobby chat">
+  <div>
+    <h2>Bring your friends</h2>
+    <p>Host a beach and it shows up on every machine on the same network.
+    Nobody types an address and nobody makes an account: pick the beach,
+    press Enter, you are in.</p>
+    <p>Up to six players, AI to fill the empty seats, a chat while you wait,
+    and room for anyone else to watch.</p>
+  </div>
+</section>
+
 <section class="gallery">
   <figure>
-    <img src="screenshots/lure.png" width="1280" height="720" loading="lazy"
-         alt="Every loose crab on the beach turning green and running for one castle">
+    <img src="media/lure.webp" width="1280" height="720" loading="lazy"
+         alt="Every loose crab on the beach taking one player's colour and running for their castle">
     <figcaption>Bank a molting crab and the whole beach runs to you for ten seconds.</figcaption>
   </figure>
   <figure>
-    <img src="screenshots/old_mill.png" width="1280" height="720" loading="lazy"
+    <img src="media/old_mill.webp" width="1280" height="720" loading="lazy"
          alt="A turnstile log splitting a stream of crabs between a kelp lane and a pool road">
     <figcaption>Turnstiles split the stream. Kelp stops gulls. Pools slow everything down.</figcaption>
   </figure>
   <figure>
-    <img src="screenshots/stages.png" width="1280" height="720" loading="lazy"
+    <img src="media/stages.webp" width="1280" height="720" loading="lazy"
          alt="The stage list, cleared stages filled gold">
     <figcaption>A hundred puzzles, each proved solvable with exactly the arrows it gives you.</figcaption>
   </figure>
   <figure>
-    <img src="screenshots/menu.png" width="1280" height="720" loading="lazy"
+    <img src="media/menu.webp" width="1280" height="720" loading="lazy"
          alt="The landing menu, a still postcard of the beach">
     <figcaption>Eight languages, and a beach that keeps moving while you decide.</figcaption>
   </figure>
@@ -166,6 +187,30 @@
     };
   });
 })();
+
+// A visitor who asked for less motion gets the poster frame; the controls
+// let them start it anyway.
+var hero = document.querySelector("video.shot");
+if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  hero.removeAttribute("autoplay");
+  hero.pause();
+  hero.controls = true;
+}
+
+// The version the install commands fetch, so a visitor knows what they
+// are about to get and that it is recent. Silent when GitHub does not
+// answer, like the star count below.
+fetch("https://api.github.com/repos/agourlay/pinch-points/releases/latest")
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (rel) {
+    if (!rel || !rel.tag_name || !rel.published_at) return;
+    var when = new Date(rel.published_at).toLocaleDateString("en-GB",
+      { day: "numeric", month: "long", year: "numeric" });
+    var line = document.querySelector(".release");
+    line.textContent = "Latest: " + rel.tag_name + ", released " + when;
+    line.hidden = false;
+  })
+  .catch(function () {});
 
 // The star count, filled in when GitHub answers; the link stands on its
 // own when it does not.

@@ -1,6 +1,8 @@
 /* Daylight on a beach: sky above, wet sand below, sea blue for anything
-   you can press, and the crab's own red for emphasis. */
+   you can press. Every colour on the page is one of these, so the night
+   set below is the whole of dark mode. */
 :root {
+  color-scheme: light dark;
   --sand: #fbf3e2;
   --sand-deep: #f2e4c9;
   --sky: #d8eef7;
@@ -8,12 +10,43 @@
   --ink-soft: #6b5c48;
   --sea: #0d7ea6;
   --sea-dark: #0a6183;
-  --crab: #bd3319;
+  --link: #0a6183;
   --line: rgba(42, 33, 24, 0.12);
+  /* Raised surfaces: the GitHub pill, the troubleshooting card. */
+  --card: rgba(255, 255, 255, 0.75);
+  --card-hover: #fff;
+  /* The install line is a terminal in both themes. */
+  --term: #2a2118;
+  --term-ink: #fbf3e2;
+  --frame: #fff;
+  --shadow: rgba(42, 33, 24, 0.18);
   --wrap: 1060px;
   --sans: ui-rounded, "SF Pro Rounded", ui-sans-serif, system-ui,
           -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* The same beach after dark: a night sky over cool sand. The sea stays
+   the colour of anything you can press, a shade lighter for links so they
+   read on the dark ground. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sand: #16140f;
+    --sand-deep: #25211a;
+    --sky: #0e1b26;
+    --ink: #f2e9d8;
+    --ink-soft: #b3a58e;
+    --sea: #1283ad;
+    --sea-dark: #0e6a8d;
+    --link: #74c6e6;
+    --line: rgba(242, 233, 216, 0.14);
+    --card: rgba(255, 255, 255, 0.07);
+    --card-hover: rgba(255, 255, 255, 0.13);
+    --term: #070605;
+    --term-ink: #f2e9d8;
+    --frame: #3b342a;
+    --shadow: rgba(0, 0, 0, 0.55);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -29,9 +62,9 @@ body {
 
 h1, h2 { line-height: 1.12; letter-spacing: -0.02em; }
 
-a { color: var(--sea-dark); }
+a { color: var(--link); }
 
-img { display: block; width: 100%; height: auto; }
+img, video { display: block; width: 100%; height: auto; }
 
 /* ---- hero ---- */
 
@@ -54,14 +87,14 @@ img { display: block; width: 100%; height: auto; }
   padding: 7px 14px;
   border-radius: 999px;
   border: 2px solid var(--line);
-  background: rgba(255, 255, 255, 0.75);
+  background: var(--card);
   color: var(--ink);
   font-size: 0.92rem;
   font-weight: 700;
   text-decoration: none;
 }
 
-.gh:hover { background: #fff; }
+.gh:hover { background: var(--card-hover); }
 .gh .stars { padding-left: 8px; border-left: 1px solid var(--line); color: var(--ink-soft); }
 .gh .stars[hidden] { display: none; }
 
@@ -92,23 +125,49 @@ img { display: block; width: 100%; height: auto; }
   color: var(--ink-soft);
 }
 
-.shot, .gallery img {
+.shot, .gallery img, .together img {
   border-radius: 14px;
-  border: 3px solid #fff;
-  box-shadow: 0 14px 34px rgba(42, 33, 24, 0.18);
+  border: 3px solid var(--frame);
+  box-shadow: 0 14px 34px var(--shadow);
 }
+
+/* The video's own ground while its first frame loads, rather than a
+   white box: the board's driftwood brown. */
+video.shot { background: #5d5140; }
 
 /* ---- sections ---- */
 
+/* Top padding only, so the gap between two sections is one padding, not
+   two; the last one closes the page. */
 main > section {
   max-width: var(--wrap);
   margin: 0 auto;
-  padding: 72px 24px;
+  padding: 72px 24px 0;
 }
+
+main > section:last-child { padding-bottom: 72px; }
 
 main h2 {
   font-size: clamp(1.4rem, 3vw, 1.85rem);
   margin: 0 0 12px;
+}
+
+/* ---- bring your friends ---- */
+
+/* The lobby beside what it does: side by side on a wide screen, the
+   picture on top on a narrow one. */
+.together {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 40px;
+  align-items: center;
+}
+
+.together p { margin: 0 0 12px; color: var(--ink-soft); }
+.together p:last-child { margin-bottom: 0; }
+
+@media (max-width: 820px) {
+  .together { grid-template-columns: 1fr; gap: 24px; }
 }
 
 /* ---- gallery ---- */
@@ -131,9 +190,7 @@ main h2 {
 
 /* ---- modes ---- */
 
-/* Straight into the gallery, whose own top padding is the gap. */
 .modes { text-align: center; }
-main > .modes { padding-bottom: 0; }
 
 .modes ul {
   display: flex;
@@ -200,7 +257,7 @@ main > .modes { padding-bottom: 0; }
   gap: 10px;
   padding: 10px 10px 10px 18px;
   border-radius: 12px;
-  background: var(--ink);
+  background: var(--term);
 }
 
 .install-line code {
@@ -210,7 +267,7 @@ main > .modes { padding-bottom: 0; }
   white-space: nowrap;
   padding: 4px 0;
   background: none;
-  color: var(--sand);
+  color: var(--term-ink);
   font-size: 0.92rem;
 }
 
@@ -239,6 +296,14 @@ main > .modes { padding-bottom: 0; }
 
 .install-note code { font-size: 0.85em; }
 
+.release {
+  margin: 0 0 4px;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+}
+
+.release[hidden] { display: none; }
+
 .alt {
   margin: 0 0 10px;
   font-size: 0.92rem;
@@ -259,7 +324,7 @@ main > .modes { padding-bottom: 0; }
 .trouble summary {
   cursor: pointer;
   font-weight: 700;
-  color: var(--sea-dark);
+  color: var(--link);
 }
 
 .trouble dl {
@@ -267,7 +332,7 @@ main > .modes { padding-bottom: 0; }
   padding: 16px 20px;
   text-align: left;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--card);
   border: 1px solid var(--line);
 }
 
@@ -301,5 +366,6 @@ footer p { margin: 0 auto 8px; max-width: 58ch; }
   /* Room above the title for the GitHub link, which would sit on it. */
   .hero { padding-top: 72px; }
   .gh { top: 14px; right: 14px; }
-  main > section { padding: 52px 20px; }
+  main > section { padding: 52px 20px 0; }
+  main > section:last-child { padding-bottom: 52px; }
 }

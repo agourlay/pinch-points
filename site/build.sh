@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 # Assemble the landing page into ./_site, ready to serve or publish.
 #
-# The screenshots live in docs/screenshots, where the README and the guide
-# point at them, and are copied in so the published site has its own copy at
-# a path that does not climb out of the site root.
+# The page's pictures are WebP copies in site/media, made from the PNGs in
+# docs/screenshots (where the README and the guide point) by site/media.sh.
+# Only the hero PNG is published as well: link previews want a PNG.
 #
 # Used by .github/workflows/pages.yml and by hand:
 #
@@ -18,7 +18,8 @@ mkdir -p "$out/screenshots"
 
 cp "$root/site/index.html" "$root/site/style.css" \
    "$root/site/install.sh" "$root/site/install.ps1" "$out/"
-cp "$root/docs/screenshots/"*.png "$out/screenshots/"
+cp "$root/docs/screenshots/turf_war.png" "$out/screenshots/"
+cp -r "$root/site/media" "$out/"
 
 # Stamp the stylesheet link with a digest of the stylesheet.
 #
