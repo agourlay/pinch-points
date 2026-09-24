@@ -12,6 +12,13 @@ take everything back.
 
 ## Install
 
+- **One line**, fetching the latest release for your machine:
+  ```sh
+  # Linux, macOS
+  curl -fsSL https://agourlay.github.io/pinch-points/install.sh | sh
+  # Windows (PowerShell)
+  irm https://agourlay.github.io/pinch-points/install.ps1 | iex
+  ```
 - **Prebuilt binaries** for Linux, macOS and Windows (x86_64 and arm64) are
   attached to each [GitHub release](https://github.com/agourlay/pinch-points/releases).
   Unpack the archive and run `pinch-points`.

@@ -22,7 +22,7 @@
     <span class="genre">a crab-routing video game</span></h1>
   <p class="lede">One to six players, on the couch or over the wire.</p>
   <p class="cta">
-    <a class="button primary" href="https://github.com/agourlay/pinch-points/releases">Download free</a>
+    <a class="button primary" href="#install">Download free</a>
     <a class="button" href="https://github.com/agourlay/pinch-points">View the source</a>
   </p>
   <p class="meta">Linux · macOS · Windows · open source</p>
@@ -88,12 +88,39 @@
   </ul>
 </section>
 
-<section class="get">
+<section class="get" id="install">
   <h2>Grab it</h2>
+  <p>Paste one line into a terminal. It fetches the latest release for your machine.</p>
+  <!-- Without script both commands show, each under its own label; with
+       it, the labels become tabs and the visitor's own system is picked. -->
+  <div class="install">
+    <div class="install-tabs" role="tablist" hidden>
+      <button type="button" role="tab" data-os="unix">macOS · Linux</button>
+      <button type="button" role="tab" data-os="windows">Windows</button>
+    </div>
+    <div class="install-cmd" data-os="unix" role="tabpanel">
+      <p class="install-label">macOS · Linux</p>
+      <div class="install-line">
+        <code>curl -fsSL https://agourlay.github.io/pinch-points/install.sh | sh</code>
+        <button type="button" class="copy" hidden>Copy</button>
+      </div>
+      <p class="install-note">Installs to <code>~/.local/bin</code> ·
+        <a href="install.sh">Read the script</a></p>
+    </div>
+    <div class="install-cmd" data-os="windows" role="tabpanel">
+      <p class="install-label">Windows (PowerShell)</p>
+      <div class="install-line">
+        <code>irm https://agourlay.github.io/pinch-points/install.ps1 | iex</code>
+        <button type="button" class="copy" hidden>Copy</button>
+      </div>
+      <p class="install-note">Installs to <code>%LOCALAPPDATA%\Programs</code> and adds it to your PATH ·
+        <a href="install.ps1">Read the script</a></p>
+    </div>
+  </div>
   <p class="cta">
-    <a class="button primary" href="https://github.com/agourlay/pinch-points/releases">Download for your machine</a>
+    <a class="button" href="https://github.com/agourlay/pinch-points/releases">Or download it yourself</a>
   </p>
-  <p>Or, with Rust installed: <code>cargo install --locked pinch-points</code></p>
+  <p>With Rust installed: <code>cargo install --locked pinch-points</code></p>
 </section>
 
 </main>
@@ -110,6 +137,36 @@
     descend from.
   </p>
 </footer>
+
+<script>
+// Turn the two install commands into tabs, opened on the visitor's system,
+// and give each a copy button. Without this the page still shows both.
+(function () {
+  var box = document.querySelector(".install");
+  var tabs = box.querySelectorAll("[role=tab]");
+  var panels = box.querySelectorAll(".install-cmd");
+  function show(os) {
+    tabs.forEach(function (t) { t.setAttribute("aria-selected", t.dataset.os === os); });
+    panels.forEach(function (p) { p.hidden = p.dataset.os !== os; });
+  }
+  tabs.forEach(function (t) { t.onclick = function () { show(t.dataset.os); }; });
+  box.querySelector(".install-tabs").hidden = false;
+  box.classList.add("tabbed");
+  var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.userAgent;
+  show(/^win|windows/i.test(ua) ? "windows" : "unix");
+
+  if (!navigator.clipboard) return;
+  box.querySelectorAll(".copy").forEach(function (b) {
+    b.hidden = false;
+    b.onclick = function () {
+      navigator.clipboard.writeText(b.previousElementSibling.textContent).then(function () {
+        b.textContent = "Copied";
+        setTimeout(function () { b.textContent = "Copy"; }, 1600);
+      });
+    };
+  });
+})();
+</script>
 
 </body>
 </html>

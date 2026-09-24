@@ -192,6 +192,87 @@ main h2 {
 
 .get p:last-child { color: var(--ink-soft); font-size: 0.97rem; }
 
+.install {
+  max-width: 780px;
+  margin: 26px auto 34px;
+  text-align: left;
+}
+
+.install-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.install-tabs[hidden] { display: none; }
+
+.install-tabs button {
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  padding: 7px 18px;
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.install-tabs button[aria-selected="true"] {
+  color: #fff;
+  background: var(--sea);
+  border-color: var(--sea);
+}
+
+.install-cmd + .install-cmd { margin-top: 22px; }
+.install-cmd[hidden] { display: none; }
+.install.tabbed .install-cmd + .install-cmd { margin-top: 0; }
+/* The tab already names the system. */
+.install.tabbed .install-label { display: none; }
+
+.install-label { margin: 0 0 6px; font-weight: 700; font-size: 0.95rem; }
+
+/* A terminal line: dark, one row, scrolling sideways on a narrow screen
+   rather than wrapping a command someone is about to paste. */
+.install-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 18px;
+  border-radius: 12px;
+  background: var(--ink);
+}
+
+.install-line code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 4px 0;
+  background: none;
+  color: var(--sand);
+  font-size: 0.92rem;
+}
+
+.install-line .copy {
+  flex: none;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--sea);
+  color: #fff;
+  cursor: pointer;
+}
+
+.install-line .copy:hover { background: var(--sea-dark); }
+.install-line .copy[hidden] { display: none; }
+
+.install-note {
+  margin: 8px 0 0;
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+}
+
+.install-note code { font-size: 0.85em; }
+
 code {
   font-family: var(--mono);
   font-size: 0.9em;

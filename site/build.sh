@@ -16,7 +16,8 @@ out="$root/_site"
 rm -rf "$out"
 mkdir -p "$out/screenshots"
 
-cp "$root/site/index.html" "$root/site/style.css" "$out/"
+cp "$root/site/index.html" "$root/site/style.css" \
+   "$root/site/install.sh" "$root/site/install.ps1" "$out/"
 cp "$root/docs/screenshots/"*.png "$out/screenshots/"
 
 # Stamp the stylesheet link with a digest of the stylesheet.
