@@ -21,11 +21,37 @@
   <h1>🦀 Pinch Points 🦀
     <span class="genre">a crab-routing video game</span></h1>
   <p class="lede">One to six players, on the couch or over the wire.</p>
-  <p class="cta">
-    <a class="button primary" href="#install">Download free</a>
-    <a class="button" href="https://github.com/agourlay/pinch-points">View the source</a>
+  <!-- Without script both commands show, each under its own label; with
+       it, the labels become tabs and the visitor's own system is picked. -->
+  <div class="install" id="install">
+    <div class="install-tabs" role="tablist" hidden>
+      <button type="button" role="tab" data-os="unix">macOS · Linux</button>
+      <button type="button" role="tab" data-os="windows">Windows</button>
+    </div>
+    <div class="install-cmd" data-os="unix" role="tabpanel">
+      <p class="install-label">macOS · Linux</p>
+      <div class="install-line">
+        <code>curl -fsSL https://agourlay.github.io/pinch-points/install.sh | sh</code>
+        <button type="button" class="copy" hidden>Copy</button>
+      </div>
+      <p class="install-note">Installs to <code>~/.local/bin</code> ·
+        <a href="install.sh">Read the script</a></p>
+    </div>
+    <div class="install-cmd" data-os="windows" role="tabpanel">
+      <p class="install-label">Windows (PowerShell)</p>
+      <div class="install-line">
+        <code>irm https://raw.githubusercontent.com/agourlay/pinch-points/master/site/install.ps1 | iex</code>
+        <button type="button" class="copy" hidden>Copy</button>
+      </div>
+      <p class="install-note">Installs to <code>%LOCALAPPDATA%\Programs</code> and adds it to your PATH ·
+        <a href="install.ps1">Read the script</a></p>
+    </div>
+  </div>
+  <p class="alt">
+    Or <a href="https://github.com/agourlay/pinch-points/releases">download a release</a>,
+    or with Rust: <code>cargo install --locked pinch-points</code>
   </p>
-  <p class="meta">Linux · macOS · Windows · open source</p>
+  <p class="meta">Linux · macOS · Windows · <a href="https://github.com/agourlay/pinch-points">open source</a></p>
   <img class="shot" src="screenshots/turf_war.png" width="1280" height="720"
        alt="Four players, four castles, crabs streaming across the sand" loading="eager">
   </div>
@@ -86,41 +112,6 @@
     <li><b>Replays</b> shareable as text</li>
     <li><b>50 trophies</b> to go after</li>
   </ul>
-</section>
-
-<section class="get" id="install">
-  <h2>Grab it</h2>
-  <p>Paste one line into a terminal. It fetches the latest release for your machine.</p>
-  <!-- Without script both commands show, each under its own label; with
-       it, the labels become tabs and the visitor's own system is picked. -->
-  <div class="install">
-    <div class="install-tabs" role="tablist" hidden>
-      <button type="button" role="tab" data-os="unix">macOS · Linux</button>
-      <button type="button" role="tab" data-os="windows">Windows</button>
-    </div>
-    <div class="install-cmd" data-os="unix" role="tabpanel">
-      <p class="install-label">macOS · Linux</p>
-      <div class="install-line">
-        <code>curl -fsSL https://agourlay.github.io/pinch-points/install.sh | sh</code>
-        <button type="button" class="copy" hidden>Copy</button>
-      </div>
-      <p class="install-note">Installs to <code>~/.local/bin</code> ·
-        <a href="install.sh">Read the script</a></p>
-    </div>
-    <div class="install-cmd" data-os="windows" role="tabpanel">
-      <p class="install-label">Windows (PowerShell)</p>
-      <div class="install-line">
-        <code>irm https://raw.githubusercontent.com/agourlay/pinch-points/master/site/install.ps1 | iex</code>
-        <button type="button" class="copy" hidden>Copy</button>
-      </div>
-      <p class="install-note">Installs to <code>%LOCALAPPDATA%\Programs</code> and adds it to your PATH ·
-        <a href="install.ps1">Read the script</a></p>
-    </div>
-  </div>
-  <p class="cta">
-    <a class="button" href="https://github.com/agourlay/pinch-points/releases">Or download it yourself</a>
-  </p>
-  <p>With Rust installed: <code>cargo install --locked pinch-points</code></p>
 </section>
 
 </main>

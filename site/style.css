@@ -69,38 +69,6 @@ img { display: block; width: 100%; height: auto; }
   color: var(--ink-soft);
 }
 
-.cta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  justify-content: center;
-  margin: 0 0 16px;
-}
-
-.button {
-  display: inline-block;
-  padding: 14px 30px;
-  border-radius: 999px;
-  font-size: 1.02rem;
-  font-weight: 700;
-  text-decoration: none;
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.75);
-  border: 2px solid var(--line);
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
-}
-
-.button.primary {
-  color: #fff;
-  background: var(--sea);
-  border-color: var(--sea);
-  box-shadow: 0 6px 0 var(--sea-dark);
-}
-
-.button:hover { transform: translateY(-2px); }
-.button.primary:hover { box-shadow: 0 8px 0 var(--sea-dark); }
-.button.primary:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--sea-dark); }
-
 .meta {
   margin: 0 0 44px;
   font-size: 0.92rem;
@@ -183,22 +151,15 @@ main h2 {
 
 .modes b { color: var(--ink); }
 
-/* ---- get ---- */
-
-.get {
-  text-align: center;
-  border-top: 1px solid var(--line);
-}
-
-.get p:last-child { color: var(--ink-soft); font-size: 0.97rem; }
+/* ---- install, in the hero ---- */
 
 .install {
   max-width: 920px;
-  margin: 26px auto 34px;
+  margin: 0 auto 18px;
   text-align: left;
 }
 
-.install-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.install-tabs { display: flex; justify-content: center; gap: 6px; margin-bottom: 10px; }
 .install-tabs[hidden] { display: none; }
 
 .install-tabs button {
@@ -267,11 +228,20 @@ main h2 {
 
 .install-note {
   margin: 8px 0 0;
+  text-align: center;
   font-size: 0.88rem;
   color: var(--ink-soft);
 }
 
 .install-note code { font-size: 0.85em; }
+
+.alt {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+  color: var(--ink-soft);
+}
+
+.alt code { font-size: 0.85em; white-space: nowrap; }
 
 code {
   font-family: var(--mono);
@@ -297,9 +267,4 @@ footer p { margin: 0 auto 8px; max-width: 58ch; }
 @media (max-width: 720px) {
   .hero { padding-top: 40px; }
   main > section { padding: 52px 20px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .button { transition: none; }
-  .button:hover { transform: none; }
 }
