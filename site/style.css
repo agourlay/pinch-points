@@ -111,21 +111,6 @@ main h2 {
   margin: 0 0 12px;
 }
 
-/* ---- three beats ---- */
-
-.beats {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 36px;
-  text-align: center;
-}
-
-.beats > div { flex: 1 1 240px; max-width: 320px; }
-
-.beats h2 { color: var(--crab); }
-.beats p { margin: 0; color: var(--ink-soft); }
-
 /* ---- gallery ---- */
 
 .gallery {
@@ -146,7 +131,9 @@ main h2 {
 
 /* ---- modes ---- */
 
+/* Straight into the gallery, whose own top padding is the gap. */
 .modes { text-align: center; }
+main > .modes { padding-bottom: 0; }
 
 .modes ul {
   display: flex;
