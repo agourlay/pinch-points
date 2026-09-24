@@ -36,11 +36,34 @@ img { display: block; width: 100%; height: auto; }
 /* ---- hero ---- */
 
 .hero {
+  position: relative;
   padding: 56px 24px 0;
   text-align: center;
   /* Sky at the top, sand underneath it. */
   background: linear-gradient(180deg, var(--sky) 0%, var(--sand) 62%);
 }
+
+/* The GitHub link, pinned to the corner of the sky. */
+.gh {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 2px solid var(--line);
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.gh:hover { background: #fff; }
+.gh .stars { padding-left: 8px; border-left: 1px solid var(--line); color: var(--ink-soft); }
+.gh .stars[hidden] { display: none; }
 
 .hero-inner { max-width: var(--wrap); margin: 0 auto; }
 
@@ -66,12 +89,6 @@ img { display: block; width: 100%; height: auto; }
   margin: 0 auto 30px;
   max-width: 42ch;
   font-size: 1rem;
-  color: var(--ink-soft);
-}
-
-.meta {
-  margin: 0 0 44px;
-  font-size: 0.92rem;
   color: var(--ink-soft);
 }
 
@@ -236,7 +253,7 @@ main h2 {
 .install-note code { font-size: 0.85em; }
 
 .alt {
-  margin: 0 0 8px;
+  margin: 0 0 44px;
   font-size: 0.92rem;
   color: var(--ink-soft);
 }
@@ -265,6 +282,8 @@ footer p { margin: 0 auto 8px; max-width: 58ch; }
 .fineprint { font-size: 0.85rem; color: var(--ink-soft); }
 
 @media (max-width: 720px) {
-  .hero { padding-top: 40px; }
+  /* Room above the title for the GitHub link, which would sit on it. */
+  .hero { padding-top: 72px; }
+  .gh { top: 14px; right: 14px; }
   main > section { padding: 52px 20px; }
 }
