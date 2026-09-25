@@ -118,6 +118,48 @@ mod tests {
         Board::new(6, 5, 3)
     }
 
+    /// What the editor says once the background search hands back `outcome`.
+    fn verdict(outcome: Option<SolveOutcome>) -> (String, bool) {
+        let mut app = App::new();
+        app.insert_resource(GameSettings::default());
+        app.insert_resource(EditorState {
+            posts: 2,
+            solver: Some(Arc::new(Mutex::new(outcome))),
+            ..EditorState::default()
+        });
+        app.add_systems(Update, poll_solver);
+        app.update();
+        let state = app.world().resource::<EditorState>();
+        (state.feedback.clone(), state.solver.is_some())
+    }
+
+    /// A found solution is spelled out placement by placement, and one
+    /// that needs no arrows at all says that instead of an empty list.
+    #[test]
+    fn a_solution_is_spelled_out_or_called_free() {
+        use crate::app::i18n::EN;
+        let (said, pending) = verdict(Some(SolveOutcome::Found(vec![(1, 2, Direction::Up)])));
+        assert!(!pending, "the answer is taken");
+        assert_eq!(said, EN.ed_solvable.replace("{placements}", "(1,2 Up)"));
+        let (said, _) = verdict(Some(SolveOutcome::Found(Vec::new())));
+        assert_eq!(said, EN.ed_solvable_free);
+    }
+
+    /// No solution names the arrows it was tried with, a search that ran
+    /// out of budget says so rather than claiming either answer, and one
+    /// still running leaves the slot where it is.
+    #[test]
+    fn no_solution_and_no_answer_are_told_apart() {
+        use crate::app::i18n::EN;
+        let (said, _) = verdict(Some(SolveOutcome::Unsolvable));
+        assert_eq!(said, EN.ed_not_solvable.replace("{n}", "2"));
+        let (said, _) = verdict(Some(SolveOutcome::GaveUp));
+        assert_eq!(said, EN.ed_solver_gave_up);
+        let (said, pending) = verdict(None);
+        assert!(pending, "still searching");
+        assert!(said.is_empty(), "and nothing said yet: {said}");
+    }
+
     /// Saving a level that will appear on neither list says so. Before the
     /// author picked the kind, nothing could go missing this way: every
     /// level with a crab on it was a stage.

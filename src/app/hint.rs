@@ -404,4 +404,77 @@ mod tests {
             "Beach Day's fourth level is not the one they were stuck on"
         );
     }
+
+    /// Hints for the level `campaign` is on, stuck on it and showing a step.
+    fn stuck_and_showing(campaign: &Campaign) -> Hints {
+        Hints {
+            level: Some(level_of(campaign)),
+            losses: STUCK_AFTER,
+            shown: Some((1, 1, crate::sim::Direction::Up)),
+        }
+    }
+
+    /// Once a step is on the board the line says how to read it, and the
+    /// line keeps quiet while the run plays out or after it is won: the
+    /// hint is for a board that is still being set up, or just lost.
+    #[test]
+    fn the_hint_line_says_what_is_shown_and_only_where_it_helps() {
+        use crate::app::i18n::EN;
+        let hints = stuck_and_showing(&campaign_at(3));
+        let quiet = DeniedNote(0.0);
+        assert_eq!(
+            hint_line(&EN, &hints, &quiet, &Phase::Setup).as_deref(),
+            Some(EN.hint_showing)
+        );
+        assert_eq!(
+            hint_line(&EN, &hints, &quiet, &Phase::Lost).as_deref(),
+            Some(EN.hint_showing)
+        );
+        for phase in [Phase::Running, Phase::Won] {
+            assert_eq!(hint_line(&EN, &hints, &quiet, &phase), None, "{phase:?}");
+        }
+    }
+
+    /// Going back to the same level takes the step off the board but keeps
+    /// the count, so the offer stands; a different level starts clean.
+    #[test]
+    fn a_reload_keeps_the_count_and_a_new_level_clears_it() {
+        let mut app = App::new();
+        app.insert_resource(campaign_at(3));
+        let hints = stuck_and_showing(&campaign_at(3));
+        app.insert_resource(hints);
+        app.add_systems(Update, reset_on_level);
+        app.update();
+        let hints = app.world().resource::<Hints>();
+        assert!(!hints.showing(), "the step is taken off");
+        assert!(hints.offered(), "and the count stands");
+        app.world_mut().resource_mut::<Campaign>().index = 4;
+        app.update();
+        let hints = app.world().resource::<Hints>();
+        assert!(!hints.offered(), "a new level starts from nothing");
+    }
+
+    /// The denial fades with time, and goes at once when the level changes:
+    /// it was about a board that is no longer there.
+    #[test]
+    fn the_denial_fades_and_goes_with_the_level() {
+        let mut app = App::new();
+        app.insert_resource(campaign_at(3));
+        app.init_resource::<Time>();
+        app.insert_resource(DeniedNote(2.0));
+        app.add_systems(Update, tick_denied_note);
+        // The first frame sees the campaign as new, which clears it; set it
+        // again to watch it fade.
+        app.update();
+        app.insert_resource(DeniedNote(2.0));
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(500));
+        app.update();
+        let left = app.world().resource::<DeniedNote>().0;
+        assert!((left - 1.5).abs() < 1e-3, "{left}");
+        app.world_mut().resource_mut::<Campaign>().index = 5;
+        app.update();
+        assert_eq!(app.world().resource::<DeniedNote>().0, 0.0);
+    }
 }

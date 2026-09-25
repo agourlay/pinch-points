@@ -295,4 +295,77 @@ mod tests {
             ]
         );
     }
+
+    /// A scratch folder of its own, gone before and after.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pinch-shelf-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    /// The shelf reads the old save slot first and then every `.txt` in the
+    /// folder in name order, skipping what is not a level and what is not a
+    /// text file, rather than failing the whole shelf over one bad file.
+    #[test]
+    fn the_shelf_reads_its_folder_in_order_and_skips_what_it_cannot_read() {
+        let dir = scratch("read");
+        let text = |name: &str| level(name, "puzzle", true).to_text();
+        std::fs::write(dir.join("slot.txt"), text("Old Slot")).expect("write");
+        let shelf = dir.join("custom");
+        std::fs::create_dir_all(&shelf).expect("shelf");
+        std::fs::write(shelf.join("b.txt"), text("Second")).expect("write");
+        std::fs::write(shelf.join("a.txt"), text("First")).expect("write");
+        std::fs::write(shelf.join("c.txt"), "not a level at all").expect("write");
+        std::fs::write(shelf.join("d.png"), text("Not A Text File")).expect("write");
+        let names: Vec<String> = load_custom_levels_in(&dir.join("slot.txt"), &shelf)
+            .into_iter()
+            .map(|level| level.name)
+            .collect();
+        assert_eq!(names, ["Old Slot", "First", "Second"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Nothing saved yet, anywhere, is an empty shelf rather than an error.
+    #[test]
+    fn a_first_run_has_an_empty_shelf() {
+        let dir = scratch("empty");
+        assert!(load_custom_levels_in(&dir.join("absent.txt"), &dir.join("absent")).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Co-op is the Tide Pool's alone: on Beach Day the switch changes
+    /// nothing, and off it is off everywhere.
+    #[test]
+    fn coop_applies_to_the_tide_pool_only() {
+        let (levels, builtins) = (crate::sim::campaign_levels(), 3);
+        let mut campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        };
+        assert!(Coop(true).in_play(&campaign));
+        assert!(!Coop(false).in_play(&campaign));
+        campaign.kind = CampaignKind::BeachDay;
+        assert!(!Coop(true).in_play(&campaign));
+    }
+
+    /// A reset starts the new list from its first level, and a shipped
+    /// count longer than the list is held to the list.
+    #[test]
+    fn a_reset_starts_over_and_holds_the_shipped_count_to_the_list() {
+        let mut campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels: crate::sim::campaign_levels(),
+            index: 7,
+            builtins: 100,
+        };
+        let two = vec![level("One", "puzzle", true), level("Two", "puzzle", true)];
+        campaign.reset(CampaignKind::BeachDay, two, 9);
+        assert_eq!(campaign.kind, CampaignKind::BeachDay);
+        assert_eq!(campaign.index, 0);
+        assert_eq!(campaign.builtins, 2);
+        assert_eq!(campaign.current().name, "One");
+    }
 }

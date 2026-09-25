@@ -457,6 +457,64 @@ mod tests {
         assert!(!caps.learn(KeyCode::KeyW, 'z'));
     }
 
+    /// What the learner is told from one press of `key` producing `text`,
+    /// with `held` down and `repeat` set as the window reports them.
+    fn learned_from(key: KeyCode, text: &str, held: Option<KeyCode>, repeat: bool) -> String {
+        use bevy::input::ButtonState;
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<crate::app::Screen>();
+        app.insert_resource(State::new(crate::app::Screen::Settings));
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<KeyCaps>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.add_message::<KeyboardInput>();
+        app.add_systems(Update, learn_keycaps);
+        if let Some(held) = held {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(held);
+        }
+        app.world_mut().write_message(KeyboardInput {
+            key_code: key,
+            logical_key: Key::Character(text.into()),
+            state: ButtonState::Pressed,
+            text: Some(text.into()),
+            repeat,
+            window: Entity::PLACEHOLDER,
+        });
+        app.update();
+        app.world().resource::<KeyCaps>().label(key)
+    }
+
+    /// A plain press is a cap read off the keyboard. A held one repeating,
+    /// one under Shift or AltGr (which is "!" or "€", not the cap), and a
+    /// key that types more than one character teach nothing.
+    #[test]
+    fn only_a_plain_press_of_one_character_teaches_a_cap() {
+        assert_eq!(learned_from(KeyCode::KeyW, "z", None, false), "Z");
+        assert_eq!(
+            learned_from(KeyCode::KeyW, "z", None, true),
+            "W",
+            "a repeat"
+        );
+        assert_eq!(
+            learned_from(KeyCode::KeyW, "Z", Some(KeyCode::ShiftLeft), false),
+            "W",
+            "under Shift"
+        );
+        assert_eq!(
+            learned_from(KeyCode::KeyE, "€", Some(KeyCode::AltRight), false),
+            "E",
+            "under AltGr"
+        );
+        assert_eq!(
+            learned_from(KeyCode::KeyW, "zz", None, false),
+            "W",
+            "two characters"
+        );
+    }
+
     /// The mnemonics follow the cap: on AZERTY "M" is the key QWERTY calls
     /// Semicolon, and the key at QWERTY's M (which says ",") is not mute.
     #[test]

@@ -692,6 +692,69 @@ pub fn apply_sim_speed(
 mod tests {
     use super::*;
 
+    /// The world `apply_sim_speed` runs in: a screen, the settings, and the
+    /// fixed clock at the canonical rate.
+    fn clocked(screen: Screen, puzzle_speed: u8) -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(screen));
+        app.insert_resource(GameSettings {
+            puzzle_speed,
+            ..GameSettings::default()
+        });
+        app.insert_resource(Time::<Fixed>::from_hz(f64::from(
+            crate::sim::TICKS_PER_SECOND,
+        )));
+        app.add_systems(Update, apply_sim_speed);
+        app
+    }
+
+    fn hz(app: &App) -> f64 {
+        1.0 / app
+            .world()
+            .resource::<Time<Fixed>>()
+            .timestep()
+            .as_secs_f64()
+    }
+
+    /// The speed assist slows a puzzle to the fraction asked for.
+    #[test]
+    fn a_puzzle_runs_at_the_speed_asked_for() {
+        let mut app = clocked(Screen::Puzzle, 50);
+        app.update();
+        assert!((hz(&app) - 15.0).abs() < 1e-6, "{} Hz", hz(&app));
+    }
+
+    /// And nothing else ever leaves the canonical rate, whatever the dial
+    /// says: a versus round is ticked in step with other machines.
+    #[test]
+    fn every_other_screen_keeps_the_canonical_rate() {
+        for screen in [Screen::Versus, Screen::Editor, Screen::Menu] {
+            let mut app = clocked(screen, 50);
+            app.update();
+            assert!(
+                (hz(&app) - 30.0).abs() < 1e-6,
+                "{screen:?}: {} Hz",
+                hz(&app)
+            );
+        }
+    }
+
+    /// With no window to measure, the scale is the dial's own ratio.
+    #[test]
+    fn the_ui_scale_follows_the_dial_without_a_window() {
+        let mut app = App::new();
+        app.insert_resource(GameSettings {
+            ui_scale: 80,
+            ..GameSettings::default()
+        });
+        app.init_resource::<UiScale>();
+        app.add_systems(Update, apply_accessibility);
+        app.update();
+        assert!((app.world().resource::<UiScale>().0 - 0.8).abs() < f32::EPSILON);
+    }
+
     /// The interface is laid out in design pixels and nothing reflows, so
     /// the applied scale may never leave it less than the design size to
     /// draw in. At 150 on the 1280x720 window the game launches in, the

@@ -276,4 +276,39 @@ mod tests {
         assert!(salvaged.is_cleared(CampaignKind::TidePool, "Welcome Ashore"));
         assert_eq!(salvaged.cleared_count(), 1);
     }
+
+    /// The record goes to disk and comes back the same, and a file that is
+    /// not there is a fresh start rather than a failure.
+    #[test]
+    fn the_record_survives_the_disk() {
+        let dir = std::env::temp_dir().join(format!("pinch-progress-{}", std::process::id()));
+        let path = dir.join("progress.txt");
+        assert_eq!(load_in(&path).cleared_count(), 0, "nothing saved yet");
+        let mut progress = Progress::default();
+        progress.mark(CampaignKind::TidePool, "Welcome Ashore");
+        save_in(&path, &progress).expect("saved");
+        let back = load_in(&path);
+        assert!(back.is_cleared(CampaignKind::TidePool, "Welcome Ashore"));
+        assert_eq!(back.to_text(), progress.to_text());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Clearing a stage marks the stage the campaign is on, in its own
+    /// list, and only once however often the win is seen.
+    #[test]
+    fn a_cleared_stage_is_marked_where_the_campaign_stands() {
+        let mut app = App::new();
+        let mut on = campaign(10, Vec::new());
+        on.index = 4;
+        let name = on.current().name.clone();
+        app.insert_resource(on);
+        app.init_resource::<Progress>();
+        app.add_systems(Update, record_cleared);
+        app.update();
+        app.update();
+        let progress = app.world().resource::<Progress>();
+        assert!(progress.is_cleared(CampaignKind::TidePool, &name));
+        assert!(!progress.is_cleared(CampaignKind::BeachDay, &name));
+        assert_eq!(progress.cleared_count(), 1);
+    }
 }

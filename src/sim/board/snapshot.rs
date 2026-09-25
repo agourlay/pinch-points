@@ -955,4 +955,72 @@ mod tests {
         );
         assert!(tile_from_token("").is_err(), "took an empty token");
     }
+
+    /// A beach two hundred ticks into a round with three tide events live
+    /// at once: a crab mania, a claw call and a quickened tempo.
+    fn stirred() -> Board {
+        use crate::sim::{
+            BotLevel, MAX_PLAYERS, PlayerAction, TideEvent, bot_action, generate_arena,
+        };
+        let mut board = generate_arena(3, 2, 8, 6);
+        for _ in 0..200 {
+            let actions: [PlayerAction; MAX_PLAYERS] =
+                std::array::from_fn(|seat| bot_action(&board, seat as u8, BotLevel::Hard));
+            board.tick(&actions);
+        }
+        board.force_tide_event(TideEvent::CrabMania, 0);
+        board.force_tide_event(TideEvent::RightClaws, 0);
+        board.force_tide_event(TideEvent::SpeedUp, 0);
+        board
+    }
+
+    /// Every live event is written out and read back: a round resumed or a
+    /// watcher caught up mid-mania plays the mania out, rather than a beach
+    /// that has quietly calmed down and hashes differently from the table.
+    #[test]
+    fn live_tide_events_survive_a_snapshot() {
+        let board = stirred();
+        let text = board.to_snapshot();
+        for line in ["mania: crab", "claw_call:", "tempo: fast"] {
+            assert!(text.contains(line), "{line} is written: {text}");
+        }
+        let back = Board::parse_snapshot(&text).expect("reads back");
+        assert_eq!(back.state_hash(), board.state_hash());
+        assert_eq!(back.to_snapshot(), text);
+    }
+
+    /// Each field the parser checks refuses a value it cannot mean, with
+    /// the field's name, rather than defaulting it into a different beach.
+    #[test]
+    fn a_field_that_cannot_mean_anything_is_refused_by_name() {
+        let text = stirred().to_snapshot();
+        let first_post = text
+            .lines()
+            .find(|line| line.starts_with("post: "))
+            .expect("posts on the beach")
+            .to_string();
+        let cases: [(String, &str); 7] = [
+            (text.replacen("size: 9 7", "size: 0 7", 1), "at least 1x1"),
+            (text.replacen("mania: crab", "mania: sand", 1), "bad kind"),
+            (text.replacen("tempo: fast", "tempo: warp", 1), "bad speed"),
+            (
+                text.lines()
+                    .filter(|line| !line.starts_with("vwalls:"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                "no vwalls",
+            ),
+            (
+                text.replacen(&first_post, &first_post.replacen(" full ", " torn ", 1), 1),
+                "bad health",
+            ),
+            (text.replacen(" c0 ", " c9 ", 1), "no seat"),
+            (text.replacen("sD94", "sD0", 1), "at least"),
+        ];
+        for (broken, why) in cases {
+            assert_ne!(broken, text, "the case changed something ({why})");
+            let err = Board::parse_snapshot(&broken).expect_err(why);
+            assert!(err.contains(why), "{why}: {err}");
+        }
+    }
 }

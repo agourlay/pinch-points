@@ -600,6 +600,67 @@ mod tests {
         Level::parse(&text)
     }
 
+    /// Every goal a challenge can set survives being written out and read
+    /// back, and `all` reads as the default it is.
+    #[test]
+    fn every_goal_survives_the_trip_through_text() {
+        for (line, goal) in [
+            ("goal: bank 12", Goal::Bank(12)),
+            ("goal: survive", Goal::Survive),
+            ("goal: golden", Goal::Golden),
+            ("goal: all", Goal::AllCrabs),
+        ] {
+            let level = level_with(line).expect(line);
+            assert_eq!(level.goal, goal, "{line}");
+            let back = Level::parse(&level.to_text()).expect("reads back");
+            assert_eq!(back.goal, goal, "{line} through to_text");
+        }
+    }
+
+    /// A goal that is none of them, or a bank that is not a number, is
+    /// refused with the line's name rather than read as "every crab".
+    #[test]
+    fn a_goal_nobody_can_meet_is_refused() {
+        for line in ["goal: win", "goal: bank lots", "goal: bank"] {
+            let err = level_with(line).unwrap_err();
+            assert!(err.contains("goal"), "{line}: {err}");
+        }
+    }
+
+    /// A rule is a policy and a cap, and evicting needs something to evict:
+    /// each malformed one is refused with its reason.
+    #[test]
+    fn a_rule_that_cannot_be_played_is_refused() {
+        for (line, why) in [
+            ("rule: evict", "expected"),
+            ("rule: evict many", "rule cap"),
+            ("rule: steal 3", "bad policy"),
+            ("rule: evict 0", "at least 1"),
+        ] {
+            let err = level_with(line).unwrap_err();
+            assert!(err.contains(why), "{line}: {err}");
+        }
+        assert!(
+            level_with("rule: reject 0").is_ok(),
+            "a puzzle with no posts"
+        );
+    }
+
+    /// A score names a seat that exists and a number; anything else is
+    /// refused rather than written onto a castle nobody holds.
+    #[test]
+    fn a_score_for_nobody_is_refused() {
+        for (line, why) in [
+            ("score: 1", "expected"),
+            ("score: x 5", "score"),
+            ("score: 1 lots", "score"),
+            ("score: 9 5", "out of range"),
+        ] {
+            let err = level_with(line).unwrap_err();
+            assert!(err.contains(why), "{line}: {err}");
+        }
+    }
+
     /// Placement is the last thing `parse` checks, and each refusal names
     /// its reason: these files are hand-edited and pasted as codes, and
     /// "invalid level" tells the author nothing. A spawner with period 0
