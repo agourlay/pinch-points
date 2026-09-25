@@ -282,9 +282,10 @@ pub(super) fn drive_typing(
                         let host = settings.names[0].clone();
                         again.or_suggest(|| suggested_beach(tr, &host))
                     }
-                    Entry::PlayerName | Entry::Address | Entry::Chat => {
-                        again.or_suggest(|| suggested_name(tr))
-                    }
+                    Entry::PlayerName => again.or_suggest(|| suggested_name(tr)),
+                    // Never refused as empty (see `answer`), and a player's
+                    // name is no suggestion for either.
+                    Entry::Address | Entry::Chat => again,
                 });
                 state.feedback = tr.lobby_needs_name.to_string();
             }
@@ -297,8 +298,10 @@ pub(super) fn drive_typing(
                 state.say(&me, &line);
             }
             Answered::PlayerThenGame(name) => {
-                let host = name.clone();
                 name_myself(settings, caps, name);
+                // After it is kept, so the beach is named after the name
+                // the gate let through, as the refused-name path names it.
+                let host = settings.names[0].clone();
                 let was = state.game_name.clone();
                 state.typing =
                     Some(Typing::game_name(&was).or_suggest(|| suggested_beach(tr, &host)));

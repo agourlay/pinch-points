@@ -585,7 +585,12 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
             r.coop,
             r.sim,
             r.phase,
-            !r.settings.stock_legend(),
+            // Co-op sets the one-hand preset aside (the partner has IJKL),
+            // so there only a rebinding makes the keys the player's own.
+            match r.coop {
+                true => r.settings.custom_binds(),
+                false => !r.settings.stock_legend(),
+            },
         ),
         // Both lines are already in the language under the cursor: moving
         // it sets the language, so the header and the prompt preview

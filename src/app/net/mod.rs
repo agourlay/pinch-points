@@ -109,6 +109,9 @@ pub struct OnlineSession {
     /// rather than building frame zero from the terms. `None` for every
     /// round anyone was at from the start.
     pub caught_up: Option<crate::sim::Board>,
+    /// The frame a caught-up watcher's session started from, which it has
+    /// to move off within a few seconds (see `catch_up_again`).
+    pub(crate) catch_up_frame: Option<u32>,
     /// Host: the late watchers owed the round as it stands, sent once the
     /// frames of this tick have been simulated and the board is the one
     /// the lockstep's frame says.
@@ -454,7 +457,7 @@ pub(crate) mod catch_up;
 mod peers;
 mod presence;
 mod rounds;
-pub(crate) use presence::{abandon_the_departed, leave_a_hostless_round};
+pub(crate) use presence::{abandon_the_departed, catch_up_again, leave_a_hostless_round};
 pub use rounds::Invitation;
 pub(crate) use rounds::lockstep_for;
 
@@ -486,6 +489,7 @@ impl OnlineSession {
             series_standing: None,
             resume_echo: 0,
             caught_up: None,
+            catch_up_frame: None,
             owed_catch_up: Vec::new(),
         }
     }
@@ -578,6 +582,7 @@ impl OnlineSession {
             series_standing: _,
             resume_echo: _,
             caught_up: _,
+            catch_up_frame: _,
             owed_catch_up: _,
         } = self;
         let Home {
@@ -896,10 +901,13 @@ impl OnlineSession {
 
     /// Host: whether `peer` came to watch after the launch, and so is one
     /// the round has to be handed to rather than one that has it already.
-    /// Only a lobby's table keeps a plan: the direct `PINCH_HOST` pair has
-    /// no watchers to catch up.
+    ///
+    /// A table formed in the lobby, however small: a host that launched
+    /// against the AI with nobody else aboard keeps an empty plan, and every
+    /// greeting after it is a latecomer. The direct `PINCH_HOST` pair has
+    /// no lobby and no watchers to catch up.
     fn late_watcher(&self, peer: usize) -> bool {
-        self.peers.planned() > 0 && self.queue_place(peer).is_some()
+        self.home.from_lobby && self.queue_place(peer).is_some()
     }
 
     /// Host: send each late watcher owed one the round as it stands.
@@ -912,11 +920,14 @@ impl OnlineSession {
             return;
         }
         let frame = self.session.frame();
-        debug_assert_eq!(
-            board.ticks(),
-            u64::from(frame),
-            "the board is at the lockstep's frame"
-        );
+        // A round the tide has ended: the board stops ticking while the
+        // lockstep still counts frames, so the two part, and there is
+        // nothing left to watch anyway. The watcher keeps greeting and is
+        // answered between rounds like everybody else.
+        if board.round_over() || board.ticks() != u64::from(frame) {
+            self.owed_catch_up.clear();
+            return;
+        }
         let parts = catch_up::pack(&self.start_msg(None), frame, board);
         for peer in std::mem::take(&mut self.owed_catch_up) {
             if parts.is_empty() {
@@ -1520,6 +1531,7 @@ mod catch_up_tests {
             2,
             MatchTerms::default(),
         );
+        host.home.from_lobby = true;
         let port = host.transport.local_addr().expect("addr").port();
         let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
         bo.send(NetMsg::hello("Bo"));
@@ -1592,17 +1604,89 @@ mod catch_up_tests {
         assert!(queued, "a player arriving mid-round waits for the next one");
     }
 
-    /// The direct `PINCH_HOST` pair keeps no plan, so nobody in it is a
-    /// latecomer to be caught up.
+    /// The direct `PINCH_HOST` pair has no lobby and nobody to catch up.
+    /// A lobby host playing the AI alone keeps no plan either, and there
+    /// everyone who greets is a latecomer.
     #[test]
-    fn a_table_with_no_plan_catches_nobody_up() {
-        let host = OnlineSession::new(
+    fn a_lobby_table_catches_up_whoever_came_late_however_small() {
+        let mut host = OnlineSession::new(
             UdpTransport::host(0).expect("host socket"),
-            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            Lockstep::new(0, vec![0], DEFAULT_DELAY),
             2,
             MatchTerms::default(),
         );
-        assert!(!host.late_watcher(0));
-        assert!(!host.late_watcher(5));
+        assert!(!host.late_watcher(0), "the direct pair");
+        host.home.from_lobby = true;
+        assert_eq!(host.peers.planned(), 0, "nobody else sat down");
+        assert!(host.late_watcher(0), "the host alone with the AI");
+        host.peers.deal(&[Some(1)]);
+        assert!(!host.late_watcher(0), "one at the launch is not late");
+        assert!(host.late_watcher(1));
+    }
+
+    /// Once the tide is in the board stops ticking and nothing is sent: the
+    /// watcher is owed nothing more, and asks again between rounds.
+    #[test]
+    fn a_finished_round_is_not_sent_to_anybody() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        host.home.from_lobby = true;
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut dee = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        dee.send(NetMsg::watch("Dee"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        host.pump(PlayerAction::None, |_| {});
+        let mut board = generate_arena(3, 2, 12, 9);
+        board.set_round_length(Some(0));
+        assert!(board.round_over());
+        host.send_catch_ups(&board);
+        assert!(host.owed_catch_up.is_empty());
+        let sent = drain(&mut dee)
+            .into_iter()
+            .any(|msg| matches!(msg, NetMsg::CatchUp { .. }));
+        assert!(!sent, "nothing to watch, nothing sent");
+    }
+
+    /// A caught-up watcher that never moves off its first frame goes back
+    /// to the lobby to be caught up again, rather than standing on a still
+    /// beach until the host gives up on it. One that is moving stays.
+    #[test]
+    fn a_watcher_stuck_on_its_first_frame_asks_again() {
+        use crate::app::Screen;
+        for stuck in [true, false] {
+            let mut app = App::new();
+            app.add_plugins(bevy::state::app::StatesPlugin);
+            app.init_state::<Screen>();
+            app.init_resource::<Time>();
+            app.init_resource::<crate::app::lobby::Homecoming>();
+            let mut session = OnlineSession::new(
+                UdpTransport::join(("127.0.0.1", 47998)).expect("join"),
+                Lockstep::observer_from(vec![0, 1], DEFAULT_DELAY, 400),
+                2,
+                MatchTerms::default(),
+            );
+            session.catch_up_frame = Some(if stuck { 400 } else { 399 });
+            app.insert_resource(Online(Some(session)));
+            app.add_systems(Update, catch_up_again);
+            for _ in 0..4 {
+                app.world_mut()
+                    .resource_mut::<Time>()
+                    .advance_by(std::time::Duration::from_secs(1));
+                app.update();
+            }
+            let gone = app.world().resource::<Online>().0.is_none();
+            assert_eq!(gone, stuck);
+            assert_eq!(
+                app.world()
+                    .resource::<crate::app::lobby::Homecoming>()
+                    .0
+                    .is_some(),
+                stuck
+            );
+        }
     }
 }

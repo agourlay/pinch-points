@@ -279,24 +279,18 @@ pub(super) fn accept_the_invitation(
     started: Option<Invitation>,
 ) {
     if let Some(invitation) = started {
-        let Standing::Joining(joined) = std::mem::take(&mut state.standing) else {
-            unreachable!("an invitation for a lobby that greeted nobody");
-        };
-        let transport = joined.transport;
-        // The host's invitation says whether this is a series, and where it
-        // stands: a joiner that assumed otherwise would stop after one
-        // round, and one admitted mid-series would start its own tally.
-        *tournament =
-            crate::app::tournament::Tournament::from_terms(invitation.terms, invitation.standing);
-        let mut session = OnlineSession::invited(transport, invitation);
-        // Formed here, so a finished match knows it has a lobby to walk
-        // this table back to.
-        session.home.from_lobby = true;
-        online.0 = Some(session);
-        next_vphase.set(VersusPhase::Running);
-        next_screen.set(Screen::Versus);
+        let terms = (invitation.terms, invitation.standing);
+        walk_into_the_arena(
+            state,
+            online,
+            tournament,
+            (next_screen, next_vphase),
+            terms,
+            |transport| OnlineSession::invited(transport, invitation),
+        );
     }
 }
+
 /// Walk into a round already running, as a watcher: the session starts
 /// at the frame the host's board was taken at, and the arena from that
 /// board (`net::catch_up`).
@@ -308,20 +302,43 @@ fn catch_up_with_the_round(
     next_vphase: &mut NextState<VersusPhase>,
     caught: crate::app::net::catch_up::CaughtUp,
 ) {
-    let Standing::Joining(joined) = std::mem::take(&mut state.standing) else {
-        unreachable!("a round sent to a lobby that greeted nobody");
-    };
-    *tournament = crate::app::tournament::Tournament::from_terms(
-        caught.invitation.terms,
-        caught.invitation.standing,
+    let terms = (caught.invitation.terms, caught.invitation.standing);
+    walk_into_the_arena(
+        state,
+        online,
+        tournament,
+        (next_screen, next_vphase),
+        terms,
+        |transport| OnlineSession::caught_up(transport, caught),
     );
-    let mut session = OnlineSession::caught_up(joined.transport, caught);
+}
+
+/// The one way from a greeted beach into the arena, whichever session the
+/// host's answer builds: the socket handed over, the series armed from the
+/// host's terms, and the session marked as having a lobby to walk back to.
+fn walk_into_the_arena(
+    state: &mut LobbyState,
+    online: &mut Online,
+    tournament: &mut crate::app::tournament::Tournament,
+    (next_screen, next_vphase): (&mut NextState<Screen>, &mut NextState<VersusPhase>),
+    (terms, standing): (MatchTerms, Option<crate::transport::SeriesStanding>),
+    session: impl FnOnce(crate::transport::UdpTransport) -> OnlineSession,
+) {
+    let Standing::Joining(joined) = std::mem::take(&mut state.standing) else {
+        unreachable!("an invitation for a lobby that greeted nobody");
+    };
+    // The host's invitation says whether this is a series, and where it
+    // stands: a joiner that assumed otherwise would stop after one round,
+    // and one admitted mid-series would start its own tally.
+    *tournament = crate::app::tournament::Tournament::from_terms(terms, standing);
+    let mut session = session(joined.transport);
+    // Formed here, so a finished match knows it has a lobby to walk this
+    // table back to.
     session.home.from_lobby = true;
     online.0 = Some(session);
     next_vphase.set(VersusPhase::Running);
     next_screen.set(Screen::Versus);
 }
-
 /// Joining: keep greeting the host until our seat assignment arrives
 /// (Start rides UDP; hellos are re-answered until one lands).
 /// What to tell a peer the host has just put in line.

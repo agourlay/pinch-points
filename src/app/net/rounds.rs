@@ -73,6 +73,7 @@ impl OnlineSession {
             Lockstep::observer_from((0..humans).collect(), crate::sim::DEFAULT_DELAY, frame);
         session.stall.reset(frame);
         session.caught_up = Some(board);
+        session.catch_up_frame = Some(frame);
         session
     }
 
@@ -110,8 +111,17 @@ impl OnlineSession {
         );
         let seated = self.peers.planned();
         // Peers are registered in arrival order, so everyone between the
-        // plan and this one is already waiting.
-        let ahead = peer.checked_sub(seated)?;
+        // plan and this one is already waiting: for a chair, that is. A
+        // watcher, caught up or in line to watch, takes none, and a player
+        // told a spectator was ahead of them was not next when they were.
+        peer.checked_sub(seated)?;
+        let ahead = (seated..peer)
+            .filter(|&before| {
+                self.peers
+                    .get(before)
+                    .is_none_or(|row| row.place == Place::Queued && !row.watch)
+            })
+            .count();
         Some(NetMsg::Queued {
             ahead: ahead.min(u8::MAX as usize) as u8,
         })
@@ -420,6 +430,7 @@ impl OnlineSession {
         self.resume_echo = 0;
         // A new round is everyone's from its first frame.
         self.caught_up = None;
+        self.catch_up_frame = None;
         self.owed_catch_up.clear();
         // And nobody is late for a round that has not begun. The results
         // card is a place a table sits for a while, and carrying that
@@ -490,7 +501,7 @@ mod tests {
     #[test]
     fn a_latecomer_is_queued_and_a_lobby_spectator_is_not() {
         // Two peers at launch: one seated, one watching.
-        let session = hosting(vec![Some(1), None]);
+        let mut session = hosting(vec![Some(1), None]);
         assert_eq!(session.queue_place(0), None, "a seated peer plays on");
         assert_eq!(
             session.queue_place(1),
@@ -503,6 +514,11 @@ mod tests {
         assert_eq!(session.queue_place(2), Some(NetMsg::Queued { ahead: 0 }));
         assert_eq!(session.queue_place(3), Some(NetMsg::Queued { ahead: 1 }));
         assert_eq!(session.queue_place(9), Some(NetMsg::Queued { ahead: 7 }));
+        // A watcher caught up in between takes no chair, so it is nobody's
+        // place in line.
+        session.peers.row(2).place = Place::LateWatching;
+        assert_eq!(session.queue_place(3), Some(NetMsg::Queued { ahead: 0 }));
+        assert_eq!(session.queue_place(9), Some(NetMsg::Queued { ahead: 6 }));
     }
 
     /// A joiner holds no plan at all, and answers nobody: the star's spokes

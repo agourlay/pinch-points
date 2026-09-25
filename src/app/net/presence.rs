@@ -362,6 +362,47 @@ pub(crate) fn abandon_the_departed(
     }
 }
 
+/// How long a caught-up watcher may sit on the frame it was caught up at
+/// before it asks again. The inputs from that frame on come from the
+/// players' resend tails, which reach about a second back; a watcher that
+/// took longer than that to walk into the arena never gets them.
+const CATCH_UP_PATIENCE: f32 = 3.0;
+
+/// A late watcher whose round never started moving goes back to the lobby
+/// and catches up again.
+///
+/// Rare: the tails cover the second it takes to walk from the lobby into
+/// the arena. But a slow machine can take longer, and then the frame the
+/// snapshot was taken at has scrolled out of every tail, and the beach
+/// would stand still until the host gave up on a watcher that never
+/// hashed. The lobby greets the host the moment it opens, and a watcher's
+/// greeting mid-round is answered with a fresh snapshot, so the way back
+/// is the way in, a second later.
+pub(crate) fn catch_up_again(
+    time: Res<Time>,
+    mut online: ResMut<Online>,
+    mut homecoming: ResMut<crate::app::lobby::Homecoming>,
+    mut next_screen: ResMut<NextState<Screen>>,
+    mut stuck: Local<f32>,
+) {
+    let waiting = online.0.as_ref().is_some_and(|session| {
+        session.catch_up_frame == Some(session.session.frame()) && !session.session.paused()
+    });
+    if !waiting {
+        *stuck = 0.0;
+        return;
+    }
+    *stuck += time.delta_secs();
+    if *stuck < CATCH_UP_PATIENCE {
+        return;
+    }
+    *stuck = 0.0;
+    if let Some(session) = online.0.take() {
+        homecoming.0 = Some(session.back_to_the_lobby());
+        next_screen.set(Screen::Lobby);
+    }
+}
+
 /// Walk a joiner out of a round whose host has gone, and say why.
 ///
 /// Every other kind of departure leaves a round that can go on: a rival's

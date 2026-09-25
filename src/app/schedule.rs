@@ -675,6 +675,7 @@ fn add_play_systems(app: &mut App) {
                 check_versus_over,
                 net::abandon_the_departed,
                 net::leave_a_hostless_round,
+                net::catch_up_again,
             )
                 .run_if(versus_running),
             // The sim is stopped on the results card, so the session has to
