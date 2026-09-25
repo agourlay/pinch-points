@@ -321,10 +321,7 @@ pub struct SeatNames(pub [String; MAX_PLAYERS]);
 impl SeatNames {
     /// The name to show for `seat`, or the localized "P{n}" fallback.
     pub fn label(&self, tr: &i18n::Tr, seat: u8) -> String {
-        match self.0.get(usize::from(seat)) {
-            Some(name) if !name.is_empty() => name.clone(),
-            _ => seat_label(tr, seat),
-        }
+        name_or_label(&self.0, tr, seat)
     }
 }
 
@@ -333,6 +330,16 @@ impl SeatNames {
 /// to consult (bindings, match setup) say it this way too.
 pub fn seat_label(tr: &i18n::Tr, seat: u8) -> String {
     fill(tr.player_label, &[("p", &(seat + 1).to_string())])
+}
+
+/// What to call a seat: its name, or the "P{n}" label when it has none.
+/// One rule for every table of names, the couch's, a round's and an
+/// online session's, so an unnamed seat reads the same on every screen.
+pub fn name_or_label(names: &[String], tr: &i18n::Tr, seat: u8) -> String {
+    match names.get(usize::from(seat)) {
+        Some(name) if !name.is_empty() => name.clone(),
+        _ => seat_label(tr, seat),
+    }
 }
 
 /// A round from a pasted code, waiting for [`Screen::Versus`] to seat it.

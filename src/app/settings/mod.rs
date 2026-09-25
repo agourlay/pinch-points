@@ -301,10 +301,7 @@ impl GameSettings {
     /// overrides these; this stays as the reference for the typing tests.
     #[cfg(test)]
     pub fn seat_name(&self, seat: u8) -> String {
-        match self.names.get(usize::from(seat)) {
-            Some(name) if !name.is_empty() => name.clone(),
-            _ => crate::app::seat_label(self.tr(), seat),
-        }
+        crate::app::name_or_label(&self.names, self.tr(), seat)
     }
 
     /// Type one character into a seat's name, dropping anything that would

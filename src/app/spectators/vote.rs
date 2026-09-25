@@ -197,34 +197,12 @@ pub fn spectator_vote_input(
 }
 
 pub(crate) fn spawn_card(commands: &mut Commands, settings: &crate::app::settings::GameSettings) {
-    use crate::app::{menu_ui, palette};
     let tr = settings.tr();
-    commands
-        .spawn((
-            SpectatorCardUi,
-            GlobalZIndex(menu_ui::layer::CARD),
-            menu_ui::centred_overlay(),
-        ))
-        .with_children(|wrap| {
-            wrap.spawn(menu_ui::screen_card()).with_children(|card| {
-                card.spawn((
-                    Text::new(tr.spectator_call_title),
-                    TextFont {
-                        font_size: FontSize::Px(menu_ui::type_scale::HEADING),
-                        ..default()
-                    },
-                    TextColor(palette::GOLD),
-                ));
-                for (at, event) in SPECTATOR_EVENTS.into_iter().enumerate() {
-                    card.spawn((
-                        Text::new(format!("{}  {}", at + 1, tr.events[event.index()])),
-                        TextFont {
-                            font_size: FontSize::Px(menu_ui::type_scale::ROW),
-                            ..default()
-                        },
-                        TextColor(palette::PARCHMENT),
-                    ));
-                }
-            });
-        });
+    let rows = SPECTATOR_EVENTS.into_iter().enumerate().map(|(at, event)| {
+        (
+            format!("{}  {}", at + 1, tr.events[event.index()]),
+            crate::app::palette::PARCHMENT,
+        )
+    });
+    spawn_list_card(commands, SpectatorCardUi, tr.spectator_call_title, rows);
 }

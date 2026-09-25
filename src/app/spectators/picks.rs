@@ -134,40 +134,15 @@ fn spawn_pick_card(
     settings: &crate::app::settings::GameSettings,
     session: &crate::app::net::OnlineSession,
 ) {
-    use crate::app::{menu_ui, palette};
     let tr = settings.tr();
-    commands
-        .spawn((
-            PickCardUi,
-            GlobalZIndex(menu_ui::layer::CARD),
-            menu_ui::centred_overlay(),
-        ))
-        .with_children(|wrap| {
-            wrap.spawn(menu_ui::screen_card()).with_children(|card| {
-                card.spawn((
-                    Text::new(tr.spectator_pick_title),
-                    TextFont {
-                        font_size: FontSize::Px(menu_ui::type_scale::HEADING),
-                        ..default()
-                    },
-                    TextColor(palette::GOLD),
-                ));
-                for seat in 0..session.seats {
-                    let name = match session.names.get(usize::from(seat)) {
-                        Some(name) if !name.is_empty() => name.clone(),
-                        _ => crate::app::seat_label(tr, seat),
-                    };
-                    card.spawn((
-                        Text::new(format!("{}  {name}", seat + 1)),
-                        TextFont {
-                            font_size: FontSize::Px(menu_ui::type_scale::ROW),
-                            ..default()
-                        },
-                        TextColor(palette::player_color(seat)),
-                    ));
-                }
-            });
-        });
+    let rows = (0..session.seats).map(|seat| {
+        let name = crate::app::name_or_label(&session.names, tr, seat);
+        (
+            format!("{}  {name}", seat + 1),
+            crate::app::palette::player_color(seat),
+        )
+    });
+    spawn_list_card(commands, PickCardUi, tr.spectator_pick_title, rows);
 }
 
 /// Score a spectator's call as the tide comes in, for the card to say.
@@ -227,10 +202,7 @@ pub(super) fn say_the_calls(
         session.stands.picks_said = true;
         if picks.any() {
             let names = &session.names;
-            let label = |seat: u8| match names.get(usize::from(seat)) {
-                Some(name) if !name.is_empty() => name.clone(),
-                _ => crate::app::seat_label(tr, seat),
-            };
+            let label = |seat: u8| crate::app::name_or_label(names, tr, seat);
             let line = crate::app::i18n::fill(tr.crowd_picked, &[("l", &picks.line(label))]);
             session.transport.send(NetMsg::chat("", &line));
             session.heard.push((String::new(), line));

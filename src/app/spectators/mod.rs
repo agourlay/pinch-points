@@ -177,6 +177,47 @@ pub fn settle_spectator_vote(
     session.heard.push((String::new(), line));
 }
 
+/// A numbered list on a card over the round, for a spectator to press a
+/// number on: the tide's events or the seats to call. `marker` is what
+/// takes it down again.
+pub(super) fn spawn_list_card(
+    commands: &mut Commands,
+    marker: impl Component,
+    title: &str,
+    rows: impl IntoIterator<Item = (String, Color)>,
+) {
+    use crate::app::{menu_ui, palette};
+    let rows: Vec<(String, Color)> = rows.into_iter().collect();
+    commands
+        .spawn((
+            marker,
+            GlobalZIndex(menu_ui::layer::CARD),
+            menu_ui::centred_overlay(),
+        ))
+        .with_children(|wrap| {
+            wrap.spawn(menu_ui::screen_card()).with_children(|card| {
+                card.spawn((
+                    Text::new(title.to_string()),
+                    TextFont {
+                        font_size: FontSize::Px(menu_ui::type_scale::HEADING),
+                        ..default()
+                    },
+                    TextColor(palette::GOLD),
+                ));
+                for (line, color) in rows {
+                    card.spawn((
+                        Text::new(line),
+                        TextFont {
+                            font_size: FontSize::Px(menu_ui::type_scale::ROW),
+                            ..default()
+                        },
+                        TextColor(color),
+                    ));
+                }
+            });
+        });
+}
+
 /// Either of the spectators' two lists, the tide's or the winner's.
 type EitherCard = Or<(With<SpectatorCardUi>, With<PickCardUi>)>;
 
