@@ -39,7 +39,7 @@ pub fn sync_castles(
             commands.entity(entity).despawn();
             continue;
         }
-        let idx = sprite.y as usize * board.width() as usize + sprite.x as usize;
+        let idx = usize::from(board.index_of(sprite.x, sprite.y));
         match board.tile_at(sprite.x, sprite.y) {
             TileKind::Castle(owner)
                 if owner == sprite.owner
@@ -59,7 +59,7 @@ pub fn sync_castles(
         }
     }
     for (x, y, kind) in board.tiles() {
-        let idx = y as usize * board.width() as usize + x as usize;
+        let idx = usize::from(board.index_of(x, y));
         if covered[idx] {
             continue;
         }

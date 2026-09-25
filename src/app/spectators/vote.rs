@@ -170,19 +170,7 @@ pub fn spectator_vote_input(
         shut(&mut commands, &mut card);
         return;
     }
-    const PICKS: [KeyCode; 7] = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-        KeyCode::Digit7,
-    ];
-    for (at, key) in PICKS.into_iter().enumerate() {
-        if !keys.just_pressed(key) {
-            continue;
-        }
+    if let Some(at) = crate::app::menu_ui::number_pressed(&keys, SPECTATOR_EVENTS.len()) {
         if let Some(session) = &mut online.0 {
             // Straight to the host, which is the only peer that counts.
             // Never counted here on the way past: the host holds seat 0
@@ -192,7 +180,6 @@ pub fn spectator_vote_input(
             });
         }
         shut(&mut commands, &mut card);
-        return;
     }
 }
 

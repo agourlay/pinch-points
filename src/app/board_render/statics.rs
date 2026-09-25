@@ -457,7 +457,7 @@ pub fn sync_signposts(
             commands.entity(entity).despawn();
             continue;
         }
-        let idx = sprite.y as usize * board.width() as usize + sprite.x as usize;
+        let idx = usize::from(board.index_of(sprite.x, sprite.y));
         match board.signpost_at(sprite.x, sprite.y) {
             Some(sp) if sp.dir == sprite.dir && sp.owner == sprite.owner => covered[idx] = true,
             // A different heading or a different owner on the same tile is
@@ -466,7 +466,7 @@ pub fn sync_signposts(
         }
     }
     for (x, y, _) in board.tiles() {
-        let idx = y as usize * board.width() as usize + x as usize;
+        let idx = usize::from(board.index_of(x, y));
         if covered[idx] {
             continue;
         }

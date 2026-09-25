@@ -246,12 +246,7 @@ pub fn update_controls_ui(
             Half::Label => label,
             Half::Value => value,
         };
-        let target = match (cell.1, picked) {
-            (Half::Label, true) => Color::WHITE,
-            (Half::Label, false) => palette::PARCHMENT.with_alpha(0.62),
-            (Half::Value, true) => palette::GOLD,
-            (Half::Value, false) => palette::PARCHMENT.with_alpha(0.92),
-        };
+        let target = menu_ui::cell_ink(cell.1, picked);
         menu_ui::set_text(&mut text, &line);
         menu_ui::set_color(&mut color, target);
     }

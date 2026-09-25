@@ -22,6 +22,15 @@ use crate::app::{Screen, Sim};
 use crate::sim::{Board, Direction, Level, LevelKind};
 use bevy::prelude::*;
 
+/// The arrow keys and the edge each names: a wall toggled on that side of
+/// the cursor's tile, or, in a playtest, the way an arrow points.
+const ARROWS: [(KeyCode, Direction); 4] = [
+    (KeyCode::ArrowUp, Direction::Up),
+    (KeyCode::ArrowDown, Direction::Down),
+    (KeyCode::ArrowLeft, Direction::Left),
+    (KeyCode::ArrowRight, Direction::Right),
+];
+
 const EDITOR_BOARD: (u8, u8) = (12, 9);
 
 /// Beach sizes the editor offers, smallest first. The same set versus plays
@@ -320,12 +329,7 @@ pub fn editor_input(
     let board = &mut sim.0;
 
     // Walls on the cursor tile's edges.
-    for (key, dir) in [
-        (KeyCode::ArrowUp, Direction::Up),
-        (KeyCode::ArrowDown, Direction::Down),
-        (KeyCode::ArrowLeft, Direction::Left),
-        (KeyCode::ArrowRight, Direction::Right),
-    ] {
+    for (key, dir) in ARROWS {
         if keys.just_pressed(key) {
             let present = board.wall_at(x, y, dir);
             board.set_wall(x, y, dir, !present);
@@ -591,12 +595,7 @@ pub fn editor_test_input(
     let Some(cursor) = cursors.iter().next() else {
         return;
     };
-    for (key, dir) in [
-        (KeyCode::ArrowUp, Direction::Up),
-        (KeyCode::ArrowDown, Direction::Down),
-        (KeyCode::ArrowLeft, Direction::Left),
-        (KeyCode::ArrowRight, Direction::Right),
-    ] {
+    for (key, dir) in ARROWS {
         if keys.just_pressed(key) {
             let _ = sim.0.place_signpost(0, cursor.x, cursor.y, dir);
         }

@@ -25,6 +25,29 @@ pub mod type_scale {
     pub const FINE: f32 = 15.0;
 }
 
+/// The number keys, one to nine, in the order a list numbers its rows.
+pub const NUMBER_KEYS: [KeyCode; 9] = [
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
+    KeyCode::Digit9,
+];
+
+/// Which of the first `count` rows a number key picked this frame, as a
+/// 0-based index: the menu's modes, the beaches on the air, the tide's
+/// events, the seats to call.
+pub fn number_pressed(keys: &ButtonInput<KeyCode>, count: usize) -> Option<usize> {
+    NUMBER_KEYS
+        .iter()
+        .take(count)
+        .position(|&key| keys.just_pressed(key))
+}
+
 /// W/S (or arrow) navigation over `len` rows, wrapping at the ends.
 pub fn nav(keys: &ButtonInput<KeyCode>, selected: usize, len: usize) -> usize {
     let mut at = selected;
@@ -306,6 +329,18 @@ pub fn card_row() -> (Node, BackgroundColor) {
 pub enum Half {
     Label,
     Value,
+}
+
+/// A two-column row's ink: the label quiet and the value clear, both lit
+/// on the row the cursor is on. The settings and the key bindings are the
+/// same card, and read alike.
+pub fn cell_ink(half: Half, picked: bool) -> Color {
+    match (half, picked) {
+        (Half::Label, true) => Color::WHITE,
+        (Half::Label, false) => palette::PARCHMENT.with_alpha(0.62),
+        (Half::Value, true) => palette::GOLD,
+        (Half::Value, false) => palette::PARCHMENT.with_alpha(0.92),
+    }
 }
 
 /// A fixed-width, clipped, single-line cell inside a card row. Every list

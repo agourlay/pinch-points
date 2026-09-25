@@ -390,6 +390,18 @@ fn chase_jackpot(
         }
     }
     let (_, _, tile, dir) = best?;
+    turn_home(board, player, level, castle, (tile, dir))
+}
+
+/// Put an arrow in front of the crab at `tile` walking `dir`, pointing it
+/// home: the move both a jackpot chase and a recruit end in.
+fn turn_home(
+    board: &Board,
+    player: PlayerId,
+    level: BotLevel,
+    castle: u16,
+    (tile, dir): (u16, Direction),
+) -> Option<(PlayerAction, Intent)> {
     let ahead = board.step(tile, dir).unwrap_or(tile);
     let home = homeward(board, ahead, castle, level, TileKind::Pool);
     let action = place_ahead(board, player, tile, dir, home, level)?;
@@ -430,10 +442,7 @@ fn recruit(
         }
     }
     let (_, _, tile, dir) = best?;
-    let ahead = board.step(tile, dir).unwrap_or(tile);
-    let home = homeward(board, ahead, castle, level, TileKind::Pool);
-    let action = place_ahead(board, player, tile, dir, home, level)?;
-    Some((action, Intent::Recruit))
+    turn_home(board, player, level, castle, (tile, dir))
 }
 
 /// Fierce only: steer a gull that is already near the leading rival's castle

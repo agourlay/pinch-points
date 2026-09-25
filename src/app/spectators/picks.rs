@@ -106,26 +106,11 @@ pub fn spectator_pick_input(
         shut(&mut commands, &mut card);
         return;
     }
-    const SEATS: [KeyCode; crate::sim::MAX_PLAYERS] = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-    ];
-    for (seat, key) in SEATS
-        .into_iter()
-        .enumerate()
-        .take(usize::from(session.seats))
-    {
-        if keys.just_pressed(key) {
-            let seat = seat as u8;
-            session.stands.my_pick = Some(seat);
-            session.transport.send(NetMsg::SpectatorPick { seat });
-            shut(&mut commands, &mut card);
-            return;
-        }
+    if let Some(seat) = crate::app::menu_ui::number_pressed(&keys, usize::from(session.seats)) {
+        let seat = seat as u8;
+        session.stands.my_pick = Some(seat);
+        session.transport.send(NetMsg::SpectatorPick { seat });
+        shut(&mut commands, &mut card);
     }
 }
 

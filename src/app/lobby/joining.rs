@@ -101,17 +101,6 @@ pub(super) fn take_a_beach(
     intent: Option<Intent>,
     auto_join: bool,
 ) {
-    const DIGITS: [KeyCode; 9] = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-        KeyCode::Digit7,
-        KeyCode::Digit8,
-        KeyCode::Digit9,
-    ];
     // A dialled address skips the list entirely: there is no row to pick,
     // no beacon to have heard, and nothing about it to be full or in
     // progress, because none of that is known until the host answers.
@@ -121,7 +110,7 @@ pub(super) fn take_a_beach(
         }
         return;
     }
-    let digit = DIGITS.iter().position(|k| keys.just_pressed(*k));
+    let digit = crate::app::menu_ui::number_pressed(keys, crate::app::menu_ui::NUMBER_KEYS.len());
     let enter_on = crate::app::menu_ui::enter(keys)
         .then(|| state.selected_index())
         .flatten();

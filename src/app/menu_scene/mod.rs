@@ -354,21 +354,10 @@ pub fn menu_input(
     }
     list.selected = menu_ui::nav(&keys, list.selected, MENU_ENTRY_COUNT);
 
-    const HOTKEYS: [KeyCode; MENU_ENTRY_COUNT] = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-        KeyCode::Digit7,
-        KeyCode::Digit8,
-        KeyCode::Digit9,
-    ];
     let choice = if menu_ui::enter(&keys) {
         Some(list.selected)
     } else {
-        HOTKEYS.iter().position(|&key| keys.just_pressed(key))
+        menu_ui::number_pressed(&keys, MENU_ENTRY_COUNT)
     };
     let Some(choice) = choice else {
         return;
