@@ -21,41 +21,144 @@ pub(super) fn bot_seats(config: &match_setup::MatchConfig) -> [Option<BotLevel>;
     bots
 }
 
-/// How many seats this round has, from whichever source knows.
-///
-/// Four ways into a versus round and they each answer differently: a replay
-/// only knows what its recorded board shows, an online session agreed its
-/// count at the lobby, a configured match was told, and a dev hook falls
-/// back to the keyboard's two seats plus whatever pads are plugged in.
-pub(super) fn seat_count(
-    config: &match_setup::MatchConfig,
-    playback: bool,
-    online: Option<u8>,
-    top_castle_owner: Option<u8>,
-    pads: u8,
-) -> u8 {
-    let asked = if playback {
-        // A replay carries no seat count; the castles on the recorded board
-        // are the record of who played.
-        top_castle_owner.unwrap_or(1).saturating_add(1)
-    } else if let Some(seats) = online {
-        seats
-    } else if config.armed {
-        config.seats
-    } else {
-        pads.max(2)
-    };
-    // Clamped on the way out, because two of these sources are not the
-    // game's to trust: `online` is whatever number a host wrote into a
-    // datagram, and `pads` is however many gamepads are plugged in. `Seats`
-    // indexes the per-seat arrays, and a seventh seat ran off the end of
-    // the scores in `leading_seats`.
-    let seats = asked.clamp(2, MAX_PLAYERS as u8);
-    debug_assert!(
-        (2..=MAX_PLAYERS as u8).contains(&seats),
-        "the clamp let {seats} through"
-    );
-    seats
+/// Where a versus round comes from, which decides its board, its table
+/// and whether it is recorded. Listed in the order they win: a round
+/// picked back up is already a beach mid-play, a recording is watched as
+/// it was, an online round is the lobby's agreement, and a match set up
+/// here is this machine's own.
+enum RoundOrigin<'a> {
+    /// Resumed from a save or a pasted code: its own beach and table.
+    Resumed(Box<crate::app::suspend::Suspended>),
+    /// A recording being watched.
+    Replay(&'a Replay),
+    /// A round at an online table, from its first frame or caught up
+    /// with mid-round.
+    Online(&'a net::OnlineSession),
+    /// A match set up on this machine, or the daily's own table.
+    Configured(&'a match_setup::MatchConfig),
+    /// Straight in from a dev hook: two keyboard seats plus pads.
+    Unconfigured,
+}
+
+impl RoundOrigin<'_> {
+    /// The beach the round is played on.
+    fn board(
+        &self,
+        daily: bool,
+        beaches: &match_setup::CustomBeaches,
+        sandbox: bool,
+        pads: u8,
+    ) -> Board {
+        match self {
+            RoundOrigin::Resumed(round) => round.board.clone(),
+            RoundOrigin::Replay(replay) => replay.level.board(),
+            RoundOrigin::Online(session) => match &session.catch_up.board {
+                // A watcher who arrived mid-round starts where the host's
+                // board was when it was sent (`net::catch_up`).
+                Some(board) => board.clone(),
+                // Every peer builds from the terms the lobby agreed (map,
+                // gull pressure, round length and seed) so the beach is
+                // identical without anyone trusting their own menu. A
+                // handmade beach cannot be described that way, so it
+                // travelled whole and is used as it arrived.
+                None => match_setup::board_from(&session.terms, session.seats, &session.beach),
+            },
+            // A configured local match: handcrafted classic or a generated
+            // arena at the chosen size, with gull pressure and round length
+            // overrides. Fresh seed per round (recorded via the board's
+            // seed, so replays are exact).
+            RoundOrigin::Configured(config) => {
+                let seed = if daily {
+                    Daily::seed()
+                } else {
+                    clock::fresh_seed()
+                };
+                let (w, h) = config.map.size();
+                let mut board = if config.map == match_setup::MapChoice::Custom {
+                    // A beach somebody built. Locally there is nobody to
+                    // send it to, so it is read off the shelf.
+                    beaches
+                        .fitting(config.seats)
+                        .get(config.custom)
+                        .map_or_else(
+                            || generate_arena(seed, config.seats, w, h),
+                            |beach| beach.level.board(),
+                        )
+                } else if config.map == match_setup::MapChoice::Classic {
+                    // Same handcrafted layout, fresh random stream: one
+                    // seed's luck (gull entry points, spawn kinds) should
+                    // not colour every round. Online keeps the canonical
+                    // seed so peers agree.
+                    classic_arena_seeded(seed, false, config.seats)
+                } else {
+                    generate_arena(seed, config.seats, w, h)
+                };
+                board.set_gull_period(config.gulls.period());
+                board.set_round_length(Some(config.round.ticks()));
+                board
+            }
+            RoundOrigin::Unconfigured => classic_arena(sandbox, pads.max(2)),
+        }
+    }
+
+    /// Which seats an AI holds, and how many seats there are.
+    ///
+    /// Online, the AI seats are part of the agreed terms; a resumed round
+    /// brings its own table; everywhere else they come from this machine's
+    /// setup screen, which leaves a replay or a dev hook botting nobody
+    /// unless a match was set up. `board` is the one [`Self::board`] built.
+    fn table(
+        &self,
+        config: &match_setup::MatchConfig,
+        board: &Board,
+        pads: u8,
+    ) -> ([Option<BotLevel>; MAX_PLAYERS], u8) {
+        let bots = match self {
+            RoundOrigin::Resumed(round) => return (round.bots, round.seats),
+            RoundOrigin::Online(session) => {
+                match_setup::bot_seats_from(&session.terms, session.seats)
+            }
+            RoundOrigin::Replay(_) | RoundOrigin::Configured(_) | RoundOrigin::Unconfigured => {
+                bot_seats(config)
+            }
+        };
+        (bots, clamp_seats(self.asked_seats(board, pads)))
+    }
+
+    /// How many seats this way into a round asks for, before the clamp.
+    fn asked_seats(&self, board: &Board, pads: u8) -> u8 {
+        match self {
+            RoundOrigin::Resumed(round) => round.seats,
+            // A replay carries no seat count; the castles on the recorded
+            // board are the record of who played.
+            RoundOrigin::Replay(_) => board.castle_owners().max().unwrap_or(1).saturating_add(1),
+            RoundOrigin::Online(session) => session.seats,
+            RoundOrigin::Configured(config) => config.seats,
+            RoundOrigin::Unconfigured => pads.max(2),
+        }
+    }
+
+    /// Whether the round is recorded as it is played. A replay is a
+    /// recording already, and a round picked back up or caught up with
+    /// mid-round has no first tick to record from: the board arrives as it
+    /// stood, not the inputs that got it there. Every reader of the
+    /// recorder allows for there being none.
+    fn recorded(&self) -> bool {
+        match self {
+            RoundOrigin::Resumed(_) | RoundOrigin::Replay(_) => false,
+            RoundOrigin::Online(session) => session.catch_up.board.is_none(),
+            RoundOrigin::Configured(_) | RoundOrigin::Unconfigured => true,
+        }
+    }
+}
+
+/// A seat count the per-seat arrays can hold. Two of the sources are not
+/// the game's to trust: an online count is whatever number a host wrote
+/// into a datagram, and a dev hook's is however many gamepads are plugged
+/// in. `Seats` indexes the per-seat arrays, and a seventh seat ran off the
+/// end of the scores in `leading_seats`.
+pub(super) fn clamp_seats(asked: u8) -> u8 {
+    asked.clamp(2, MAX_PLAYERS as u8)
 }
 
 /// Where a versus round's board comes from. Bundled because there are six
@@ -101,99 +204,23 @@ pub(super) fn load_versus(
     // The daily plays on a table of its own rather than the player's.
     let daily_config = match_setup::MatchConfig::daily();
     let config: &match_setup::MatchConfig = if daily.active { &daily_config } else { config };
-    // A round picked back up beats every other source: it is already a
-    // beach, mid-play, and nothing here should build it a fresh one.
-    let resumed = resuming.0.take();
-    sim.0 = if let Some(round) = &resumed {
-        round.board.clone()
+    let pad_count = pads.iter().count() as u8;
+    let origin = if let Some(round) = resuming.0.take() {
+        RoundOrigin::Resumed(Box::new(round))
     } else if let Some((replay, _)) = &playback.0 {
-        replay.level.board()
+        RoundOrigin::Replay(replay)
     } else if let Some(session) = &online.0 {
-        match &session.catch_up.board {
-            // A watcher who arrived mid-round starts where the host's board
-            // was when it was sent (`net::catch_up`).
-            Some(board) => board.clone(),
-            // Every peer builds from the terms the lobby agreed (map, gull
-            // pressure, round length and seed) so the beach is identical
-            // without anyone trusting their own menu. A handmade beach
-            // cannot be described that way, so it travelled whole and is
-            // used as it arrived.
-            None => match_setup::board_from(&session.terms, session.seats, &session.beach),
-        }
+        RoundOrigin::Online(session)
     } else if config.armed {
-        // A configured local match: handcrafted classic or a generated
-        // arena at the chosen size, with gull pressure and round length
-        // overrides. Fresh seed per round (recorded via the board's seed,
-        // so replays are exact).
-        let seed = if daily.active {
-            Daily::seed()
-        } else {
-            clock::fresh_seed()
-        };
-        let (w, h) = config.map.size();
-        let mut board = if config.map == match_setup::MapChoice::Custom {
-            // A beach somebody built. Locally there is nobody to send it
-            // to, so it is read off the shelf.
-            beaches
-                .fitting(config.seats)
-                .get(config.custom)
-                .map_or_else(
-                    || generate_arena(seed, config.seats, w, h),
-                    |beach| beach.level.board(),
-                )
-        } else if config.map == match_setup::MapChoice::Classic {
-            // Same handcrafted layout, fresh random stream: one seed's luck
-            // (gull entry points, spawn kinds) should not colour every
-            // round. Online keeps the canonical seed so peers agree.
-            classic_arena_seeded(seed, false, config.seats)
-        } else {
-            generate_arena(seed, config.seats, w, h)
-        };
-        board.set_gull_period(config.gulls.period());
-        board.set_round_length(Some(config.round.ticks()));
-        board
+        RoundOrigin::Configured(config)
     } else {
-        // Unconfigured entry (dev hooks): two keyboard seats plus pads.
-        classic_arena(sandbox.0, (pads.iter().count() as u8).max(2))
+        RoundOrigin::Unconfigured
     };
-    // Online, the AI seats are part of the agreed terms; locally they come
-    // from this machine's setup screen, except for a resumed round, which
-    // brings its own table with it.
-    (bots.0, seats.0) = match (&resumed, &online.0) {
-        (Some(round), _) => (round.bots, round.seats),
-        (None, session) => {
-            let seated = session.as_ref().map(|s| s.seats);
-            let bots = match session {
-                Some(s) => match_setup::bot_seats_from(&s.terms, s.seats),
-                None => bot_seats(config),
-            };
-            (
-                bots,
-                seat_count(
-                    config,
-                    playback.0.is_some(),
-                    seated,
-                    sim.0.castle_owners().max(),
-                    pads.iter().count() as u8,
-                ),
-            )
-        }
-    };
-    // A replay is the round from its first tick, and a round started from
-    // a pasted code has no first tick to hand: the code carries the board
-    // as it stood when it was copied, not the inputs that got it there. So
-    // a pasted round is not recorded at all, which every reader of the
-    // recorder already allows for.
-    // A watcher caught up mid-round has no first tick either.
-    let caught_up = online
-        .0
-        .as_ref()
-        .is_some_and(|s| s.catch_up.board.is_some());
-    recorder.0 = if playback.0.is_none() && resumed.is_none() && !caught_up {
-        Some(Replay::new(Level::from_board("Turf War", 3, sim.0.clone())))
-    } else {
-        None
-    };
+    sim.0 = origin.board(daily.active, beaches, sandbox.0, pad_count);
+    (bots.0, seats.0) = origin.table(config, &sim.0, pad_count);
+    recorder.0 = origin
+        .recorded()
+        .then(|| Replay::new(Level::from_board("Turf War", 3, sim.0.clone())));
     board_render::spawn_static_board(&mut commands, &sim.0, &art);
     board_render::spawn_waterline(&mut commands);
     board_render::spawn_water_foam(&mut commands, &art);
@@ -821,27 +848,49 @@ mod tests {
         assert_eq!(bot_seats(&idle), [None; MAX_PLAYERS]);
     }
 
-    /// Each way into a round has its own authority on the seat count, and
-    /// they are consulted in a fixed order.
+    /// A replay's board with castles for `seats` seats.
+    fn recorded(seats: u8) -> Replay {
+        Replay::new(Level::from_board(
+            "Turf War",
+            3,
+            classic_arena(false, seats),
+        ))
+    }
+
+    fn online_at(seats: u8) -> net::OnlineSession {
+        net::OnlineSession::new(
+            crate::transport::UdpTransport::host(0).expect("socket"),
+            crate::sim::Lockstep::new(0, vec![0, 1], crate::sim::DEFAULT_DELAY),
+            seats,
+            crate::transport::MatchTerms::default(),
+        )
+    }
+
+    /// Each way into a round has its own authority on the seat count.
     #[test]
     fn every_entry_path_knows_its_own_seat_count() {
         let config = armed(3, 1);
         // A replay: the highest castle owner on the recorded board.
-        assert_eq!(seat_count(&config, true, None, Some(3), 0), 4);
+        let replay = recorded(4);
+        let board = replay.level.board();
+        assert_eq!(RoundOrigin::Replay(&replay).table(&config, &board, 0).1, 4);
+        let bare = Board::new(4, 4, 1);
         assert_eq!(
-            seat_count(&config, true, None, None, 0),
+            RoundOrigin::Replay(&replay).table(&config, &bare, 0).1,
             2,
             "a castle-less recording still seats two"
         );
-        // Online beats the local config: the lobby agreed the count.
-        assert_eq!(seat_count(&config, false, Some(2), None, 0), 2);
+        // Online: the lobby agreed the count, whatever the local config says.
+        let session = online_at(2);
+        assert_eq!(RoundOrigin::Online(&session).table(&config, &bare, 0).1, 2);
         // A configured match is told.
-        assert_eq!(seat_count(&config, false, None, None, 0), 3);
+        assert_eq!(
+            RoundOrigin::Configured(&config).table(&config, &bare, 0).1,
+            3
+        );
         // A dev hook: the keyboard's two seats, plus a pad each beyond that.
-        let mut hook = armed(3, 1);
-        hook.armed = false;
-        assert_eq!(seat_count(&hook, false, None, None, 0), 2);
-        assert_eq!(seat_count(&hook, false, None, None, 3), 3);
+        assert_eq!(RoundOrigin::Unconfigured.table(&config, &bare, 0).1, 2);
+        assert_eq!(RoundOrigin::Unconfigured.table(&config, &bare, 3).1, 3);
     }
 
     /// Two of the sources are outside the game's control, and the count
@@ -852,20 +901,54 @@ mod tests {
     fn a_seat_count_never_leaves_the_table() {
         let config = armed(3, 1);
         let seated = MAX_PLAYERS as u8;
+        let bare = Board::new(4, 4, 1);
         // A host can put any byte in a `Start`.
-        assert_eq!(seat_count(&config, false, Some(200), None, 0), seated);
-        assert_eq!(seat_count(&config, false, Some(0), None, 0), 2);
+        assert_eq!(
+            RoundOrigin::Online(&online_at(200))
+                .table(&config, &bare, 0)
+                .1,
+            seated
+        );
+        assert_eq!(
+            RoundOrigin::Online(&online_at(0))
+                .table(&config, &bare, 0)
+                .1,
+            2
+        );
         // And a player can plug in more gamepads than there are chairs.
-        let mut hook = armed(3, 1);
-        hook.armed = false;
-        assert_eq!(seat_count(&hook, false, None, None, 9), seated);
+        assert_eq!(RoundOrigin::Unconfigured.table(&config, &bare, 9).1, seated);
         // Whatever comes back is a count the per-seat arrays can hold.
-        for online in [None, Some(0), Some(3), Some(255)] {
-            for pads in [0, 2, 200] {
-                let seats = seat_count(&hook, false, online, Some(255), pads);
-                assert!((2..=seated).contains(&seats), "{online:?}/{pads} → {seats}");
-            }
+        for asked in [0, 1, 3, 6, 7, 200, 255] {
+            assert!((2..=seated).contains(&clamp_seats(asked)), "{asked}");
         }
+    }
+
+    /// Only a round played from its first tick is recorded: a replay is a
+    /// recording already, and one resumed or caught up with mid-round has
+    /// no first tick to record from.
+    #[test]
+    fn only_a_round_played_from_its_first_tick_is_recorded() {
+        let config = armed(3, 1);
+        let replay = recorded(2);
+        let mut caught_up = online_at(2);
+        assert!(RoundOrigin::Configured(&config).recorded());
+        assert!(RoundOrigin::Unconfigured.recorded());
+        assert!(RoundOrigin::Online(&caught_up).recorded());
+        assert!(!RoundOrigin::Replay(&replay).recorded());
+        caught_up.catch_up.board = Some(Board::new(4, 4, 1));
+        assert!(!RoundOrigin::Online(&caught_up).recorded());
+        let resumed = crate::app::suspend::Suspended {
+            seats: 3,
+            bots: [None; MAX_PLAYERS],
+            board: Board::new(4, 4, 1),
+        };
+        let origin = RoundOrigin::Resumed(Box::new(resumed));
+        assert!(!origin.recorded());
+        assert_eq!(
+            origin.table(&config, &Board::new(4, 4, 1), 0).1,
+            3,
+            "its own table"
+        );
     }
 
     /// The AI fill is why an online AI seat is safe at all: two peers holding
