@@ -387,6 +387,16 @@ struct Tr {
     pub tag_you: &'static str,
     pub tag_ai: &'static str,
     pub haul: &'static str,
+    /// The round's awards under the standings (`app::awards`). `{p}` is
+    /// who, one name or several joined by " & " on a tie; `{n}` the figure.
+    /// The round winner who was furthest behind the leader, and by how much.
+    pub award_comeback: &'static str,
+    /// The most banked during one of your own lures.
+    pub award_lure: &'static str,
+    /// The most arrows planted.
+    pub award_arrows: &'static str,
+    /// The most banked score lost, to gulls or to the left claw.
+    pub award_hit: &'static str,
     /// Where the round's highlight reel was written.
     pub highlight_saved: &'static str,
     pub all_safe: &'static str,

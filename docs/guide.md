@@ -93,7 +93,10 @@ announced across the centre of the screen as well.
 ![The lure: banking a molting crab turns every loose crab the luring player's colour and pulls it home - here, to P2](screenshots/lure.png)
 
 **The tide.** The clock turns red for the last 30 seconds and the gull
-surge doubles; when the tide comes in, the highest bank wins.
+surge doubles; when the tide comes in, the highest bank wins. The results
+card also hands out the round's awards, for the comeback from furthest
+behind, the lure that paid most, the most arrows planted and the most
+score lost, so the rest of the table has something to point at too.
 
 **Terrain.**
 

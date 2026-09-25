@@ -427,6 +427,7 @@ pub(super) fn advance_sim(
     mut playback: ResMut<Playback>,
     speed: Res<replays::PlaybackSpeed>,
     bots: Res<Bots>,
+    mut tally: ResMut<awards::RoundTally>,
 ) {
     if paused.0 {
         return;
@@ -440,7 +441,9 @@ pub(super) fn advance_sim(
                 break;
             };
             *idx += 1;
+            let before = awards::Reading::of(&sim.0);
             sim.0.tick(&actions);
+            tally.observe(before, &sim.0, &actions);
         }
         return;
     }
@@ -465,6 +468,7 @@ pub(super) fn advance_sim(
         // that has not moved, so it is set by hand below when one did.
         let sim_board = &mut sim.bypass_change_detection().0;
         let recording = &mut recorder.bypass_change_detection().0;
+        let tally = &mut *tally;
         let bots = &*bots;
         // The level every peer gives an abandoned seat, from the terms the
         // table agreed on, so the chair plays the same on all of them.
@@ -488,7 +492,9 @@ pub(super) fn advance_sim(
                     at,
                     &mut frame_actions,
                 );
+                let before = awards::Reading::of(sim_board);
                 sim_board.tick(&frame_actions);
+                tally.observe(before, sim_board, &frame_actions);
                 if let Some(replay) = recording {
                     replay.record(frame_actions);
                 }
@@ -520,7 +526,9 @@ pub(super) fn advance_sim(
     }
     let mut actions = std::mem::take(&mut pending.0);
     fill_bot_actions(&sim.0, &bots, &mut actions);
+    let before = awards::Reading::of(&sim.0);
     sim.0.tick(&actions);
+    tally.observe(before, &sim.0, &actions);
     if let Some(replay) = &mut recorder.0 {
         replay.record(actions);
     }
@@ -675,8 +683,8 @@ mod tests {
     #[derive(Component)]
     struct Marker;
 
-    /// The smallest world `advance_sim` will run in: a board, the four
-    /// resources it reads, and nothing else.
+    /// The smallest world `advance_sim` will run in: a board, the
+    /// resources it reads and writes, and nothing else.
     fn sim_app() -> App {
         let mut app = App::new();
         app.insert_resource(Sim(classic_arena(false, 2)));
@@ -687,6 +695,7 @@ mod tests {
         app.init_resource::<Playback>();
         app.init_resource::<replays::PlaybackSpeed>();
         app.init_resource::<Bots>();
+        app.init_resource::<awards::RoundTally>();
         app.add_systems(Update, advance_sim);
         app
     }

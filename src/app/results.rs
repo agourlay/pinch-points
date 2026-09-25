@@ -134,8 +134,36 @@ fn standings_rows(
         .collect()
 }
 
+/// The round's awards as card lines, each in the colour of the first seat
+/// it names. Nothing for a solo table, where every award goes to the one
+/// player there, or for a round the tally did not see whole.
+fn award_rows(
+    settings: &GameSettings,
+    names: &crate::app::SeatNames,
+    tally: &crate::app::awards::RoundTally,
+    board: &crate::sim::Board,
+    seats: u8,
+    mode: TeamMode,
+) -> Vec<(String, Color)> {
+    if seats < 2 || !tally.covers(board) {
+        return Vec::new();
+    }
+    let tr = settings.tr();
+    let winners = leading_seats(board.scores(), seats, mode);
+    tally
+        .awards(seats, mode, &winners)
+        .iter()
+        .map(|award| {
+            (
+                award.line(tr, |seat| names.label(tr, seat)),
+                palette::player_color(award.who[0]),
+            )
+        })
+        .collect()
+}
+
 /// The tide-is-in standings card: winner headline, ranked scores in seat
-/// colours (with AI/you markers), and the round's total haul.
+/// colours (with AI/you markers), the round's awards, and its total haul.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_versus_results(
     mut commands: Commands,
@@ -152,6 +180,7 @@ pub fn spawn_versus_results(
     highlight: Res<crate::app::Highlight>,
     stats: Res<crate::app::achievements::Stats>,
     tournament: Res<crate::app::tournament::Tournament>,
+    tally: Res<crate::app::awards::RoundTally>,
 ) {
     let board = &sim.0;
     let scores = board.scores();
@@ -178,6 +207,7 @@ pub fn spawn_versus_results(
         crate::app::side_panels::seat_tag(tr, &bots, local, seat)
     });
     let haul = board.crabs_banked();
+    let awards = award_rows(&settings, &names, &tally, board, seats.0, mode);
 
     let card = results_card(&mut commands);
     commands.entity(card).with_children(|wrap| {
@@ -192,6 +222,16 @@ pub fn spawn_versus_results(
             });
             for (line, color) in rows {
                 let row = card_text(23.0, color);
+                card.spawn((Text::new(line), row.0, row.1));
+            }
+            if !awards.is_empty() {
+                card.spawn(Node {
+                    height: Val::Px(6.0),
+                    ..default()
+                });
+            }
+            for (line, color) in awards {
+                let row = card_text(17.0, color);
                 card.spawn((Text::new(line), row.0, row.1));
             }
             card.spawn(Node {

@@ -8,6 +8,7 @@ mod achievements;
 pub(crate) mod announce;
 mod art;
 mod audio;
+mod awards;
 mod binds;
 mod board_render;
 mod boot;

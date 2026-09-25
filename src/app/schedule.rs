@@ -129,6 +129,7 @@ fn insert_resources(app: &mut App) {
     app.init_resource::<Paused>();
     app.init_resource::<editor::EditorState>();
     app.init_resource::<Recorder>();
+    app.init_resource::<awards::RoundTally>();
     app.init_resource::<Highlight>();
     app.init_resource::<ReelThread>();
     app.init_resource::<Bots>();
