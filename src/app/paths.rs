@@ -13,12 +13,30 @@ use std::path::{Path, PathBuf};
 
 /// The game's data directory, created lazily by whoever writes into it.
 pub fn data_dir() -> PathBuf {
+    #[cfg(test)]
+    return test_home().join("data");
+    #[cfg(not(test))]
     resolve(std::env::var_os("XDG_DATA_HOME"), &[".local", "share"])
 }
 
 /// The game's configuration directory.
 pub fn config_dir() -> PathBuf {
+    #[cfg(test)]
+    return test_home().join("config");
+    #[cfg(not(test))]
     resolve(std::env::var_os("XDG_CONFIG_HOME"), &[".config"])
+}
+
+/// Where a unit test's saves land instead: a folder of its own in the
+/// temp directory, one per test process.
+///
+/// Without it every test that walked through a save wrote the developer's
+/// own files. The lobby's naming tests call `GameSettings::save` on their
+/// way through, and each `cargo test` put the real settings file back to
+/// defaults with a player called Bob in it.
+#[cfg(test)]
+fn test_home() -> PathBuf {
+    std::env::temp_dir().join(format!("pinch-points-test-{}", std::process::id()))
 }
 
 /// A player's own words made safe to use as a file name: the level they
