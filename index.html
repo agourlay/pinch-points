@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pinch Points: a crab-routing video game</title>
+<meta name="description" content="A crab-routing video game for 1 to 6 players. Place arrows in the sand and steer streams of crabs into your castle before the tide comes in.">
+<meta property="og:title" content="Pinch Points: a crab-routing video game">
+<meta property="og:description" content="A crab-routing video game for 1 to 6 players. Place arrows in the sand and steer streams of crabs into your castle before the tide comes in.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://agourlay.github.io/pinch-points/">
+<meta property="og:site_name" content="Pinch Points">
+<!-- Rendered from site/card/card.html by site/card/card.sh. -->
+<meta property="og:image" content="https://agourlay.github.io/pinch-points/media/card.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Pinch Points, a crab-routing video game for 1 to 6 players, beside a four-player round in progress">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image:alt" content="Pinch Points, a crab-routing video game for 1 to 6 players, beside a four-player round in progress">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%F0%9F%A6%80</text></svg>">
+<link rel="stylesheet" href="style.css?v=3603694018">
+</head>
+<body>
+
+<header class="hero">
+  <a class="gh" href="https://github.com/agourlay/pinch-points" aria-label="Pinch Points on GitHub">
+    <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    <span>GitHub</span>
+    <span class="stars" hidden>★ <span class="stars-n"></span></span>
+  </a>
+  <div class="hero-inner">
+  <h1>🦀 Pinch Points 🦀
+    <span class="genre">a crab-routing video game</span></h1>
+  <p class="lede">Place arrows in the sand and steer streams of crabs into
+    your castle before the tide comes in. One to six players, on the couch
+    or over the wire.</p>
+  <!-- Without script both commands show, each under its own label; with
+       it, the labels become tabs and the visitor's own system is picked. -->
+  <div class="install" id="install">
+    <div class="install-tabs" role="tablist" hidden>
+      <button type="button" role="tab" data-os="unix">macOS · Linux</button>
+      <button type="button" role="tab" data-os="windows">Windows</button>
+    </div>
+    <div class="install-cmd" data-os="unix" role="tabpanel">
+      <p class="install-label">macOS · Linux</p>
+      <div class="install-line">
+        <code>curl -fsSL https://agourlay.github.io/pinch-points/install.sh | sh</code>
+        <button type="button" class="copy" hidden>Copy</button>
+      </div>
+      <p class="install-note">Installs to <code>~/.local/bin</code> ·
+        <a href="install.sh">Read the script</a></p>
+    </div>
+    <div class="install-cmd" data-os="windows" role="tabpanel">
+      <p class="install-label">Windows (PowerShell)</p>
+      <div class="install-line">
+        <code>irm https://raw.githubusercontent.com/agourlay/pinch-points/master/site/install.ps1 | iex</code>
+        <button type="button" class="copy" hidden>Copy</button>
+      </div>
+      <p class="install-note">Installs to <code>%LOCALAPPDATA%\Programs</code> and adds it to your PATH ·
+        <a href="install.ps1">Read the script</a></p>
+    </div>
+  </div>
+  <p class="release" hidden></p>
+  <p class="alt">
+    Or <a href="https://github.com/agourlay/pinch-points/releases">download a release</a>,
+    or with Rust: <code>cargo install --locked pinch-points</code>
+  </p>
+  <details class="trouble">
+    <summary>Trouble installing?</summary>
+    <dl>
+      <dt>Linux</dt>
+      <dd>The prebuilt game needs glibc 2.39 or newer: Ubuntu 24.04,
+        Debian 13, Fedora 40 or later. On an older system it stops with
+        <code>GLIBC_2.39 not found</code>; <code>cargo install</code> builds
+        one that fits. If it stops on <code>error while loading shared
+        libraries</code>, install the one it names (ALSA, udev, xkbcommon)
+        from your distribution.</dd>
+      <dt>macOS</dt>
+      <dd>The game is not signed, so a copy downloaded in the browser is
+        blocked on first launch. Allow it under System Settings, Privacy
+        &amp; Security, Open Anyway, or run
+        <code>xattr -d com.apple.quarantine pinch-points</code>.
+        The curl command avoids this.</dd>
+      <dt>Windows</dt>
+      <dd>SmartScreen may warn about a downloaded copy: choose More info,
+        then Run anyway. The PowerShell command avoids this.</dd>
+    </dl>
+  </details>
+  <!-- Ten seconds of a real round: Crab Mania floods the holes, then a
+       lure pulls the whole beach to one castle. Muted, so browsers let it
+       play on its own; the poster is its first frame. -->
+  <video class="shot" width="1280" height="720" autoplay muted loop playsinline
+         preload="auto" poster="media/hero-poster.webp"
+         aria-label="Four players, four castles, crabs streaming across the sand">
+    <source src="media/hero.webm" type="video/webm">
+    <source src="media/hero.mp4" type="video/mp4">
+  </video>
+  </div>
+</header>
+
+<main>
+
+<section class="modes">
+  <h2>What's in the box</h2>
+  <ul>
+    <li><b>Tide Pool</b> 100 solo puzzles</li>
+    <li><b>Turf War</b> 2-6 on one couch</li>
+    <li><b>Beach Lobby</b> 6 over LAN</li>
+    <li><b>Driftwood</b> level editor</li>
+    <li><b>Beach Day</b> score attack</li>
+    <li><b>Daily Challenge</b> same for everyone</li>
+    <li><b>Replays</b> shareable as text</li>
+    <li><b>50 trophies</b> to go after</li>
+  </ul>
+</section>
+
+<section class="together">
+  <img src="media/lobby.webp" width="1280" height="720" loading="lazy"
+       alt="The Beach Lobby: five friends at one beach, the round's settings, and the lobby chat">
+  <div>
+    <h2>Bring your friends</h2>
+    <p>Host a beach and it shows up on every machine on the same network.
+    Nobody types an address and nobody makes an account: pick the beach,
+    press Enter, you are in.</p>
+    <p>Up to six players, AI to fill the empty seats, a chat while you wait,
+    and room for anyone else to watch.</p>
+  </div>
+</section>
+
+<section class="gallery">
+  <figure>
+    <img src="media/lure.webp" width="1280" height="720" loading="lazy"
+         alt="Every loose crab on the beach taking one player's colour and running for their castle">
+    <figcaption>Bank a molting crab and the whole beach runs to you for ten seconds.</figcaption>
+  </figure>
+  <figure>
+    <img src="media/old_mill.webp" width="1280" height="720" loading="lazy"
+         alt="A turnstile log splitting a stream of crabs between a kelp lane and a pool road">
+    <figcaption>Turnstiles split the stream. Kelp stops gulls. Pools slow everything down.</figcaption>
+  </figure>
+  <figure>
+    <img src="media/stages.webp" width="1280" height="720" loading="lazy"
+         alt="The stage list, cleared stages filled gold">
+    <figcaption>A hundred puzzles, each proved solvable with exactly the arrows it gives you.</figcaption>
+  </figure>
+  <figure>
+    <img src="media/menu.webp" width="1280" height="720" loading="lazy"
+         alt="The landing menu, a still postcard of the beach">
+    <figcaption>Eight languages, and a beach that keeps moving while you decide.</figcaption>
+  </figure>
+</section>
+
+</main>
+
+<footer>
+  <p>
+    <a href="https://github.com/agourlay/pinch-points">GitHub</a> ·
+    <a href="https://github.com/agourlay/pinch-points/blob/master/docs/guide.md">Guide</a> ·
+    <a href="https://github.com/agourlay/pinch-points/blob/master/LICENSE">Apache-2.0</a>
+  </p>
+  <p class="fineprint">
+    An original game, not affiliated with Sega or Sonic Team.
+    <em>ChuChu Rocket!</em> is named only to credit the design its mechanics
+    descend from.
+  </p>
+</footer>
+
+<script>
+// Turn the two install commands into tabs, opened on the visitor's system,
+// and give each a copy button. Without this the page still shows both.
+(function () {
+  var box = document.querySelector(".install");
+  var tabs = box.querySelectorAll("[role=tab]");
+  var panels = box.querySelectorAll(".install-cmd");
+  function show(os) {
+    tabs.forEach(function (t) { t.setAttribute("aria-selected", t.dataset.os === os); });
+    panels.forEach(function (p) { p.hidden = p.dataset.os !== os; });
+  }
+  tabs.forEach(function (t) { t.onclick = function () { show(t.dataset.os); }; });
+  box.querySelector(".install-tabs").hidden = false;
+  box.classList.add("tabbed");
+  var ua = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.userAgent;
+  show(/^win|windows/i.test(ua) ? "windows" : "unix");
+
+  if (!navigator.clipboard) return;
+  box.querySelectorAll(".copy").forEach(function (b) {
+    b.hidden = false;
+    b.onclick = function () {
+      navigator.clipboard.writeText(b.previousElementSibling.textContent).then(function () {
+        b.textContent = "Copied";
+        setTimeout(function () { b.textContent = "Copy"; }, 1600);
+      });
+    };
+  });
+})();
+
+// A visitor who asked for less motion gets the poster frame; the controls
+// let them start it anyway.
+var hero = document.querySelector("video.shot");
+if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  hero.removeAttribute("autoplay");
+  hero.pause();
+  hero.controls = true;
+}
+
+// The version the install commands fetch, so a visitor knows what they
+// are about to get and that it is recent. Silent when GitHub does not
+// answer, like the star count below.
+fetch("https://api.github.com/repos/agourlay/pinch-points/releases/latest")
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (rel) {
+    if (!rel || !rel.tag_name || !rel.published_at) return;
+    var when = new Date(rel.published_at).toLocaleDateString("en-GB",
+      { day: "numeric", month: "long", year: "numeric" });
+    var line = document.querySelector(".release");
+    line.textContent = "Latest: " + rel.tag_name + ", released " + when;
+    line.hidden = false;
+  })
+  .catch(function () {});
+
+// The star count, filled in when GitHub answers; the link stands on its
+// own when it does not.
+fetch("https://api.github.com/repos/agourlay/pinch-points")
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (repo) {
+    if (!repo || typeof repo.stargazers_count !== "number") return;
+    document.querySelector(".gh .stars-n").textContent = repo.stargazers_count;
+    document.querySelector(".gh .stars").hidden = false;
+  })
+  .catch(function () {});
+</script>
+
+</body>
+</html>
