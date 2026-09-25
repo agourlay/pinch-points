@@ -552,6 +552,15 @@ struct Tr {
     pub lobby_ask_player_name: &'static str,
     pub lobby_ask_game_name: &'static str,
     pub lobby_needs_name: &'static str,
+    /// What the name box holds for a player who has never given one, so a
+    /// pad, which cannot type, can still say who it is: "Crab {n}", `{n}`
+    /// a two-digit number that tells two of them apart.
+    pub lobby_suggest_name: &'static str,
+    /// The same for a beach nobody has named yet, `{p}` its host.
+    pub lobby_suggest_beach: &'static str,
+    /// The lines a pad can say without a keyboard: North opens the chat
+    /// line with the first, and each North after it moves to the next.
+    pub quick_chat: [&'static str; 6],
     /// Asked by J: the address of a beach no beacon reached, because the
     /// network drops broadcasts or the host is on the other side of one.
     pub lobby_ask_address: &'static str,

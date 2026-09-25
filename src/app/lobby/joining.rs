@@ -145,7 +145,10 @@ pub(super) fn take_a_beach(
         // The table shows everyone by name, so who is sitting here is
         // asked before they are seated, every time. See `player_name`.
         Pick::AskName(at) => {
-            state.typing = Some(Typing::player_name(Intent::Join(at), &settings.names[0]));
+            state.typing = Some(
+                Typing::player_name(Intent::Join(at), &settings.names[0])
+                    .or_suggest(|| suggested_name(tr)),
+            );
         }
         // A full beach is worth neither joining nor queueing for: there is
         // no chair for this player at the end of it either way.

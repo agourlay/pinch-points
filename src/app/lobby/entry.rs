@@ -35,6 +35,10 @@ pub struct Typing {
     /// Set when the name is only being asked for on the way to something
     /// else: hosting, or joining the beach at this index.
     pub then: Option<Intent>,
+    /// `text` is the game's suggestion rather than anything the player
+    /// wrote: Enter (or South) takes it, and the first key typed replaces
+    /// it instead of adding to it.
+    pub suggested: bool,
 }
 
 /// What finishing a typed line means.
@@ -90,6 +94,7 @@ impl Typing {
             what: Entry::Chat,
             text: String::new(),
             then: None,
+            suggested: false,
         }
     }
 
@@ -100,6 +105,7 @@ impl Typing {
             what: Entry::GameName,
             text: was.to_string(),
             then: None,
+            suggested: false,
         }
     }
 
@@ -110,6 +116,7 @@ impl Typing {
             what: Entry::Address,
             text: was.to_string(),
             then: None,
+            suggested: false,
         }
     }
 
@@ -125,8 +132,92 @@ impl Typing {
             what: Entry::PlayerName,
             text: was.to_string(),
             then: Some(then),
+            suggested: false,
         }
     }
+}
+
+impl Typing {
+    /// The chat line opened by a pad's North, already saying `line`.
+    pub fn chat_saying(line: &str) -> Typing {
+        Typing {
+            text: line.to_string(),
+            ..Typing::chat()
+        }
+    }
+
+    /// Offer `suggestion` in a box that would otherwise open empty.
+    ///
+    /// For a pad, which has no keys to spell with: an empty name box is
+    /// one it can only close. A box with something in it is one South can
+    /// answer. A keyboard loses nothing, since the first letter typed
+    /// replaces the suggestion rather than landing after it.
+    pub fn or_suggest(mut self, suggestion: impl FnOnce() -> String) -> Typing {
+        if self.text.trim().is_empty() {
+            self.text = suggestion();
+            self.suggested = true;
+        }
+        self
+    }
+}
+
+/// A name for a player who has never given one: "Crab 37". Two digits, so
+/// the three pads that walk into a hall together are three rows apart.
+pub(super) fn suggested_name(tr: &crate::app::i18n::Tr) -> String {
+    let n = 10 + crate::app::clock::fresh_seed() % 90;
+    fill(tr.lobby_suggest_name, &[("n", &n.to_string())])
+}
+
+/// A name for a beach nobody has named: after its host.
+pub(super) fn suggested_beach(tr: &crate::app::i18n::Tr, host: &str) -> String {
+    fill(tr.lobby_suggest_beach, &[("p", host)])
+}
+
+/// The quick-chat line after `said`, going round: the first if `said` is
+/// none of them, which is where a line opened by T starts.
+pub(super) fn next_quick_line(tr: &crate::app::i18n::Tr, said: &str) -> &'static str {
+    let lines = &tr.quick_chat;
+    let next = lines
+        .iter()
+        .position(|&line| line == said)
+        .map_or(0, |at| (at + 1) % lines.len());
+    lines[next]
+}
+
+/// This frame's keystrokes into the open line, and the answer if one
+/// finished it.
+///
+/// Two things on top of [`type_a_line`], both for a pad. South reaches the
+/// lobby as a pressed Enter with no keystroke behind it, the pad bridge
+/// having no text to give, so a pressed Enter the keystrokes did not see
+/// finishes the line too. And a suggestion is taken whole by Enter and
+/// dropped whole by the first key that types or erases.
+fn read_line(
+    keys: &ButtonInput<KeyCode>,
+    typed: &mut MessageReader<bevy::input::keyboard::KeyboardInput>,
+    open: &mut Typing,
+) -> Option<String> {
+    let said = if open.suggested {
+        let mut fresh = String::new();
+        match type_a_line(typed, &mut fresh) {
+            // Enter over a suggestion that nothing was typed across.
+            Some(said) if said.is_empty() => Some(open.text.trim().to_string()),
+            Some(said) => Some(said),
+            None => {
+                if !fresh.is_empty() || keys.just_pressed(KeyCode::Backspace) {
+                    open.text = fresh;
+                    open.suggested = false;
+                }
+                None
+            }
+        }
+    } else {
+        type_a_line(typed, &mut open.text)
+    };
+    said.or_else(|| {
+        (keys.just_pressed(KeyCode::Enter) && !keys.just_pressed(KeyCode::Escape))
+            .then(|| open.text.trim().to_string())
+    })
 }
 
 /// What the line being typed did with this frame.
@@ -149,9 +240,13 @@ pub(super) enum Typed {
 /// Drive the line being typed, and say what it unblocked.
 ///
 /// Lifted out of `lobby_input`, which had eight jobs and no seams.
+///
+/// `quick` is a pad's North this frame, which on an open chat line moves
+/// it to the next quick-chat phrase.
 pub(super) fn drive_typing(
     keys: &ButtonInput<KeyCode>,
     typed: &mut MessageReader<bevy::input::keyboard::KeyboardInput>,
+    quick: bool,
     settings: &mut GameSettings,
     caps: &crate::app::keycaps::KeyCaps,
     state: &mut LobbyState,
@@ -161,8 +256,11 @@ pub(super) fn drive_typing(
     let Some(mut open) = state.typing.take() else {
         return Typed::Nothing;
     };
+    if quick && open.what == Entry::Chat {
+        open.text = next_quick_line(tr, &open.text).to_string();
+    }
     {
-        let finished = type_a_line(typed, &mut open.text);
+        let finished = read_line(keys, typed, &mut open);
         let Some(said) = finished else {
             // Esc closes it; anything else and it is still being written.
             if !keys.just_pressed(KeyCode::Escape) {
@@ -172,9 +270,21 @@ pub(super) fn drive_typing(
         };
         match answer(&open, said) {
             Answered::AskAgain => {
-                state.typing = Some(Typing {
+                // Asked again with a suggestion in the box, not an empty
+                // one, or a pad that got here would have no way on.
+                let again = Typing {
                     text: String::new(),
+                    suggested: false,
                     ..open
+                };
+                state.typing = Some(match again.what {
+                    Entry::GameName => {
+                        let host = settings.names[0].clone();
+                        again.or_suggest(|| suggested_beach(tr, &host))
+                    }
+                    Entry::PlayerName | Entry::Address | Entry::Chat => {
+                        again.or_suggest(|| suggested_name(tr))
+                    }
                 });
                 state.feedback = tr.lobby_needs_name.to_string();
             }
@@ -187,9 +297,11 @@ pub(super) fn drive_typing(
                 state.say(&me, &line);
             }
             Answered::PlayerThenGame(name) => {
+                let host = name.clone();
                 name_myself(settings, caps, name);
                 let was = state.game_name.clone();
-                state.typing = Some(Typing::game_name(&was));
+                state.typing =
+                    Some(Typing::game_name(&was).or_suggest(|| suggested_beach(tr, &host)));
             }
             Answered::PlayerThen(name, then) => {
                 name_myself(settings, caps, name);
@@ -205,7 +317,10 @@ pub(super) fn drive_typing(
             Answered::AddressGiven(addr) => {
                 settings.last_beach = addr.to_string();
                 settings.save(caps);
-                state.typing = Some(Typing::player_name(Intent::Dial(addr), &settings.names[0]));
+                state.typing = Some(
+                    Typing::player_name(Intent::Dial(addr), &settings.names[0])
+                        .or_suggest(|| suggested_name(tr)),
+                );
             }
             Answered::BadAddress(text) => {
                 state.typing = Some(Typing { text, ..open });
@@ -560,5 +675,146 @@ mod door_tests {
             state.joined().is_none(),
             "and the cursor's beach is not taken"
         );
+    }
+
+    /// The lobby with one pad plugged in and no keyboard typing anything.
+    fn pad_lobby() -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<LobbyState>();
+        app.init_resource::<MatchConfig>();
+        app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        app.world_mut().spawn(Gamepad::default());
+        app.add_systems(Update, lobby_input);
+        app
+    }
+
+    /// South as the lobby hears it: a pressed Enter, and no keystroke.
+    fn south(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+    }
+
+    fn north(app: &mut App) {
+        let pad = app
+            .world_mut()
+            .query_filtered::<Entity, With<Gamepad>>()
+            .single(app.world())
+            .expect("one pad");
+        let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("the pad");
+        gamepad.digital_mut().press(GamepadButton::North);
+        app.update();
+        let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("the pad");
+        gamepad.digital_mut().release(GamepadButton::North);
+        gamepad.digital_mut().clear();
+    }
+
+    fn typing(app: &App) -> Option<Typing> {
+        app.world().resource::<LobbyState>().typing.clone()
+    }
+
+    /// A player who has never given a name gets one to accept, and South
+    /// accepts it: a pad with no keys to spell with still gets through the
+    /// door, and on to naming the beach, which is suggested the same way.
+    #[test]
+    fn a_pad_takes_the_suggested_names() {
+        let mut app = pad_lobby();
+        app.world_mut().resource_mut::<LobbyState>().typing =
+            Some(Typing::player_name(Intent::Host, "").or_suggest(|| "Crab 42".into()));
+        south(&mut app);
+        assert_eq!(app.world().resource::<GameSettings>().names[0], "Crab 42");
+        let next = typing(&app).expect("the beach's name is asked next");
+        assert_eq!(next.what, Entry::GameName);
+        assert_eq!(next.text, "Crab 42's beach");
+        assert!(next.suggested);
+    }
+
+    /// A name already on file is no suggestion, and South takes it as is.
+    #[test]
+    fn a_pad_takes_the_name_on_file() {
+        let asked = Typing::player_name(Intent::Host, "Maya").or_suggest(|| "Crab 42".into());
+        assert_eq!(asked.text, "Maya");
+        assert!(!asked.suggested);
+        let mut app = pad_lobby();
+        app.world_mut().resource_mut::<LobbyState>().typing = Some(asked);
+        south(&mut app);
+        assert_eq!(app.world().resource::<GameSettings>().names[0], "Maya");
+    }
+
+    /// The first key typed over a suggestion replaces it, rather than
+    /// writing "Crab 42Bo".
+    #[test]
+    fn typing_over_a_suggestion_replaces_it() {
+        use bevy::input::ButtonState;
+        use bevy::input::keyboard::{Key, KeyboardInput};
+        let mut app = pad_lobby();
+        app.world_mut().resource_mut::<LobbyState>().typing =
+            Some(Typing::player_name(Intent::Host, "").or_suggest(|| "Crab 42".into()));
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::KeyB,
+            logical_key: Key::Character("B".into()),
+            state: ButtonState::Pressed,
+            text: Some("B".into()),
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+        app.update();
+        let open = typing(&app).expect("still being typed");
+        assert_eq!(open.text, "B");
+        assert!(!open.suggested);
+    }
+
+    /// North opens the chat line on the first phrase and walks the list,
+    /// round again at the end, and South says the one showing.
+    #[test]
+    fn north_walks_the_quick_chat_and_south_says_it() {
+        let tr = GameSettings::default().tr();
+        let mut app = pad_lobby();
+        app.world_mut().resource_mut::<LobbyState>().typing = Some(Typing::chat());
+        north(&mut app);
+        assert_eq!(typing(&app).expect("open").text, tr.quick_chat[0]);
+        north(&mut app);
+        assert_eq!(typing(&app).expect("open").text, tr.quick_chat[1]);
+        for _ in 2..tr.quick_chat.len() {
+            north(&mut app);
+        }
+        north(&mut app);
+        assert_eq!(
+            typing(&app).expect("open").text,
+            tr.quick_chat[0],
+            "round again"
+        );
+        north(&mut app);
+        south(&mut app);
+        let state = app.world().resource::<LobbyState>();
+        assert!(state.typing.is_none(), "said and closed");
+        assert_eq!(
+            state.chat.last().map(|said| said.line.as_str()),
+            Some(tr.quick_chat[1])
+        );
+    }
+
+    /// Erase a suggestion and press Enter on the empty box, and it comes
+    /// back with a suggestion in it, not empty: a pad that got there would
+    /// otherwise have no way on.
+    #[test]
+    fn a_refused_name_is_asked_again_with_a_suggestion() {
+        let mut app = pad_lobby();
+        app.world_mut().resource_mut::<LobbyState>().typing =
+            Some(Typing::player_name(Intent::Host, ""));
+        south(&mut app);
+        let again = typing(&app).expect("asked again");
+        assert_eq!(again.what, Entry::PlayerName);
+        assert!(again.suggested && !again.text.is_empty(), "{again:?}");
     }
 }

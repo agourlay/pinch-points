@@ -310,33 +310,45 @@ pub fn pad_setup_input(
 /// (`menu_scene::menu_input`). So the menu gets the other five: the
 /// keyboard keeps its Escape, spelled out in the prompt line, and the pad
 /// keeps every way *in* it had.
+///
+/// The lobby is the other exception: its d-pad is the arrow keys. The
+/// lobby reads only the arrows, for walking the beach list and turning the
+/// host's dials, because W there is the watch toggle; the W/S/A/D the
+/// other menus take left a pad unable to walk the list at all, and made
+/// Up a switch that turned a player into a spectator without a word.
 pub fn pad_menu_bridge(
     pads: Query<&Gamepad>,
     screen: Res<State<Screen>>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
 ) {
-    const MAP: [(GamepadButton, KeyCode); 6] = [
-        (GamepadButton::DPadUp, KeyCode::KeyW),
-        (GamepadButton::DPadDown, KeyCode::KeyS),
-        (GamepadButton::DPadLeft, KeyCode::KeyA),
-        (GamepadButton::DPadRight, KeyCode::KeyD),
-        (GamepadButton::South, KeyCode::Enter),
-        (GamepadButton::East, KeyCode::Escape),
+    // Each button with its key, and the key the lobby hears instead.
+    const MAP: [(GamepadButton, KeyCode, KeyCode); 6] = [
+        (GamepadButton::DPadUp, KeyCode::KeyW, KeyCode::ArrowUp),
+        (GamepadButton::DPadDown, KeyCode::KeyS, KeyCode::ArrowDown),
+        (GamepadButton::DPadLeft, KeyCode::KeyA, KeyCode::ArrowLeft),
+        (GamepadButton::DPadRight, KeyCode::KeyD, KeyCode::ArrowRight),
+        (GamepadButton::South, KeyCode::Enter, KeyCode::Enter),
+        (GamepadButton::East, KeyCode::Escape, KeyCode::Escape),
     ];
     let quits = *screen.get() == Screen::Menu;
+    let lobby = *screen.get() == Screen::Lobby;
     for pad in &pads {
-        for (button, key) in MAP {
+        for (button, key, lobby_key) in MAP {
             // The press is what is suppressed, never the release. A press
             // that changes the screen is let go of on the screen it opened,
             // so suppressing the release would strand the synthesized key
             // in `pressed` for ever, and `ButtonInput::press` reports
             // `just_pressed` only for a key it was not already holding.
+            // For the same reason the release lets go of both keys the
+            // button can mean: one pressed on the menu and released in the
+            // lobby is still holding the menu's key.
             let muted = quits && button == GamepadButton::East;
             if pad.just_pressed(button) && !muted {
-                keys.press(key);
+                keys.press(if lobby { lobby_key } else { key });
             }
             if pad.just_released(button) {
                 keys.release(key);
+                keys.release(lobby_key);
             }
         }
     }
@@ -744,5 +756,59 @@ mod tests {
                 "{button:?} still drives the menu"
             );
         }
+    }
+
+    /// In the lobby the d-pad is the arrows, which walk the beach list,
+    /// and never W, which there turns a player into a spectator.
+    #[test]
+    fn the_lobby_dpad_is_the_arrows() {
+        for (button, key) in [
+            (GamepadButton::DPadUp, KeyCode::ArrowUp),
+            (GamepadButton::DPadDown, KeyCode::ArrowDown),
+            (GamepadButton::DPadLeft, KeyCode::ArrowLeft),
+            (GamepadButton::DPadRight, KeyCode::ArrowRight),
+            (GamepadButton::South, KeyCode::Enter),
+            (GamepadButton::East, KeyCode::Escape),
+        ] {
+            let mut app = bridged(Screen::Lobby);
+            press(&mut app, button);
+            let keys = app.world().resource::<ButtonInput<KeyCode>>();
+            assert!(keys.pressed(key), "{button:?} is {key:?} in the lobby");
+            assert!(
+                !keys.pressed(KeyCode::KeyW),
+                "{button:?} must not toggle watching"
+            );
+        }
+    }
+
+    /// Up pressed on the menu and let go in the lobby lets go of the
+    /// menu's W, rather than of the lobby's arrow it never pressed.
+    #[test]
+    fn a_dpad_press_carried_into_the_lobby_is_released() {
+        let mut app = bridged(Screen::Menu);
+        press(&mut app, GamepadButton::DPadUp);
+        assert!(
+            app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::KeyW)
+        );
+        app.insert_resource(State::new(Screen::Lobby));
+        let pad = app
+            .world_mut()
+            .query_filtered::<Entity, With<Gamepad>>()
+            .single(app.world())
+            .expect("one pad");
+        app.world_mut()
+            .get_mut::<Gamepad>(pad)
+            .expect("the pad")
+            .digital_mut()
+            .release(GamepadButton::DPadUp);
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::KeyW),
+            "the W pressed on the menu must not be left held in the lobby"
+        );
     }
 }

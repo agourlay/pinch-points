@@ -589,16 +589,30 @@ pub fn lobby_input(
     mut config: ResMut<MatchConfig>,
     mut state: ResMut<LobbyState>,
     mut next_screen: ResMut<NextState<Screen>>,
+    pads: Query<&Gamepad>,
 ) {
     let tr = settings.tr();
     let tr: &'static crate::app::i18n::Tr = tr;
+    // A pad's North is quick chat: the one way a player with no keyboard
+    // has to say anything at all.
+    let quick = pads
+        .iter()
+        .any(|pad| pad.just_pressed(GamepadButton::North));
     // Set when an answer finishes and the thing it was blocking can now go
     // ahead in the same frame.
     let mut intent: Option<Intent> = None;
     // While anything is being typed the keyboard is text and nothing else:
     // H would host, W would arm watching, and a digit would join a beach,
     // none of which anyone means halfway through "wait for me".
-    match drive_typing(&keys, &mut typed, &mut settings, &caps, &mut state, tr) {
+    match drive_typing(
+        &keys,
+        &mut typed,
+        quick,
+        &mut settings,
+        &caps,
+        &mut state,
+        tr,
+    ) {
         // The keyboard is busy: every other key in this lobby is text.
         Typed::Taken => return,
         // An answer finished and freed something to happen this frame.
@@ -611,6 +625,11 @@ pub fn lobby_input(
     // T for talk, once there is anyone to talk to.
     if intent.is_none() && caps.just_pressed(&keys, 'T') && state.can_chat() {
         state.typing = Some(Typing::chat());
+        return;
+    }
+    // North for the same line, saying the first quick-chat phrase already.
+    if intent.is_none() && quick && state.can_chat() {
+        state.typing = Some(Typing::chat_saying(tr.quick_chat[0]));
         return;
     }
     // J for a beach the list will never show: one whose beacons the
@@ -645,7 +664,9 @@ pub fn lobby_input(
     if step == HostStep::Ask {
         // Stopped at the door until we know who is asking and what the
         // beach is to be called. Both are what the rest of the hall reads.
-        state.typing = Some(Typing::player_name(Intent::Host, &settings.names[0]));
+        state.typing = Some(
+            Typing::player_name(Intent::Host, &settings.names[0]).or_suggest(|| suggested_name(tr)),
+        );
         return;
     }
     if step == HostStep::Go && !state.standing.at_a_beach() {
