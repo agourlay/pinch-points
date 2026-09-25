@@ -164,6 +164,12 @@ score lost, so the rest of the table has something to point at too.
   the beach, and the host sends the round as it stands, so you watch from
   that moment on, with the rest of the crowd.
 
+  The crowd has free hands and uses them. For the first half minute of a
+  round, **P** calls who will win; the table hears what the crowd picked,
+  and the results card says who called it, with a tally for the session.
+  **E** votes on a tide event to throw at the beach, and **T** says
+  something to the table.
+
   When the match ends, Enter takes the **whole table back to the lobby**
   rather than out to the menu: the sockets stay open, the host goes back on
   the air, and the next game is one keypress away instead of a fresh
@@ -291,7 +297,7 @@ deliberately.
   placing anything, so a timed level runs out.
   `PINCH_BANNER=lure|surge|<0-8>` raises an announcement, `PINCH_TIDE=<0-8>`
   fires the tide event itself, and `PINCH_LURE=<seat>` starts a lure a few
-  seconds in. `PINCH_SPECTATOR=card|say|<0-6>` works a watching peer's
+  seconds in. `PINCH_SPECTATOR=card|say|pick<n>|<0-6>` works a watching peer's
   spectator keys,
   opening its event list or casting that vote, which is otherwise a thing
   only a person standing behind a chair can do. `PINCH_PAUSE=1`,

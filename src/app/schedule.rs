@@ -158,6 +158,7 @@ fn insert_resources(app: &mut App) {
     app.init_resource::<pause::PauseMenu>();
     app.init_resource::<spectators::SpectatorChat>();
     app.init_resource::<spectators::SpectatorCard>();
+    app.init_resource::<spectators::PickCard>();
     app.init_resource::<audio::Muted>();
     app.init_resource::<Daily>();
     app.init_resource::<SeatNames>();
@@ -422,6 +423,8 @@ fn add_phase_transitions(app: &mut App) {
             // best, and it should be the best with this round counted.
             // A replay being watched counts for nothing.
             achievements::record_round.run_if(in_state(Screen::Versus).and_then(not_watching)),
+            // A spectator's call, scored before the card that says how it went.
+            spectators::score_the_call.run_if(in_state(Screen::Versus)),
             results::spawn_versus_results.run_if(in_state(Screen::Versus)),
         )
             .chain(),
@@ -580,6 +583,7 @@ fn add_ui_systems(app: &mut App) {
             (
                 spectators::spectator_chat_input,
                 spectators::spectator_vote_input,
+                spectators::spectator_pick_input,
                 spectators::settle_spectator_vote,
             )
                 .chain()

@@ -408,6 +408,20 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
                         (0, wait) => fill(tr.spectator_wait, &[("n", &wait.to_string())]),
                         (open, _) => fill(tr.spectator_vote_open, &[("n", &open.to_string())]),
                     };
+                    // While the winner can still be called, that is the
+                    // offer instead: the round's first half minute, and the
+                    // one thing a spectator cannot do later. The tide's
+                    // key works all the same, and is named again after.
+                    let session = online.0.as_ref();
+                    let open = session.map_or(0, |s| s.picks.open);
+                    let call = match (open, session.and_then(|s| s.my_pick)) {
+                        (0, _) => call,
+                        (n, None) => fill(tr.spectator_pick_hint, &[("n", &n.to_string())]),
+                        (n, Some(seat)) => fill(
+                            tr.spectator_picked,
+                            &[("p", &names.label(tr, seat)), ("n", &n.to_string())],
+                        ),
+                    };
                     format!("{call} | {} | {}", tr.lobby_chat_hint, tr.prompt_esc_menu)
                 }
             }

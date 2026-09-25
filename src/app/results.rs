@@ -162,6 +162,42 @@ fn award_rows(
         .collect()
 }
 
+/// What the crowd called, for everyone at an online table, and for a
+/// spectator how their own call went. Nothing when nobody called anyone.
+fn crowd_rows(
+    settings: &GameSettings,
+    names: &crate::app::SeatNames,
+    online: &Online,
+) -> Vec<(String, Color)> {
+    let Some(session) = &online.0 else {
+        return Vec::new();
+    };
+    let tr = settings.tr();
+    let mut rows = Vec::new();
+    if session.picks.any() {
+        let list = session.picks.line(|seat| names.label(tr, seat));
+        rows.push((
+            fill(tr.crowd_picked, &[("l", &list)]),
+            CARD_TEXT.darker(0.15),
+        ));
+    }
+    if let Some((seat, right)) = session.last_call {
+        let calls = &session.calls;
+        let (a, b) = (calls.right.to_string(), calls.made.to_string());
+        rows.push(match right {
+            true => (fill(tr.call_right, &[("a", &a), ("b", &b)]), palette::GOLD),
+            false => (
+                fill(
+                    tr.call_wrong,
+                    &[("p", &names.label(tr, seat)), ("a", &a), ("b", &b)],
+                ),
+                palette::player_color(seat),
+            ),
+        });
+    }
+    rows
+}
+
 /// The tide-is-in standings card: winner headline, ranked scores in seat
 /// colours (with AI/you markers), the round's awards, and its total haul.
 #[allow(clippy::too_many_arguments)]
@@ -231,6 +267,10 @@ pub fn spawn_versus_results(
                 });
             }
             for (line, color) in awards {
+                let row = card_text(17.0, color);
+                card.spawn((Text::new(line), row.0, row.1));
+            }
+            for (line, color) in crowd_rows(&settings, &names, &online) {
                 let row = card_text(17.0, color);
                 card.spawn((Text::new(line), row.0, row.1));
             }

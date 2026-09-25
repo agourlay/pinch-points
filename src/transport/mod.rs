@@ -29,8 +29,10 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// handmade beach that cannot seat the table gave way to the generated
 /// arena the terms name, 11 is where a tick's inputs became one
 /// datagram, 12 is where a spectator's greeting started carrying its
-/// name, and 13 is where a spectator arriving mid-round started being sent
-/// the round as it stands (`CatchUp`) instead of a place in line.
+/// name, 13 is where a spectator arriving mid-round started being sent
+/// the round as it stands (`CatchUp`) instead of a place in line, and 14
+/// is where spectators started calling the winner (`SpectatorPick`,
+/// `CrowdPicks`).
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in
@@ -40,7 +42,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// frozen for all time**: it is how a build tells "I cannot read this"
 /// apart from "I disagree with this", however the rest of the format
 /// moves.
-pub const PROTOCOL_VERSION: u8 = 13;
+pub const PROTOCOL_VERSION: u8 = 14;
 
 /// Connections a host accepts: five rivals (a six-seat table) and everyone
 /// else who turned up. How many of them get a seat is the lobby's

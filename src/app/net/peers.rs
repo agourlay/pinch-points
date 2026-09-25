@@ -44,6 +44,9 @@ pub struct Peer {
     /// Seconds since it was last heard from: anything at all, an input, a
     /// hash, a stray greeting.
     pub silence: f32,
+    /// The seat it called to win this round, as a spectator. On the row
+    /// so it moves with the peer when one before it is forgotten.
+    pub pick: Option<u8>,
 }
 
 impl Peer {

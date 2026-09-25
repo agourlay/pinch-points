@@ -396,7 +396,7 @@ pub(super) fn debug_lure(mut sim: ResMut<Sim>, online: Res<net::Online>, mut hoo
         .force_lure(seat.min(crate::sim::MAX_PLAYERS as u8 - 1));
 }
 
-/// Dev hook: `PINCH_SPECTATOR=card|say|<0-6>` works the spectator keys for a watcher that
+/// Dev hook: `PINCH_SPECTATOR=card|say|pick<n>|<0-6>` works the spectator keys for a watcher that
 /// has no hands: `card` opens the event list for a screenshot, and a
 /// number casts that vote a few seconds in, which is otherwise a thing
 /// only a person standing behind a chair can do.
@@ -441,6 +441,21 @@ pub(super) fn debug_spectator(
     if which == "card" {
         card.0 = true;
         crate::app::spectators::spawn_card(&mut commands, &settings);
+        return;
+    }
+    // `pick<n>` calls seat n (1-based, as the list numbers them) to win,
+    // through the same send the pick card makes.
+    if let Some(seat) = which
+        .strip_prefix("pick")
+        .and_then(|n| n.parse::<u8>().ok())
+    {
+        if let Some(session) = &mut online.0 {
+            let seat = seat.saturating_sub(1);
+            session.my_pick = Some(seat);
+            session
+                .transport
+                .send(crate::transport::NetMsg::SpectatorPick { seat });
+        }
         return;
     }
     let at = which.parse::<usize>().unwrap_or(0);

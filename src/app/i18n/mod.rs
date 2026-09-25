@@ -347,6 +347,19 @@ struct Tr {
     /// How many are watching, said to the whole table so a called event
     /// is not the first anyone hears of a crowd.
     pub spectator_count: &'static str,
+    /// The heading over the seats a spectator can call to win.
+    pub spectator_pick_title: &'static str,
+    /// The spectator's prompt while the calls are open, `{n}` seconds left.
+    pub spectator_pick_hint: &'static str,
+    /// The same once a call is made: `{p}` whom, `{n}` seconds left to change it.
+    pub spectator_picked: &'static str,
+    /// The crowd's calls, `{l}` the list ("Maya ×2 · Theo ×1"): said to the
+    /// feed as the calls close, and on the results card.
+    pub crowd_picked: &'static str,
+    /// A spectator's call came in: `{a}` right of `{b}` made this session.
+    pub call_right: &'static str,
+    /// It did not: `{p}` whom they called, then the same record.
+    pub call_wrong: &'static str,
     /// Said on the versus screen when a round is copied as a code.
     pub round_copied: &'static str,
     pub round_code_bad: &'static str,

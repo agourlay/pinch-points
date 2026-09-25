@@ -432,7 +432,10 @@ pub fn join_tick(
                 NetMsg::Queued { ahead } => queued = Some(ahead),
                 NetMsg::Chat { name, text } => said.push((name, text)),
                 // Round things, and this screen has no round.
-                NetMsg::SpectatorVote { .. } | NetMsg::SpectatorTally { .. } => {}
+                NetMsg::SpectatorVote { .. }
+                | NetMsg::SpectatorTally { .. }
+                | NetMsg::SpectatorPick { .. }
+                | NetMsg::CrowdPicks { .. } => {}
                 // Who else is here. A joiner has spoken to nobody but the
                 // host and would otherwise sit at an apparently empty beach.
                 NetMsg::Roster { names, terms, .. } => {

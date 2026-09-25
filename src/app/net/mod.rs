@@ -112,6 +112,18 @@ pub struct OnlineSession {
     /// The frame a caught-up watcher's session started from, which it has
     /// to move off within a few seconds (see `catch_up_again`).
     pub(crate) catch_up_frame: Option<u32>,
+    /// The host's word on the crowd's calls for the winner (on the host,
+    /// what it is about to say), like [`Self::crowd`].
+    pub picks: crate::app::spectators::Picks,
+    /// Host: whether the closing count has gone to the feed this round.
+    pub(crate) picks_said: bool,
+    /// A spectator's own call this round, if it made one.
+    pub my_pick: Option<u8>,
+    /// A spectator's calls over the whole session, for the results card.
+    pub calls: crate::app::spectators::Calls,
+    /// How this round's call went, once the tide is in: the seat, and
+    /// whether it won.
+    pub last_call: Option<(u8, bool)>,
     /// Host: the late watchers owed the round as it stands, sent once the
     /// frames of this tick have been simulated and the board is the one
     /// the lockstep's frame says.
@@ -384,6 +396,47 @@ impl OnlineSession {
         }
     }
 
+    /// Host: seconds left for the crowd to call the winner, zero once the
+    /// calls are in. From the lockstep's frame, which is where the round is
+    /// for everybody.
+    pub fn picks_open_for(&self) -> u8 {
+        use crate::app::spectators::PICKS_OPEN_FOR;
+        let frame = self.session.frame();
+        let left = PICKS_OPEN_FOR.saturating_sub(frame);
+        left.div_ceil(crate::sim::TICKS_PER_SECOND)
+            .min(u32::from(u8::MAX)) as u8
+    }
+
+    /// Host: the calls as they stand, counted from the peers watching this
+    /// round alone.
+    pub fn crowd_picks_now(&self) -> crate::app::spectators::Picks {
+        let mut counts = [0u8; MAX_PLAYERS];
+        for peer in 0..self.peers.len() {
+            if !self.watching_this_round(peer) {
+                continue;
+            }
+            if let Some(seat) = self.peers.get(peer).and_then(|row| row.pick)
+                && seat < self.seats
+            {
+                counts[usize::from(seat)] = counts[usize::from(seat)].saturating_add(1);
+            }
+        }
+        crate::app::spectators::Picks {
+            counts,
+            open: self.picks_open_for(),
+        }
+    }
+
+    /// Take a call for the winner, from someone entitled to make one, while
+    /// the calls are open. Watching this round, as with the vote, and a
+    /// seat at this table.
+    fn take_pick(&mut self, host: bool, from: usize, seat: u8) {
+        if host && self.watching_this_round(from) && seat < self.seats && self.picks_open_for() > 0
+        {
+            self.peers.row(from).pick = Some(seat);
+        }
+    }
+
     /// Take a line said to the table, and pass it on if this is the hub.
     ///
     /// Two jobs the lobby already does and the round did not. A spoke
@@ -490,6 +543,11 @@ impl OnlineSession {
             resume_echo: 0,
             caught_up: None,
             catch_up_frame: None,
+            picks: Default::default(),
+            picks_said: false,
+            my_pick: None,
+            calls: Default::default(),
+            last_call: None,
             owed_catch_up: Vec::new(),
         }
     }
@@ -583,6 +641,11 @@ impl OnlineSession {
             resume_echo: _,
             caught_up: _,
             catch_up_frame: _,
+            picks: _,
+            picks_said: _,
+            my_pick: _,
+            calls: _,
+            last_call: _,
             owed_catch_up: _,
         } = self;
         let Home {
@@ -874,6 +937,16 @@ impl OnlineSession {
                 // datagram had the beach announcing what the spectators
                 // had called.
                 NetMsg::SpectatorVote { event } => self.take_vote(host, from, event),
+                NetMsg::SpectatorPick { seat } => self.take_pick(host, from, seat),
+                // The host's word on the calls, like the tally.
+                NetMsg::CrowdPicks { picks, open } => {
+                    if !host {
+                        self.picks = crate::app::spectators::Picks {
+                            counts: picks,
+                            open,
+                        };
+                    }
+                }
                 NetMsg::Abandoned { seat, frame } => {
                     // The host's word, not our own patience. Idempotent,
                     // because it is repeated against packet loss.
@@ -1140,6 +1213,52 @@ mod homecoming_tests {
     /// A pick is counted only from someone watching this round, and only
     /// by the host, which is the only peer that counts anything.
     #[test]
+    fn a_call_for_the_winner_is_taken_from_a_watcher_while_the_calls_are_open() {
+        use crate::sim::InputMsg;
+        let mut session = hosting_session(5);
+        session.peers.row(0).place = Place::Seated(1);
+        session.peers.row(1).place = Place::Watching;
+        session.peers.row(2).place = Place::LateWatching;
+        session.peers.row(3).place = Place::Queued;
+        session.take_pick(true, 0, 0);
+        session.take_pick(true, 1, 1);
+        session.take_pick(true, 2, 1);
+        session.take_pick(true, 3, 0);
+        session.take_pick(true, 1, 9);
+        let picks = session.crowd_picks_now();
+        assert_eq!(
+            picks.counts,
+            [0, 2, 0, 0, 0, 0],
+            "two watchers; the player and the queue unheard"
+        );
+        assert!(picks.open > 0);
+        // A spectator may change its mind, and a spoke counts nothing.
+        session.take_pick(true, 1, 0);
+        session.take_pick(false, 2, 0);
+        assert_eq!(session.crowd_picks_now().counts, [1, 1, 0, 0, 0, 0]);
+
+        // Past the first half minute the calls are in.
+        let close = crate::app::spectators::PICKS_OPEN_FOR;
+        for frame in 0..close {
+            session.session.commit_local(PlayerAction::None);
+            session.session.receive(InputMsg {
+                player: 1,
+                frame: DEFAULT_DELAY + frame,
+                action: PlayerAction::None,
+            });
+            while session.session.advance().is_some() {}
+        }
+        assert!(session.session.frame() >= close);
+        assert_eq!(session.crowd_picks_now().open, 0);
+        session.take_pick(true, 1, 1);
+        assert_eq!(
+            session.crowd_picks_now().counts,
+            [1, 1, 0, 0, 0, 0],
+            "a call after the close is not taken"
+        );
+    }
+
+    #[test]
     fn a_vote_is_taken_only_from_someone_watching() {
         let sand = crate::sim::TideEvent::FreshSand.index() as u8;
         let open = |session: &OnlineSession| session.spectators.open().is_some();
@@ -1338,6 +1457,8 @@ mod homecoming_tests {
                         | NetMsg::Roster { .. }
                         | NetMsg::Abandoned { .. }
                         | NetMsg::CatchUp { .. }
+                        | NetMsg::SpectatorPick { .. }
+                        | NetMsg::CrowdPicks { .. }
                         | NetMsg::Incompatible { .. } => {}
                     }
                 }

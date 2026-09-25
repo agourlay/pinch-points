@@ -212,6 +212,9 @@ impl OnlineSession {
                 // The round is over; the next greeting is answered with
                 // the next round's `Start`, which is how they come in.
                 | NetMsg::CatchUp { .. }
+                // Calls are for a round being played, and this one is over.
+                | NetMsg::SpectatorPick { .. }
+                | NetMsg::CrowdPicks { .. }
                 | NetMsg::Incompatible { .. } => {}
             }
         }
@@ -432,6 +435,14 @@ impl OnlineSession {
         self.caught_up = None;
         self.catch_up_frame = None;
         self.owed_catch_up.clear();
+        // Every call is for one round; the record of them is the session's.
+        self.picks = Default::default();
+        self.picks_said = false;
+        self.my_pick = None;
+        self.last_call = None;
+        for peer in self.peers.iter_mut() {
+            peer.pick = None;
+        }
         // And nobody is late for a round that has not begun. The results
         // card is a place a table sits for a while, and carrying that
         // silence into the new round would call the host gone on its first

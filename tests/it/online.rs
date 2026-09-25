@@ -65,7 +65,9 @@ impl Peer {
                 | NetMsg::Chat { .. }
                 | NetMsg::Roster { .. }
                 | NetMsg::Abandoned { .. }
-                | NetMsg::CatchUp { .. } => {}
+                | NetMsg::CatchUp { .. }
+                | NetMsg::SpectatorPick { .. }
+                | NetMsg::CrowdPicks { .. } => {}
             }
         }
         while let Some(actions) = self.session.advance() {

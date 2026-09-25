@@ -127,6 +127,18 @@ pub enum NetMsg {
     /// anyway, so it is the one that can put the result where nobody can
     /// miss it: into an action, on a frame.
     SpectatorVote { event: u8 },
+    /// A spectator's call for who wins this round: a seat, picked while the
+    /// host still takes picks. Only the host counts, as with the vote, and
+    /// a later pick from the same spectator replaces an earlier one.
+    SpectatorPick { seat: u8 },
+    /// Host → everyone, once a second while picks may still change: how
+    /// many spectators have called each seat, and the whole seconds left to
+    /// call one, zero once the calls are in. The players see it too; what
+    /// the crowd thinks of them is half the point.
+    CrowdPicks {
+        picks: [u8; crate::sim::MAX_PLAYERS],
+        open: u8,
+    },
     /// Host → a peer that turned up after the launch: the round is under
     /// way and cannot take you, but you are in line for the next one, with
     /// `ahead` people in front of you.
@@ -236,12 +248,14 @@ const TAG_INPUTS: u8 = 12;
 const TAG_SPECTATOR_VOTE: u8 = 13;
 const TAG_SPECTATOR_TALLY: u8 = 14;
 const TAG_CATCH_UP: u8 = 15;
+const TAG_SPECTATOR_PICK: u8 = 16;
+const TAG_CROWD_PICKS: u8 = 17;
 /// The last of them, which `peek_version` uses to tell one of ours from
 /// stray traffic on the port.
 ///
 /// It said `TAG_INPUTS` through two more tags, so a build of another
 /// version sending the spectators' two was ignored rather than told why.
-const HIGHEST_TAG: u8 = TAG_CATCH_UP;
+const HIGHEST_TAG: u8 = TAG_CROWD_PICKS;
 
 /// Inputs one datagram may carry.
 ///
@@ -393,6 +407,8 @@ impl NetMsg {
             NetMsg::SpectatorTally { .. } => vec![TAG_SPECTATOR_TALLY],
             NetMsg::Resume { .. } => vec![TAG_RESUME],
             NetMsg::CatchUp { .. } => vec![TAG_CATCH_UP],
+            NetMsg::SpectatorPick { .. } => vec![TAG_SPECTATOR_PICK],
+            NetMsg::CrowdPicks { .. } => vec![TAG_CROWD_PICKS],
             NetMsg::Incompatible { version } => return vec![TAG_INCOMPATIBLE, version],
         };
         bytes.push(PROTOCOL_VERSION);
@@ -484,6 +500,11 @@ impl NetMsg {
                 bytes.extend_from_slice(&piece[..len]);
             }
             NetMsg::SpectatorVote { event } => bytes.push(event),
+            NetMsg::SpectatorPick { seat } => bytes.push(seat),
+            NetMsg::CrowdPicks { picks, open } => {
+                bytes.extend_from_slice(&picks);
+                bytes.push(open);
+            }
             NetMsg::SpectatorTally {
                 watching,
                 open,
@@ -617,6 +638,16 @@ impl NetMsg {
             }
             TAG_SPECTATOR_VOTE => Some(NetMsg::SpectatorVote {
                 event: *body.first()?,
+            }),
+            // A seat off the table is nobody to call, and would index off
+            // the end of the count.
+            TAG_SPECTATOR_PICK => {
+                let seat = *body.first()?;
+                (seat < crate::sim::MAX_PLAYERS as u8).then_some(NetMsg::SpectatorPick { seat })
+            }
+            TAG_CROWD_PICKS => Some(NetMsg::CrowdPicks {
+                picks: body.get(..crate::sim::MAX_PLAYERS)?.try_into().ok()?,
+                open: *body.get(crate::sim::MAX_PLAYERS)?,
             }),
             TAG_SPECTATOR_TALLY => Some(NetMsg::SpectatorTally {
                 watching: *body.first()?,
@@ -874,6 +905,14 @@ mod tests {
         }
     }
 
+    /// A call for a seat no table has is refused on the way in.
+    #[test]
+    fn a_pick_off_the_table_is_refused() {
+        let mut bytes = NetMsg::SpectatorPick { seat: 1 }.encode();
+        *bytes.last_mut().expect("a seat byte") = crate::sim::MAX_PLAYERS as u8;
+        assert!(NetMsg::decode(&bytes).is_none());
+    }
+
     #[test]
     fn decode_rejects_garbage() {
         assert!(NetMsg::decode(&[]).is_none());
@@ -897,6 +936,17 @@ mod tests {
                 watching: 3,
                 open: 2,
                 wait: 0,
+            },
+            NetMsg::SpectatorPick { seat: 5 },
+            NetMsg::CrowdPicks {
+                picks: [0, 3, 1, 0, 0, 2],
+                open: 27,
+            },
+            NetMsg::CatchUp {
+                frame: 901,
+                part: 1,
+                parts: 3,
+                bytes: vec![7; 40],
             },
             NetMsg::Inputs(vec![InputMsg {
                 player: 1,
