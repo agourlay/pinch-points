@@ -547,7 +547,7 @@ mod tests {
         }
     }
 
-    /// The description column is what is left of a 580px row once the mark,
+    /// The description column is what is left of a row once the mark,
     /// the fixed name column, the gaps and the progress count have taken
     /// theirs, and it clips so a long description never pushes the count
     /// off the end. A description clipped mid-word still reads as a bug,
@@ -556,10 +556,9 @@ mod tests {
     fn every_trophy_description_fits_what_is_left_of_its_row() {
         use crate::app::i18n::metrics::text_px;
         // `ui::spawn_trophy`'s own numbers.
-        const ROW_PX: f32 = 580.0;
+        use super::ui::{NAME_PX, ROW_PX};
         const PADDING_PX: f32 = 8.0 * 2.0;
         const MARK_PX: f32 = 14.0;
-        const NAME_PX: f32 = 204.0;
         const GAPS_PX: f32 = 8.0 * 3.0;
         let fine = crate::app::menu_ui::type_scale::FINE;
         let mut over = Vec::new();
@@ -604,14 +603,14 @@ mod tests {
         assert!(clashes.is_empty(), "shared names:\n{}", clashes.join("\n"));
     }
 
-    /// The name column is a fixed 204px with `clip_x`, so a name too long
+    /// The name column is a fixed width with `clip_x`, so a name too long
     /// for it loses its tail silently. Measured in pixels rather than
     /// characters: Japanese draws about two-thirds wider per character, so
     /// a character count passes the language most likely to overrun.
     #[test]
     fn every_trophy_name_fits_its_column() {
         // The row's own numbers, from `ui::spawn_trophy`.
-        const NAME_COLUMN_PX: f32 = 204.0;
+        const NAME_COLUMN_PX: f32 = super::ui::NAME_PX;
         let size = crate::app::menu_ui::type_scale::BODY;
         let mut over = Vec::new();
         for lang in crate::app::i18n::ALL_LANGS {

@@ -140,17 +140,27 @@ fn unlock_mark(done: bool, id: &str) -> (Node, BackgroundColor, BorderColor) {
     )
 }
 
-/// Columns the shelf is dealt into. Two, because a 580px row twice over
-/// plus the card's padding is 1216 of the window's 1280: a third column
-/// does not fit sideways, and a narrower row would have to give up either
-/// the description or the bar.
-const COLS: usize = 2;
+/// Columns the shelf is dealt into. One: at the type sizes the rest of the
+/// game reads at, a trophy's name and what it asks for do not fit two to a
+/// line, and at the old two columns of 580px some thirty names and fifty
+/// descriptions across the eight languages lost their tails. The shelf
+/// scrolls, so every trophy is still a keypress away.
+const COLS: usize = 1;
+
+/// A trophy row's width, the width two 580px columns and their gap took,
+/// and the name column inside it. Shared with the tests that measure every
+/// name and description against them, which used to copy the numbers.
+pub(super) const ROW_PX: f32 = 1176.0;
+pub(super) const NAME_PX: f32 = 300.0;
 
 /// A trophy tile's own height, and the `row_gap` the column puts under it.
 /// Named rather than inlined because the viewport height below is derived
 /// from them, and a row that changed shape without them would cut the
-/// bottom row in half.
-const TILE_HEIGHT: f32 = 32.0;
+/// bottom row in half. Set on the tile as well, rather than left to what
+/// its text measures: it was 32 when the name was 15px, the name grew to
+/// 17, the tile to 35, and the shelf went on scrolling by 34 and showing
+/// the last row sliced through the middle.
+const TILE_HEIGHT: f32 = 35.0;
 const TILE_GAP: f32 = 2.0;
 
 /// A trophy row and the gap under it. One press of a scroll key moves
@@ -158,11 +168,12 @@ const TILE_GAP: f32 = 2.0;
 /// drifting half a row out of step with itself.
 const ROW_PITCH: f32 = TILE_HEIGHT + TILE_GAP;
 
-/// Rows the viewport shows at once. Fifteen is what fits between the header
-/// and the prompt with the count above and the lifetime line below. It is
+/// Rows the viewport shows at once. Thirteen is what fits between the
+/// header and the prompt with the count above and the lifetime line below,
+/// at the 35px a tile takes. It is
 /// no longer a cap on how many trophies there may be, only on how many are
 /// in front of you at once.
-const SHELF_ROWS: f32 = 15.0;
+const SHELF_ROWS: f32 = 13.0;
 
 /// The viewport height: whole rows, so the shelf never cuts one in half.
 /// The last row has no gap under it, hence the one gap taken back off.
@@ -208,7 +219,8 @@ fn spawn_trophy(
     column
         .spawn((
             Node {
-                width: Val::Px(580.0),
+                width: Val::Px(ROW_PX),
+                height: Val::Px(TILE_HEIGHT),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(3.0),
                 padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
@@ -238,7 +250,7 @@ fn spawn_trophy(
                 // `every_trophy_name_fits_its_column` measures in pixels.
                 line.spawn((
                     Node {
-                        width: Val::Px(204.0),
+                        width: Val::Px(NAME_PX),
                         flex_shrink: 0.0,
                         overflow: Overflow::clip_x(),
                         ..default()

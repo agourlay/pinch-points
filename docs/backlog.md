@@ -47,18 +47,6 @@ Nothing blocks these. They want the work and no more.
   window to fill the screen so nothing is broken, but a first launch should
   look intended.
 
-- **Raise the floor on small text.** `type_scale::FINE` is 13px and `BODY`
-  15px, and between them they carry the notes, the hints, the menu blurbs
-  and the pad help. `UI_SCALE_MAX` is 150, which only helps a player who
-  goes looking for the dial. Raise the floor, or default the scale up on a
-  small window. Smaller still, and unexamined, are the 11px and 12px in
-  `effects.rs`: those are floating score numbers rather than copy, so they
-  may be fine, but they are below anything the interface uses deliberately.
-
-  Also a Deck requirement, and the most common Verified failure there is.
-  The layout itself is lucky: the interface is built for 1280x720 and the
-  Deck is 1280x800, so `fit_ratio` stays at 1.0 and nothing shrinks.
-
 - **An itch.io page**, with the shots in `docs/screenshots`. The binaries
   exist to put on it: `v0.4.0` is tagged and `release.yml` builds six
   targets across Linux, Windows and macOS. A Steam build is a longer road
@@ -196,10 +184,10 @@ would change that.
 
 ## Steam and the Steam Deck
 
-A project rather than a list, so it keeps its own section. Two items it
-needs are above under **Ready when someone is**, because they are owed to
-desktop players too: borderless fullscreen by default and the small-text
-floor.
+A project rather than a list, so it keeps its own section. One item it
+needs is above under **Ready when someone is**, because it is owed to
+desktop players too: borderless fullscreen by default. The small-text floor
+it also wanted was raised on 2026-09-25 (fine print 15px, card copy 17px).
 
 The shape of it, checked 2026-08-17 and re-checked 2026-09-17: the game is
 in good order for a controller-first platform, `gamepad::pad_menu_bridge`

@@ -20,9 +20,9 @@ pub mod type_scale {
     /// List rows and prompts.
     pub const ROW: f32 = 19.0;
     /// Body copy on cards.
-    pub const BODY: f32 = 15.0;
+    pub const BODY: f32 = 17.0;
     /// The fine print: blurbs, keys, footnotes.
-    pub const FINE: f32 = 13.0;
+    pub const FINE: f32 = 15.0;
 }
 
 /// W/S (or arrow) navigation over `len` rows, wrapping at the ends.
@@ -181,6 +181,16 @@ pub fn screen_card() -> (ShoreCard, Node, BackgroundColor, BorderColor, BoxShado
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             row_gap: Val::Px(ROW_GAP),
+            // Free to shrink into the space between the bars. Left to its
+            // automatic minimum, a card is held to the height its rows
+            // measure while it is sizing itself, and a `card_row` measures
+            // taller there than it lays out (by 13px a row, measured): the
+            // key bindings card came out 702px for 546 of rows and ran
+            // under the header and over the prompt, and the replay shelf
+            // and match setup carried the same blank band, only with room
+            // to spare. A card whose rows really do not fit is no better
+            // off either way.
+            min_height: Val::Px(0.0),
             padding: UiRect::axes(Val::Px(22.0), Val::Px(CARD_PAD_Y)),
             border: UiRect::all(Val::Px(1.0)),
             border_radius: BorderRadius::all(Val::Px(16.0)),
