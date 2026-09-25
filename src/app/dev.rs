@@ -67,6 +67,12 @@ fn seats() -> Option<u8> {
     std::env::var("PINCH_SEATS").ok()?.parse().ok()
 }
 
+/// `PINCH_COOP`: the Tide Pool starts in co-op, two cursors on one pool of
+/// arrows, so the second pair of hands can be shot without a C pressed.
+pub(super) fn coop() -> bool {
+    std::env::var("PINCH_COOP").is_ok()
+}
+
 /// `PINCH_SANDBOX`: a local arena with preloaded castles.
 pub(super) fn sandbox() -> bool {
     std::env::var("PINCH_SANDBOX").is_ok()

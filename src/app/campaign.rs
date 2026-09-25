@@ -30,6 +30,26 @@ impl CampaignKind {
     }
 }
 
+/// Whether the Tide Pool is being played by two, side by side.
+///
+/// Co-op is a second pair of hands, not a second player: both cursors place
+/// and lift the same seat's arrows, so the stage's inventory is one pool the
+/// two of them share and either can re-point or pick up any arrow on the
+/// beach. Every stage is proved solvable with exactly its arrows, whoever
+/// puts them down, so all hundred work as they are.
+///
+/// Tide Pool only. Beach Day's rule evicts the oldest arrow to make room,
+/// and "the oldest of a shared pool" is a rule nobody would guess.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Coop(pub bool);
+
+impl Coop {
+    /// Whether co-op applies to the list being played.
+    pub fn in_play(self, campaign: &Campaign) -> bool {
+        self.0 && campaign.kind == CampaignKind::TidePool
+    }
+}
+
 #[derive(Resource)]
 pub struct Campaign {
     pub kind: CampaignKind,

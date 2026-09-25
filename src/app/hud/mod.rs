@@ -336,9 +336,10 @@ pub fn update_hud(
     bots: Res<Bots>,
     library: Res<crate::app::replays::Library>,
     // Tupled for the same reason as the pair above: sixteen is the limit.
-    (notice, match_menu): (
+    (notice, match_menu, coop): (
         Res<crate::app::RoundNotice>,
         Res<crate::app::match_setup::MatchMenu>,
+        Res<crate::app::Coop>,
     ),
     // Tupled for the same reason again: sixteen is the limit.
     (speed, tournament, pause_menu, spectators): (
@@ -363,6 +364,7 @@ pub fn update_hud(
             lang,
             sim: &sim,
             campaign: &campaign,
+            coop: coop.in_play(&campaign),
             phase: &phase,
             vphase: &vphase,
             editor: &editor,

@@ -117,6 +117,7 @@ fn insert_resources(app: &mut App) {
     )));
     app.insert_resource(Sandbox(dev::sandbox()));
     let (levels, builtins) = campaign::tide_pool_levels();
+    app.insert_resource(Coop(dev::coop()));
     app.insert_resource(Campaign {
         kind: CampaignKind::TidePool,
         levels,
@@ -216,7 +217,7 @@ fn add_screen_transitions(app: &mut App) {
             // Before the first load, whose message this stage's retry count
             // is about to be measured against.
             achievements::reset_puzzle_attempt,
-            cursor::spawn_puzzle_cursor,
+            cursor::spawn_stage_cursors,
             send_first_load,
         )
             .chain(),

@@ -658,10 +658,15 @@ pub fn update_stage_tiles(
     }
 }
 
-/// Arrows move, Enter plays an open stage, a locked one just says no.
+/// Arrows move, Enter plays an open stage, a locked one just says no, and
+/// on the Tide Pool's list C (or a pad's North) turns co-op on and off.
+#[allow(clippy::too_many_arguments)]
 pub fn stage_select_input(
     keys: Res<ButtonInput<KeyCode>>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
+    pads: Query<&Gamepad>,
     progress: Res<Progress>,
+    mut coop: ResMut<crate::app::Coop>,
     mut list: ResMut<StageList>,
     mut campaign: ResMut<Campaign>,
     mut denied: MessageWriter<PlacementDenied>,
@@ -671,6 +676,13 @@ pub fn stage_select_input(
     // the only thing this system changes.
     let at = step(list.selected, &list.rows, &keys);
     list.selected = at;
+    let toggled = caps.just_pressed(&keys, 'C')
+        || pads
+            .iter()
+            .any(|pad| pad.just_pressed(GamepadButton::North));
+    if toggled && campaign.kind == crate::app::CampaignKind::TidePool {
+        coop.0 = !coop.0;
+    }
     if keys.just_pressed(KeyCode::Escape) {
         next_screen.set(Screen::Menu);
         return;
@@ -816,6 +828,37 @@ mod tests {
 
     /// The wiring, end to end in a headless App: Enter on a locked stage is
     /// refused (and says so), Enter on an open one loads that stage.
+    /// C turns co-op on and off on the Tide Pool's list, and does nothing
+    /// on Beach Day's, whose rule has no shared pool to offer.
+    #[test]
+    fn c_toggles_coop_on_the_tide_pool_only() {
+        for (kind, flips) in [
+            (crate::app::CampaignKind::TidePool, true),
+            (crate::app::CampaignKind::BeachDay, false),
+        ] {
+            let mut app = App::new();
+            app.add_plugins(bevy::state::app::StatesPlugin);
+            app.init_state::<Screen>();
+            app.insert_resource(Campaign { kind, ..campaign() });
+            app.init_resource::<Progress>();
+            app.init_resource::<StageList>();
+            app.init_resource::<ButtonInput<KeyCode>>();
+            app.init_resource::<crate::app::keycaps::KeyCaps>();
+            app.init_resource::<crate::app::Coop>();
+            app.add_message::<PlacementDenied>();
+            app.add_systems(Update, stage_select_input);
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyC);
+            app.update();
+            assert_eq!(
+                app.world().resource::<crate::app::Coop>().0,
+                flips,
+                "{kind:?}"
+            );
+        }
+    }
+
     #[test]
     fn enter_plays_an_open_stage_and_refuses_a_locked_one() {
         let mut app = App::new();
@@ -826,6 +869,8 @@ mod tests {
         app.init_resource::<Progress>();
         app.init_resource::<StageList>();
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::Coop>();
         app.add_systems(Update, stage_select_input);
 
         let enter = |app: &mut App, at: usize| {

@@ -81,7 +81,7 @@ mod tournament;
 mod typing;
 pub mod update;
 
-pub use campaign::{Campaign, CampaignKind};
+pub use campaign::{Campaign, CampaignKind, Coop};
 pub use daily::Daily;
 pub use schedule::run;
 

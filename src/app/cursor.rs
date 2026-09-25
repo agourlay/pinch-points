@@ -151,9 +151,10 @@ pub fn flash_cursors(
         // every tile on the beach, and a cursor dimmed everywhere reads as
         // broken rather than as a message; the arrow count in the header
         // says that one, and `out_of_signposts` tells the two apart.
+        let seat = acts_for(*screen.get(), &cursor);
         let tile_refuses = placing
-            && !board.can_place_signpost(cursor.player, cursor.x, cursor.y)
-            && !board.out_of_signposts(cursor.player, cursor.x, cursor.y);
+            && !board.can_place_signpost(seat, cursor.x, cursor.y)
+            && !board.out_of_signposts(seat, cursor.x, cursor.y);
         sprite.color = if tile_refuses {
             color.with_alpha(0.34)
         } else {
@@ -294,6 +295,29 @@ pub fn spawn_puzzle_cursor(mut commands: Commands, art: Res<crate::app::art::Art
     spawn_cursors(&mut commands, &art, 1);
 }
 
+/// A puzzle's cursors: one, or two in co-op, where the second is a second
+/// pair of hands for the same seat's arrows (see [`crate::app::Coop`]).
+pub fn spawn_stage_cursors(
+    mut commands: Commands,
+    art: Res<crate::app::art::Art>,
+    coop: Res<crate::app::Coop>,
+    campaign: Res<crate::app::Campaign>,
+) {
+    let hands = if coop.in_play(&campaign) { 2 } else { 1 };
+    spawn_cursors(&mut commands, &art, hands);
+}
+
+/// The seat a cursor's placements belong to. A puzzle has one, whoever's
+/// hands are on the cursor: co-op's second cursor places the first seat's
+/// arrows.
+pub fn acts_for(screen: Screen, cursor: &Cursor) -> u8 {
+    if screen == Screen::Puzzle {
+        0
+    } else {
+        cursor.player
+    }
+}
+
 /// Versus cursors: online spawns only the local seat's cursor (rivals'
 /// placements arrive over the wire); local play seats two keyboard players
 /// plus one per extra connected gamepad.
@@ -380,8 +404,10 @@ pub fn move_cursor(
 ) {
     let board = &sim.0;
     // Versus shares the keyboard, so IJKL belongs to the second seat there
-    // whatever the one-hand preset says.
-    let commit = if *screen.get() == Screen::Versus {
+    // whatever the one-hand preset says, and so does a co-op puzzle, whose
+    // second cursor is on it.
+    let shared = *screen.get() == Screen::Versus || cursors.iter().any(|c| c.player == 1);
+    let commit = if shared {
         CommitScheme::Arrows
     } else {
         settings.commit
@@ -463,6 +489,124 @@ mod tests {
             ));
         }
         app
+    }
+
+    /// A Tide Pool stage granting one arrow, in setup, with `hands`
+    /// cursors on it: co-op when there are two.
+    fn stage(hands: u8) -> App {
+        use crate::app::{Campaign, CampaignKind, LoadLevel, Phase};
+        let levels = crate::sim::campaign_levels();
+        let index = levels
+            .iter()
+            .position(|level| level.posts == 1)
+            .expect("a one-arrow stage");
+        let builtins = levels.len();
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Puzzle));
+        app.init_state::<Phase>();
+        app.insert_resource(Sim(levels[index].board()));
+        app.insert_resource(Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index,
+            builtins,
+        });
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::progress::Progress>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.add_message::<PlacementDenied>();
+        app.add_message::<LoadLevel>();
+        app.add_systems(Update, setup_input);
+        for player in 0..hands {
+            app.world_mut()
+                .spawn((Cursor::seated(player), Transform::default()));
+        }
+        app
+    }
+
+    /// Put `player`'s cursor on `(x, y)`.
+    fn park(app: &mut App, player: u8, (x, y): (u8, u8)) {
+        let mut query = app.world_mut().query::<&mut Cursor>();
+        for mut cursor in query.iter_mut(app.world_mut()) {
+            if cursor.player == player {
+                (cursor.x, cursor.y) = (x, y);
+            }
+        }
+    }
+
+    /// Two empty tiles of the stage, for the two hands to stand on.
+    fn two_sand_tiles(app: &App) -> [(u8, u8); 2] {
+        let board = &app.world().resource::<Sim>().0;
+        let sand: Vec<(u8, u8)> = board
+            .tiles()
+            .filter(|&(x, y, kind)| kind == TileKind::Empty && board.can_place_signpost(0, x, y))
+            .map(|(x, y, _)| (x, y))
+            .collect();
+        [sand[0], sand[sand.len() - 1]]
+    }
+
+    /// Co-op is one pool of arrows between two pairs of hands: the second
+    /// cursor, on the second seat's keys, places the same seat's arrows,
+    /// is refused once the pool is spent, and can pick up or re-point an
+    /// arrow its partner put down.
+    #[test]
+    fn two_hands_share_one_pool_of_arrows() {
+        let mut app = stage(2);
+        let [a, b] = two_sand_tiles(&app);
+        park(&mut app, 0, a);
+        park(&mut app, 1, b);
+        let count = |app: &App| app.world().resource::<Sim>().0.signpost_count(0);
+
+        tap(&mut app, KeyCode::ArrowUp);
+        assert_eq!(count(&app), 1, "P1 spends the one arrow");
+
+        tap(&mut app, KeyCode::Numpad8);
+        assert_eq!(count(&app), 1, "and there is none left for P2");
+        assert!(
+            app.world()
+                .resource::<Sim>()
+                .0
+                .signpost_at(b.0, b.1)
+                .is_none(),
+            "P2's tile stays bare"
+        );
+
+        // P2 walks over and picks up P1's arrow, then puts it down again
+        // pointing another way: it is the pair's, not P1's.
+        park(&mut app, 1, a);
+        tap(&mut app, KeyCode::Numpad0);
+        assert_eq!(count(&app), 0, "P2 lifts P1's arrow");
+        tap(&mut app, KeyCode::Numpad6);
+        let post = app
+            .world()
+            .resource::<Sim>()
+            .0
+            .signpost_at(a.0, a.1)
+            .expect("placed");
+        assert_eq!((post.owner, post.dir), (0, Direction::Right));
+    }
+
+    /// Alone, the second seat's keys do nothing to a puzzle, and the
+    /// one-hand preset still commits on IJKL; with a partner the preset
+    /// stands down, since IJKL is the partner's.
+    #[test]
+    fn the_one_hand_preset_gives_way_to_a_partner() {
+        for (hands, placed) in [(1, true), (2, false)] {
+            let mut app = stage(hands);
+            app.world_mut().resource_mut::<GameSettings>().commit = CommitScheme::Ijkl;
+            let [a, _] = two_sand_tiles(&app);
+            park(&mut app, 0, a);
+            tap(&mut app, KeyCode::KeyI);
+            let board = &app.world().resource::<Sim>().0;
+            assert_eq!(
+                board.signpost_at(a.0, a.1).is_some(),
+                placed,
+                "{hands} hand(s): IJKL commits for P1 only when nobody else has it"
+            );
+        }
     }
 
     fn tap(app: &mut App, key: KeyCode) {

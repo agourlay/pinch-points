@@ -271,30 +271,32 @@ pub fn pad_setup_input(
 ) {
     let mut players: Vec<u8> = cursors.iter().map(|c| c.player).collect();
     players.sort_unstable();
-    let Some(pad) = pad_index_of(&settings, &players, 0).and_then(|i| nth_pad(&pads, &seats, i))
-    else {
-        return;
-    };
-    let Some(mut cursor) = cursors.iter_mut().find(|c| c.player == 0) else {
-        return;
-    };
-    for (button, dir) in PLACES {
-        if pad.just_pressed(button) {
-            let spent = sim.0.out_of_signposts(0, cursor.x, cursor.y);
-            if !sim.0.place_signpost(0, cursor.x, cursor.y, dir) {
-                cursor.flash = 0.25;
-                denied.write(PlacementDenied {
-                    player: 0,
-                    out_of_signposts: spent,
-                });
+    // Each cursor answers to its own pad, and in co-op both place the one
+    // seat's arrows (see `Coop`).
+    for mut cursor in &mut cursors {
+        let Some(pad) = pad_index_of(&settings, &players, cursor.player)
+            .and_then(|i| nth_pad(&pads, &seats, i))
+        else {
+            continue;
+        };
+        for (button, dir) in PLACES {
+            if pad.just_pressed(button) {
+                let spent = sim.0.out_of_signposts(0, cursor.x, cursor.y);
+                if !sim.0.place_signpost(0, cursor.x, cursor.y, dir) {
+                    cursor.flash = 0.25;
+                    denied.write(PlacementDenied {
+                        player: 0,
+                        out_of_signposts: spent,
+                    });
+                }
             }
         }
-    }
-    if pad.just_pressed(GamepadButton::LeftTrigger) {
-        let _ = sim.0.remove_signpost(0, cursor.x, cursor.y);
-    }
-    if pad.just_pressed(GamepadButton::Start) {
-        next_phase.set(Phase::Running);
+        if pad.just_pressed(GamepadButton::LeftTrigger) {
+            let _ = sim.0.remove_signpost(0, cursor.x, cursor.y);
+        }
+        if pad.just_pressed(GamepadButton::Start) {
+            next_phase.set(Phase::Running);
+        }
     }
 }
 

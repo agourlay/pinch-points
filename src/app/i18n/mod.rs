@@ -257,6 +257,11 @@ struct Tr {
     // Stage select
     pub title_stages: &'static str,
     pub prompt_stages: &'static str,
+    /// The Tide Pool stage list's prompt, which offers co-op; Beach Day,
+    /// whose rule has no shared pool to offer, keeps `prompt_stages`.
+    pub prompt_stages_tide: &'static str,
+    /// Said on the stage list while co-op is on.
+    pub stage_coop_on: &'static str,
     pub stage_progress: &'static str,
     /// The label in front of the difficulty key under the grid.
     pub stage_key: &'static str,
@@ -291,6 +296,8 @@ struct Tr {
     pub goal_golden: &'static str,
     // Prompts
     pub prompt_setup: &'static str,
+    /// The setup prompt in co-op: both players' keys, one line.
+    pub prompt_setup_coop: &'static str,
     pub prompt_setup_full: &'static str,
     /// Shown for a moment when a placement is refused because the level's
     /// signposts are all out, which every other refusal is not.

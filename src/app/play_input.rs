@@ -14,6 +14,10 @@ use bevy::prelude::*;
 
 /// Puzzle setup phase: spend the inventory directly on the board, Enter to
 /// run, N/P to jump between levels.
+///
+/// Every cursor here places the one seat's arrows: in co-op the second is a
+/// second pair of hands (see [`crate::app::Coop`]), on the second seat's
+/// keys, and the IJKL one-hand preset stands down for it.
 #[allow(clippy::too_many_arguments)]
 pub fn setup_input(
     keys: Res<ButtonInput<KeyCode>>,
@@ -28,27 +32,35 @@ pub fn setup_input(
     mut cursors: Query<&mut Cursor>,
 ) {
     // Esc is the pause card's key; it handles leaving.
+    let hands = cursors.iter().filter(|c| c.player < 2).count();
+    let commit = if hands > 1 {
+        CommitScheme::Arrows
+    } else {
+        settings.commit
+    };
+    for mut hand in cursors.iter_mut().filter(|c| c.player < 2) {
+        let map = keymap(&settings, hand.player, commit);
+        for (key, dir) in map.places {
+            if keys.just_pressed(key) {
+                // CapPolicy::Reject enforces the inventory; surface the
+                // no-op, and say which no it was.
+                let spent = sim.0.out_of_signposts(0, hand.x, hand.y);
+                if !sim.0.place_signpost(0, hand.x, hand.y, dir) {
+                    hand.flash = FLASH_SECS;
+                    denied.write(PlacementDenied {
+                        player: 0,
+                        out_of_signposts: spent,
+                    });
+                }
+            }
+        }
+        if keys.just_pressed(map.remove) {
+            let _ = sim.0.remove_signpost(0, hand.x, hand.y);
+        }
+    }
     let Some(mut cursor) = cursors.iter_mut().find(|c| c.player == 0) else {
         return;
     };
-    let map = keymap(&settings, 0, settings.commit);
-    for (key, dir) in map.places {
-        if keys.just_pressed(key) {
-            // CapPolicy::Reject enforces the inventory; surface the no-op,
-            // and say which no it was.
-            let spent = sim.0.out_of_signposts(0, cursor.x, cursor.y);
-            if !sim.0.place_signpost(0, cursor.x, cursor.y, dir) {
-                cursor.flash = FLASH_SECS;
-                denied.write(PlacementDenied {
-                    player: 0,
-                    out_of_signposts: spent,
-                });
-            }
-        }
-    }
-    if keys.just_pressed(map.remove) {
-        let _ = sim.0.remove_signpost(0, cursor.x, cursor.y);
-    }
     if keys.just_pressed(KeyCode::Enter) {
         next_phase.set(Phase::Running);
     }

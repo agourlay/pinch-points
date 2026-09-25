@@ -116,6 +116,10 @@ score lost, so the rest of the table has something to point at too.
   inventory. The test suite proves every level solvable with the arrows it
   grants and unsolvable without them; the opening tutorial is the exception,
   handing you one to practise with on a board that cannot be lost.
+  Press **C** on the stage list for **co-op**: a second player joins on the
+  second seat's keys or a pad, and the two of you share the stage's arrows,
+  either of you free to put one down, turn it or pick it up. Every stage
+  plays the same with two as with one, so all hundred are open to it.
 - **Turf War**: local versus for **2-6 players** on one keyboard plus
   gamepads. Six built-in maps, from the handcrafted classic beach to
   generated arenas up to 20×13 and an edgeless **open ocean** (five and

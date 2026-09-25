@@ -193,6 +193,7 @@ pub(super) fn puzzle_text(
     tr: &Tr,
     lang: crate::app::i18n::Lang,
     campaign: &Campaign,
+    coop: bool,
     sim: &Sim,
     phase: &State<Phase>,
     custom_keys: bool,
@@ -258,6 +259,8 @@ pub(super) fn puzzle_text(
         Phase::Setup if level.posts == 0 => tr.prompt_setup_no_posts.to_string(),
         Phase::Setup if used >= level.posts as usize => tr.prompt_setup_full.to_string(),
         Phase::Setup if custom_keys => tr.prompt_setup_custom.to_string(),
+        // Two sets of hands, so both sets of keys: the solo line names one.
+        Phase::Setup if coop => tr.prompt_setup_coop.to_string(),
         Phase::Setup => tr.prompt_setup.to_string(),
         Phase::Running => tr.prompt_running.to_string(),
         // On the last level the card says the run is over and Enter goes
@@ -448,6 +451,9 @@ pub(super) struct Readout<'a> {
     pub lang: crate::app::i18n::Lang,
     pub sim: &'a Sim,
     pub campaign: &'a Campaign,
+    /// Two players at the Tide Pool (`app::Coop`), which changes what the
+    /// setup prompt and the stage list say.
+    pub coop: bool,
     pub phase: &'a State<Phase>,
     pub vphase: &'a State<VersusPhase>,
     pub editor: &'a EditorState,
@@ -554,8 +560,16 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
                 },
                 r.tr.title_stages
             ),
-            String::new(),
-            r.tr.prompt_stages.to_string(),
+            match r.coop {
+                true => r.tr.stage_coop_on.to_string(),
+                false => String::new(),
+            },
+            // Co-op is the Tide Pool's alone (see `app::Coop`), so only its
+            // list offers the key.
+            match r.campaign.kind {
+                CampaignKind::TidePool => r.tr.prompt_stages_tide.to_string(),
+                CampaignKind::BeachDay => r.tr.prompt_stages.to_string(),
+            },
         ),
         Screen::Interlude => HudText::new(
             r.tr.title_turf_war.to_string(),
@@ -568,6 +582,7 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
             r.tr,
             r.lang,
             r.campaign,
+            r.coop,
             r.sim,
             r.phase,
             !r.settings.stock_legend(),
@@ -618,6 +633,7 @@ mod tests {
             lang: Lang::En,
             sim: &Sim(Board::new(9, 7, 1)),
             campaign: &campaign,
+            coop: false,
             phase: &State::new(Phase::Setup),
             vphase: &State::new(VersusPhase::Running),
             editor: &EditorState::default(),
@@ -689,6 +705,7 @@ mod tests {
                     index: 0,
                     builtins,
                 },
+                coop: false,
                 phase: &State::new(Phase::Running),
                 vphase: &State::new(VersusPhase::Running),
                 editor: &EditorState::default(),
@@ -869,6 +886,7 @@ mod tests {
                 lang: Lang::En,
                 sim: &Sim(Board::new(9, 7, 1)),
                 campaign: &campaign,
+                coop: false,
                 phase: &State::new(Phase::Setup),
                 vphase: &State::new(VersusPhase::Running),
                 editor: &EditorState::default(),
@@ -970,6 +988,7 @@ mod tests {
                 lang: Lang::En,
                 sim: &Sim(Board::new(9, 7, 1)),
                 campaign: &campaign,
+                coop: false,
                 phase: &State::new(Phase::Setup),
                 vphase: &State::new(phase),
                 editor: &EditorState::default(),
@@ -1042,6 +1061,7 @@ mod tests {
                 lang: Lang::En,
                 sim: &Sim(board),
                 campaign: &campaign,
+                coop: false,
                 phase: &State::new(Phase::Setup),
                 vphase: &State::new(VersusPhase::Running),
                 editor: &EditorState::default(),
@@ -1106,6 +1126,7 @@ mod tests {
                     lang: Lang::En,
                     sim: &Sim(Board::new(9, 7, 1)),
                     campaign: &campaign,
+                    coop: false,
                     phase: &State::new(Phase::Setup),
                     vphase: &State::new(VersusPhase::Running),
                     editor: &EditorState::default(),
@@ -1163,6 +1184,7 @@ mod tests {
                 lang: Lang::En,
                 sim: &Sim(Board::new(9, 7, 1)),
                 campaign: &campaign,
+                coop: false,
                 phase: &State::new(Phase::Setup),
                 vphase: &State::new(VersusPhase::Over),
                 editor: &EditorState::default(),
@@ -1219,7 +1241,15 @@ mod tests {
         };
         let said = |campaign: &Campaign, phase| {
             let sim = Sim(campaign.current().board());
-            puzzle_text(&EN, Lang::En, campaign, &sim, &State::new(phase), false)
+            puzzle_text(
+                &EN,
+                Lang::En,
+                campaign,
+                false,
+                &sim,
+                &State::new(phase),
+                false,
+            )
         };
 
         // A shipped stage counts against the shipped list, not against the
@@ -1267,7 +1297,7 @@ mod tests {
         let phase = State::new(Phase::Setup);
 
         let HudText { title, prompt, .. } =
-            puzzle_text(&EN, Lang::En, &campaign, &sim, &phase, false);
+            puzzle_text(&EN, Lang::En, &campaign, false, &sim, &phase, false);
         assert!(title.starts_with(EN.title_tide_pool), "{title}");
         assert!(
             title.contains("1/"),
@@ -1295,14 +1325,40 @@ mod tests {
                     }
                 }
             }
-            let prompt = puzzle_text(&EN, Lang::En, &campaign, &sim, &phase, false).prompt;
+            let prompt = puzzle_text(&EN, Lang::En, &campaign, false, &sim, &phase, false).prompt;
             assert_eq!(prompt, EN.prompt_setup_full);
         }
 
         // Rebound keys retire the stock legend rather than teach wrong keys.
-        let prompt =
-            puzzle_text(&EN, Lang::En, &campaign, &Sim(level.board()), &phase, true).prompt;
+        let prompt = puzzle_text(
+            &EN,
+            Lang::En,
+            &campaign,
+            false,
+            &Sim(level.board()),
+            &phase,
+            true,
+        )
+        .prompt;
         assert_eq!(prompt, EN.prompt_setup_custom);
+        // In co-op the stock line names both players' keys, and rebound
+        // keys still win: the pair's keys are the settings' then.
+        let coop = |custom| {
+            puzzle_text(
+                &EN,
+                Lang::En,
+                &campaign,
+                true,
+                &Sim(level.board()),
+                &phase,
+                custom,
+            )
+            .prompt
+        };
+        if posts > 0 {
+            assert_eq!(coop(false), EN.prompt_setup_coop);
+        }
+        assert_eq!(coop(true), EN.prompt_setup_custom);
         // And so does the one-hand preset: placement is on IJKL then, not
         // the arrows the stock legend names.
         let one_hand = GameSettings {

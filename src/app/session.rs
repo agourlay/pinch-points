@@ -311,8 +311,11 @@ pub(super) fn handle_load_level(
     // board has no round timer, so this is free for normal puzzles.
     board_render::spawn_waterline(&mut commands);
     board_render::spawn_water_foam(&mut commands, &art);
-    if let Ok((mut cur, mut transform)) = cursors.single_mut() {
-        cur.x = sim.0.width() / 2;
+    // The middle of the beach, and in co-op the second pair of hands a tile
+    // to its right rather than on top of it, where it would hide.
+    for (mut cur, mut transform) in &mut cursors {
+        let right = (sim.0.width() / 2 + cur.player).min(sim.0.width().saturating_sub(1));
+        cur.x = right;
         cur.y = sim.0.height() / 2;
         transform.translation = layout::tile_center(&sim.0, cur.x, cur.y).extend(layout::z::CURSOR);
     }
