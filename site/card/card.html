@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<!-- The link-preview card, 1200x630. Not part of the site: site/card/card.sh
+     renders it to site/media/card.png, which the page's og:image names. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; }
+  body {
+    width: 1200px;
+    height: 630px;
+    overflow: hidden;
+    position: relative;
+    font-family: "Noto Sans", sans-serif;
+    color: #2a2118;
+    /* The landing page's hero: sky over sand. */
+    background: linear-gradient(180deg, #d8eef7 0%, #fbf3e2 70%);
+  }
+
+  .text {
+    position: absolute;
+    left: 64px;
+    top: 0;
+    bottom: 0;
+    width: 470px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .crab { font-size: 64px; line-height: 1; margin-bottom: 18px; }
+
+  h1 {
+    margin: 0;
+    font-size: 76px;
+    font-weight: 800;
+    line-height: 1.02;
+    letter-spacing: -0.03em;
+  }
+
+  .genre {
+    margin: 14px 0 0;
+    font-size: 30px;
+    font-weight: 700;
+  }
+
+  .pitch {
+    margin: 22px 0 0;
+    font-size: 23px;
+    line-height: 1.4;
+    color: #6b5c48;
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
+
+  .chips span {
+    padding: 8px 16px;
+    border-radius: 999px;
+    background: #f2e4c9;
+    font-size: 19px;
+    font-weight: 700;
+  }
+
+  /* The board, running off the right edge, so the card reads as a window
+     onto a bigger beach. */
+  .shot {
+    position: absolute;
+    left: 590px;
+    top: 64px;
+    width: 900px;
+    height: 506px;
+    border-radius: 18px;
+    border: 5px solid #fff;
+    box-shadow: 0 22px 48px rgba(42, 33, 24, 0.25);
+    background: url("../../docs/screenshots/turf_war.png") 0 0 / cover;
+    transform: rotate(-3deg);
+    transform-origin: left center;
+  }
+
+  .url {
+    position: absolute;
+    left: 64px;
+    bottom: 34px;
+    color: #0a6183;
+    font-size: 20px;
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+  <div class="text">
+    <div class="crab">🦀</div>
+    <h1>Pinch Points</h1>
+    <p class="genre">a crab-routing video game</p>
+    <p class="pitch">Steer streams of crabs into your castle before the tide comes in.</p>
+    <div class="chips">
+      <span>1 to 6 players</span>
+      <span>couch or LAN</span>
+      <span>free</span>
+    </div>
+  </div>
+  <div class="shot"></div>
+  <div class="url">agourlay.github.io/pinch-points</div>
+</body>
+</html>

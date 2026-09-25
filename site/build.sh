@@ -2,8 +2,8 @@
 # Assemble the landing page into ./_site, ready to serve or publish.
 #
 # The page's pictures are WebP copies in site/media, made from the PNGs in
-# docs/screenshots (where the README and the guide point) by site/media.sh.
-# Only the hero PNG is published as well: link previews want a PNG.
+# docs/screenshots (where the README and the guide point) by site/media.sh,
+# and the link-preview card, media/card.png, is rendered by site/card/card.sh.
 #
 # Used by .github/workflows/pages.yml and by hand:
 #
@@ -14,11 +14,10 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 out="$root/_site"
 
 rm -rf "$out"
-mkdir -p "$out/screenshots"
+mkdir -p "$out"
 
 cp "$root/site/index.html" "$root/site/style.css" \
    "$root/site/install.sh" "$root/site/install.ps1" "$out/"
-cp "$root/docs/screenshots/turf_war.png" "$out/screenshots/"
 cp -r "$root/site/media" "$out/"
 
 # Stamp the stylesheet link with a digest of the stylesheet.
