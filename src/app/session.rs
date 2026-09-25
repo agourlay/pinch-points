@@ -109,12 +109,17 @@ pub(super) fn load_versus(
     } else if let Some((replay, _)) = &playback.0 {
         replay.level.board()
     } else if let Some(session) = &online.0 {
-        // Every peer builds from the terms the lobby agreed (map, gull
-        // pressure, round length and seed) so the beach is identical
-        // without anyone trusting their own menu. A handmade beach cannot
-        // be described that way, so it travelled whole and is used as it
-        // arrived.
-        match_setup::board_from(&session.terms, session.seats, &session.beach)
+        match &session.caught_up {
+            // A watcher who arrived mid-round starts where the host's board
+            // was when it was sent (`net::catch_up`).
+            Some(board) => board.clone(),
+            // Every peer builds from the terms the lobby agreed (map, gull
+            // pressure, round length and seed) so the beach is identical
+            // without anyone trusting their own menu. A handmade beach
+            // cannot be described that way, so it travelled whole and is
+            // used as it arrived.
+            None => match_setup::board_from(&session.terms, session.seats, &session.beach),
+        }
     } else if config.armed {
         // A configured local match: handcrafted classic or a generated
         // arena at the chosen size, with gull pressure and round length
@@ -179,7 +184,9 @@ pub(super) fn load_versus(
     // as it stood when it was copied, not the inputs that got it there. So
     // a pasted round is not recorded at all, which every reader of the
     // recorder already allows for.
-    recorder.0 = if playback.0.is_none() && resumed.is_none() {
+    // A watcher caught up mid-round has no first tick either.
+    let caught_up = online.0.as_ref().is_some_and(|s| s.caught_up.is_some());
+    recorder.0 = if playback.0.is_none() && resumed.is_none() && !caught_up {
         Some(Replay::new(Level::from_board("Turf War", 3, sim.0.clone())))
     } else {
         None
@@ -502,6 +509,9 @@ pub(super) fn advance_sim(
                 advanced = true;
             }
         });
+        // Late watchers who greeted this tick are sent the round now, off
+        // the board as the lockstep's frame leaves it.
+        session.send_catch_ups(&sim.bypass_change_detection().0);
         if advanced {
             sim.set_changed();
             recorder.set_changed();

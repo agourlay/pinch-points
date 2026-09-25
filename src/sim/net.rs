@@ -156,6 +156,23 @@ impl Lockstep {
         Lockstep::seated(None, players, delay)
     }
 
+    /// A session that watches from `frame` on, for a spectator who arrived
+    /// with the round already running: the host sent the board as it stood
+    /// at `frame`, so that is where this session starts simulating.
+    ///
+    /// Nothing is prefilled, unlike a session from frame zero: the frames
+    /// here were committed by players long since, and arrive in the resend
+    /// tails every peer keeps sending.
+    pub fn observer_from(players: Vec<PlayerId>, delay: u32, frame: u32) -> Lockstep {
+        let mut session = Lockstep::seated(None, players, delay);
+        if frame > 0 {
+            session.pending.clear();
+            session.frame = frame;
+            session.next_commit = frame + delay;
+        }
+        session
+    }
+
     fn seated(local: Option<PlayerId>, players: Vec<PlayerId>, delay: u32) -> Lockstep {
         assert!(
             players
@@ -475,6 +492,102 @@ mod tests {
     use super::*;
     use crate::sim::board::Board;
     use crate::sim::{CrabKind, Handedness, Spawner, TileKind};
+
+    /// A spectator handed the board at frame `n` and a session from `n`
+    /// plays the rest of the round exactly as the table does: the snapshot
+    /// carries everything the sim reads, and the inputs from `n` on are
+    /// the ones the players' resend tails still hold.
+    #[test]
+    fn a_late_watcher_from_a_snapshot_keeps_step_with_the_table() {
+        use crate::sim::{BotLevel, bot_action, generate_arena};
+        let players = vec![0u8, 1, 2];
+        let mut table = generate_arena(21, 4, 20, 13);
+        let mut host = Lockstep::new(0, players.clone(), DEFAULT_DELAY);
+        // Every input on the wire, as a stand-in for the resend tails.
+        let mut sent: Vec<InputMsg> = Vec::new();
+        let mut late: Option<(Lockstep, Board)> = None;
+        for step in 0..900u32 {
+            // Each seat's input for the frame it commits, as the bots would
+            // play it; seat 3 is an AI the lockstep never carries.
+            for &seat in &players {
+                let msg = InputMsg {
+                    player: seat,
+                    frame: DEFAULT_DELAY + step,
+                    action: bot_action(&table, seat, BotLevel::Hard),
+                };
+                if seat == 0 {
+                    host.commit_local(msg.action);
+                } else {
+                    host.receive(msg);
+                }
+                sent.push(msg);
+                if let Some((watcher, _)) = &mut late {
+                    watcher.receive(msg);
+                }
+            }
+            while let Some(mut actions) = host.advance() {
+                actions[3] = bot_action(&table, 3, BotLevel::Normal);
+                table.tick(&actions);
+            }
+            if step == 300 {
+                // The board through its text, as the wire carries it.
+                let board = Board::parse_snapshot(&table.to_snapshot()).expect("parses");
+                assert_eq!(board.state_hash(), table.state_hash());
+                let mut watcher =
+                    Lockstep::observer_from(players.clone(), DEFAULT_DELAY, host.frame());
+                assert_eq!(watcher.frame(), host.frame());
+                // The frames already committed, which the tails repeat.
+                for &msg in &sent {
+                    watcher.receive(msg);
+                }
+                late = Some((watcher, board));
+            }
+            if let Some((watcher, board)) = &mut late {
+                while let Some(mut actions) = watcher.advance() {
+                    actions[3] = bot_action(board, 3, BotLevel::Normal);
+                    board.tick(&actions);
+                }
+            }
+        }
+        let (mut watcher, board) = late.expect("the watcher arrived");
+        assert!(host.frame() > 600, "the round ran: {}", host.frame());
+        assert_eq!(watcher.frame(), host.frame(), "caught up to the table");
+        assert_eq!(
+            board.state_hash(),
+            table.state_hash(),
+            "and on the same beach"
+        );
+        assert!(
+            watcher.commit_local(PlayerAction::None).is_none(),
+            "it only watches"
+        );
+    }
+
+    /// A session from frame zero still prefills its first frames; one from
+    /// later prefills nothing, those frames having been played by others.
+    #[test]
+    fn a_session_from_a_later_frame_waits_for_real_inputs() {
+        let fresh = Lockstep::observer_from(vec![0, 1], DEFAULT_DELAY, 0);
+        assert!(fresh.awaiting().is_empty(), "frame zero is agreed idle");
+        let mut late = Lockstep::observer_from(vec![0, 1], DEFAULT_DELAY, 500);
+        assert_eq!(late.awaiting(), vec![0, 1]);
+        assert!(late.advance().is_none());
+        // Inputs from before its first frame are nothing to it.
+        late.receive(InputMsg {
+            player: 0,
+            frame: 499,
+            action: PlayerAction::None,
+        });
+        for player in [0, 1] {
+            late.receive(InputMsg {
+                player,
+                frame: 500,
+                action: PlayerAction::None,
+            });
+        }
+        assert!(late.advance().is_some());
+        assert_eq!(late.frame(), 501);
+    }
 
     /// A stalled peer pushes back on local commits at the lead cap, and the
     /// queue reopens as soon as frames advance.

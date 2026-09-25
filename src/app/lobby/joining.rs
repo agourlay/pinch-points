@@ -297,6 +297,31 @@ pub(super) fn accept_the_invitation(
         next_screen.set(Screen::Versus);
     }
 }
+/// Walk into a round already running, as a watcher: the session starts
+/// at the frame the host's board was taken at, and the arena from that
+/// board (`net::catch_up`).
+fn catch_up_with_the_round(
+    state: &mut LobbyState,
+    online: &mut Online,
+    tournament: &mut crate::app::tournament::Tournament,
+    next_screen: &mut NextState<Screen>,
+    next_vphase: &mut NextState<VersusPhase>,
+    caught: crate::app::net::catch_up::CaughtUp,
+) {
+    let Standing::Joining(joined) = std::mem::take(&mut state.standing) else {
+        unreachable!("a round sent to a lobby that greeted nobody");
+    };
+    *tournament = crate::app::tournament::Tournament::from_terms(
+        caught.invitation.terms,
+        caught.invitation.standing,
+    );
+    let mut session = OnlineSession::caught_up(joined.transport, caught);
+    session.home.from_lobby = true;
+    online.0 = Some(session);
+    next_vphase.set(VersusPhase::Running);
+    next_screen.set(Screen::Versus);
+}
+
 /// Joining: keep greeting the host until our seat assignment arrives
 /// (Start rides UDP; hellos are re-answered until one lands).
 /// What to tell a peer the host has just put in line.
@@ -333,6 +358,7 @@ pub fn join_tick(
     };
     let say_hello = once_a_second(&mut joined.hello_in, time.delta_secs());
     let mut started = None;
+    let mut caught = None;
     let mut mismatch = None;
     let mut queued = None;
     let mut said: Vec<(crate::transport::WireName, crate::transport::WireChat)> = Vec::new();
@@ -366,6 +392,20 @@ pub fn join_tick(
                         standing,
                         beach,
                     })
+                }
+                // A watcher at a beach mid-round: the round as it stands,
+                // part by part, until there is a whole of it to walk into.
+                NetMsg::CatchUp {
+                    frame,
+                    part,
+                    parts,
+                    bytes,
+                } => {
+                    if joined.watching
+                        && let Some(whole) = joined.catching_up.take(frame, part, parts, bytes)
+                    {
+                        caught = Some(whole);
+                    }
                 }
                 NetMsg::Incompatible { version } => mismatch = Some(version),
                 // That beach is mid-round. The greeting already repeats
@@ -436,6 +476,17 @@ pub fn join_tick(
         if let Some(joined) = state.joined_mut() {
             joined.queued = Some(ahead);
         }
+    }
+    if let Some(caught) = caught {
+        catch_up_with_the_round(
+            &mut state,
+            &mut online,
+            &mut tournament,
+            &mut next_screen,
+            &mut next_vphase,
+            caught,
+        );
+        return;
     }
     let played = state.joined().and_then(Joined::played_seed);
     let started = started.filter(|invitation| a_fresh_invitation(played, invitation));

@@ -136,6 +136,22 @@ pub enum NetMsg {
     /// nobody would ever send it inputs for and sat there, apparently
     /// connected, forever.
     Queued { ahead: u8 },
+    /// Host → a spectator that arrived with the round already running: one
+    /// part of the round as it stands at `frame`, the `Start` it would have
+    /// been sent at the launch and the board, packed together and cut into
+    /// `parts` pieces, of which this is number `part`.
+    ///
+    /// In parts because the board does not fit a datagram: a mid-round
+    /// beach carries every crab and gull and post on it. Keyed by `frame`,
+    /// so pieces of two different snapshots can never be put together; a
+    /// piece that went astray is made good by the next greeting, which is
+    /// answered with a whole fresh snapshot.
+    CatchUp {
+        frame: u32,
+        part: u8,
+        parts: u8,
+        bytes: Vec<u8>,
+    },
     /// "I speak protocol `version`, and what you sent me is not it." The
     /// answer to a datagram from another build, so a mismatched joiner is
     /// told why nothing is happening instead of greeting a host that ignores
@@ -219,9 +235,13 @@ const TAG_ABANDONED: u8 = 11;
 const TAG_INPUTS: u8 = 12;
 const TAG_SPECTATOR_VOTE: u8 = 13;
 const TAG_SPECTATOR_TALLY: u8 = 14;
+const TAG_CATCH_UP: u8 = 15;
 /// The last of them, which `peek_version` uses to tell one of ours from
 /// stray traffic on the port.
-const HIGHEST_TAG: u8 = TAG_INPUTS;
+///
+/// It said `TAG_INPUTS` through two more tags, so a build of another
+/// version sending the spectators' two was ignored rather than told why.
+const HIGHEST_TAG: u8 = TAG_CATCH_UP;
 
 /// Inputs one datagram may carry.
 ///
@@ -234,6 +254,16 @@ const HIGHEST_TAG: u8 = TAG_INPUTS;
 /// A tail never comes close: `2 * resend_span(DEFAULT_DELAY)` is 66. The
 /// host's relay does, at a full table, and chunks.
 pub const MAX_INPUTS_PER_DATAGRAM: usize = 127;
+
+/// The most of a snapshot one `CatchUp` carries: the datagram less its
+/// header (tag, version, frame, part, parts and a length), with room to
+/// spare under a 1500-byte MTU so no part is ever fragmented.
+pub const CATCH_UP_CHUNK: usize = 900;
+
+/// The most parts a snapshot may be cut into. A crowded XL beach packs to
+/// a few; this is room for many times that, and a bound on what a
+/// receiver will hold for a snapshot still arriving.
+pub const CATCH_UP_PARTS: u8 = 32;
 
 /// How a peer that came to watch is written down in a `Start`: outside
 /// the range of real seats, so it cannot collide with one. A wire detail:
@@ -362,6 +392,7 @@ impl NetMsg {
             NetMsg::SpectatorVote { .. } => vec![TAG_SPECTATOR_VOTE],
             NetMsg::SpectatorTally { .. } => vec![TAG_SPECTATOR_TALLY],
             NetMsg::Resume { .. } => vec![TAG_RESUME],
+            NetMsg::CatchUp { .. } => vec![TAG_CATCH_UP],
             NetMsg::Incompatible { version } => return vec![TAG_INCOMPATIBLE, version],
         };
         bytes.push(PROTOCOL_VERSION);
@@ -438,6 +469,20 @@ impl NetMsg {
                 bytes.extend_from_slice(&beach[..usize::from(len)]);
             }
             NetMsg::Pause { frame } => bytes.extend_from_slice(&frame.to_le_bytes()),
+            NetMsg::CatchUp {
+                frame,
+                part,
+                parts,
+                bytes: ref piece,
+            } => {
+                debug_assert!(piece.len() <= CATCH_UP_CHUNK, "{} bytes", piece.len());
+                let len = piece.len().min(CATCH_UP_CHUNK);
+                bytes.extend_from_slice(&frame.to_le_bytes());
+                bytes.push(part);
+                bytes.push(parts);
+                bytes.extend_from_slice(&(len as u16).to_le_bytes());
+                bytes.extend_from_slice(&piece[..len]);
+            }
             NetMsg::SpectatorVote { event } => bytes.push(event),
             NetMsg::SpectatorTally {
                 watching,
@@ -554,6 +599,22 @@ impl NetMsg {
             TAG_PAUSE => Some(NetMsg::Pause {
                 frame: u32::from_le_bytes(body.get(..4)?.try_into().ok()?),
             }),
+            TAG_CATCH_UP => {
+                let frame = u32::from_le_bytes(body.get(..4)?.try_into().ok()?);
+                let (part, parts) = (*body.get(4)?, *body.get(5)?);
+                let len = usize::from(u16::from_le_bytes(body.get(6..8)?.try_into().ok()?));
+                // A piece of a snapshot nobody could finish is refused
+                // here, before a receiver sets aside room for it.
+                if parts == 0 || parts > CATCH_UP_PARTS || part >= parts || len > CATCH_UP_CHUNK {
+                    return None;
+                }
+                Some(NetMsg::CatchUp {
+                    frame,
+                    part,
+                    parts,
+                    bytes: body.get(8..8 + len)?.to_vec(),
+                })
+            }
             TAG_SPECTATOR_VOTE => Some(NetMsg::SpectatorVote {
                 event: *body.first()?,
             }),
@@ -640,6 +701,12 @@ mod tests {
             NetMsg::Hash {
                 frame: u32::MAX,
                 hash: u64::MAX,
+            },
+            NetMsg::CatchUp {
+                frame: u32::MAX,
+                part: CATCH_UP_PARTS - 1,
+                parts: CATCH_UP_PARTS,
+                bytes: vec![0xAB; CATCH_UP_CHUNK],
             },
             // A batch filled to the cap, which is the one message whose
             // size a caller chooses rather than the format fixing it.

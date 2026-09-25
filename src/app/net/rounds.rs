@@ -57,6 +57,25 @@ impl OnlineSession {
         session
     }
 
+    /// A watcher's session for a round already running: the invitation as
+    /// the launch would have given it, then a lockstep that starts at the
+    /// frame the host's board was taken at, and that board for the arena
+    /// to start from (see `catch_up`).
+    pub fn caught_up(transport: UdpTransport, caught: super::catch_up::CaughtUp) -> OnlineSession {
+        let super::catch_up::CaughtUp {
+            invitation,
+            frame,
+            board,
+        } = caught;
+        let humans = invitation.terms.humans(invitation.seats);
+        let mut session = OnlineSession::invited(transport, invitation);
+        session.session =
+            Lockstep::observer_from((0..humans).collect(), crate::sim::DEFAULT_DELAY, frame);
+        session.stall.reset(frame);
+        session.caught_up = Some(board);
+        session
+    }
+
     /// Take up an invitation: the host's beach, the table's names, and a
     /// round begun afresh on its terms (see [`Self::begin_round`] for
     /// everything that resets). Does not arm `next_round`, which is the
@@ -180,6 +199,9 @@ impl OnlineSession {
                 // why the key is not offered between rounds either.
                 | NetMsg::SpectatorVote { .. }
                 | NetMsg::SpectatorTally { .. }
+                // The round is over; the next greeting is answered with
+                // the next round's `Start`, which is how they come in.
+                | NetMsg::CatchUp { .. }
                 | NetMsg::Incompatible { .. } => {}
             }
         }
@@ -396,6 +418,9 @@ impl OnlineSession {
         self.names = names;
         self.hashes.reset();
         self.resume_echo = 0;
+        // A new round is everyone's from its first frame.
+        self.caught_up = None;
+        self.owed_catch_up.clear();
         // And nobody is late for a round that has not begun. The results
         // card is a place a table sits for a while, and carrying that
         // silence into the new round would call the host gone on its first

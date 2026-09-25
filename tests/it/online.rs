@@ -64,7 +64,8 @@ impl Peer {
                 | NetMsg::Queued { .. }
                 | NetMsg::Chat { .. }
                 | NetMsg::Roster { .. }
-                | NetMsg::Abandoned { .. } => {}
+                | NetMsg::Abandoned { .. }
+                | NetMsg::CatchUp { .. } => {}
             }
         }
         while let Some(actions) = self.session.advance() {

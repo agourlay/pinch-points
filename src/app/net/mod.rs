@@ -104,6 +104,15 @@ pub struct OnlineSession {
     pub series_standing: Option<SeriesStanding>,
     /// Ticks of `Resume` still to repeat (see [`RESUME_ECHOES`]).
     resume_echo: u8,
+    /// The board this round is joined at, for a spectator that arrived
+    /// with it already running (`catch_up`): the arena starts from this
+    /// rather than building frame zero from the terms. `None` for every
+    /// round anyone was at from the start.
+    pub caught_up: Option<crate::sim::Board>,
+    /// Host: the late watchers owed the round as it stands, sent once the
+    /// frames of this tick have been simulated and the board is the one
+    /// the lockstep's frame says.
+    owed_catch_up: Vec<usize>,
 }
 
 /// The beach a session came from: its beacon, what it is called, and
@@ -334,7 +343,7 @@ impl OnlineSession {
     pub fn watching_this_round(&self, peer: usize) -> bool {
         self.peers
             .get(peer)
-            .is_some_and(|peer| peer.place == Place::Watching)
+            .is_some_and(|peer| matches!(peer.place, Place::Watching | Place::LateWatching))
     }
 
     /// How many are watching this round.
@@ -441,6 +450,7 @@ pub fn poll_between_rounds(time: Res<Time>, mut online: ResMut<Online>) {
     }
 }
 
+pub(crate) mod catch_up;
 mod peers;
 mod presence;
 mod rounds;
@@ -475,6 +485,8 @@ impl OnlineSession {
             next_round: false,
             series_standing: None,
             resume_echo: 0,
+            caught_up: None,
+            owed_catch_up: Vec::new(),
         }
     }
 
@@ -565,6 +577,8 @@ impl OnlineSession {
             next_round: _,
             series_standing: _,
             resume_echo: _,
+            caught_up: _,
+            owed_catch_up: _,
         } = self;
         let Home {
             announcer,
@@ -702,13 +716,23 @@ impl OnlineSession {
                     }
                 }
                 NetMsg::Watch { name } => {
-                    if host {
-                        // Watching is no more possible than playing once the
-                        // round is under way: a spectator simulates the same
-                        // frames as everyone else, from the same frame zero.
-                        // The wish is remembered, so a peer that armed W and
-                        // dialled in mid-round is seated as an onlooker next
-                        // round rather than dealt a chair it never asked for.
+                    // Somebody who came to watch after the launch is sent
+                    // the round as it stands, once this tick's frames are
+                    // in, and watches from there (`catch_up`). One from the
+                    // launch is told its place again, as ever. A greeting
+                    // repeats until the watcher is in, so a snapshot that
+                    // went astray is simply sent again, fresher.
+                    if host && self.late_watcher(from) {
+                        let told = name_from_wire(&name);
+                        if !told.is_empty() {
+                            self.remember_peer_name(from, &told);
+                        }
+                        self.note_watch_wish(from);
+                        self.peers.row(from).place = Place::LateWatching;
+                        if !self.owed_catch_up.contains(&from) {
+                            self.owed_catch_up.push(from);
+                        }
+                    } else if host {
                         let answer = self.answer_greeting(from, &name_from_wire(&name), true);
                         self.transport.send_to(from, answer);
                     }
@@ -804,8 +828,9 @@ impl OnlineSession {
                 // is a stranger, not a member: the match plays on without it.
                 NetMsg::Incompatible { .. } => {}
                 // Only a host hands these out, and a host never receives
-                // one: a joiner in the queue is still in the lobby.
-                NetMsg::Queued { .. } => {}
+                // one: a joiner in the queue is still in the lobby, and so
+                // is a watcher being caught up.
+                NetMsg::Queued { .. } | NetMsg::CatchUp { .. } => {}
                 // A spectator talking. Players have both hands on the keys
                 // and no way to answer, which is the point: the people
                 // with nothing to hold are the ones who can say something,
@@ -867,6 +892,51 @@ impl OnlineSession {
         }
         self.hashes.compare();
         committed
+    }
+
+    /// Host: whether `peer` came to watch after the launch, and so is one
+    /// the round has to be handed to rather than one that has it already.
+    /// Only a lobby's table keeps a plan: the direct `PINCH_HOST` pair has
+    /// no watchers to catch up.
+    fn late_watcher(&self, peer: usize) -> bool {
+        self.peers.planned() > 0 && self.queue_place(peer).is_some()
+    }
+
+    /// Host: send each late watcher owed one the round as it stands.
+    ///
+    /// Called after `pump`, with the board it has just simulated: that
+    /// board is at the lockstep's frame, which is the frame the watcher's
+    /// session will start from. Each part goes to the watcher alone.
+    pub fn send_catch_ups(&mut self, board: &crate::sim::Board) {
+        if self.owed_catch_up.is_empty() {
+            return;
+        }
+        let frame = self.session.frame();
+        debug_assert_eq!(
+            board.ticks(),
+            u64::from(frame),
+            "the board is at the lockstep's frame"
+        );
+        let parts = catch_up::pack(&self.start_msg(None), frame, board);
+        for peer in std::mem::take(&mut self.owed_catch_up) {
+            if parts.is_empty() {
+                // A board too big to send. No board this game builds comes
+                // near, but a watcher sent nothing would greet for ever, so
+                // it gets what every latecomer used to: a place in line.
+                self.peers.row(peer).place = Place::Queued;
+                let name = self
+                    .peers
+                    .get(peer)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default();
+                let answer = self.answer_greeting(peer, &name, true);
+                self.transport.send_to(peer, answer);
+                continue;
+            }
+            for part in &parts {
+                self.transport.send_to(peer, part.clone());
+            }
+        }
     }
 
     /// Called by the tick closure after simulating a frame, with the fresh
@@ -1256,6 +1326,7 @@ mod homecoming_tests {
                         | NetMsg::Chat { .. }
                         | NetMsg::Roster { .. }
                         | NetMsg::Abandoned { .. }
+                        | NetMsg::CatchUp { .. }
                         | NetMsg::Incompatible { .. } => {}
                     }
                 }
@@ -1418,5 +1489,120 @@ mod hash_tests {
         hashes.reset();
         hashes.compare();
         assert_eq!(hashes.desync_at, None, "and the new board is level");
+    }
+}
+
+#[cfg(test)]
+mod catch_up_tests {
+    use super::*;
+    use crate::sim::{DEFAULT_DELAY, InputMsg, generate_arena};
+
+    /// Everything waiting on `socket`, after giving it a moment to arrive.
+    fn drain(socket: &mut UdpTransport) -> Vec<NetMsg> {
+        let mut heard = Vec::new();
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            heard.extend(socket.recv_all().into_iter().map(|(msg, _)| msg));
+        }
+        heard
+    }
+
+    /// The whole walk over real sockets: a host sixty frames into a round,
+    /// a watcher greeting it, and the round arriving at the watcher in
+    /// parts that put back together into the host's own board at the
+    /// host's own frame. A player greeting at the same moment is still put
+    /// in line: a round in progress can take an onlooker, not a chair.
+    #[test]
+    fn a_watcher_greeting_mid_round_is_sent_the_round_and_a_player_is_queued() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        let port = host.transport.local_addr().expect("addr").port();
+        let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        bo.send(NetMsg::hello("Bo"));
+        drain(&mut host.transport);
+        host.peers.deal(&[Some(1)]);
+
+        // Sixty frames of round, Bo's inputs arriving as they would.
+        let mut board = generate_arena(3, 2, 12, 9);
+        for frame in 0..60 {
+            host.session.commit_local(PlayerAction::None);
+            host.session.receive(InputMsg {
+                player: 1,
+                frame: DEFAULT_DELAY + frame,
+                action: PlayerAction::None,
+            });
+            while let Some(actions) = host.session.advance() {
+                board.tick(&actions);
+            }
+        }
+        assert!(host.session.frame() > 50);
+
+        let mut dee = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        dee.send(NetMsg::watch("Dee"));
+        let mut cy = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        cy.send(NetMsg::hello("Cy"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        host.pump(PlayerAction::None, |_| {});
+        host.send_catch_ups(&board);
+
+        assert_eq!(host.peers.planned(), 1, "the plan is still the launch's");
+        assert_eq!(
+            host.peers.get(1).map(|p| p.place),
+            Some(Place::LateWatching)
+        );
+        assert!(
+            host.peers.follows_the_round(1),
+            "Dee is sent the round from now on"
+        );
+        assert!(host.watching_this_round(1), "and counts in the crowd");
+        assert!(!host.peers.follows_the_round(2), "Cy, in line, is not");
+
+        let mut assembly = catch_up::Assembly::default();
+        let caught = drain(&mut dee)
+            .into_iter()
+            .find_map(|msg| {
+                let NetMsg::CatchUp {
+                    frame,
+                    part,
+                    parts,
+                    bytes,
+                } = msg
+                else {
+                    return None;
+                };
+                assembly.take(frame, part, parts, bytes)
+            })
+            .expect("the round arrived whole");
+        assert_eq!(caught.frame, host.session.frame());
+        assert_eq!(caught.board.state_hash(), board.state_hash());
+        assert_eq!(caught.invitation.seat, None);
+        let session = OnlineSession::caught_up(dee, caught);
+        assert!(session.watching());
+        assert_eq!(session.session.frame(), host.session.frame());
+        assert!(session.caught_up.is_some());
+
+        let queued = drain(&mut cy)
+            .into_iter()
+            .any(|msg| matches!(msg, NetMsg::Queued { .. }));
+        assert!(queued, "a player arriving mid-round waits for the next one");
+    }
+
+    /// The direct `PINCH_HOST` pair keeps no plan, so nobody in it is a
+    /// latecomer to be caught up.
+    #[test]
+    fn a_table_with_no_plan_catches_nobody_up() {
+        let host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        assert!(!host.late_watcher(0));
+        assert!(!host.late_watcher(5));
     }
 }

@@ -188,6 +188,9 @@ pub struct Joined {
     /// is nothing to do with the match being joined; `None` until the
     /// first roster lands.
     pub terms: Option<MatchTerms>,
+    /// The round as it stands, arriving in parts, for a watcher who
+    /// greeted a beach mid-round (`net::catch_up`).
+    catching_up: crate::app::net::catch_up::Assembly,
 }
 
 impl Joined {
@@ -204,6 +207,7 @@ impl Joined {
             host_answered: false,
             played_seed: None,
             terms: None,
+            catching_up: Default::default(),
         }
     }
 
@@ -220,6 +224,7 @@ impl Joined {
             host_answered: true,
             played_seed: Some(played_seed),
             terms: None,
+            catching_up: Default::default(),
         }
     }
 

@@ -473,6 +473,7 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             | NetMsg::Queued { .. }
             | NetMsg::Roster { .. }
             | NetMsg::Abandoned { .. }
+            | NetMsg::CatchUp { .. }
             | NetMsg::Incompatible { .. } => {}
         }
     }

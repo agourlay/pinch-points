@@ -185,29 +185,6 @@ would change that.
   replace it, since every other seat, the keyboard included, keeps the two
   stages.
 
-- **Watching a round that has already started.** A peer the socket picks up
-  mid-round is answered with `NetMsg::Queued { ahead }` and waits for the
-  next one (`net::rounds::queue_place`). That is deliberate: a lockstep
-  session replays from frame zero and the resend tail only reaches
-  `resend_span` frames back, 33 at the default delay, so a latecomer
-  admitted as a spectator ends up staring at frame zero forever. (Forty was
-  the old fixed window, and `sim/net.rs:133` records why it went: it
-  deadlocked under a one-way loss burst.)
-
-  Letting them in needs a snapshot join rather than a replay: hand the
-  arrival the board as it stands and start their session at that frame
-  instead of zero. The format exists and is exercised. The *level* format
-  cannot carry a round in progress, which is what the note in
-  `tests/it/online.rs` means, but `snapshot-v1` (`Board::to_snapshot` /
-  `parse_snapshot`) carries every field `state_hash` covers, and
-  `app::suspend` already moves a mid-round board between machines that way.
-  What is missing is a `Lockstep` that can begin at a nonzero frame, and a
-  wire message to carry the snapshot.
-
-  Worth it on a busy LAN, where someone wandering over to watch is the
-  common case and "wait for the next round" is the whole of the answer
-  today. Not worth it for a living room where everyone starts together.
-
 - **The round-end spectacle, half of it.** The wave shipped
   (`board_render::wash`): at zero the sea comes in over the whole beach,
   holds, and drains, with everything the round built underneath it. What did

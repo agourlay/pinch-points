@@ -154,10 +154,11 @@ score lost, so the rest of the table has something to point at too.
 
   `T` sends a short line to the lobby, relayed by the host.
 
-  A match that has begun stays listed as **in progress**. Lockstep replays
-  from frame zero, so there is nothing to catch a latecomer up with: you
-  cannot join, but you can **queue** for the host's next round, or press
-  **W** to spectate, which has to happen before launch.
+  A match that has begun stays listed as **in progress**. A player cannot
+  take a chair in a round already running, but can **queue** for the
+  host's next one. A spectator can walk straight in: press **W** and pick
+  the beach, and the host sends the round as it stands, so you watch from
+  that moment on, with the rest of the crowd.
 
   When the match ends, Enter takes the **whole table back to the lobby**
   rather than out to the menu: the sockets stay open, the host goes back on

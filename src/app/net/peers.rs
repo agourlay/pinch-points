@@ -14,6 +14,16 @@ pub enum Place {
     /// Watching since the launch: in step from frame zero like every
     /// player, but holding no chair.
     Watching,
+    /// Not in the launch plan, but watching this round all the same: came
+    /// to watch after the launch and was sent the round as it stood
+    /// (`net::catch_up`), so it follows from that frame on.
+    ///
+    /// Its own place rather than `Watching`, because the plan is the
+    /// leading run of placed rows ([`PeerBook::planned`]), and a latecomer
+    /// counted into it would be answered as a launch watcher: sent a
+    /// `Start` for frame zero, which is the one thing lockstep cannot
+    /// give anybody halfway through a round.
+    LateWatching,
     /// Not in the launch plan: turned up mid-round and is in line for the
     /// next one. Also every peer a joiner or the direct `PINCH_HOST` pair
     /// knows, which keep no plan at all.
@@ -41,14 +51,14 @@ impl Peer {
     pub fn seat(&self) -> Option<u8> {
         match self.place {
             Place::Seated(seat) => Some(seat),
-            Place::Watching | Place::Queued => None,
+            Place::Watching | Place::LateWatching | Place::Queued => None,
         }
     }
 
     /// Whether it watches rather than plays: dealt no chair at the
     /// launch, or asked for it since.
     pub fn watches(&self) -> bool {
-        self.place == Place::Watching || self.watch
+        matches!(self.place, Place::Watching | Place::LateWatching) || self.watch
     }
 }
 
@@ -145,7 +155,7 @@ impl PeerBook {
     pub fn planned(&self) -> usize {
         self.0
             .iter()
-            .take_while(|peer| peer.place != Place::Queued)
+            .take_while(|peer| matches!(peer.place, Place::Seated(_) | Place::Watching))
             .count()
     }
 
@@ -162,7 +172,11 @@ impl PeerBook {
     /// they have.
     pub fn follows_the_round(&self, peer: usize) -> bool {
         let planned = self.planned();
-        planned == 0 || peer < planned
+        planned == 0
+            || peer < planned
+            || self
+                .get(peer)
+                .is_some_and(|row| row.place == Place::LateWatching)
     }
 
     /// The peer holding `seat`, if any does.
@@ -261,6 +275,31 @@ mod tests {
         assert!(peers.follows_the_round(1), "the watcher, in step from zero");
         assert!(!peers.follows_the_round(2), "the one in line");
         assert!(!peers.follows_the_round(3), "and the one behind it");
+    }
+
+    /// A watcher that arrived late follows the round without joining the
+    /// plan: the peer in line behind it is still in line, and so is the
+    /// one in front of it, whatever order they greeted in.
+    #[test]
+    fn a_late_watcher_follows_the_round_outside_the_plan() {
+        let mut peers = PeerBook::default();
+        peers.deal(&[Some(1), None]);
+        peers.reach(4);
+        peers.row(2).place = Place::LateWatching;
+        assert_eq!(peers.planned(), 2, "the plan is still the launch's");
+        assert!(
+            peers.follows_the_round(2),
+            "the late watcher is sent the round"
+        );
+        assert!(!peers.follows_the_round(3), "the one in line is not");
+        assert!(peers.get(2).is_some_and(Peer::watches));
+        assert_eq!(peers.seat_of(2), None);
+        // First in line, straight after the plan, it still does not extend it.
+        let mut peers = PeerBook::default();
+        peers.deal(&[Some(1)]);
+        peers.row(1).place = Place::LateWatching;
+        peers.row(2).place = Place::Queued;
+        assert_eq!(peers.planned(), 1);
     }
 
     /// The exception that keeps online play working at all: `Queued` is
