@@ -460,6 +460,36 @@ mod tests {
         assert_eq!(at(0, 900), None, "and a seat nobody left is left be");
     }
 
+    /// A round recorded as it is played holds one input a tick, and played
+    /// back from its first board lands on the board the round left: the
+    /// whole promise of the replay library, through the real tick system.
+    #[test]
+    fn a_recorded_round_plays_back_to_the_board_it_left() {
+        let mut app = sim_app();
+        app.world_mut().resource_mut::<Bots>().0[0] = Some(BotLevel::Normal);
+        app.world_mut().resource_mut::<Bots>().0[1] = Some(BotLevel::Hard);
+        let start = app.world().resource::<Sim>().0.clone();
+        app.world_mut().resource_mut::<Recorder>().0 =
+            Some(Replay::new(Level::from_board("Turf War", 3, start)));
+        for _ in 0..40 {
+            app.update();
+        }
+        let board = &app.world().resource::<Sim>().0;
+        let replay = app
+            .world()
+            .resource::<Recorder>()
+            .0
+            .as_ref()
+            .expect("recording");
+        assert_eq!(board.ticks(), 40);
+        assert_eq!(replay.inputs.len(), 40, "one input a tick");
+        assert_eq!(
+            replay.playback().state_hash(),
+            board.state_hash(),
+            "and played back, the same beach"
+        );
+    }
+
     /// A round nobody is watching still stops when it is paused.
     #[test]
     fn a_paused_round_does_not_advance() {

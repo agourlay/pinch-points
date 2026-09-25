@@ -458,6 +458,16 @@ impl Lockstep {
     /// If every player's action for the next frame is known, pop it for
     /// simulation. `None` means "stall this render frame": never guess.
     pub fn advance(&mut self) -> Option<[PlayerAction; MAX_PLAYERS]> {
+        // Nothing waits for a frame already played: `receive` refuses one,
+        // and each frame's slot is taken as it is played. A stale slot
+        // would be a frame played twice, or a table that grows.
+        debug_assert!(
+            self.pending
+                .keys()
+                .next()
+                .is_none_or(|&at| at >= self.frame),
+            "inputs kept for a frame already played"
+        );
         let slot = self.slot(self.frame);
         if slot.iter().any(|a| a.is_none()) {
             return None;

@@ -216,6 +216,12 @@ pub(in crate::app) fn load_versus(
     };
     sim.0 = origin.board(daily.active, beaches, sandbox.0, pad_count);
     (bots.0, seats.0) = origin.table(config, &sim.0, pad_count);
+    // Every per-seat array is indexed by this, and every table needs two.
+    debug_assert!(
+        (2..=MAX_PLAYERS as u8).contains(&seats.0),
+        "a table of {} seats",
+        seats.0
+    );
     recorder.0 = origin
         .recorded()
         .then(|| Replay::new(Level::from_board("Turf War", 3, sim.0.clone())));

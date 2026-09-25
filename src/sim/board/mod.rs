@@ -587,6 +587,65 @@ impl Board {
             }
         }
         self.tick += 1;
+        #[cfg(debug_assertions)]
+        self.check_invariants();
+    }
+
+    /// What every tick must leave true, checked after each one in a debug
+    /// build (which is what the tests run). Each is something a later
+    /// reader relies on without looking:
+    ///
+    /// - a running timer has at least a tick left, because an expired one
+    ///   is cleared the tick it reaches zero, and the snapshot parser
+    ///   refuses a zero, so a board holding one could not be resumed or
+    ///   sent to a watcher catching up;
+    /// - a signpost stands on sand, since crabs turn on it and only sand
+    ///   takes one, and its sequence number is behind the counter, or the
+    ///   cap would evict the wrong post first;
+    /// - no seat holds more posts than the cap;
+    /// - every creature is on the board, which the tile indexing assumes;
+    /// - the golden crabs banked are some of the crabs banked.
+    #[cfg(debug_assertions)]
+    fn check_invariants(&self) {
+        for (what, left) in [
+            ("lure", self.lure.map(|(_, t)| t)),
+            ("mania", self.tide.mania.map(|(_, t)| t)),
+            ("tempo", self.tide.tempo.map(|(_, t)| t)),
+        ] {
+            debug_assert!(left != Some(0), "a {what} left running with no ticks");
+        }
+        let tiles = self.grid.tiles.len();
+        let mut held = [0usize; MAX_PLAYERS];
+        for (t, post) in self.signposts.iter().enumerate() {
+            let Some(post) = post else {
+                continue;
+            };
+            debug_assert_eq!(
+                self.grid.tiles[t],
+                TileKind::Empty,
+                "a signpost stands on a {:?} at tile {t}",
+                self.grid.tiles[t]
+            );
+            debug_assert!(post.seq < self.signpost_seq, "a signpost from the future");
+            if let Some(slot) = held.get_mut(usize::from(post.owner)) {
+                *slot += 1;
+            }
+        }
+        debug_assert!(
+            held.iter()
+                .all(|&n| n <= usize::from(self.rules.signpost_cap)),
+            "posts over the cap of {}: {held:?}",
+            self.rules.signpost_cap
+        );
+        debug_assert!(
+            self.crabs.iter().all(|crab| usize::from(crab.tile) < tiles),
+            "a crab off the board"
+        );
+        debug_assert!(
+            self.gulls.iter().all(|gull| usize::from(gull.tile) < tiles),
+            "a gull off the board"
+        );
+        debug_assert!(self.golden_banked <= self.crabs_banked);
     }
 
     /// The seat order this tick's actions are applied in: one seat leads,

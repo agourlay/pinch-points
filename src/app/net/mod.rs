@@ -751,6 +751,16 @@ impl OnlineSession {
                 NetMsg::Roster { .. } => {}
             }
         }
+        // One row per peer the socket has, and never a row for one it
+        // does not: rows are grown for a peer the socket just indexed and
+        // dropped with it when it is forgotten. A row past the socket's
+        // list is somebody else's seat, name or watch wish.
+        debug_assert!(
+            self.peers.len() <= self.transport.peer_count(),
+            "{} peer rows for {} peers",
+            self.peers.len(),
+            self.transport.peer_count()
+        );
         self.hashes.compare();
         if rearmed {
             return committed;

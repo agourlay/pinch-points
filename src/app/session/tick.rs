@@ -155,8 +155,22 @@ pub(in crate::app) fn advance_sim(
                 let before = awards::Reading::of(sim_board);
                 sim_board.tick(&frame_actions);
                 tally.observe(before, sim_board, &frame_actions);
+                // The board is at the lockstep's frame: the hash sent for a
+                // frame is this board's, and a late watcher is handed this
+                // board as that frame. Once the tide is in the board stops
+                // ticking and the frames go on, which is the one parting.
+                debug_assert!(
+                    sim_board.round_over() || sim_board.ticks() == u64::from(net.session.frame()),
+                    "board at tick {} for frame {}",
+                    sim_board.ticks(),
+                    net.session.frame()
+                );
                 if let Some(replay) = recording {
                     replay.record(frame_actions);
+                    debug_assert!(
+                        sim_board.round_over() || replay.inputs.len() as u64 == sim_board.ticks(),
+                        "a recording out of step with its round"
+                    );
                 }
                 net.after_frame(sim_board.state_hash());
                 advanced = true;
@@ -194,5 +208,11 @@ pub(in crate::app) fn advance_sim(
     tally.observe(before, &sim.0, &actions);
     if let Some(replay) = &mut recorder.0 {
         replay.record(actions);
+        // One input a tick from the first, or the replay plays out a
+        // different round: playback feeds them to a fresh board in order.
+        debug_assert!(
+            sim.0.round_over() || replay.inputs.len() as u64 == sim.0.ticks(),
+            "a recording out of step with its round"
+        );
     }
 }
