@@ -60,36 +60,15 @@ pub struct OnlineSession {
     /// from, so the shell can put an AI in each and say so once rather
     /// than every frame, and the host can keep telling the table.
     pub abandoned: Vec<(u8, u32)>,
-    /// How the spectators' vote stands, counted by the host and nobody else.
-    pub spectators: crate::app::spectators::SpectatorVotes,
-    /// The last word the host said about the crowd.
-    ///
-    /// Only the host counts, so every other peer keeps the host's word
-    /// here rather than a guess of its own. On the host it is what it is
-    /// about to say.
-    pub crowd: crate::app::spectators::Crowd,
-    /// Host: how long since it last said so.
-    ///
-    /// The word is repeated on a clock as well as on a change, because a
-    /// count that only changes once a round travels in exactly one
-    /// datagram, and UDP owes nobody that datagram. Worse than a lost
-    /// pause, which the next tick makes good: the crowd's size is settled
-    /// at the launch and never changes again, so the one send goes out
-    /// while a spectator is still walking out of the lobby, where the
-    /// lobby drops it as round business (`joining::work_the_socket`).
-    /// That left the crowd unable to see itself for the whole round.
-    pub(crate) crowd_said: f32,
-    /// An event the spectators settled on, waiting for a frame to ride out on.
-    ///
-    /// Held rather than sent: it goes out as this seat's action, which is
-    /// the only carriage a peer cannot advance past without.
-    pub pending_call: Option<crate::sim::TideEvent>,
     /// Lines said to the table since the shell last read them, each with
     /// who said it.
     ///
     /// Drained rather than kept: the round's own feed is where a line is
     /// shown, and the feed keeps its own history.
     pub heard: Vec<(String, String)>,
+    /// What the people without a chair are doing: the tide vote, the
+    /// crowd's size, the calls for the winner.
+    pub stands: crate::app::spectators::Stands,
     /// The beach this session came from, and what it owes it.
     pub home: Home,
     /// A next round has been agreed and the session is armed for it; the
@@ -104,30 +83,8 @@ pub struct OnlineSession {
     pub series_standing: Option<SeriesStanding>,
     /// Ticks of `Resume` still to repeat (see [`RESUME_ECHOES`]).
     resume_echo: u8,
-    /// The board this round is joined at, for a spectator that arrived
-    /// with it already running (`catch_up`): the arena starts from this
-    /// rather than building frame zero from the terms. `None` for every
-    /// round anyone was at from the start.
-    pub caught_up: Option<crate::sim::Board>,
-    /// The frame a caught-up watcher's session started from, which it has
-    /// to move off within a few seconds (see `catch_up_again`).
-    pub(crate) catch_up_frame: Option<u32>,
-    /// The host's word on the crowd's calls for the winner (on the host,
-    /// what it is about to say), like [`Self::crowd`].
-    pub picks: crate::app::spectators::Picks,
-    /// Host: whether the closing count has gone to the feed this round.
-    pub(crate) picks_said: bool,
-    /// A spectator's own call this round, if it made one.
-    pub my_pick: Option<u8>,
-    /// A spectator's calls over the whole session, for the results card.
-    pub calls: crate::app::spectators::Calls,
-    /// How this round's call went, once the tide is in: the seat, and
-    /// whether it won.
-    pub last_call: Option<(u8, bool)>,
-    /// Host: the late watchers owed the round as it stands, sent once the
-    /// frames of this tick have been simulated and the board is the one
-    /// the lockstep's frame says.
-    owed_catch_up: Vec<usize>,
+    /// A round joined late, or owed to someone who came late to it.
+    pub catch_up: catch_up::CatchUp,
 }
 
 /// The beach a session came from: its beacon, what it is called, and
@@ -339,152 +296,6 @@ pub struct LobbyReturn {
 #[derive(Resource, Default)]
 pub struct Online(pub Option<OnlineSession>);
 
-impl OnlineSession {
-    /// Whether `peer` was dealt a place watching this round.
-    ///
-    /// The place itself, and nothing derived from it. Not `Peer::watches`,
-    /// which is a wish as much as a place: true of somebody in line for
-    /// the *next* round, who is sent no frames and sees nothing, and of a
-    /// seated player that has asked to watch next time while still
-    /// playing this one.
-    ///
-    /// And not "follows the round without a chair" either, which is what
-    /// this asked first. That reads right until the book holds no plan,
-    /// which `follows_the_round` treats as "everybody hears" so that a
-    /// joiner and the direct `PINCH_HOST` pair keep talking to the one
-    /// peer they have. In a direct pair the host then had its opponent
-    /// down as a spectator: counted in the audience, and allowed to call
-    /// tide events onto the game it was playing.
-    pub fn watching_this_round(&self, peer: usize) -> bool {
-        self.peers
-            .get(peer)
-            .is_some_and(|peer| matches!(peer.place, Place::Watching | Place::LateWatching))
-    }
-
-    /// How many are watching this round.
-    pub fn watchers_in_round(&self) -> usize {
-        (0..self.peers.len())
-            .filter(|&peer| self.watching_this_round(peer))
-            .count()
-    }
-
-    /// Drop a vote still being argued over, without touching the wait.
-    pub fn forget_open_vote(&mut self) {
-        self.spectators.forget_open();
-    }
-
-    /// Forget the vote and the wait both, the round being over.
-    pub fn forget_spectator_votes(&mut self) {
-        self.spectators.forget_all();
-    }
-
-    /// Take a pick for the next tide event, from someone entitled to make
-    /// one.
-    ///
-    /// Counted only from a peer watching this round. The sender used to go
-    /// unread, so a seated player could call tide events down on the table
-    /// it was playing at, and a peer in line for the next round, sent no
-    /// frames and with no board on screen, could vote on this one. With
-    /// nobody watching at all, one stray datagram had the beach announcing
-    /// what the spectators had called.
-    ///
-    /// Its own function, like [`Self::take_chat`], because the rule about
-    /// who may be heard is the part worth being able to test.
-    fn take_vote(&mut self, host: bool, from: usize, event: u8) {
-        if host && self.watching_this_round(from) {
-            self.spectators.cast(event);
-        }
-    }
-
-    /// Host: seconds left for the crowd to call the winner, zero once the
-    /// calls are in. From the lockstep's frame, which is where the round is
-    /// for everybody.
-    pub fn picks_open_for(&self) -> u8 {
-        use crate::app::spectators::PICKS_OPEN_FOR;
-        let frame = self.session.frame();
-        let left = PICKS_OPEN_FOR.saturating_sub(frame);
-        left.div_ceil(crate::sim::TICKS_PER_SECOND)
-            .min(u32::from(u8::MAX)) as u8
-    }
-
-    /// Host: the calls as they stand, counted from the peers watching this
-    /// round alone.
-    pub fn crowd_picks_now(&self) -> crate::app::spectators::Picks {
-        let mut counts = [0u8; MAX_PLAYERS];
-        for peer in 0..self.peers.len() {
-            if !self.watching_this_round(peer) {
-                continue;
-            }
-            if let Some(seat) = self.peers.get(peer).and_then(|row| row.pick)
-                && seat < self.seats
-            {
-                counts[usize::from(seat)] = counts[usize::from(seat)].saturating_add(1);
-            }
-        }
-        crate::app::spectators::Picks {
-            counts,
-            open: self.picks_open_for(),
-        }
-    }
-
-    /// Take a call for the winner, from someone entitled to make one, while
-    /// the calls are open. Watching this round, as with the vote, and a
-    /// seat at this table.
-    fn take_pick(&mut self, host: bool, from: usize, seat: u8) {
-        if host && self.watching_this_round(from) && seat < self.seats && self.picks_open_for() > 0
-        {
-            self.peers.row(from).pick = Some(seat);
-        }
-    }
-
-    /// Take a line said to the table, and pass it on if this is the hub.
-    ///
-    /// Two jobs the lobby already does and the round did not. A spoke
-    /// cannot hear another spoke, so a line reaches the table only by the
-    /// host repeating it: without that, "say something to the table" said
-    /// it to exactly one person. And the name is checked against the one
-    /// the peer greeted with, because an empty name is the beach's own
-    /// voice here (it is what announces a called event), so a peer that
-    /// has a name may not drop it and speak as the room.
-    fn take_chat(
-        &self,
-        host: bool,
-        from: usize,
-        name: crate::transport::WireName,
-        text: crate::transport::WireChat,
-    ) -> Option<(String, String)> {
-        // Host side only, as in the lobby. The hub vets what it repeats,
-        // and a spoke takes the vetted line as it stands: a joiner that
-        // re-applied this would stamp the host's name onto the beach's own
-        // voice, which is the one line that is supposed to have none.
-        let known = match host {
-            true => self.peers.get(from).map_or("", |peer| peer.name.as_str()),
-            false => "",
-        };
-        let name = match known.is_empty() {
-            false => crate::transport::wire_name(known),
-            true => name,
-        };
-        let (who, line) = (name_from_wire(&name), chat_from_wire(&text));
-        if line.is_empty() {
-            return None;
-        }
-        // The beach's own voice is the host's to use, so on the hub a line
-        // that ends up nameless is refused outright rather than repeated:
-        // a watcher greets with a bare `Watch` and may never have said
-        // what to call it, and one that has no name is not the room. A
-        // spoke has only the hub to hear from, so a nameless line reaching
-        // it came from the beach and is passed through.
-        if host && who.is_empty() {
-            return None;
-        }
-        if host {
-            relay(&self.transport, from, NetMsg::Chat { name, text });
-        }
-        Some((who, line))
-    }
-}
-
 /// Pass `msg` from peer `from` on to every other peer. Star topology: the
 /// spokes cannot hear each other, so whatever one says reaches the rest
 /// only by the hub repeating it, and inputs, pauses, resumes and chat
@@ -507,6 +318,7 @@ pub fn poll_between_rounds(time: Res<Time>, mut online: ResMut<Online>) {
 }
 
 pub(crate) mod catch_up;
+mod crowd;
 mod peers;
 mod presence;
 mod rounds;
@@ -532,23 +344,13 @@ impl OnlineSession {
             hashes: HashCheck::default(),
             stall: StallWatch::default(),
             abandoned: Vec::new(),
-            spectators: crate::app::spectators::SpectatorVotes::default(),
-            crowd: crate::app::spectators::Crowd::default(),
-            crowd_said: 0.0,
-            pending_call: None,
             heard: Vec::new(),
+            stands: Default::default(),
             home: Home::nowhere(),
             next_round: false,
             series_standing: None,
             resume_echo: 0,
-            caught_up: None,
-            catch_up_frame: None,
-            picks: Default::default(),
-            picks_said: false,
-            my_pick: None,
-            calls: Default::default(),
-            last_call: None,
-            owed_catch_up: Vec::new(),
+            catch_up: Default::default(),
         }
     }
 
@@ -630,23 +432,13 @@ impl OnlineSession {
             hashes: _,
             stall: _,
             abandoned: _,
-            spectators: _,
-            crowd: _,
-            crowd_said: _,
-            pending_call: _,
             heard: _,
+            stands: _,
             home,
             next_round: _,
             series_standing: _,
             resume_echo: _,
-            caught_up: _,
-            catch_up_frame: _,
-            picks: _,
-            picks_said: _,
-            my_pick: _,
-            calls: _,
-            last_call: _,
-            owed_catch_up: _,
+            catch_up: _,
         } = self;
         let Home {
             announcer,
@@ -797,8 +589,8 @@ impl OnlineSession {
                         }
                         self.note_watch_wish(from);
                         self.peers.row(from).place = Place::LateWatching;
-                        if !self.owed_catch_up.contains(&from) {
-                            self.owed_catch_up.push(from);
+                        if !self.catch_up.owed.contains(&from) {
+                            self.catch_up.owed.push(from);
                         }
                     } else if host {
                         let answer = self.answer_greeting(from, &name_from_wire(&name), true);
@@ -921,7 +713,7 @@ impl OnlineSession {
                     wait,
                 } => {
                     if !host {
-                        self.crowd = crate::app::spectators::Crowd {
+                        self.stands.crowd = crate::app::spectators::Crowd {
                             watching,
                             open,
                             wait,
@@ -941,7 +733,7 @@ impl OnlineSession {
                 // The host's word on the calls, like the tally.
                 NetMsg::CrowdPicks { picks, open } => {
                     if !host {
-                        self.picks = crate::app::spectators::Picks {
+                        self.stands.picks = crate::app::spectators::Picks {
                             counts: picks,
                             open,
                         };
@@ -970,57 +762,6 @@ impl OnlineSession {
         }
         self.hashes.compare();
         committed
-    }
-
-    /// Host: whether `peer` came to watch after the launch, and so is one
-    /// the round has to be handed to rather than one that has it already.
-    ///
-    /// A table formed in the lobby, however small: a host that launched
-    /// against the AI with nobody else aboard keeps an empty plan, and every
-    /// greeting after it is a latecomer. The direct `PINCH_HOST` pair has
-    /// no lobby and no watchers to catch up.
-    fn late_watcher(&self, peer: usize) -> bool {
-        self.home.from_lobby && self.queue_place(peer).is_some()
-    }
-
-    /// Host: send each late watcher owed one the round as it stands.
-    ///
-    /// Called after `pump`, with the board it has just simulated: that
-    /// board is at the lockstep's frame, which is the frame the watcher's
-    /// session will start from. Each part goes to the watcher alone.
-    pub fn send_catch_ups(&mut self, board: &crate::sim::Board) {
-        if self.owed_catch_up.is_empty() {
-            return;
-        }
-        let frame = self.session.frame();
-        // A round the tide has ended: the board stops ticking while the
-        // lockstep still counts frames, so the two part, and there is
-        // nothing left to watch anyway. The watcher keeps greeting and is
-        // answered between rounds like everybody else.
-        if board.round_over() || board.ticks() != u64::from(frame) {
-            self.owed_catch_up.clear();
-            return;
-        }
-        let parts = catch_up::pack(&self.start_msg(None), frame, board);
-        for peer in std::mem::take(&mut self.owed_catch_up) {
-            if parts.is_empty() {
-                // A board too big to send. No board this game builds comes
-                // near, but a watcher sent nothing would greet for ever, so
-                // it gets what every latecomer used to: a place in line.
-                self.peers.row(peer).place = Place::Queued;
-                let name = self
-                    .peers
-                    .get(peer)
-                    .map(|p| p.name.clone())
-                    .unwrap_or_default();
-                let answer = self.answer_greeting(peer, &name, true);
-                self.transport.send_to(peer, answer);
-                continue;
-            }
-            for part in &parts {
-                self.transport.send_to(peer, part.clone());
-            }
-        }
     }
 
     /// Called by the tick closure after simulating a frame, with the fresh
@@ -1261,7 +1002,7 @@ mod homecoming_tests {
     #[test]
     fn a_vote_is_taken_only_from_someone_watching() {
         let sand = crate::sim::TideEvent::FreshSand.index() as u8;
-        let open = |session: &OnlineSession| session.spectators.open().is_some();
+        let open = |session: &OnlineSession| session.stands.votes.open().is_some();
 
         // Seated: a player may not call the tide down on its own table.
         let mut session = hosting_session(1);
@@ -1310,7 +1051,7 @@ mod homecoming_tests {
 
         session.take_vote(true, 0, crate::sim::TideEvent::FreshSand.index() as u8);
         assert!(
-            session.spectators.open().is_none(),
+            session.stands.votes.open().is_none(),
             "and it cannot call the tide onto the game it is playing"
         );
     }
@@ -1621,193 +1362,5 @@ mod hash_tests {
         hashes.reset();
         hashes.compare();
         assert_eq!(hashes.desync_at, None, "and the new board is level");
-    }
-}
-
-#[cfg(test)]
-mod catch_up_tests {
-    use super::*;
-    use crate::sim::{DEFAULT_DELAY, InputMsg, generate_arena};
-
-    /// Everything waiting on `socket`, after giving it a moment to arrive.
-    fn drain(socket: &mut UdpTransport) -> Vec<NetMsg> {
-        let mut heard = Vec::new();
-        for _ in 0..40 {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            heard.extend(socket.recv_all().into_iter().map(|(msg, _)| msg));
-        }
-        heard
-    }
-
-    /// The whole walk over real sockets: a host sixty frames into a round,
-    /// a watcher greeting it, and the round arriving at the watcher in
-    /// parts that put back together into the host's own board at the
-    /// host's own frame. A player greeting at the same moment is still put
-    /// in line: a round in progress can take an onlooker, not a chair.
-    #[test]
-    fn a_watcher_greeting_mid_round_is_sent_the_round_and_a_player_is_queued() {
-        let mut host = OnlineSession::new(
-            UdpTransport::host(0).expect("host socket"),
-            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
-            2,
-            MatchTerms::default(),
-        );
-        host.home.from_lobby = true;
-        let port = host.transport.local_addr().expect("addr").port();
-        let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
-        bo.send(NetMsg::hello("Bo"));
-        drain(&mut host.transport);
-        host.peers.deal(&[Some(1)]);
-
-        // Sixty frames of round, Bo's inputs arriving as they would.
-        let mut board = generate_arena(3, 2, 12, 9);
-        for frame in 0..60 {
-            host.session.commit_local(PlayerAction::None);
-            host.session.receive(InputMsg {
-                player: 1,
-                frame: DEFAULT_DELAY + frame,
-                action: PlayerAction::None,
-            });
-            while let Some(actions) = host.session.advance() {
-                board.tick(&actions);
-            }
-        }
-        assert!(host.session.frame() > 50);
-
-        let mut dee = UdpTransport::join(("127.0.0.1", port)).expect("join");
-        dee.send(NetMsg::watch("Dee"));
-        let mut cy = UdpTransport::join(("127.0.0.1", port)).expect("join");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        cy.send(NetMsg::hello("Cy"));
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        host.pump(PlayerAction::None, |_| {});
-        host.send_catch_ups(&board);
-
-        assert_eq!(host.peers.planned(), 1, "the plan is still the launch's");
-        assert_eq!(
-            host.peers.get(1).map(|p| p.place),
-            Some(Place::LateWatching)
-        );
-        assert!(
-            host.peers.follows_the_round(1),
-            "Dee is sent the round from now on"
-        );
-        assert!(host.watching_this_round(1), "and counts in the crowd");
-        assert!(!host.peers.follows_the_round(2), "Cy, in line, is not");
-
-        let mut assembly = catch_up::Assembly::default();
-        let caught = drain(&mut dee)
-            .into_iter()
-            .find_map(|msg| {
-                let NetMsg::CatchUp {
-                    frame,
-                    part,
-                    parts,
-                    bytes,
-                } = msg
-                else {
-                    return None;
-                };
-                assembly.take(frame, part, parts, bytes)
-            })
-            .expect("the round arrived whole");
-        assert_eq!(caught.frame, host.session.frame());
-        assert_eq!(caught.board.state_hash(), board.state_hash());
-        assert_eq!(caught.invitation.seat, None);
-        let session = OnlineSession::caught_up(dee, caught);
-        assert!(session.watching());
-        assert_eq!(session.session.frame(), host.session.frame());
-        assert!(session.caught_up.is_some());
-
-        let queued = drain(&mut cy)
-            .into_iter()
-            .any(|msg| matches!(msg, NetMsg::Queued { .. }));
-        assert!(queued, "a player arriving mid-round waits for the next one");
-    }
-
-    /// The direct `PINCH_HOST` pair has no lobby and nobody to catch up.
-    /// A lobby host playing the AI alone keeps no plan either, and there
-    /// everyone who greets is a latecomer.
-    #[test]
-    fn a_lobby_table_catches_up_whoever_came_late_however_small() {
-        let mut host = OnlineSession::new(
-            UdpTransport::host(0).expect("host socket"),
-            Lockstep::new(0, vec![0], DEFAULT_DELAY),
-            2,
-            MatchTerms::default(),
-        );
-        assert!(!host.late_watcher(0), "the direct pair");
-        host.home.from_lobby = true;
-        assert_eq!(host.peers.planned(), 0, "nobody else sat down");
-        assert!(host.late_watcher(0), "the host alone with the AI");
-        host.peers.deal(&[Some(1)]);
-        assert!(!host.late_watcher(0), "one at the launch is not late");
-        assert!(host.late_watcher(1));
-    }
-
-    /// Once the tide is in the board stops ticking and nothing is sent: the
-    /// watcher is owed nothing more, and asks again between rounds.
-    #[test]
-    fn a_finished_round_is_not_sent_to_anybody() {
-        let mut host = OnlineSession::new(
-            UdpTransport::host(0).expect("host socket"),
-            Lockstep::new(0, vec![0], DEFAULT_DELAY),
-            2,
-            MatchTerms::default(),
-        );
-        host.home.from_lobby = true;
-        let port = host.transport.local_addr().expect("addr").port();
-        let mut dee = UdpTransport::join(("127.0.0.1", port)).expect("join");
-        dee.send(NetMsg::watch("Dee"));
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        host.pump(PlayerAction::None, |_| {});
-        let mut board = generate_arena(3, 2, 12, 9);
-        board.set_round_length(Some(0));
-        assert!(board.round_over());
-        host.send_catch_ups(&board);
-        assert!(host.owed_catch_up.is_empty());
-        let sent = drain(&mut dee)
-            .into_iter()
-            .any(|msg| matches!(msg, NetMsg::CatchUp { .. }));
-        assert!(!sent, "nothing to watch, nothing sent");
-    }
-
-    /// A caught-up watcher that never moves off its first frame goes back
-    /// to the lobby to be caught up again, rather than standing on a still
-    /// beach until the host gives up on it. One that is moving stays.
-    #[test]
-    fn a_watcher_stuck_on_its_first_frame_asks_again() {
-        use crate::app::Screen;
-        for stuck in [true, false] {
-            let mut app = App::new();
-            app.add_plugins(bevy::state::app::StatesPlugin);
-            app.init_state::<Screen>();
-            app.init_resource::<Time>();
-            app.init_resource::<crate::app::lobby::Homecoming>();
-            let mut session = OnlineSession::new(
-                UdpTransport::join(("127.0.0.1", 47998)).expect("join"),
-                Lockstep::observer_from(vec![0, 1], DEFAULT_DELAY, 400),
-                2,
-                MatchTerms::default(),
-            );
-            session.catch_up_frame = Some(if stuck { 400 } else { 399 });
-            app.insert_resource(Online(Some(session)));
-            app.add_systems(Update, catch_up_again);
-            for _ in 0..4 {
-                app.world_mut()
-                    .resource_mut::<Time>()
-                    .advance_by(std::time::Duration::from_secs(1));
-                app.update();
-            }
-            let gone = app.world().resource::<Online>().0.is_none();
-            assert_eq!(gone, stuck);
-            assert_eq!(
-                app.world()
-                    .resource::<crate::app::lobby::Homecoming>()
-                    .0
-                    .is_some(),
-                stuck
-            );
-        }
     }
 }

@@ -385,7 +385,7 @@ pub fn update_hud(
             crowd: online
                 .0
                 .as_ref()
-                .map_or_else(Default::default, |session| session.crowd),
+                .map_or_else(Default::default, |session| session.stands.crowd),
             speed: speed.0,
         },
     );

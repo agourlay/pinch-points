@@ -386,7 +386,7 @@ pub(crate) fn catch_up_again(
     mut stuck: Local<f32>,
 ) {
     let waiting = online.0.as_ref().is_some_and(|session| {
-        session.catch_up_frame == Some(session.session.frame()) && !session.session.paused()
+        session.catch_up.from_frame == Some(session.session.frame()) && !session.session.paused()
     });
     if !waiting {
         *stuck = 0.0;

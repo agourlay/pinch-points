@@ -72,6 +72,72 @@ pub struct Calls {
     pub made: u32,
 }
 
+/// Where the people without a chair stand in a round: their tide vote as
+/// the host counts it and the host's word on it, a call settled and
+/// waiting for a frame, and their calls for the winner. Every peer keeps
+/// one; the host is the one that fills in the counts.
+#[derive(Default)]
+pub struct Stands {
+    /// How the spectators' tide vote stands, counted by the host and
+    /// nobody else.
+    pub votes: SpectatorVotes,
+    /// The last word the host said about the crowd.
+    ///
+    /// Only the host counts, so every other peer keeps the host's word
+    /// here rather than a guess of its own. On the host it is what it is
+    /// about to say.
+    pub crowd: Crowd,
+    /// Host: how long since it last said so.
+    ///
+    /// The word is repeated on a clock as well as on a change, because a
+    /// count that only changes once a round travels in exactly one
+    /// datagram, and UDP owes nobody that datagram. Worse than a lost
+    /// pause, which the next tick makes good: the crowd's size is settled
+    /// at the launch and never changes again, so the one send goes out
+    /// while a spectator is still walking out of the lobby, where the
+    /// lobby drops it as round business (`joining::work_the_socket`).
+    /// That left the crowd unable to see itself for the whole round.
+    pub crowd_said: f32,
+    /// An event the spectators settled on, waiting for a frame to ride out on.
+    ///
+    /// Held rather than sent: it goes out as this seat's action, which is
+    /// the only carriage a peer cannot advance past without.
+    pub pending_call: Option<TideEvent>,
+    /// The host's word on the crowd's calls for the winner (on the host,
+    /// what it is about to say), like [`Self::crowd`].
+    pub picks: Picks,
+    /// Host: whether the closing count has gone to the feed this round.
+    pub picks_said: bool,
+    /// A spectator's own call this round, if it made one.
+    pub my_pick: Option<u8>,
+    /// A spectator's calls over the whole session, for the results card.
+    pub calls: Calls,
+    /// How this round's call went, once the tide is in: the seat, and
+    /// whether it won.
+    pub last_call: Option<(u8, bool)>,
+}
+
+impl Stands {
+    /// A new round: every call is for one round, while the record of them
+    /// is the session's, and the vote's wait carries on with the crowd.
+    pub fn new_round(&mut self) {
+        self.picks = Picks::default();
+        self.picks_said = false;
+        self.my_pick = None;
+        self.last_call = None;
+    }
+
+    /// Leaving the round: the settled-but-unsent call, the vote and its
+    /// wait, and the last word about a crowd that has gone home, which
+    /// would otherwise be carried into the next round until the host's
+    /// first send happened to differ from it.
+    pub fn leave_round(&mut self) {
+        self.pending_call = None;
+        self.votes.forget_all();
+        self.crowd = Crowd::default();
+    }
+}
+
 /// The line a spectator is typing, if one is open.
 ///
 /// Its own resource rather than a field on the session: the session is
@@ -287,7 +353,7 @@ pub fn settle_spectator_vote(
         // it came in settles onto nothing, rather than waiting in hand for
         // a frame and firing at the start of the next round, called by
         // nobody who is still watching.
-        session.forget_open_vote();
+        session.stands.votes.forget_open();
         return;
     }
     // What the crowd is told, before anything settles. Said when it
@@ -297,17 +363,19 @@ pub fn settle_spectator_vote(
     let crowd = Crowd {
         watching: session.watchers_in_round().min(u8::MAX as usize) as u8,
         open: session
-            .spectators
+            .stands
+            .votes
             .open()
             .map_or(0, |left| left.ceil() as u8),
         wait: session
-            .spectators
+            .stands
+            .votes
             .waiting()
             .map_or(0, |left| left.ceil() as u8),
     };
-    let again = crate::app::lobby::once_a_second(&mut session.crowd_said, time.delta_secs());
-    if crowd != session.crowd || again {
-        session.crowd = crowd;
+    let again = crate::app::lobby::once_a_second(&mut session.stands.crowd_said, time.delta_secs());
+    if crowd != session.stands.crowd || again {
+        session.stands.crowd = crowd;
         session.transport.send(NetMsg::SpectatorTally {
             watching: crowd.watching,
             open: crowd.open,
@@ -321,19 +389,19 @@ pub fn settle_spectator_vote(
     // Counted until they close and then held, so a spectator who leaves
     // afterwards does not take their call out of a count the feed has
     // already read out and the results card will quote.
-    let picks = match session.picks_said {
-        true => session.picks,
+    let picks = match session.stands.picks_said {
+        true => session.stands.picks,
         false => session.crowd_picks_now(),
     };
-    if picks != session.picks || again {
-        session.picks = picks;
+    if picks != session.stands.picks || again {
+        session.stands.picks = picks;
         session.transport.send(NetMsg::CrowdPicks {
             picks: picks.counts,
             open: picks.open,
         });
     }
-    if picks.open == 0 && !session.picks_said {
-        session.picks_said = true;
+    if picks.open == 0 && !session.stands.picks_said {
+        session.stands.picks_said = true;
         if picks.any() {
             let tr = settings.tr();
             let names = &session.names;
@@ -346,10 +414,10 @@ pub fn settle_spectator_vote(
             session.heard.push((String::new(), line));
         }
     }
-    let Some(event) = session.spectators.settle(time.delta_secs()) else {
+    let Some(event) = session.stands.votes.settle(time.delta_secs()) else {
         return;
     };
-    session.pending_call = Some(event);
+    session.stands.pending_call = Some(event);
     // Said by the room rather than by anyone in it: an empty name is the
     // beach's own voice, which is how the lobby already spells "this is
     // not a person talking".
@@ -393,7 +461,7 @@ pub fn spectator_pick_input(
         }
     };
     let playing = *phase.get() == crate::app::VersusPhase::Running;
-    let open = online.0.as_ref().is_some_and(|s| s.picks.open > 0);
+    let open = online.0.as_ref().is_some_and(|s| s.stands.picks.open > 0);
     if !is_spectating(&online) || chat.open() || events.0 || !playing || !open {
         if card.0 {
             shut(&mut commands, &mut card);
@@ -404,7 +472,7 @@ pub fn spectator_pick_input(
         return;
     };
     if crate::app::lobby::once_a_second(&mut resend, time.delta_secs())
-        && let Some(seat) = session.my_pick
+        && let Some(seat) = session.stands.my_pick
     {
         session.transport.send(NetMsg::SpectatorPick { seat });
     }
@@ -434,7 +502,7 @@ pub fn spectator_pick_input(
     {
         if keys.just_pressed(key) {
             let seat = seat as u8;
-            session.my_pick = Some(seat);
+            session.stands.my_pick = Some(seat);
             session.transport.send(NetMsg::SpectatorPick { seat });
             shut(&mut commands, &mut card);
             return;
@@ -498,13 +566,17 @@ pub fn score_the_call(
     let Some(session) = &mut online.0 else {
         return;
     };
-    let Some(seat) = session.my_pick.filter(|_| session.session.watching()) else {
+    let Some(seat) = session
+        .stands
+        .my_pick
+        .filter(|_| session.session.watching())
+    else {
         return;
     };
     let right = winners[usize::from(seat)];
-    session.calls.made += 1;
-    session.calls.right += u32::from(right);
-    session.last_call = Some((seat, right));
+    session.stands.calls.made += 1;
+    session.stands.calls.right += u32::from(right);
+    session.stands.last_call = Some((seat, right));
 }
 
 /// The spectators' event list, while one has it open.
@@ -641,12 +713,7 @@ pub fn forget_spectating(
         commands.entity(entity).despawn();
     }
     if let Some(session) = &mut online.0 {
-        session.pending_call = None;
-        session.forget_spectator_votes();
-        // The last word about a crowd that has gone home, which would
-        // otherwise be carried into the next round until the host's first
-        // send happened to differ from it.
-        session.crowd = Crowd::default();
+        session.stands.leave_round();
     }
 }
 
@@ -699,7 +766,7 @@ mod tests {
     /// The host's word that the calls are open, as it would arrive.
     fn calls_open(app: &mut App, open: u8) {
         if let Some(session) = &mut app.world_mut().resource_mut::<Online>().0 {
-            session.picks.open = open;
+            session.stands.picks.open = open;
         }
     }
 
@@ -708,7 +775,7 @@ mod tests {
             .resource::<Online>()
             .0
             .as_ref()
-            .and_then(|s| s.my_pick)
+            .and_then(|s| s.stands.my_pick)
     }
 
     /// P opens the seats while the calls are open, a number calls one and
@@ -771,7 +838,7 @@ mod tests {
             app.insert_resource(crate::app::Sim(board));
             app.insert_resource(crate::app::settings::GameSettings::default());
             let mut watcher = session(None);
-            watcher.my_pick = Some(pick);
+            watcher.stands.my_pick = Some(pick);
             app.insert_resource(Online(Some(watcher)));
             app.add_systems(Update, score_the_call);
             app.update();
@@ -781,9 +848,9 @@ mod tests {
                 .0
                 .as_ref()
                 .expect("session");
-            assert_eq!(session.last_call, Some((pick, right)));
+            assert_eq!(session.stands.last_call, Some((pick, right)));
             assert_eq!(
-                (session.calls.right, session.calls.made),
+                (session.stands.calls.right, session.stands.calls.made),
                 (u32::from(right), 1)
             );
         }
@@ -1146,7 +1213,10 @@ mod tests {
             {
                 let mut online = app.world_mut().resource_mut::<Online>();
                 let session = online.0.as_mut().expect("a session");
-                session.spectators.cast(TideEvent::FreshSand.index() as u8);
+                session
+                    .stands
+                    .votes
+                    .cast(TideEvent::FreshSand.index() as u8);
             }
             app.world_mut()
                 .resource_mut::<Time>()
@@ -1159,6 +1229,7 @@ mod tests {
                 .0
                 .as_ref()
                 .expect("a session")
+                .stands
                 .pending_call;
             assert_eq!(call, expected, "seat {seat}");
         }
@@ -1234,8 +1305,11 @@ mod tests {
         {
             let mut online = app.world_mut().resource_mut::<Online>();
             let session = online.0.as_mut().expect("a session");
-            session.pending_call = Some(TideEvent::CastleSwap);
-            session.spectators.cast(TideEvent::FreshSand.index() as u8);
+            session.stands.pending_call = Some(TideEvent::CastleSwap);
+            session
+                .stands
+                .votes
+                .cast(TideEvent::FreshSand.index() as u8);
         }
 
         let _ = app.world_mut().run_system_once(forget_spectating);
@@ -1252,8 +1326,11 @@ mod tests {
         );
         let online = app.world().resource::<Online>();
         let session = online.0.as_ref().expect("a session");
-        assert_eq!(session.pending_call, None, "no call waiting on a frame");
-        assert!(session.spectators.open().is_none(), "no vote still open");
+        assert_eq!(
+            session.stands.pending_call, None,
+            "no call waiting on a frame"
+        );
+        assert!(session.stands.votes.open().is_none(), "no vote still open");
     }
 
     /// The crowd's size is said again on a clock, not only when it moves.

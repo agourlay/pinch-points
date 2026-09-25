@@ -57,26 +57,6 @@ impl OnlineSession {
         session
     }
 
-    /// A watcher's session for a round already running: the invitation as
-    /// the launch would have given it, then a lockstep that starts at the
-    /// frame the host's board was taken at, and that board for the arena
-    /// to start from (see `catch_up`).
-    pub fn caught_up(transport: UdpTransport, caught: super::catch_up::CaughtUp) -> OnlineSession {
-        let super::catch_up::CaughtUp {
-            invitation,
-            frame,
-            board,
-        } = caught;
-        let humans = invitation.terms.humans(invitation.seats);
-        let mut session = OnlineSession::invited(transport, invitation);
-        session.session =
-            Lockstep::observer_from((0..humans).collect(), crate::sim::DEFAULT_DELAY, frame);
-        session.stall.reset(frame);
-        session.caught_up = Some(board);
-        session.catch_up_frame = Some(frame);
-        session
-    }
-
     /// Take up an invitation: the host's beach, the table's names, and a
     /// round begun afresh on its terms (see [`Self::begin_round`] for
     /// everything that resets). Does not arm `next_round`, which is the
@@ -432,14 +412,8 @@ impl OnlineSession {
         self.hashes.reset();
         self.resume_echo = 0;
         // A new round is everyone's from its first frame.
-        self.caught_up = None;
-        self.catch_up_frame = None;
-        self.owed_catch_up.clear();
-        // Every call is for one round; the record of them is the session's.
-        self.picks = Default::default();
-        self.picks_said = false;
-        self.my_pick = None;
-        self.last_call = None;
+        self.catch_up = Default::default();
+        self.stands.new_round();
         for peer in self.peers.iter_mut() {
             peer.pick = None;
         }

@@ -109,7 +109,7 @@ pub(super) fn load_versus(
     } else if let Some((replay, _)) = &playback.0 {
         replay.level.board()
     } else if let Some(session) = &online.0 {
-        match &session.caught_up {
+        match &session.catch_up.board {
             // A watcher who arrived mid-round starts where the host's board
             // was when it was sent (`net::catch_up`).
             Some(board) => board.clone(),
@@ -185,7 +185,10 @@ pub(super) fn load_versus(
     // a pasted round is not recorded at all, which every reader of the
     // recorder already allows for.
     // A watcher caught up mid-round has no first tick either.
-    let caught_up = online.0.as_ref().is_some_and(|s| s.caught_up.is_some());
+    let caught_up = online
+        .0
+        .as_ref()
+        .is_some_and(|s| s.catch_up.board.is_some());
     recorder.0 = if playback.0.is_none() && resumed.is_none() && !caught_up {
         Some(Replay::new(Level::from_board("Turf War", 3, sim.0.clone())))
     } else {
@@ -467,7 +470,7 @@ pub(super) fn advance_sim(
         // has one action a frame like everybody else, so a call takes the
         // frame its own placement would have had, and that placement waits
         // rather than being thrown away.
-        let call = session.pending_call;
+        let call = session.stands.pending_call;
         let action = match call {
             Some(event) => PlayerAction::CallEvent(event),
             None => local.map_or(PlayerAction::None, |seat| pending.0[seat]),
@@ -524,7 +527,7 @@ pub(super) fn advance_sim(
             // commit leaves it for the next frame, or they would have
             // voted for nothing.
             if committed {
-                session.pending_call = None;
+                session.stands.pending_call = None;
             }
         } else if let Some(seat) = local
             && (committed || session.session.paused())
