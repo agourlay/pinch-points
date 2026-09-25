@@ -43,14 +43,14 @@ impl Board {
                 continue;
             };
             // Manias override the cadence: floods every 8 ticks.
-            let period = match self.mania {
+            let period = match self.tide.mania {
                 Some((Mania::Crab | Mania::Gull, _)) => 8,
                 None => u64::from(s.period),
             };
             if !self.tick.is_multiple_of(period) {
                 continue;
             }
-            if let Some((Mania::Gull, _)) = self.mania {
+            if let Some((Mania::Gull, _)) = self.tide.mania {
                 // Balance: the mania flood is dramatic but bounded. Beyond
                 // three flocks' worth the beach becomes unplayable for the
                 // rest of the round (mania gulls only leave by raiding).
@@ -64,7 +64,7 @@ impl Board {
             // Crab Mania floods past it, which is the event, but only to
             // twice the cap, the same way Gull Mania stops at three flocks:
             // unbounded, it buried the board under two crabs a tile.
-            let ceiling = match self.mania {
+            let ceiling = match self.tide.mania {
                 Some((Mania::Crab, _)) => self.crab_cap() * 2,
                 _ => self.crab_cap(),
             };
@@ -156,7 +156,7 @@ impl Board {
         }
         // Sparkling banks spin the roulette only now: events like Monopoly
         // drain the crab list, which must not happen mid-iteration.
-        let queued = std::mem::take(&mut self.event_queue);
+        let queued = std::mem::take(&mut self.tide.queue);
         for banker in queued {
             self.spin_tide_event(banker);
         }
@@ -186,7 +186,7 @@ impl Board {
                     }
                 }
                 CrabKind::Golden => self.golden_banked += 1,
-                CrabKind::Sparkling => self.event_queue.push(owner),
+                CrabKind::Sparkling => self.tide.queue.push(owner),
                 CrabKind::Common | CrabKind::Juvenile | CrabKind::Giant => {}
             }
             return true;

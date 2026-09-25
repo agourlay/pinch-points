@@ -60,7 +60,7 @@ impl Board {
         if !self.rules.castle_raids {
             let _ = writeln!(out, "raids: off");
         }
-        if self.events_enabled {
+        if self.tide.enabled {
             let _ = writeln!(out, "events: on");
         }
         if let Some((owner, ticks)) = self.lure {
@@ -69,27 +69,27 @@ impl Board {
         if self.lure_cooldown > 0 {
             let _ = writeln!(out, "cooldown: {}", self.lure_cooldown);
         }
-        if self.event_cooldown > 0 {
-            let _ = writeln!(out, "event_cooldown: {}", self.event_cooldown);
+        if self.tide.cooldown > 0 {
+            let _ = writeln!(out, "event_cooldown: {}", self.tide.cooldown);
         }
-        if let Some((mania, ticks)) = self.mania {
+        if let Some((mania, ticks)) = self.tide.mania {
             let name = match mania {
                 Mania::Crab => "crab",
                 Mania::Gull => "gull",
             };
             let _ = writeln!(out, "mania: {name} {ticks}");
         }
-        if self.claw_call > 0 {
-            let _ = writeln!(out, "claw_call: {}", self.claw_call);
+        if self.tide.claw_call > 0 {
+            let _ = writeln!(out, "claw_call: {}", self.tide.claw_call);
         }
-        if let Some((tempo, ticks)) = self.tempo {
+        if let Some((tempo, ticks)) = self.tide.tempo {
             let name = match tempo {
                 Tempo::Fast => "fast",
                 Tempo::Slow => "slow",
             };
             let _ = writeln!(out, "tempo: {name} {ticks}");
         }
-        if let Some((event, at)) = self.last_event {
+        if let Some((event, at)) = self.tide.last {
             let _ = writeln!(out, "last_event: {} {at}", event.index());
         }
         let _ = writeln!(out, "hwalls: {}", bits_to_hex(&self.grid.h_walls));
@@ -393,18 +393,20 @@ impl Fields {
             next_gull_id,
             lure: self.lure,
             lure_cooldown: self.lure_cooldown,
-            event_cooldown: self.event_cooldown,
             crabs_banked,
             golden_banked,
-            events_enabled: self.events_enabled,
-            mania: self.mania,
-            tempo: self.tempo,
-            claw_call: self.claw_call,
-            last_event: self.last_event,
             wrap: self.wrap,
+            tide: super::events::Tide {
+                enabled: self.events_enabled,
+                cooldown: self.event_cooldown,
+                mania: self.mania,
+                tempo: self.tempo,
+                claw_call: self.claw_call,
+                last: self.last_event,
+                queue: Vec::new(),
+            },
             // Drained within the tick that fills it, so a snapshot taken
             // between ticks never has one to carry.
-            event_queue: Vec::new(),
             // News for the frame it happened on, and this is not that
             // frame: a round picked back up has no sweep to report.
             swept_home: Vec::new(),
@@ -665,10 +667,10 @@ mod tests {
         board.golden_banked = 2;
         board.lure = Some((1, 145));
         board.lure_cooldown = 60;
-        board.event_cooldown = 210;
-        board.mania = Some((Mania::Gull, 88));
-        board.tempo = Some((Tempo::Slow, 44));
-        board.last_event = Some((TideEvent::FreshSand, 3000));
+        board.tide.cooldown = 210;
+        board.tide.mania = Some((Mania::Gull, 88));
+        board.tide.tempo = Some((Tempo::Slow, 44));
+        board.tide.last = Some((TideEvent::FreshSand, 3000));
         board.signposts[6] = Some(Signpost {
             dir: Direction::Left,
             owner: 1,

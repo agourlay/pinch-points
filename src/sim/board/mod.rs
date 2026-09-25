@@ -275,38 +275,18 @@ pub struct Board {
     lure: Option<(PlayerId, u32)>,
     /// Ticks until another lure may start; set when one ends.
     lure_cooldown: u32,
-    /// Ticks until the tide roulette may spin again; set when any event
-    /// fires. See [`EVENT_COOLDOWN`].
-    event_cooldown: u32,
     /// Crabs banked since the start, all players combined. With
     /// `next_crab_id` (crabs ever spawned) this distinguishes "every crab is
     /// safe" from "the gulls got some" (spec §5.1 win condition).
     crabs_banked: u32,
     /// Golden crabs banked (challenge goals).
     golden_banked: u32,
-    /// Tide events fire only where enabled (versus arenas, the attract
-    /// beach), never in puzzles or goal-checked challenges.
-    events_enabled: bool,
-    /// Active spawn mania: spawners flood crabs or emit gulls instead.
-    mania: Option<(Mania, u32)>,
-    /// Active tempo shift and the ticks left of it.
-    tempo: Option<(Tempo, u32)>,
-    /// Ticks left of a Right Claws event, zero when none is running.
-    ///
-    /// A bare count rather than an `Option`, because unlike a mania or a
-    /// tempo shift there is nothing to say but how long is left: the claw
-    /// it favours never changes.
-    claw_call: u32,
-    /// The most recent tide event and the tick it fired (HUD banner).
-    last_event: Option<(TideEvent, u64)>,
     /// Open edges: creatures walking (or flying) off one side re-enter on
     /// the opposite side (spec §3.1 wrap-around, settled by research: the
     /// original wraps).
     wrap: bool,
-    /// Sparkling banks noticed during crab movement; the roulette spins
-    /// after the movement pass so events may safely mutate the crab list.
-    /// Always drained within the same tick (never hashed).
-    event_queue: Vec<PlayerId>,
+    /// The tide roulette and what it has set running.
+    pub(crate) tide: events::Tide,
     /// Crabs the tide put straight into a keep, and who got them.
     ///
     /// `Monopoly` banks crabs where they stand rather than walking them
@@ -380,16 +360,10 @@ impl Board {
             next_gull_id: 0,
             lure: None,
             lure_cooldown: 0,
-            event_cooldown: 0,
             crabs_banked: 0,
             golden_banked: 0,
-            events_enabled: false,
-            mania: None,
-            tempo: None,
-            claw_call: 0,
-            last_event: None,
             wrap: false,
-            event_queue: Vec::new(),
+            tide: events::Tide::default(),
             swept_home: Vec::new(),
         };
         // The border walls are the wrap rule with wrap off; the border
@@ -427,16 +401,10 @@ impl Board {
             next_gull_id,
             lure,
             lure_cooldown,
-            event_cooldown,
             crabs_banked,
             golden_banked,
-            events_enabled,
-            mania,
-            tempo,
-            claw_call,
-            last_event,
             wrap,
-            event_queue,
+            tide,
             swept_home,
         } = other;
         self.grid.copy_from(grid);
@@ -453,16 +421,10 @@ impl Board {
         self.next_gull_id = *next_gull_id;
         self.lure = *lure;
         self.lure_cooldown = *lure_cooldown;
-        self.event_cooldown = *event_cooldown;
         self.crabs_banked = *crabs_banked;
         self.golden_banked = *golden_banked;
-        self.events_enabled = *events_enabled;
-        self.mania = *mania;
-        self.tempo = *tempo;
-        self.claw_call = *claw_call;
-        self.last_event = *last_event;
         self.wrap = *wrap;
-        refill(&mut self.event_queue, event_queue);
+        self.tide.copy_from(tide);
         refill(&mut self.swept_home, swept_home);
     }
 
@@ -544,16 +506,16 @@ impl Board {
     /// Enable tide events (the sparkling crab's roulette). Off by default:
     /// puzzles and goal-checked challenges stay predictable.
     pub fn events_enabled(&self) -> bool {
-        self.events_enabled
+        self.tide.enabled
     }
 
     pub fn set_events_enabled(&mut self, enabled: bool) {
-        self.events_enabled = enabled;
+        self.tide.enabled = enabled;
     }
 
     /// The most recent tide event and when it fired.
     pub fn last_event(&self) -> Option<(TideEvent, u64)> {
-        self.last_event
+        self.tide.last
     }
 
     pub fn golden_banked(&self) -> u32 {
@@ -586,7 +548,7 @@ impl Board {
         // Before anything that could spin the roulette, so an event
         // firing this tick gets its whole cooldown rather than one tick
         // less than it.
-        self.event_cooldown = self.event_cooldown.saturating_sub(1);
+        self.tide.cooldown = self.tide.cooldown.saturating_sub(1);
         // And before anything that could add to it. Kept for a few ticks
         // rather than cleared outright: the only reader runs between
         // frames, and a frame can cover more than one tick.
@@ -611,17 +573,17 @@ impl Board {
         } else {
             self.lure_cooldown = self.lure_cooldown.saturating_sub(1);
         }
-        if let Some((_, ticks)) = &mut self.mania {
+        if let Some((_, ticks)) = &mut self.tide.mania {
             *ticks -= 1;
             if *ticks == 0 {
-                self.mania = None;
+                self.tide.mania = None;
             }
         }
-        self.claw_call = self.claw_call.saturating_sub(1);
-        if let Some((_, ticks)) = &mut self.tempo {
+        self.tide.claw_call = self.tide.claw_call.saturating_sub(1);
+        if let Some((_, ticks)) = &mut self.tide.tempo {
             *ticks -= 1;
             if *ticks == 0 {
-                self.tempo = None;
+                self.tide.tempo = None;
             }
         }
         self.tick += 1;
@@ -726,7 +688,7 @@ impl Board {
     pub(super) fn credit_bank(&mut self, owner: PlayerId, crab: &Crab) {
         let value = crab.kind.value();
         let score = &mut self.scores[owner as usize];
-        if self.claw_call == 0 {
+        if self.tide.claw_call == 0 {
             *score += value;
             return;
         }
@@ -754,7 +716,7 @@ impl Board {
 
     /// Tide-event tempo: doubled or halved speed for every creature.
     fn tempo_speed(&self, base: u16) -> u16 {
-        match self.tempo {
+        match self.tide.tempo {
             Some((Tempo::Fast, _)) => base * 2,
             Some((Tempo::Slow, _)) => (base / 2).max(1),
             None => base,
@@ -825,7 +787,7 @@ impl Board {
     /// and a left-clawed one costs. Read by the bots, who would otherwise
     /// go on herding whatever is nearest and hand their points back.
     pub fn in_claw_call(&self) -> bool {
-        self.claw_call > 0
+        self.tide.claw_call > 0
     }
 
     /// What a crab is worth to whoever banks it right now, which is not

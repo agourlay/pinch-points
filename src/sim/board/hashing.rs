@@ -44,14 +44,19 @@ impl Board {
                 },
             lure: _,
             lure_cooldown: _,
-            event_cooldown: _,
             crabs_banked: _,
             golden_banked: _,
-            events_enabled: _,
-            mania: _,
-            tempo: _,
-            claw_call: _,
-            last_event: _,
+            tide:
+                super::events::Tide {
+                    enabled: _,
+                    cooldown: _,
+                    mania: _,
+                    tempo: _,
+                    claw_call: _,
+                    last: _,
+                    // Outside, with the others below.
+                    queue: _,
+                },
             wrap: _,
             // Outside the fingerprint, each for a reason of its own: the
             // construction seed is dead once the PRNG state (which *is*
@@ -62,7 +67,6 @@ impl Board {
             // hashing it would only make this build disagree with builds
             // playing the same round.
             seed: _,
-            event_queue: _,
             swept_home: _,
         } = self;
         let mut h = Fnv::new();
@@ -184,9 +188,9 @@ impl Board {
         }
         h.u32(self.golden_banked);
         h.bool(self.rules.castle_raids);
-        h.bool(self.events_enabled);
+        h.bool(self.tide.enabled);
         h.bool(self.wrap);
-        match self.mania {
+        match self.tide.mania {
             None => h.u8(0),
             Some((Mania::Crab, t)) => {
                 h.u8(1);
@@ -197,7 +201,7 @@ impl Board {
                 h.u32(t);
             }
         }
-        match self.tempo {
+        match self.tide.tempo {
             None => h.u8(0),
             Some((tempo, t)) => {
                 h.u8(match tempo {
@@ -207,8 +211,8 @@ impl Board {
                 h.u32(t);
             }
         }
-        h.u32(self.claw_call);
-        match self.last_event {
+        h.u32(self.tide.claw_call);
+        match self.tide.last {
             None => h.u8(0),
             Some((event, tick)) => {
                 // ALL's position, not the declaration discriminant: every
@@ -231,7 +235,7 @@ impl Board {
         // in beside `lure`, where it belongs by meaning, because field
         // order is the format and only the tail is safe to grow.
         h.u32(self.lure_cooldown);
-        h.u32(self.event_cooldown);
+        h.u32(self.tide.cooldown);
     }
 }
 
@@ -347,7 +351,7 @@ mod tests {
             let mut board = Board::new(6, 5, 1);
             board.set_events_enabled(true);
             board.set_tile(3, 2, TileKind::Castle(0));
-            board.event_cooldown = cooldown;
+            board.tide.cooldown = cooldown;
             board.spawn_crab(
                 2,
                 2,

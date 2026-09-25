@@ -3,6 +3,60 @@
 
 use super::*;
 
+/// The tide roulette's state: whether it spins on this board, how long
+/// until it may spin again, and what it has set running. One struct
+/// because every field is the roulette's alone, read by the event code and
+/// the spawners and nothing else.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Tide {
+    /// Tide events fire only where enabled (versus arenas, the attract
+    /// beach), never in puzzles or goal-checked challenges.
+    pub(crate) enabled: bool,
+    /// Ticks until the roulette may spin again; set when any event fires.
+    /// See [`EVENT_COOLDOWN`].
+    pub(crate) cooldown: u32,
+    /// Active spawn mania: spawners flood crabs or emit gulls instead.
+    pub(crate) mania: Option<(Mania, u32)>,
+    /// Active tempo shift and the ticks left of it.
+    pub(crate) tempo: Option<(Tempo, u32)>,
+    /// Ticks left of a Right Claws event, zero when none is running.
+    ///
+    /// A bare count rather than an `Option`, because unlike a mania or a
+    /// tempo shift there is nothing to say but how long is left: the claw
+    /// it favours never changes.
+    pub(crate) claw_call: u32,
+    /// The most recent tide event and the tick it fired (HUD banner).
+    pub(crate) last: Option<(TideEvent, u64)>,
+    /// Sparkling banks noticed during crab movement; the roulette spins
+    /// after the movement pass so events may safely mutate the crab list.
+    /// Always drained within the same tick (never hashed).
+    pub(crate) queue: Vec<PlayerId>,
+}
+
+impl Tide {
+    /// [`Board::copy_from`]'s share: every field, the queue's allocation
+    /// kept.
+    pub(crate) fn copy_from(&mut self, other: &Self) {
+        let Self {
+            enabled,
+            cooldown,
+            mania,
+            tempo,
+            claw_call,
+            last,
+            queue,
+        } = other;
+        self.enabled = *enabled;
+        self.cooldown = *cooldown;
+        self.mania = *mania;
+        self.tempo = *tempo;
+        self.claw_call = *claw_call;
+        self.last = *last;
+        self.queue.clear();
+        self.queue.extend_from_slice(queue);
+    }
+}
+
 /// Tempo shifts (tide events): the beach's clock run faster or slower.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tempo {
@@ -76,7 +130,7 @@ impl Board {
     /// events, re-themed). Deterministic: one PRNG draw picks the event, and
     /// every effect operates in fixed order.
     pub(super) fn spin_tide_event(&mut self, banker: PlayerId) {
-        if !self.events_enabled {
+        if !self.tide.enabled {
             return;
         }
         // Not while the last event is still running. The wheel is spun by
@@ -84,7 +138,7 @@ impl Board {
         // put more crabs on the beach, so without this the events feed
         // themselves: three Crab Manias inside fourteen seconds, measured.
         // The crab still banks and still scores.
-        if self.event_cooldown > 0 {
+        if self.tide.cooldown > 0 {
             return;
         }
         // One draw indexes ALL, so the roulette's order *is* ALL's order:
@@ -136,18 +190,18 @@ impl Board {
     /// Apply one tide event's effects (split from the roulette so each event
     /// is unit-testable in isolation).
     pub(super) fn apply_tide_event(&mut self, event: TideEvent, banker: PlayerId) {
-        self.last_event = Some((event, self.tick));
+        self.tide.last = Some((event, self.tick));
         // Set here rather than in the roulette so a forced event starts
         // the clock too: the point is "an event is running", not "the
         // wheel was spun".
-        self.event_cooldown = EVENT_COOLDOWN;
+        self.tide.cooldown = EVENT_COOLDOWN;
         match event {
             TideEvent::CrabMania => {
                 self.gulls.clear();
-                self.mania = Some((Mania::Crab, EVENT_TICKS));
+                self.tide.mania = Some((Mania::Crab, EVENT_TICKS));
             }
             TideEvent::GullMania => {
-                self.mania = Some((Mania::Gull, EVENT_TICKS));
+                self.tide.mania = Some((Mania::Gull, EVENT_TICKS));
             }
             TideEvent::Monopoly => {
                 // Half the loose crabs (front of the line) scuttle straight
@@ -204,9 +258,9 @@ impl Board {
                     }
                 }
             }
-            TideEvent::RightClaws => self.claw_call = EVENT_TICKS,
-            TideEvent::SpeedUp => self.tempo = Some((Tempo::Fast, EVENT_TICKS)),
-            TideEvent::SlowDown => self.tempo = Some((Tempo::Slow, EVENT_TICKS)),
+            TideEvent::RightClaws => self.tide.claw_call = EVENT_TICKS,
+            TideEvent::SpeedUp => self.tide.tempo = Some((Tempo::Fast, EVENT_TICKS)),
+            TideEvent::SlowDown => self.tide.tempo = Some((Tempo::Slow, EVENT_TICKS)),
             TideEvent::FreshSand => self.signposts.fill(None),
             TideEvent::CastleSwap => {
                 // Rockets swap places: every castle passes to the next
