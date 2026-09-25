@@ -13,6 +13,14 @@ use crate::sim::TideEvent;
 use crate::transport::NetMsg;
 use bevy::prelude::*;
 
+mod chat;
+mod picks;
+mod vote;
+
+pub use chat::*;
+pub use picks::*;
+pub use vote::*;
+
 /// What the host says about the crowd, and the only word anyone else has
 /// on it.
 ///
@@ -28,48 +36,6 @@ pub struct Crowd {
     pub open: u8,
     /// Seconds until the next call may be made, or zero when none is owed.
     pub wait: u8,
-}
-
-/// How long the crowd has to call the winner: the first half minute of a
-/// round, long enough to see who is doing well and too soon to know.
-pub const PICKS_OPEN_FOR: u32 = 30 * crate::sim::TICKS_PER_SECOND;
-
-/// What the host says about the crowd's calls for the winner.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub struct Picks {
-    /// How many spectators have called each seat.
-    pub counts: [u8; crate::sim::MAX_PLAYERS],
-    /// Whole seconds left to call one, zero once the calls are in.
-    pub open: u8,
-}
-
-impl Picks {
-    /// Whether anybody called anyone.
-    pub fn any(&self) -> bool {
-        self.counts.iter().any(|&n| n > 0)
-    }
-
-    /// "Maya ×2 · Theo ×1": the seats called, most called first, and the
-    /// lower seat first on a tie so every screen lists them alike.
-    pub fn line(&self, name: impl Fn(u8) -> String) -> String {
-        let mut called: Vec<(u8, u8)> = (0..crate::sim::MAX_PLAYERS as u8)
-            .map(|seat| (seat, self.counts[usize::from(seat)]))
-            .filter(|&(_, n)| n > 0)
-            .collect();
-        called.sort_by_key(|&(seat, n)| (std::cmp::Reverse(n), seat));
-        called
-            .into_iter()
-            .map(|(seat, n)| format!("{} ×{n}", name(seat)))
-            .collect::<Vec<_>>()
-            .join(" · ")
-    }
-}
-
-/// A spectator's calls over the session: how many came in, of how many.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub struct Calls {
-    pub right: u32,
-    pub made: u32,
 }
 
 /// Where the people without a chair stand in a round: their tide vote as
@@ -138,198 +104,12 @@ impl Stands {
     }
 }
 
-/// The line a spectator is typing, if one is open.
-///
-/// Its own resource rather than a field on the session: the session is
-/// rebuilt between rounds and a half-typed line is not worth carrying
-/// across, and the shell reads this to know the keyboard is spoken for.
-#[derive(Resource, Default)]
-pub struct SpectatorChat(pub Option<String>);
-
-impl SpectatorChat {
-    pub fn open(&self) -> bool {
-        self.0.is_some()
-    }
-}
-
-/// Events spectators may call.
-///
-/// Seven of the nine. Crab Monopoly sends half the loose crabs to a
-/// banker and Gull Attack spares one castle, and spectators have no castle to
-/// spare and no bank to fill: a crowd that could hand a player points is
-/// a crowd worth lobbying. What is left stirs the beach for everybody.
-pub const SPECTATOR_EVENTS: [TideEvent; 7] = [
-    TideEvent::CrabMania,
-    TideEvent::GullMania,
-    TideEvent::SpeedUp,
-    TideEvent::SlowDown,
-    TideEvent::FreshSand,
-    TideEvent::CastleSwap,
-    TideEvent::RightClaws,
-];
-
-/// Seconds a vote stays open once the first pick lands.
-const WINDOW: f32 = 3.0;
-
-/// Seconds spectators wait between calls, however many of them there are.
-///
-/// Shared, not one apiece: a bigger crowd should be louder, not more
-/// interrupting, and a three-minute round has room for a handful.
-const COOLDOWN: f32 = 25.0;
-
-/// The vote as the host counts it.
-///
-/// Host side only, and deliberately outside the sim: what the spectators are
-/// arguing about is nobody else's business and never has to agree
-/// anywhere. Only the answer enters the round, and it enters as an action
-/// on a frame, where it cannot be lost.
-#[derive(Default)]
-pub struct SpectatorVotes {
-    /// Picks since the window opened, one count per `SPECTATOR_EVENTS` seat.
-    tally: [u16; SPECTATOR_EVENTS.len()],
-    /// Seconds left of an open window, or zero when none is open.
-    open_for: f32,
-    /// Seconds until spectators may call again.
-    cooldown: f32,
-}
-
-impl SpectatorVotes {
-    /// Take a spectator's pick. The first one inside a quiet stretch opens
-    /// the window; the rest fall into it.
-    pub fn cast(&mut self, event: u8) {
-        let Some(at) = SPECTATOR_EVENTS
-            .iter()
-            .position(|e| e.index() == usize::from(event))
-        else {
-            return; // not one of theirs, or not an event at all
-        };
-        if self.cooldown > 0.0 {
-            return;
-        }
-        if self.open_for <= 0.0 {
-            self.tally = [0; SPECTATOR_EVENTS.len()];
-            self.open_for = WINDOW;
-        }
-        self.tally[at] = self.tally[at].saturating_add(1);
-    }
-
-    /// Run the window down; the event the spectators settled on, once it closes.
-    ///
-    /// The tie-break is the earlier seat in [`SPECTATOR_EVENTS`], which is
-    /// arbitrary but fixed: a tie broken by whichever vote the socket
-    /// happened to hand over first would make the same room's same vote
-    /// come out differently twice.
-    pub fn settle(&mut self, seconds: f32) -> Option<TideEvent> {
-        self.cooldown = (self.cooldown - seconds).max(0.0);
-        if self.open_for <= 0.0 {
-            return None;
-        }
-        self.open_for -= seconds;
-        if self.open_for > 0.0 {
-            return None;
-        }
-        self.open_for = 0.0;
-        self.cooldown = COOLDOWN;
-        let (at, votes) = self
-            .tally
-            .iter()
-            .enumerate()
-            .max_by_key(|(at, votes)| (**votes, std::cmp::Reverse(*at)))?;
-        (*votes > 0).then(|| SPECTATOR_EVENTS[at])
-    }
-
-    /// Drop an open window without settling it, leaving any wait alone.
-    pub fn forget_open(&mut self) {
-        self.open_for = 0.0;
-        self.tally = [0; SPECTATOR_EVENTS.len()];
-    }
-
-    /// Forget the vote and the wait both: the round they belonged to is
-    /// over.
-    ///
-    /// The wait only ever ran while a round did, so carrying it into the
-    /// next one meant carrying a clock that had stopped: a call made in
-    /// the last seconds cost the crowd most of the following round,
-    /// having sat through a results card and an interlude that cost it
-    /// nothing. Each round hands them their call back.
-    pub fn forget_all(&mut self) {
-        *self = SpectatorVotes::default();
-    }
-
-    /// Whether a vote is open, and how long there is left to join it.
-    pub fn open(&self) -> Option<f32> {
-        (self.open_for > 0.0).then_some(self.open_for)
-    }
-
-    /// Seconds until spectators may call again, if they are waiting.
-    pub fn waiting(&self) -> Option<f32> {
-        (self.cooldown > 0.0).then_some(self.cooldown)
-    }
-}
-
 /// Whether this peer is a spectator: online, in a round, holding no seat.
 pub fn is_spectating(online: &Online) -> bool {
     online
         .0
         .as_ref()
         .is_some_and(|session| session.session.watching())
-}
-
-/// T opens a line, Enter says it, Esc drops it.
-///
-/// The key is read only for a spectator, so a player's T is still a player's
-/// T: nothing here can take a letter out of a round being played.
-pub fn spectator_chat_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
-    mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
-    settings: Res<crate::app::settings::GameSettings>,
-    mut chat: ResMut<SpectatorChat>,
-    mut online: ResMut<Online>,
-) {
-    if !is_spectating(&online) {
-        // A seat was handed out mid-round, or the session ended under a
-        // half-typed line. Either way the line is not going anywhere.
-        chat.0 = None;
-        typed.clear();
-        return;
-    }
-    let Some(line) = &mut chat.0 else {
-        // Not typing: the keystrokes belong to whatever else reads them,
-        // and T is the way in.
-        if caps.just_pressed(&keys, 'T') {
-            chat.0 = Some(String::new());
-            typed.clear();
-        }
-        return;
-    };
-    let said = crate::app::lobby::type_a_line(&mut typed, line);
-    if keys.just_pressed(KeyCode::Escape) {
-        chat.0 = None;
-        return;
-    }
-    let Some(said) = said else {
-        return;
-    };
-    chat.0 = None;
-    if said.trim().is_empty() {
-        return;
-    }
-    let me = settings.names[0].clone();
-    if me.is_empty() {
-        // The hub refuses a line that resolves to no name, because an
-        // empty name is the beach's own voice. Echoing it here anyway
-        // would show the sender something nobody else was ever given. The
-        // lobby asks for a name before it lets anyone watch, so this is
-        // the player who went and cleared it again.
-        return;
-    }
-    if let Some(session) = &mut online.0 {
-        session.transport.send(NetMsg::chat(&me, &said));
-        // Said to the table, and shown here too: the sender is a peer like
-        // any other and its own datagram never comes back to it.
-        session.heard.push((me, said));
-    }
 }
 
 /// Run the host's open vote down and hand the answer to the next frame.
@@ -382,38 +162,8 @@ pub fn settle_spectator_vote(
             wait: crowd.wait,
         });
     }
-    // The calls for the winner, on the same clock, and after they close as
-    // well: the closing count is one datagram too, and a spectator that
-    // missed it would be offered a call for ever. Once they close the
-    // table is told in the feed what the crowd thinks of it.
-    // Counted until they close and then held, so a spectator who leaves
-    // afterwards does not take their call out of a count the feed has
-    // already read out and the results card will quote.
-    let picks = match session.stands.picks_said {
-        true => session.stands.picks,
-        false => session.crowd_picks_now(),
-    };
-    if picks != session.stands.picks || again {
-        session.stands.picks = picks;
-        session.transport.send(NetMsg::CrowdPicks {
-            picks: picks.counts,
-            open: picks.open,
-        });
-    }
-    if picks.open == 0 && !session.stands.picks_said {
-        session.stands.picks_said = true;
-        if picks.any() {
-            let tr = settings.tr();
-            let names = &session.names;
-            let label = |seat: u8| match names.get(usize::from(seat)) {
-                Some(name) if !name.is_empty() => name.clone(),
-                _ => crate::app::seat_label(tr, seat),
-            };
-            let line = crate::app::i18n::fill(tr.crowd_picked, &[("l", &picks.line(label))]);
-            session.transport.send(NetMsg::chat("", &line));
-            session.heard.push((String::new(), line));
-        }
-    }
+    // The calls for the winner, on the same clock.
+    say_the_calls(session, settings.tr(), again);
     let Some(event) = session.stands.votes.settle(time.delta_secs()) else {
         return;
     };
@@ -425,269 +175,6 @@ pub fn settle_spectator_vote(
     let line = crate::app::i18n::fill(tr.spectator_called, &[("e", tr.events[event.index()])]);
     session.transport.send(NetMsg::chat("", &line));
     session.heard.push((String::new(), line));
-}
-
-/// The seats to call, while a spectator has the list open.
-#[derive(Component)]
-pub struct PickCardUi;
-
-/// Whether the list of seats to call is on screen.
-#[derive(Resource, Default)]
-pub struct PickCard(pub bool);
-
-/// Call the winner: P opens the seats, a number calls one.
-///
-/// Open while the host still takes calls, and a call already made can be
-/// changed until then. Repeated to the host once a second while the calls
-/// are open, since a pick is one datagram and UDP owes nobody that.
-#[allow(clippy::too_many_arguments)]
-pub fn spectator_pick_input(
-    mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
-    time: Res<Time>,
-    settings: Res<crate::app::settings::GameSettings>,
-    (chat, events): (Res<SpectatorChat>, Res<SpectatorCard>),
-    phase: Res<State<crate::app::VersusPhase>>,
-    mut card: ResMut<PickCard>,
-    mut online: ResMut<Online>,
-    ui: Query<Entity, With<PickCardUi>>,
-    mut resend: Local<f32>,
-) {
-    let shut = |commands: &mut Commands, card: &mut PickCard| {
-        card.0 = false;
-        for entity in &ui {
-            commands.entity(entity).despawn();
-        }
-    };
-    let playing = *phase.get() == crate::app::VersusPhase::Running;
-    let open = online.0.as_ref().is_some_and(|s| s.stands.picks.open > 0);
-    if !is_spectating(&online) || chat.open() || events.0 || !playing || !open {
-        if card.0 {
-            shut(&mut commands, &mut card);
-        }
-        return;
-    }
-    let Some(session) = &mut online.0 else {
-        return;
-    };
-    if crate::app::lobby::once_a_second(&mut resend, time.delta_secs())
-        && let Some(seat) = session.stands.my_pick
-    {
-        session.transport.send(NetMsg::SpectatorPick { seat });
-    }
-    if !card.0 {
-        if caps.just_pressed(&keys, 'P') {
-            card.0 = true;
-            spawn_pick_card(&mut commands, &settings, session);
-        }
-        return;
-    }
-    if keys.just_pressed(KeyCode::Escape) || caps.just_pressed(&keys, 'P') {
-        shut(&mut commands, &mut card);
-        return;
-    }
-    const SEATS: [KeyCode; crate::sim::MAX_PLAYERS] = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-    ];
-    for (seat, key) in SEATS
-        .into_iter()
-        .enumerate()
-        .take(usize::from(session.seats))
-    {
-        if keys.just_pressed(key) {
-            let seat = seat as u8;
-            session.stands.my_pick = Some(seat);
-            session.transport.send(NetMsg::SpectatorPick { seat });
-            shut(&mut commands, &mut card);
-            return;
-        }
-    }
-}
-
-fn spawn_pick_card(
-    commands: &mut Commands,
-    settings: &crate::app::settings::GameSettings,
-    session: &crate::app::net::OnlineSession,
-) {
-    use crate::app::{menu_ui, palette};
-    let tr = settings.tr();
-    commands
-        .spawn((
-            PickCardUi,
-            GlobalZIndex(menu_ui::layer::CARD),
-            menu_ui::centred_overlay(),
-        ))
-        .with_children(|wrap| {
-            wrap.spawn(menu_ui::screen_card()).with_children(|card| {
-                card.spawn((
-                    Text::new(tr.spectator_pick_title),
-                    TextFont {
-                        font_size: FontSize::Px(menu_ui::type_scale::HEADING),
-                        ..default()
-                    },
-                    TextColor(palette::GOLD),
-                ));
-                for seat in 0..session.seats {
-                    let name = match session.names.get(usize::from(seat)) {
-                        Some(name) if !name.is_empty() => name.clone(),
-                        _ => crate::app::seat_label(tr, seat),
-                    };
-                    card.spawn((
-                        Text::new(format!("{}  {name}", seat + 1)),
-                        TextFont {
-                            font_size: FontSize::Px(menu_ui::type_scale::ROW),
-                            ..default()
-                        },
-                        TextColor(palette::player_color(seat)),
-                    ));
-                }
-            });
-        });
-}
-
-/// Score a spectator's call as the tide comes in, for the card to say.
-pub fn score_the_call(
-    sim: Res<crate::app::Sim>,
-    settings: Res<crate::app::settings::GameSettings>,
-    mut online: ResMut<Online>,
-) {
-    let Some(seats) = online.0.as_ref().map(|s| s.seats) else {
-        return;
-    };
-    // The same winners the standings crown, teams and all.
-    let mode = crate::app::teams::in_play(&settings, &online, seats);
-    let winners = crate::app::side_panels::leading_seats(sim.0.scores(), seats, mode);
-    let Some(session) = &mut online.0 else {
-        return;
-    };
-    let Some(seat) = session
-        .stands
-        .my_pick
-        .filter(|_| session.session.watching())
-    else {
-        return;
-    };
-    let right = winners[usize::from(seat)];
-    session.stands.calls.made += 1;
-    session.stands.calls.right += u32::from(right);
-    session.stands.last_call = Some((seat, right));
-}
-
-/// The spectators' event list, while one has it open.
-#[derive(Component)]
-pub struct SpectatorCardUi;
-
-/// Whether the spectators' event list is on screen.
-#[derive(Resource, Default)]
-pub struct SpectatorCard(pub bool);
-
-/// Open the list, pick from it, or put it away.
-///
-/// Numbers rather than a cursor: a card with seven rows and a crowd
-/// behind it wants one press, not four. The keys are the same ones the
-/// menu already numbers its modes with.
-#[allow(clippy::too_many_arguments)]
-pub fn spectator_vote_input(
-    mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
-    settings: Res<crate::app::settings::GameSettings>,
-    chat: Res<SpectatorChat>,
-    phase: Res<State<crate::app::VersusPhase>>,
-    (mut card, pick): (ResMut<SpectatorCard>, Res<PickCard>),
-    mut online: ResMut<Online>,
-    ui: Query<Entity, With<SpectatorCardUi>>,
-) {
-    let shut = |commands: &mut Commands, card: &mut SpectatorCard| {
-        card.0 = false;
-        for entity in &ui {
-            commands.entity(entity).despawn();
-        }
-    };
-    // Typing takes the keyboard, losing a seat takes the job, and a round
-    // that is over has no beach to call anything onto.
-    let playing = *phase.get() == crate::app::VersusPhase::Running;
-    if !is_spectating(&online) || chat.open() || !playing {
-        if card.0 {
-            shut(&mut commands, &mut card);
-        }
-        return;
-    }
-    if !card.0 {
-        // Not over the other list: one card at a time, and both are numbers.
-        if caps.just_pressed(&keys, 'E') && !pick.0 {
-            card.0 = true;
-            spawn_card(&mut commands, &settings);
-        }
-        return;
-    }
-    if keys.just_pressed(KeyCode::Escape) || caps.just_pressed(&keys, 'E') {
-        shut(&mut commands, &mut card);
-        return;
-    }
-    const PICKS: [KeyCode; 7] = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-        KeyCode::Digit7,
-    ];
-    for (at, key) in PICKS.into_iter().enumerate() {
-        if !keys.just_pressed(key) {
-            continue;
-        }
-        if let Some(session) = &mut online.0 {
-            // Straight to the host, which is the only peer that counts.
-            // Never counted here on the way past: the host holds seat 0
-            // and so is never a spectator, so this is always a spoke.
-            session.transport.send(NetMsg::SpectatorVote {
-                event: SPECTATOR_EVENTS[at].index() as u8,
-            });
-        }
-        shut(&mut commands, &mut card);
-        return;
-    }
-}
-
-pub(super) fn spawn_card(commands: &mut Commands, settings: &crate::app::settings::GameSettings) {
-    use crate::app::{menu_ui, palette};
-    let tr = settings.tr();
-    commands
-        .spawn((
-            SpectatorCardUi,
-            GlobalZIndex(menu_ui::layer::CARD),
-            menu_ui::centred_overlay(),
-        ))
-        .with_children(|wrap| {
-            wrap.spawn(menu_ui::screen_card()).with_children(|card| {
-                card.spawn((
-                    Text::new(tr.spectator_call_title),
-                    TextFont {
-                        font_size: FontSize::Px(menu_ui::type_scale::HEADING),
-                        ..default()
-                    },
-                    TextColor(palette::GOLD),
-                ));
-                for (at, event) in SPECTATOR_EVENTS.into_iter().enumerate() {
-                    card.spawn((
-                        Text::new(format!("{}  {}", at + 1, tr.events[event.index()])),
-                        TextFont {
-                            font_size: FontSize::Px(menu_ui::type_scale::ROW),
-                            ..default()
-                        },
-                        TextColor(palette::PARCHMENT),
-                    ));
-                }
-            });
-        });
 }
 
 /// Either of the spectators' two lists, the tide's or the winner's.
@@ -719,6 +206,7 @@ pub fn forget_spectating(
 
 #[cfg(test)]
 mod tests {
+    use super::vote::{COOLDOWN, WINDOW};
     use super::*;
     use crate::app::net::OnlineSession;
     use crate::sim::{DEFAULT_DELAY, Lockstep};
