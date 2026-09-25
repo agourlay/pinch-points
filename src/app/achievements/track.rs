@@ -27,19 +27,43 @@ fn local_seat(online: &Online, bots: &Bots) -> Option<u8> {
     }
 }
 
+/// What every system that can earn a trophy needs: the record it adds to,
+/// the shelf of what is already earned, and what it takes to say so (the
+/// words, the chime, and whether it may ring).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Trophies<'w> {
+    pub stats: ResMut<'w, Stats>,
+    unlocked: ResMut<'w, Unlocked>,
+    pub settings: Res<'w, GameSettings>,
+    sounds: Option<Res<'w, Sounds>>,
+    muted: Res<'w, Muted>,
+}
+
+impl Trophies<'_> {
+    /// Unlock whatever the stats now earn, with a toast and a chime each,
+    /// and save both: once, after the caller's own changes, because a save
+    /// is a sync to disk on the frame thread.
+    pub fn credit(&mut self, commands: &mut Commands) {
+        unlock_new(
+            commands,
+            &self.stats,
+            &mut self.unlocked,
+            &self.settings,
+            &self.muted,
+            &self.sounds,
+        );
+        save(&self.stats, &self.unlocked);
+    }
+}
+
 /// Fold the sim event stream into the lifetime stats.
-#[allow(clippy::too_many_arguments)]
 pub fn track_events(
     mut commands: Commands,
     mut events: MessageReader<SimEvent>,
     online: Res<Online>,
     bots: Res<Bots>,
-    settings: Res<GameSettings>,
-    sounds: Option<Res<Sounds>>,
-    muted: Res<Muted>,
-    mut stats: ResMut<Stats>,
+    mut trophies: Trophies,
     mut scratch: ResMut<RoundScratch>,
-    mut unlocked: ResMut<Unlocked>,
 ) {
     let Some(seat) = local_seat(&online, &bots) else {
         for _ in events.read() {}
@@ -49,13 +73,13 @@ pub fn track_events(
     for event in events.read() {
         match event {
             SimEvent::CrabBanked { owner, kind, .. } if *owner == seat => {
-                stats.banked += 1;
+                trophies.stats.banked += 1;
                 scratch.banked += 1;
                 match kind {
-                    CrabKind::Golden => stats.golden += 1,
-                    CrabKind::Molting => stats.lures += 1,
-                    CrabKind::Sparkling => stats.events += 1,
-                    CrabKind::Giant => stats.giants += 1,
+                    CrabKind::Golden => trophies.stats.golden += 1,
+                    CrabKind::Molting => trophies.stats.lures += 1,
+                    CrabKind::Sparkling => trophies.stats.events += 1,
+                    CrabKind::Giant => trophies.stats.giants += 1,
                     CrabKind::Common | CrabKind::Juvenile => {}
                 }
                 changed = true;
@@ -64,15 +88,15 @@ pub fn track_events(
             // have come up rather than how many. Any seat's sparkling crab
             // spins a wheel everyone plays under.
             SimEvent::TideEventFired { event } => {
-                stats.events_seen |= 1 << event.index();
+                trophies.stats.events_seen |= 1 << event.index();
                 changed = true;
             }
             SimEvent::CrabEaten { .. } => {
-                stats.gulls_fed += 1;
+                trophies.stats.gulls_fed += 1;
                 changed = true;
             }
             SimEvent::CastleRaided { owner, .. } if *owner == seat => {
-                stats.raids_taken += 1;
+                trophies.stats.raids_taken += 1;
                 scratch.raids += 1;
                 changed = true;
             }
@@ -91,15 +115,7 @@ pub fn track_events(
         }
     }
     if changed {
-        unlock_new(
-            &mut commands,
-            &stats,
-            &mut unlocked,
-            &settings,
-            &muted,
-            &sounds,
-        );
-        save(&stats, &unlocked);
+        trophies.credit(&mut commands);
     }
 }
 
@@ -153,47 +169,43 @@ pub fn record_round(
     bots: Res<Bots>,
     daily: Res<crate::app::Daily>,
     tournament: Res<crate::app::tournament::Tournament>,
-    settings: Res<GameSettings>,
-    sounds: Option<Res<Sounds>>,
-    muted: Res<Muted>,
-    mut stats: ResMut<Stats>,
+    mut trophies: Trophies,
     mut scratch: ResMut<RoundScratch>,
-    mut unlocked: ResMut<Unlocked>,
 ) {
     let Some(seat) = local_seat(&online, &bots) else {
         return;
     };
-    stats.rounds += 1;
+    trophies.stats.rounds += 1;
     // The busiest table this seat has ever sat at. Seats, not peers: an AI
     // seat still fills a chair and still has a castle to raid.
-    stats.crowd = stats.crowd.max(u32::from(seats.0));
+    trophies.stats.crowd = trophies.stats.crowd.max(u32::from(seats.0));
     if online
         .0
         .as_ref()
         .is_some_and(crate::app::net::OnlineSession::is_host)
     {
-        stats.hosted += 1;
+        trophies.stats.hosted += 1;
     }
     if daily.active {
         let today = crate::app::Daily::today();
-        if stats.daily_day != today {
+        if trophies.stats.daily_day != today {
             // A day's daily played for the first time: today's best starts
             // over, and the habit counter ticks.
-            stats.daily_day = today;
-            stats.daily_best = 0;
-            stats.daily_days += 1;
+            trophies.stats.daily_day = today;
+            trophies.stats.daily_best = 0;
+            trophies.stats.daily_days += 1;
         }
-        stats.daily_best = stats.daily_best.max(sim.0.scores()[seat as usize]);
+        trophies.stats.daily_best = trophies.stats.daily_best.max(sim.0.scores()[seat as usize]);
         // And the all-time mark, which is what a trophy can hang on:
         // `daily_best` starts over at midnight and would take the trophy's
         // progress bar back down with it.
-        stats.daily_record = stats.daily_record.max(stats.daily_best);
+        trophies.stats.daily_record = trophies.stats.daily_record.max(trophies.stats.daily_best);
     }
-    let mode = crate::app::teams::in_play(&settings, &online, seats.0);
+    let mode = crate::app::teams::in_play(&trophies.settings, &online, seats.0);
     let winners = crate::app::side_panels::leading_seats(sim.0.scores(), seats.0, mode);
     let won = winners[seat as usize];
     credit_round(
-        &mut stats,
+        &mut trophies.stats,
         &mut scratch,
         RoundOutcome {
             won,
@@ -208,15 +220,7 @@ pub fn record_round(
             seat,
         },
     );
-    unlock_new(
-        &mut commands,
-        &stats,
-        &mut unlocked,
-        &settings,
-        &muted,
-        &sounds,
-    );
-    save(&stats, &unlocked);
+    trophies.credit(&mut commands);
 }
 
 /// Persist on leaving a play screen so a mid-round quit loses nothing.
@@ -230,26 +234,14 @@ pub fn save_now(stats: Res<Stats>, unlocked: Res<Unlocked>) {
 pub fn record_level_built(
     mut commands: Commands,
     mut saved: MessageReader<crate::app::LevelSaved>,
-    settings: Res<GameSettings>,
-    sounds: Option<Res<Sounds>>,
-    muted: Res<Muted>,
-    mut stats: ResMut<Stats>,
-    mut unlocked: ResMut<Unlocked>,
+    mut trophies: Trophies,
 ) {
     let built = saved.read().count() as u32;
     if built == 0 {
         return;
     }
-    stats.levels_built += built;
-    unlock_new(
-        &mut commands,
-        &stats,
-        &mut unlocked,
-        &settings,
-        &muted,
-        &sounds,
-    );
-    save(&stats, &unlocked);
+    trophies.stats.levels_built += built;
+    trophies.credit(&mut commands);
 }
 
 /// Fresh round: the scratch starts over.
@@ -263,22 +255,17 @@ pub fn reset_round_scratch(mut scratch: ResMut<RoundScratch>) {
 /// already counted: the last stage of a campaign is the one this would
 /// otherwise miss, and the one the trophy is for. Only the built-in stages
 /// count, so saving a level in the editor does not unfinish the campaign.
-#[allow(clippy::too_many_arguments)]
 pub fn record_puzzle(
     mut commands: Commands,
-    settings: Res<GameSettings>,
-    sounds: Option<Res<Sounds>>,
-    muted: Res<Muted>,
     progress: Res<crate::app::progress::Progress>,
     campaign: Res<crate::app::Campaign>,
     sim: Res<crate::app::Sim>,
     attempt: Res<PuzzleAttempt>,
-    mut stats: ResMut<Stats>,
-    mut unlocked: ResMut<Unlocked>,
+    mut trophies: Trophies,
 ) {
     // A solve is a solve, and the trophies over this one say "solve 100
     // puzzles": re-solving a stage is one of those.
-    stats.puzzles += 1;
+    trophies.stats.puzzles += 1;
     // How it was cleared, not merely that it was, and only on a stage that
     // was still unbeaten when the attempt began: these three say "stages",
     // and a stage already in the book is not another one. Read before the
@@ -287,13 +274,13 @@ pub fn record_puzzle(
     let level = campaign.current();
     if attempt.unbeaten {
         if sim.0.signpost_count(0) < usize::from(level.posts) {
-            stats.under_par += 1;
+            trophies.stats.under_par += 1;
         }
         if level.posts >= DEEP_POSTS {
-            stats.deep_solves += 1;
+            trophies.stats.deep_solves += 1;
         }
         if attempt.retries == 0 {
-            stats.clean_solves += 1;
+            trophies.stats.clean_solves += 1;
         }
     }
     let builtins = &campaign.levels[..campaign.builtins.min(campaign.levels.len())];
@@ -303,19 +290,11 @@ pub fn record_puzzle(
             .all(|level| progress.is_cleared(campaign.kind, &level.name))
     {
         match campaign.kind {
-            crate::app::CampaignKind::TidePool => stats.campaign_done = 1,
-            crate::app::CampaignKind::BeachDay => stats.beach_done = 1,
+            crate::app::CampaignKind::TidePool => trophies.stats.campaign_done = 1,
+            crate::app::CampaignKind::BeachDay => trophies.stats.beach_done = 1,
         }
     }
-    unlock_new(
-        &mut commands,
-        &stats,
-        &mut unlocked,
-        &settings,
-        &muted,
-        &sounds,
-    );
-    save(&stats, &unlocked);
+    trophies.credit(&mut commands);
 }
 
 /// The signpost grant that marks the deep end of the campaign. The late
@@ -360,33 +339,20 @@ pub fn reset_puzzle_attempt(mut attempt: ResMut<PuzzleAttempt>) {
 /// A level went out as a share code, or came in as one. Its own system for
 /// the reason [`record_level_built`] is one: the editor writes a message
 /// and knows nothing about what reads it.
-#[allow(clippy::too_many_arguments)]
 pub fn record_codes(
     mut commands: Commands,
     mut shared: MessageReader<crate::app::CodeShared>,
     mut taken: MessageReader<crate::app::CodeTaken>,
-    settings: Res<GameSettings>,
-    sounds: Option<Res<Sounds>>,
-    muted: Res<Muted>,
-    mut stats: ResMut<Stats>,
-    mut unlocked: ResMut<Unlocked>,
+    mut trophies: Trophies,
 ) {
     let out = shared.read().count() as u32;
     let inn = taken.read().count() as u32;
     if out == 0 && inn == 0 {
         return;
     }
-    stats.codes_shared += out;
-    stats.codes_taken += inn;
-    unlock_new(
-        &mut commands,
-        &stats,
-        &mut unlocked,
-        &settings,
-        &muted,
-        &sounds,
-    );
-    save(&stats, &unlocked);
+    trophies.stats.codes_shared += out;
+    trophies.stats.codes_taken += inn;
+    trophies.credit(&mut commands);
 }
 
 fn unlock_new(
