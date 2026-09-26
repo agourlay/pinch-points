@@ -599,6 +599,33 @@ mod tests {
         }
     }
 
+    /// Crab Mania clears the sky in one go, and none of those birds went
+    /// near a castle. The board has ticked first: on an unticked one the
+    /// gulls going would read as a board swap, which is silent anyway, and
+    /// the test would pass without the rule it is here for.
+    #[test]
+    fn the_gulls_crab_mania_clears_were_not_shooed() {
+        let mut board = Board::new(8, 4, 7);
+        board.set_tile(7, 3, TileKind::Castle(0));
+        board.set_castle_raids(false);
+        board.spawn_gull(0, 0, Direction::Up);
+        board.spawn_gull(1, 0, Direction::Up);
+        for _ in 0..3 {
+            board.tick_idle();
+        }
+        let mut watch = synced(&board);
+        board.force_tide_event(TideEvent::CrabMania, 0);
+        board.tick_idle();
+        assert!(board.gulls().is_empty(), "the tide took them");
+        let events = diff(&board, &mut watch);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, SimEvent::GullShooed { .. })),
+            "washed away, not turned away: {events:?}"
+        );
+    }
+
     /// A board swap (tick clock rolling back) resyncs without emitting a
     /// burst of stale events.
     #[test]
