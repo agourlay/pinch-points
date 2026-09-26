@@ -49,6 +49,16 @@ pub enum SimEvent {
     GullTookOff,
     /// A flying gull touched down here.
     GullLanded { pos: Vec2 },
+    /// A gull reached a castle on a beach without raids and was sent
+    /// packing: it leaves the beach, as a raider does, and takes nothing.
+    ///
+    /// A puzzle's castles cannot be robbed, but reaching one still takes
+    /// the gull off the sand (see `Board::castle_raids` for why that is
+    /// load-bearing). Drawn as nothing, the bird walked into the keep and
+    /// vanished, which is exactly what a raid looks like in versus, and
+    /// players read their puzzle as lost. `pos` is where it was last
+    /// drawn, `castle` the middle of the tile that turned it away.
+    GullShooed { pos: Vec2, castle: Vec2 },
     /// A signpost went up here, and whose it is.
     ///
     /// One per tile, never a headcount: a board-wide count nets one seat's
@@ -156,6 +166,8 @@ pub struct Watch {
     /// Where each gull was in the air, `None` while it was on the sand: a
     /// gull that had a flight position and now has none has just landed.
     gulls_aloft: HashMap<u32, Option<Vec2>>,
+    /// Where each gull was last drawn, for the one that is gone next frame.
+    gulls_at: HashMap<u32, Vec2>,
 }
 
 impl Watch {
@@ -199,6 +211,11 @@ impl Watch {
                         .then(|| layout::creature_pos(board, g.tile, g.dir, g.progress));
                     (g.id, aloft)
                 })
+                .collect(),
+            gulls_at: board
+                .gulls()
+                .iter()
+                .map(|g| (g.id, layout::creature_pos(board, g.tile, g.dir, g.progress)))
                 .collect(),
         }
     }
@@ -299,6 +316,43 @@ fn crab_events(board: &crate::sim::Board, watch: &Watch, events: &mut Vec<SimEve
     }
 }
 
+/// Gulls a raid-free castle turned away since the last frame.
+///
+/// A gull leaves the beach two ways: through a castle, or all at once when
+/// Crab Mania clears the sky. The sim does not record which castle, so the
+/// nearest one to where the bird was last drawn is taken: it walks at most
+/// a tile a frame, and a flight that ends on a castle ends on that tile.
+/// With raids on this stays quiet, since [`SimEvent::CastleRaided`] is the
+/// news there.
+fn gull_departures(
+    board: &crate::sim::Board,
+    prev: &Watch,
+    next: &Watch,
+    events: &mut Vec<SimEvent>,
+) {
+    let mania = next.event_at != prev.event_at && next.last_event == Some(TideEvent::CrabMania);
+    if board.castle_raids() || mania {
+        return;
+    }
+    let castles: Vec<Vec2> = board
+        .tiles()
+        .filter(|(_, _, kind)| matches!(kind, TileKind::Castle(_)))
+        .map(|(x, y, _)| layout::tile_center(board, x, y))
+        .collect();
+    for (id, &pos) in &prev.gulls_at {
+        if next.gulls_at.contains_key(id) {
+            continue;
+        }
+        let nearest = castles
+            .iter()
+            .copied()
+            .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
+        if let Some(castle) = nearest {
+            events.push(SimEvent::GullShooed { pos, castle });
+        }
+    }
+}
+
 /// Diff the sim against the last frame and emit one message per happening.
 /// A board swap (fresh level or round, detected by the tick clock rolling
 /// back or by an un-ticked board's identity changing) resyncs silently so
@@ -375,6 +429,8 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
             });
         }
     }
+
+    gull_departures(board, prev, next, &mut events);
 
     // Signposts tile by tile, in both directions. A tile whose seat is the
     // same on both sides has not changed hands: re-pointing a post keeps
@@ -498,6 +554,51 @@ mod tests {
         assert!(eaten, "the gull never registered its meal");
     }
 
+    /// A gull a puzzle's castle turns away is seen leaving, from where it
+    /// was, beside the castle that sent it. With raids on the same walk is
+    /// a raid, whose own event is the news, and nothing is shooed.
+    #[test]
+    fn a_raid_free_castle_is_seen_turning_its_gull_away() {
+        for raids in [false, true] {
+            let mut board = Board::new(6, 4, 7);
+            board.set_tile(3, 1, TileKind::Castle(0));
+            board.set_castle_raids(raids);
+            board.spawn_gull(2, 1, Direction::Right);
+            let mut watch = synced(&board);
+            let mut shooed = Vec::new();
+            for _ in 0..120 {
+                board.tick_idle();
+                shooed.extend(
+                    diff(&board, &mut watch)
+                        .into_iter()
+                        .filter(|e| matches!(e, SimEvent::GullShooed { .. })),
+                );
+                if board.gulls().is_empty() {
+                    break;
+                }
+            }
+            assert!(
+                board.gulls().is_empty(),
+                "raids {raids}: the gull never left"
+            );
+            if raids {
+                assert!(shooed.is_empty(), "a raid is not a shooing: {shooed:?}");
+                continue;
+            }
+            let castle = layout::tile_center(&board, 3, 1);
+            match shooed.as_slice() {
+                [SimEvent::GullShooed { pos, castle: at }] => {
+                    assert_eq!(*at, castle, "the castle it walked into");
+                    assert!(
+                        pos.distance(castle) <= layout::TILE,
+                        "last drawn beside it: {pos}"
+                    );
+                }
+                other => panic!("one departure, told once: {other:?}"),
+            }
+        }
+    }
+
     /// A board swap (tick clock rolling back) resyncs without emitting a
     /// burst of stale events.
     #[test]
@@ -575,6 +676,7 @@ mod tests {
                 | SimEvent::GullArrived
                 | SimEvent::GullTookOff
                 | SimEvent::GullLanded { .. }
+                | SimEvent::GullShooed { .. }
                 | SimEvent::SignpostPlaced { .. }
                 | SimEvent::SignpostRemoved { .. }
                 | SimEvent::TierUp { .. }

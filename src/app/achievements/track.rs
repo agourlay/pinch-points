@@ -106,6 +106,7 @@ pub fn track_events(
             | SimEvent::GullArrived
             | SimEvent::GullTookOff
             | SimEvent::GullLanded { .. }
+            | SimEvent::GullShooed { .. }
             | SimEvent::SignpostPlaced { .. }
             | SimEvent::SignpostRemoved { .. }
             | SimEvent::SignpostEvicted { .. }

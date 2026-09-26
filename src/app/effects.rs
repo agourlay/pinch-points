@@ -274,6 +274,46 @@ fn feathers(commands: &mut Commands, rng: &mut VisualRng, art: &Art, pos: Vec2) 
     }
 }
 
+/// A gull a castle turned away, beating off the beach the way it faces
+/// from the keep: a pale knock on the wall, and the bird climbing out,
+/// swelling as it rises toward the camera and fading as it goes.
+///
+/// `calm` keeps the bird and drops the flight. It still fades where it
+/// stood, which is the news: vanishing on the spot is what a raid does.
+fn shooed(commands: &mut Commands, art: &Art, pos: Vec2, castle: Vec2, calm: bool) {
+    let away = (pos - castle).try_normalize().unwrap_or(Vec2::Y);
+    // Up the screen as well as out, so a bird leaving downward still
+    // reads as taking off rather than as walking on.
+    let heading = (away + Vec2::Y * 0.6).normalize();
+    if !calm {
+        ring(
+            commands,
+            art,
+            castle,
+            Color::srgba(0.95, 0.97, 1.0, 0.55),
+            TILE * 0.55,
+            2.0,
+            0.3,
+        );
+    }
+    commands.spawn((
+        Particle {
+            velocity: if calm { Vec2::ZERO } else { heading * 150.0 },
+            grow: if calm { 0.0 } else { 0.6 },
+            fade_in: 0.0,
+            life: 0.75,
+            ..default()
+        },
+        Sprite {
+            image: art.gull_fly.clone(),
+            custom_size: Some(Vec2::splat(TILE * 0.78)),
+            ..default()
+        },
+        Transform::from_translation(pos.extend(layout::z::PARTICLE))
+            .with_rotation(Quat::from_rotation_z(heading.to_angle())),
+    ));
+}
+
 /// A shockwave out of one tile: a bright circle swelling and thinning.
 ///
 /// The shape every "something happened *here*" gets, so a tier-up, a post
@@ -652,10 +692,16 @@ pub fn moment_effects(
     // Reduced motion keeps the news and drops the fireworks: the score pip
     // for a raid still floats up (it is the only place that number appears),
     // but the puffs, the scatter, the shake and the full-tile white flash
-    // do not.
+    // do not. A gull turned away at a puzzle's castle still fades where it
+    // stood, or it vanished into the keep, which is what a raid looks like.
     let calm = settings.reduced_motion;
     for event in events.read() {
-        if calm && !matches!(event, SimEvent::CastleRaided { .. }) {
+        if calm
+            && !matches!(
+                event,
+                SimEvent::CastleRaided { .. } | SimEvent::GullShooed { .. }
+            )
+        {
             continue;
         }
         match event {
@@ -805,6 +851,11 @@ pub fn moment_effects(
                     0.35,
                 );
                 trauma.add(0.14);
+            }
+            // Turned away at a puzzle's castle. The bird has to be seen
+            // leaving, or it went *in*, and in versus that is a raid.
+            SimEvent::GullShooed { pos, castle } => {
+                shooed(&mut commands, &art, *pos, *castle, calm);
             }
             // A post going in gets a ring under it; the pop of the post
             // itself belongs to the sprite, which `board_render` owns.

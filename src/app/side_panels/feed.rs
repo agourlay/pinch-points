@@ -153,6 +153,7 @@ pub fn collect_log(
             | SimEvent::CrabSpawned { .. }
             | SimEvent::GullTookOff
             | SimEvent::GullLanded { .. }
+            | SimEvent::GullShooed { .. }
             | SimEvent::SignpostPlaced { .. }
             | SimEvent::SignpostRemoved { .. }
             | SimEvent::SignpostEvicted { .. }

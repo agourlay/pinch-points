@@ -282,6 +282,11 @@ pub fn play_events(
             }
             SimEvent::GullArrived => play(&mut commands, &sounds.screech, gain),
             SimEvent::GullTookOff => play(&mut commands, &sounds.takeoff, gain),
+            // The wingbeat of a bird leaving, from where it leaves: not the
+            // raid's crash, which is the sound of losing something.
+            SimEvent::GullShooed { pos, .. } => {
+                play_at(&mut commands, &sounds.takeoff, gain, pan(pos));
+            }
             // Only your own posts knock: the bots place far more often
             // than the players do, and online this was announcing arrows
             // that went down in somebody else's room. Unless nobody here
