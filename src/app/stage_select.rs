@@ -833,8 +833,8 @@ mod tests {
     #[test]
     fn c_toggles_coop_on_the_tide_pool_only() {
         for (kind, flips) in [
-            (crate::app::CampaignKind::TidePool, true),
-            (crate::app::CampaignKind::BeachDay, false),
+            (CampaignKind::TidePool, true),
+            (CampaignKind::BeachDay, false),
         ] {
             let mut app = App::new();
             app.add_plugins(bevy::state::app::StatesPlugin);

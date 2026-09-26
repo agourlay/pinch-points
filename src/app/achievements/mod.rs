@@ -610,7 +610,7 @@ mod tests {
     #[test]
     fn every_trophy_name_fits_its_column() {
         // The row's own numbers, from `ui::spawn_trophy`.
-        const NAME_COLUMN_PX: f32 = super::ui::NAME_PX;
+        const NAME_COLUMN_PX: f32 = ui::NAME_PX;
         let size = crate::app::menu_ui::type_scale::BODY;
         let mut over = Vec::new();
         for lang in crate::app::i18n::ALL_LANGS {

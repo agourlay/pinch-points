@@ -396,7 +396,7 @@ impl Fields {
             crabs_banked,
             golden_banked,
             wrap: self.wrap,
-            tide: super::events::Tide {
+            tide: events::Tide {
                 enabled: self.events_enabled,
                 cooldown: self.event_cooldown,
                 mania: self.mania,

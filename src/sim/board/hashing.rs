@@ -47,7 +47,7 @@ impl Board {
             crabs_banked: _,
             golden_banked: _,
             tide:
-                super::events::Tide {
+                events::Tide {
                     enabled: _,
                     cooldown: _,
                     mania: _,

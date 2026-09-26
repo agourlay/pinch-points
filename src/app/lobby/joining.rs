@@ -311,7 +311,7 @@ fn walk_into_the_arena(
     tournament: &mut crate::app::tournament::Tournament,
     (next_screen, next_vphase): (&mut NextState<Screen>, &mut NextState<VersusPhase>),
     (terms, standing): (MatchTerms, Option<crate::transport::SeriesStanding>),
-    session: impl FnOnce(crate::transport::UdpTransport) -> OnlineSession,
+    session: impl FnOnce(UdpTransport) -> OnlineSession,
 ) {
     let Standing::Joining(joined) = std::mem::take(&mut state.standing) else {
         unreachable!("an invitation for a lobby that greeted nobody");

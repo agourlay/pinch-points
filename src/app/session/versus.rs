@@ -26,7 +26,7 @@ pub(in crate::app) fn bot_seats(
 /// here is this machine's own.
 pub(super) enum RoundOrigin<'a> {
     /// Resumed from a save or a pasted code: its own beach and table.
-    Resumed(Box<crate::app::suspend::Suspended>),
+    Resumed(Box<suspend::Suspended>),
     /// A recording being watched.
     Replay(&'a Replay),
     /// A round at an online table, from its first frame or caught up

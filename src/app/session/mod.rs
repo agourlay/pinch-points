@@ -297,7 +297,7 @@ mod tests {
         assert!(!RoundOrigin::Replay(&replay).recorded());
         caught_up.catch_up.board = Some(Board::new(4, 4, 1));
         assert!(!RoundOrigin::Online(&caught_up).recorded());
-        let resumed = crate::app::suspend::Suspended {
+        let resumed = suspend::Suspended {
             seats: 3,
             bots: [None; MAX_PLAYERS],
             board: Board::new(4, 4, 1),

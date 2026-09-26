@@ -73,7 +73,7 @@ impl OnlineSession {
     /// Called after `pump`, with the board it has just simulated: that
     /// board is at the lockstep's frame, which is the frame the watcher's
     /// session will start from. Each part goes to the watcher alone.
-    pub fn send_catch_ups(&mut self, board: &crate::sim::Board) {
+    pub fn send_catch_ups(&mut self, board: &Board) {
         if self.catch_up.owed.is_empty() {
             return;
         }
@@ -426,7 +426,7 @@ mod session_tests {
         assert!(host.watching_this_round(1), "and counts in the crowd");
         assert!(!host.peers.follows_the_round(2), "Cy, in line, is not");
 
-        let mut assembly = catch_up::Assembly::default();
+        let mut assembly = Assembly::default();
         let caught = drain(&mut dee)
             .into_iter()
             .find_map(|msg| {
