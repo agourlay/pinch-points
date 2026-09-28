@@ -82,8 +82,9 @@ pub struct Sounds {
 /// two and a half minutes in all, back to back in a fixed order that
 /// opened every launch on the same track. So the order is a shuffle bag
 /// (every track once before any comes round again, never the same one
-/// twice running, a different one first each launch), and between tracks
-/// the beach goes quiet for a while.
+/// twice running, a different one first each launch), between tracks the
+/// beach goes quiet for a while, and three longer, softer tracks joined
+/// the seven: ten, and five minutes of music.
 #[derive(Resource)]
 pub struct MusicPlaylist {
     tracks: Vec<Handle<AudioSource>>,
@@ -197,6 +198,10 @@ pub fn load_sounds(mut commands: Commands, assets: Res<AssetServer>) {
             assets.load("sounds/theme_e.ogg"),
             assets.load("sounds/theme_f.ogg"),
             assets.load("sounds/theme_g.ogg"),
+            // The soft three, twice as long and gentler on the ear.
+            assets.load("sounds/theme_h.ogg"),
+            assets.load("sounds/theme_i.ogg"),
+            assets.load("sounds/theme_j.ogg"),
         ],
         crate::app::effects::VisualRng::from_clock(),
     ));

@@ -67,8 +67,10 @@ def triangle(phase):
     return 4.0 * p - 1.0 if p < 0.5 else 3.0 - 4.0 * p
 
 
-def tone(freqs, dur, wave_fn=square, vol=0.5, bend=1.0, vibrato=0.0):
-    """One note or a slide across `freqs` (start->end), with optional vibrato."""
+def tone(freqs, dur, wave_fn=square, vol=0.5, bend=1.0, vibrato=0.0,
+         attack=0.01, release=0.25):
+    """One note or a slide across `freqs` (start->end), with optional vibrato.
+    `attack` and `release` shape the envelope as fractions of the note."""
     n = int(dur * RATE)
     f0, f1 = (freqs, freqs) if isinstance(freqs, (int, float)) else freqs
     out = []
@@ -79,7 +81,7 @@ def tone(freqs, dur, wave_fn=square, vol=0.5, bend=1.0, vibrato=0.0):
         if vibrato:
             f *= 1.0 + math.sin(t * dur * 2 * math.pi * 30) * vibrato
         phase += f / RATE
-        out.append(wave_fn(phase) * vol * env(i, n))
+        out.append(wave_fn(phase) * vol * env(i, n, attack, release))
     return out
 
 
@@ -384,3 +386,181 @@ check = abs(len(melody) - len(bass))
 assert check < RATE * 0.05, f"theme_g voices differ by {check / RATE:.2f}s"
 surf = noise(len(melody) / RATE, vol=0.06, lowpass=0.03)
 write_music("theme_g", mix(melody, bass, glint, surf))
+
+# --- the soft three: H, I and J ---------------------------------------------
+# Added after players called the music repetitive and, some of them,
+# annoying. B to G are square and triangle leads sitting in the same
+# register as the effects, one phrase each, never resting. These three are
+# the answer to that: sine-based voices with softer note edges, melodies
+# pitched lower, and 24 bars in an A-B-A shape whose middle thins out, so
+# each track has somewhere to breathe. About twice as long as the others.
+
+def hz(name):
+    """Equal-tempered frequency of a note name like "Eb4" or "F#3"."""
+    steps = {"C": -9, "D": -7, "E": -5, "F": -4, "G": -2, "A": 0, "B": 2}
+    semis = steps[name[0]] + name.count("#") - name[1:].count("b")
+    octave = int(name.lstrip("ABCDEFG#b"))
+    return 440.0 * 2 ** ((semis + 12 * (octave - 4)) / 12)
+
+
+def mellow(phase):
+    """A sine with a touch of its octave: round, like a marimba bar."""
+    return 0.85 * math.sin(2 * math.pi * phase) + 0.15 * math.sin(4 * math.pi * phase)
+
+
+def sine(phase):
+    return math.sin(2 * math.pi * phase)
+
+
+def play(seq, beat, wave_fn, vol, **shape):
+    """A line of (note, beats) at `beat` seconds a beat; "R" rests."""
+    out = []
+    for name, beats in seq:
+        dur = beats * beat
+        if name == "R":
+            out += [0.0] * int(dur * RATE)
+        else:
+            out += tone(hz(name), dur, wave_fn, vol=vol, **shape)
+    return out
+
+
+def same_length(name, *voices):
+    longest = max(len(v) for v in voices)
+    for v in voices:
+        gap = longest - len(v)
+        assert gap < RATE * 0.05, f"{name} voices differ by {gap / RATE:.2f}s"
+
+
+# --- theme H: rock pools, C major, 4/4 at 100 bpm ----------------------------
+# A marimba melody over a two-note bass. The B section drops the melody an
+# octave's worth of weight and leaves half of every bar empty.
+BEAT_H = 60.0 / 100.0
+A_H = [
+    ("E4", 1), ("G4", 1), ("C5", 1.5), ("B4", 0.5),
+    ("A4", 2), ("E4", 1), ("R", 1),
+    ("F4", 1), ("A4", 1), ("C5", 1), ("A4", 1),
+    ("G4", 3), ("R", 1),
+    ("E4", 1), ("G4", 1), ("C5", 1), ("D5", 1),
+    ("E5", 1.5), ("D5", 0.5), ("C5", 1), ("A4", 1),
+    ("F4", 1), ("A4", 1), ("D5", 1), ("C5", 1),
+]
+MELODY_H = A_H + [
+    ("B4", 2), ("G4", 1), ("R", 1),
+    ("R", 2), ("C5", 1), ("B4", 1),
+    ("G4", 3), ("R", 1),
+    ("R", 2), ("A4", 1), ("G4", 1),
+    ("E4", 3), ("R", 1),
+    ("R", 1), ("D4", 1), ("F4", 1), ("A4", 1),
+    ("C5", 2), ("B4", 1), ("A4", 1),
+    ("A4", 1), ("G4", 1), ("F4", 1), ("E4", 1),
+    ("D4", 3), ("R", 1),
+] + A_H + [("C5", 3), ("R", 1)]
+# One chord a bar, as (root, fifth).
+CHORDS_H = [
+    ("C3", "G3"), ("A2", "E3"), ("F2", "C3"), ("G2", "D3"),
+    ("C3", "G3"), ("A2", "E3"), ("D3", "A3"), ("G2", "D3"),
+    ("A2", "E3"), ("E3", "B3"), ("F2", "C3"), ("C3", "G3"),
+    ("D3", "A3"), ("A2", "E3"), ("F2", "C3"), ("G2", "D3"),
+    ("C3", "G3"), ("A2", "E3"), ("F2", "C3"), ("G2", "D3"),
+    ("C3", "G3"), ("A2", "E3"), ("D3", "A3"), ("C3", "G3"),
+]
+BASS_H = [step for root, fifth in CHORDS_H
+          for step in ((root, 1.5), ("R", 0.5), (fifth, 1.5), ("R", 0.5))]
+melody = play(MELODY_H, BEAT_H, mellow, 0.30, release=0.15)
+bass = play(BASS_H, BEAT_H, triangle, 0.17, attack=0.03, release=0.4)
+same_length("theme_h", melody, bass)
+surf = noise(len(melody) / RATE, vol=0.05, lowpass=0.04)
+write_music("theme_h", mix(melody, bass, surf))
+
+# --- theme I: driftwood, D dorian, 3/4 at 108 bpm ----------------------------
+# A whistled tune: a sine with a slow swell and a little vibrato, over a
+# plucked bass. The B natural of the dorian mode is what gives it the
+# folk-song lilt none of the others has.
+BEAT_I = 60.0 / 108.0
+A_I = [
+    ("D4", 2), ("F4", 1),
+    ("E4", 1), ("G4", 2),
+    ("A4", 2), ("G4", 1),
+    ("E4", 3),
+    ("F4", 1), ("A4", 1), ("C5", 1),
+    ("B4", 2), ("G4", 1),
+    ("D5", 1.5), ("C5", 0.5), ("B4", 1),
+]
+MELODY_I = A_I + [
+    ("A4", 3),
+    ("B4", 1), ("A4", 1), ("G4", 1),
+    ("F4", 3),
+    ("E4", 1), ("F4", 1), ("G4", 1),
+    ("A4", 3),
+    ("R", 1), ("C5", 1), ("A4", 1),
+    ("B4", 1), ("G4", 2),
+    ("E4", 1), ("G4", 1), ("E4", 1),
+    ("D4", 3),
+] + A_I + [("D4", 3)]
+# The chord under each bar, as (root, fifth).
+ROOTS_I = {"Dm": ("D3", "A3"), "C": ("C3", "G3"), "F": ("F2", "C3"),
+           "G": ("G2", "D3")}
+CHORDS_I = ["Dm", "C", "Dm", "C", "F", "C", "G", "Dm",
+            "G", "Dm", "C", "Dm", "F", "G", "C", "Dm",
+            "Dm", "C", "Dm", "C", "F", "C", "G", "Dm"]
+BASS_I = [step for chord in CHORDS_I
+          for step in ((ROOTS_I[chord][0], 1), ("R", 1),
+                       (ROOTS_I[chord][1], 0.5), ("R", 0.5))]
+melody = play(MELODY_I, BEAT_I, sine, 0.26, vibrato=0.004,
+              attack=0.12, release=0.6)
+bass = play(BASS_I, BEAT_I, triangle, 0.18, release=0.2)
+same_length("theme_i", melody, bass)
+surf = noise(len(melody) / RATE, vol=0.05, lowpass=0.03)
+write_music("theme_i", mix(melody, bass, surf))
+
+# --- theme J: low tide shuffle, Eb major, 4/4 at 112 bpm ---------------------
+# Led from the bottom: a walking bass and soft chord stabs on 2 and 4 carry
+# the first eight bars alone, the swung melody comes in for eight, and the
+# last eight trade short calls with the groove.
+BEAT_J = 60.0 / 112.0
+S, L = 1 / 3, 2 / 3  # a swung pair of eighths: long, then short
+MELODY_J = [("R", 32)] + [
+    ("Bb4", 1), ("G4", L), ("Bb4", S), ("C5", 1), ("Bb4", 1),
+    ("G4", 2), ("R", 1), ("Eb4", 1),
+    ("C5", L), ("Bb4", S), ("Ab4", L), ("G4", S), ("Ab4", 1), ("C5", 1),
+    ("Bb4", 3), ("R", 1),
+    ("Eb5", 1), ("D5", L), ("C5", S), ("Bb4", 1), ("G4", 1),
+    ("C5", 2), ("G4", 1), ("R", 1),
+    ("Ab4", 1), ("C5", 1), ("Bb4", L), ("Ab4", S), ("G4", 1),
+    ("F4", 2), ("R", 2),
+    ("G4", L), ("Bb4", S), ("Eb5", 1), ("R", 2),
+    ("R", 4),
+    ("Ab4", L), ("C5", S), ("Eb5", 1), ("R", 2),
+    ("R", 2), ("D5", 1), ("Bb4", 1),
+    ("G4", L), ("Bb4", S), ("Eb5", 1), ("R", 2),
+    ("R", 2), ("Eb5", 1), ("C5", 1),
+    ("Bb4", 1), ("Ab4", 1), ("G4", 1), ("F4", 1),
+    ("Eb4", 3), ("R", 1),
+]
+WALK_J = {
+    "Eb": [("Eb3", 1), ("G3", 1), ("Bb3", 1), ("G3", 1)],
+    "Cm": [("C3", 1), ("Eb3", 1), ("G3", 1), ("Eb3", 1)],
+    "Ab": [("Ab2", 1), ("C3", 1), ("Eb3", 1), ("C3", 1)],
+    "Bb": [("Bb2", 1), ("D3", 1), ("F3", 1), ("D3", 1)],
+}
+# The two chord tones each stab plays.
+STAB_J = {"Eb": ("G4", "Bb4"), "Cm": ("G4", "C5"), "Ab": ("Ab4", "C5"),
+          "Bb": ("F4", "Bb4")}
+CHORDS_J = ["Eb", "Cm", "Ab", "Bb"] * 6
+bass = play([step for chord in CHORDS_J[:-1] for step in WALK_J[chord]]
+            + [("Eb3", 3), ("R", 1)], BEAT_J, triangle, 0.20, release=0.35)
+stabs = []
+for i, chord in enumerate(CHORDS_J):
+    lo, hi = STAB_J["Eb" if i == len(CHORDS_J) - 1 else chord]
+    bar = [("R", 1), (None, 0.3), ("R", 1.7), (None, 0.3), ("R", 0.7)]
+    for name, beats in bar:
+        if name == "R":
+            stabs += [0.0] * int(beats * BEAT_J * RATE)
+        else:
+            dur = beats * BEAT_J
+            stabs += mix(tone(hz(lo), dur, mellow, vol=0.07, release=0.3),
+                         tone(hz(hi), dur, mellow, vol=0.07, release=0.3))
+melody = play(MELODY_J, BEAT_J, mellow, 0.28, attack=0.02, release=0.3)
+same_length("theme_j", melody, bass, stabs)
+surf = noise(len(melody) / RATE, vol=0.05, lowpass=0.05)
+write_music("theme_j", mix(melody, bass, stabs, surf))
