@@ -878,6 +878,7 @@ fn add_finish_systems(app: &mut App) {
             audio::toggle_mute.run_if(not(text_entry_open)),
             audio::drive_music,
             audio::rotate_music,
+            audio::fade_music,
             dev::debug_screenshot,
         )
             .chain()

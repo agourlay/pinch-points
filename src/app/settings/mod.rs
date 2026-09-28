@@ -709,7 +709,7 @@ pub fn toggle_fullscreen(
 /// Push the music volume to the sink whenever settings change.
 pub fn apply_music_volume(
     settings: Res<GameSettings>,
-    mut sinks: Query<&mut AudioSink, With<Music>>,
+    mut sinks: Query<&mut AudioSink, (With<Music>, Without<crate::app::audio::FadingOut>)>,
 ) {
     if !settings.is_changed() {
         return;

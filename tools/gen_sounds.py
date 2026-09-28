@@ -867,3 +867,118 @@ HOOK_M = [
 for bar in (12, 16, 20):
     hook(m, bar, HOOK_M, sine, 0.22, None, attack=0.05, release=0.6)
 write_music("theme_m", m.mix(depth=0.85, recover=0.3))
+
+# --- the second club three: N, O and P ---------------------------------------
+# Players loved K, L and M, so versus rounds got a set of their own: these
+# three join them there, and the calmer tracks keep the menus and puzzles.
+TRIADS.update({"Gm": ("G3", "Bb3", "D4"), "Bb": ("Bb3", "D4", "F4"),
+               "Em": ("E3", "G3", "B3"), "Cm": ("C4", "Eb4", "G4")})
+
+# --- theme N: sandbar, G minor trance at 138 bpm -----------------------------
+# The trance gate: supersaw chords chopped into a sixteenth-note stutter,
+# over a bass on every sixteenth the kick leaves free. A breakdown with a
+# snare roll halfway, then the lead arpeggio leaps an octave over it all.
+n_ = Track(138, 32)
+CHORDS_N = ["Gm", "Eb", "Bb", "F"] * 8
+GATE = [0, 2, 3, 5, 6, 8, 10, 11, 13, 14]
+for bar, chord in enumerate(CHORDS_N):
+    root, third, fifth = TRIADS[chord]
+    drums = bar < 12 or 16 <= bar < 32
+    breakdown = 12 <= bar < 16
+    if drums:
+        fade = 1.0 if bar < 28 else (32 - bar) / 5
+        n_.hit(KICK, bar, FOUR_ON_THE_FLOOR, 0.9 * fade)
+        n_.hit(HAT, bar, range(16), 0.08 * fade)
+        n_.hit(OPEN_HAT, bar, OFFBEATS, 0.10 * fade)
+        for s in range(16):
+            if s % 4:
+                n_.note(synth(hz(down(root, 1)), 0.9 * n_.step, saw, 0.24 * fade,
+                              release=0.5, cutoff=800), bar, s)
+    if 4 <= bar < 12 or 16 <= bar < 28:
+        n_.hit(CLAP, bar, [4, 12], 0.40)
+        for s in GATE:
+            for name in (root, third, fifth):
+                n_.note(synth(hz(name), n_.step, saw, 0.07, release=0.6,
+                              cutoff=2800, voices=3), bar, s)
+    if breakdown:
+        for name in (root, third, fifth):
+            n_.note(synth(hz(name), 16 * n_.step, saw, 0.15, attack=0.1,
+                          release=3.0, cutoff=1600, voices=3), bar, 0)
+        if bar >= 14:
+            every = 2 if bar == 14 else 1
+            n_.hit(SNARE, bar, range(0, 12 if bar == 15 else 16, every),
+                   0.18 + 0.08 * (bar - 14))
+    if 16 <= bar < 28:
+        # The lead: an arpeggio up the triad and over the octave.
+        arp = [root, third, fifth, down(root, -1), down(third, -1), down(root, -1),
+               fifth, third]
+        for s in range(0, 16, 2):
+            n_.note(synth(hz(down(arp[s // 2], -1)), 2 * n_.step,
+                          lambda p: square(p, 0.3), 0.10, release=0.3,
+                          cutoff=2600), bar, s)
+write_music("theme_n", n_.mix(depth=0.75))
+
+# --- theme O: riptide, E minor drum and bass at 174 bpm ----------------------
+# The fastest in the game: a two-step break (kick on 1 and the "and" of 3,
+# snare on 2 and 4) with ghost snares, under a reese bass - two saws
+# slightly out of tune, beating against each other - and a wide pad.
+o = Track(174, 40)
+CHORDS_O = ["Em", "C", "G", "D"] * 10
+for bar, chord in enumerate(CHORDS_O):
+    root, third, fifth = TRIADS[chord]
+    full = 8 <= bar < 32
+    fade = 1.0 if bar < 32 else (40 - bar) / 9
+    o.hit(HAT, bar, range(0, 16, 2), 0.09 * fade)
+    if full or bar >= 32:
+        o.hit(KICK, bar, [0, 10], 0.85 * fade)
+        o.hit(SNARE, bar, [4, 12], 0.55 * fade)
+    if full:
+        o.hit(SNARE, bar, [7, 15] if bar % 2 else [9], 0.12)  # ghosts
+        o.hit(HAT, bar, [3, 11], 0.06)
+        o.note(synth(hz(down(root, 2)), 16 * o.step, saw, 0.30, attack=0.01,
+                     release=2.0, cutoff=450, voices=2, detune=0.02), bar, 0)
+    for name in (root, third, fifth):
+        # Carrying the intro alone, the pad has to be heard over nothing.
+        o.note(synth(hz(name), 16 * o.step, saw, (0.22 if bar < 8 else 0.10) * fade, attack=0.2,
+                     release=3.0, cutoff=1300, voices=3), bar, 0)
+    if 16 <= bar < 32 and bar % 2 == 0:
+        # A stab answer every other bar, up an octave.
+        for s, name in ((0, fifth), (3, third), (6, root), (10, third)):
+            o.note(synth(hz(down(name, -1)), 2 * o.step, lambda p: square(p, 0.4),
+                         0.10, release=0.3, cutoff=2400), bar, s)
+write_music("theme_o", o.mix(depth=0.4, recover=0.15))
+
+# --- theme P: crab walk, C minor electro wobble at 126 bpm -------------------
+# The wobble: a square bass whose filter sweeps open and shut on every
+# eighth note, under four-on-the-floor and a brass-like stab hook.
+p_ = Track(126, 32)
+CHORDS_P = ["Cm", "Ab", "Eb", "Bb"] * 8
+for bar, chord in enumerate(CHORDS_P):
+    root, third, fifth = TRIADS[chord]
+    drop = 8 <= bar < 24
+    if bar < 28:
+        fade = 1.0 if bar < 24 else 0.7
+        p_.hit(KICK, bar, FOUR_ON_THE_FLOOR, 0.9 * fade)
+        p_.hit(HAT, bar, range(0, 16, 2), 0.10 * fade)
+    if 4 <= bar < 24:
+        p_.hit(CLAP, bar, [4, 12], 0.45)
+    if 4 <= bar < 8 or bar >= 24:
+        fade = (32 - bar) / 4 if bar >= 28 else 1.0
+        for name in (root, third, fifth):
+            p_.note(synth(hz(name), 16 * p_.step, saw, 0.18 * fade, attack=0.1,
+                          release=3.0, cutoff=1200, voices=3), bar, 0)
+    if drop:
+        rate = 1 / (2 * p_.step)  # one wobble an eighth note
+        wobble = lambda i, rate=rate: 250 + 1900 * (0.5 - 0.5 * math.cos(2 * math.pi * i / RATE * rate))
+        p_.note(synth(hz(down(root, 2)), 16 * p_.step, lambda q: square(q, 0.5), 0.32,
+                      attack=0.01, release=3.0, cutoff=wobble), bar, 0)
+        p_.hit(OPEN_HAT, bar, OFFBEATS, 0.10)
+HOOK_P = [
+    (0, 2, "G4"), (3, 2, "G4"), (6, 2, "Eb4"), (8, 2, "F4"), (10, 4, "G4"),
+    (16, 2, "Ab4"), (19, 2, "Ab4"), (22, 2, "G4"), (24, 2, "Eb4"), (26, 4, "C4"),
+    (32, 2, "Bb4"), (35, 2, "Bb4"), (38, 2, "G4"), (40, 2, "Bb4"), (42, 4, "C5"),
+    (48, 2, "D5"), (51, 2, "C5"), (54, 2, "Bb4"), (56, 4, "F4"), (60, 4, "D4"),
+]
+for bar in (12, 16, 20):
+    hook(p_, bar, HOOK_P, saw, 0.13, 1600, voices=2, release=0.5)
+write_music("theme_p", p_.mix(depth=0.75))

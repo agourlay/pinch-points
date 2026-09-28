@@ -21,9 +21,64 @@ use bevy::input::gamepad::{GamepadRumbleIntensity, GamepadRumbleRequest};
 use bevy::prelude::*;
 use std::time::Duration;
 
-/// Marker for the looping background theme entity.
+/// The background theme entity, and which set it was drawn from.
 #[derive(Component)]
-pub struct Music;
+pub struct Music(Mood);
+
+/// Which of the two sets of tracks a screen plays.
+///
+/// Players loved the dance tracks and wanted them where the game is fast:
+/// a versus round gets the drums, and everywhere a player sits and thinks
+/// (the menus, the puzzles, the editor) keeps the calmer tracks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mood {
+    Calm,
+    Battle,
+}
+
+impl Mood {
+    /// The set this screen plays. The interlude between the rounds of a
+    /// series is still the battle, so a track is not cut off by it.
+    pub fn of(screen: Screen) -> Mood {
+        match screen {
+            Screen::Versus | Screen::Interlude => Mood::Battle,
+            Screen::Menu
+            | Screen::Puzzle
+            | Screen::Editor
+            | Screen::Lobby
+            | Screen::Settings
+            | Screen::Controls
+            | Screen::MatchSetup
+            | Screen::Achievements
+            | Screen::StageSelect
+            | Screen::Replays
+            | Screen::Language
+            | Screen::NewVersion => Mood::Calm,
+        }
+    }
+
+    /// How long the beach goes quiet between two tracks, seconds.
+    ///
+    /// Calm rests are longer than most of the tracks themselves, on
+    /// purpose: the rest is what lets a short playlist last a session
+    /// without wearing thin. A battle only takes a breath: a round is a
+    /// few minutes long, and a minute of it in silence is a round without
+    /// its music.
+    fn rest_secs(self) -> std::ops::Range<f32> {
+        match self {
+            Mood::Calm => 30.0..90.0,
+            Mood::Battle => 3.0..6.0,
+        }
+    }
+}
+
+/// A track on its way out because the screen changed sets: it fades over
+/// [`FADE_SECS`] under the new one and then goes. Seconds left.
+#[derive(Component)]
+pub struct FadingOut(f32);
+
+/// How long a track takes to fade out when the set changes under it.
+const FADE_SECS: f32 = 0.8;
 
 /// The master mute on M: everything off, now, without touching what the
 /// player has set.
@@ -76,61 +131,60 @@ pub struct Sounds {
 }
 
 /// The background playlist; a track spawns, plays once, despawns, and
-/// after a rest `rotate_music` starts another.
+/// after a rest `rotate_music` starts another from the set the screen asks
+/// for ([`Mood`]).
 ///
 /// Players called the music repetitive, and it was: seven short loops,
 /// two and a half minutes in all, back to back in a fixed order that
-/// opened every launch on the same track. So the order is a shuffle bag
+/// opened every launch on the same track. So each set is a shuffle bag
 /// (every track once before any comes round again, never the same one
 /// twice running, a different one first each launch), between tracks the
-/// beach goes quiet for a while, and six longer tracks joined the seven
-/// (three soft, three with drums): thirteen, and about eight minutes.
+/// beach goes quiet for a while, and longer tracks joined them.
 #[derive(Resource)]
 pub struct MusicPlaylist {
+    calm: Shelf,
+    battle: Shelf,
+    rest: Rest,
+    rng: crate::app::effects::VisualRng,
+}
+
+/// One set's tracks and its shuffle bag.
+struct Shelf {
     tracks: Vec<Handle<AudioSource>>,
     /// What is left to play this time round, drawn from the back.
     bag: Vec<usize>,
     /// The track drawn last, which the next refill must not open with.
     last: Option<usize>,
-    rest: Rest,
-    rng: crate::app::effects::VisualRng,
 }
 
-/// Where the playlist is between two tracks.
+/// Where the playlist is between two tracks, and for which set.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Rest {
     /// Nothing has played yet: the first track starts without a wait.
     Due,
     /// A track is alive, playing or held down.
-    Playing,
+    Playing(Mood),
     /// Seconds of quiet left before the next track.
-    Waiting(f32),
+    Waiting(Mood, f32),
 }
 
-/// How long the beach goes quiet between two tracks, seconds. Longer than
-/// most of the tracks themselves, on purpose: the rest is what lets a short
-/// playlist last a session without wearing thin.
-const REST_SECS: std::ops::Range<f32> = 30.0..90.0;
-
-impl MusicPlaylist {
-    fn new(tracks: Vec<Handle<AudioSource>>, rng: crate::app::effects::VisualRng) -> Self {
-        MusicPlaylist {
+impl Shelf {
+    fn new(tracks: Vec<Handle<AudioSource>>) -> Self {
+        Shelf {
             tracks,
             bag: Vec::new(),
             last: None,
-            rest: Rest::Due,
-            rng,
         }
     }
 
     /// The next track to play, from a bag refilled and shuffled whenever it
     /// runs dry.
-    fn draw(&mut self) -> usize {
+    fn draw(&mut self, rng: &mut crate::app::effects::VisualRng) -> usize {
         if self.bag.is_empty() {
             self.bag = (0..self.tracks.len()).collect();
             for i in (1..self.bag.len()).rev() {
                 // The high bits: an LCG's low bits cycle with short periods.
-                let j = (self.rng.next() >> 16) as usize % (i + 1);
+                let j = (rng.next() >> 16) as usize % (i + 1);
                 self.bag.swap(i, j);
             }
             // The last of one round and the first of the next would
@@ -143,6 +197,34 @@ impl MusicPlaylist {
         let track = self.bag.pop().unwrap_or(0);
         self.last = Some(track);
         track
+    }
+}
+
+impl MusicPlaylist {
+    fn new(
+        calm: Vec<Handle<AudioSource>>,
+        battle: Vec<Handle<AudioSource>>,
+        rng: crate::app::effects::VisualRng,
+    ) -> Self {
+        MusicPlaylist {
+            calm: Shelf::new(calm),
+            battle: Shelf::new(battle),
+            rest: Rest::Due,
+            rng,
+        }
+    }
+
+    /// The next track from `mood`'s set.
+    fn draw(&mut self, mood: Mood) -> Handle<AudioSource> {
+        let MusicPlaylist {
+            calm, battle, rng, ..
+        } = self;
+        let shelf = match mood {
+            Mood::Calm => calm,
+            Mood::Battle => battle,
+        };
+        let index = shelf.draw(rng);
+        shelf.tracks[index].clone()
     }
 }
 
@@ -188,6 +270,7 @@ pub fn load_sounds(mut commands: Commands, assets: Res<AssetServer>) {
     // zooming or sliding never changes how the beach sounds.
     commands.spawn(SpatialListener::new(EAR_GAP));
     commands.insert_resource(MusicPlaylist::new(
+        // Calm: the menus, the puzzles and the editor.
         vec![
             // theme.wav predates the sound generator and has no source to
             // re-encode from; the generated loops ship as OGG. It was also
@@ -204,10 +287,15 @@ pub fn load_sounds(mut commands: Commands, assets: Res<AssetServer>) {
             assets.load("sounds/theme_h.ogg"),
             assets.load("sounds/theme_i.ogg"),
             assets.load("sounds/theme_j.ogg"),
-            // The club three: drums, a pumping bass, a synth hook.
+        ],
+        // Battle: the dance tracks, drums and a pumping bass, for versus.
+        vec![
             assets.load("sounds/theme_k.ogg"),
             assets.load("sounds/theme_l.ogg"),
             assets.load("sounds/theme_m.ogg"),
+            assets.load("sounds/theme_n.ogg"),
+            assets.load("sounds/theme_o.ogg"),
+            assets.load("sounds/theme_p.ogg"),
         ],
         crate::app::effects::VisualRng::from_clock(),
     ));
@@ -449,7 +537,8 @@ pub fn play_chime(commands: &mut Commands, sounds: &Sounds, gain: f32) {
     play(commands, &sounds.tier, gain);
 }
 
-/// Keep the playlist rolling: when a track ends, rest, then start the next.
+/// Keep the playlist rolling: when a track ends, rest, then start the next
+/// from the set this screen plays.
 ///
 /// A track that is merely down - muted, paused, switched off - is still
 /// alive and still here, so it is the same song that comes back, from
@@ -457,48 +546,84 @@ pub fn play_chime(commands: &mut Commands, sounds: &Sounds, gain: f32) {
 /// audible, which is what keeps a silenced game from decoding a playlist
 /// nobody is listening to, and the rest only counts down while the music
 /// could be heard: a pause card does not eat it.
+///
+/// When the screen changes sets, the track from the other one fades out
+/// and one from this set starts at once, rest or no rest: a round opening
+/// on a lull is a round opening without its music.
+#[allow(clippy::too_many_arguments)]
 pub fn rotate_music(
     mut commands: Commands,
     mut playlist: ResMut<MusicPlaylist>,
     settings: Res<crate::app::settings::GameSettings>,
     muted: Res<Muted>,
     menu: Res<crate::app::pause::PauseMenu>,
+    screen: Res<State<Screen>>,
     time: Res<Time>,
-    playing: Query<(), With<Music>>,
+    playing: Query<(Entity, &Music), Without<FadingOut>>,
 ) {
-    if !playing.is_empty() {
-        playlist.rest = Rest::Playing;
+    let mood = Mood::of(*screen.get());
+    let mut live = false;
+    for (entity, music) in &playing {
+        if music.0 == mood {
+            live = true;
+        } else {
+            commands.entity(entity).try_insert(FadingOut(FADE_SECS));
+        }
+    }
+    if live {
+        playlist.rest = Rest::Playing(mood);
         return;
     }
     if !music_audible(&settings, &muted, menu.open) {
         return;
     }
     match playlist.rest {
-        Rest::Due => {}
-        Rest::Playing => {
-            let secs = playlist.rng.range(REST_SECS.start, REST_SECS.end);
-            playlist.rest = Rest::Waiting(secs);
+        Rest::Playing(was) if was == mood => {
+            let rest = mood.rest_secs();
+            let secs = playlist.rng.range(rest.start, rest.end);
+            playlist.rest = Rest::Waiting(mood, secs);
             return;
         }
-        Rest::Waiting(left) => {
+        Rest::Waiting(was, left) if was == mood => {
             let left = left - time.delta_secs();
             if left > 0.0 {
-                playlist.rest = Rest::Waiting(left);
+                playlist.rest = Rest::Waiting(mood, left);
                 return;
             }
         }
+        // Nothing yet, or the other set was playing or resting.
+        Rest::Due | Rest::Playing(_) | Rest::Waiting(..) => {}
     }
-    let index = playlist.draw();
-    let track = playlist.tracks[index].clone();
-    playlist.rest = Rest::Playing;
+    let track = playlist.draw(mood);
+    playlist.rest = Rest::Playing(mood);
     commands.spawn((
-        Music,
+        Music(mood),
         AudioPlayer::new(track),
         PlaybackSettings {
             volume: Volume::Linear(settings.music_gain()),
             ..PlaybackSettings::DESPAWN
         },
     ));
+}
+
+/// Take a track that is leaving down to nothing, then away.
+///
+/// Counted without a sink too: a track faded before its audio had started
+/// has no sink to turn down, and must still go.
+pub fn fade_music(
+    mut commands: Commands,
+    settings: Res<crate::app::settings::GameSettings>,
+    time: Res<Time>,
+    mut fading: Query<(Entity, &mut FadingOut, Option<&mut AudioSink>)>,
+) {
+    for (entity, mut fade, sink) in &mut fading {
+        fade.0 -= time.delta_secs();
+        if fade.0 <= 0.0 {
+            commands.entity(entity).try_despawn();
+        } else if let Some(mut sink) = sink {
+            sink.set_volume(Volume::Linear(settings.music_gain() * fade.0 / FADE_SECS));
+        }
+    }
 }
 
 /// M mutes the game: the cap that says M, on whatever keyboard this is.
@@ -772,10 +897,11 @@ mod tests {
     fn the_shuffle_plays_everything_and_never_repeats_back_to_back() {
         let tracks = vec![Handle::default(); 7];
         for seed in 0..50 {
-            let mut playlist = MusicPlaylist::new(tracks.clone(), VisualRng::seeded(seed));
+            let mut rng = VisualRng::seeded(seed);
+            let mut shelf = Shelf::new(tracks.clone());
             let mut previous = None;
             for _ in 0..20 {
-                let mut round: Vec<usize> = (0..7).map(|_| playlist.draw()).collect();
+                let mut round: Vec<usize> = (0..7).map(|_| shelf.draw(&mut rng)).collect();
                 for &track in &round {
                     assert_ne!(Some(track), previous, "seed {seed}: {track} twice running");
                     previous = Some(track);
@@ -790,9 +916,65 @@ mod tests {
         }
         // And launches do not all open on the same track.
         let openers: std::collections::HashSet<usize> = (0..50)
-            .map(|seed| MusicPlaylist::new(tracks.clone(), VisualRng::seeded(seed)).draw())
+            .map(|seed| Shelf::new(tracks.clone()).draw(&mut VisualRng::seeded(seed)))
             .collect();
         assert!(openers.len() > 1, "every launch opened on {openers:?}");
+    }
+
+    /// The versus screens play the battle set, and every other one the
+    /// calm set.
+    #[test]
+    fn only_a_round_plays_the_battle_set() {
+        for screen in Screen::ALL {
+            let battle = matches!(screen, Screen::Versus | Screen::Interlude);
+            let want = if battle { Mood::Battle } else { Mood::Calm };
+            assert_eq!(Mood::of(screen), want, "{screen:?}");
+        }
+    }
+
+    /// A world with the playlist's systems: two calm tracks, two battle
+    /// tracks, on the menu, with the clock under the test's hand.
+    fn radio() -> App {
+        let mut app = App::new();
+        app.insert_resource(GameSettings::default());
+        app.insert_resource(Muted(false));
+        app.insert_resource(crate::app::pause::PauseMenu::default());
+        app.insert_resource(State::new(Screen::Menu));
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(MusicPlaylist::new(
+            vec![Handle::default(), Handle::default()],
+            vec![Handle::default(), Handle::default()],
+            VisualRng::seeded(7),
+        ));
+        app.add_systems(Update, (rotate_music, fade_music).chain());
+        app
+    }
+
+    /// The tracks alive, by set, with whether each is on its way out.
+    fn on_air(app: &mut App) -> Vec<(Mood, bool)> {
+        app.world_mut()
+            .query::<(&Music, Has<FadingOut>)>()
+            .iter(app.world())
+            .map(|(music, fading)| (music.0, fading))
+            .collect()
+    }
+
+    fn wait(app: &mut App, secs: f32) {
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs_f32(secs));
+        app.update();
+    }
+
+    fn end_it(app: &mut App) {
+        let live: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<Music>>()
+            .iter(app.world())
+            .collect();
+        for entity in live {
+            app.world_mut().entity_mut(entity).despawn();
+        }
     }
 
     /// The playlist rests between tracks, and it only moves when somebody
@@ -803,38 +985,9 @@ mod tests {
     /// it, and nothing starts at all while none of it would be audible.
     #[test]
     fn the_playlist_rests_between_tracks_and_only_while_somebody_could_hear_it() {
-        let mut app = App::new();
-        app.insert_resource(GameSettings::default());
-        app.insert_resource(Muted(false));
-        app.insert_resource(crate::app::pause::PauseMenu::default());
-        app.insert_resource(Time::<()>::default());
-        app.insert_resource(MusicPlaylist::new(
-            vec![Handle::default(), Handle::default(), Handle::default()],
-            VisualRng::seeded(7),
-        ));
-        app.add_systems(Update, rotate_music);
-        let playing = |app: &mut App| {
-            app.world_mut()
-                .query_filtered::<Entity, With<Music>>()
-                .iter(app.world())
-                .count()
-        };
-        let end_it = |app: &mut App| {
-            let live: Vec<Entity> = app
-                .world_mut()
-                .query_filtered::<Entity, With<Music>>()
-                .iter(app.world())
-                .collect();
-            for entity in live {
-                app.world_mut().entity_mut(entity).despawn();
-            }
-        };
-        let wait = |app: &mut App, secs: f32| {
-            app.world_mut()
-                .resource_mut::<Time>()
-                .advance_by(Duration::from_secs_f32(secs));
-            app.update();
-        };
+        let mut app = radio();
+        let rest = Mood::Calm.rest_secs();
+        let playing = |app: &mut App| on_air(app).len();
 
         app.update();
         assert_eq!(playing(&mut app), 1, "the first track starts at once");
@@ -849,7 +1002,7 @@ mod tests {
         // rest before anything else starts.
         end_it(&mut app);
         app.update();
-        wait(&mut app, REST_SECS.start - 1.0);
+        wait(&mut app, rest.start - 1.0);
         assert_eq!(playing(&mut app), 0, "resting");
 
         // Silenced, the rest holds where it is, however long it lasts:
@@ -874,8 +1027,45 @@ mod tests {
         assert_eq!(playing(&mut app), 0, "the rest was held, not spent");
 
         // Past the longest rest, the next track is on.
-        wait(&mut app, REST_SECS.end);
+        wait(&mut app, rest.end);
         assert_eq!(playing(&mut app), 1, "and then the next one");
+    }
+
+    /// Walking into a round swaps the calm track for a battle one at once,
+    /// the old one fading under it, and walking out swaps them back, even
+    /// in the middle of a rest.
+    #[test]
+    fn a_round_changes_the_set_without_waiting_for_a_rest() {
+        let mut app = radio();
+        app.update();
+        assert_eq!(on_air(&mut app), [(Mood::Calm, false)], "the menu is calm");
+
+        app.insert_resource(State::new(Screen::Versus));
+        wait(&mut app, 0.1);
+        app.update();
+        let mut air = on_air(&mut app);
+        air.sort_by_key(|&(mood, _)| mood == Mood::Battle);
+        assert_eq!(
+            air,
+            [(Mood::Calm, true), (Mood::Battle, false)],
+            "the calm one fades under the battle one"
+        );
+        wait(&mut app, FADE_SECS);
+        assert_eq!(on_air(&mut app), [(Mood::Battle, false)], "and is gone");
+
+        // A battle track ends and the round takes only a breath.
+        end_it(&mut app);
+        app.update();
+        wait(&mut app, Mood::Battle.rest_secs().end);
+        assert_eq!(on_air(&mut app), [(Mood::Battle, false)], "the next one");
+
+        // Out of the round mid-rest: the calm set does not wait out the
+        // battle's breath, nor start one of its own.
+        end_it(&mut app);
+        app.update();
+        app.insert_resource(State::new(Screen::Menu));
+        wait(&mut app, 0.1);
+        assert_eq!(on_air(&mut app), [(Mood::Calm, false)], "straight back");
     }
 
     /// The stereo field mirrors the board (rodio boosts the far ear), tops

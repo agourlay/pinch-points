@@ -219,6 +219,11 @@ P2 can each say otherwise and name a controller of their own. Every menu is
 navigable from a pad, and Start on the match-setup screen joins the next
 seat. `M` toggles music, and `Esc` on the menu quits.
 
+The music comes in two sets, each shuffled: calm tracks for the menus,
+puzzles and editor, with a long quiet between them, and dance tracks for
+versus rounds, which only pause for a breath. Walking into a round fades
+the calm track out under a dance one.
+
 ## Settings and languages
 
 Settings is grouped into controls, sound, the round, presentation and the
