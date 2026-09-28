@@ -564,3 +564,306 @@ melody = play(MELODY_J, BEAT_J, mellow, 0.28, attack=0.02, release=0.3)
 same_length("theme_j", melody, bass, stabs)
 surf = noise(len(melody) / RATE, vol=0.05, lowpass=0.05)
 write_music("theme_j", mix(melody, bass, stabs, surf))
+
+# --- the club three: K, L and M ---------------------------------------------
+# Electronic dance tracks: drums, a bass that pumps against the kick, and a
+# synth hook. They need what the chiptune loops never did - a drum kit, a
+# filter and a sidechain - so they are built on a sequencer grid of
+# sixteenth notes and summed into one buffer rather than voice by voice.
+import random
+
+_hiss = random.Random(0x5EA5)  # seeded, so every run writes the same files
+
+
+def saw(phase):
+    return 2.0 * (phase % 1.0) - 1.0
+
+
+def lowpass(samples, cutoff):
+    """One-pole low-pass at `cutoff` Hz, or a cutoff per sample (a sweep)."""
+    out, y = [], 0.0
+    sweep = callable(cutoff)
+    a = 1.0 - math.exp(-2 * math.pi * (0 if sweep else cutoff) / RATE)
+    for i, x in enumerate(samples):
+        if sweep:
+            a = 1.0 - math.exp(-2 * math.pi * cutoff(i) / RATE)
+        y += a * (x - y)
+        out.append(y)
+    return out
+
+
+def highpass(samples, cutoff):
+    return [x - l for x, l in zip(samples, lowpass(samples, cutoff))]
+
+
+def white(n):
+    return [_hiss.uniform(-1.0, 1.0) for _ in range(n)]
+
+
+def kick():
+    """A sine dropping from 160 Hz to 45 Hz in a few milliseconds."""
+    n, out, phase = int(0.35 * RATE), [], 0.0
+    for i in range(n):
+        t = i / RATE
+        phase += (45 + 115 * math.exp(-t * 30)) / RATE
+        out.append(math.sin(2 * math.pi * phase) * math.exp(-t * 7))
+    return out
+
+
+def snare():
+    n = int(0.2 * RATE)
+    rattle = highpass(white(n), 1500)
+    return [0.5 * math.sin(2 * math.pi * 185 * i / RATE) * math.exp(-i / RATE * 30)
+            + rattle[i] * math.exp(-i / RATE * 22) for i in range(n)]
+
+
+def clap():
+    """Three hand-slaps a hair apart, then the room."""
+    n = int(0.25 * RATE)
+    hiss = highpass(lowpass(white(n), 5000), 800)
+    out = []
+    for i, h in enumerate(hiss):
+        t = i / RATE
+        slaps = sum(math.exp(-(t - k * 0.01) * 150) for k in range(3) if t >= k * 0.01)
+        tail = 0.4 * math.exp(-(t - 0.03) * 18) if t >= 0.03 else 0.0
+        out.append(h * (slaps + tail))
+    return out
+
+
+def hat(open_=False):
+    n = int((0.25 if open_ else 0.06) * RATE)
+    decay = 15 if open_ else 70
+    return [h * math.exp(-i / RATE * decay) for i, h in enumerate(highpass(white(n), 7000))]
+
+
+def synth(freq, dur, wave_fn, vol, attack=0.005, release=0.3, cutoff=None,
+          voices=1, detune=0.012):
+    """One synth note: `voices` detuned copies (a supersaw at 3), filtered."""
+    n = int(dur * RATE)
+    spread = [1.0 + detune * (k - (voices - 1) / 2) for k in range(voices)]
+    phases = [k / voices for k in range(voices)]
+    out = []
+    for i in range(n):
+        s = 0.0
+        for k, ratio in enumerate(spread):
+            phases[k] += freq * ratio / RATE
+            s += wave_fn(phases[k])
+        out.append(s / voices * vol * env(i, n, attack, release))
+    return lowpass(out, cutoff) if cutoff else out
+
+
+def place(buf, samples, at, gain=1.0):
+    start = int(at * RATE)
+    for i, s in enumerate(samples[: max(0, len(buf) - start)]):
+        buf[start + i] += s * gain
+
+
+def sidechain(buf, hits, depth=0.7, recover=0.2):
+    """Duck `buf` under every hit, the pump that makes the bass breathe."""
+    for at in hits:
+        start = int(at * RATE)
+        n = int(recover * RATE)
+        for i in range(min(n, len(buf) - start)):
+            buf[start + i] *= 1.0 - depth * (1.0 - i / n) ** 2
+
+
+def master(buf, loudness_db=-22.5):
+    """Level with the other tracks (by RMS), then round off any peaks."""
+    rms = math.sqrt(sum(x * x for x in buf) / len(buf))
+    gain = 10 ** (loudness_db / 20) / rms
+    out = []
+    for x in buf:
+        x *= gain
+        if abs(x) > 0.8:
+            x = math.copysign(0.8 + 0.2 * math.tanh((abs(x) - 0.8) / 0.2), x)
+        out.append(x)
+    return out
+
+
+KICK, SNARE, CLAP, HAT, OPEN_HAT = kick(), snare(), clap(), hat(), hat(open_=True)
+
+
+class Track:
+    """A buffer `bars` long on a sixteenth-note grid, with drums and synth
+    buses kept apart so only the synths pump against the kick."""
+
+    def __init__(self, bpm, bars):
+        self.step = 60.0 / bpm / 4
+        n = int(bars * 16 * self.step * RATE)
+        self.drums, self.synths = [0.0] * n, [0.0] * n
+        self.kicks = []
+
+    def at(self, bar, step):
+        return (bar * 16 + step) * self.step
+
+    def hit(self, sample, bar, steps, gain):
+        for s in steps:
+            if sample is KICK:
+                self.kicks.append(self.at(bar, s))
+            place(self.drums, sample, self.at(bar, s), gain)
+
+    def note(self, samples, bar, step, gain=1.0):
+        place(self.synths, samples, self.at(bar, step), gain)
+
+    def mix(self, depth=0.7, recover=0.2):
+        sidechain(self.synths, self.kicks, depth, recover)
+        return master([d + s for d, s in zip(self.drums, self.synths)])
+
+
+FOUR_ON_THE_FLOOR = [0, 4, 8, 12]
+OFFBEATS = [2, 6, 10, 14]
+TRIADS = {
+    "Am": ("A3", "C4", "E4"), "F": ("F3", "A3", "C4"), "C": ("C4", "E4", "G4"),
+    "G": ("G3", "B3", "D4"), "Fm": ("F3", "Ab3", "C4"), "Db": ("Db4", "F4", "Ab4"),
+    "Ab": ("Ab3", "C4", "Eb4"), "Eb": ("Eb4", "G4", "Bb4"), "D": ("D4", "F#4", "A4"),
+    "A": ("A3", "C#4", "E4"), "Bm": ("B3", "D4", "F#4"),
+}
+
+
+def down(name, octaves):
+    """The same note `octaves` lower, for a bass under a triad."""
+    return name.rstrip("0123456789") + str(int(name.lstrip("ABCDEFG#b")) - octaves)
+
+
+def hook(track, bar, line, wave_fn, vol, cutoff, **shape):
+    """A melody as (start step, length in steps, note) from `bar` on."""
+    for start, length, name in line:
+        track.note(synth(hz(name), length * track.step, wave_fn, vol,
+                         cutoff=cutoff, **shape), bar, start)
+
+
+# --- theme K: neon tide, A minor house at 124 bpm ----------------------------
+# Four on the floor, an off-beat bass, and a plucked arpeggio that opens up
+# as the track does. Intro, sixteen bars of groove with a hook over the
+# second half, and a breakdown of pads to hand back to the quiet.
+k = Track(124, 32)
+CHORDS_K = ["Am", "F", "C", "G"] * 8
+for bar, chord in enumerate(CHORDS_K):
+    root, third, fifth = TRIADS[chord]
+    groove = 8 <= bar < 24
+    if 4 <= bar < 24:
+        k.hit(KICK, bar, FOUR_ON_THE_FLOOR, 0.9)
+    if bar < 24:
+        k.hit(HAT, bar, range(16), 0.10)
+    if groove:
+        k.hit(CLAP, bar, [4, 12], 0.45)
+        k.hit(OPEN_HAT, bar, OFFBEATS, 0.12)
+        for s in OFFBEATS:
+            k.note(synth(hz(down(root, 1)), 1.6 * k.step, saw, 0.30,
+                         release=0.4, cutoff=700), bar, s)
+    # The arpeggio, brighter in the groove than either side of it.
+    cutoff = 2400 if groove else 1000
+    arp = [root, third, fifth, down(root, -1), fifth, third]
+    for s in range(16):
+        k.note(synth(hz(arp[s % len(arp)]), k.step, lambda p: square(p, 0.25),
+                     0.20, release=0.2, cutoff=cutoff), bar, s)
+    if bar >= 24:
+        for name in (root, third, fifth):
+            k.note(synth(hz(name), 16 * k.step, saw, 0.16, attack=0.15,
+                         release=3.0, cutoff=1200, voices=3), bar, 0)
+HOOK_K = [(0, 3, "E5"), (3, 3, "D5"), (6, 2, "C5"), (8, 4, "A4"), (14, 2, "C5"),
+          (16, 3, "D5"), (19, 3, "C5"), (22, 2, "B4"), (24, 6, "G4")]
+for bar in range(16, 24, 2):
+    hook(k, bar, HOOK_K, lambda p: square(p, 0.5), 0.13, 1800, release=0.5)
+write_music("theme_k", k.mix())
+
+# --- theme L: reef drop, F minor at 128 bpm ----------------------------------
+# The one with a drop: pads, a snare roll that tightens over four bars under
+# a rising sweep, a beat of silence, then kick, rolling bass and pumping
+# supersaw stabs, with the hook on the second pass.
+l = Track(128, 32)
+CHORDS_L = ["Fm", "Db", "Ab", "Eb"] * 8
+for bar, chord in enumerate(CHORDS_L):
+    root, third, fifth = TRIADS[chord]
+    if bar < 8:
+        # Pads open up from the intro through the build.
+        cutoff = 700 + 300 * bar
+        for name in (root, third, fifth):
+            l.note(synth(hz(name), (12 if bar == 7 else 16) * l.step, saw, 0.16,
+                         attack=0.1, release=3.0, cutoff=cutoff, voices=3), bar, 0)
+        l.hit(HAT, bar, range(0, 16, 2), 0.09)
+    if 4 <= bar < 8:
+        # The roll: quarters, eighths, then sixteenths, louder as it goes,
+        # stopping a beat short so the drop lands on silence.
+        every = {4: 4, 5: 2}.get(bar, 1)
+        steps = range(0, 12 if bar == 7 else 16, every)
+        l.hit(SNARE, bar, steps, 0.15 + 0.07 * (bar - 4))
+    if 8 <= bar < 28:
+        l.hit(KICK, bar, FOUR_ON_THE_FLOOR, 0.9)
+        l.hit(HAT, bar, range(16), 0.08)
+    if 8 <= bar < 24:
+        l.hit(CLAP, bar, [4, 12], 0.45)
+        l.hit(OPEN_HAT, bar, OFFBEATS, 0.11)
+        for s in OFFBEATS:
+            for name in (root, third, fifth):
+                l.note(synth(hz(name), 1.5 * l.step, saw, 0.09, release=0.5,
+                             cutoff=2600, voices=3), bar, s)
+    if 8 <= bar < 28:
+        # Rolling bass: every sixteenth the kick does not own, darker in
+        # the outro.
+        cutoff = 900 if bar < 24 else 400
+        for s in range(16):
+            if s % 4:
+                l.note(synth(hz(down(root, 1)), 0.9 * l.step, saw, 0.26,
+                             release=0.5, cutoff=cutoff), bar, s)
+    if bar >= 28:
+        fade = (32 - bar) / 5
+        for name in (root, third, fifth):
+            l.note(synth(hz(name), 16 * l.step, saw, 0.16 * fade, attack=0.1,
+                         release=3.0, cutoff=900, voices=3), bar, 0)
+# The build's sweep: noise opening from 300 Hz to 8 kHz over four bars.
+span = int(16 * 4 * l.step * RATE)
+sweep = lowpass([x * 0.25 * i / span for i, x in enumerate(white(span))],
+                lambda i: 300 + 7700 * (i / span) ** 2)
+place(l.drums, sweep, l.at(4, 0))
+HOOK_L = [
+    (0, 3, "C5"), (3, 3, "Ab4"), (6, 2, "F4"), (8, 2, "G4"), (10, 2, "Ab4"), (12, 4, "C5"),
+    (16, 3, "Db5"), (19, 3, "Ab4"), (22, 2, "F4"), (24, 2, "Ab4"), (26, 2, "Db5"), (28, 4, "C5"),
+    (32, 3, "C5"), (35, 3, "Eb5"), (38, 2, "C5"), (40, 4, "Ab4"), (44, 4, "Eb4"),
+    (48, 3, "G4"), (51, 3, "Bb4"), (54, 2, "Eb5"), (56, 4, "Bb4"), (60, 4, "G4"),
+]
+for bar in (16, 20):
+    hook(l, bar, HOOK_L, lambda p: square(p, 0.3), 0.12, 2200, release=0.4)
+write_music("theme_l", l.mix(depth=0.8))
+
+# --- theme M: undertow, D major future bass at 150 bpm, half-time ------------
+# Kick and snare at half the tempo, so it sways rather than drives; wide
+# supersaw chords chopped 3-3-2 and pumping hard; a sine sub underneath and
+# a soft vibrato lead on top.
+m = Track(150, 32)
+CHORDS_M = ["D", "A", "Bm", "G"] * 8
+CHOPS = [(0, 3), (3, 3), (6, 4), (10, 3), (13, 3)]
+for bar, chord in enumerate(CHORDS_M):
+    root, third, fifth = TRIADS[chord]
+    main = 8 <= bar < 24
+    if main:
+        m.hit(KICK, bar, [0, 10], 0.9)
+        m.hit(SNARE, bar, [8], 0.5)
+        m.hit(CLAP, bar, [8], 0.25)
+        m.hit(HAT, bar, [0, 2, 4, 6, 8, 10, 12, 14, 15], 0.10)
+        for start, length in CHOPS:
+            for name in (root, third, fifth, down(root, -1)):
+                m.note(synth(hz(name), length * m.step, saw, 0.06, attack=0.05,
+                             release=0.8, cutoff=3000, voices=3), bar, start)
+        m.note(synth(hz(down(root, 2)), 16 * m.step, sine, 0.30, attack=0.02,
+                     release=3.0), bar, 0)
+    else:
+        # Either side of the drop, the chords held soft and whole.
+        fade = 1.0 if bar < 8 else (32 - bar) / 8
+        if bar >= 24:
+            m.hit(KICK, bar, [0], 0.6 * fade)
+        m.hit(HAT, bar, range(0, 16, 4), 0.08 * fade)
+        for name in (root, third, fifth):
+            m.note(synth(hz(name), 16 * m.step, saw, 0.16 * fade, attack=0.2,
+                         release=3.0, cutoff=1400, voices=3), bar, 0)
+# The snare pumps the chords too: that double breath is the style.
+m.kicks += [m.at(bar, 8) for bar in range(8, 24)]
+HOOK_M = [
+    (0, 2, "F#4"), (2, 2, "A4"), (4, 4, "D5"), (8, 2, "C#5"), (10, 6, "A4"),
+    (16, 2, "E4"), (18, 2, "A4"), (20, 4, "C#5"), (24, 2, "B4"), (26, 6, "A4"),
+    (32, 2, "F#4"), (34, 2, "B4"), (36, 4, "D5"), (40, 2, "C#5"), (42, 6, "B4"),
+    (48, 2, "G4"), (50, 2, "B4"), (52, 4, "D5"), (56, 4, "E5"), (60, 4, "D5"),
+]
+for bar in (12, 16, 20):
+    hook(m, bar, HOOK_M, sine, 0.22, None, attack=0.05, release=0.6)
+write_music("theme_m", m.mix(depth=0.85, recover=0.3))

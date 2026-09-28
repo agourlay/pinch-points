@@ -83,8 +83,8 @@ pub struct Sounds {
 /// opened every launch on the same track. So the order is a shuffle bag
 /// (every track once before any comes round again, never the same one
 /// twice running, a different one first each launch), between tracks the
-/// beach goes quiet for a while, and three longer, softer tracks joined
-/// the seven: ten, and five minutes of music.
+/// beach goes quiet for a while, and six longer tracks joined the seven
+/// (three soft, three with drums): thirteen, and about eight minutes.
 #[derive(Resource)]
 pub struct MusicPlaylist {
     tracks: Vec<Handle<AudioSource>>,
@@ -190,7 +190,9 @@ pub fn load_sounds(mut commands: Commands, assets: Res<AssetServer>) {
     commands.insert_resource(MusicPlaylist::new(
         vec![
             // theme.wav predates the sound generator and has no source to
-            // re-encode from; the generated loops ship as OGG.
+            // re-encode from; the generated loops ship as OGG. It was also
+            // mixed 10 dB hotter than the rest and has been turned down to
+            // their -23 dB, so it no longer jumps out of the shuffle.
             assets.load("sounds/theme.wav"),
             assets.load("sounds/theme_b.ogg"),
             assets.load("sounds/theme_c.ogg"),
@@ -202,6 +204,10 @@ pub fn load_sounds(mut commands: Commands, assets: Res<AssetServer>) {
             assets.load("sounds/theme_h.ogg"),
             assets.load("sounds/theme_i.ogg"),
             assets.load("sounds/theme_j.ogg"),
+            // The club three: drums, a pumping bass, a synth hook.
+            assets.load("sounds/theme_k.ogg"),
+            assets.load("sounds/theme_l.ogg"),
+            assets.load("sounds/theme_m.ogg"),
         ],
         crate::app::effects::VisualRng::from_clock(),
     ));
