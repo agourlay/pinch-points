@@ -75,12 +75,74 @@ pub struct Sounds {
     evict: Handle<AudioSource>,
 }
 
-/// The rotating background playlist; a track spawns, plays once, despawns,
-/// and `rotate_music` starts the next.
+/// The background playlist; a track spawns, plays once, despawns, and
+/// after a rest `rotate_music` starts another.
+///
+/// Players called the music repetitive, and it was: seven short loops,
+/// two and a half minutes in all, back to back in a fixed order that
+/// opened every launch on the same track. So the order is a shuffle bag
+/// (every track once before any comes round again, never the same one
+/// twice running, a different one first each launch), and between tracks
+/// the beach goes quiet for a while.
 #[derive(Resource)]
 pub struct MusicPlaylist {
     tracks: Vec<Handle<AudioSource>>,
-    next: usize,
+    /// What is left to play this time round, drawn from the back.
+    bag: Vec<usize>,
+    /// The track drawn last, which the next refill must not open with.
+    last: Option<usize>,
+    rest: Rest,
+    rng: crate::app::effects::VisualRng,
+}
+
+/// Where the playlist is between two tracks.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Rest {
+    /// Nothing has played yet: the first track starts without a wait.
+    Due,
+    /// A track is alive, playing or held down.
+    Playing,
+    /// Seconds of quiet left before the next track.
+    Waiting(f32),
+}
+
+/// How long the beach goes quiet between two tracks, seconds. Longer than
+/// most of the tracks themselves, on purpose: the rest is what lets a short
+/// playlist last a session without wearing thin.
+const REST_SECS: std::ops::Range<f32> = 30.0..90.0;
+
+impl MusicPlaylist {
+    fn new(tracks: Vec<Handle<AudioSource>>, rng: crate::app::effects::VisualRng) -> Self {
+        MusicPlaylist {
+            tracks,
+            bag: Vec::new(),
+            last: None,
+            rest: Rest::Due,
+            rng,
+        }
+    }
+
+    /// The next track to play, from a bag refilled and shuffled whenever it
+    /// runs dry.
+    fn draw(&mut self) -> usize {
+        if self.bag.is_empty() {
+            self.bag = (0..self.tracks.len()).collect();
+            for i in (1..self.bag.len()).rev() {
+                // The high bits: an LCG's low bits cycle with short periods.
+                let j = (self.rng.next() >> 16) as usize % (i + 1);
+                self.bag.swap(i, j);
+            }
+            // The last of one round and the first of the next would
+            // otherwise be the same song twice, one rest apart.
+            if self.bag.len() > 1 && self.bag.last() == self.last.as_ref() {
+                let end = self.bag.len() - 1;
+                self.bag.swap(0, end);
+            }
+        }
+        let track = self.bag.pop().unwrap_or(0);
+        self.last = Some(track);
+        track
+    }
 }
 
 /// How far, in listener units, the edge of the board sits from the centre
@@ -124,8 +186,8 @@ pub fn load_sounds(mut commands: Commands, assets: Res<AssetServer>) {
     // by `pan_pos` rather than at their true board positions, so the camera
     // zooming or sliding never changes how the beach sounds.
     commands.spawn(SpatialListener::new(EAR_GAP));
-    commands.insert_resource(MusicPlaylist {
-        tracks: vec![
+    commands.insert_resource(MusicPlaylist::new(
+        vec![
             // theme.wav predates the sound generator and has no source to
             // re-encode from; the generated loops ship as OGG.
             assets.load("sounds/theme.wav"),
@@ -136,8 +198,8 @@ pub fn load_sounds(mut commands: Commands, assets: Res<AssetServer>) {
             assets.load("sounds/theme_f.ogg"),
             assets.load("sounds/theme_g.ogg"),
         ],
-        next: 0,
-    });
+        crate::app::effects::VisualRng::from_clock(),
+    ));
     commands.insert_resource(Sounds {
         place: assets.load("sounds/place.wav"),
         remove: assets.load("sounds/remove.wav"),
@@ -376,27 +438,48 @@ pub fn play_chime(commands: &mut Commands, sounds: &Sounds, gain: f32) {
     play(commands, &sounds.tier, gain);
 }
 
-/// Keep the playlist rolling: whenever no track entity is alive and the
-/// music can be heard, start the next one.
+/// Keep the playlist rolling: when a track ends, rest, then start the next.
 ///
 /// A track that is merely down - muted, paused, switched off - is still
 /// alive and still here, so it is the same song that comes back, from
 /// where it left off. Nothing new is started while none of it would be
 /// audible, which is what keeps a silenced game from decoding a playlist
-/// nobody is listening to.
+/// nobody is listening to, and the rest only counts down while the music
+/// could be heard: a pause card does not eat it.
 pub fn rotate_music(
     mut commands: Commands,
     mut playlist: ResMut<MusicPlaylist>,
     settings: Res<crate::app::settings::GameSettings>,
     muted: Res<Muted>,
     menu: Res<crate::app::pause::PauseMenu>,
+    time: Res<Time>,
     playing: Query<(), With<Music>>,
 ) {
-    if !playing.is_empty() || !music_audible(&settings, &muted, menu.open) {
+    if !playing.is_empty() {
+        playlist.rest = Rest::Playing;
         return;
     }
-    let track = playlist.tracks[playlist.next].clone();
-    playlist.next = (playlist.next + 1) % playlist.tracks.len();
+    if !music_audible(&settings, &muted, menu.open) {
+        return;
+    }
+    match playlist.rest {
+        Rest::Due => {}
+        Rest::Playing => {
+            let secs = playlist.rng.range(REST_SECS.start, REST_SECS.end);
+            playlist.rest = Rest::Waiting(secs);
+            return;
+        }
+        Rest::Waiting(left) => {
+            let left = left - time.delta_secs();
+            if left > 0.0 {
+                playlist.rest = Rest::Waiting(left);
+                return;
+            }
+        }
+    }
+    let index = playlist.draw();
+    let track = playlist.tracks[index].clone();
+    playlist.rest = Rest::Playing;
     commands.spawn((
         Music,
         AudioPlayer::new(track),
@@ -453,6 +536,7 @@ pub fn drive_music(
 mod tests {
     use super::*;
     use crate::app::cursor::Cursor;
+    use crate::app::effects::VisualRng;
     use crate::app::settings::GameSettings;
     use crate::sim::classic_arena;
 
@@ -671,21 +755,52 @@ mod tests {
         assert_eq!(off.sfx_volume, 80, "the slider is where it was left");
     }
 
-    /// The playlist walks, and it only walks when somebody could hear it.
+    /// Every track once before any comes round again, and never the same
+    /// one twice running, across as many rounds of the bag as it takes.
+    #[test]
+    fn the_shuffle_plays_everything_and_never_repeats_back_to_back() {
+        let tracks = vec![Handle::default(); 7];
+        for seed in 0..50 {
+            let mut playlist = MusicPlaylist::new(tracks.clone(), VisualRng::seeded(seed));
+            let mut previous = None;
+            for _ in 0..20 {
+                let mut round: Vec<usize> = (0..7).map(|_| playlist.draw()).collect();
+                for &track in &round {
+                    assert_ne!(Some(track), previous, "seed {seed}: {track} twice running");
+                    previous = Some(track);
+                }
+                round.sort_unstable();
+                assert_eq!(
+                    round,
+                    (0..7).collect::<Vec<_>>(),
+                    "seed {seed}: one of each"
+                );
+            }
+        }
+        // And launches do not all open on the same track.
+        let openers: std::collections::HashSet<usize> = (0..50)
+            .map(|seed| MusicPlaylist::new(tracks.clone(), VisualRng::seeded(seed)).draw())
+            .collect();
+        assert!(openers.len() > 1, "every launch opened on {openers:?}");
+    }
+
+    /// The playlist rests between tracks, and it only moves when somebody
+    /// could hear it.
     ///
     /// A track that is merely down (muted, paused, switched off) is still
     /// alive and still the same song, so nothing new starts over the top of
     /// it, and nothing starts at all while none of it would be audible.
     #[test]
-    fn the_playlist_walks_only_while_somebody_could_hear_it() {
+    fn the_playlist_rests_between_tracks_and_only_while_somebody_could_hear_it() {
         let mut app = App::new();
         app.insert_resource(GameSettings::default());
         app.insert_resource(Muted(false));
         app.insert_resource(crate::app::pause::PauseMenu::default());
-        app.insert_resource(MusicPlaylist {
-            tracks: vec![Handle::default(), Handle::default(), Handle::default()],
-            next: 0,
-        });
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(MusicPlaylist::new(
+            vec![Handle::default(), Handle::default(), Handle::default()],
+            VisualRng::seeded(7),
+        ));
         app.add_systems(Update, rotate_music);
         let playing = |app: &mut App| {
             app.world_mut()
@@ -693,21 +808,6 @@ mod tests {
                 .iter(app.world())
                 .count()
         };
-        let next = |app: &App| app.world().resource::<MusicPlaylist>().next;
-
-        app.update();
-        assert_eq!(playing(&mut app), 1, "a track starts");
-        assert_eq!(next(&app), 1, "and the playlist moves on");
-
-        // The one that is playing is the one that stays: a second is not
-        // stacked on top of it, however many frames go by.
-        app.update();
-        app.update();
-        assert_eq!(playing(&mut app), 1, "still the one song");
-        assert_eq!(next(&app), 1, "and the playlist did not move");
-
-        // It ends. The next one takes its place, and the list comes round
-        // to the top rather than running off the end of itself.
         let end_it = |app: &mut App| {
             let live: Vec<Entity> = app
                 .world_mut()
@@ -718,18 +818,32 @@ mod tests {
                 app.world_mut().entity_mut(entity).despawn();
             }
         };
-        end_it(&mut app);
-        app.update();
-        assert_eq!(next(&app), 2);
-        end_it(&mut app);
-        app.update();
-        assert_eq!(next(&app), 0, "three tracks and back to the first");
+        let wait = |app: &mut App, secs: f32| {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_secs_f32(secs));
+            app.update();
+        };
 
-        // Silenced, nothing new is started: not by the master mute, not by
-        // the switch, not by the slider, not by the pause card.
+        app.update();
+        assert_eq!(playing(&mut app), 1, "the first track starts at once");
+
+        // The one that is playing is the one that stays: a second is not
+        // stacked on top of it, however many frames go by.
+        app.update();
+        wait(&mut app, 200.0);
+        assert_eq!(playing(&mut app), 1, "still the one song");
+
+        // It ends, and the beach goes quiet for the whole of the shortest
+        // rest before anything else starts.
+        end_it(&mut app);
+        app.update();
+        wait(&mut app, REST_SECS.start - 1.0);
+        assert_eq!(playing(&mut app), 0, "resting");
+
+        // Silenced, the rest holds where it is, however long it lasts:
+        // not by the master mute, the switch, the slider, the pause card.
         for silence in 0..4 {
-            end_it(&mut app);
-            let at = next(&app);
             {
                 let world = app.world_mut();
                 let mut settings = world.resource_mut::<GameSettings>();
@@ -738,10 +852,19 @@ mod tests {
                 world.resource_mut::<Muted>().0 = silence == 0;
                 world.resource_mut::<crate::app::pause::PauseMenu>().open = silence == 3;
             }
-            app.update();
+            wait(&mut app, 500.0);
             assert_eq!(playing(&mut app), 0, "silence {silence} starts nothing");
-            assert_eq!(next(&app), at, "and does not walk the list either");
         }
+        *app.world_mut().resource_mut::<GameSettings>() = GameSettings::default();
+        app.world_mut()
+            .resource_mut::<crate::app::pause::PauseMenu>()
+            .open = false;
+        wait(&mut app, 0.5);
+        assert_eq!(playing(&mut app), 0, "the rest was held, not spent");
+
+        // Past the longest rest, the next track is on.
+        wait(&mut app, REST_SECS.end);
+        assert_eq!(playing(&mut app), 1, "and then the next one");
     }
 
     /// The stereo field mirrors the board (rodio boosts the far ear), tops

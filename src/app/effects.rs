@@ -54,6 +54,21 @@ impl Default for VisualRng {
 }
 
 impl VisualRng {
+    /// Seeded from the wall clock, for variety that should differ from one
+    /// launch to the next rather than open the same way every time.
+    pub(crate) fn from_clock() -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.subsec_nanos() ^ since.as_secs() as u32);
+        VisualRng(nanos | 1)
+    }
+
+    /// A fixed seed, for tests that need the same draws every run.
+    #[cfg(test)]
+    pub(crate) fn seeded(seed: u32) -> Self {
+        VisualRng(seed)
+    }
+
     pub(crate) fn next(&mut self) -> u32 {
         self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         self.0
