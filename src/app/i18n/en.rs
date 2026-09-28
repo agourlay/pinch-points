@@ -313,6 +313,7 @@ pub static EN: Tr = Tr {
     pad_help1: "Controller: d-pad/stick move, face buttons place",
     pad_help2: "L1 remove, R1 clear, Start pause/join, B back",
     set_palette: "Player colours",
+    set_fullscreen: "Fullscreen",
     set_ui_scale: "UI scale",
     set_reduced_motion: "Reduced motion",
     set_update_check: "Check for updates",

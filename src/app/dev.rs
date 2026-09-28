@@ -18,6 +18,13 @@ pub(super) fn window_size() -> Option<(f32, f32)> {
     Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
 }
 
+/// Whether this run keeps a window whatever the settings say:
+/// `PINCH_WINDOW` sized it, or `PINCH_SCREENSHOT` came to photograph it
+/// (see [`crate::app::settings::window_mode`]).
+pub(super) fn window_pinned() -> bool {
+    std::env::var("PINCH_WINDOW").is_ok() || screenshotting()
+}
+
 /// `PINCH_LOBBY_HOST=n`: host a LAN lobby unattended and launch once `n`
 /// peers are aboard (`=1`, the historical value, launches on the first).
 pub(super) fn auto_host_quota() -> Option<usize> {

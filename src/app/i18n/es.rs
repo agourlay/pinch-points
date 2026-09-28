@@ -313,6 +313,7 @@ pub static ES: Tr = Tr {
     pad_help1: "Mando: cruceta/stick mueven, botones ponen",
     pad_help2: "L1 quitar, R1 limpiar, Start pausa/entrar, B volver",
     set_palette: "Colores de jugador",
+    set_fullscreen: "Pantalla completa",
     set_ui_scale: "Tamaño de interfaz",
     set_reduced_motion: "Menos movimiento",
     set_update_check: "Buscar actualizaciones",

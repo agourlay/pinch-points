@@ -320,6 +320,7 @@ pub static DE: Tr = Tr {
     pad_help1: "Controller: Steuerkreuz/Stick bewegen, Tasten setzen",
     pad_help2: "L1 entfernen, R1 löschen, Start Pause/beitreten, B zurück",
     set_palette: "Spielerfarben",
+    set_fullscreen: "Vollbild",
     set_ui_scale: "UI-Größe",
     set_reduced_motion: "Weniger Bewegung",
     set_update_check: "Nach Updates suchen",

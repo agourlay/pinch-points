@@ -9,6 +9,14 @@ use super::*;
 pub fn run() {
     let mut app = App::new();
     embedded::register(&mut app);
+    // Read before the window is built, so a fullscreen player never sees a
+    // window open and then grow. The same read seeds the resources below.
+    let saved = settings::GameSettings::load_saved();
+    let mode = settings::window_mode(
+        saved
+            .as_ref()
+            .map_or(&settings::GameSettings::default(), |(settings, _)| settings),
+    );
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
@@ -17,6 +25,7 @@ pub fn run() {
                     resolution: dev::window_size().map_or_else(default, |(w, h)| {
                         bevy::window::WindowResolution::new(w as u32, h as u32)
                     }),
+                    mode,
                     ..default()
                 }),
                 ..default()
@@ -87,7 +96,7 @@ pub fn run() {
                 ..RenderPlugin::default()
             }),
     );
-    insert_resources(&mut app);
+    insert_resources(&mut app, saved);
     add_startup(&mut app);
     add_screen_transitions(&mut app);
     add_phase_transitions(&mut app);
@@ -111,7 +120,7 @@ pub fn run() {
 }
 
 /// The resources, states and message types the whole shell shares.
-fn insert_resources(app: &mut App) {
+fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycaps::KeyCaps)>) {
     app.insert_resource(Time::<Fixed>::from_hz(f64::from(
         crate::sim::TICKS_PER_SECOND,
     )));
@@ -171,7 +180,6 @@ fn insert_resources(app: &mut App) {
     // answers both questions: what the settings are, and whether there
     // were any. A dev hook still wins - `dev::kickoff` sets NextState in
     // Startup, which lands before the first state transition.
-    let saved = settings::GameSettings::load_saved();
     let opens_on = language::opening_screen(saved.is_some());
     // Two resources off one read: the preferences, and the learned caps
     // table that shares their file (see [`keycaps::KeyCaps`]).
@@ -612,6 +620,8 @@ fn add_apply_systems(app: &mut App) {
             settings::apply_music_volume,
             settings::apply_accessibility,
             settings::apply_sim_speed,
+            settings::toggle_fullscreen,
+            settings::apply_window_mode,
         )
             .chain()
             .in_set(Frame::Apply),

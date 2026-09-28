@@ -313,6 +313,7 @@ pub static NL: Tr = Tr {
     pad_help1: "Controller: pad/stick lopen, knoppen zetten",
     pad_help2: "L1 weghalen, R1 leegmaken, Start pauze/meedoen, B terug",
     set_palette: "Spelerskleuren",
+    set_fullscreen: "Volledig scherm",
     set_ui_scale: "Schaal interface",
     set_reduced_motion: "Minder beweging",
     set_update_check: "Zoeken naar updates",

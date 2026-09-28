@@ -41,14 +41,8 @@ Nothing blocks these. They want the work and no more.
   small, heavily correlated sample whose sigmas swing several points between
   runs that change nothing they measure.
 
-- **It launches windowed.** With no `PINCH_WINDOW` the window is Bevy's
-  default 1280x720. Default to borderless fullscreen instead, with a toggle
-  and a settings row. Also a Deck requirement, where gamescope scales a 720p
-  window to fill the screen so nothing is broken, but a first launch should
-  look intended.
-
 - **An itch.io page**, with the shots in `docs/screenshots`. The binaries
-  exist to put on it: `v0.4.0` is tagged and `release.yml` builds six
+  exist to put on it: `v0.6.0` is tagged (2026-09-28) and `release.yml` builds six
   targets across Linux, Windows and macOS. A Steam build is a longer road
   and has a section of its own below; the update check is the one place the
   two disagree, wanting to be on for a downloaded build and off for a store
@@ -184,10 +178,11 @@ would change that.
 
 ## Steam and the Steam Deck
 
-A project rather than a list, so it keeps its own section. One item it
-needs is above under **Ready when someone is**, because it is owed to
-desktop players too: borderless fullscreen by default. The small-text floor
-it also wanted was raised on 2026-09-25 (fine print 15px, card copy 17px).
+A project rather than a list, so it keeps its own section. Two things it
+wanted were owed to desktop players too and are done: borderless
+fullscreen by default (2026-09-28, F11 or a settings row to leave it), and
+the small-text floor, raised on 2026-09-25 (fine print 15px, card copy
+17px).
 
 The shape of it, checked 2026-08-17 and re-checked 2026-09-17: the game is
 in good order for a controller-first platform, `gamepad::pad_menu_bridge`

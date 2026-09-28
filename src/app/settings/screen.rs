@@ -40,6 +40,8 @@ pub enum Row {
     Rumble,
     Deadzone,
     Palette,
+    /// Borderless fullscreen or a window; F11 flips it anywhere else.
+    Fullscreen,
     UiScale,
     ReducedMotion,
     /// How many finished rounds the shelf keeps.
@@ -55,7 +57,7 @@ impl Row {
     /// Display and navigation order, which is [`SECTIONS`] flattened. The
     /// rows used to run in the order they were added, which put the pad
     /// deadzone six rows below the keys it belongs with.
-    pub const ALL: [Row; 22] = [
+    pub const ALL: [Row; 23] = [
         // Controls
         Row::InputP1,
         Row::InputP2,
@@ -79,6 +81,7 @@ impl Row {
         Row::ReplayCap,
         // Presentation
         Row::Palette,
+        Row::Fullscreen,
         Row::UiScale,
         Row::ReducedMotion,
         Row::Language,
@@ -146,6 +149,7 @@ pub const SECTIONS: [&[(Group, &[Row])]; 2] = [
             Group::Look,
             &[
                 Row::Palette,
+                Row::Fullscreen,
                 Row::UiScale,
                 Row::ReducedMotion,
                 Row::Language,
@@ -401,6 +405,7 @@ pub fn settings_input(
             | Row::Rumble
             | Row::Deadzone
             | Row::Palette
+            | Row::Fullscreen
             | Row::UiScale
             | Row::ReducedMotion
             | Row::ReplayCap
@@ -461,6 +466,7 @@ pub fn settings_input(
             settings.pad_deadzone = dial(settings.pad_deadzone, turn, 10, DEADZONE_RANGE);
         }
         Row::Palette => settings.colorblind = !settings.colorblind,
+        Row::Fullscreen => settings.fullscreen = !settings.fullscreen,
         Row::UiScale => {
             // The dial stops where the window does, so it never sits on a
             // number the interface is not being drawn at.
@@ -566,6 +572,7 @@ pub(super) fn row_text(
             }
             .to_string(),
         ),
+        Row::Fullscreen => (tr.set_fullscreen, on_off(settings.fullscreen)),
         // What the interface is actually being drawn at, which on a window
         // with no room for the chosen scale is less than it: a row saying
         // 150% over an interface at 100% is the dial lying about itself.

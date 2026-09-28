@@ -320,6 +320,7 @@ pub static RU: Tr = Tr {
     pad_help1: "Геймпад: крестовина/стик ходят, кнопки ставят",
     pad_help2: "L1 убрать, R1 очистить, Start пауза/вход, B назад",
     set_palette: "Цвета игроков",
+    set_fullscreen: "Полный экран",
     set_ui_scale: "Масштаб интерфейса",
     set_reduced_motion: "Меньше движения",
     set_update_check: "Искать обновления",

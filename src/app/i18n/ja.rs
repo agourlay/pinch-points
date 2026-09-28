@@ -313,6 +313,7 @@ pub static JA: Tr = Tr {
     pad_help1: "パッド: 十字/スティックで移動、ボタンで設置",
     pad_help2: "L1 消す、R1 全消し、Start 中断/参加、B 戻る",
     set_palette: "プレイヤーの色",
+    set_fullscreen: "全画面",
     set_ui_scale: "画面の大きさ",
     set_reduced_motion: "動きを控えめに",
     set_update_check: "更新を確認する",

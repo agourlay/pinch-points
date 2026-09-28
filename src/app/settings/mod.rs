@@ -19,6 +19,7 @@ use crate::app::teams::TeamMode;
 use crate::sim::MAX_PLAYERS;
 use bevy::audio::Volume;
 use bevy::prelude::*;
+use bevy::window::{MonitorSelection, WindowMode};
 
 /// The settings file, under the XDG config directory.
 fn settings_path() -> std::path::PathBuf {
@@ -177,6 +178,10 @@ pub struct GameSettings {
     pub pad_deadzone: u8,
     /// Use the colour-vision-safe player palette (no red/green pair).
     pub colorblind: bool,
+    /// Borderless fullscreen on the current monitor, or a window. On by
+    /// default, so a first launch fills the screen the way a game is
+    /// expected to; F11 flips it from anywhere (`toggle_fullscreen`).
+    pub fullscreen: bool,
     /// UI scale percent (80-150): every HUD, panel, and menu element.
     pub ui_scale: u8,
     /// Drop the decorative motion: particle bursts, confetti, footprints,
@@ -369,6 +374,7 @@ impl Default for GameSettings {
             rumble: true,
             pad_deadzone: 50,
             colorblind: false,
+            fullscreen: true,
             ui_scale: 100,
             reduced_motion: false,
             binds: default_binds(),
@@ -404,6 +410,7 @@ impl GameSettings {
             rumble,
             pad_deadzone,
             colorblind,
+            fullscreen,
             ui_scale,
             reduced_motion,
             binds,
@@ -417,7 +424,7 @@ impl GameSettings {
             "commit_scheme: {}\nrepeat_delay: {:.2}\nrepeat_interval: {:.2}\n\
              music_on: {}\nmusic: {}\nsfx_on: {}\nsfx: {}\n\
              puzzle_speed: {}\nteams: {}\nlanguage: {}\n\
-             rumble: {}\npad_deadzone: {}\npalette: {}\nui_scale: {}\n\
+             rumble: {}\npad_deadzone: {}\npalette: {}\nfullscreen: {}\nui_scale: {}\n\
              reduced_motion: {}\nnames: {}\nreplay_cap: {}\nbeach: {}\n\
              updates: {}\nkeycaps: {}\nkeyboard: {}\n\
              p1_input: {}\np2_input: {}\n{}",
@@ -434,6 +441,7 @@ impl GameSettings {
             if *rumble { "on" } else { "off" },
             pad_deadzone,
             if *colorblind { "colorblind" } else { "classic" },
+            if *fullscreen { "on" } else { "off" },
             ui_scale,
             if *reduced_motion { "on" } else { "off" },
             names.join("|"),
@@ -512,6 +520,7 @@ impl GameSettings {
                     }
                 }
                 "palette" => settings.colorblind = value == "colorblind",
+                "fullscreen" => settings.fullscreen = value != "off",
                 "ui_scale" => {
                     if let Ok(v) = value.parse::<u8>() {
                         settings.ui_scale = v.clamp(UI_SCALE_MIN, UI_SCALE_MAX);
@@ -655,6 +664,48 @@ pub fn apply_accessibility(
     }
 }
 
+/// The mode the window should be in for these settings.
+///
+/// A dev run that sized its window or came to take a picture stays in that
+/// window whatever the settings say: `PINCH_WINDOW` asks for a size a
+/// fullscreen window would ignore, and a screenshot harness launches one
+/// process per peer, which would otherwise take the whole screen each.
+pub fn window_mode(settings: &GameSettings) -> WindowMode {
+    if settings.fullscreen && !crate::app::dev::window_pinned() {
+        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+    } else {
+        WindowMode::Windowed
+    }
+}
+
+/// Put the window in the mode the settings ask for. The launch mode is set
+/// when the window is built (`schedule::run`), so this only acts on a
+/// change: the settings row, or F11.
+pub fn apply_window_mode(settings: Res<GameSettings>, mut windows: Query<&mut Window>) {
+    if !settings.is_changed() {
+        return;
+    }
+    let mode = window_mode(&settings);
+    for mut window in &mut windows {
+        if window.mode != mode {
+            window.mode = mode;
+        }
+    }
+}
+
+/// F11 flips fullscreen on every screen, and keeps the answer: a player who
+/// wanted the window once will want it next launch too.
+pub fn toggle_fullscreen(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut settings: ResMut<GameSettings>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
+) {
+    if keys.just_pressed(KeyCode::F11) {
+        settings.fullscreen = !settings.fullscreen;
+        settings.save(&caps);
+    }
+}
+
 /// Push the music volume to the sink whenever settings change.
 pub fn apply_music_volume(
     settings: Res<GameSettings>,
@@ -754,7 +805,7 @@ mod tests {
 
     /// The interface is laid out in design pixels and nothing reflows, so
     /// the applied scale may never leave it less than the design size to
-    /// draw in. At 150 on the 1280x720 window the game launches in, the
+    /// draw in. At 150 on the 1280x720 window the game once launched in, the
     /// settings card left the screen on all four sides and its whole left
     /// column of labels was cut away.
     #[test]
@@ -835,6 +886,7 @@ mod tests {
             rumble: false,
             pad_deadzone: 70,
             colorblind: true,
+            fullscreen: false,
             ui_scale: 130,
             reduced_motion: true,
             check_updates: false,
@@ -988,6 +1040,15 @@ mod tests {
         assert_eq!(quiet.music_gain(), 0.0, "the music is off");
         assert!(quiet.sfx_gain() > 0.0, "the effects are not");
         assert_eq!(quiet.music_volume, 60, "and the slider is where it was");
+    }
+
+    /// A settings.txt from before the row existed launches fullscreen, like
+    /// a first run: every player who had the game then was given a window
+    /// they never chose, not one they asked for.
+    #[test]
+    fn a_file_without_the_fullscreen_line_fills_the_screen() {
+        assert!(GameSettings::parse("music: 60\n").0.fullscreen);
+        assert!(!GameSettings::parse("fullscreen: off\n").0.fullscreen);
     }
 
     /// The sfx row was once an on/off toggle; a settings.txt written by that

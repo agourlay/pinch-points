@@ -225,7 +225,7 @@ Settings is grouped into controls, sound, the round, presentation and the
 game itself: what plays each of the first two seats, per-key rebinding, a
 single-hand preset, cursor tuning, puzzle speed assist, rumble and
 deadzone, versus scoring, how many finished rounds the shelf keeps, a
-colour-vision-safe palette, UI scaling, reduced motion, the update check,
+colour-vision-safe palette, fullscreen, UI scaling, reduced motion, the update check,
 a progress reset, and the UI language: **English, Français, Deutsch,
 Español, Italiano, Nederlands, Русский, 日本語**, each with its flag beside
 it on the dial.
@@ -250,8 +250,11 @@ language nobody chose: eight flags, with the header and prompt rewriting
 themselves as the cursor moves, so the right one can be recognised without
 reading the others. Enter takes it, and the picker never appears again.
 
-The window is resizable and the interface scales with it, so the whole
-game fits whatever it is dragged to.
+The game opens borderless fullscreen on the current monitor. F11 switches
+between that and a window from any screen, as does the fullscreen row under
+presentation, and the choice is kept for the next launch. The window is
+resizable and the interface scales with it, so the whole game fits
+whatever it is dragged to.
 
 ## Building and running
 
@@ -306,7 +309,8 @@ deliberately.
   seconds into a versus round, for shooting them. `PINCH_NET_PROBE=1`
   submits one scripted signpost mid-round over the wire, and `PINCH_ST_EXEC`
   runs every schedule on the single-threaded executor, for the CPU
-  measurement. `PINCH_WINDOW=<w>x<h>` opens at a given size, and
+  measurement. `PINCH_WINDOW=<w>x<h>` opens a window at a given size (it
+  and `PINCH_SCREENSHOT` both keep the game out of fullscreen), and
   `PINCH_SCREENSHOT=<path>` with `PINCH_SCREENSHOT_AT=<seconds>` took every
   picture in this guide. `PINCH_NO_UPDATE` skips the release check for a
   run, and `PINCH_UPDATE_DEMO` opens the new-version page for a made-up

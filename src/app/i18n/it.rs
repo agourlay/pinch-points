@@ -313,6 +313,7 @@ pub static IT: Tr = Tr {
     pad_help1: "Controller: croce/levetta muovono, tasti mettono",
     pad_help2: "L1 togli, R1 pulisci, Start pausa/entra, B indietro",
     set_palette: "Colori giocatori",
+    set_fullscreen: "Schermo intero",
     set_ui_scale: "Scala interfaccia",
     set_reduced_motion: "Meno movimento",
     set_update_check: "Cerca aggiornamenti",

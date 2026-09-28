@@ -455,6 +455,8 @@ struct Tr {
     pub set_rumble: &'static str,
     pub set_deadzone: &'static str,
     pub set_palette: &'static str,
+    /// Settings row: borderless fullscreen or a window.
+    pub set_fullscreen: &'static str,
     pub set_ui_scale: &'static str,
     pub set_reduced_motion: &'static str,
     /// Settings row: whether start-up asks GitHub for a newer release.

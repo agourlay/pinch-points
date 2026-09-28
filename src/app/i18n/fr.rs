@@ -313,6 +313,7 @@ pub static FR: Tr = Tr {
     pad_help1: "Manette : croix/stick bouger, boutons poser",
     pad_help2: "L1 retirer, R1 effacer, Start pause/rejoindre, B retour",
     set_palette: "Couleurs des joueurs",
+    set_fullscreen: "Plein écran",
     set_ui_scale: "Taille de l'interface",
     set_reduced_motion: "Animations réduites",
     set_update_check: "Nouvelles versions",
