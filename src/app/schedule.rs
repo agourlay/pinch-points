@@ -800,6 +800,9 @@ fn add_render_systems(app: &mut App) {
     // On every screen: the sprites load while the menu is up, and the menu
     // draws them too.
     app.add_systems(Update, art::mipmap_sprites);
+    // On every screen too: it is also what puts the prompt back to its own
+    // size and wrapping once there is no legend under it.
+    app.add_systems(Update, hud::fit_prompt);
 }
 
 /// The sim observer and its consumers, plus the ambient screens.

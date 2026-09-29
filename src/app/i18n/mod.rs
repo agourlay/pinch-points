@@ -162,7 +162,7 @@ macro_rules! string_table {
             /// Every string in the table, each paired with the field it came
             /// from. Array fields expand to one entry per element.
             #[cfg(test)]
-            fn strings(&self) -> Vec<(String, &'static str)> {
+            pub(crate) fn strings(&self) -> Vec<(String, &'static str)> {
                 let mut out = Vec::new();
                 $( TableField::push(&self.$field, stringify!($field), &mut out); )*
                 out

@@ -25,6 +25,106 @@ pub struct PostsLabel;
 #[derive(Component)]
 pub struct PromptLabel;
 
+/// The share of the window the prompt's pill may take, as its node says.
+const PROMPT_SHARE: f32 = 0.88;
+/// The pill's padding either side of the text.
+const PROMPT_PAD_X: f32 = 12.0;
+/// The smallest the prompt shrinks to on the play screens: the fine print.
+const PROMPT_MIN_PX: f32 = menu_ui::type_scale::FINE;
+
+/// The size the prompt is drawn at on a play screen, given how wide it
+/// would be at [`HEADER_PX`] and how much room its pill has: its own size
+/// if it fits, smaller until it does, and `None` if even
+/// [`PROMPT_MIN_PX`] cannot hold it on one line, for the caller to wrap.
+fn prompt_fit(natural: f32, room: f32) -> Option<f32> {
+    if natural <= room {
+        return Some(HEADER_PX);
+    }
+    let size = HEADER_PX * room / natural;
+    (size >= PROMPT_MIN_PX).then_some(size)
+}
+
+/// Keep the prompt on one line on the screens that have the crab legend
+/// just above it.
+///
+/// The prompt sits at the foot and wraps upward when it is long, into a
+/// second row the chrome once kept for it. The legend strip took that row,
+/// so the two-seat prompt at 720p ran its second line over the legend. On
+/// those screens it now stays one line and shrinks until it fits, which
+/// text width makes a single step: it scales with the font size. Anywhere
+/// else it wraps as it always has, where the screens make room for two
+/// rows (the lobby does). A prompt too long even at the fine print's size
+/// wraps too, since running off the window is worse than the overlap.
+///
+/// Reads last frame's layout, so a new prompt is one frame at the old
+/// size before it settles.
+#[allow(clippy::type_complexity)]
+pub fn fit_prompt(
+    windows: Query<&Window>,
+    ui_scale: Res<UiScale>,
+    guides: Query<&Node, (With<FieldGuide>, Without<PromptLabel>)>,
+    mut prompts: Query<
+        (
+            &Text,
+            &mut TextFont,
+            &mut TextLayout,
+            &bevy::text::TextLayoutInfo,
+        ),
+        With<PromptLabel>,
+    >,
+    // The line given up on: too long even at the fine print, and wrapped.
+    // Held until the words change, or measuring the wrapped pill as if it
+    // were the line would unwrap it and give up again, every other frame.
+    mut too_long: Local<Option<String>>,
+) {
+    let legend_up = guides.iter().any(|node| node.display != Display::None);
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let room = window.width() / ui_scale.0.max(f32::EPSILON) * PROMPT_SHARE - 2.0 * PROMPT_PAD_X;
+    for (text, mut font, mut layout, info) in &mut prompts {
+        let FontSize::Px(now) = font.font_size else {
+            continue;
+        };
+        let given_up = too_long.as_deref() == Some(text.0.as_str());
+        let (size, wrap) = if legend_up && given_up {
+            (PROMPT_MIN_PX, true)
+        } else if legend_up && info.size.x > 0.0 {
+            let drawn = info.size.x / info.scale_factor.max(f32::EPSILON);
+            // How wide it is at full size: measured on one line, since it
+            // only ever is on these screens once this has run.
+            let natural = drawn * HEADER_PX / now;
+            let one_line = layout.linebreak == LineBreak::NoWrap;
+            match prompt_fit(natural, room) {
+                Some(size) if one_line => (size, false),
+                // Wrapped last frame: its width is the pill's, not the
+                // line's. Unwrap at full size and measure next frame.
+                Some(_) => (HEADER_PX, false),
+                None => {
+                    *too_long = Some(text.0.clone());
+                    (PROMPT_MIN_PX, true)
+                }
+            }
+        } else {
+            (HEADER_PX, true)
+        };
+        // Half-pixel steps: a sub-pixel change is no change to read, and
+        // every write re-shapes the line.
+        let size = (size * 2.0).floor() / 2.0;
+        if (now - size).abs() > 0.01 {
+            font.font_size = FontSize::Px(size);
+        }
+        let linebreak = if wrap {
+            LineBreak::WordBoundary
+        } else {
+            LineBreak::NoWrap
+        };
+        if layout.linebreak != linebreak {
+            layout.linebreak = linebreak;
+        }
+    }
+}
+
 /// The header strip; its dark backdrop hides on the menu so the sky
 /// reaches the top of the window.
 #[derive(Component)]
@@ -573,6 +673,47 @@ pub fn header_backdrop(
 mod tests {
     use super::*;
     use crate::app::i18n::Lang;
+
+    /// A prompt that fits keeps its size; one that does not shrinks by
+    /// exactly as much as it is too wide, since width scales with size; and
+    /// one that would need to go below the fine print is left to wrap.
+    #[test]
+    fn a_prompt_shrinks_to_its_room_and_no_further() {
+        assert_eq!(prompt_fit(900.0, 1000.0), Some(HEADER_PX));
+        let size = prompt_fit(1100.0, 1000.0).expect("a tenth too wide fits smaller");
+        assert!((size - HEADER_PX * 1000.0 / 1100.0).abs() < 0.01, "{size}");
+        assert_eq!(
+            prompt_fit(2000.0, 1000.0),
+            None,
+            "under the fine print: wrap"
+        );
+    }
+
+    /// Every prompt in every language, with the mute key the play screens
+    /// add to it, fits one line of a 720p window without going under the
+    /// fine print. The play screens keep their prompt on one line so it
+    /// stays off the crab legend, and a prompt this cannot hold would wrap
+    /// back over it.
+    #[test]
+    fn every_prompt_fits_one_line_at_720p() {
+        use crate::app::i18n::ALL_LANGS;
+        use crate::app::i18n::metrics::display_px;
+        let room = 1280.0 * PROMPT_SHARE - 2.0 * PROMPT_PAD_X;
+        for lang in ALL_LANGS {
+            let tr = lang.tr();
+            for (field, line) in tr.strings() {
+                if !field.starts_with("prompt_") {
+                    continue;
+                }
+                let prompt = format!("{line} | {}", tr.prompt_mute);
+                let natural = display_px(&prompt, HEADER_PX);
+                assert!(
+                    prompt_fit(natural, room).is_some(),
+                    "{lang:?} {field} is {natural:.0}px at full size, too long for one line: {prompt}"
+                );
+            }
+        }
+    }
 
     /// The title stops before the clock, on the one screen that puts a
     /// clock in the same bar.
