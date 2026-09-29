@@ -23,7 +23,8 @@ pub use castles::{
 };
 pub use statics::{
     BoardStatic, SignpostSprite, TurnstileSprite, animate_turnstiles, dress_signposts,
-    drift_cloud_shadows, pulse_spawners, spawn_static_board, sync_signposts, sync_turnstiles,
+    drift_cloud_shadows, pulse_spawners, ripple_pools, spawn_static_board, sync_signposts,
+    sync_turnstiles,
 };
 pub use wash::{advance_tide_wash, start_tide_wash};
 pub use water::{

@@ -13,6 +13,8 @@ tile on a 1080p screen, and the game opens fullscreen. At 1440p a tile is
 The engine draws every sprite at an explicit size, so the resolution of
 the file never moves anything on screen.
 """
+import math
+
 from PIL import Image, ImageChops, ImageDraw
 
 SIZE = 96  # design units: every coordinate below is in this square
@@ -326,14 +328,55 @@ for i, x0 in enumerate((22, 36, 50, 64, 76)):
               fill=(62, 156, 82, 255))
 save(img, "kelp")
 
-# --- pool: shallow water with ripples, baked ---------------------------------
+# --- pool: an irregular pond, drawn in layers ---------------------------------
+# It was a rounded square with two rings in it, which read as a button on
+# the sand rather than as water. A pool is a blob instead: a circle whose
+# radius wanders by a few low harmonics, seeded, so it is the same pond
+# every run.
+import random
+
+
+def blob(cx, cy, r, seed, wobble=0.10, points=96):
+    """An irregular closed outline around (cx, cy), in design units."""
+    rng = random.Random(seed)
+    waves = [(k, rng.uniform(0.5, 1.0) * wobble / math.sqrt(k),
+              rng.uniform(0.0, 2.0 * math.pi)) for k in (2, 3, 5)]
+    pts = []
+    for i in range(points):
+        a = 2.0 * math.pi * i / points
+        f = 1.0 + sum(amp * math.sin(k * a + ph) for k, amp, ph in waves)
+        pts.append(px(cx + r * f * math.cos(a), cy + r * f * math.sin(a)))
+    return pts
+
+
+WET_SAND = (196, 168, 122, 255)
+SHALLOW = (112, 176, 204, 255)
+DEEP = (84, 146, 184, 255)
+
+# The board draws pools from `puddle`, white and tinted, one layer at a
+# time: wet sand, shallow water, deep water. Layers of one flat colour
+# merge where they overlap, so neighbouring pool tiles, bridged by a
+# stretched puddle between them, read as one pond with one shoreline.
 img, d = canvas()
-d.rounded_rectangle([px(4, 4), px(92, 92)], radius=26 * S, fill=(70, 130, 168, 235))
-d.rounded_rectangle([px(9, 9), px(87, 87)], radius=22 * S, fill=(96, 160, 196, 255))
-for r, alpha in ((30, 140), (18, 180)):
-    d.ellipse([px(48 - r, 48 - r), px(48 + r, 48 + r)],
-              outline=(214, 236, 246, alpha), width=2 * S)
-d.ellipse([px(30, 26), px(52, 40)], fill=(196, 226, 240, 120))
+d.polygon(blob(48, 48, 40, "puddle"), fill=WHITE)
+save(img, "puddle")
+
+# `ripple`: a thin ring with the same wander, which the board swells and
+# fades across the water, slowly, so the pond is never quite still.
+img, d = canvas()
+d.line(blob(48, 48, 40, "ripple", wobble=0.05) + [blob(48, 48, 40, "ripple", wobble=0.05)[0]],
+       fill=WHITE, width=3 * S, joint="curve")
+save(img, "ripple")
+
+# `pool` is the same pond baked in its colours, for the places that draw a
+# single one as an icon: the editor's brush and the menu's beach.
+img, d = canvas()
+d.polygon(blob(48, 48, 44, "puddle"), fill=WET_SAND)
+d.polygon(blob(48, 48, 38, "puddle"), fill=SHALLOW)
+d.polygon(blob(50, 50, 24, "deep"), fill=DEEP)
+d.line(blob(46, 46, 28, "ripple", wobble=0.05) + [blob(46, 46, 28, "ripple", wobble=0.05)[0]],
+       fill=(214, 236, 246, 150), width=2 * S, joint="curve")
+d.ellipse([px(30, 28), px(46, 36)], fill=(214, 236, 246, 130))
 save(img, "pool")
 
 # --- log: turnstile driftwood, horizontal with a pivot knob ------------------

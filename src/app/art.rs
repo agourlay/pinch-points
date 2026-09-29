@@ -28,7 +28,12 @@ pub struct Art {
     pub bracket: Handle<Image>,
     pub crown: Handle<Image>,
     pub kelp: Handle<Image>,
+    /// A pool baked in its colours, for icons: the editor brush, the menu.
     pub pool: Handle<Image>,
+    /// A pool's shape in white, which the board tints layer by layer.
+    pub puddle: Handle<Image>,
+    /// A thin irregular ring, swelled and faded across pool water.
+    pub ripple: Handle<Image>,
     pub log: Handle<Image>,
     pub star: Handle<Image>,
     pub puff: Handle<Image>,
@@ -83,6 +88,8 @@ impl Art {
             crown,
             kelp,
             pool,
+            puddle,
+            ripple,
             log,
             star,
             puff,
@@ -103,8 +110,8 @@ impl Art {
         } = self;
         [
             arrow, arrow_worn, crab, claw, gull, gull_fly, rock, hole, castle, sand_a, sand_b,
-            shadow, plank, bracket, crown, kelp, pool, log, star, puff, foam, post, crab_b, wet,
-            cloud, boat, keep_ring, turret, moat, feather, ramp, vignette, ring,
+            shadow, plank, bracket, crown, kelp, pool, puddle, ripple, log, star, puff, foam, post,
+            crab_b, wet, cloud, boat, keep_ring, turret, moat, feather, ramp, vignette, ring,
         ]
         .into_iter()
         .chain(flags)
@@ -246,6 +253,8 @@ impl FromWorld for Art {
             crown: assets.load("sprites/crown.png"),
             kelp: assets.load("sprites/kelp.png"),
             pool: assets.load("sprites/pool.png"),
+            puddle: assets.load("sprites/puddle.png"),
+            ripple: assets.load("sprites/ripple.png"),
             log: assets.load("sprites/log.png"),
             star: assets.load("sprites/star.png"),
             puff: assets.load("sprites/puff.png"),

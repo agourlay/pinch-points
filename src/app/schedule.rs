@@ -780,7 +780,9 @@ fn add_render_systems(app: &mut App) {
             )
                 .chain(),
             board_render::pulse_spawners,
-            board_render::animate_turnstiles,
+            // Paired for the same twenty-element limit: pools and logs are
+            // the terrain that moves.
+            (board_render::animate_turnstiles, board_render::ripple_pools),
             board_render::drift_cloud_shadows,
             (
                 board_render::start_tide_wash,
