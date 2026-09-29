@@ -21,7 +21,9 @@ use bevy::prelude::*;
 /// with figure spaces (U+2007, as wide as a digit) so it reads as a sign
 /// rather than a sentence. The gap between the two words is three of them,
 /// so "PINCH" and "POINTS" still read as two words at that spacing.
-const TITLE: &str = "P\u{2007}I\u{2007}N\u{2007}C\u{2007}H\u{2007}\u{2007}\u{2007}\u{2007}P\u{2007}O\u{2007}I\u{2007}N\u{2007}T\u{2007}S";
+/// Plain letters in the display face. It was letter-spaced with figure
+/// spaces, which only spaces evenly in a monospace face.
+const TITLE: &str = "PINCH POINTS";
 
 /// One landing-menu entry, in display order (digit 1 launches the
 /// first). The launch ladder and the i18n name/blurb tables follow this
@@ -122,10 +124,7 @@ fn spawn_title(commands: &mut Commands, settings: &GameSettings) {
             .with_children(|card| {
                 card.spawn((
                     Text::new(TITLE),
-                    TextFont {
-                        font_size: FontSize::Px(menu_ui::type_scale::TITLE),
-                        ..default()
-                    },
+                    menu_ui::display_font(menu_ui::type_scale::TITLE),
                     TextColor(palette::TITLE_INK),
                     TextShadow {
                         offset: Vec2::new(2.0, 3.0),

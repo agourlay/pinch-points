@@ -821,6 +821,36 @@ mod tests {
         }
     }
 
+    /// The display face draws the header, clocks, scores, banners and
+    /// headings, any of which may be any string in any table. Nunito is a
+    /// whole font rather than a subset, but a character it lacks would draw
+    /// as nothing all the same, so every character every language says is
+    /// held to it, bar the Japanese that falls back to the subset.
+    #[test]
+    fn the_display_font_carries_every_character_but_japanese() {
+        let display = metrics::display_covers();
+        let kanji = metrics::characters_in_font(include_bytes!(
+            "../../../assets/fonts/NotoSansMonoCJKjp-Subset.otf"
+        ));
+        for lang in ALL_LANGS {
+            let column = lang.column();
+            let mut said: String = lang.tr().strings().iter().map(|(_, line)| *line).collect();
+            for row in &LEVEL_NAMES {
+                said.push_str(row[column]);
+            }
+            for row in &LEVEL_HINTS {
+                said.push_str(row[1 + column]);
+            }
+            said.push_str(lang.native_name());
+            for ch in said.chars().filter(|ch| !ch.is_control()) {
+                assert!(
+                    display.contains(&ch) || kanji.contains(&ch),
+                    "{lang:?} says {ch:?}, which neither the display face nor the subset draws"
+                );
+            }
+        }
+    }
+
     /// The old hand-written list checked 53 fields; the generated walk must
     /// reach far more than that, or the macro is not expanding what we think.
     #[test]

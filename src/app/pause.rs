@@ -63,10 +63,7 @@ fn spawn_card(commands: &mut Commands, settings: &GameSettings) {
             wrap.spawn(menu_ui::screen_card()).with_children(|card| {
                 card.spawn((
                     Text::new(tr.pause_title),
-                    TextFont {
-                        font_size: FontSize::Px(30.0),
-                        ..default()
-                    },
+                    crate::app::menu_ui::display_font(30.0),
                     TextColor(palette::GOLD),
                 ));
                 card.spawn(Node {

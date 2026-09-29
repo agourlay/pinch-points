@@ -10,6 +10,17 @@ use bevy::prelude::*;
 /// section headings, list rows, body copy, and the fine print. Sizes that
 /// answer to something else (per-seat score arrays, row constants tied to a
 /// width budget, computed fits) stay where they are.
+/// Text in the display face at `px`: the wordmark, the header, clocks,
+/// scores, banners and headings. See [`crate::app::boot::DISPLAY_FONT`]
+/// for why it is those and not the rows.
+pub fn display_font(px: f32) -> TextFont {
+    TextFont {
+        font: FontSource::Handle(crate::app::boot::DISPLAY_FONT),
+        font_size: FontSize::Px(px),
+        ..default()
+    }
+}
+
 pub mod type_scale {
     /// The menu wordmark.
     pub const TITLE: f32 = 54.0;
@@ -572,10 +583,7 @@ pub fn heading_row(
             }
             head.spawn((
                 Text::new(heading),
-                TextFont {
-                    font_size: FontSize::Px(15.0),
-                    ..default()
-                },
+                display_font(15.0),
                 TextColor(palette::IDLE_ROW),
             ));
             head.spawn((

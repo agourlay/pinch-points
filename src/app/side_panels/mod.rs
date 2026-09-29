@@ -225,10 +225,7 @@ fn spawn_score_chip(
         chip.spawn((
             SideScore { seat, bump: 0.0 },
             Text::new("0"),
-            TextFont {
-                font_size: FontSize::Px(SCORE_PX[seat as usize]),
-                ..default()
-            },
+            crate::app::menu_ui::display_font(SCORE_PX[seat as usize]),
             TextColor(palette::HUD_INK),
         ));
         // The crown perches on the card's top-right corner.

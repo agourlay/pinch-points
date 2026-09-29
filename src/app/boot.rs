@@ -27,6 +27,22 @@ pub const ITALIC_FONT: Handle<Font> = uuid_handle!("9b451db2-8b49-4ad5-9794-ac1c
 /// stack, which reaches for it a run at a time.
 pub const JP_FONT: Handle<Font> = uuid_handle!("6c2f0e33-3d4b-4d2e-9a58-6f2b2c9d4d71");
 
+/// The display face: Nunito ExtraBold (SIL OFL, `assets/fonts/Nunito-LICENSE`),
+/// for the text that is read from across a room rather than studied: the
+/// wordmark, the header, the clocks, the scores, banners and headings.
+///
+/// DejaVu Sans Mono stays on everything else, and on purpose: the cards
+/// lay their rows out in columns measured as a monospace sum
+/// (`i18n::metrics`), and a proportional face there would make every
+/// width guard a guess. The display face is the friendlier voice on top.
+///
+/// A static instance at weight 800 cut from Google's variable Nunito,
+/// whose default instance is ExtraLight. Nunito declares no Reserved Font
+/// Name, so the instance may keep the name. Japanese falls back to the
+/// subset exactly as it does under DejaVu: the fallback is by script, not
+/// by face.
+pub const DISPLAY_FONT: Handle<Font> = uuid_handle!("6cf5591f-337a-4b2e-bb6a-697aece4ab2b");
+
 /// The family name the subset carries in its `name` table, and the three
 /// scripts it is the answer for: kana of both kinds, and the kanji.
 const JP_FAMILY: &str = "Noto Sans Mono CJK JP";
@@ -63,6 +79,13 @@ pub(super) fn install_ui_font(mut fonts: ResMut<Assets<Font>>) {
         .is_err()
     {
         warn!("italic UI font failed to install; notices will read upright");
+    }
+    let display = include_bytes!("../../assets/fonts/Nunito-ExtraBold.ttf");
+    if fonts
+        .insert(&DISPLAY_FONT, Font::from_bytes(display.to_vec()))
+        .is_err()
+    {
+        warn!("display font failed to install; headings will read in the UI face");
     }
     let kanji = include_bytes!("../../assets/fonts/NotoSansMonoCJKjp-Subset.otf");
     if fonts

@@ -183,10 +183,7 @@ pub fn enter_new_version(
                         tr.update_title,
                         &[("v", &release.version.to_string())],
                     )),
-                    TextFont {
-                        font_size: FontSize::Px(26.0),
-                        ..default()
-                    },
+                    menu_ui::display_font(26.0),
                     TextColor(palette::GOLD),
                 ));
                 card.spawn((

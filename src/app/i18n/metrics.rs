@@ -18,12 +18,18 @@
 //! shaping run. The advances are read out of the very bytes that ship
 //! rather than written down here, so re-subsetting either one cannot leave
 //! this quietly wrong.
+//!
+//! The display face (`boot::DISPLAY_FONT`, Nunito) is not monospace, and
+//! [`display_px`] measures it glyph by glyph instead, from the same bytes.
+//! It leaves kerning out, which only ever pulls a pair closer in this
+//! face, so a line it says fits does.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
 const UI_FACE: &[u8] = include_bytes!("../../../assets/fonts/DejaVuSansMono.ttf");
 const JP_FACE: &[u8] = include_bytes!("../../../assets/fonts/NotoSansMonoCJKjp-Subset.otf");
+const DISPLAY_FACE: &[u8] = include_bytes!("../../../assets/fonts/Nunito-ExtraBold.ttf");
 
 fn be16(font: &[u8], at: usize) -> u16 {
     u16::from_be_bytes([font[at], font[at + 1]])
@@ -50,6 +56,11 @@ fn table(font: &[u8], tag: &[u8; 4]) -> usize {
 /// directory, and the format 4 subtable. A font with neither panics, which
 /// is the right answer for one this cannot vouch for.
 pub fn characters_in_font(font: &[u8]) -> BTreeSet<char> {
+    glyphs_in_font(font).into_keys().collect()
+}
+
+/// Every character the face can draw, and the glyph it draws it with.
+fn glyphs_in_font(font: &[u8]) -> BTreeMap<char, u16> {
     let cmap = table(font, b"cmap");
     let subtable = (0..be16(font, cmap + 2) as usize)
         .map(|index| cmap + 4 + index * 8)
@@ -61,7 +72,7 @@ pub fn characters_in_font(font: &[u8]) -> BTreeSet<char> {
     let starts = ends + segments * 2 + 2;
     let deltas = starts + segments * 2;
     let ranges = deltas + segments * 2;
-    let mut out = BTreeSet::new();
+    let mut out = BTreeMap::new();
     for segment in 0..segments {
         let at = segment * 2;
         let (first, last) = (be16(font, starts + at), be16(font, ends + at));
@@ -80,7 +91,7 @@ pub fn characters_in_font(font: &[u8]) -> BTreeSet<char> {
             if glyph != 0
                 && let Some(ch) = char::from_u32(u32::from(code))
             {
-                out.insert(ch);
+                out.insert(ch, glyph);
             }
         }
     }
@@ -102,10 +113,37 @@ fn em_advance(font: &[u8]) -> f32 {
     f32::from(widest) / f32::from(be16(font, table(font, b"head") + 18))
 }
 
+/// Every glyph's advance, as a fraction of the em. `hmtx` stops early and
+/// every glyph past its end inherits the last entry.
+fn advances(font: &[u8]) -> Vec<f32> {
+    let em = f32::from(be16(font, table(font, b"head") + 18));
+    let metrics = be16(font, table(font, b"hhea") + 34) as usize;
+    let glyphs = be16(font, table(font, b"maxp") + 4) as usize;
+    let hmtx = table(font, b"hmtx");
+    (0..glyphs.max(metrics))
+        .map(|glyph| f32::from(be16(font, hmtx + glyph.min(metrics - 1) * 4)) / em)
+        .collect()
+}
+
 struct Face {
     covers: BTreeSet<char>,
     advance: f32,
 }
+
+/// The display face, which is proportional: an advance per character.
+struct Proportional {
+    advance: BTreeMap<char, f32>,
+}
+
+static DISPLAY: LazyLock<Proportional> = LazyLock::new(|| {
+    let widths = advances(DISPLAY_FACE);
+    Proportional {
+        advance: glyphs_in_font(DISPLAY_FACE)
+            .into_iter()
+            .map(|(ch, glyph)| (ch, widths[usize::from(glyph)]))
+            .collect(),
+    }
+});
 
 static UI: LazyLock<Face> = LazyLock::new(|| Face {
     covers: characters_in_font(UI_FACE),
@@ -135,6 +173,30 @@ pub fn text_px(line: &str, font_px: f32) -> f32 {
         })
         .sum::<f32>()
         * font_px
+}
+
+/// How wide `line` draws at `font_px` in the display face, which the
+/// header, clocks, scores, banners and headings use.
+///
+/// Japanese falls back to the subset exactly as it does under the UI face,
+/// so kana and kanji are measured at the subset's full em. A character
+/// neither has is counted at the UI face's advance, for the reason
+/// [`text_px`] gives; `the_display_font_carries_every_character_but_japanese`
+/// is what catches one.
+pub fn display_px(line: &str, font_px: f32) -> f32 {
+    line.chars()
+        .map(|ch| match DISPLAY.advance.get(&ch) {
+            Some(&advance) => advance,
+            None if JP.covers.contains(&ch) => JP.advance,
+            None => UI.advance,
+        })
+        .sum::<f32>()
+        * font_px
+}
+
+/// Every character the display face can draw.
+pub fn display_covers() -> BTreeSet<char> {
+    DISPLAY.advance.keys().copied().collect()
 }
 
 #[cfg(test)]
@@ -170,6 +232,22 @@ mod tests {
         assert!((px("ab") - 2.0 * 100.0 * 1233.0 / 2048.0).abs() < 0.01);
         assert!((px("かな") - 200.0).abs() < 0.01);
         assert!((px("あa") - (100.0 + 100.0 * 1233.0 / 2048.0)).abs() < 0.01);
+        assert_eq!(px(""), 0.0);
+    }
+
+    /// The display face is measured glyph by glyph: an "i" is narrower
+    /// than a "W", its figures are all one width so a clock does not
+    /// shuffle as it counts, and kana still measure at the subset's em.
+    #[test]
+    fn the_display_face_is_measured_glyph_by_glyph() {
+        let px = |s: &str| display_px(s, 100.0);
+        assert!(px("i") < px("W"), "{} against {}", px("i"), px("W"));
+        let figures: Vec<f32> = ('0'..='9').map(|d| px(&d.to_string())).collect();
+        assert!(
+            figures.iter().all(|w| (w - figures[0]).abs() < 0.01),
+            "{figures:?}"
+        );
+        assert!((px("かな") - 200.0).abs() < 0.01);
         assert_eq!(px(""), 0.0);
     }
 

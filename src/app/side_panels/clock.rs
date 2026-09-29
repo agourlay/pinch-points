@@ -56,10 +56,7 @@ pub(super) fn spawn_clock(root: &mut ChildSpawnerCommands) {
             card.spawn((
                 SideClock,
                 Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(CLOCK_PX),
-                    ..default()
-                },
+                crate::app::menu_ui::display_font(CLOCK_PX),
                 // The calm colour, which is what `update_side_clock` writes
                 // on the first frame anyway.
                 TextColor(crate::app::palette::CLOCK_CALM),

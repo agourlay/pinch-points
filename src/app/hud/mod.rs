@@ -30,15 +30,16 @@ pub struct PromptLabel;
 #[derive(Component)]
 pub struct HeaderBar;
 
+/// The header bar's lines: the title on the left, the tally on the right,
+/// in the display face.
+const HEADER_PX: f32 = 22.0;
+
 pub fn spawn_hud(
     mut commands: Commands,
     settings: Res<GameSettings>,
     art: Res<crate::app::art::Art>,
 ) {
-    let font = TextFont {
-        font_size: FontSize::Px(22.0),
-        ..default()
-    };
+    let font = menu_ui::display_font(HEADER_PX);
     // Header bar: title | score chips | clock-or-inventory.
     commands
         .spawn((
@@ -153,10 +154,7 @@ pub fn spawn_hud(
             wrap.spawn((
                 TideClock,
                 Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(menu_ui::type_scale::DISPLAY),
-                    ..default()
-                },
+                menu_ui::display_font(menu_ui::type_scale::DISPLAY),
                 TextColor(CLOCK_CALM),
             ));
         });
@@ -586,13 +584,13 @@ mod tests {
     /// each other.
     #[test]
     fn a_long_level_name_stops_before_the_clock() {
-        use crate::app::i18n::metrics::text_px;
+        use crate::app::i18n::metrics::display_px;
         use crate::app::settings::DESIGN_W;
 
         // Where the clock's left edge falls at the design width: it is
         // centred, so half of its widest reading sits left of the middle.
         // "10:00" rather than "0:59", since a long round counts in tens.
-        let clock = text_px("10:00", menu_ui::type_scale::DISPLAY);
+        let clock = display_px("10:00", menu_ui::type_scale::DISPLAY);
         let clock_left = DESIGN_W / 2.0 - clock / 2.0;
 
         let Val::Percent(share) = title_width(Screen::Puzzle) else {
@@ -614,7 +612,7 @@ mod tests {
                 let tr = lang.tr();
                 [tr.title_tide_pool, tr.title_beach_day, tr.stage_custom]
                     .into_iter()
-                    .map(|section| text_px(&format!("{section} 100/100 - {name}"), 22.0))
+                    .map(|section| display_px(&format!("{section} 100/100 - {name}"), HEADER_PX))
                     .fold(0.0f32, f32::max)
             })
             .fold(0.0f32, f32::max);

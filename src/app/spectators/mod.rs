@@ -198,10 +198,7 @@ pub(super) fn spawn_list_card(
             wrap.spawn(menu_ui::screen_card()).with_children(|card| {
                 card.spawn((
                     Text::new(title.to_string()),
-                    TextFont {
-                        font_size: FontSize::Px(menu_ui::type_scale::HEADING),
-                        ..default()
-                    },
+                    menu_ui::display_font(menu_ui::type_scale::HEADING),
                     TextColor(palette::GOLD),
                 ));
                 for (line, color) in rows {

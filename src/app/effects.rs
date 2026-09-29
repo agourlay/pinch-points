@@ -435,10 +435,7 @@ pub fn score_pip(commands: &mut Commands, text: String, pos: Vec2, color: Color)
             ..default()
         },
         Text2d::new(text),
-        TextFont {
-            font_size: FontSize::Px(22.0 * oversample),
-            ..default()
-        },
+        crate::app::menu_ui::display_font(22.0 * oversample),
         TextColor(color),
         Transform::from_translation(pos.extend(layout::z::PIP))
             .with_scale(Vec3::splat(1.0 / oversample)),

@@ -360,10 +360,7 @@ pub fn enter_interlude(
             overlay.spawn(menu_ui::screen_card()).with_children(|card| {
                 card.spawn((
                     Text::new(round_line(tr, &tournament)),
-                    TextFont {
-                        font_size: FontSize::Px(menu_ui::type_scale::DISPLAY),
-                        ..default()
-                    },
+                    menu_ui::display_font(menu_ui::type_scale::DISPLAY),
                     TextColor(palette::GOLD),
                 ));
                 for (line, color) in standings(&settings, &names, &tournament, mode, seats.0.max(2))
