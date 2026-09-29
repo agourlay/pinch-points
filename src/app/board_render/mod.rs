@@ -18,8 +18,8 @@ mod wash;
 mod water;
 
 pub use castles::{
-    CastleFlight, CastleSprite, cheer_tier_ups, fly_castles, kick_castles, sync_castles,
-    wave_pennants,
+    CastleFlight, CastleSprite, castle_body, cheer_tier_ups, fly_castles, kick_castles,
+    sync_castles, wave_pennants,
 };
 pub use statics::{
     BoardStatic, SignpostSprite, TurnstileSprite, animate_turnstiles, dress_signposts,

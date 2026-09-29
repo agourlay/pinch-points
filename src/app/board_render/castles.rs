@@ -7,6 +7,7 @@ use crate::app::art::Art;
 use crate::app::layout::{self, TILE};
 use crate::app::palette;
 use crate::sim::{TileKind, castle_tier};
+use bevy::color::Mix;
 use bevy::prelude::*;
 
 /// Marker for a castle's sprite tree; carries the tier it was built at so a
@@ -69,82 +70,187 @@ pub fn sync_castles(
         let tier = castle_tier(board.scores()[owner as usize]);
         let color = palette::player_color(owner);
         let pos = layout::tile_center(board, x, y);
-        let base_size = TILE * (0.55 + 0.12 * f32::from(tier));
         commands
             .spawn((
                 CastleSprite { x, y, tier, owner },
                 CastleKick(0.0),
-                image_sprite(&art.castle, color, Vec2::splat(base_size * 1.12)),
                 Transform::from_translation(pos.extend(z::TILE_FEATURE + 0.2)),
+                Visibility::default(),
             ))
-            .with_children(|parent| {
-                // The keep sits on the sand rather than in it.
-                parent.spawn((
-                    image_sprite(
-                        &art.shadow,
-                        Color::srgba(1.0, 1.0, 1.0, 0.7),
-                        Vec2::splat(base_size * 1.3),
-                    ),
-                    Transform::from_translation(layout::SUN.extend(-0.3)),
-                ));
-                if tier >= 1 {
-                    // The curtain wall the first tier throws up: a
-                    // battlemented ring, hollow, with the keep inside it.
-                    parent.spawn((
-                        image_sprite(&art.keep_ring, color.darker(0.12), Vec2::splat(TILE * 0.99)),
-                        Transform::from_translation(Vec3::new(0.0, 0.0, -0.1)),
-                    ));
-                }
-                if tier >= 2 {
-                    // Bucket-moulded corner towers on the front wall.
-                    for side in [-1.0, 1.0] {
-                        parent.spawn((
-                            image_sprite(
-                                &art.turret,
-                                color.lighter(0.10),
-                                Vec2::splat(TILE * 0.28),
-                            ),
-                            Transform::from_translation(Vec3::new(
-                                side * base_size * 0.42,
-                                base_size * 0.42,
-                                0.1,
-                            )),
-                        ));
-                    }
-                }
-                if tier >= 3 {
-                    // The moat, dug outermost: water with its own ripples,
-                    // open in the middle where the keep stands.
-                    parent.spawn((
-                        image_sprite(&art.moat, Color::WHITE, Vec2::splat(TILE * 1.06)),
-                        Transform::from_translation(Vec3::new(0.0, 0.0, -0.2)),
-                    ));
-                }
-                // Pennant on top; every tier flies the flag.
-                // The flag (spec §3.4: flying their colour flag): a
-                // driftwood pole with a bright owner-coloured pennant,
-                // sticking up past the keep so it reads at a glance.
-                let pole_height = TILE * 0.34;
-                let pole_top = base_size * 0.5 + pole_height;
-                parent.spawn((
-                    Sprite::from_color(WALL_COLOR, Vec2::new(2.5, pole_height)),
-                    Transform::from_translation(Vec3::new(
-                        -TILE * 0.06,
-                        base_size * 0.5 + pole_height / 2.0,
-                        0.3,
-                    )),
-                ));
-                parent.spawn((
-                    Pennant,
-                    Sprite::from_color(color.lighter(0.22), Vec2::new(TILE * 0.20, TILE * 0.12)),
-                    Transform::from_translation(Vec3::new(
-                        -TILE * 0.06 + TILE * 0.11,
-                        pole_top - TILE * 0.05,
-                        0.3,
-                    )),
-                ));
-            });
+            .with_children(|parent| build_castle(parent, &art, tier, color));
     }
+}
+
+/// The sand a castle is built of before its owner's colour goes in.
+const SAND: Color = Color::srgb(0.925, 0.84, 0.66);
+
+/// A castle's walls: sand, dyed well toward its owner's colour.
+///
+/// It was the owner's colour outright, a flat coloured square on the
+/// beach. Dyed sand still says whose it is from across the board, and
+/// leaves the owner's full colour for the flags and the banner, which
+/// is what they are for.
+pub fn castle_body(owner: Color) -> Color {
+    SAND.mix(&owner, 0.62)
+}
+
+/// One piece of a castle: which sprite, how big and where, in tiles from
+/// the tile's centre, and how far in front of the keep it is drawn.
+struct Piece {
+    size: f32,
+    at: Vec2,
+    z: f32,
+}
+
+/// Where a tier's keep stands and how big it is. It rises a little as the
+/// castle grows, and moves back a step once there is a wall in front.
+fn keep(tier: u8) -> Piece {
+    let (size, lift) = match tier {
+        0 => (0.66, 0.02),
+        1 => (0.62, 0.08),
+        2 => (0.64, 0.08),
+        _ => (0.72, 0.10),
+    };
+    Piece {
+        size,
+        at: Vec2::new(0.0, lift),
+        z: 0.0,
+    }
+}
+
+/// The corner towers a tier has: the front pair from tier 2, the back pair
+/// from tier 3. Back towers stand behind the keep and front ones before
+/// the wall, which is what makes it read as a courtyard.
+fn turrets(tier: u8) -> Vec<Piece> {
+    let mut towers = Vec::new();
+    for (from, y, z) in [(3, 0.30, -0.15), (2, -0.30, 0.2)] {
+        if tier >= from {
+            for side in [-1.0, 1.0] {
+                towers.push(Piece {
+                    size: 0.36,
+                    at: Vec2::new(side * 0.40, y),
+                    z,
+                });
+            }
+        }
+    }
+    towers
+}
+
+/// How far above its centre a tower's top stands, as a fraction of its
+/// sprite: the top merlons in `tools/gen_sprites.py`.
+const TOWER_TOP: f32 = 0.27;
+
+/// Everything standing on a castle's tile at `tier` (spec §3.4: the castle
+/// grows with its owner's score and is the scoreboard):
+///
+/// | tier | points | adds |
+/// |---|---|---|
+/// | 0 | 0-9 | the keep and its flag |
+/// | 1 | 10-24 | a curtain wall, gate at the front |
+/// | 2 | 25-49 | two front towers, flying pennants |
+/// | 3 | 50+ | two back towers, a taller keep, a moat |
+///
+/// Each tier adds pieces and none replaces one, so a castle only ever
+/// gets bigger. Before, the keep itself grew until at tier 3 it covered
+/// the wall it was meant to stand inside, and the tiers were hard to
+/// tell apart at a glance.
+fn build_castle(parent: &mut ChildSpawnerCommands, art: &Art, tier: u8, color: Color) {
+    let body = castle_body(color);
+    let sprite = |image: &Handle<Image>, tint: Color, piece: &Piece| {
+        (
+            image_sprite(image, tint, Vec2::splat(TILE * piece.size)),
+            Transform::from_translation((piece.at * TILE).extend(piece.z)),
+        )
+    };
+    let footprint = if tier == 0 { 0.8 } else { 1.15 };
+    // It sits on the sand rather than in it.
+    parent.spawn((
+        image_sprite(
+            &art.shadow,
+            Color::srgba(1.0, 1.0, 1.0, 0.7),
+            Vec2::splat(TILE * footprint),
+        ),
+        Transform::from_translation(layout::SUN.extend(-0.4)),
+    ));
+    let whole = |z| Piece {
+        size: 0.96,
+        at: Vec2::ZERO,
+        z,
+    };
+    if tier >= 3 {
+        // The moat, dug outermost: water, open in the middle.
+        parent.spawn(sprite(
+            &art.moat,
+            Color::WHITE,
+            &Piece {
+                size: 1.14,
+                at: Vec2::ZERO,
+                z: -0.3,
+            },
+        ));
+    }
+    if tier >= 1 {
+        parent.spawn(sprite(&art.wall_back, body, &whole(-0.2)));
+    }
+    let keep = keep(tier);
+    parent.spawn(sprite(&art.castle, body, &keep));
+    // The owner's banner on the keep, and its door's arch, in full colour.
+    parent.spawn(sprite(
+        &art.castle_trim,
+        color.lighter(0.12),
+        &Piece { z: 0.05, ..keep },
+    ));
+    if tier >= 1 {
+        parent.spawn(sprite(&art.wall_front, body, &whole(0.1)));
+    }
+    for tower in turrets(tier) {
+        parent.spawn(sprite(&art.turret, body, &tower));
+        let top = tower.at + Vec2::new(0.0, tower.size * TOWER_TOP);
+        flag(parent, color, top, 0.16, 0.6, tower.z + 0.05);
+    }
+    // The flag (spec §3.4: flying their colour flag): a driftwood pole
+    // with a bright owner-coloured pennant, sticking up past the keep so
+    // it reads at a glance.
+    flag(
+        parent,
+        color,
+        keep.at + Vec2::new(-0.06, keep.size * TOWER_TOP),
+        0.36,
+        1.3,
+        0.3,
+    );
+}
+
+/// A pole standing on `base` (tiles from the castle's centre), `height`
+/// tiles tall, with a pennant of `scale` times the keep's first one.
+fn flag(
+    parent: &mut ChildSpawnerCommands,
+    color: Color,
+    base: Vec2,
+    height: f32,
+    scale: f32,
+    z: f32,
+) {
+    let base = base * TILE;
+    let height = height * TILE;
+    parent.spawn((
+        Sprite::from_color(WALL_COLOR, Vec2::new(2.5, height)),
+        Transform::from_translation(Vec3::new(base.x, base.y + height / 2.0, z)),
+    ));
+    let size = Vec2::new(TILE * 0.20, TILE * 0.12) * scale;
+    parent.spawn((
+        Pennant,
+        // The owner's colour as it is: the castle is dyed sand now, and a
+        // lightened pennant, which stood out against a castle already in
+        // that colour, washed out to white on a yellow one.
+        Sprite::from_color(color, size),
+        Transform::from_translation(Vec3::new(
+            base.x + size.x / 2.0,
+            base.y + height - size.y / 2.0,
+            z,
+        )),
+    ));
 }
 
 /// A castle's flag; waves gently in the sea breeze.
@@ -512,10 +618,32 @@ pub fn wave_pennants(time: Res<Time>, mut flags: Query<(Entity, &mut Transform),
 
 #[cfg(test)]
 mod tests {
-    use super::{gains, hop};
+    use super::{gains, hop, keep, turrets};
     use crate::app::sim_events::SimEvent;
     use crate::sim::{CrabKind, MAX_PLAYERS};
     use bevy::prelude::*;
+
+    /// A castle only ever gains pieces: every tier keeps the towers the
+    /// last one had, going none, none, two, four, and the top tier's keep
+    /// stands taller than a bare one. (Tiers 1 and 2 step the keep down a
+    /// little, to fit it inside the wall they add.)
+    #[test]
+    fn every_tier_adds_to_the_castle() {
+        let towers: Vec<usize> = (0..=3).map(|tier| turrets(tier).len()).collect();
+        assert_eq!(towers, [0, 0, 2, 4]);
+        for tier in 1..=3 {
+            let before: Vec<_> = turrets(tier - 1).iter().map(|t| t.at).collect();
+            let now: Vec<_> = turrets(tier).iter().map(|t| t.at).collect();
+            assert!(
+                before.iter().all(|at| now.contains(at)),
+                "tier {tier} lost a tower"
+            );
+        }
+        assert!(
+            keep(3).size > keep(0).size,
+            "the top tier's keep stands taller"
+        );
+    }
 
     /// A crab of `kind` worth `value` walking into `owner`'s keep.
     fn bank(owner: u8, value: u32) -> SimEvent {

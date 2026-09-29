@@ -230,39 +230,116 @@ d.ellipse([px(16, 24), px(80, 76)], fill=(94, 70, 44, 255))
 d.ellipse([px(24, 32), px(72, 68)], fill=(44, 32, 20, 255))
 save(img, "hole")
 
-# --- castle: sandcastle keep - towers, drip-sand, shell door; tintable ------
+# --- castle: sandcastles in three-quarter view, tintable --------------------
+# The front of the tile is the bottom of the image: every piece shows a lit
+# top and a shaded face below it, the way the rocks do. The engine tints
+# them sand dyed with the owner's colour, and hangs the owner's own colour
+# off them as flags and a banner, so a castle is a sandcastle first and
+# whose it is second.
+#
+# `castle` is the keep, which every castle has. `wall_back` and
+# `wall_front` are the curtain wall a first tier throws up, in two pieces
+# so the keep stands inside it rather than on top of it, and `turret` is
+# the corner tower later tiers add. `castle_trim` is the keep's banner and
+# door arch, tinted in the owner's colour at full strength.
+FACE = (214, 214, 214, 255)   # a tower's shaded front
+GRAIN = (190, 190, 190, 255)  # sand grains pressed into the face
+
+
+def tower(d, cx, top, bottom, rx, ry, merlons, grains):
+    """A bucket-moulded tower: top ellipse at `top`, face down to `bottom`."""
+    mw = rx * 2 / (merlons * 2 - 1)  # merlon width, with gaps as wide
+    def rim_y(x):
+        t = max(0.0, 1 - ((x - cx) / rx) ** 2)
+        return top + ry * math.sqrt(t)
+    # silhouette, grown a little, in outline
+    g = 2.5
+    d.ellipse([px(cx - rx - g, bottom - ry - g), px(cx + rx + g, bottom + ry + g)], fill=OUTLINE)
+    d.rectangle([px(cx - rx - g, top), px(cx + rx + g, bottom)], fill=OUTLINE)
+    d.ellipse([px(cx - rx - g, top - ry - g), px(cx + rx + g, top + ry + g)], fill=OUTLINE)
+    for i in range(merlons):
+        x0 = cx - rx + i * 2 * mw
+        y = rim_y(x0 + mw / 2)
+        d.rectangle([px(x0 - g, y - 7 - g), px(x0 + mw + g, y)], fill=OUTLINE)
+    # face, then the flat top, then the merlons standing on its front rim
+    d.ellipse([px(cx - rx, bottom - ry), px(cx + rx, bottom + ry)], fill=FACE)
+    d.rectangle([px(cx - rx, top), px(cx + rx, bottom)], fill=FACE)
+    for (gx, gy) in grains:
+        d.ellipse([px(cx + gx * rx, top + gy * (bottom - top)),
+                   px(cx + gx * rx + 2.2, top + gy * (bottom - top) + 2.2)], fill=GRAIN)
+    d.ellipse([px(cx - rx, top - ry), px(cx + rx, top + ry)], fill=WHITE)
+    d.ellipse([px(cx - rx * 0.62, top - ry * 0.55), px(cx + rx * 0.62, top + ry * 0.55)],
+              fill=LIGHT)
+    for i in range(merlons):
+        x0 = cx - rx + i * 2 * mw
+        y = rim_y(x0 + mw / 2)
+        d.rectangle([px(x0, y - 7), px(x0 + mw, y)], fill=FACE)
+        d.rectangle([px(x0, y - 7), px(x0 + mw, y - 4.5)], fill=WHITE)
+
+
+GRAINS = [(-0.6, 0.3), (-0.2, 0.62), (0.35, 0.25), (0.6, 0.7), (-0.75, 0.8), (0.1, 0.9)]
+
 img, d = canvas()
-d.rectangle([px(12, 12), px(84, 84)], fill=OUTLINE)
-d.rectangle([px(16, 16), px(80, 80)], fill=WHITE)
-# battlements: notch the border on all sides
-for i in range(4):
-    off = 20 + i * 15
-    d.rectangle([px(off, 8), px(off + 8, 18)], fill=(0, 0, 0, 0))
-    d.rectangle([px(off, 78), px(off + 8, 90)], fill=(0, 0, 0, 0))
-    d.rectangle([px(8, off), px(18, off + 8)], fill=(0, 0, 0, 0))
-    d.rectangle([px(78, off), px(90, off + 8)], fill=(0, 0, 0, 0))
-# bucket-moulded corner towers
-for cx, cy in [(20, 20), (76, 20), (20, 76), (76, 76)]:
-    d.ellipse([px(cx - 9, cy - 9), px(cx + 9, cy + 9)], fill=OUTLINE)
-    d.ellipse([px(cx - 6, cy - 6), px(cx + 6, cy + 6)], fill=LIGHT)
-# courtyard
-d.rectangle([px(30, 30), px(66, 66)], fill=LIGHT)
-d.rectangle([px(35, 35), px(61, 61)], fill=WHITE)
-# arched gate with a scallop shell above (front = bottom of the tile)
-d.rectangle([px(42, 66), px(54, 80)], fill=OUTLINE)
-d.ellipse([px(42, 60), px(54, 72)], fill=OUTLINE)
-d.rectangle([px(45, 69), px(51, 80)], fill=LIGHT)
-d.ellipse([px(45, 63), px(51, 74)], fill=LIGHT)
-# drip-sand speckles on the walls
-import random as _rnd
-_r = _rnd.Random("castle")
-for _ in range(26):
-    x = _r.randrange(18, 78)
-    y = _r.randrange(18, 78)
-    if 30 <= x <= 66 and 30 <= y <= 66:
-        continue
-    d.ellipse([px(x, y), px(x + 2, y + 2)], fill=LIGHT)
+tower(d, 48, 30, 76, 26, 10, merlons=4, grains=GRAINS)
+# door and a window slit, pressed into the face
+d.rounded_rectangle([px(42, 66), px(54, 88)], radius=6 * S, fill=OUTLINE)
+d.rectangle([px(46, 46), px(50, 56)], fill=OUTLINE)
 save(img, "castle")
+
+img, d = canvas()
+# the owner's banner, hung on the face beside the door, and the door's arch
+d.polygon([px(29, 44), px(37, 44), px(37, 64), px(33, 60), px(29, 64)], fill=OUTLINE)
+d.polygon([px(30.5, 45.5), px(35.5, 45.5), px(35.5, 61), px(33, 58.5), px(30.5, 61)], fill=WHITE)
+d.arc([px(40, 64), px(56, 80)], 180, 360, fill=WHITE, width=2 * S)
+save(img, "castle_trim")
+
+# --- the curtain wall, back and front ----------------------------------------
+# A square of wall round the keep: the back and the two sides in one
+# piece, drawn behind it, and the front, with its gate, drawn before it.
+WALL = 9       # how thick the wall's top is, in design units
+WALL_FACE = 9  # how tall its front face stands
+L, R, T, B = 6, 90, 14, 78  # the wall's footprint, outer edges
+
+
+def merlon_row(d, x0, x1, y, n):
+    step = (x1 - x0) / (n * 2 - 1)
+    for i in range(n):
+        xa = x0 + i * 2 * step
+        d.rectangle([px(xa, y - 5), px(xa + step, y)], fill=FACE)
+        d.rectangle([px(xa, y - 5), px(xa + step, y - 3)], fill=WHITE)
+
+
+img, d = canvas()
+# back wall: its top, and its face seen over the courtyard
+d.rectangle([px(L - 2, T - 7), px(R + 2, T + WALL + 2)], fill=OUTLINE)
+d.rectangle([px(L, T), px(R, T + WALL)], fill=WHITE)
+merlon_row(d, L, R, T, 7)
+# side walls: long tops running down to the front wall
+for x in (L, R - WALL):
+    d.rectangle([px(x - 2, T), px(x + WALL + 2, B + 2)], fill=OUTLINE)
+    d.rectangle([px(x, T), px(x + WALL, B)], fill=WHITE)
+    d.rectangle([px(x + WALL * 0.35, T + WALL), px(x + WALL * 0.65, B - 2)], fill=LIGHT)
+d.rectangle([px(L, T), px(R, T + WALL)], fill=WHITE)
+merlon_row(d, L, R, T, 7)
+save(img, "wall_back")
+
+img, d = canvas()
+# front wall: its top, then its face down to the sand, then the gate
+d.rectangle([px(L - 2, B - 7), px(R + 2, B + WALL_FACE + 2)], fill=OUTLINE)
+d.rectangle([px(L, B), px(R, B + WALL_FACE)], fill=FACE)
+d.rectangle([px(L, B - WALL + 4), px(R, B)], fill=WHITE)
+merlon_row(d, L, R, B - WALL + 4, 7)
+for gx in (0.15, 0.3, 0.7, 0.85):
+    x = L + gx * (R - L)
+    d.ellipse([px(x, B + 3), px(x + 2.2, B + 5.2)], fill=GRAIN)
+d.rounded_rectangle([px(41, B - 2), px(55, B + WALL_FACE + 2)], radius=5 * S, fill=OUTLINE)
+save(img, "wall_front")
+
+# --- turret: a corner tower, the keep in miniature ----------------------------
+img, d = canvas()
+tower(d, 48, 30, 72, 30, 12, merlons=3, grains=GRAINS[:4])
+d.rectangle([px(45, 46), px(51, 58)], fill=OUTLINE)
+save(img, "turret")
 
 # --- sand tiles: baked speckled sand, two brightness variants ----------------
 import random
@@ -505,41 +582,6 @@ d.polygon([px(44, 22), px(44, 58), px(20, 58)], fill=(230, 224, 206, 255))
 # tiny pennant
 d.polygon([px(46, 14), px(46, 8), px(58, 11)], fill=(214, 60, 50, 255))
 save(img, "boat")
-
-# --- keep_ring: the outer curtain wall a tier-1 castle grows, tintable -------
-# Replaces a plain coloured square. Hollow, so the keep sits inside it.
-# Three deep merlons a side rather than a row of fine notches: at 64 px on
-# the board a fine notch is a dashed border, not a battlement.
-img, d = canvas()
-# The dark keel is kept thin and the coloured band wide: the outline is
-# tinted along with everything else, and a wall that is mostly outline
-# comes out black whoever owns it.
-d.rounded_rectangle([px(2, 2), px(94, 94)], radius=10 * S, fill=OUTLINE)
-d.rounded_rectangle([px(5, 5), px(91, 91)], radius=8 * S, fill=WHITE)
-d.rounded_rectangle([px(17, 17), px(79, 79)], radius=6 * S, fill=(0, 0, 0, 0))
-for off in (20, 42, 64):
-    for box in [(off, 0, off + 12, 9), (off, 87, off + 12, 96),
-                (0, off, 9, off + 12), (87, off, 96, off + 12)]:
-        d.rectangle([px(box[0], box[1]), px(box[2], box[3])], fill=(0, 0, 0, 0))
-# a lit inner lip so the wall has a thickness to it rather than reading flat
-d.rounded_rectangle([px(17, 17), px(79, 79)], radius=6 * S,
-                    outline=LIGHT, width=2 * S)
-save(img, "keep_ring")
-
-# --- turret: a bucket-moulded corner tower seen from above, tintable ---------
-img, d = canvas()
-d.ellipse([px(6, 6), px(90, 90)], fill=OUTLINE)
-d.ellipse([px(11, 11), px(85, 85)], fill=WHITE)
-d.ellipse([px(24, 24), px(72, 72)], fill=LIGHT)
-d.ellipse([px(34, 30), px(62, 52)], fill=WHITE)
-# crenellation nicks around the rim
-for i in range(8):
-    a = i * 45
-    import math as _m
-    cx = 48 + 39 * _m.cos(_m.radians(a))
-    cy = 48 + 39 * _m.sin(_m.radians(a))
-    d.ellipse([px(cx - 6, cy - 6), px(cx + 6, cy + 6)], fill=(0, 0, 0, 0))
-save(img, "turret")
 
 # --- moat: the ring of water a tier-3 castle digs, baked ---------------------
 img, d = canvas()

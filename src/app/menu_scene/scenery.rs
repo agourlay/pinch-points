@@ -310,7 +310,9 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
         0 | 1 => Prop {
             // A castle from some earlier game, still standing.
             image: art.castle.clone(),
-            tint: palette::player_color((rng.next() % 4) as u8),
+            tint: crate::app::board_render::castle_body(palette::player_color(
+                (rng.next() % 4) as u8,
+            )),
             size: Vec2::splat(52.0 * scale),
             shadow: 44.0 * scale,
             rotation: 0.0,
