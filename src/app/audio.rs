@@ -537,6 +537,18 @@ pub fn play_chime(commands: &mut Commands, sounds: &Sounds, gain: f32) {
     play(commands, &sounds.tier, gain);
 }
 
+/// Which set of music this moment wants, if any.
+///
+/// None once a versus round is over: the results card is where the win
+/// fanfare plays and the awards are read out, and a dance track carrying
+/// on under them buried both. The next round of a series brings it back.
+fn wanted(screen: Screen, phase: crate::app::VersusPhase) -> Option<Mood> {
+    match (screen, phase) {
+        (Screen::Versus, crate::app::VersusPhase::Over) => None,
+        (screen, _) => Some(Mood::of(screen)),
+    }
+}
+
 /// Keep the playlist rolling: when a track ends, rest, then start the next
 /// from the set this screen plays.
 ///
@@ -550,6 +562,9 @@ pub fn play_chime(commands: &mut Commands, sounds: &Sounds, gain: f32) {
 /// When the screen changes sets, the track from the other one fades out
 /// and one from this set starts at once, rest or no rest: a round opening
 /// on a lull is a round opening without its music.
+///
+/// When a versus round is over the playing track fades and nothing takes
+/// its place (see [`wanted`]).
 #[allow(clippy::too_many_arguments)]
 pub fn rotate_music(
     mut commands: Commands,
@@ -558,18 +573,26 @@ pub fn rotate_music(
     muted: Res<Muted>,
     menu: Res<crate::app::pause::PauseMenu>,
     screen: Res<State<Screen>>,
+    phase: Res<State<crate::app::VersusPhase>>,
     time: Res<Time>,
     playing: Query<(Entity, &Music), Without<FadingOut>>,
 ) {
-    let mood = Mood::of(*screen.get());
+    let mood = wanted(*screen.get(), *phase.get());
     let mut live = false;
     for (entity, music) in &playing {
-        if music.0 == mood {
+        if Some(music.0) == mood {
             live = true;
         } else {
             commands.entity(entity).try_insert(FadingOut(FADE_SECS));
         }
     }
+    let Some(mood) = mood else {
+        // Quiet until something wants music again, which then starts at
+        // once rather than after a rest: the next round of a series should
+        // open on its music, as the first one did.
+        playlist.rest = Rest::Due;
+        return;
+    };
     if live {
         playlist.rest = Rest::Playing(mood);
         return;
@@ -675,6 +698,47 @@ mod tests {
     use crate::app::effects::VisualRng;
     use crate::app::settings::GameSettings;
     use crate::sim::classic_arena;
+
+    /// The results card is quiet: once a versus round is over, the track
+    /// that played it out fades and no other starts, while every other
+    /// moment, the round itself included, still wants its set.
+    #[test]
+    fn the_music_stops_when_a_versus_round_is_over() {
+        use crate::app::VersusPhase;
+        assert_eq!(wanted(Screen::Versus, VersusPhase::Over), None);
+        assert_eq!(
+            wanted(Screen::Versus, VersusPhase::Running),
+            Some(Mood::Battle)
+        );
+        // A phase left over from the last round means nothing off the beach.
+        assert_eq!(wanted(Screen::Menu, VersusPhase::Over), Some(Mood::Calm));
+
+        let mut app = App::new();
+        app.insert_resource(MusicPlaylist::new(
+            vec![Handle::default()],
+            vec![Handle::default()],
+            VisualRng::default(),
+        ));
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<Muted>();
+        app.init_resource::<crate::app::pause::PauseMenu>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.insert_resource(State::new(VersusPhase::Over));
+        app.init_resource::<Time>();
+        app.add_systems(Update, rotate_music);
+        let track = app.world_mut().spawn(Music(Mood::Battle)).id();
+        app.update();
+        assert!(
+            app.world().get::<FadingOut>(track).is_some(),
+            "the round's track fades out"
+        );
+        let mut music = app.world_mut().query::<&Music>();
+        assert_eq!(
+            music.iter(app.world()).count(),
+            1,
+            "and nothing starts in its place"
+        );
+    }
 
     /// A beach with `humans` seats answered for at this machine. Bots and
     /// rivals down a wire are exactly the seats with no cursor, which is
@@ -940,6 +1004,7 @@ mod tests {
         app.insert_resource(Muted(false));
         app.insert_resource(crate::app::pause::PauseMenu::default());
         app.insert_resource(State::new(Screen::Menu));
+        app.insert_resource(State::new(crate::app::VersusPhase::Running));
         app.insert_resource(Time::<()>::default());
         app.insert_resource(MusicPlaylist::new(
             vec![Handle::default(), Handle::default()],
