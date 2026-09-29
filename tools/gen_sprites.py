@@ -1,21 +1,30 @@
 #!/usr/bin/env python3
 """Procedural sprite sheet for Pinch Points.
 
-Draws at 4x and downsamples for smooth edges. White/light shapes are meant
-to be tinted by the engine (owner/kind colours); gulls, rocks, and holes
-bake their palette in.
+Draws at 4x the output size and downsamples for smooth edges. White/light
+shapes are meant to be tinted by the engine (owner/kind colours); gulls,
+rocks, and holes bake their palette in.
+
+Every shape is written in a 96-unit design square (SIZE); `px` scales it to
+the canvas. The file itself is OUT pixels square, twice the design size:
+a tile is 64 world units in a 1280x720 layout, so 96 pixels is exactly a
+tile on a 1080p screen, and the game opens fullscreen. At 1440p a tile is
+128 pixels and at 4K 192, and a 96-pixel sprite came out soft on both.
+The engine draws every sprite at an explicit size, so the resolution of
+the file never moves anything on screen.
 """
 from PIL import Image, ImageChops, ImageDraw
 
-S = 4  # supersample factor
-SIZE = 96
+SIZE = 96  # design units: every coordinate below is in this square
+OUT = 192  # pixels in the saved file: a tile on a 4K screen
+S = OUT * 4 // SIZE  # canvas pixels per design unit, 4x supersampled
 
 def canvas():
     img = Image.new("RGBA", (SIZE * S, SIZE * S), (0, 0, 0, 0))
     return img, ImageDraw.Draw(img)
 
 def save(img, name):
-    img = img.resize((SIZE, SIZE), Image.LANCZOS)
+    img = img.resize((OUT, OUT), Image.LANCZOS)
     img.save(f"assets/sprites/{name}.png")
     print(name)
 

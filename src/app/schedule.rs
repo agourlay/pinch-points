@@ -795,6 +795,9 @@ fn add_render_systems(app: &mut App) {
             .run_if(board_screens)
             .in_set(Frame::Render),
     );
+    // On every screen: the sprites load while the menu is up, and the menu
+    // draws them too.
+    app.add_systems(Update, art::mipmap_sprites);
 }
 
 /// The sim observer and its consumers, plus the ambient screens.

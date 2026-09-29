@@ -62,6 +62,165 @@ impl Art {
     pub fn flag(&self, lang: Lang) -> Handle<Image> {
         self.flags[lang.index()].clone()
     }
+
+    /// Whether `id` is one of these sprites.
+    fn holds(&self, id: AssetId<Image>) -> bool {
+        let Self {
+            arrow,
+            arrow_worn,
+            crab,
+            claw,
+            gull,
+            gull_fly,
+            rock,
+            hole,
+            castle,
+            sand_a,
+            sand_b,
+            shadow,
+            plank,
+            bracket,
+            crown,
+            kelp,
+            pool,
+            log,
+            star,
+            puff,
+            foam,
+            post,
+            crab_b,
+            wet,
+            cloud,
+            boat,
+            keep_ring,
+            turret,
+            moat,
+            feather,
+            ramp,
+            vignette,
+            ring,
+            flags,
+        } = self;
+        [
+            arrow, arrow_worn, crab, claw, gull, gull_fly, rock, hole, castle, sand_a, sand_b,
+            shadow, plank, bracket, crown, kelp, pool, log, star, puff, foam, post, crab_b, wet,
+            cloud, boat, keep_ring, turret, moat, feather, ramp, vignette, ring,
+        ]
+        .into_iter()
+        .chain(flags)
+        .any(|handle| handle.id() == id)
+    }
+}
+
+/// Give every sprite a mip chain as it finishes loading.
+///
+/// The sprites are drawn at 192 pixels, a tile on a 4K screen, and most
+/// screens draw them far smaller: 96 at 1080p, and under 40 for the XL
+/// beach in a 720p window. The GPU shrinks a texture by sampling it, and a
+/// texture with no smaller copies is sampled a few texels apart and the
+/// rest skipped, so a crab's outline came out broken and crawled as it
+/// walked. Measured against a proper downscale, a 192-pixel sprite drawn
+/// at 56 pixels was twice as far off as the old 96-pixel one. With a chain
+/// the GPU reads from the level nearest the size on screen, and the big
+/// sprite is at least as good as the small one at every size.
+///
+/// Bevy uploads whatever levels an image carries, and its default sampler
+/// already filters between them; nothing makes the levels, so this does,
+/// once per sprite. The image it changes is a new asset version, and the
+/// `Modified` event that follows is not the one this listens for.
+pub fn mipmap_sprites(
+    mut events: MessageReader<AssetEvent<Image>>,
+    art: Res<Art>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    for event in events.read() {
+        let AssetEvent::LoadedWithDependencies { id } = *event else {
+            continue;
+        };
+        if art.holds(id)
+            && let Some(mut image) = images.get_mut(id)
+        {
+            with_mips(&mut image);
+        }
+    }
+}
+
+/// Append a full mip chain to an 8-bit sRGB RGBA image, down to 1x1.
+///
+/// Each level is a 2x2 box filter of the one above, averaged in linear
+/// light and weighted by alpha. Linear, because averaging sRGB values
+/// darkens every edge between two colours. Weighted, because the colour
+/// under a transparent texel is whatever the drawing tool left there,
+/// usually black, and an unweighted average bleeds it into the outline as
+/// a dark fringe.
+///
+/// Leaves an image alone that already has levels, holds no data, or is in
+/// any other format.
+fn with_mips(image: &mut Image) {
+    use bevy::render::render_resource::TextureFormat;
+    let descriptor = &image.texture_descriptor;
+    if descriptor.mip_level_count != 1
+        || descriptor.format != TextureFormat::Rgba8UnormSrgb
+        || descriptor.size.depth_or_array_layers != 1
+    {
+        return;
+    }
+    let Some(data) = image.data.as_mut() else {
+        return;
+    };
+    let (mut w, mut h) = (
+        descriptor.size.width as usize,
+        descriptor.size.height as usize,
+    );
+    let to_linear: [f32; 256] = std::array::from_fn(|v| srgb_to_linear(v as f32 / 255.0));
+    let mut levels = 1;
+    let mut above = 0; // where the level being halved starts in `data`
+    while w > 1 || h > 1 {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let mut next = Vec::with_capacity(nw * nh * 4);
+        for y in 0..nh {
+            for x in 0..nw {
+                let (mut rgb, mut alpha, mut count) = ([0.0f32; 3], 0.0f32, 0.0f32);
+                for sy in (y * 2)..(y * 2 + 2).min(h) {
+                    for sx in (x * 2)..(x * 2 + 2).min(w) {
+                        let p = above + (sy * w + sx) * 4;
+                        let a = f32::from(data[p + 3]) / 255.0;
+                        for (c, sum) in rgb.iter_mut().enumerate() {
+                            *sum += to_linear[usize::from(data[p + c])] * a;
+                        }
+                        alpha += a;
+                        count += 1.0;
+                    }
+                }
+                for sum in rgb {
+                    let linear = if alpha > 0.0 { sum / alpha } else { 0.0 };
+                    next.push((linear_to_srgb(linear) * 255.0).round() as u8);
+                }
+                next.push((alpha / count * 255.0).round() as u8);
+            }
+        }
+        above = data.len();
+        data.extend_from_slice(&next);
+        (w, h) = (nw, nh);
+        levels += 1;
+    }
+    image.texture_descriptor.mip_level_count = levels;
+}
+
+fn srgb_to_linear(v: f32) -> f32 {
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb(v: f32) -> f32 {
+    if v <= 0.003_130_8 {
+        v * 12.92
+    } else {
+        1.055 * v.powf(1.0 / 2.4) - 0.055
+    }
 }
 
 impl FromWorld for Art {
@@ -113,6 +272,81 @@ impl FromWorld for Art {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+
+    fn image(w: u32, h: u32, pixels: &[[u8; 4]]) -> Image {
+        Image::new(
+            Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            pixels.concat(),
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::default(),
+        )
+    }
+
+    /// The chain runs to 1x1, every level half the last, laid out one
+    /// after another the way the upload reads them. 192 is not a power of
+    /// two, and 3 halves to 1: the odd row is simply not read.
+    #[test]
+    fn the_chain_halves_down_to_one_pixel() {
+        let mut sprite = image(192, 192, &vec![[200, 100, 50, 255]; 192 * 192]);
+        with_mips(&mut sprite);
+        let sizes = [192usize, 96, 48, 24, 12, 6, 3, 1];
+        assert_eq!(
+            sprite.texture_descriptor.mip_level_count,
+            sizes.len() as u32
+        );
+        let bytes: usize = sizes.iter().map(|s| s * s * 4).sum();
+        assert_eq!(sprite.data.as_ref().map(Vec::len), Some(bytes));
+        // A flat colour stays that colour all the way down.
+        let data = sprite.data.unwrap();
+        assert_eq!(&data[bytes - 4..], &[200, 100, 50, 255]);
+
+        // A flag chip is 3:2, and each side stops halving at 1 on its own.
+        let mut flag = image(96, 64, &vec![[255; 4]; 96 * 64]);
+        with_mips(&mut flag);
+        assert_eq!(flag.texture_descriptor.mip_level_count, 7, "96 wide");
+    }
+
+    /// A transparent texel's colour is not part of the picture. Averaged
+    /// in, the black under the clear half of an outline edge would darken
+    /// the half that shows.
+    #[test]
+    fn clear_texels_lend_no_colour() {
+        let red = [255, 0, 0, 255];
+        let clear = [0, 0, 0, 0];
+        let mut edge = image(2, 2, &[red, clear, red, clear]);
+        with_mips(&mut edge);
+        let data = edge.data.unwrap();
+        assert_eq!(&data[16..], &[255, 0, 0, 128], "full red, half covered");
+    }
+
+    /// Black and white average to a mid grey *in light*, which is sRGB
+    /// 188, not the 128 that averaging the stored numbers gives.
+    #[test]
+    fn levels_are_averaged_in_linear_light() {
+        let (black, white) = ([0, 0, 0, 255], [255, 255, 255, 255]);
+        let mut checker = image(2, 2, &[black, white, white, black]);
+        with_mips(&mut checker);
+        let grey = checker.data.unwrap()[16];
+        assert!((186..=189).contains(&grey), "{grey}");
+    }
+
+    /// Only the plain 8-bit sprites this game draws are touched: an image
+    /// that already has levels keeps them.
+    #[test]
+    fn an_image_with_levels_is_left_alone() {
+        let mut done = image(2, 2, &[[9; 4]; 4]);
+        done.texture_descriptor.mip_level_count = 2;
+        let before = done.data.clone();
+        with_mips(&mut done);
+        assert_eq!(done.data, before);
+    }
 
     /// A language with no flag file loads nothing: the asset server logs a
     /// miss and the settings row draws an empty gap where the chip goes.
