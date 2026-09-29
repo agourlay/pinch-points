@@ -414,7 +414,13 @@ fn spawn_beach_props(
                     custom_size: Some(Vec2::new(prop.shadow, prop.shadow * 0.42)),
                     ..default()
                 },
-                Transform::from_translation(Vec3::new(x, y - prop.size.y * 0.36, z - 0.01)),
+                // Leaning the way the board's shadows fall (`layout::SUN`):
+                // the sun is over the same shoulder on every screen.
+                Transform::from_translation(Vec3::new(
+                    x + prop.shadow * 0.12,
+                    y - prop.size.y * 0.36,
+                    z - 0.01,
+                )),
             ));
         }
         commands.spawn((

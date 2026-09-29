@@ -164,12 +164,14 @@ fn spawn_tile_feature(commands: &mut Commands, art: &Art, pos: Vec2, kind: TileK
         // neighbours, which this tile alone cannot see.
         TileKind::Pool => {}
         // The log is dynamic (its tilt flips per crossing); only a
-        // shadow pad is static.
+        // shadow pad is static. Cast the way every other shadow is: it
+        // sat dead under the log, the one thing on the beach lit from
+        // straight above.
         TileKind::Turnstile { .. } => {
             commands.spawn((
                 BoardStatic,
                 image_sprite(&art.shadow, Color::WHITE, Vec2::splat(TILE * 0.8)),
-                Transform::from_translation(pos.extend(z::POOL)),
+                Transform::from_translation((pos + layout::SUN).extend(z::POOL)),
             ));
         }
     }
