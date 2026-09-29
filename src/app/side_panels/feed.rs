@@ -191,7 +191,7 @@ pub fn update_log(
 /// Spawn the feed card, filling the sidebar below the clock.
 pub(super) fn spawn_feed(root: &mut ChildSpawnerCommands) {
     // Its rows stack from the top, so it drops the clock card's centring.
-    let (mut node, edge, fill) = card(LOG_TOP, None);
+    let (mut node, edge, fill, shadow) = card(LOG_TOP, None);
     node.flex_direction = FlexDirection::Column;
     node.align_items = AlignItems::default();
     node.justify_content = JustifyContent::default();
@@ -202,19 +202,20 @@ pub(super) fn spawn_feed(root: &mut ChildSpawnerCommands) {
     // the sidebar comes through and the feed reads as a different material
     // from the clock card touching it above, (36, 34, 33) against the
     // clock's (18, 20, 28).
-    root.spawn((node, edge, fill)).with_children(|list| {
-        for index in 0..LOG_LINES {
-            list.spawn((
-                LogLine(index),
-                Text::new(""),
-                TextFont {
-                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
-                    ..default()
-                },
-                TextColor(Color::NONE),
-            ));
-        }
-    });
+    root.spawn((node, edge, fill, shadow))
+        .with_children(|list| {
+            for index in 0..LOG_LINES {
+                list.spawn((
+                    LogLine(index),
+                    Text::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(menu_ui::type_scale::BODY),
+                        ..default()
+                    },
+                    TextColor(Color::NONE),
+                ));
+            }
+        });
 }
 
 #[cfg(test)]

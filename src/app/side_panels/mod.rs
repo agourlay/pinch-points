@@ -108,9 +108,11 @@ fn sidebar(left: bool) -> (SidePanelRoot, Node) {
     )
 }
 
-/// The card language both sidebars share: a hairline edge over the dark
-/// panel fill.
-fn card(top: f32, height: Option<f32>) -> (Node, BorderColor, BackgroundColor) {
+/// The card language both sidebars share: the menus' gold hairline and
+/// drop shadow over the in-round panel's opaque fill, so the chrome of a
+/// round is the same set of cards as the screens around it, standing on
+/// the same beach. The fill stays opaque: the scores are read at a glance.
+fn card(top: f32, height: Option<f32>) -> (Node, BorderColor, BackgroundColor, BoxShadow) {
     (
         Node {
             position_type: PositionType::Absolute,
@@ -129,8 +131,9 @@ fn card(top: f32, height: Option<f32>) -> (Node, BorderColor, BackgroundColor) {
             border_radius: BorderRadius::all(Val::Px(12.0)),
             ..default()
         },
-        BorderColor::all(palette::HAIRLINE),
+        BorderColor::all(palette::CARD_EDGE),
         BackgroundColor(palette::CARD_BG),
+        crate::app::menu_ui::card_shadow(),
     )
 }
 

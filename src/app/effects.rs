@@ -63,8 +63,8 @@ impl VisualRng {
         VisualRng(nanos | 1)
     }
 
-    /// A fixed seed, for tests that need the same draws every run.
-    #[cfg(test)]
+    /// A fixed seed: the same draws every run, for tests and for scenery
+    /// that should look the same every time its board is played.
     pub(crate) fn seeded(seed: u32) -> Self {
         VisualRng(seed)
     }

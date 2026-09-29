@@ -433,6 +433,11 @@ pub fn drift_cloud_shadows(
 /// menu promised instead of floating in a grey void. Sized from the board
 /// rather than the window, because the camera zooms to fit the board and
 /// world units are the only ones that hold still while it does.
+/// The dry sand the board is staked out on: a shade darker and duller than
+/// the board's own sand, so the play stays the brightest thing on screen.
+/// It was a dim olive, which read as nowhere at all rather than as beach.
+const SURROUND_SAND: Color = Color::srgb(0.70, 0.61, 0.45);
+
 fn spawn_dusk_shore(commands: &mut Commands, board: &Board, art: &Art) {
     // Far larger than any zoomed-out view can reach: the wave's reach.
     const REACH: f32 = super::wash::REACH;
@@ -449,7 +454,7 @@ fn spawn_dusk_shore(commands: &mut Commands, board: &Board, art: &Art) {
         Vec2::splat(REACH),
         Vec2::ZERO,
         z::SAND - 10.0,
-        Color::srgb(0.38, 0.34, 0.25),
+        SURROUND_SAND,
     ));
     // The sea along the top of the beach, deepening away from the shore.
     let shore = top + TILE * 0.55;
@@ -457,31 +462,154 @@ fn spawn_dusk_shore(commands: &mut Commands, board: &Board, art: &Art) {
         Vec2::new(REACH, REACH / 2.0),
         Vec2::new(0.0, shore + REACH / 4.0),
         z::SAND - 9.8,
-        Color::srgb(0.13, 0.24, 0.33),
+        Color::srgb(0.13, 0.30, 0.42),
     ));
     commands.spawn(plane(
         Vec2::new(REACH, 26.0),
         Vec2::new(0.0, shore + 13.0),
         z::SAND - 9.7,
-        Color::srgb(0.18, 0.32, 0.42),
+        Color::srgb(0.20, 0.42, 0.55),
     ));
     // The wet line where the last wave reached, and its foam lip.
     commands.spawn(plane(
         Vec2::new(REACH, 18.0),
         Vec2::new(0.0, shore - 9.0),
         z::SAND - 9.7,
-        Color::srgb(0.31, 0.29, 0.22),
+        Color::srgb(0.58, 0.50, 0.37),
     ));
     commands.spawn((
         BoardStatic,
         Sprite {
             image: art.foam.clone(),
-            color: Color::srgba(1.0, 1.0, 1.0, 0.28),
+            color: Color::srgba(1.0, 1.0, 1.0, 0.45),
             custom_size: Some(Vec2::new(REACH, 12.0)),
             ..default()
         },
         Transform::from_translation(Vec3::new(0.0, shore + 2.0, z::SAND - 9.6)),
     ));
+    // Crests further out, fainter, thinner and more broken toward the
+    // horizon, so the strip of blue is a sea coming in rather than a band
+    // of colour. Short lengths with gaps between: one crest the width of
+    // the world was a ruled line.
+    let mut rng = crate::app::effects::VisualRng::seeded(board.seed() as u32 ^ 0x5EA);
+    let span = f32::from(board.width()) * TILE / 2.0 + MARGIN_TILES * TILE;
+    for (lift, alpha, depth) in [(30.0, 0.34, 9.0), (62.0, 0.24, 7.0), (104.0, 0.15, 5.0)] {
+        let mut x = -span;
+        while x < span {
+            let length = rng.range(70.0, 190.0);
+            commands.spawn((
+                BoardStatic,
+                Sprite {
+                    image: art.foam.clone(),
+                    color: Color::srgba(1.0, 1.0, 1.0, alpha),
+                    custom_size: Some(Vec2::new(length, depth)),
+                    ..default()
+                },
+                Transform::from_translation(Vec3::new(
+                    x + length / 2.0,
+                    shore + lift + rng.range(-5.0, 5.0),
+                    z::SAND - 9.65,
+                )),
+            ));
+            x += length + rng.range(30.0, 110.0);
+        }
+    }
+    furnish_the_margin(commands, board, art, shore);
+}
+
+/// How far out from the board the margin is furnished, in tiles: past
+/// anything a window can show beside a zoomed-in board, and the scenery
+/// beyond it would never be seen.
+const MARGIN_TILES: f32 = 14.0;
+
+/// A place in the margin round a board `size` wide and high, or `None` if
+/// the draw landed where nothing may go: on the board, its frame or the
+/// tide that widens past it, or in the sea above `shore`.
+fn margin_spot(rng: &mut crate::app::effects::VisualRng, size: Vec2, shore: f32) -> Option<Vec2> {
+    let clear = size / 2.0 + Vec2::splat(super::RIM + 14.0);
+    let reach = size / 2.0 + Vec2::splat(MARGIN_TILES * TILE);
+    let at = Vec2::new(
+        rng.range(-reach.x, reach.x),
+        rng.range(-reach.y, shore - 16.0),
+    );
+    (at.x.abs() > clear.x || at.y.abs() > clear.y).then_some(at)
+}
+
+/// Scatter the beach around the board: sand grain, dune grass, driftwood,
+/// pebbles and the odd starfish.
+///
+/// Only things that are not in the game: a rock, a pool or a hole out
+/// here would read as a piece of the board that had wandered off. Kept
+/// clear of the board, its frame and the tide that widens round it
+/// (`RIM`), and of the sea. Drawn from the board's own size and seed, so a
+/// level looks the same every time it is played, and a little dimmer than
+/// the same things on the board.
+fn furnish_the_margin(commands: &mut Commands, board: &Board, art: &Art, shore: f32) {
+    let (w, h) = (
+        f32::from(board.width()) * TILE,
+        f32::from(board.height()) * TILE,
+    );
+    let seed = (board.seed() as u32)
+        ^ u32::from(board.width()).wrapping_mul(0x9E37_79B1)
+        ^ u32::from(board.height()).wrapping_mul(0x85EB_CA77);
+    let mut rng = crate::app::effects::VisualRng::seeded(seed);
+    let spot = |rng: &mut crate::app::effects::VisualRng| margin_spot(rng, Vec2::new(w, h), shore);
+    let z = z::SAND - 9.5;
+    // Grain first, the most of it and the least of each.
+    for _ in 0..900 {
+        let Some(at) = spot(&mut rng) else { continue };
+        let pale = rng.next().is_multiple_of(3);
+        let tint = if pale {
+            Color::srgba(1.0, 0.96, 0.86, 0.22)
+        } else {
+            Color::srgba(0.45, 0.37, 0.25, 0.20)
+        };
+        commands.spawn((
+            BoardStatic,
+            Sprite::from_color(tint, Vec2::splat(rng.range(2.0, 5.5))),
+            Transform::from_translation(at.extend(z)),
+        ));
+    }
+    for _ in 0..140 {
+        let Some(at) = spot(&mut rng) else { continue };
+        let (image, tint, size, turn) = match rng.next() % 10 {
+            0..=3 => (
+                &art.kelp,
+                Color::srgba(0.62, 0.70, 0.45, 0.80),
+                Vec2::splat(TILE * rng.range(0.38, 0.62)),
+                rng.range(-0.25, 0.25),
+            ),
+            4..=5 => (
+                &art.log,
+                Color::srgba(0.92, 0.86, 0.78, 0.90),
+                Vec2::splat(TILE * rng.range(0.55, 0.85)),
+                rng.range(0.0, std::f32::consts::TAU),
+            ),
+            6..=8 => (
+                &art.shadow,
+                Color::srgba(0.42, 0.40, 0.37, 0.55),
+                Vec2::new(TILE * 0.16, TILE * 0.11) * rng.range(0.7, 1.4),
+                rng.range(0.0, std::f32::consts::TAU),
+            ),
+            _ => (
+                &art.star,
+                Color::srgba(0.93, 0.56, 0.42, 0.85),
+                Vec2::splat(TILE * rng.range(0.20, 0.28)),
+                rng.range(0.0, std::f32::consts::TAU),
+            ),
+        };
+        commands.spawn((
+            BoardStatic,
+            image_sprite(&art.shadow, Color::srgba(1.0, 1.0, 1.0, 0.35), size * 0.9),
+            Transform::from_translation((at + layout::SUN).extend(z + 0.01)),
+        ));
+        commands.spawn((
+            BoardStatic,
+            image_sprite(image, tint, size),
+            Transform::from_translation(at.extend(z + 0.02))
+                .with_rotation(Quat::from_rotation_z(turn)),
+        ));
+    }
 }
 
 /// Iterates every tile's Up and Left edges plus the far borders, so each
@@ -839,6 +967,28 @@ pub fn animate_turnstiles(time: Res<Time>, mut logs: Query<(&TurnstileSprite, &m
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The scenery keeps off the play: nothing lands on the board, its
+    /// frame, or the tide that widens round it by the end of a round, and
+    /// nothing lands in the sea.
+    #[test]
+    fn the_margin_keeps_off_the_board_and_out_of_the_sea() {
+        let size = Vec2::new(12.0, 9.0) * TILE;
+        let shore = size.y / 2.0 + 26.0 + TILE * 0.55;
+        let mut rng = crate::app::effects::VisualRng::seeded(7);
+        let mut placed = 0;
+        for _ in 0..5000 {
+            let Some(at) = margin_spot(&mut rng, size, shore) else {
+                continue;
+            };
+            placed += 1;
+            let off_board = at.x.abs() > size.x / 2.0 + super::super::RIM
+                || at.y.abs() > size.y / 2.0 + super::super::RIM;
+            assert!(off_board, "{at} is on the board or its tide");
+            assert!(at.y < shore, "{at} is in the sea");
+        }
+        assert!(placed > 1000, "only {placed} of 5000 found a place");
+    }
 
     fn pond(width: u8, height: u8, pools: &[(u8, u8)]) -> Vec<PondPiece> {
         let mut board = Board::new(width, height, 1);
