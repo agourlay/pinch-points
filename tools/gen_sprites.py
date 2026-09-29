@@ -77,48 +77,76 @@ d.line([px(20, 42), px(40, 54)], fill=OUTLINE, width=3 * S)
 d.line([px(46, 34), px(58, 58)], fill=OUTLINE, width=3 * S)
 save(img, "arrow_worn")
 
-# --- crab: jointed legs, stalked eyes, patterned shell; tintable ------------
-img, d = canvas()
-# four jointed legs per side: hip -> knee -> foot
-LEGS = [((34, 32), (16, 20), (6, 10)), ((30, 42), (12, 38), (2, 32)),
-        ((30, 54), (12, 58), (2, 64)), ((34, 64), (16, 76), (6, 86))]
-for hip, knee, foot in LEGS:
-    for (a, b) in [(hip, knee), (knee, foot)]:
-        d.line([px(*a), px(*b)], fill=OUTLINE, width=5 * S)
-    mx, my = 96 - hip[0], hip[1]
-    kx, ky = 96 - knee[0], knee[1]
-    fx, fy = 96 - foot[0], foot[1]
-    # mirrored on the leading side
-    d.line([px(62, hip[1]), px(kx - 26, ky)], fill=OUTLINE, width=5 * S)
-    d.line([px(kx - 26, ky), px(fx - 26, fy)], fill=OUTLINE, width=5 * S)
-# shell: broad oval with outline
-d.ellipse([px(20, 18), px(76, 78)], fill=OUTLINE)
-d.ellipse([px(24, 22), px(72, 74)], fill=WHITE)
-# shell pattern: dimple plus speckles
-d.ellipse([px(32, 32), px(64, 64)], fill=LIGHT)
-for (sx, sy) in [(34, 28), (58, 26), (30, 60), (60, 66), (46, 70)]:
-    d.ellipse([px(sx, sy), px(sx + 4, sy + 4)], fill=LIGHT)
-# small off-hand claw hint at the front
-d.ellipse([px(66, 20), px(80, 32)], fill=OUTLINE)
-d.ellipse([px(68, 22), px(78, 30)], fill=WHITE)
-# googly eyes on stalks at the front (+X)
-d.line([px(66, 38), px(78, 32)], fill=OUTLINE, width=3 * S)
-d.line([px(66, 58), px(78, 64)], fill=OUTLINE, width=3 * S)
-d.ellipse([px(74, 26), px(88, 40)], fill=OUTLINE)
-d.ellipse([px(74, 56), px(88, 70)], fill=OUTLINE)
-d.ellipse([px(76, 28), px(86, 38)], fill=(252, 252, 252, 255))
-d.ellipse([px(76, 58), px(86, 68)], fill=(252, 252, 252, 255))
-d.ellipse([px(80, 31), px(85, 36)], fill=(20, 16, 12, 255))
-d.ellipse([px(80, 61), px(85, 66)], fill=(20, 16, 12, 255))
-save(img, "crab")
+# --- crab: a crab from above, facing +X, tintable -----------------------------
+# Drawn right-handed: the crab's left is up the image (+Y in the engine) and
+# its right is down. A left-handed crab is the same sprite mirrored.
+#
+# The old one was a disc with eight legs spread evenly round it, which at
+# board size read as a beetle, and its claw was a separate dot. This is a
+# carapace wider than it is long, legs grouped down its two sides, eyes on
+# stalks at the front, and a small claw on the off hand. The big claw is
+# the `claw` sprite, drawn in the same frame and tinted by handedness: the
+# one thing a player reads a crab by is the side its big claw is on.
+CARAPACE = [(24, 36), (30, 27), (42, 21), (56, 21), (64, 28), (68, 40), (68, 56),
+            (64, 68), (56, 75), (42, 75), (30, 69), (24, 60)]
+# hip on the carapace's edge -> knee -> foot, for the top side; the bottom
+# side mirrors them. Short and swept back, as a crab's walking legs are:
+# long ones, fanned out, were what made the old one read as a spider.
+LEGS_A = [((30, 31), (22, 19), (12, 12)), ((37, 25), (31, 13), (22, 6)),
+          ((45, 22), (43, 10), (36, 4)), ((53, 22), (56, 10), (52, 4))]
+LEGS_B = [((30, 31), (20, 22), (9, 18)), ((37, 25), (29, 15), (18, 10)),
+          ((45, 22), (45, 11), (40, 3)), ((53, 22), (58, 12), (58, 5))]
 
-# --- claw: open pincer, tintable --------------------------------------------
+
+def crab_legs(d, legs, mirror):
+    for hip, knee, foot in legs:
+        pts = [hip, knee, foot]
+        if mirror:
+            pts = [(x, 96 - y) for (x, y) in pts]
+        d.line([px(*q) for q in pts], fill=OUTLINE, width=4 * S, joint="curve")
+
+
+def crab_body(legs):
+    img, d = canvas()
+    crab_legs(d, legs, mirror=False)
+    crab_legs(d, legs, mirror=True)
+    # small off-hand claw, on the crab's left: an arm and a closed pincer
+    d.line([px(62, 30), px(72, 22)], fill=OUTLINE, width=6 * S)
+    d.ellipse([px(68, 13), px(82, 25)], fill=OUTLINE)
+    d.ellipse([px(70, 15), px(80, 23)], fill=WHITE)
+    # carapace: outline, face, and a paler ridge down the middle
+    d.polygon([px(*q) for q in CARAPACE], fill=OUTLINE)
+    inner = [(44 + (x - 44) * 0.86, 48 + (y - 48) * 0.86) for (x, y) in CARAPACE]
+    d.polygon([px(*q) for q in inner], fill=WHITE)
+    d.ellipse([px(34, 34), px(58, 62)], fill=LIGHT)
+    for (sx, sy) in [(32, 32), (50, 27), (32, 60), (50, 65)]:
+        d.ellipse([px(sx, sy), px(sx + 4, sy + 4)], fill=LIGHT)
+    # eyes on stalks at the front, close together
+    for ey in (42, 54):
+        d.line([px(64, ey), px(72, ey + (ey - 48) * 0.5)], fill=OUTLINE, width=3 * S)
+    for (ex, ey) in ((69, 34), (69, 54)):
+        d.ellipse([px(ex, ey), px(ex + 10, ey + 10)], fill=OUTLINE)
+        d.ellipse([px(ex + 2, ey + 2), px(ex + 8, ey + 8)], fill=(252, 252, 252, 255))
+        d.ellipse([px(ex + 4, ey + 3), px(ex + 8, ey + 7)], fill=(20, 16, 12, 255))
+    return img
+
+
+save(crab_body(LEGS_A), "crab")
+
+# --- claw: the big claw, in the crab's own frame, tintable -------------------
+# Drawn over the crab at the same size and place, so the two never come
+# apart: an arm out of the carapace's front right, and a pincer twice the
+# small claw's size, open, pointing ahead.
 img, d = canvas()
-d.ellipse([px(16, 16), px(88, 88)], fill=OUTLINE)
-d.ellipse([px(22, 22), px(82, 82)], fill=WHITE)
-# the pincer gap: wedge cut toward +X
-d.polygon([px(52, 52), px(100, 24), px(100, 80)], fill=(0, 0, 0, 0))
-d.polygon([px(52, 52), px(96, 30), px(96, 74)], fill=(0, 0, 0, 0))
+d.line([px(60, 64), px(70, 72)], fill=OUTLINE, width=8 * S)
+# the palm, then two fingers reaching forward with a gap between them
+d.ellipse([px(62, 66), px(86, 90)], fill=OUTLINE)
+d.polygon([px(78, 66), px(95, 70), px(93, 77), px(80, 77)], fill=OUTLINE)
+d.polygon([px(78, 81), px(93, 81), px(95, 88), px(78, 90)], fill=OUTLINE)
+d.ellipse([px(65, 69), px(83, 87)], fill=WHITE)
+d.polygon([px(79, 69), px(92, 72), px(90, 75), px(80, 75)], fill=WHITE)
+d.polygon([px(80, 83), px(90, 83), px(92, 86), px(79, 87)], fill=WHITE)
+d.ellipse([px(68, 72), px(76, 78)], fill=LIGHT)
 save(img, "claw")
 
 # --- gull: walking, folded wings, facing +X ---------------------------------
@@ -434,33 +462,8 @@ d.ellipse([px(28, 28), px(68, 68)], fill=(96, 74, 52, 255))
 d.ellipse([px(34, 34), px(54, 54)], fill=(126, 100, 72, 255))
 save(img, "post")
 
-# --- crab frame B: alternate leg pose for the walk cycle ---------------------
-img, d = canvas()
-LEGS_B = [((34, 32), (14, 26), (4, 18)), ((30, 42), (14, 34), (2, 26)),
-          ((30, 54), (14, 62), (2, 70)), ((34, 64), (14, 70), (4, 80))]
-for hip, knee, foot in LEGS_B:
-    for (a, b) in [(hip, knee), (knee, foot)]:
-        d.line([px(*a), px(*b)], fill=OUTLINE, width=5 * S)
-    kx, ky = 96 - knee[0], knee[1]
-    fx, fy = 96 - foot[0], foot[1]
-    d.line([px(62, hip[1]), px(kx - 26, ky)], fill=OUTLINE, width=5 * S)
-    d.line([px(kx - 26, ky), px(fx - 26, fy)], fill=OUTLINE, width=5 * S)
-d.ellipse([px(20, 18), px(76, 78)], fill=OUTLINE)
-d.ellipse([px(24, 22), px(72, 74)], fill=WHITE)
-d.ellipse([px(32, 32), px(64, 64)], fill=LIGHT)
-for (sx, sy) in [(34, 28), (58, 26), (30, 60), (60, 66), (46, 70)]:
-    d.ellipse([px(sx, sy), px(sx + 4, sy + 4)], fill=LIGHT)
-d.ellipse([px(66, 20), px(80, 32)], fill=OUTLINE)
-d.ellipse([px(68, 22), px(78, 30)], fill=WHITE)
-d.line([px(66, 38), px(78, 32)], fill=OUTLINE, width=3 * S)
-d.line([px(66, 58), px(78, 64)], fill=OUTLINE, width=3 * S)
-d.ellipse([px(74, 26), px(88, 40)], fill=OUTLINE)
-d.ellipse([px(74, 56), px(88, 70)], fill=OUTLINE)
-d.ellipse([px(76, 28), px(86, 38)], fill=(252, 252, 252, 255))
-d.ellipse([px(76, 58), px(86, 68)], fill=(252, 252, 252, 255))
-d.ellipse([px(80, 31), px(85, 36)], fill=(20, 16, 12, 255))
-d.ellipse([px(80, 61), px(85, 66)], fill=(20, 16, 12, 255))
-save(img, "crab_b")
+# --- crab frame B: the other half of the walk cycle ------------------------
+save(crab_body(LEGS_B), "crab_b")
 
 # --- wet: sand-to-water gradient strip (fades downward) ----------------------
 img = Image.new("RGBA", (SIZE * S, SIZE * S), (0, 0, 0, 0))

@@ -498,13 +498,13 @@ pub fn bank_hop(
     to: Vec2,
     kind: crate::sim::CrabKind,
 ) {
-    let size = crate::app::creatures::body_size(kind);
+    let side = crate::app::creatures::sprite_side(kind);
     commands.spawn((
         Hop { from, to, age: 0.0 },
         Sprite {
             image: art.crab.clone(),
             color: crate::app::creatures::shell_color(kind, crate::app::creatures::shade_of(id)),
-            custom_size: Some(size * 1.25),
+            custom_size: Some(Vec2::splat(side)),
             ..default()
         },
         Transform::from_translation(from.extend(layout::z::CREATURE + 0.1)),

@@ -75,6 +75,24 @@ pub(crate) fn body_color(kind: CrabKind) -> Color {
     }
 }
 
+/// The side of the square a crab's sprites are drawn in: the body, and the
+/// big claw laid over it in the same frame. The sprites are square with
+/// the legs reaching toward the corners, so the side is wider than the
+/// shell's footprint ([`body_size`]), which is what the shadow is cut to.
+pub(crate) fn sprite_side(kind: CrabKind) -> f32 {
+    body_size(kind).x * 1.45
+}
+
+/// Which way up a crab's sprites are drawn. They are authored right-
+/// handed, big claw on the crab's right; a left-handed crab is the same
+/// crab mirrored across its own heading.
+pub(crate) fn mirrored(handed: Handedness) -> bool {
+    match handed {
+        Handedness::Left => true,
+        Handedness::Right => false,
+    }
+}
+
 pub(crate) fn body_size(kind: CrabKind) -> Vec2 {
     match kind {
         CrabKind::Giant => Vec2::new(TILE * 0.80, TILE * 0.62),
@@ -108,17 +126,12 @@ pub fn sync_crab_sprites(
     for (&id, crab) in live.iter() {
         let pos = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
         let size = body_size(crab.kind);
+        let side = Vec2::splat(sprite_side(crab.kind));
         let claw = match crab.handed {
             Handedness::Left => CLAW_LEFT,
             Handedness::Right => CLAW_RIGHT,
         };
-        // The claw sits at the crab's front, offset to its handed side.
-        // Sprite is authored facing +X; sim-left is -Y in local space *before*
-        // the world-y flip, so left-handed offset is +Y here.
-        let claw_y = match crab.handed {
-            Handedness::Left => size.y * 0.45,
-            Handedness::Right => -size.y * 0.45,
-        };
+        let flip_y = mirrored(crab.handed);
         commands
             .spawn((
                 CrabSprite {
@@ -129,7 +142,8 @@ pub fn sync_crab_sprites(
                 Sprite {
                     image: art.crab.clone(),
                     color: shell_color(crab.kind, shade_of(id)),
-                    custom_size: Some(size * 1.25),
+                    custom_size: Some(side),
+                    flip_y,
                     ..default()
                 },
                 Transform::from_translation(pos.extend(layout::z::CREATURE))
@@ -145,14 +159,19 @@ pub fn sync_crab_sprites(
                     },
                     Transform::from_translation(Vec3::new(0.0, 0.0, -0.5)),
                 ));
+                // The big claw: the handedness tell, and the one thing a
+                // player reads a crab by. Drawn in the body's own frame, so
+                // it sits where the body's arm reaches whatever the crab's
+                // size, and tinted by hand rather than by kind.
                 parent.spawn((
                     Sprite {
                         image: art.claw.clone(),
                         color: claw,
-                        custom_size: Some(Vec2::splat(size.y * 0.62)),
+                        custom_size: Some(side),
+                        flip_y,
                         ..default()
                     },
-                    Transform::from_translation(Vec3::new(size.x * 0.5, claw_y, 0.1)),
+                    Transform::from_translation(Vec3::new(0.0, 0.0, 0.1)),
                 ));
             });
     }
