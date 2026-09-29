@@ -41,6 +41,10 @@ Nothing blocks these. They want the work and no more.
   small, heavily correlated sample whose sigmas swing several points between
   runs that change nothing they measure.
 
+- **Bot seats**, so people can program bots and hold competitions between
+  them, on the same beach as humans and the game's AI. A project with its
+  own design, in `bot-seats.md` (proposal, 2026-09-29).
+
 - **An itch.io page**, with the shots in `docs/screenshots`. The binaries
   exist to put on it: `v0.6.0` is tagged (2026-09-28) and `release.yml` builds six
   targets across Linux, Windows and macOS. A Steam build is a longer road
