@@ -152,13 +152,15 @@ pub(super) fn fit_camera(
     let fit_w = (window.width() - chrome_w).max(layout::TILE);
     let fit_h = (window.height() - chrome_h).max(layout::TILE);
     // The menu has no board: its decoration is laid out 1:1 with the
-    // window. Small boards zoom in a little rather than floating in their
-    // margins, a five-row puzzle at 1:1 filling a third of the window. 0.8
-    // is a quarter over life size, gentle enough to stay crisp.
+    // window.
     let scale = if menu {
         1.0
     } else {
-        (board_w / fit_w).max(board_h / fit_h).max(0.8)
+        board_scale(
+            Vec2::new(board_w, board_h),
+            Vec2::new(fit_w, fit_h),
+            window.scale_factor(),
+        )
     };
     // Centre the board on the gap between the bars, not on the window. The
     // camera's y maps straight to screen y, so half the difference between
@@ -183,6 +185,35 @@ pub(super) fn fit_camera(
             transform.translation.y = target.y;
         }
     }
+}
+
+/// The camera scale that fits a board of `board` world units into `fit`
+/// logical pixels, on a display that scales by `scale_factor`: world units
+/// per logical pixel, so below 1 is zoomed in.
+///
+/// A board fills the room it has, up to the size its art was drawn at: a
+/// tile of [`layout::SPRITE_PX`] physical pixels, which on a display the
+/// system scales up is fewer logical ones. It used to stop at a quarter
+/// over life size, 80 pixels a tile, which was the 96-pixel sprites' limit
+/// and left a board on a 1080p screen filling under half of it.
+///
+/// The grid is what is fitted, but the board is drawn past it: the wooden
+/// frame, and the tide that widens out to [`board_render::RIM`] by the end
+/// of a round. The interface's margins leave room for that band at 1:1,
+/// and zoomed in it grows with everything else: at twice the size the
+/// tide ran under the prompt line. So the grid and its rim together get
+/// the room they have at 1:1. That changes nothing for a board that is
+/// zoomed out, next to nothing for one near 1:1, and holds the rim to its
+/// 1:1 width however far in the board goes.
+///
+/// [`board_render::RIM`]: crate::app::board_render::RIM
+fn board_scale(board: Vec2, fit: Vec2, scale_factor: f32) -> f32 {
+    let rim = Vec2::splat(2.0 * crate::app::board_render::RIM);
+    let grid = board / fit;
+    let framed = (board + rim) / (fit + rim);
+    grid.max_element()
+        .max(framed.max_element())
+        .max(scale_factor / layout::MAX_ZOOM)
 }
 
 /// Shake the camera by whatever trauma is in the pool.
@@ -214,5 +245,64 @@ pub(super) fn shake_camera(
         };
         transform.translation.x += offset.x * scale;
         transform.translation.y += offset.y * scale;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::board_render::RIM;
+
+    /// What the fit was before the zoom was lifted: the grid alone, and
+    /// never closer than 0.8.
+    fn old_scale(board: Vec2, fit: Vec2) -> f32 {
+        (board / fit).max_element().max(0.8)
+    }
+
+    /// In a 720p window nothing moves: the XL beach is zoomed out and
+    /// fits exactly as it did, and the classic one, which sits a hair
+    /// inside 1:1, gives its rim back a fraction of a percent.
+    #[test]
+    fn a_720p_window_fits_as_it_did() {
+        let fit = Vec2::new(1280.0 - 490.0, 720.0 - 137.0);
+        let xl = Vec2::new(20.0, 13.0) * layout::TILE;
+        assert!(old_scale(xl, fit) > 1.0, "the XL beach is zoomed out");
+        assert_eq!(board_scale(xl, fit, 1.0), old_scale(xl, fit));
+
+        let classic = Vec2::new(12.0, 9.0) * layout::TILE;
+        let (new, old) = (board_scale(classic, fit, 1.0), old_scale(classic, fit));
+        assert!((new / old - 1.0).abs() < 0.01, "{new} against {old}");
+    }
+
+    /// A tile never grows past the pixels its sprite was drawn with, on a
+    /// plain display or a scaled one, however small the board.
+    #[test]
+    fn a_tile_stops_at_its_sprite() {
+        let board = Vec2::new(5.0, 3.0) * layout::TILE;
+        let fit = Vec2::new(3000.0, 2000.0);
+        for scale_factor in [1.0, 1.5, 2.0] {
+            let scale = board_scale(board, fit, scale_factor);
+            let physical = layout::TILE / scale * scale_factor;
+            assert!(
+                (physical - layout::SPRITE_PX).abs() < 0.01,
+                "{physical} px at {scale_factor}x"
+            );
+        }
+    }
+
+    /// Zoomed in, the frame and the tide take no more of the screen than
+    /// they do at 1:1, so they stay out from under the interface.
+    #[test]
+    fn a_zoomed_board_keeps_its_rim_in_the_room_it_had() {
+        let board = Vec2::new(12.0, 9.0) * layout::TILE;
+        let fit = Vec2::new(1920.0 - 490.0, 1152.0 - 137.0);
+        let scale = board_scale(board, fit, 1.0);
+        assert!(scale < 0.8, "a 1080p-class window zooms past the old cap");
+        let drawn = (board + Vec2::splat(2.0 * RIM)) / scale;
+        let room = fit + Vec2::splat(2.0 * RIM);
+        assert!(
+            drawn.x <= room.x + 0.01 && drawn.y <= room.y + 0.01,
+            "{drawn} in {room}"
+        );
     }
 }

@@ -6,6 +6,16 @@ use bevy::prelude::*;
 
 pub const TILE: f32 = 64.0;
 
+/// How many screen pixels a tile may grow to: the size `tools/gen_sprites.py`
+/// draws a sprite at. Past it the art is stretched and goes soft, so the
+/// camera zooms a board no further, whatever room the window has.
+pub const SPRITE_PX: f32 = 192.0;
+
+/// The most a board is ever magnified, in physical screen pixels per world
+/// unit: a tile drawn at [`SPRITE_PX`]. Text drawn on the board is
+/// rasterized this much larger than it is shown, so it holds up too.
+pub const MAX_ZOOM: f32 = SPRITE_PX / TILE;
+
 /// Where everything standing on this beach drops its shadow, in world
 /// pixels.
 ///

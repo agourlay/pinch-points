@@ -136,6 +136,10 @@ pub struct Particle {
     spin: f32,
     /// Scale multiplier per second (1.0 = constant size).
     grow: f32,
+    /// The scale it is drawn at before growing. 1.0 for everything but
+    /// text, which is rasterized larger than it is shown (see
+    /// [`score_pip`]).
+    size: f32,
     /// A colour to drift to over life, and the one drifted from. `None`
     /// keeps the spawn colour and moves only its alpha.
     ramp: Option<(Color, Color)>,
@@ -161,6 +165,7 @@ impl Default for Particle {
             drag: 0.0,
             spin: 0.0,
             grow: 0.0,
+            size: 1.0,
             ramp: None,
             fade_in: 0.09,
             peak: None,
@@ -410,7 +415,14 @@ pub fn spark_trail(commands: &mut Commands, rng: &mut VisualRng, art: &Art, pos:
 }
 
 /// Floating score text ("+3", "-12") rising from a board position.
+///
+/// Text on the board is rasterized at its font size in screen pixels and
+/// then magnified with the board, so a pip on a zoomed-in beach came out a
+/// blur. It is drawn [`layout::MAX_ZOOM`] times larger and shown at that
+/// fraction of the scale: sharp at the closest the camera ever gets, and
+/// merely downsampled at every other zoom.
 pub fn score_pip(commands: &mut Commands, text: String, pos: Vec2, color: Color) {
+    let oversample = layout::MAX_ZOOM;
     commands.spawn((
         Particle {
             velocity: Vec2::new(0.0, 46.0),
@@ -419,15 +431,17 @@ pub fn score_pip(commands: &mut Commands, text: String, pos: Vec2, color: Color)
             gravity: Vec2::new(0.0, -34.0),
             life: 1.2,
             fade_in: 0.0,
+            size: 1.0 / oversample,
             ..default()
         },
         Text2d::new(text),
         TextFont {
-            font_size: FontSize::Px(22.0),
+            font_size: FontSize::Px(22.0 * oversample),
             ..default()
         },
         TextColor(color),
-        Transform::from_translation(pos.extend(layout::z::PIP)),
+        Transform::from_translation(pos.extend(layout::z::PIP))
+            .with_scale(Vec3::splat(1.0 / oversample)),
     ));
 }
 
@@ -674,7 +688,7 @@ pub fn update_particles(
         transform.translation.y += particle.velocity.y * dt;
         transform.rotation *= Quat::from_rotation_z(particle.spin * dt);
         let scale = (1.0 + particle.grow * particle.age).max(0.05);
-        transform.scale = Vec3::splat(scale);
+        transform.scale = Vec3::splat(particle.size * scale);
         if let Some(mut sprite) = sprite {
             // The colour spawned with is the peak, alpha included: a piece
             // asked for at 60% never draws stronger than 60%.

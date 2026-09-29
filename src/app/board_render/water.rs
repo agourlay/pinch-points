@@ -5,7 +5,7 @@
 //! own edge and grows away from it, so the sea rises around the beach and
 //! the board itself is untouched until the clock says otherwise.
 
-use super::{WATER, WATER_MAX, image_sprite, z};
+use super::{SWELL, WATER, WATER_MAX, WATER_MIN, image_sprite, z};
 use crate::app::Sim;
 use crate::app::art::Art;
 use crate::app::layout::TILE;
@@ -37,10 +37,10 @@ fn heaving(board: &crate::sim::Board, remaining: u64) -> bool {
 fn tide_depth(board: &crate::sim::Board, remaining: u64, seconds: f32) -> f32 {
     let total = board.ticks() + remaining;
     let elapsed = 1.0 - remaining as f32 / total.max(1) as f32;
-    let mut depth = 6.0 + elapsed * WATER_MAX;
+    let mut depth = WATER_MIN + elapsed * WATER_MAX;
     if heaving(board, remaining) {
         // The swell, in the closing stretch only.
-        depth += (seconds * 6.0).sin() * 3.0;
+        depth += (seconds * 6.0).sin() * SWELL;
     }
     depth
 }
@@ -230,7 +230,7 @@ mod tests {
         assert!(early > 0.0, "there is water from the start: {early}");
         assert!(late > early, "and more of it later: {early} then {late}");
         assert!(
-            late <= WATER_MAX + 6.0,
+            late <= WATER_MAX + WATER_MIN,
             "the tide never runs past its own ceiling: {late}"
         );
     }

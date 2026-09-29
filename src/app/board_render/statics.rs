@@ -226,9 +226,10 @@ fn spawn_weather(commands: &mut Commands, board: &Board, art: &Art) {
     // is never quite evenly lit twice.
     //
     // They turn round well outside the window, not just outside the board:
-    // `boot::fit_camera` stops zooming in at 0.8, so a small board sits in
-    // a much larger visible beach, and a shadow wrapping at the board's
-    // edge vanishes in plain sight mid-sand.
+    // `boot::fit_camera` fits the board to the tighter of the window's two
+    // sides and stops zooming at `layout::MAX_ZOOM`, so a board sits in a
+    // wider visible beach, and a shadow wrapping at the board's edge
+    // vanishes in plain sight mid-sand.
     let edge = w / 2.0 + CLOUD_REACH;
     for (i, (span, speed, at)) in [(3.4, 9.0, -0.28), (5.0, -6.0, 0.12), (2.6, 13.0, 0.38)]
         .into_iter()

@@ -39,9 +39,10 @@ const DRAIN: f32 = 0.7;
 /// How far the wave is built past the board, in world units.
 ///
 /// Sized from the world rather than from the board: `boot::fit_camera`
-/// clamps the zoom at 0.8, so a board smaller than the window leaves a
-/// great deal of beach visible around it, and a wave cut to the board's
-/// width ends in two hard vertical edges with dry sand beyond them.
+/// fits a board to the tighter of the window's two sides and clamps the
+/// zoom at `layout::MAX_ZOOM`, so a board leaves a great deal of beach
+/// visible beside it, and a wave cut to the board's width ends in two hard
+/// vertical edges with dry sand beyond them.
 /// `spawn_dusk_shore` reads it from here for the same reason.
 pub(super) const REACH: f32 = 9000.0;
 

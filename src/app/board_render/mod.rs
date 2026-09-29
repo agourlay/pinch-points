@@ -59,5 +59,15 @@ const WATER: Color = Color::srgba(0.30, 0.58, 0.82, 0.65);
 /// How wide the water grows over the whole round, in pixels, out from the
 /// sand's edge: the bars swell seaward and never cover the board.
 const WATER_MAX: f32 = 42.0;
+/// The water's width before the round has run at all.
+const WATER_MIN: f32 = 6.0;
+/// How far the closing stretch's swell carries the water past its width.
+const SWELL: f32 = 3.0;
+
+/// How far past the sand the board is ever drawn, in world units: the tide
+/// at its widest, which reaches past the wooden frame. `boot::fit_camera`
+/// keeps this band inside the screen room it has at 1:1, so a zoomed-in
+/// board does not push its tide under the interface.
+pub(crate) const RIM: f32 = WATER_MIN + WATER_MAX + SWELL;
 
 pub(super) use crate::app::layout::z;
