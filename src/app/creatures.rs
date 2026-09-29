@@ -64,6 +64,14 @@ pub struct CreatureShadow;
 const CLAW_LEFT: Color = Color::srgb(0.18, 0.49, 0.82); // blue = left-clawed
 const CLAW_RIGHT: Color = Color::srgb(0.97, 0.82, 0.17); // yellow = right-clawed
 
+/// The big claw's colour: the handedness tell.
+pub(crate) fn claw_color(handed: Handedness) -> Color {
+    match handed {
+        Handedness::Left => CLAW_LEFT,
+        Handedness::Right => CLAW_RIGHT,
+    }
+}
+
 pub(crate) fn body_color(kind: CrabKind) -> Color {
     match kind {
         CrabKind::Common => Color::srgb(0.91, 0.50, 0.29),
@@ -127,10 +135,7 @@ pub fn sync_crab_sprites(
         let pos = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
         let size = body_size(crab.kind);
         let side = Vec2::splat(sprite_side(crab.kind));
-        let claw = match crab.handed {
-            Handedness::Left => CLAW_LEFT,
-            Handedness::Right => CLAW_RIGHT,
-        };
+        let claw = claw_color(crab.handed);
         let flip_y = mirrored(crab.handed);
         commands
             .spawn((

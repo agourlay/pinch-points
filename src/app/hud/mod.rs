@@ -522,6 +522,10 @@ pub struct FieldGuide;
 #[derive(Component)]
 pub struct FieldGuideNote(usize);
 
+/// A crab's size in the guide. It was 20, and a crab drawn with its legs
+/// out to the corners of its square was a speck at that size.
+const LEGEND_CRAB_PX: f32 = 26.0;
+
 /// The kinds the guide lists, in the order shown.
 const KINDS: [crate::sim::CrabKind; 6] = [
     crate::sim::CrabKind::Common,
@@ -596,15 +600,32 @@ fn spawn_field_guide(
             ))
             .with_children(|strip| {
                 for (i, kind) in KINDS.iter().enumerate() {
-                    strip.spawn((
-                        ImageNode::new(art.crab.clone())
-                            .with_color(crate::app::creatures::body_color(*kind)),
-                        Node {
-                            width: Val::Px(20.0),
-                            height: Val::Px(20.0),
+                    // The crab as it walks the board, big claw and all,
+                    // rather than a coloured dot: its body and claw in one
+                    // square, the claw in the body's colour, since the
+                    // guide is about kinds and not about hands.
+                    let color = crate::app::creatures::body_color(*kind);
+                    let layer = |image: &Handle<Image>| {
+                        (
+                            ImageNode::new(image.clone()).with_color(color),
+                            Node {
+                                position_type: PositionType::Absolute,
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                        )
+                    };
+                    strip
+                        .spawn(Node {
+                            width: Val::Px(LEGEND_CRAB_PX),
+                            height: Val::Px(LEGEND_CRAB_PX),
                             ..default()
-                        },
-                    ));
+                        })
+                        .with_children(|icon| {
+                            icon.spawn(layer(&art.crab));
+                            icon.spawn(layer(&art.claw));
+                        });
                     strip.spawn((
                         FieldGuideNote(i),
                         Text::new(field_guide_note(tr, i)),

@@ -574,7 +574,15 @@ fn spawn_critter(
         CritterKind::Crab => 0.5,
     };
     let x = at_x.unwrap_or(-speed.signum() * (w / 2.0 + 110.0));
-    commands.spawn((
+    // A crab carries its big claw, on whichever side it was born with, as
+    // it does on the board: the body alone is a crab with one small claw.
+    let handed = if rng.next().is_multiple_of(2) {
+        crate::sim::Handedness::Left
+    } else {
+        crate::sim::Handedness::Right
+    };
+    let flip_y = kind == CritterKind::Crab && crate::app::creatures::mirrored(handed);
+    let mut critter = commands.spawn((
         MenuCritter {
             speed,
             frame_clock: rng.range(0.0, 3.0),
@@ -586,10 +594,23 @@ fn spawn_critter(
             color: tint,
             custom_size: Some(size),
             flip_x: kind == CritterKind::Boat && !rightward,
+            flip_y,
             ..default()
         },
         Transform::from_translation(Vec3::new(x, y, z)).with_rotation(rotation),
     ));
+    if kind == CritterKind::Crab {
+        critter.with_child((
+            Sprite {
+                image: art.claw.clone(),
+                color: crate::app::creatures::claw_color(handed),
+                custom_size: Some(size),
+                flip_y,
+                ..default()
+            },
+            Transform::from_translation(Vec3::new(0.0, 0.0, 0.01)),
+        ));
+    }
 }
 
 /// Every so often something traverses the postcard: crabs scuttle the

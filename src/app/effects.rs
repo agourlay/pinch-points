@@ -486,7 +486,8 @@ pub struct Hop {
 /// score has already moved, and a slow hop would read as lag.
 const HOP: f32 = 0.19;
 
-/// Send a banked crab home over the wall.
+/// Send a banked crab home over the wall: the crab that walked there, big
+/// claw and all, on the side it was on.
 pub fn bank_hop(
     commands: &mut Commands,
     art: &Art,
@@ -494,18 +495,33 @@ pub fn bank_hop(
     from: Vec2,
     to: Vec2,
     kind: crate::sim::CrabKind,
+    handed: crate::sim::Handedness,
 ) {
-    let side = crate::app::creatures::sprite_side(kind);
-    commands.spawn((
-        Hop { from, to, age: 0.0 },
-        Sprite {
-            image: art.crab.clone(),
-            color: crate::app::creatures::shell_color(kind, crate::app::creatures::shade_of(id)),
-            custom_size: Some(Vec2::splat(side)),
-            ..default()
-        },
-        Transform::from_translation(from.extend(layout::z::CREATURE + 0.1)),
-    ));
+    use crate::app::creatures::{claw_color, mirrored, shade_of, shell_color, sprite_side};
+    let side = Vec2::splat(sprite_side(kind));
+    let flip_y = mirrored(handed);
+    commands
+        .spawn((
+            Hop { from, to, age: 0.0 },
+            Sprite {
+                image: art.crab.clone(),
+                color: shell_color(kind, shade_of(id)),
+                custom_size: Some(side),
+                flip_y,
+                ..default()
+            },
+            Transform::from_translation(from.extend(layout::z::CREATURE + 0.1)),
+        ))
+        .with_child((
+            Sprite {
+                image: art.claw.clone(),
+                color: claw_color(handed),
+                custom_size: Some(side),
+                flip_y,
+                ..default()
+            },
+            Transform::from_translation(Vec3::new(0.0, 0.0, 0.01)),
+        ));
 }
 
 /// Where a banking crab is, and how big it looks, `progress` of the way
@@ -739,8 +755,9 @@ pub fn moment_effects(
                 pos,
                 keep,
                 kind,
+                handed,
                 ..
-            } => bank_hop(&mut commands, &art, *id, *pos, *keep, *kind),
+            } => bank_hop(&mut commands, &art, *id, *pos, *keep, *kind, *handed),
             // A gull got one: sand, and the feathers that say what kind of
             // ending this was.
             SimEvent::CrabEaten { pos } => {

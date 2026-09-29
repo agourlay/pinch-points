@@ -799,6 +799,7 @@ mod tests {
             keep: Vec2::ZERO,
             value: 1,
             kind,
+            handed: crate::sim::Handedness::Right,
         }
     }
 

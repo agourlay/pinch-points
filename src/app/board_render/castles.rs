@@ -654,6 +654,7 @@ mod tests {
             keep: Vec2::ZERO,
             value,
             kind: CrabKind::Common,
+            handed: crate::sim::Handedness::Right,
         }
     }
 

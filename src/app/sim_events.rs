@@ -5,7 +5,8 @@
 
 use crate::app::{Sim, layout};
 use crate::sim::{
-    Crab, CrabKind, Direction, GullState, MAX_PLAYERS, PlayerId, TideEvent, TileKind, castle_tier,
+    Crab, CrabKind, Direction, GullState, Handedness, MAX_PLAYERS, PlayerId, TideEvent, TileKind,
+    castle_tier,
 };
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -32,6 +33,9 @@ pub enum SimEvent {
         keep: Vec2,
         value: u32,
         kind: CrabKind,
+        /// Which side its big claw is on, so the crab that hops into the
+        /// keep is the crab that walked there.
+        handed: Handedness,
     },
     /// The gulls got one.
     CrabEaten { pos: Vec2 },
@@ -264,6 +268,7 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab) -> SimEvent {
             keep: layout::tile_center(board, kx, ky),
             value: prev.kind.value(),
             kind: prev.kind,
+            handed: prev.handed,
         };
     }
     let here = tile_or_empty(i32::from(x), i32::from(y));
@@ -281,6 +286,7 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab) -> SimEvent {
             keep: keep_at((i32::from(x), i32::from(y))),
             value: prev.kind.value(),
             kind: prev.kind,
+            handed: prev.handed,
         },
         (_, TileKind::Castle(owner)) => SimEvent::CrabBanked {
             id: prev.id,
@@ -289,6 +295,7 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab) -> SimEvent {
             keep: keep_at(ahead),
             value: prev.kind.value(),
             kind: prev.kind,
+            handed: prev.handed,
         },
         _ => SimEvent::CrabEaten { pos },
     }
