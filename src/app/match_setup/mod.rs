@@ -374,11 +374,56 @@ pub fn settle_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
 }
 
 #[cfg(test)]
-use screen::{LABEL_W, ROW_FONT, VALUE_W, ai_seat, cycle_ai_level, live_rows, row_text};
+use screen::{
+    LABEL_W, ROW_FONT, VALUE_W, ai_seat, cycle_ai_level, has_an_opponent, live_rows, p2_pressed,
+    row_text,
+};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A match needs somebody for player 1 to play: an AI, a pad that
+    /// pressed Start, or a second person at P2's keys. Two humans on the
+    /// dial with nobody else there is not a game.
+    #[test]
+    fn a_match_needs_an_opponent() {
+        let alone = MatchConfig {
+            seats: 2,
+            bots: 0,
+            ..MatchConfig::default()
+        };
+        assert!(!has_an_opponent(&alone, 0, false), "an empty chair");
+        assert!(has_an_opponent(&alone, 1, false), "a pad joined");
+        assert!(has_an_opponent(&alone, 0, true), "P2 pressed a key");
+        let with_ai = MatchConfig { bots: 1, ..alone };
+        assert!(has_an_opponent(&with_ai, 0, false), "the AI plays");
+    }
+
+    /// P2 joins by pressing one of P2's own keys, and never by a key the
+    /// menu or player 1 uses: under the one-hand preset IJKL are player
+    /// 1's commit keys, and pressing them is not a second person arriving.
+    #[test]
+    fn only_p2s_own_keys_say_p2_is_here() {
+        use crate::app::settings::{CommitScheme, GameSettings};
+        let pressed = |key: KeyCode, settings: &GameSettings| {
+            let mut keys = ButtonInput::<KeyCode>::default();
+            keys.press(key);
+            p2_pressed(&keys, settings)
+        };
+        let stock = GameSettings::default();
+        assert!(pressed(KeyCode::KeyI, &stock), "P2's up");
+        assert!(!pressed(KeyCode::KeyW, &stock), "P1's up");
+        assert!(!pressed(KeyCode::Enter, &stock), "the menu's start");
+        let one_hand = GameSettings {
+            commit: CommitScheme::Ijkl,
+            ..GameSettings::default()
+        };
+        assert!(
+            !pressed(KeyCode::KeyI, &one_hand),
+            "P1's commit under the preset"
+        );
+    }
 
     /// Every row fits the two cells that hold it, in every language, on
     /// every stop of every dial.
@@ -897,6 +942,7 @@ mod tests {
         app.init_resource::<MatchConfig>();
         app.init_resource::<CustomBeaches>();
         app.init_resource::<crate::app::tournament::Tournament>();
+        app.init_resource::<crate::app::gamepad::PadSeats>();
         app.insert_resource(GameSettings::default());
         app.add_systems(Update, match_setup_input);
 
@@ -950,7 +996,9 @@ mod tests {
         );
 
         // And now Enter starts the match from that very row, rather than
-        // reopening the box it just closed.
+        // reopening the box it just closed: with somebody to play, since
+        // a table of two humans and no AI starts only once P2 is there.
+        app.world_mut().resource_mut::<MatchMenu>().p2_here = true;
         assert!(
             matches!(Row::ALL[name_row], Row::Name(0)),
             "still on a name row"

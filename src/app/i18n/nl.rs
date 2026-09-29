@@ -353,6 +353,7 @@ pub static NL: Tr = Tr {
     ],
     match_pad_joined: "Controllers doen mee: {list}",
     match_pad_hint: "Start op een controller neemt de volgende plek",
+    match_needs_opponent: "Nog geen tegenstander: neem een AI, of laat P2 een van zijn toetsen indrukken",
     val_arrows: "Pijltjestoetsen",
     val_ijkl: "IJKL (één hand)",
     val_on: "aan",

@@ -360,6 +360,7 @@ pub static DE: Tr = Tr {
     ],
     match_pad_joined: "Controller dabei: {list}",
     match_pad_hint: "Start auf dem Controller: mitspielen",
+    match_needs_opponent: "Noch kein Gegner: KI dazunehmen, oder P2 drückt eine seiner Tasten",
     val_arrows: "Pfeiltasten",
     val_ijkl: "IJKL (einhändig)",
     val_on: "an",

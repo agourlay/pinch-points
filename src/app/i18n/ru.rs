@@ -360,6 +360,7 @@ pub static RU: Tr = Tr {
     ],
     match_pad_joined: "Геймпады в игре: {list}",
     match_pad_hint: "Start на геймпаде занимает следующее место",
+    match_needs_opponent: "Соперника пока нет: добавь ИИ, или пусть P2 нажмёт свою клавишу",
     val_arrows: "Клавиши-стрелки",
     val_ijkl: "IJKL (одной рукой)",
     val_on: "вкл",

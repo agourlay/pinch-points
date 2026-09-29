@@ -497,6 +497,9 @@ struct Tr {
     pub pad_help2: &'static str,
     pub match_pad_joined: &'static str,
     pub match_pad_hint: &'static str,
+    /// Under the match card when nobody would play against player 1: no
+    /// AI, and no second player has joined by pad or by their keys.
+    pub match_needs_opponent: &'static str,
     pub val_arrows: &'static str,
     pub val_ijkl: &'static str,
     pub val_on: &'static str,

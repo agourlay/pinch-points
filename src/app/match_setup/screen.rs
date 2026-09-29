@@ -15,6 +15,55 @@ pub struct MatchMenu {
     /// The seat whose name is being typed, if any. While this is set the
     /// keyboard belongs to the name: navigation and launching wait.
     pub naming: Option<u8>,
+    /// Whether a second player has shown up at the keyboard, by pressing
+    /// one of P2's own keys. The pads say so by pressing Start
+    /// ([`crate::app::gamepad::PadSeats`]); the keyboard's second seat
+    /// had no way to, so nothing could tell two people sharing it from
+    /// one person who set the table for two.
+    pub p2_here: bool,
+}
+
+/// Whether player 1 would have anybody to play against: an AI in the
+/// match, or a second person who has joined, by a pad's Start or by
+/// pressing P2's keys. Whoever is working this menu is player 1.
+///
+/// A two-seat table with no AI used to start with nobody else there, and
+/// the round played out against an empty chair.
+pub(super) fn has_an_opponent(config: &MatchConfig, pads_joined: usize, p2_here: bool) -> bool {
+    config.bots > 0 || pads_joined > 0 || p2_here
+}
+
+/// Whether this frame's keys include one of P2's own: a key bound to the
+/// second keyboard seat that neither player 1 nor the menu also uses, so
+/// the person working the menu cannot join as P2 by accident.
+pub(super) fn p2_pressed(keys: &ButtonInput<KeyCode>, settings: &GameSettings) -> bool {
+    use crate::app::cursor::{KeyMap, keymap};
+    let all = |map: KeyMap| {
+        let KeyMap {
+            moves,
+            places,
+            remove,
+            clear_all,
+        } = map;
+        moves
+            .into_iter()
+            .map(|(key, ..)| key)
+            .chain(places.into_iter().map(|(key, _)| key))
+            .chain([remove, clear_all])
+            .collect::<Vec<KeyCode>>()
+    };
+    let menu = [
+        KeyCode::Enter,
+        KeyCode::NumpadEnter,
+        KeyCode::Escape,
+        KeyCode::Tab,
+        KeyCode::Backspace,
+    ];
+    let p1 = all(keymap(settings, 0, settings.commit));
+    all(keymap(settings, 1, settings.commit))
+        .into_iter()
+        .filter(|key| !p1.contains(key) && !menu.contains(key))
+        .any(|key| keys.just_pressed(key))
 }
 
 /// A row of the card, by its index. What the row *is* rides on its cells:
@@ -48,6 +97,7 @@ pub fn enter_match_setup(
 ) {
     menu.selected = 0;
     menu.naming = None;
+    menu.p2_here = false;
     // The shelf may have changed since the last visit (a beach deleted, or
     // resaved with fewer castles): a config still pointing at it is moved
     // on, so the dial reads what will be played.
@@ -121,7 +171,16 @@ pub fn enter_match_setup(
                         ..default()
                     },
                     TextLayout::no_wrap(),
-                    TextColor(palette::PARCHMENT.with_alpha(0.40)),
+                    TextColor(footer_ink()),
+                    // Clear, until the line is the warning that the match
+                    // cannot start: that one has to be read, and faint
+                    // parchment on bright sand is not.
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
+                        border_radius: BorderRadius::all(Val::Px(9.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
                 ));
             }
         });
@@ -148,14 +207,26 @@ pub(super) const VALUE_W: f32 = 428.0;
 /// the same number already, which is not the same as saying so.
 pub(super) const ROW_FONT: f32 = menu_ui::type_scale::ROW;
 
+/// The controller footer's usual ink: a quiet hint under the card.
+fn footer_ink() -> Color {
+    palette::PARCHMENT.with_alpha(0.40)
+}
+
 /// Keep the controller footer current: the join hint, and who joined -
 /// and the note about beaches this table has grown too big for.
+#[allow(clippy::type_complexity)]
 pub fn update_match_pad_info(
     seats: Res<crate::app::gamepad::PadSeats>,
+    menu: Res<MatchMenu>,
     config: Res<MatchConfig>,
     settings: Res<GameSettings>,
     beaches: Res<CustomBeaches>,
-    mut rows: Query<(&MatchPadInfo, &mut Text)>,
+    mut rows: Query<(
+        &MatchPadInfo,
+        &mut Text,
+        &mut TextColor,
+        &mut BackgroundColor,
+    )>,
     mut note: Query<&mut Text, (With<MatchBeachNote>, Without<MatchPadInfo>)>,
 ) {
     let tr = settings.tr();
@@ -164,7 +235,16 @@ pub fn update_match_pad_info(
         menu_ui::set_text(&mut text, &line);
     }
     let humans = config.seats - config.bots;
-    for (info, mut text) in &mut rows {
+    let alone = !has_an_opponent(&config, seats.0.len(), menu.p2_here);
+    for (info, mut text, mut ink, mut pill) in &mut rows {
+        let warning = !info.0 && alone;
+        let (want_ink, want_pill) = if warning {
+            (palette::GOLD, palette::PILL_FILL)
+        } else {
+            (footer_ink(), Color::NONE)
+        };
+        menu_ui::set_color(&mut ink, want_ink);
+        menu_ui::set_bg(&mut pill, want_pill);
         let line = if info.0 {
             if seats.0.is_empty() {
                 String::new()
@@ -178,6 +258,10 @@ pub fn update_match_pad_info(
                     .collect();
                 fill(tr.match_pad_joined, &[("list", &list.join(", "))])
             }
+        } else if warning {
+            // In the join hint's place: it is the same news, a seat
+            // waiting for somebody, with the other way to fill it.
+            tr.match_needs_opponent.to_string()
         } else {
             tr.match_pad_hint.to_string()
         };
@@ -219,6 +303,7 @@ pub fn match_setup_input(
     mut settings: ResMut<GameSettings>,
     mut tournament: ResMut<crate::app::tournament::Tournament>,
     mut next_screen: ResMut<NextState<Screen>>,
+    pads: Res<crate::app::gamepad::PadSeats>,
 ) {
     if let Some(seat) = menu.naming {
         type_a_name(seat, &mut typed, &keys, &mut settings, &mut menu);
@@ -241,7 +326,14 @@ pub fn match_setup_input(
         menu.naming = Some(seat);
         return;
     }
+    if p2_pressed(&keys, &settings) {
+        menu.p2_here = true;
+    }
     if menu_ui::enter(&keys) {
+        // Nobody to play: the footer already says what to do about it.
+        if !has_an_opponent(&config, pads.0.len(), menu.p2_here) {
+            return;
+        }
         config.armed = true;
         *tournament = if config.series.is_series() {
             crate::app::tournament::Tournament::start(config.series)

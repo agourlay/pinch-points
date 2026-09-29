@@ -353,6 +353,7 @@ pub static FR: Tr = Tr {
     ],
     match_pad_joined: "Manettes en jeu : {list}",
     match_pad_hint: "Start sur une manette : rejoindre la partie",
+    match_needs_opponent: "Pas encore d'adversaire : ajoute une IA, ou P2 appuie sur une de ses touches",
     val_arrows: "Touches fléchées",
     val_ijkl: "IJKL (une main)",
     val_on: "oui",

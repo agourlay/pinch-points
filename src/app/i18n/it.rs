@@ -353,6 +353,7 @@ pub static IT: Tr = Tr {
     ],
     match_pad_joined: "Controller in gioco: {list}",
     match_pad_hint: "Start su un controller prende il posto dopo",
+    match_needs_opponent: "Nessun avversario: aggiungi un'IA, o P2 preme uno dei suoi tasti",
     val_arrows: "Tasti freccia",
     val_ijkl: "IJKL (una mano)",
     val_on: "sì",

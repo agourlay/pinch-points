@@ -353,6 +353,7 @@ pub static ES: Tr = Tr {
     ],
     match_pad_joined: "Mandos en juego: {list}",
     match_pad_hint: "Start en un mando ocupa la siguiente plaza",
+    match_needs_opponent: "Aún no hay rival: añade una IA, o que P2 pulse una de sus teclas",
     val_arrows: "Teclas de flecha",
     val_ijkl: "IJKL (una mano)",
     val_on: "sí",

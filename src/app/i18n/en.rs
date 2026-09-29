@@ -353,6 +353,7 @@ pub static EN: Tr = Tr {
     ],
     match_pad_joined: "Controllers joined: {list}",
     match_pad_hint: "Start on a controller joins the next seat",
+    match_needs_opponent: "No opponent yet: add an AI, or P2 presses one of their keys",
     val_arrows: "Arrow keys",
     val_ijkl: "IJKL (single-hand)",
     val_on: "on",

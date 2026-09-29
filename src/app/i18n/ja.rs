@@ -353,6 +353,7 @@ pub static JA: Tr = Tr {
     ],
     match_pad_joined: "参加したパッド: {list}",
     match_pad_hint: "パッドのStartで次の席に着く",
+    match_needs_opponent: "まだ相手がいない: AIを入れるか、P2がキーを押してね",
     val_arrows: "矢印キー",
     val_ijkl: "IJKL (片手)",
     val_on: "オン",
