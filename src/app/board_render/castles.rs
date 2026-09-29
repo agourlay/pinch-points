@@ -184,7 +184,7 @@ fn build_castle(parent: &mut ChildSpawnerCommands, art: &Art, tier: u8, color: C
             &art.moat,
             Color::WHITE,
             &Piece {
-                size: 1.14,
+                size: 1.22,
                 at: Vec2::ZERO,
                 z: -0.3,
             },

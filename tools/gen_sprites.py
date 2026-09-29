@@ -584,16 +584,38 @@ d.polygon([px(46, 14), px(46, 8), px(58, 11)], fill=(214, 60, 50, 255))
 save(img, "boat")
 
 # --- moat: the ring of water a tier-3 castle digs, baked ---------------------
+# The pools' pond, dug round a castle: the same wet-sand shore, shallow and
+# deep water and wandering outline, with the island the castle stands on
+# left dry in the middle. It was a rounded square of water, a button round
+# the castle the way the pools were buttons on the sand. It keeps the
+# square's corners, since the wall inside it is square, but its edges
+# wander like a pond's. The wall covers most of it; what shows is the shore
+# and a band of water, so the ripples are drawn in that band.
+def squircle(cx, cy, r, seed, wobble=0.04, points=128, n=4.0):
+    """A rounded square whose edge wanders, in design units."""
+    rng = random.Random(seed)
+    waves = [(k, rng.uniform(0.5, 1.0) * wobble / math.sqrt(k),
+              rng.uniform(0.0, 2.0 * math.pi)) for k in (3, 5, 7)]
+    pts = []
+    for i in range(points):
+        a = 2.0 * math.pi * i / points
+        c, s_ = math.cos(a), math.sin(a)
+        base = r / (abs(c) ** n + abs(s_) ** n) ** (1.0 / n)
+        f = 1.0 + sum(amp * math.sin(k * a + ph) for k, amp, ph in waves)
+        pts.append(px(cx + base * f * c, cy + base * f * s_))
+    return pts
+
+
 img, d = canvas()
-d.rounded_rectangle([px(0, 0), px(96, 96)], radius=16 * S, fill=(46, 96, 132, 255))
-d.rounded_rectangle([px(4, 4), px(92, 92)], radius=14 * S, fill=(78, 142, 180, 255))
-d.rounded_rectangle([px(7, 7), px(89, 89)], radius=12 * S, fill=(104, 172, 206, 255))
-# ripple highlights around the ring
-for inset, alpha in ((11, 150), (16, 100)):
-    d.rounded_rectangle([px(inset, inset), px(96 - inset, 96 - inset)],
-                        radius=10 * S, outline=(216, 238, 248, alpha), width=2 * S)
-# the island the keep stands on: nothing, so the sand shows through
-d.rounded_rectangle([px(21, 21), px(75, 75)], radius=8 * S, fill=(0, 0, 0, 0))
+d.polygon(squircle(48, 48, 46, "moat-shore"), fill=WET_SAND)
+d.polygon(squircle(48, 48, 43, "moat-water"), fill=SHALLOW)
+d.polygon(squircle(48, 48, 41, "moat-deep", wobble=0.03), fill=DEEP)
+ring = squircle(48, 48, 41.5, "moat-ripple", wobble=0.02)
+# broken arcs rather than a whole ring: water catching the light
+for start in range(6, len(ring), 32):
+    d.line(ring[start:start + 9], fill=(214, 236, 246, 110), width=int(1.5 * S), joint="curve")
+d.polygon(squircle(48, 48, 37, "moat-island", wobble=0.03), fill=WET_SAND)
+d.polygon(squircle(48, 48, 35, "moat-island", wobble=0.03), fill=(0, 0, 0, 0))
 save(img, "moat")
 
 # --- feather: what is left when a gull gets a crab, tintable -----------------
