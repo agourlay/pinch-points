@@ -11,6 +11,21 @@ pub const TILE: f32 = 64.0;
 /// camera zooms a board no further, whatever room the window has.
 pub const SPRITE_PX: f32 = 192.0;
 
+/// The smallest board the camera fits to, in world units: the classic
+/// arena, 12 by 9. A board smaller on either side is drawn at the tile size
+/// the classic arena would get in the same window, and sits in more beach.
+///
+/// Fitted as itself, a small board grew to fill the window: the five-by-
+/// three first puzzle reached a full [`SPRITE_PX`] a tile, crabs twice the
+/// size of any other stage's, and the jump in scale from one stage to the
+/// next read as the game lurching rather than the beach getting bigger.
+pub const SMALLEST_FIT: Vec2 = Vec2::new(12.0 * TILE, 9.0 * TILE);
+
+/// How far a small board may always be magnified, however little the
+/// classic arena is: a quarter over life size, as small boards were drawn
+/// before boards could fill the window.
+pub const SMALL_BOARD_ZOOM: f32 = 1.25;
+
 /// The most a board is ever magnified, in physical screen pixels per world
 /// unit: a tile drawn at [`SPRITE_PX`]. Text drawn on the board is
 /// rasterized this much larger than it is shown, so it holds up too.

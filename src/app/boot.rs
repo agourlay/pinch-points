@@ -197,6 +197,13 @@ pub(super) fn fit_camera(
 /// over life size, 80 pixels a tile, which was the 96-pixel sprites' limit
 /// and left a board on a 1080p screen filling under half of it.
 ///
+/// A board smaller than the classic arena grows no further than the
+/// classic arena would ([`layout::SMALLEST_FIT`]), with one floor under
+/// that: it may always be drawn at [`layout::SMALL_BOARD_ZOOM`], the
+/// quarter over life size small boards have always had. In a 720p window
+/// the classic arena sits at 1:1, and without the floor the first puzzle
+/// would have shrunk from 80 pixels a tile to 64.
+///
 /// The grid is what is fitted, but the board is drawn past it: the wooden
 /// frame, and the tide that widens out to [`board_render::RIM`] by the end
 /// of a round. The interface's margins leave room for that band at 1:1,
@@ -208,12 +215,18 @@ pub(super) fn fit_camera(
 ///
 /// [`board_render::RIM`]: crate::app::board_render::RIM
 fn board_scale(board: Vec2, fit: Vec2, scale_factor: f32) -> f32 {
-    let rim = Vec2::splat(2.0 * crate::app::board_render::RIM);
-    let grid = board / fit;
-    let framed = (board + rim) / (fit + rim);
-    grid.max_element()
-        .max(framed.max_element())
-        .max(scale_factor / layout::MAX_ZOOM)
+    let fitted = |board: Vec2| {
+        let rim = Vec2::splat(2.0 * crate::app::board_render::RIM);
+        let grid = board / fit;
+        let framed = (board + rim) / (fit + rim);
+        grid.max_element()
+            .max(framed.max_element())
+            .max(scale_factor / layout::MAX_ZOOM)
+    };
+    // For a board at least the classic arena's size on both sides the
+    // second term is never the larger, so only small boards are held back.
+    let small = fitted(layout::SMALLEST_FIT).min(1.0 / layout::SMALL_BOARD_ZOOM);
+    fitted(board).max(small)
 }
 
 /// Shake the camera by whatever trauma is in the pool.
@@ -274,12 +287,41 @@ mod tests {
         assert!((new / old - 1.0).abs() < 0.01, "{new} against {old}");
     }
 
+    /// In a 720p window a small board is drawn a quarter over life size,
+    /// as it always was, though the classic arena there is at 1:1.
+    #[test]
+    fn a_small_board_keeps_its_old_zoom_in_a_small_window() {
+        let fit = Vec2::new(1280.0 - 490.0, 720.0 - 137.0);
+        let first = Vec2::new(5.0, 3.0) * layout::TILE;
+        assert_eq!(board_scale(first, fit, 1.0), old_scale(first, fit));
+    }
+
+    /// A board smaller than the classic arena is drawn at the classic
+    /// arena's tile size, not blown up to fill the window: the five-by-
+    /// three first puzzle and a narrow corridor both.
+    #[test]
+    fn a_small_board_grows_no_further_than_the_classic_one() {
+        let fit = Vec2::new(1920.0 - 490.0, 1152.0 - 137.0);
+        let classic = board_scale(Vec2::new(12.0, 9.0) * layout::TILE, fit, 1.0);
+        for tiles in [
+            Vec2::new(5.0, 3.0),
+            Vec2::new(8.0, 6.0),
+            Vec2::new(12.0, 5.0),
+        ] {
+            let scale = board_scale(tiles * layout::TILE, fit, 1.0);
+            assert_eq!(scale, classic, "{tiles}");
+        }
+        // Wider than the classic arena on one side is fitted on that side.
+        let long = board_scale(Vec2::new(20.0, 5.0) * layout::TILE, fit, 1.0);
+        assert!(long > classic, "a 20-wide board zooms out further: {long}");
+    }
+
     /// A tile never grows past the pixels its sprite was drawn with, on a
-    /// plain display or a scaled one, however small the board.
+    /// plain display or a scaled one, however big the window.
     #[test]
     fn a_tile_stops_at_its_sprite() {
-        let board = Vec2::new(5.0, 3.0) * layout::TILE;
-        let fit = Vec2::new(3000.0, 2000.0);
+        let board = Vec2::new(12.0, 9.0) * layout::TILE;
+        let fit = Vec2::new(6000.0, 4000.0);
         for scale_factor in [1.0, 1.5, 2.0] {
             let scale = board_scale(board, fit, scale_factor);
             let physical = layout::TILE / scale * scale_factor;
