@@ -274,14 +274,13 @@ pub fn between_bars() -> Node {
     }
 }
 
-/// A heading over a group of rows inside a card.
+/// A heading over a group of rows inside a card, in the display face like
+/// every other heading: the settings card's were the last ones still in
+/// the rows' face.
 pub fn heading(text: &str, first: bool) -> impl Bundle {
     (
         Text::new(text.to_string()),
-        TextFont {
-            font_size: FontSize::Px(type_scale::BODY),
-            ..default()
-        },
+        display_font(type_scale::BODY),
         TextColor(palette::GOLD.with_alpha(0.55)),
         Node {
             margin: UiRect::top(Val::Px(if first { 0.0 } else { 10.0 }))
