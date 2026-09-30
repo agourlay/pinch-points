@@ -583,6 +583,99 @@ pub fn advance_hops(
     }
 }
 
+/// Dry sand thrown up by something landing in it.
+pub(crate) const SAND_KICK: Color = Color::srgba(0.93, 0.86, 0.70, 0.95);
+
+/// The most splashes a frame throws: a stream of crabs wading into a pool
+/// lane is one crab after another, and past a few a frame it is spray,
+/// not splashes.
+const SPLASHES_PER_FRAME: usize = 4;
+
+/// A splash where something wades into a pool: a ring on the water and a
+/// few drops thrown up out of it.
+fn splash(commands: &mut Commands, rng: &mut VisualRng, art: &Art, pos: Vec2, size: f32) {
+    ring(
+        commands,
+        art,
+        pos,
+        Color::srgba(0.86, 0.95, 1.0, 0.55),
+        TILE * 0.28 * size,
+        2.2,
+        0.45,
+    );
+    burst(
+        commands,
+        rng,
+        &Burst {
+            image: art.puff.clone(),
+            pos,
+            color: Color::srgba(0.78, 0.90, 0.98, 0.9),
+            count: (5.0 * size).round() as usize,
+            size: 6.0 * size,
+            speed: 55.0,
+            gravity: 120.0,
+        },
+    );
+}
+
+/// Whether the tile at `index` is a pool.
+fn in_pool(board: &crate::sim::Board, index: u16) -> bool {
+    let (x, y) = board.coords_u8(index);
+    board.tile_at(x, y) == crate::sim::TileKind::Pool
+}
+
+/// Whether a creature that was `was` in a pool last frame, and is `now`,
+/// has just waded in: from dry sand to water, and not when it is first
+/// seen, since nothing it is standing in then is news.
+fn wades_in(was: Option<bool>, now: bool) -> bool {
+    now && was == Some(false)
+}
+
+/// Crabs and walking gulls splash as they wade into a pool from dry sand.
+///
+/// Once on the way in, not on every tile of it: a pool lane is a run of
+/// pool tiles, and a stream crossing one would be spray from end to end.
+/// A creature first seen is taken to be where it has always been, so a
+/// level that starts with a crab in a pool, or a board reloading, does not
+/// splash everything on it. Render-side: the sim is untouched.
+pub fn splash_ponds(
+    mut commands: Commands,
+    sim: Res<crate::app::Sim>,
+    art: Res<Art>,
+    settings: Res<crate::app::settings::GameSettings>,
+    mut rng: ResMut<VisualRng>,
+    mut wet: Local<bevy::platform::collections::HashMap<(bool, u32), bool>>,
+    mut seen: Local<bevy::platform::collections::HashSet<(bool, u32)>>,
+) {
+    let board = &sim.0;
+    seen.clear();
+    let mut thrown = 0;
+    let creatures = board
+        .crabs()
+        .iter()
+        .map(|crab| ((false, crab.id), crab.tile, crab.dir, crab.progress, 1.0))
+        .chain(board.gulls().iter().filter_map(|gull| {
+            matches!(gull.state, crate::sim::GullState::Walking).then_some((
+                (true, gull.id),
+                gull.tile,
+                gull.dir,
+                gull.progress,
+                0.8,
+            ))
+        }));
+    for (key, tile, dir, progress, size) in creatures {
+        seen.insert(key);
+        let now = in_pool(board, tile);
+        let was = wet.insert(key, now);
+        if wades_in(was, now) && !settings.reduced_motion && thrown < SPLASHES_PER_FRAME {
+            thrown += 1;
+            let pos = layout::creature_pos(board, tile, dir, progress);
+            splash(&mut commands, &mut rng, &art, pos, size);
+        }
+    }
+    wet.retain(|key, _| seen.contains(key));
+}
+
 /// Walking crabs scuff the sand: tiny alternating footprints that linger
 /// and fade, plus the occasional kicked-up grain. Footfalls are paced by
 /// distance walked, tracked per crab id. Pure decoration, sim untouched.
@@ -921,6 +1014,21 @@ pub fn moment_effects(
                     1.9,
                     0.3,
                 );
+                // Driven in: the sand the stake shoved aside, thrown out
+                // low and falling straight back.
+                burst(
+                    &mut commands,
+                    &mut rng,
+                    &Burst {
+                        image: art.puff.clone(),
+                        pos: *pos,
+                        color: SAND_KICK,
+                        count: 6,
+                        size: 7.0,
+                        speed: 48.0,
+                        gravity: 95.0,
+                    },
+                );
             }
             SimEvent::SignpostRemoved { owner, pos }
                 if crate::app::cursor::seated_here(&cursors, *owner) =>
@@ -956,6 +1064,18 @@ pub fn moment_effects(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A splash is the step from sand into water, once: not every tile of
+    /// a pool lane, not the step back out, and not a crab that was already
+    /// wading when it was first seen.
+    #[test]
+    fn a_splash_is_wading_in_and_only_that() {
+        assert!(wades_in(Some(false), true), "sand to water");
+        assert!(!wades_in(Some(true), true), "water to water, along a lane");
+        assert!(!wades_in(Some(true), false), "climbing out");
+        assert!(!wades_in(Some(false), false), "sand to sand");
+        assert!(!wades_in(None, true), "first seen, already in");
+    }
 
     /// `range` feeds particle lifetimes, sizes and spins straight into
     /// sprite maths, and a draw that lands on or past `hi` (a 24-bit

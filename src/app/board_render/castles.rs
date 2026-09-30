@@ -636,6 +636,21 @@ pub fn cheer_tier_ups(
                     gravity: 55.0,
                 },
             );
+            // Grains of the new work trickling off its walls: small, quick
+            // to fall, in the castle's own dyed sand, out of its top.
+            burst(
+                &mut commands,
+                &mut rng,
+                &Burst {
+                    image: art.puff.clone(),
+                    pos: at + Vec2::new(0.0, TILE * 0.25),
+                    color: castle_body(color),
+                    count: 12,
+                    size: 5.0,
+                    speed: 70.0,
+                    gravity: 170.0,
+                },
+            );
             for _ in 0..4 {
                 crate::app::effects::glint(&mut commands, &mut rng, &art, at, color.lighter(0.4));
             }

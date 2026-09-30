@@ -791,7 +791,9 @@ fn add_render_systems(app: &mut App) {
                 .chain(),
             (cursor::glide_cursors, cursor::ghost_pending_posts).chain(),
             effects::moment_effects,
-            effects::crab_trails,
+            // Paired for the twenty-element limit: both are the beach
+            // answering what walks on it.
+            (effects::crab_trails, effects::splash_ponds),
         )
             .chain()
             .run_if(board_screens)
