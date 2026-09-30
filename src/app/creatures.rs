@@ -23,6 +23,95 @@ pub struct CrabSprite {
     pub(crate) shade: f32,
 }
 
+/// How far a crab has been nudged out of a crowd, and how much smaller it
+/// is drawn there, eased toward what [`crowd_target`] asks each frame so a
+/// pile forming or breaking up is a drift and not a jump.
+#[derive(Component, Default)]
+pub struct Crowding {
+    spread: Vec2,
+    shrink: f32,
+}
+
+/// How close another crab has to be, centre to centre, to count as company.
+const CROWD_RADIUS: f32 = TILE * 0.45;
+
+/// How far across its heading a crab in a thick crowd is moved: the outer
+/// of its five lanes, in world units.
+const CROWD_SPREAD: f32 = TILE * 0.32;
+
+/// How much smaller a crab in a thick crowd is drawn.
+const CROWD_SHRINK: f32 = 0.28;
+
+/// How crowded a crab is, 0 to 1, from how many others are within
+/// [`CROWD_RADIUS`]: none is 0, three or more is a pile.
+fn crowd_level(neighbours: usize) -> f32 {
+    (neighbours as f32 / 3.0).min(1.0)
+}
+
+/// Which of five lanes across its heading a crab takes in a crowd, -1 to
+/// 1: fixed by its id, so the same crab always moves the same way and a
+/// stream fans out into a band instead of shuffling.
+fn crowd_lane(id: u32) -> f32 {
+    let lane = (id.wrapping_mul(2_654_435_761) >> 16) % 5;
+    lane as f32 / 2.0 - 1.0
+}
+
+/// Where a crab should be drawn relative to its true place, and how much
+/// smaller, given how crowded it is and which way it faces.
+///
+/// A crowd is where crabs are drawn on top of each other: a stream out of
+/// a spawner walks single file, each half over the one ahead, and a lure
+/// or Crab Mania heaps them into a pile of legs nobody can count. Moved
+/// across their heading into lanes and drawn a little smaller, they read
+/// as that many crabs. A crab on its own is drawn exactly where it is:
+/// the offset is render-side only and never reaches the sim.
+fn crowd_target(neighbours: usize, id: u32, heading: Vec2) -> (Vec2, f32) {
+    let level = crowd_level(neighbours);
+    let across = Vec2::new(-heading.y, heading.x);
+    (
+        across * crowd_lane(id) * CROWD_SPREAD * level,
+        CROWD_SHRINK * level,
+    )
+}
+
+/// How many other crabs are within [`CROWD_RADIUS`] of each crab, by id.
+/// Bucketed by radius-sized cells, so each crab checks its own cell and the
+/// eight round it rather than the whole beach.
+fn count_neighbours(board: &crate::sim::Board, into: &mut HashMap<u32, usize>) {
+    into.clear();
+    let at: Vec<(u32, Vec2)> = board
+        .crabs()
+        .iter()
+        .map(|crab| (crab.id, layout::pose_pos(board, crab.pose())))
+        .collect();
+    let cell = |p: Vec2| {
+        (
+            (p.x / CROWD_RADIUS).floor() as i32,
+            (p.y / CROWD_RADIUS).floor() as i32,
+        )
+    };
+    let mut cells: HashMap<(i32, i32), Vec<Vec2>> = HashMap::default();
+    for &(_, p) in &at {
+        cells.entry(cell(p)).or_default().push(p);
+    }
+    for &(id, p) in &at {
+        let (cx, cy) = cell(p);
+        let mut near = 0;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                if let Some(others) = cells.get(&(cx + dx, cy + dy)) {
+                    near += others
+                        .iter()
+                        .filter(|o| o.distance_squared(p) < CROWD_RADIUS * CROWD_RADIUS)
+                        .count();
+                }
+            }
+        }
+        // Itself, counted once in its own cell.
+        into.insert(id, near.saturating_sub(1));
+    }
+}
+
 /// The widest a shell strays from its kind's colour, either way.
 const SHADE_SPREAD: f32 = 0.05;
 
@@ -144,6 +233,7 @@ pub fn sync_crab_sprites(
                     kind: crab.kind,
                     shade: shade_of(id),
                 },
+                Crowding::default(),
                 Sprite {
                     image: art.crab.clone(),
                     color: shell_color(crab.kind, shade_of(id)),
@@ -221,8 +311,15 @@ pub fn interpolate_crabs(
     mut glint_clock: Local<f32>,
     mut watch: Local<(u64, f32)>,
     mut by_id: Local<HashMap<u32, Crab>>,
+    mut crowds: Local<HashMap<u32, usize>>,
     mut sprites: Query<
-        (&CrabSprite, &mut Transform, &mut Sprite, &Children),
+        (
+            &CrabSprite,
+            &mut Crowding,
+            &mut Transform,
+            &mut Sprite,
+            &Children,
+        ),
         Without<CreatureShadow>,
     >,
     mut shadows: Query<&mut Transform, (With<CreatureShadow>, Without<CrabSprite>)>,
@@ -242,7 +339,11 @@ pub fn interpolate_crabs(
     // During a molting lure every loose crab ignores arrows; tint them all
     // toward the luring player's colour so the takeover is visible.
     let lure_tint = board.lure().map(|(owner, _)| palette::player_color(owner));
-    for (sprite, mut transform, mut body, children) in &mut sprites {
+    count_neighbours(board, &mut crowds);
+    // The same easing whatever the frame rate: about a third of a second
+    // to settle into, or out of, a crowd.
+    let ease = 1.0 - (-time.delta_secs() * 8.0).exp();
+    for (sprite, mut crowding, mut transform, mut body, children) in &mut sprites {
         let Some(crab) = by_id.get(&sprite.id) else {
             continue; // despawns this frame
         };
@@ -259,7 +360,15 @@ pub fn interpolate_crabs(
         } else {
             prev.lerp(curr, alpha)
         };
-        transform.translation = pos.extend(layout::z::CREATURE);
+        let (dx, dy) = crab.dir.offset();
+        // Sim y runs down, world y runs up.
+        let heading = Vec2::new(dx as f32, -(dy as f32));
+        let neighbours = crowds.get(&sprite.id).copied().unwrap_or(0);
+        let (spread, shrink) = crowd_target(neighbours, sprite.id, heading);
+        let (was_spread, was_shrink) = (crowding.spread, crowding.shrink);
+        crowding.spread = was_spread + (spread - was_spread) * ease;
+        crowding.shrink = was_shrink + (shrink - was_shrink) * ease;
+        transform.translation = (pos + crowding.spread).extend(layout::z::CREATURE);
         // Scuttle: a small heading wiggle while actually moving, phased per
         // crab so a crowd shimmers instead of marching.
         let moving = prev != curr;
@@ -277,11 +386,14 @@ pub fn interpolate_crabs(
         if body.image != *wanted {
             body.image = wanted.clone();
         }
-        // Molting crabs pulse gently: they are worth chasing.
-        if sprite.kind == CrabKind::Molting {
-            let pulse = 1.0 + (time.elapsed_secs() * 5.0).sin() * 0.06;
-            transform.scale = Vec3::splat(pulse);
-        }
+        // Drawn a little smaller in a crowd, and molting crabs pulse
+        // gently on top of that: they are worth chasing.
+        let pulse = if sprite.kind == CrabKind::Molting {
+            1.0 + (time.elapsed_secs() * 5.0).sin() * 0.06
+        } else {
+            1.0
+        };
+        transform.scale = Vec3::splat(pulse * (1.0 - crowding.shrink));
         // The shadow: pushed out from under the body, the same way as
         // every other thing standing on this sand, since one sitting
         // exactly beneath the crab is never seen.
@@ -618,6 +730,37 @@ fn kick_up(commands: &mut Commands, rng: &mut effects::VisualRng, art: &Art, pos
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A crab on its own is drawn exactly where it is; in a crowd it moves
+    /// across its heading, never along it, by at most the outer lane, and
+    /// always to the same side for the same crab.
+    #[test]
+    fn a_crowd_fans_out_across_its_heading_and_a_lone_crab_stays_put() {
+        let east = Vec2::X;
+        for id in 0..40 {
+            assert_eq!(
+                crowd_target(0, id, east),
+                (Vec2::ZERO, 0.0),
+                "crab {id} alone"
+            );
+            let (spread, shrink) = crowd_target(5, id, east);
+            assert_eq!(spread.x, 0.0, "crab {id} moved along its heading");
+            assert!(spread.y.abs() <= CROWD_SPREAD + 1e-4, "{spread}");
+            assert_eq!(shrink, CROWD_SHRINK, "a pile is a full crowd");
+            assert_eq!(
+                crowd_target(5, id, east),
+                (spread, shrink),
+                "same crab, same lane"
+            );
+        }
+        // One neighbour is a third of a crowd.
+        let (_, some) = crowd_target(1, 3, east);
+        assert!((some - CROWD_SHRINK / 3.0).abs() < 1e-6);
+        // The five lanes are all in use across a crowd of crabs.
+        let lanes: std::collections::BTreeSet<i32> =
+            (0..40).map(|id| (crowd_lane(id) * 2.0) as i32).collect();
+        assert_eq!(lanes.len(), 5, "{lanes:?}");
+    }
 
     /// A crab keeps its shell for as long as it lives. The shade is a hash
     /// of the id rather than a draw, so a sprite rebuilt around a crab, as
