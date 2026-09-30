@@ -213,14 +213,32 @@ d.ellipse([px(71, 40), px(75, 44)], fill=(24, 22, 20, 255))
 save(img, "gull_fly")
 
 # --- rock: faceted boulder, baked -------------------------------------------
+# Lit from the upper left, the way every shadow on the beach falls to the
+# lower right (`layout::SUN`): a pale top, two shaded flanks, and a dark
+# keel so it sits on the sand. It was three flat greys, which read as a
+# paper cut-out beside the ponds and the castles.
 img, d = canvas()
-pts = [px(20, 78), px(10, 46), px(28, 20), px(58, 12), px(84, 30),
-       px(88, 62), px(66, 84)]
-d.polygon(pts, fill=(64, 62, 58, 255))
-d.polygon([px(28, 24), px(56, 16), px(78, 32), px(52, 44), px(24, 44)],
-          fill=(112, 110, 104, 255))
-d.polygon([px(24, 46), px(52, 46), px(46, 74), px(22, 70)],
-          fill=(88, 86, 82, 255))
+ROCK_EDGE = (44, 42, 40, 255)
+silhouette = [px(18, 76), px(10, 52), px(18, 30), px(36, 16), px(60, 14),
+              px(80, 26), px(88, 50), px(82, 72), px(62, 86), px(34, 86)]
+d.polygon(silhouette, fill=ROCK_EDGE)
+body = [px(22, 73), px(15, 52), px(22, 32), px(38, 20), px(59, 18),
+        px(77, 29), px(84, 50), px(78, 69), px(60, 81), px(36, 81)]
+d.polygon(body, fill=(92, 89, 84, 255))                      # the shaded flank
+d.polygon([px(22, 32), px(38, 20), px(59, 18), px(77, 29), px(70, 46),
+           px(46, 52), px(24, 48)], fill=(142, 138, 130, 255))  # the lit top
+d.polygon([px(15, 52), px(22, 32), px(24, 48), px(46, 52), px(40, 74),
+           px(22, 73)], fill=(114, 110, 104, 255))           # the near face
+d.polygon([px(46, 52), px(70, 46), px(84, 50), px(78, 69), px(60, 81),
+           px(40, 74)], fill=(76, 73, 69, 255))              # the far face, in shade
+# a highlight along the top's front ridge, a crack, lichen, a pebble
+d.line([px(26, 46), px(46, 50), px(68, 45)], fill=(170, 166, 156, 255),
+       width=2 * S, joint="curve")
+d.line([px(52, 22), px(48, 32), px(54, 40)], fill=(96, 92, 86, 255), width=2 * S)
+for (lx, ly, r) in [(34, 30, 3), (40, 26, 2), (64, 34, 2.5)]:
+    d.ellipse([px(lx - r, ly - r), px(lx + r, ly + r)], fill=(150, 164, 120, 255))
+d.ellipse([px(80, 78), px(90, 86)], fill=ROCK_EDGE)
+d.ellipse([px(81, 79), px(88, 84)], fill=(118, 114, 108, 255))
 save(img, "rock")
 
 # --- hole: spawner burrow, baked --------------------------------------------
@@ -419,18 +437,44 @@ for x in (26, 48, 70):
 save(img, "crown")
 
 # --- kelp: seaweed clump, baked ----------------------------------------------
+# Fronds, not stalks: each a ribbon that widens out of its holdfast and
+# tapers to a tip, curving as it goes, with a pale midrib and the odd air
+# bladder, over a damp patch of sand. It was five straight lines with a
+# blob on each, which read as grass.
 img, d = canvas()
 rng = random.Random("kelp")
-for i, x0 in enumerate((22, 36, 50, 64, 76)):
-    sway = rng.randrange(-8, 9)
-    top = rng.randrange(10, 26)
-    d.line([px(x0, 88), px(x0 + sway // 2, 56), px(x0 + sway, top)],
-           fill=(26, 84, 44, 255), width=7 * S)
-    d.line([px(x0, 88), px(x0 + sway // 2, 56), px(x0 + sway, top)],
-           fill=(44, 128, 66, 255), width=4 * S)
-    # frond tips
-    d.ellipse([px(x0 + sway - 5, top - 6), px(x0 + sway + 5, top + 4)],
-              fill=(62, 156, 82, 255))
+d.ellipse([px(16, 76), px(80, 92)], fill=(150, 128, 92, 110))   # the damp patch
+
+
+def frond(x0, lean, top, width, phase):
+    """A tapering ribbon from (x0, 86) up to its tip: it leans by `lean`,
+    snakes as it rises, and its edges ruffle, the way a kelp blade does."""
+    steps = 28
+    left, right, rib = [], [], []
+    for i in range(steps + 1):
+        t = i / steps
+        y = 86 - t * (86 - top)
+        x = x0 + lean * t * t + 4.0 * t * math.sin(t * 2.0 * math.pi * 1.2 + phase)
+        swell = 0.55 + 0.45 * math.sin(math.pi * min(1.0, t * 1.5))
+        ruffle = 1.0 + 0.18 * math.sin(t * 2.0 * math.pi * 4.0 + phase)
+        half = width * (1.0 - t) ** 0.7 * swell * ruffle
+        left.append(px(x - half, y))
+        right.append(px(x + half, y))
+        rib.append(px(x, y))
+    return left + right[::-1], rib
+
+
+for x0, lean, top, width, phase in [(28, -16, 26, 8.5, 0.0), (43, -5, 12, 9.5, 2.1),
+                                    (56, 9, 17, 9.0, 4.0), (69, 17, 32, 7.5, 1.0)]:
+    shape, rib = frond(x0, lean, top, width, phase)
+    d.polygon(shape, fill=(20, 70, 38, 255))
+    inner, _ = frond(x0, lean, top + 2, width - 2.0, phase)
+    d.polygon(inner, fill=(46, 130, 66, 255))
+    d.line(rib[1:-2], fill=(118, 186, 110, 255), width=int(1.5 * S), joint="curve")
+    # an air bladder a third of the way up
+    bx, by = rib[9]
+    r = 2.6 * S
+    d.ellipse([bx - r, by - r, bx + r, by + r], fill=(150, 170, 70, 255))
 save(img, "kelp")
 
 # --- pool: an irregular pond, drawn in layers ---------------------------------
