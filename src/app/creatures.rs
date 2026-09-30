@@ -494,13 +494,20 @@ pub fn interpolate_gulls(
             }
         };
         let flying = altitude > 0.0 || matches!(gull.state, GullState::Flying { .. });
-        // Dedicated spread-wing art in flight (write-on-change).
-        let wanted = if flying { &art.gull_fly } else { &art.gull };
+        // Spread-wing art in flight, and it flaps: the upstroke frame for
+        // the rising half of the same wing-beat the scale pulses with
+        // below, so the two agree (write-on-change).
+        let beat = (t * 16.0 + phase).sin();
+        let wanted = match (flying, beat > 0.35) {
+            (true, true) => &art.gull_fly_b,
+            (true, false) => &art.gull_fly,
+            (false, _) => &art.gull,
+        };
         if image.image != *wanted {
             image.image = wanted.clone();
         }
         let (scale, waddle) = if flying {
-            (1.0 + 0.22 * altitude + (t * 16.0 + phase).sin() * 0.05, 0.0)
+            (1.0 + 0.22 * altitude + beat * 0.05, 0.0)
         } else if prev == curr {
             (1.0, 0.0)
         } else {

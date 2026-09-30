@@ -149,68 +149,106 @@ d.polygon([px(80, 83), px(90, 83), px(92, 86), px(79, 87)], fill=WHITE)
 d.ellipse([px(68, 72), px(76, 78)], fill=LIGHT)
 save(img, "claw")
 
-# --- gull: walking, folded wings, facing +X ---------------------------------
-# The recognizable herring-gull cues: white body, pale grey mantle, BLACK
-# wingtips crossing at the tail, yellow beak with the red spot.
+# --- gull: a herring gull from above, facing +X -------------------------------
+# The cues a gull is read by, from above: a white body tapering to the
+# tail, a pale grey mantle, black wingtips with white spots, a round white
+# head and a yellow beak with the red spot. The first drawing had those
+# cues on an oval with big cartoon eyes, and flew on stiff straight wings
+# like a paper plane.
 GULL_WHITE = (248, 250, 252, 255)
 GULL_GREY = (176, 186, 196, 255)
-GULL_DARK = (52, 56, 62, 255)
+GULL_GREY_DEEP = (150, 160, 172, 255)
+GULL_DARK = (40, 44, 50, 255)
 BEAK = (240, 190, 60, 255)
+BEAK_DARK = (150, 110, 30, 255)
+GULL_EDGE = (52, 56, 62, 255)
+
+
+def teardrop(x_tail, x_nose, fat_at, half, tail_half, y=48, steps=24):
+    """A body outline: round at the nose, tapering to the tail."""
+    top, bottom = [], []
+    for i in range(steps + 1):
+        t = i / steps
+        x = x_tail + t * (x_nose - x_tail)
+        if x < fat_at:
+            u = (x - x_tail) / (fat_at - x_tail)
+            w = tail_half + (half - tail_half) * math.sin(u * math.pi / 2)
+        else:
+            u = (x - fat_at) / (x_nose - fat_at)
+            w = half * math.sqrt(max(0.0, 1 - u * u))
+        top.append(px(x, y - w))
+        bottom.append(px(x, y + w))
+    return top + bottom[::-1]
+
+
+def gull_head(d, cx, r, eyes=True):
+    d.ellipse([px(cx - r - 2, 48 - r - 2), px(cx + r + 2, 48 + r + 2)], fill=GULL_EDGE)
+    d.ellipse([px(cx - r, 48 - r), px(cx + r, 48 + r)], fill=GULL_WHITE)
+    # the beak, a little hooked at the tip, with the red spot
+    d.polygon([px(cx + r - 2, 44), px(cx + r + 11, 46), px(cx + r + 13, 49),
+               px(cx + r + 10, 51), px(cx + r - 2, 52)], fill=BEAK_DARK)
+    d.polygon([px(cx + r - 1, 45), px(cx + r + 10, 47), px(cx + r + 11, 49),
+               px(cx + r + 9, 50), px(cx + r - 1, 51)], fill=BEAK)
+    d.ellipse([px(cx + r + 7, 49), px(cx + r + 10, 52)], fill=(214, 70, 60, 255))
+    if eyes:
+        # small and dark, on the sides of the head where a gull's are
+        for ey in (48 - r * 0.62, 48 + r * 0.62):
+            d.ellipse([px(cx + 2, ey - 1.8), px(cx + 5.6, ey + 1.8)], fill=(24, 22, 20, 255))
+
+
+# walking: wings folded along the back, their black tips crossing past the tail
 img, d = canvas()
-# tail fan with dark band
-d.polygon([px(16, 40), px(2, 44), px(2, 52), px(16, 56)], fill=GULL_WHITE)
-d.polygon([px(8, 42), px(2, 44), px(2, 52), px(8, 54)], fill=GULL_DARK)
-# body: white teardrop
-d.ellipse([px(12, 28), px(74, 68)], fill=OUTLINE)
-d.ellipse([px(15, 31), px(71, 65)], fill=GULL_WHITE)
-# folded-wing mantle: grey shield over the back
-d.ellipse([px(18, 35), px(60, 61)], fill=GULL_GREY)
-# crossed black wingtips pointing at the tail
-d.polygon([px(44, 38), px(10, 44), px(26, 48), px(46, 44)], fill=GULL_DARK)
-d.polygon([px(44, 58), px(10, 52), px(26, 48), px(46, 52)], fill=GULL_DARK)
-# head: white, proud
-d.ellipse([px(56, 32), px(86, 62)], fill=OUTLINE)
-d.ellipse([px(58, 34), px(84, 60)], fill=GULL_WHITE)
-# yellow beak with the red spot
-d.polygon([px(82, 42), px(97, 46), px(97, 50), px(82, 54)], fill=(150, 110, 30, 255))
-d.polygon([px(82, 43), px(95, 47), px(95, 49), px(82, 53)], fill=BEAK)
-d.ellipse([px(88, 49), px(92, 53)], fill=(214, 70, 60, 255))
-# eyes: two, slightly toward the top for the top-down read
-d.ellipse([px(68, 36), px(76, 44)], fill=(255, 255, 255, 255))
-d.ellipse([px(68, 52), px(76, 60)], fill=(255, 255, 255, 255))
-d.ellipse([px(71, 38), px(75, 42)], fill=(24, 22, 20, 255))
-d.ellipse([px(71, 54), px(75, 58)], fill=(24, 22, 20, 255))
+for sign in (-1, 1):
+    d.polygon([px(44, 48 + sign * 6), px(6, 48 + sign * 2.5), px(4, 48 + sign * 5.5),
+               px(26, 48 + sign * 9)], fill=GULL_DARK)
+    d.ellipse([px(8, 48 + sign * 4 - 1.6), px(11.2, 48 + sign * 4 + 1.6)], fill=GULL_WHITE)
+d.polygon([px(20, 42), px(6, 44), px(6, 52), px(20, 54)], fill=GULL_WHITE)
+d.polygon(teardrop(12, 80, 50, 17, 5), fill=GULL_EDGE)
+d.polygon(teardrop(14, 78, 50, 15, 3.5), fill=GULL_WHITE)
+# the mantle: grey folded wings, parted down the back
+d.polygon(teardrop(18, 66, 46, 13, 4), fill=GULL_GREY)
+d.line([px(22, 48), px(58, 48)], fill=GULL_GREY_DEEP, width=2 * S)
+gull_head(d, 72, 11)
 save(img, "gull")
 
-# --- gull in flight: wings spread wide, unmistakably a seabird ---------------
-img, d = canvas()
-# wings: long, angled back, grey with black tips and white mirror spots
-for sign in (-1, 1):
-    def wy(y):
-        return 48 + sign * y
-    d.polygon([px(30, wy(6)), px(16, wy(34)), px(28, wy(46)),
-               px(48, wy(40)), px(50, wy(8))], fill=OUTLINE)
-    d.polygon([px(32, wy(8)), px(19, wy(33)), px(28, wy(43)),
-               px(46, wy(38)), px(48, wy(10))], fill=GULL_GREY)
-    # black wingtip with white spot
-    d.polygon([px(19, wy(33)), px(28, wy(43)), px(24, wy(46)),
-               px(14, wy(36))], fill=GULL_DARK)
-    spot_y0, spot_y1 = sorted((wy(37), wy(41)))
-    d.ellipse([px(20, spot_y0), px(24, spot_y1)], fill=GULL_WHITE)
-# tail fan with dark band
-d.polygon([px(20, 42), px(4, 40), px(2, 48), px(4, 56), px(20, 54)], fill=GULL_WHITE)
-d.polygon([px(8, 41), px(2, 46), px(2, 50), px(8, 55)], fill=GULL_DARK)
-# body
-d.ellipse([px(14, 36), px(70, 60)], fill=OUTLINE)
-d.ellipse([px(17, 38), px(67, 58)], fill=GULL_WHITE)
-# head + beak
-d.ellipse([px(56, 34), px(84, 62)], fill=OUTLINE)
-d.ellipse([px(58, 36), px(82, 60)], fill=GULL_WHITE)
-d.polygon([px(80, 43), px(96, 47), px(96, 49), px(80, 53)], fill=BEAK)
-d.ellipse([px(88, 48), px(92, 52)], fill=(214, 70, 60, 255))
-d.ellipse([px(68, 38), px(76, 46)], fill=(255, 255, 255, 255))
-d.ellipse([px(71, 40), px(75, 44)], fill=(24, 22, 20, 255))
-save(img, "gull_fly")
+
+# One wing, outward from the body along +y, as (x, y): the leading edge
+# from the shoulder out to a forward wrist and back to the tip, then the
+# trailing edge home, scalloped by the flight feathers.
+WING = [(55, 7), (58, 16), (59, 24), (55, 31), (46, 39), (32, 47),
+        (28, 45), (33, 41), (33, 37), (37, 33), (37, 29), (41, 25),
+        (40, 21), (44, 17), (43, 12), (46, 7)]
+# The black of the tip, and where its white mirror spot sits.
+WING_TIP = [(46, 39), (32, 47), (28, 45), (33, 41), (41, 35)]
+WING_SPOT = (34, 43)
+
+
+def gull_in_flight(span, sweep, name):
+    """Wings at `span` of their reach, tips moved forward by `sweep`."""
+    img, d = canvas()
+    for sign in (-1, 1):
+        def at(x, y):
+            return px(x + sweep * y / 45, 48 + sign * y * span)
+        d.polygon([at(x, y) for (x, y) in WING], fill=GULL_EDGE)
+        inner = [(47 + (x - 47) * 0.88, 7 + (y - 7) * 0.94) for (x, y) in WING]
+        d.polygon([at(x, y) for (x, y) in inner], fill=GULL_GREY)
+        d.polygon([at(x, y) for (x, y) in WING_TIP], fill=GULL_DARK)
+        # a darker line where the arm meets the hand
+        d.line([at(53, 10), at(52, 22), at(46, 33)], fill=GULL_GREY_DEEP, width=S)
+        sx, sy = at(*WING_SPOT)
+        r = 1.9 * S
+        d.ellipse([sx - r, sy - r, sx + r, sy + r], fill=GULL_WHITE)
+    d.polygon([px(22, 42), px(8, 40), px(6, 48), px(8, 56), px(22, 54)], fill=GULL_EDGE)
+    d.polygon([px(22, 43.5), px(9.5, 42), px(8, 48), px(9.5, 54), px(22, 52.5)], fill=GULL_WHITE)
+    d.polygon(teardrop(16, 78, 48, 11, 4), fill=GULL_EDGE)
+    d.polygon(teardrop(18, 76, 48, 9.5, 3), fill=GULL_WHITE)
+    gull_head(d, 72, 9.5)
+    save(img, name)
+
+
+gull_in_flight(1.0, 0, "gull_fly")
+# the upstroke: wings raised, so from above they span less and reach forward
+gull_in_flight(0.62, 10, "gull_fly_b")
 
 # --- rock: faceted boulder, baked -------------------------------------------
 # Lit from the upper left, the way every shadow on the beach falls to the

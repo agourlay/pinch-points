@@ -18,6 +18,9 @@ pub struct Art {
     pub claw: Handle<Image>,
     pub gull: Handle<Image>,
     pub gull_fly: Handle<Image>,
+    /// The same gull at the top of its wing-beat: wings raised, so from
+    /// above they span less. Flying gulls alternate the two.
+    pub gull_fly_b: Handle<Image>,
     pub rock: Handle<Image>,
     pub hole: Handle<Image>,
     pub castle: Handle<Image>,
@@ -82,6 +85,7 @@ impl Art {
             claw,
             gull,
             gull_fly,
+            gull_fly_b,
             rock,
             hole,
             castle,
@@ -122,6 +126,7 @@ impl Art {
             claw,
             gull,
             gull_fly,
+            gull_fly_b,
             rock,
             hole,
             castle,
@@ -283,6 +288,7 @@ impl FromWorld for Art {
             claw: assets.load("sprites/claw.png"),
             gull: assets.load("sprites/gull.png"),
             gull_fly: assets.load("sprites/gull_fly.png"),
+            gull_fly_b: assets.load("sprites/gull_fly_b.png"),
             rock: assets.load("sprites/rock.png"),
             hole: assets.load("sprites/hole.png"),
             castle: assets.load("sprites/castle.png"),
