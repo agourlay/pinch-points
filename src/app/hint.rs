@@ -161,17 +161,30 @@ pub fn draw_hint(
         return;
     };
     let pos = layout::tile_center(&sim.0, x, y);
-    commands.spawn((
-        HintGhost,
-        Sprite {
-            image: art.arrow.clone(),
-            color: palette::PARCHMENT.with_alpha(0.35),
-            custom_size: Some(Vec2::splat(layout::TILE * 0.88)),
-            ..default()
-        },
-        Transform::from_translation(pos.extend(layout::z::SIGNPOST - 0.1))
-            .with_rotation(layout::dir_rotation(dir)),
-    ));
+    // The signpost that goes here, as a ghost: the board's outline faint
+    // and its arrow a little less so, in no seat's colour.
+    let size = Some(Vec2::splat(layout::TILE * 0.94));
+    commands
+        .spawn((
+            HintGhost,
+            Sprite {
+                image: art.sign_shape.clone(),
+                color: palette::PARCHMENT.with_alpha(0.2),
+                custom_size: size,
+                ..default()
+            },
+            Transform::from_translation(pos.extend(layout::z::SIGNPOST - 0.1))
+                .with_rotation(layout::dir_rotation(dir)),
+        ))
+        .with_child((
+            Sprite {
+                image: art.sign_paint.clone(),
+                color: palette::PARCHMENT.with_alpha(0.45),
+                custom_size: size,
+                ..default()
+            },
+            Transform::from_translation(Vec3::new(0.0, 0.0, 0.01)),
+        ));
 }
 
 pub fn clear_hint_ghosts(mut commands: Commands, ghosts: Query<Entity, With<HintGhost>>) {

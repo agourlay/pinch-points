@@ -11,9 +11,17 @@ use bevy::prelude::*;
 /// spawn; gulls, rocks, and holes bake their palette.
 #[derive(Resource)]
 pub struct Art {
-    pub arrow: Handle<Image>,
-    /// The same post after weather: splintered rather than merely faint.
-    pub arrow_worn: Handle<Image>,
+    /// A signpost's driftwood board, in its own colours: never tinted.
+    pub sign_board: Handle<Image>,
+    /// The same board after weather: split along the grain, chipped.
+    pub sign_board_worn: Handle<Image>,
+    /// The arrow painted on the board, white, tinted by owner.
+    pub sign_paint: Handle<Image>,
+    /// The paint after weather, flaking.
+    pub sign_paint_worn: Handle<Image>,
+    /// The board's silhouette, white: a post not yet planted, and one
+    /// popping off the beach.
+    pub sign_shape: Handle<Image>,
     pub crab: Handle<Image>,
     pub claw: Handle<Image>,
     pub gull: Handle<Image>,
@@ -79,8 +87,11 @@ impl Art {
     /// Whether `id` is one of these sprites.
     fn holds(&self, id: AssetId<Image>) -> bool {
         let Self {
-            arrow,
-            arrow_worn,
+            sign_board,
+            sign_board_worn,
+            sign_paint,
+            sign_paint_worn,
+            sign_shape,
             crab,
             claw,
             gull,
@@ -120,8 +131,11 @@ impl Art {
             flags,
         } = self;
         [
-            arrow,
-            arrow_worn,
+            sign_board,
+            sign_board_worn,
+            sign_paint,
+            sign_paint_worn,
+            sign_shape,
             crab,
             claw,
             gull,
@@ -282,8 +296,11 @@ impl FromWorld for Art {
     fn from_world(world: &mut World) -> Self {
         let assets = world.resource::<AssetServer>();
         Art {
-            arrow: assets.load("sprites/arrow.png"),
-            arrow_worn: assets.load("sprites/arrow_worn.png"),
+            sign_board: assets.load("sprites/sign_board.png"),
+            sign_board_worn: assets.load("sprites/sign_board_worn.png"),
+            sign_paint: assets.load("sprites/sign_paint.png"),
+            sign_paint_worn: assets.load("sprites/sign_paint_worn.png"),
+            sign_shape: assets.load("sprites/sign_shape.png"),
             crab: assets.load("sprites/crab.png"),
             claw: assets.load("sprites/claw.png"),
             gull: assets.load("sprites/gull.png"),

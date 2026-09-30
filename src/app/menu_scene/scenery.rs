@@ -252,6 +252,9 @@ struct Prop {
     /// Ground shadow width, or zero for flat things like shells.
     shadow: f32,
     rotation: f32,
+    /// A second layer over the first, tinted: a signpost's paint on its
+    /// board.
+    paint: Option<(Handle<Image>, Color)>,
 }
 
 /// The swell: a stack of crests rolling shoreward. Each is a row of
@@ -330,6 +333,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             size: Vec2::splat(52.0 * scale),
             shadow: 44.0 * scale,
             rotation: 0.0,
+            paint: None,
         },
         2 => Prop {
             // Driftwood: the turnstile log, washed up.
@@ -342,6 +346,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             } else {
                 std::f32::consts::FRAC_PI_2
             },
+            paint: None,
         },
         3 | 4 => Prop {
             image: art.kelp.clone(),
@@ -349,6 +354,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             size: Vec2::splat(rng.range(26.0, 38.0) * scale),
             shadow: 0.0,
             rotation: rng.range(-0.25, 0.25),
+            paint: None,
         },
         5 => Prop {
             // A tide pool left behind by the water.
@@ -357,6 +363,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             size: Vec2::splat(rng.range(46.0, 62.0) * scale),
             shadow: 0.0,
             rotation: 0.0,
+            paint: None,
         },
         6 => Prop {
             // A crab burrow.
@@ -365,11 +372,16 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             size: Vec2::splat(rng.range(26.0, 34.0) * scale),
             shadow: 0.0,
             rotation: 0.0,
+            paint: None,
         },
         7 => Prop {
             // A signpost nobody picked up, still pointing somewhere.
-            image: art.arrow.clone(),
-            tint: palette::player_color((rng.next() % 4) as u8).lighter(0.12),
+            image: art.sign_board.clone(),
+            tint: Color::WHITE,
+            paint: Some((
+                art.sign_paint.clone(),
+                palette::player_color((rng.next() % 4) as u8).lighter(0.08),
+            )),
             size: Vec2::splat(rng.range(30.0, 38.0) * scale),
             shadow: 24.0 * scale,
             rotation: (rng.next() % 4) as f32 * std::f32::consts::FRAC_PI_2,
@@ -380,6 +392,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             size: Vec2::splat(rng.range(22.0, 38.0) * scale),
             shadow: 22.0 * scale,
             rotation: rng.range(0.0, std::f32::consts::TAU),
+            paint: None,
         },
         _ => Prop {
             // A shell in the sand.
@@ -388,6 +401,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             size: Vec2::splat(rng.range(9.0, 15.0) * scale),
             shadow: 0.0,
             rotation: rng.range(0.0, std::f32::consts::TAU),
+            paint: None,
         },
     }
 }
@@ -437,7 +451,7 @@ fn spawn_beach_props(
                 )),
             ));
         }
-        commands.spawn((
+        let mut piece = commands.spawn((
             MenuShore,
             Sprite {
                 image: prop.image,
@@ -448,6 +462,17 @@ fn spawn_beach_props(
             Transform::from_translation(Vec3::new(x, y, z))
                 .with_rotation(Quat::from_rotation_z(prop.rotation)),
         ));
+        if let Some((image, color)) = prop.paint {
+            piece.with_child((
+                Sprite {
+                    image,
+                    color,
+                    custom_size: Some(prop.size),
+                    ..default()
+                },
+                Transform::from_translation(Vec3::new(0.0, 0.0, 0.001)),
+            ));
+        }
     }
     // Grain: the flat sand band reads as paint without a little speckle,
     // the same way the board's sand tiles do.

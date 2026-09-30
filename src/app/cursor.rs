@@ -204,21 +204,33 @@ pub fn ghost_pending_posts(
         if x >= board.width() || y >= board.height() {
             continue;
         }
-        commands.spawn((
-            PostGhost,
-            Sprite {
-                image: art.arrow.clone(),
-                color: palette::player_color(seat as u8)
-                    .lighter(0.2)
-                    .with_alpha(0.4),
-                custom_size: Some(Vec2::splat(TILE * 0.88)),
-                ..default()
-            },
-            Transform::from_translation(
-                layout::tile_center(board, x, y).extend(layout::z::SIGNPOST - 0.1),
-            )
-            .with_rotation(layout::dir_rotation(dir)),
-        ));
+        // The board's outline, faint, and its arrow a little less so: the
+        // post it will be, in the seat's colour, before it goes in.
+        let color = palette::player_color(seat as u8).lighter(0.2);
+        let size = Some(Vec2::splat(TILE * 0.94));
+        commands
+            .spawn((
+                PostGhost,
+                Sprite {
+                    image: art.sign_shape.clone(),
+                    color: color.with_alpha(0.22),
+                    custom_size: size,
+                    ..default()
+                },
+                Transform::from_translation(
+                    layout::tile_center(board, x, y).extend(layout::z::SIGNPOST - 0.1),
+                )
+                .with_rotation(layout::dir_rotation(dir)),
+            ))
+            .with_child((
+                Sprite {
+                    image: art.sign_paint.clone(),
+                    color: color.with_alpha(0.5),
+                    custom_size: size,
+                    ..default()
+                },
+                Transform::from_translation(Vec3::new(0.0, 0.0, 0.01)),
+            ));
     }
 }
 

@@ -790,10 +790,11 @@ pub fn moment_effects(
                         fade_in: 0.0,
                         ..default()
                     },
+                    // The arrow off the lost post, in its owner's paint.
                     Sprite {
-                        image: art.arrow.clone(),
-                        color: palette::player_color(*owner).lighter(0.12),
-                        custom_size: Some(Vec2::splat(TILE * 0.88)),
+                        image: art.sign_paint.clone(),
+                        color: palette::player_color(*owner).lighter(0.08),
+                        custom_size: Some(Vec2::splat(TILE * 0.94)),
                         ..default()
                     },
                     Transform::from_translation(pos.extend(layout::z::PARTICLE))

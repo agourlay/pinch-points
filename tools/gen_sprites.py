@@ -16,7 +16,7 @@ the file never moves anything on screen.
 import math
 import random
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 SIZE = 96  # design units: every coordinate below is in this square
 OUT = 192  # pixels in the saved file: a tile on a 4K screen
@@ -51,45 +51,80 @@ OUTLINE = (52, 38, 28, 255)
 WHITE = (255, 255, 255, 255)
 LIGHT = (235, 235, 235, 255)
 
-# --- arrow: fat shaft + big triangular head, pointing +X ---------------------
-img, d = canvas()
-def arrow_poly(inset):
-    i = inset
-    return [px(8 + i, 40 + i), px(52 - i//2, 40 + i), px(52 - i//2, 22 + i),
-            px(90 - i, 48), px(52 - i//2, 74 - i), px(52 - i//2, 56 - i),
-            px(8 + i, 56 - i)]
-# A fat dark keel under a bright face: the arrow is the player's only verb
-# and it is drawn on bright sand, so the outline carries the contrast and
-# the fill carries the owner's colour.
-# The outline is grown *outward* rather than inset. Inset, it ate the
-# shaft: the shaft is sixteen pixels tall on this canvas, so seven pixels
-# of border each side left two pixels of owner colour down the middle and
-# the arrow came out black.
-d.polygon(arrow_poly(-5), fill=OUTLINE)
-d.polygon(arrow_poly(1), fill=WHITE)
-d.polygon(arrow_poly(6), fill=LIGHT)
-save(img, "arrow")
+# --- signpost: a driftwood board with an arrow painted on it, pointing +X -----
+# The player's only verb, so it is drawn to be read at a glance: a board cut
+# to a point like a fingerpost, and a fat arrow painted on it in the owner's
+# colour over a dark keel, so the colour holds against the wood and the wood
+# against the sand. Two sprites: the board in its own colours, never tinted,
+# and the paint in white, which the engine tints by owner. It was a flat
+# arrow in the owner's colour, whose pastels faded into the sand.
+#
+# Worn, the board splits along its grain and loses chips from its edges, and
+# the paint flakes. `sign_shape` is the board's silhouette in white, for the
+# ghosts of posts not yet planted and for a post popping off the beach.
 
-# --- arrow, worn: the same post after a round of weather ---------------------
-# Wear used to be spelled with transparency alone, which cost the arrow the
-# one thing it cannot spare: contrast against the sand. So a worn post keeps
-# its ink and loses its edges - splintered bites out of the shaft and head,
-# and two cracks across the face.
+SIGN_EDGE = (58, 42, 28, 255)
+SIGN_WOOD = (178, 144, 104, 255)
+SIGN_WOOD_LIT = (206, 176, 134, 255)
+SIGN_WOOD_SHADE = (138, 106, 72, 255)
+SIGN_GRAIN = (126, 94, 62, 255)
+# The painted arrow, big on the board: a rim of wood all round it and no more.
+SIGN_ARROW = [(9, 41), (44, 41), (44, 33), (84, 48), (44, 63), (44, 55), (9, 55)]
+
+
+def sign_plank(inset=0.0):
+    """The board's outline: a square-ish tail and a head cut to a point."""
+    i = inset
+    return [px(6 + i, 30 + i), px(58, 28 + i), px(91 - i * 1.7, 48),
+            px(58, 68 - i), px(6 + i, 66 - i), px(4 + i, 48)]
+
+
+def sign_board(worn):
+    img, d = canvas()
+    d.polygon(sign_plank(0), fill=SIGN_EDGE)
+    d.polygon(sign_plank(2.4), fill=SIGN_WOOD)
+    d.polygon([px(8.5, 33), px(58, 31), px(86, 46), px(58, 38.5), px(8.5, 39.5)],
+              fill=SIGN_WOOD_LIT)
+    d.polygon([px(8.5, 57), px(58, 60), px(86, 50), px(58, 65.5), px(8.5, 63.5)],
+              fill=SIGN_WOOD_SHADE)
+    rng = random.Random("sign-board")
+    for _ in range(5):
+        y = rng.uniform(40, 58)
+        x0 = rng.uniform(10, 36)
+        d.line([px(x0, y), px(x0 + rng.uniform(12, 24), y)], fill=SIGN_GRAIN,
+               width=int(1.1 * S))
+    # the keel the paint sits on: the arrow, grown and dark
+    keel, kd = canvas()
+    kd.polygon([px(x, y) for x, y in SIGN_ARROW], fill=SIGN_EDGE)
+    keel = keel.filter(ImageFilter.MaxFilter(13))
+    img.alpha_composite(keel)
+    if worn:
+        d = ImageDraw.Draw(img)
+        d.line([px(8, 52), px(40, 51), px(56, 54)], fill=SIGN_EDGE, width=int(1.8 * S))
+        for chip in ([px(66, 33), px(78, 40), px(70, 42)], [px(16, 66), px(26, 62), px(30, 67)]):
+            d.polygon(chip, fill=(0, 0, 0, 0))
+    return img
+
+
+def sign_paint(worn):
+    img, d = canvas()
+    d.polygon([px(x, y) for x, y in SIGN_ARROW], fill=WHITE)
+    if worn:
+        rng = random.Random("sign-flake")
+        for _ in range(10):
+            x, y = rng.uniform(12, 76), rng.uniform(42, 54)
+            r = rng.uniform(1.4, 3.0)
+            d.ellipse([px(x - r, y - r), px(x + r, y + r)], fill=(0, 0, 0, 0))
+    return img
+
+
+save(sign_board(False), "sign_board")
+save(sign_board(True), "sign_board_worn")
+save(sign_paint(False), "sign_paint")
+save(sign_paint(True), "sign_paint_worn")
 img, d = canvas()
-d.polygon(arrow_poly(-5), fill=OUTLINE)
-d.polygon(arrow_poly(1), fill=WHITE)
-# splinter bites: wedges of nothing chewed out of the silhouette
-for pts in [
-    [(10, 38), (22, 40), (16, 50), (8, 46)],
-    [(30, 56), (44, 58), (38, 68), (28, 62)],
-    [(64, 30), (74, 36), (62, 42)],
-    [(76, 58), (86, 52), (84, 64)],
-]:
-    d.polygon([px(*pt) for pt in pts], fill=(0, 0, 0, 0))
-# cracks: dark hairlines across what is left
-d.line([px(20, 42), px(40, 54)], fill=OUTLINE, width=3 * S)
-d.line([px(46, 34), px(58, 58)], fill=OUTLINE, width=3 * S)
-save(img, "arrow_worn")
+d.polygon(sign_plank(0), fill=WHITE)
+save(img, "sign_shape")
 
 # --- crab: a crab from above, facing +X, tintable -----------------------------
 # Drawn right-handed: the crab's left is up the image (+Y in the engine) and

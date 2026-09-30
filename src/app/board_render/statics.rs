@@ -44,6 +44,15 @@ pub struct SignpostSprite {
 #[derive(Component)]
 pub struct SignpostShadow;
 
+/// The arrow painted on a signpost's board: the one part in its owner's
+/// colour. A child of the board, so it turns and settles with it.
+#[derive(Component)]
+pub struct SignpostPaint;
+
+/// The board's size on its tile: a touch bigger than the flat arrow was,
+/// since the paint on it is what has to read and it sits inside the wood.
+const SIGN_SIZE: f32 = TILE * 0.94;
+
 /// How long a post takes to settle into the sand after it is planted.
 const PLANT_POP: f32 = 0.17;
 
@@ -60,13 +69,19 @@ fn plant_pop(age: f32) -> f32 {
     1.0 + 0.35 * (1.0 - t) * (t * std::f32::consts::PI * 1.5).cos()
 }
 
-/// How strongly a post draws with `fade` of its life left.
+/// How strongly a post's paint draws with `fade` of its life left.
 ///
 /// Floored well short of transparent: spelled with alpha alone, a worn,
 /// aged post comes out at an eighth of full strength on bright sand, as
 /// the one thing on the board the player steers with.
+///
+/// Only the paint: the board it is on stays at full strength, since the
+/// wood against the sand is what finds a post at all, and a faded board is
+/// sand-coloured wood fading into sand.
 fn post_alpha(fade: f32) -> f32 {
-    0.55 + 0.45 * fade
+    // Higher than the 0.55 a whole post once faded to: over wood that no
+    // longer fades, an aged yellow at 0.55 was cream on tan.
+    0.7 + 0.3 * fade
 }
 
 /// How much a post shrinks as it runs out.
@@ -754,9 +769,11 @@ pub fn sync_signposts(
             continue;
         };
         let pos = layout::tile_center(board, x, y);
-        // One clear owner-coloured arrow, over a shadow of itself so it
-        // stands in the sand rather than being painted on it. The colour
-        // and the art are written on the first frame by `dress_signposts`.
+        // A driftwood board, cut to a point, with an arrow painted on it
+        // in the owner's colour, over a shadow of itself so it stands in
+        // the sand rather than being painted on it. The board is its own
+        // colour and only the paint is tinted. The art and the colours are
+        // written on the first frame by `dress_signposts`.
         commands
             .spawn((
                 SignpostSprite {
@@ -767,37 +784,47 @@ pub fn sync_signposts(
                     age: 0.0,
                     planted: sp.placed,
                 },
-                image_sprite(
-                    &art.arrow,
-                    palette::player_color(sp.owner).lighter(0.12),
-                    Vec2::splat(TILE * 0.88),
-                ),
+                image_sprite(&art.sign_board, Color::WHITE, Vec2::splat(SIGN_SIZE)),
                 Transform::from_translation(pos.extend(z::SIGNPOST))
                     .with_rotation(layout::dir_rotation(sp.dir)),
             ))
             .with_children(|parent| {
                 parent.spawn((
                     SignpostShadow,
-                    image_sprite(
-                        &art.arrow,
-                        Color::srgba(0.14, 0.10, 0.06, 0.34),
-                        Vec2::splat(TILE * 0.88),
-                    ),
-                    // Down-and-right in the arrow's own frame would swing
+                    image_sprite(&art.sign_shape, SIGN_SHADOW, Vec2::splat(SIGN_SIZE)),
+                    // Down-and-right in the board's own frame would swing
                     // with its heading; the offset is applied in world
                     // space by `dress_signposts` for that reason.
                     Transform::from_translation(Vec3::new(0.0, 0.0, -0.05)),
                 ));
+                parent.spawn((
+                    SignpostPaint,
+                    image_sprite(
+                        &art.sign_paint,
+                        paint_color(sp.owner),
+                        Vec2::splat(SIGN_SIZE),
+                    ),
+                    Transform::from_translation(Vec3::new(0.0, 0.0, 0.01)),
+                ));
             });
     }
+}
+
+/// The shadow a signpost drops, at full strength.
+const SIGN_SHADOW: Color = Color::srgba(0.14, 0.10, 0.06, 0.34);
+
+/// The colour a seat paints its arrows: its own, a touch lifted so it
+/// reads bright on the wood.
+fn paint_color(owner: u8) -> Color {
+    palette::player_color(owner).lighter(0.08)
 }
 
 /// Write what a post looks like *now*: how far it has settled after being
 /// planted, how worn it is, and how much life it has left.
 ///
 /// Wear keeps a post's ink and takes its edges instead of dimming it away
-/// (see [`post_alpha`]): [`crate::app::art::Art::arrow_worn`] is the same
-/// arrow with splinters bitten out of it.
+/// (see [`post_alpha`]): a worn board is split and chipped
+/// ([`crate::app::art::Art::sign_board_worn`]) and its paint flaking.
 #[allow(clippy::type_complexity)]
 pub fn dress_signposts(
     time: Res<Time>,
@@ -807,7 +834,19 @@ pub fn dress_signposts(
     mut posts: Query<(&mut SignpostSprite, &mut Sprite, &mut Transform, &Children)>,
     mut shadows: Query<
         (&mut Sprite, &mut Transform),
-        (With<SignpostShadow>, Without<SignpostSprite>),
+        (
+            With<SignpostShadow>,
+            Without<SignpostSprite>,
+            Without<SignpostPaint>,
+        ),
+    >,
+    mut paints: Query<
+        &mut Sprite,
+        (
+            With<SignpostPaint>,
+            Without<SignpostSprite>,
+            Without<SignpostShadow>,
+        ),
     >,
 ) {
     let board = &sim.0;
@@ -826,20 +865,26 @@ pub fn dress_signposts(
             post.age = 0.0;
         }
         let worn = sp.health == SignpostHealth::Worn;
-        let wanted = if worn { &art.arrow_worn } else { &art.arrow };
-        if sprite.image != *wanted {
-            sprite.image = wanted.clone();
+        let (board_art, paint_art) = if worn {
+            (&art.sign_board_worn, &art.sign_paint_worn)
+        } else {
+            (&art.sign_board, &art.sign_paint)
+        };
+        if sprite.image != *board_art {
+            sprite.image = board_art.clone();
         }
         // Versus posts age out; a puzzle's stand until pulled. What is
         // left of a post's life dims it, but never past the point where it
         // stops reading against the sand.
         let fade = board.signpost_fade(&sp);
         let alpha = post_alpha(fade);
-        let mut color = palette::player_color(post.owner).lighter(0.12);
-        if worn {
-            color = color.darker(0.06);
+        if sprite.color != Color::WHITE {
+            sprite.color = Color::WHITE;
         }
-        sprite.color = color.with_alpha(alpha);
+        let mut paint = paint_color(post.owner);
+        if worn {
+            paint = paint.darker(0.06);
+        }
         let pop = if settings.reduced_motion {
             1.0
         } else {
@@ -847,13 +892,17 @@ pub fn dress_signposts(
         };
         transform.scale = Vec3::splat(pop * wither(fade));
         for child in children {
+            if let Ok(mut coat) = paints.get_mut(*child) {
+                if coat.image != *paint_art {
+                    coat.image = paint_art.clone();
+                }
+                coat.color = paint.with_alpha(alpha);
+                continue;
+            }
             let Ok((mut shadow, mut shadow_tf)) = shadows.get_mut(*child) else {
                 continue;
             };
-            shadow.color = Color::srgba(0.14, 0.10, 0.06, 0.34 * alpha);
-            if shadow.image != *wanted {
-                shadow.image = wanted.clone();
-            }
+            shadow.color = SIGN_SHADOW;
             // The sun is one direction for the whole beach, so the offset
             // is undone out of the arrow's rotation: a post pointing left
             // and one pointing up drop their shadow the same way. Divided
