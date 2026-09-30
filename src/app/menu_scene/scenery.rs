@@ -94,6 +94,7 @@ pub fn tend_backdrop(
     mut commands: Commands,
     screen: Res<State<crate::app::Screen>>,
     windows: Query<&Window>,
+    ui_scale: Res<UiScale>,
     shore: Query<Entity, With<MenuShore>>,
     critters: Query<Entity, With<MenuCritter>>,
     scrim: Query<Entity, With<Scrim>>,
@@ -113,11 +114,12 @@ pub fn tend_backdrop(
         let Ok(window) = windows.single() else {
             return;
         };
+        let size = postcard_size(window, &ui_scale);
         commands.spawn((
             Scrim,
             Sprite::from_color(
                 Color::srgba(0.07, 0.09, 0.12, 0.55),
-                Vec2::new(window.width() + 80.0, window.height() + 80.0),
+                size + Vec2::splat(80.0),
             ),
             Transform::from_translation(Vec3::new(0.0, 0.0, 5.0)),
         ));
@@ -128,11 +130,23 @@ pub fn tend_backdrop(
     }
 }
 
+/// The window's size in interface units: what the postcard is laid out in.
+///
+/// The camera over the postcard zooms by the interface's scale
+/// (`boot::fit_camera`), so a postcard this size fills the window and every
+/// pixel measure in this file is one of the interface's own. Laid out in
+/// window pixels, the scenery stayed its 720p size while the cards grew
+/// with the window, and on a big screen the props shrank to specks beside
+/// them.
+fn postcard_size(window: &Window, ui_scale: &UiScale) -> Vec2 {
+    Vec2::new(window.width(), window.height()) / ui_scale.0.max(f32::EPSILON)
+}
+
 /// The whole postcard, bottom to top: sand with shells, a wet line, the
 /// open sea up to the horizon, and sky above. World-space sprites behind
-/// the UI (the menu camera is 1:1 with the window).
-fn spawn_shore(commands: &mut Commands, art: &art::Art, rng: &mut VisualRng, window: &Window) {
-    let (w, h) = (window.width(), window.height());
+/// the UI, in interface units ([`postcard_size`]).
+fn spawn_shore(commands: &mut Commands, art: &art::Art, rng: &mut VisualRng, size: Vec2) {
+    let (w, h) = (size.x, size.y);
     let bottom = -h / 2.0;
     let horizon = bottom + h * HORIZON;
     let band = |y: f32, height: f32, color: Color, z: f32| {
@@ -478,11 +492,13 @@ fn spawn_beach_props(
 /// (Re)build the shore whenever the window size changes or the menu is
 /// freshly entered: the backdrop is world-space and sized to the window,
 /// so maximizing must stretch it.
+#[allow(clippy::too_many_arguments)]
 pub fn refit_shore(
     mut commands: Commands,
     art: Res<art::Art>,
     mut rng: ResMut<VisualRng>,
     windows: Query<&Window>,
+    ui_scale: Res<UiScale>,
     mut last: Local<Vec2>,
     shore: Query<Entity, With<MenuShore>>,
     critters: Query<Entity, With<MenuCritter>>,
@@ -490,7 +506,9 @@ pub fn refit_shore(
     let Ok(window) = windows.single() else {
         return;
     };
-    let size = Vec2::new(window.width(), window.height());
+    // In interface units, so turning the UI scale rebuilds it as surely as
+    // resizing the window does.
+    let size = postcard_size(window, &ui_scale);
     if *last == size && !shore.is_empty() {
         return;
     }
@@ -500,7 +518,7 @@ pub fn refit_shore(
     for entity in shore.iter().chain(critters.iter()) {
         commands.entity(entity).despawn();
     }
-    spawn_shore(&mut commands, &art, &mut rng, window);
+    spawn_shore(&mut commands, &art, &mut rng, size);
 }
 
 /// Spawn one ambient traveller. `at_x` places it mid-scene (used to
@@ -630,6 +648,7 @@ pub fn menu_ambience(
     mut rng: ResMut<VisualRng>,
     mut countdown: Local<f32>,
     windows: Query<&Window>,
+    ui_scale: Res<UiScale>,
     mut critters: Query<(Entity, &mut MenuCritter, &mut Transform, &mut Sprite)>,
     mut waves: Query<(&WaveSegment, &mut Transform, &mut Sprite), Without<MenuCritter>>,
     mut foam: Query<
@@ -640,7 +659,8 @@ pub fn menu_ambience(
     let Ok(window) = windows.single() else {
         return;
     };
-    let (w, h) = (window.width(), window.height());
+    let size = postcard_size(window, &ui_scale);
+    let (w, h) = (size.x, size.y);
     let dt = time.delta_secs();
 
     *countdown -= dt;

@@ -176,8 +176,12 @@ pub(super) fn fit_camera(
     let fit_h = (window.height() - chrome_h).max(layout::TILE);
     // The menu has no board: its decoration is laid out 1:1 with the
     // window.
+    // The postcard is laid out in interface units (`scenery::postcard_size`)
+    // and zoomed by the interface's scale, so its sand, sea and props grow
+    // with the cards standing on them rather than shrinking beside them on
+    // a big window.
     let scale = if menu {
-        1.0
+        1.0 / ui.max(f32::EPSILON)
     } else {
         board_scale(
             Vec2::new(board_w, board_h),
