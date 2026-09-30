@@ -17,6 +17,7 @@ mod statics;
 mod wash;
 mod water;
 
+pub(crate) use castles::castle_parts;
 pub use castles::{
     CastleFlight, CastleSprite, castle_body, cheer_tier_ups, fly_castles, kick_castles,
     sync_castles, wave_pennants,

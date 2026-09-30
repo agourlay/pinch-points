@@ -51,6 +51,71 @@ fn winner_line(
     }
 }
 
+/// How many pixels a tile is when the results card draws the winner's
+/// castle: bigger than on the board, since it is the one thing on the card
+/// that is a picture.
+const CASTLE_TILE_PX: f32 = 96.0;
+
+/// The winner's castle on the results card, built from the same pieces as
+/// the one on their tile, at the tier they finished on: a round won big
+/// shows off a big castle, moat and all.
+fn winner_castle(
+    card: &mut ChildSpawnerCommands,
+    art: &crate::app::art::Art,
+    tier: u8,
+    color: Color,
+) {
+    let t = CASTLE_TILE_PX;
+    // Room for the widest castle (the moat) and its flag above the keep.
+    let side = 1.4 * t;
+    card.spawn(Node {
+        width: Val::Px(side),
+        height: Val::Px(side),
+        margin: UiRect::vertical(Val::Px(4.0)),
+        ..default()
+    })
+    .with_children(|stage| {
+        // A mound of sand to stand on, or it floats on the dark card.
+        let mound = Vec2::new(1.55, 0.6) * t;
+        stage.spawn((
+            // Stretched: left to keep its square, the mound drew as a round
+            // blob under the gate rather than ground under the castle.
+            ImageNode::new(art.puddle.clone())
+                .with_color(Color::srgba(0.84, 0.77, 0.62, 0.9))
+                .with_mode(bevy::ui::widget::NodeImageMode::Stretch),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(side / 2.0 - mound.x / 2.0),
+                top: Val::Px(side / 2.0 + 0.40 * t - mound.y / 2.0),
+                width: Val::Px(mound.x),
+                height: Val::Px(mound.y),
+                ..default()
+            },
+        ));
+        // The parts come back to front, which is the order UI draws in.
+        for part in crate::app::board_render::castle_parts(art, tier, color) {
+            let size = part.size * t;
+            let node = Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(side / 2.0 + part.at.x * t - size.x / 2.0),
+                // UI runs down, the castle's y up.
+                top: Val::Px(side / 2.0 - part.at.y * t - size.y / 2.0),
+                width: Val::Px(size.x),
+                height: Val::Px(size.y),
+                ..default()
+            };
+            match part.image {
+                Some(image) => {
+                    stage.spawn((ImageNode::new(image).with_color(part.tint), node));
+                }
+                None => {
+                    stage.spawn((BackgroundColor(part.tint), node));
+                }
+            }
+        }
+    });
+}
+
 /// Spawn the wrapper that centres the results card, and return its entity.
 fn results_card(commands: &mut Commands) -> Entity {
     commands
@@ -245,13 +310,34 @@ pub fn spawn_versus_results(
     let haul = board.crabs_banked();
     let awards = award_rows(&settings, &names, &tally, board, seats.0, mode);
 
+    // Whose castle the card shows off: the winner's, at the tier the round
+    // left it on. A dead heat has no one to crown, and keeps the card's gold.
+    let crowned = winners.iter().position(|&won| won).map(|seat| seat as u8);
     let card = results_card(&mut commands);
     commands.entity(card).with_children(|wrap| {
-        wrap.spawn(menu_ui::screen_card()).with_children(|card| {
-            let title = card_text(20.0, CARD_TEXT.darker(0.1));
-            card.spawn((Text::new(tr.tide_is_in), title.0, title.1));
-            let head = card_text(30.0, headline_color);
-            card.spawn((Text::new(headline), head.0, head.1));
+        // Opaque, as the round's other cards are: it stands on the board,
+        // and the browsing cards' 0.95, blended in linear light, let the
+        // crabs and fences show through the standings.
+        let mut frame = wrap.spawn(menu_ui::screen_card());
+        frame.insert(BackgroundColor(palette::CARD_BG));
+        if crowned.is_some() {
+            frame.insert(BorderColor::all(headline_color));
+        }
+        frame.with_children(|card| {
+            card.spawn((
+                Text::new(tr.tide_is_in),
+                menu_ui::display_font(20.0),
+                TextColor(CARD_TEXT.darker(0.1)),
+            ));
+            if let Some(seat) = crowned {
+                let tier = crate::sim::castle_tier(scores[usize::from(seat)]);
+                winner_castle(card, &art, tier, palette::player_color(seat));
+            }
+            card.spawn((
+                Text::new(headline),
+                menu_ui::display_font(34.0),
+                TextColor(headline_color),
+            ));
             card.spawn(Node {
                 height: Val::Px(6.0),
                 ..default()

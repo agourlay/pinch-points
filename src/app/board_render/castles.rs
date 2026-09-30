@@ -141,8 +141,53 @@ fn turrets(tier: u8) -> Vec<Piece> {
 /// sprite: the top merlons in `tools/gen_sprites.py`.
 const TOWER_TOP: f32 = 0.27;
 
-/// Everything standing on a castle's tile at `tier` (spec §3.4: the castle
-/// grows with its owner's score and is the scoreboard):
+/// Everything standing on a castle's tile at `tier`: its shadow on the
+/// sand, and its [`castle_parts`].
+fn build_castle(parent: &mut ChildSpawnerCommands, art: &Art, tier: u8, color: Color) {
+    let footprint = if tier == 0 { 0.8 } else { 1.15 };
+    // It sits on the sand rather than in it.
+    parent.spawn((
+        image_sprite(
+            &art.shadow,
+            Color::srgba(1.0, 1.0, 1.0, 0.7),
+            Vec2::splat(TILE * footprint),
+        ),
+        Transform::from_translation(layout::SUN.extend(-0.4)),
+    ));
+    for part in castle_parts(art, tier, color) {
+        let at = (part.at * TILE).extend(part.z);
+        let size = part.size * TILE;
+        let sprite = match &part.image {
+            Some(image) => image_sprite(image, part.tint, size),
+            None => Sprite::from_color(part.tint, size),
+        };
+        let mut piece = parent.spawn((sprite, Transform::from_translation(at)));
+        if part.pennant {
+            piece.insert(Pennant);
+        }
+    }
+}
+
+/// One piece of a castle, wherever it is drawn: on its tile, or on the
+/// results card that shows off the winner's.
+pub(crate) struct CastlePart {
+    /// The sprite, or `None` for a plain block of `tint`: a flag's pole or
+    /// its pennant.
+    pub image: Option<Handle<Image>>,
+    pub tint: Color,
+    /// Width and height, in tiles.
+    pub size: Vec2,
+    /// Its centre, in tiles from the castle's, y up.
+    pub at: Vec2,
+    /// Depth among the castle's own pieces: higher is nearer.
+    pub z: f32,
+    /// Whether it is a pennant, which waves.
+    pub pennant: bool,
+}
+
+/// Every piece of a castle at `tier` in its owner's `color`, back to front
+/// (spec §3.4: the castle grows with its owner's score and is the
+/// scoreboard):
 ///
 /// | tier | points | adds |
 /// |---|---|---|
@@ -154,25 +199,21 @@ const TOWER_TOP: f32 = 0.27;
 /// Each tier adds pieces and none replaces one, so a castle only ever
 /// gets bigger. Before, the keep itself grew until at tier 3 it covered
 /// the wall it was meant to stand inside, and the tiers were hard to
-/// tell apart at a glance.
-fn build_castle(parent: &mut ChildSpawnerCommands, art: &Art, tier: u8, color: Color) {
+/// tell apart at a glance. Everything but the sand shadow under it, which
+/// belongs to the beach rather than to the castle.
+pub(crate) fn castle_parts(art: &Art, tier: u8, color: Color) -> Vec<CastlePart> {
     let body = castle_body(color);
-    let sprite = |image: &Handle<Image>, tint: Color, piece: &Piece| {
-        (
-            image_sprite(image, tint, Vec2::splat(TILE * piece.size)),
-            Transform::from_translation((piece.at * TILE).extend(piece.z)),
-        )
+    let mut parts = Vec::new();
+    let mut add = |image: &Handle<Image>, tint: Color, piece: &Piece| {
+        parts.push(CastlePart {
+            image: Some(image.clone()),
+            tint,
+            size: Vec2::splat(piece.size),
+            at: piece.at,
+            z: piece.z,
+            pennant: false,
+        });
     };
-    let footprint = if tier == 0 { 0.8 } else { 1.15 };
-    // It sits on the sand rather than in it.
-    parent.spawn((
-        image_sprite(
-            &art.shadow,
-            Color::srgba(1.0, 1.0, 1.0, 0.7),
-            Vec2::splat(TILE * footprint),
-        ),
-        Transform::from_translation(layout::SUN.extend(-0.4)),
-    ));
     let whole = |z| Piece {
         size: 0.96,
         at: Vec2::ZERO,
@@ -180,7 +221,7 @@ fn build_castle(parent: &mut ChildSpawnerCommands, art: &Art, tier: u8, color: C
     };
     if tier >= 3 {
         // The moat, dug outermost: water, open in the middle.
-        parent.spawn(sprite(
+        add(
             &art.moat,
             Color::WHITE,
             &Piece {
@@ -188,69 +229,68 @@ fn build_castle(parent: &mut ChildSpawnerCommands, art: &Art, tier: u8, color: C
                 at: Vec2::ZERO,
                 z: -0.3,
             },
-        ));
+        );
     }
     if tier >= 1 {
-        parent.spawn(sprite(&art.wall_back, body, &whole(-0.2)));
+        add(&art.wall_back, body, &whole(-0.2));
     }
     let keep = keep(tier);
-    parent.spawn(sprite(&art.castle, body, &keep));
+    add(&art.castle, body, &keep);
     // The owner's banner on the keep, and its door's arch, in full colour.
-    parent.spawn(sprite(
+    add(
         &art.castle_trim,
         color.lighter(0.12),
         &Piece { z: 0.05, ..keep },
-    ));
+    );
     if tier >= 1 {
-        parent.spawn(sprite(&art.wall_front, body, &whole(0.1)));
+        add(&art.wall_front, body, &whole(0.1));
     }
-    for tower in turrets(tier) {
-        parent.spawn(sprite(&art.turret, body, &tower));
+    let towers = turrets(tier);
+    for tower in &towers {
+        add(&art.turret, body, tower);
+    }
+    for tower in &towers {
         let top = tower.at + Vec2::new(0.0, tower.size * TOWER_TOP);
-        flag(parent, color, top, 0.16, 0.6, tower.z + 0.05);
+        flag(&mut parts, color, top, 0.16, 0.6, tower.z + 0.05);
     }
     // The flag (spec §3.4: flying their colour flag): a driftwood pole
     // with a bright owner-coloured pennant, sticking up past the keep so
     // it reads at a glance.
     flag(
-        parent,
+        &mut parts,
         color,
         keep.at + Vec2::new(-0.06, keep.size * TOWER_TOP),
         0.36,
         1.3,
         0.3,
     );
+    parts.sort_by(|a, b| a.z.total_cmp(&b.z));
+    parts
 }
 
 /// A pole standing on `base` (tiles from the castle's centre), `height`
 /// tiles tall, with a pennant of `scale` times the keep's first one.
-fn flag(
-    parent: &mut ChildSpawnerCommands,
-    color: Color,
-    base: Vec2,
-    height: f32,
-    scale: f32,
-    z: f32,
-) {
-    let base = base * TILE;
-    let height = height * TILE;
-    parent.spawn((
-        Sprite::from_color(WALL_COLOR, Vec2::new(2.5, height)),
-        Transform::from_translation(Vec3::new(base.x, base.y + height / 2.0, z)),
-    ));
-    let size = Vec2::new(TILE * 0.20, TILE * 0.12) * scale;
-    parent.spawn((
-        Pennant,
+fn flag(parts: &mut Vec<CastlePart>, color: Color, base: Vec2, height: f32, scale: f32, z: f32) {
+    parts.push(CastlePart {
+        image: None,
+        tint: WALL_COLOR,
+        size: Vec2::new(2.5 / TILE, height),
+        at: Vec2::new(base.x, base.y + height / 2.0),
+        z,
+        pennant: false,
+    });
+    let size = Vec2::new(0.20, 0.12) * scale;
+    parts.push(CastlePart {
+        image: None,
         // The owner's colour as it is: the castle is dyed sand now, and a
         // lightened pennant, which stood out against a castle already in
         // that colour, washed out to white on a yellow one.
-        Sprite::from_color(color, size),
-        Transform::from_translation(Vec3::new(
-            base.x + size.x / 2.0,
-            base.y + height - size.y / 2.0,
-            z,
-        )),
-    ));
+        tint: color,
+        size,
+        at: Vec2::new(base.x + size.x / 2.0, base.y + height - size.y / 2.0),
+        z,
+        pennant: true,
+    });
 }
 
 /// A castle's flag; waves gently in the sea breeze.
