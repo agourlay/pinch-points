@@ -471,6 +471,8 @@ pub fn spawn_puzzle_won(
     mut commands: Commands,
     campaign: Res<Campaign>,
     settings: Res<GameSettings>,
+    sim: Res<Sim>,
+    art: Res<crate::app::art::Art>,
 ) {
     let tr = settings.tr();
     let name = settings
@@ -485,15 +487,29 @@ pub fn spawn_puzzle_won(
     let (place, of, custom) = campaign.place();
     let last = campaign.is_last();
     let last_shipped = last && !custom;
+    let board = &sim.0;
+    // The castle the crabs were routed to: the first on the beach, which
+    // is the only one in all but a handful of stages.
+    let castle = board.castle_owners().next();
     let card = results_card(&mut commands);
     commands.entity(card).with_children(|wrap| {
-        wrap.spawn(menu_ui::screen_card()).with_children(|card| {
-            let head = card_text(30.0, palette::GOLD);
+        let mut frame = wrap.spawn(menu_ui::screen_card());
+        frame.insert(BackgroundColor(palette::CARD_BG));
+        frame.with_children(|card| {
             let title = match last_shipped {
                 true => tr.campaign_done,
                 false => tr.all_safe,
             };
-            card.spawn((Text::new(title), head.0, head.1));
+            card.spawn((
+                Text::new(title),
+                menu_ui::display_font(34.0),
+                TextColor(palette::GOLD),
+            ));
+            if let Some(owner) = castle {
+                let tier = crate::sim::castle_tier(board.scores()[usize::from(owner)]);
+                winner_castle(card, &art, tier, palette::player_color(owner));
+            }
+            saved_row(card, &art, &campaign, board);
             let sub = card_text(21.0, CARD_TEXT);
             let shelf = match custom {
                 true => format!("{}  ", tr.stage_custom),
@@ -514,6 +530,82 @@ pub fn spawn_puzzle_won(
     });
 }
 
+/// How big a crab is in the row of them on a puzzle's card.
+const ROW_CRAB_PX: f32 = 34.0;
+/// Most crabs the row shows: a stage with spawners can save dozens, and a
+/// row of forty is a smear. Past this the row is as many as fit.
+const ROW_CRABS_MAX: usize = 12;
+
+/// The level's crabs in a row on a strip of sand, the ones saved bright and
+/// the rest faded, so a win shows off who made it home and a loss shows
+/// how near it came.
+///
+/// Drawn as the level's own crabs, kind and claw and all, in the order the
+/// level lists them: a crab from a spawner, which the level cannot name,
+/// is a common one. Which crabs were the lost ones is not something the
+/// board keeps once they are gone, so a loss dims the tail of the row: the
+/// count is exact, the faces are the level's.
+fn saved_row(
+    card: &mut ChildSpawnerCommands,
+    art: &crate::app::art::Art,
+    campaign: &Campaign,
+    board: &crate::sim::Board,
+) {
+    use crate::app::creatures::{body_color, claw_color, mirrored};
+    use crate::sim::{CrabKind, Handedness};
+    let level = campaign.current();
+    let of = board.crabs_spawned().max(level.crab_count()) as usize;
+    let saved = board.crabs_banked() as usize;
+    let shown = of.min(ROW_CRABS_MAX);
+    let start = level.board();
+    let faces: Vec<(CrabKind, Handedness)> = start
+        .crabs()
+        .iter()
+        .map(|crab| (crab.kind, crab.handed))
+        .chain(std::iter::repeat((CrabKind::Common, Handedness::Right)))
+        .take(shown)
+        .collect();
+    card.spawn((
+        Node {
+            column_gap: Val::Px(2.0),
+            padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
+            margin: UiRect::vertical(Val::Px(4.0)),
+            border_radius: BorderRadius::all(Val::Px(14.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.84, 0.77, 0.62)),
+    ))
+    .with_children(|row| {
+        for (i, (kind, handed)) in faces.into_iter().enumerate() {
+            let home = i < saved;
+            let fade = if home { 1.0 } else { 0.28 };
+            let layer = |image: &Handle<Image>, color: Color| {
+                let mut node = ImageNode::new(image.clone()).with_color(color.with_alpha(fade));
+                node.flip_y = mirrored(handed);
+                (
+                    node,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                )
+            };
+            row.spawn(Node {
+                width: Val::Px(ROW_CRAB_PX),
+                height: Val::Px(ROW_CRAB_PX),
+                ..default()
+            })
+            .with_children(|icon| {
+                // Facing along the row, the way they walked home.
+                icon.spawn(layer(&art.crab, body_color(kind)));
+                icon.spawn(layer(&art.claw, claw_color(handed)));
+            });
+        }
+    });
+}
+
 /// The puzzle loss card: which level, and Enter to try again.
 ///
 /// A loss stops the sim on the tick the crab was lost, and the board holds
@@ -524,6 +616,10 @@ pub fn spawn_puzzle_lost(
     mut commands: Commands,
     campaign: Res<Campaign>,
     settings: Res<GameSettings>,
+    // Optional, so the card goes up whatever else is loaded: the row of
+    // crabs is a picture on it, and the words are the news.
+    sim: Option<Res<Sim>>,
+    art: Option<Res<crate::app::art::Art>>,
 ) {
     let tr = settings.tr();
     let name = settings
@@ -532,9 +628,20 @@ pub fn spawn_puzzle_lost(
         .to_string();
     let card = results_card(&mut commands);
     commands.entity(card).with_children(|wrap| {
-        wrap.spawn(menu_ui::screen_card()).with_children(|card| {
-            let head = card_text(30.0, palette::INK_RAID);
-            card.spawn((Text::new(tr.crabs_lost), head.0, head.1));
+        let mut frame = wrap.spawn(menu_ui::screen_card());
+        frame.insert((
+            BackgroundColor(palette::CARD_BG),
+            BorderColor::all(palette::INK_RAID.with_alpha(0.6)),
+        ));
+        frame.with_children(|card| {
+            card.spawn((
+                Text::new(tr.crabs_lost),
+                menu_ui::display_font(34.0),
+                TextColor(palette::INK_RAID),
+            ));
+            if let (Some(sim), Some(art)) = (&sim, &art) {
+                saved_row(card, art, &campaign, &sim.0);
+            }
             let sub = card_text(21.0, CARD_TEXT);
             card.spawn((
                 Text::new(format!(
