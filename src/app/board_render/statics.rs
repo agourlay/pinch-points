@@ -919,7 +919,10 @@ pub fn sync_turnstiles(
                 y,
                 right: next_right,
             },
-            image_sprite(&art.log, Color::WHITE, Vec2::new(TILE * 0.94, TILE * 0.3)),
+            // Square, as the art is drawn: the log's own shape is in the
+            // picture. Squeezed to a strip, the drawing inside came out a
+            // sliver a few pixels thick.
+            image_sprite(&art.log, Color::WHITE, Vec2::splat(TILE * 0.98)),
             Transform::from_translation(
                 layout::tile_center(board, x, y).extend(z::TILE_FEATURE + 0.1),
             )

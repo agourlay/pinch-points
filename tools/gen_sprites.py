@@ -14,6 +14,7 @@ The engine draws every sprite at an explicit size, so the resolution of
 the file never moves anything on screen.
 """
 import math
+import random
 
 from PIL import Image, ImageChops, ImageDraw
 
@@ -32,6 +33,19 @@ def save(img, name):
 
 def px(*vals):
     return tuple(v * S for v in vals)
+
+
+def blob(cx, cy, r, seed, wobble=0.10, points=96):
+    """An irregular closed outline around (cx, cy), in design units."""
+    rng = random.Random(seed)
+    waves = [(k, rng.uniform(0.5, 1.0) * wobble / math.sqrt(k),
+              rng.uniform(0.0, 2.0 * math.pi)) for k in (2, 3, 5)]
+    pts = []
+    for i in range(points):
+        a = 2.0 * math.pi * i / points
+        f = 1.0 + sum(amp * math.sin(k * a + ph) for k, amp, ph in waves)
+        pts.append(px(cx + r * f * math.cos(a), cy + r * f * math.sin(a)))
+    return pts
 
 OUTLINE = (52, 38, 28, 255)
 WHITE = (255, 255, 255, 255)
@@ -280,10 +294,24 @@ d.ellipse([px(81, 79), px(88, 84)], fill=(118, 114, 108, 255))
 save(img, "rock")
 
 # --- hole: spawner burrow, baked --------------------------------------------
+# A burrow dug into the beach: a mound of thrown-out sand with clods round
+# it, and a mouth with depth, its far wall catching the light from the
+# upper left and its near wall in shadow. It was three flat ovals.
 img, d = canvas()
-d.ellipse([px(10, 18), px(86, 82)], fill=(196, 168, 120, 255))  # sand rim
-d.ellipse([px(16, 24), px(80, 76)], fill=(94, 70, 44, 255))
-d.ellipse([px(24, 32), px(72, 68)], fill=(44, 32, 20, 255))
+rng = random.Random("hole")
+for _ in range(9):
+    a = rng.uniform(0, 2 * math.pi)
+    r = rng.uniform(33, 38)
+    cx, cy = 48 + r * math.cos(a), 50 + r * 0.8 * math.sin(a)
+    k = rng.uniform(2.0, 3.6)
+    d.ellipse([px(cx - k, cy - k), px(cx + k, cy + k)], fill=(176, 148, 104, 255))
+d.polygon(blob(48, 50, 33, "hole-mound", wobble=0.09), fill=(188, 160, 114, 255))
+d.polygon(blob(46, 47, 28, "hole-mound-top", wobble=0.08), fill=(206, 180, 134, 255))
+d.polygon(blob(48, 50, 22, "hole-mouth", wobble=0.07), fill=(70, 52, 34, 255))
+# the far wall, lower right, lit; the depths; the near wall's shadow
+d.polygon(blob(51, 53, 17.5, "hole-far", wobble=0.07), fill=(112, 86, 58, 255))
+d.polygon(blob(46, 47, 15, "hole-deep", wobble=0.07), fill=(30, 22, 14, 255))
+d.arc([px(28, 31), px(68, 70)], 190, 290, fill=(44, 32, 20, 255), width=3 * S)
 save(img, "hole")
 
 # --- castle: sandcastles in three-quarter view, tintable --------------------
@@ -398,7 +426,6 @@ d.rectangle([px(45, 46), px(51, 58)], fill=OUTLINE)
 save(img, "turret")
 
 # --- sand tiles: baked speckled sand, two brightness variants ----------------
-import random
 for name, base, speck_dark, speck_light in [
     ("sand_a", (237, 217, 176, 255), (219, 196, 152, 255), (247, 233, 203, 255)),
     ("sand_b", (230, 207, 161, 255), (211, 187, 141, 255), (242, 226, 192, 255)),
@@ -520,22 +547,6 @@ save(img, "kelp")
 # the sand rather than as water. A pool is a blob instead: a circle whose
 # radius wanders by a few low harmonics, seeded, so it is the same pond
 # every run.
-import random
-
-
-def blob(cx, cy, r, seed, wobble=0.10, points=96):
-    """An irregular closed outline around (cx, cy), in design units."""
-    rng = random.Random(seed)
-    waves = [(k, rng.uniform(0.5, 1.0) * wobble / math.sqrt(k),
-              rng.uniform(0.0, 2.0 * math.pi)) for k in (2, 3, 5)]
-    pts = []
-    for i in range(points):
-        a = 2.0 * math.pi * i / points
-        f = 1.0 + sum(amp * math.sin(k * a + ph) for k, amp, ph in waves)
-        pts.append(px(cx + r * f * math.cos(a), cy + r * f * math.sin(a)))
-    return pts
-
-
 WET_SAND = (196, 168, 122, 255)
 SHALLOW = (112, 176, 204, 255)
 DEEP = (84, 146, 184, 255)
@@ -566,21 +577,53 @@ d.line(blob(46, 46, 28, "ripple", wobble=0.05) + [blob(46, 46, 28, "ripple", wob
 d.ellipse([px(30, 28), px(46, 36)], fill=(214, 236, 246, 130))
 save(img, "pool")
 
-# --- log: turnstile driftwood, horizontal with a pivot knob ------------------
-img = Image.new("RGBA", (SIZE * S, SIZE * S), (0, 0, 0, 0))
-d = ImageDraw.Draw(img)
-d.rounded_rectangle([px(4, 36), px(92, 60)], radius=11 * S, fill=(74, 58, 44, 255))
-d.rounded_rectangle([px(7, 39), px(89, 57)], radius=9 * S, fill=(122, 96, 68, 255))
-d.rounded_rectangle([px(7, 39), px(89, 46)], radius=8 * S, fill=(148, 120, 88, 255))
+# --- log: turnstile driftwood, horizontal with a pivot peg -------------------
+# Sea-bleached driftwood, a sun-faded brown, tapering unevenly, with grain along
+# it, knots, cut ends showing their rings, and a wooden peg lashed through
+# the middle that it swings on. It was a rounded bar with a dot on it.
+img, d = canvas()
+DRIFT_EDGE = (66, 52, 40, 255)
+DRIFT = (152, 126, 98, 255)
+DRIFT_LIT = (188, 164, 132, 255)
+DRIFT_SHADE = (116, 94, 72, 255)
+
+
+def log_outline(inset):
+    """Top edge left to right, bottom edge back: thicker at the left end."""
+    top = [(5, 40), (20, 37), (40, 38), (60, 39), (78, 40), (91, 42)]
+    bottom = [(91, 55), (78, 57), (60, 58), (40, 59), (20, 60), (5, 57)]
+    return [px(x + (inset if x < 48 else -inset), y + inset) for x, y in top] + \
+           [px(x + (inset if x < 48 else -inset), y - inset) for x, y in bottom]
+
+
+d.polygon(log_outline(0), fill=DRIFT_EDGE)
+d.polygon(log_outline(2.5), fill=DRIFT)
+d.polygon([px(8, 42), px(22, 40), px(42, 41), px(62, 42), px(88, 44),
+           px(88, 47), px(60, 46), px(40, 45), px(20, 45), px(8, 46)], fill=DRIFT_LIT)
+d.polygon([px(8, 54), px(22, 56), px(42, 55), px(62, 54), px(88, 52),
+           px(88, 54), px(60, 56), px(40, 57), px(20, 58), px(8, 56)], fill=DRIFT_SHADE)
 rng = random.Random("log")
-for _ in range(5):
-    x0 = rng.randrange(14, 66)
-    y0 = rng.randrange(42, 54)
-    d.line([px(x0, y0), px(x0 + rng.randrange(8, 18), y0)],
-           fill=(96, 74, 52, 255), width=2 * S)
-# pivot knob
-d.ellipse([px(38, 38), px(58, 58)], fill=(52, 38, 28, 255))
-d.ellipse([px(42, 42), px(54, 54)], fill=(178, 148, 108, 255))
+for _ in range(7):
+    x0 = rng.uniform(12, 70)
+    y0 = rng.uniform(44, 55)
+    d.line([px(x0, y0), px(x0 + rng.uniform(8, 18), y0 + rng.uniform(-1, 1))],
+           fill=DRIFT_SHADE, width=int(1.5 * S))
+for kx, ky in ((24, 50), (70, 47)):
+    d.ellipse([px(kx - 3, ky - 2), px(kx + 3, ky + 2)], fill=DRIFT_EDGE)
+    d.ellipse([px(kx - 1.6, ky - 1), px(kx + 1.6, ky + 1)], fill=DRIFT_SHADE)
+# cut ends, rings and all
+for ex, ey, rx, ry in ((6, 48.5, 3.4, 9.5), (90, 48.5, 2.8, 7.2)):
+    d.ellipse([px(ex - rx, ey - ry), px(ex + rx, ey + ry)], fill=(204, 186, 158, 255))
+    d.ellipse([px(ex - rx * 0.55, ey - ry * 0.55), px(ex + rx * 0.55, ey + ry * 0.55)],
+              outline=DRIFT_SHADE, width=S)
+# the pivot: a peg through the middle, lashed with rope
+d.ellipse([px(40, 40), px(56, 57)], fill=(92, 70, 48, 255))
+for i in range(4):
+    y = 43 + i * 3.4
+    d.line([px(41, y), px(55, y + 1.2)], fill=(214, 196, 150, 255), width=int(1.4 * S))
+d.ellipse([px(43.5, 43.5), px(52.5, 52.5)], fill=DRIFT_EDGE)
+d.ellipse([px(45, 45), px(51, 51)], fill=(150, 116, 80, 255))
+d.ellipse([px(45.8, 45.6), px(48.4, 48)], fill=(196, 164, 120, 255))
 save(img, "log")
 
 # --- puff: soft white cloud for sand/dust/bubble bursts, tintable ------------
