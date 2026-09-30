@@ -22,6 +22,8 @@ pub struct Art {
     /// The board's silhouette, white: a post not yet planted, and one
     /// popping off the beach.
     pub sign_shape: Handle<Image>,
+    /// The driftwood frame round a menu card, nine-sliced.
+    pub card_frame: Handle<Image>,
     pub crab: Handle<Image>,
     pub claw: Handle<Image>,
     pub gull: Handle<Image>,
@@ -92,6 +94,7 @@ impl Art {
             sign_paint,
             sign_paint_worn,
             sign_shape,
+            card_frame,
             crab,
             claw,
             gull,
@@ -136,6 +139,7 @@ impl Art {
             sign_paint,
             sign_paint_worn,
             sign_shape,
+            card_frame,
             crab,
             claw,
             gull,
@@ -301,6 +305,7 @@ impl FromWorld for Art {
             sign_paint: assets.load("sprites/sign_paint.png"),
             sign_paint_worn: assets.load("sprites/sign_paint_worn.png"),
             sign_shape: assets.load("sprites/sign_shape.png"),
+            card_frame: assets.load("sprites/card_frame.png"),
             crab: assets.load("sprites/crab.png"),
             claw: assets.load("sprites/claw.png"),
             gull: assets.load("sprites/gull.png"),

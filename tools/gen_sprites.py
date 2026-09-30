@@ -126,6 +126,54 @@ img, d = canvas()
 d.polygon(sign_plank(0), fill=WHITE)
 save(img, "sign_shape")
 
+# --- card_frame: a driftwood frame for the menu cards, nine-sliced -----------
+# The cards the menus stand on were dark panels edged in a gold hairline,
+# the least made thing left in the game. This is a frame of the board's own
+# driftwood round each of them: a band of wood with its grain running along
+# each side, a dark outer edge and a lit inner lip, and a nail in each
+# corner. It is nine-sliced (`menu_ui::FRAME_SLICE`): the corners are drawn
+# as they are and the sides stretch, so the grain runs along a side however
+# long the card. It is cut at 56 px, past the band, so each corner slice
+# holds its whole curve. The middle is empty, so the card's fill shows.
+FRAME_BAND = 16      # the band's width, in design units (32 px of the 192)
+FRAME_RADIUS = 19.7  # the outer corner: a card's 16 px, at the 13 px it is drawn
+img, d = canvas()
+outer = [px(0.5, 0.5), px(95.5, 95.5)]
+d.rounded_rectangle(outer, radius=int(FRAME_RADIUS * S), fill=SIGN_EDGE)
+# lit along the top and left edges, shaded along the bottom and right:
+# three offset layers, so the light is the beach's, from the upper left
+r = int((FRAME_RADIUS - 1.5) * S)
+d.rounded_rectangle([px(2, 2), px(94, 94)], radius=r, fill=SIGN_WOOD_LIT)
+d.rounded_rectangle([px(3.6, 3.6), px(94, 94)], radius=r, fill=SIGN_WOOD_SHADE)
+d.rounded_rectangle([px(3.6, 3.6), px(92.4, 92.4)], radius=r, fill=SIGN_WOOD)
+rng = random.Random("frame")
+for band in range(4):
+    for _ in range(4):
+        along = rng.uniform(FRAME_RADIUS + 2, 96 - FRAME_RADIUS - 14)
+        across = rng.uniform(4.5, FRAME_BAND - 3.5)
+        length = rng.uniform(6, 12)
+        if band == 0:
+            pts = [px(along, across), px(along + length, across)]
+        elif band == 1:
+            pts = [px(along, 96 - across), px(along + length, 96 - across)]
+        elif band == 2:
+            pts = [px(across, along), px(across, along + length)]
+        else:
+            pts = [px(96 - across, along), px(96 - across, along + length)]
+        d.line(pts, fill=SIGN_GRAIN, width=int(1.1 * S))
+# the lip where the wood meets the card, and the hole the card shows in
+inner = [px(FRAME_BAND, FRAME_BAND), px(96 - FRAME_BAND, 96 - FRAME_BAND)]
+inner_radius = int(max(FRAME_RADIUS - FRAME_BAND, 2) * S)
+d.rounded_rectangle([px(FRAME_BAND - 1.6, FRAME_BAND - 1.6),
+                     px(97.6 - FRAME_BAND, 97.6 - FRAME_BAND)],
+                    radius=inner_radius + int(1.6 * S), fill=SIGN_EDGE)
+d.rounded_rectangle(inner, radius=inner_radius, fill=(0, 0, 0, 0))
+# a nail in each corner
+for cx, cy in ((13, 13), (83, 13), (13, 83), (83, 83)):
+    d.ellipse([px(cx - 2.2, cy - 2.2), px(cx + 2.2, cy + 2.2)], fill=(58, 58, 62, 255))
+    d.ellipse([px(cx - 1.2, cy - 1.4), px(cx + 0.6, cy + 0.2)], fill=(150, 150, 156, 255))
+save(img, "card_frame")
+
 # --- crab: a crab from above, facing +X, tintable -----------------------------
 # Drawn right-handed: the crab's left is up the image (+Y in the engine) and
 # its right is down. A left-handed crab is the same sprite mirrored.

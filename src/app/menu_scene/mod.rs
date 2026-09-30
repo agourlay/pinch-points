@@ -120,6 +120,7 @@ fn spawn_title(commands: &mut Commands, settings: &GameSettings) {
                 BackgroundColor(palette::SIGN_FILL),
                 BorderColor::all(palette::CARD_EDGE),
                 card_shadow(),
+                menu_ui::Framed,
             ))
             .with_children(|card| {
                 card.spawn((
@@ -175,6 +176,7 @@ fn spawn_mode_list(commands: &mut Commands) {
                 BackgroundColor(palette::CARD_FILL),
                 BorderColor::all(palette::CARD_EDGE),
                 card_shadow(),
+                menu_ui::Framed,
             ))
             .with_children(|panel| {
                 for row in 0..MENU_ENTRY_COUNT {

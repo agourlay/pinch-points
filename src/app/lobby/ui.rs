@@ -247,7 +247,8 @@ fn card(
                 row_gap: Val::Px(4.0),
                 // Room at the foot for the tide to come in without
                 // washing over the last row.
-                padding: UiRect::all(Val::Px(12.0))
+                // Clear of the driftwood frame round it (`menu_ui::Framed`).
+                padding: UiRect::all(Val::Px(18.0))
                     .with_bottom(Val::Px(crate::app::menu_ui::FOAM_DEPTH + 6.0)),
                 border: UiRect::all(Val::Px(2.0)),
                 border_radius: BorderRadius::all(Val::Px(12.0)),
@@ -256,6 +257,7 @@ fn card(
             BorderColor::all(palette::CARD_EDGE),
             BackgroundColor(palette::CARD_FILL),
             crate::app::menu_ui::card_shadow(),
+            crate::app::menu_ui::Framed,
         ))
         .with_children(|panel| {
             crate::app::menu_ui::tide_line(panel, &art.foam);
@@ -761,6 +763,11 @@ fn spawn_entry_bar(commands: &mut Commands) {
                 ..default()
             },
             BackgroundColor(Color::NONE),
+            // Above the panels it overlaps, said rather than left to the
+            // order Bevy happens to walk its root nodes in: equal roots
+            // keep no order, and framing the panels put the line under
+            // the round's card.
+            ZIndex(1),
         ))
         .with_children(|entry| {
             entry.spawn((ChatRow(CHAT_LINES), row_text(20.0)));
