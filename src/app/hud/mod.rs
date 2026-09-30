@@ -526,6 +526,10 @@ pub struct FieldGuideNote(usize);
 /// out to the corners of its square was a speck at that size.
 const LEGEND_CRAB_PX: f32 = 26.0;
 
+/// The sand a legend crab stands on: the board's own, a touch dimmed so the
+/// coins do not outshine the notes beside them.
+const LEGEND_SAND: Color = Color::srgb(0.84, 0.77, 0.62);
+
 /// The kinds the guide lists, in the order shown.
 const KINDS: [crate::sim::CrabKind; 6] = [
     crate::sim::CrabKind::Common,
@@ -616,12 +620,19 @@ fn spawn_field_guide(
                             },
                         )
                     };
+                    // Each on a coin of sand, the ground it is drawn for:
+                    // its legs and outline are dark, and straight on the
+                    // dark pill they vanished and left a blob with a claw.
                     strip
-                        .spawn(Node {
-                            width: Val::Px(LEGEND_CRAB_PX),
-                            height: Val::Px(LEGEND_CRAB_PX),
-                            ..default()
-                        })
+                        .spawn((
+                            Node {
+                                width: Val::Px(LEGEND_CRAB_PX),
+                                height: Val::Px(LEGEND_CRAB_PX),
+                                border_radius: BorderRadius::MAX,
+                                ..default()
+                            },
+                            BackgroundColor(LEGEND_SAND),
+                        ))
                         .with_children(|icon| {
                             icon.spawn(layer(&art.crab));
                             icon.spawn(layer(&art.claw));
