@@ -528,12 +528,7 @@ fn frame_corner_scale(ui_scale: f32, scale_factor: f32) -> f32 {
 /// edge colour where a screen gave it one (the winner's, a loss's red),
 /// so the frame carries what the hairline under it used to.
 fn frame_bundle(art: &crate::app::art::Art, edge: Option<Color>, corner: f32) -> impl Bundle {
-    let tint = match edge {
-        Some(color) if color != palette::CARD_EDGE => {
-            Color::WHITE.mix(&color.with_alpha(1.0), 0.55)
-        }
-        Some(_) | None => Color::WHITE,
-    };
+    let tint = frame_tint(edge);
     (
         CardFrame,
         ImageNode {
@@ -558,6 +553,18 @@ fn frame_bundle(art: &crate::app::art::Art, edge: Option<Color>, corner: f32) ->
         },
         Pickable::IGNORE,
     )
+}
+
+/// The tint a card's frame takes from the card's edge: bare wood for the
+/// plain gold edge every card is born with, or none; the wood stained
+/// toward any other, at full strength whatever the edge's own alpha.
+fn frame_tint(edge: Option<Color>) -> Color {
+    match edge {
+        Some(color) if color != palette::CARD_EDGE => {
+            Color::WHITE.mix(&color.with_alpha(1.0), 0.55)
+        }
+        Some(_) | None => Color::WHITE,
+    }
 }
 
 /// Keep every frame [`FRAME_PX`] thick in interface pixels as the
@@ -739,6 +746,23 @@ pub fn paint_row(selected: bool, line: &str, text: &mut Mut<Text>, color: &mut M
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A plain card's frame is bare wood; a card a screen gave its own edge
+    /// (the winner's colour, a loss's red) stains its wood with it, at full
+    /// strength however faint that edge was drawn.
+    #[test]
+    fn a_frame_takes_the_cards_own_colour_and_only_that() {
+        assert_eq!(frame_tint(None), Color::WHITE);
+        assert_eq!(frame_tint(Some(palette::CARD_EDGE)), Color::WHITE);
+        let red = frame_tint(Some(palette::INK_RAID.with_alpha(0.6)));
+        assert_ne!(red, Color::WHITE, "stained");
+        assert_eq!(red.alpha(), 1.0, "at full strength");
+        assert_eq!(
+            red,
+            frame_tint(Some(palette::INK_RAID)),
+            "whatever the edge's alpha"
+        );
+    }
 
     /// The frame is the same thickness in interface pixels at every scale:
     /// its slice cap follows the interface and the display, so a card grown

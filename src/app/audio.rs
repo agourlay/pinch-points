@@ -699,6 +699,21 @@ mod tests {
     use crate::app::settings::GameSettings;
     use crate::sim::classic_arena;
 
+    /// Between the rounds of a series the music plays on: only the results
+    /// card is quiet, and the interlude that follows it is the battle set,
+    /// whatever phase the round it came from was left in.
+    #[test]
+    fn the_series_interlude_keeps_its_music() {
+        use crate::app::VersusPhase;
+        for phase in [VersusPhase::Running, VersusPhase::Over] {
+            assert_eq!(
+                wanted(Screen::Interlude, phase),
+                Some(Mood::Battle),
+                "{phase:?}"
+            );
+        }
+    }
+
     /// The results card is quiet: once a versus round is over, the track
     /// that played it out fades and no other starts, while every other
     /// moment, the round itself included, still wants its set.

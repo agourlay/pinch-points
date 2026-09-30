@@ -80,6 +80,59 @@ pub struct Art {
 }
 
 impl Art {
+    /// Every handle the same empty one, for tests that lay pieces out
+    /// without an asset server: they tell pieces apart by size or tint,
+    /// never by picture. A struct literal, so a new field fails to build
+    /// here until it is given one.
+    #[cfg(test)]
+    pub fn blank() -> Art {
+        Art {
+            sign_board: Default::default(),
+            sign_board_worn: Default::default(),
+            sign_paint: Default::default(),
+            sign_paint_worn: Default::default(),
+            sign_shape: Default::default(),
+            card_frame: Default::default(),
+            crab: Default::default(),
+            claw: Default::default(),
+            gull: Default::default(),
+            gull_fly: Default::default(),
+            gull_fly_b: Default::default(),
+            rock: Default::default(),
+            hole: Default::default(),
+            castle: Default::default(),
+            sand_a: Default::default(),
+            sand_b: Default::default(),
+            shadow: Default::default(),
+            plank: Default::default(),
+            bracket: Default::default(),
+            crown: Default::default(),
+            kelp: Default::default(),
+            pool: Default::default(),
+            puddle: Default::default(),
+            ripple: Default::default(),
+            log: Default::default(),
+            star: Default::default(),
+            puff: Default::default(),
+            foam: Default::default(),
+            post: Default::default(),
+            crab_b: Default::default(),
+            wet: Default::default(),
+            cloud: Default::default(),
+            boat: Default::default(),
+            castle_trim: Default::default(),
+            wall_back: Default::default(),
+            wall_front: Default::default(),
+            turret: Default::default(),
+            moat: Default::default(),
+            feather: Default::default(),
+            ramp: Default::default(),
+            vignette: Default::default(),
+            ring: Default::default(),
+            flags: Default::default(),
+        }
+    }
+
     /// The flag chip for a language. Built and read in the same
     /// [`ALL_LANGS`] order, so the two cannot drift apart.
     pub fn flag(&self, lang: Lang) -> Handle<Image> {

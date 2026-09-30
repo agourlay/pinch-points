@@ -673,7 +673,69 @@ pub fn wave_pennants(time: Res<Time>, mut flags: Query<(Entity, &mut Transform),
 
 #[cfg(test)]
 mod tests {
-    use super::{gains, hop, keep, turrets};
+    use super::{castle_body, castle_parts, gains, hop, keep, turrets};
+    use crate::app::art::Art;
+    use crate::app::palette;
+
+    fn parts(tier: u8) -> Vec<super::CastlePart> {
+        castle_parts(&Art::blank(), tier, palette::player_color(0))
+    }
+
+    /// Every tier draws more than the last: the scoreboard only grows.
+    #[test]
+    fn each_tier_draws_more_than_the_last() {
+        let counts: Vec<usize> = (0..=3).map(|tier| parts(tier).len()).collect();
+        assert!(counts.windows(2).all(|w| w[0] < w[1]), "{counts:?}");
+    }
+
+    /// The moat is the top tier's, and only the top tier's: it is the one
+    /// piece drawn wider than the tile.
+    #[test]
+    fn only_the_top_tier_digs_a_moat() {
+        let moats = |tier| parts(tier).iter().filter(|p| p.size.x > 1.0).count();
+        assert_eq!([moats(0), moats(1), moats(2), moats(3)], [0, 0, 0, 1]);
+    }
+
+    /// Every tower flies a pennant of its own, and the keep flies one more.
+    #[test]
+    fn every_tower_flies_a_pennant() {
+        for tier in 0..=3 {
+            let pennants = parts(tier).iter().filter(|p| p.pennant).count();
+            assert_eq!(pennants, turrets(tier).len() + 1, "tier {tier}");
+        }
+    }
+
+    /// The parts come back to front: the order the results card draws them
+    /// in, which UI takes from the order they are spawned.
+    #[test]
+    fn a_castle_comes_back_to_front() {
+        for tier in 0..=3 {
+            let depths: Vec<f32> = parts(tier).iter().map(|p| p.z).collect();
+            assert!(
+                depths.windows(2).all(|w| w[0] <= w[1]),
+                "tier {tier}: {depths:?}"
+            );
+        }
+    }
+
+    /// A castle is sand dyed toward its owner, not the owner's colour
+    /// outright, and the dye still keeps any two owners apart.
+    #[test]
+    fn a_castle_is_dyed_sand() {
+        let bodies: Vec<Color> = (0..6)
+            .map(|seat| castle_body(palette::player_color(seat)))
+            .collect();
+        for (seat, body) in bodies.iter().enumerate() {
+            assert_ne!(
+                *body,
+                palette::player_color(seat as u8),
+                "seat {seat} is raw colour"
+            );
+            for other in &bodies[seat + 1..] {
+                assert_ne!(body, other, "two owners dye alike");
+            }
+        }
+    }
     use crate::app::sim_events::SimEvent;
     use crate::sim::{CrabKind, MAX_PLAYERS};
     use bevy::prelude::*;

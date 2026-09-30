@@ -731,6 +731,37 @@ fn kick_up(commands: &mut Commands, rng: &mut effects::VisualRng, art: &Art, pos
 mod tests {
     use super::*;
 
+    /// A left-handed crab is the right-handed drawing mirrored, and the two
+    /// hands wear different claws: the tell a player reads a crab by.
+    #[test]
+    fn a_left_handed_crab_is_the_other_one_mirrored() {
+        assert!(mirrored(Handedness::Left));
+        assert!(!mirrored(Handedness::Right));
+        assert_ne!(claw_color(Handedness::Left), claw_color(Handedness::Right));
+    }
+
+    /// A crab's square is bigger than its shell, legs out to the corners,
+    /// and the kinds keep their sizes: a giant over a common over a young.
+    #[test]
+    fn a_crab_is_drawn_bigger_than_its_shell_and_in_its_size() {
+        for kind in CrabKind::ALL {
+            assert!(sprite_side(kind) > body_size(kind).x, "{kind:?}");
+        }
+        let side = sprite_side;
+        assert!(side(CrabKind::Giant) > side(CrabKind::Common));
+        assert!(side(CrabKind::Common) > side(CrabKind::Juvenile));
+    }
+
+    /// How crowded a crab is climbs with its company and stops at full:
+    /// nothing alone, a third with one neighbour, full at three, no further.
+    #[test]
+    fn a_crowd_fills_up_at_three_neighbours() {
+        assert_eq!(crowd_level(0), 0.0);
+        assert!((crowd_level(1) - 1.0 / 3.0).abs() < 1e-6);
+        assert_eq!(crowd_level(3), 1.0);
+        assert_eq!(crowd_level(20), 1.0);
+    }
+
     /// A crab on its own is drawn exactly where it is; in a crowd it moves
     /// across its heading, never along it, by at most the outer lane, and
     /// always to the same side for the same crab.

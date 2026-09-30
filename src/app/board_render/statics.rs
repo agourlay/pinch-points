@@ -550,6 +550,15 @@ fn margin_spot(rng: &mut crate::app::effects::VisualRng, size: Vec2, shore: f32)
     (at.x.abs() > clear.x || at.y.abs() > clear.y).then_some(at)
 }
 
+/// The seed a board's margin is scattered from: its own seed and its size,
+/// so a level looks the same every time it is played and two levels do
+/// not share a beach.
+fn margin_seed(board: &Board) -> u32 {
+    (board.seed() as u32)
+        ^ u32::from(board.width()).wrapping_mul(0x9E37_79B1)
+        ^ u32::from(board.height()).wrapping_mul(0x85EB_CA77)
+}
+
 /// Scatter the beach around the board: sand grain, dune grass, driftwood,
 /// pebbles and the odd starfish.
 ///
@@ -564,10 +573,7 @@ fn furnish_the_margin(commands: &mut Commands, board: &Board, art: &Art, shore: 
         f32::from(board.width()) * TILE,
         f32::from(board.height()) * TILE,
     );
-    let seed = (board.seed() as u32)
-        ^ u32::from(board.width()).wrapping_mul(0x9E37_79B1)
-        ^ u32::from(board.height()).wrapping_mul(0x85EB_CA77);
-    let mut rng = crate::app::effects::VisualRng::seeded(seed);
+    let mut rng = crate::app::effects::VisualRng::seeded(margin_seed(board));
     let spot = |rng: &mut crate::app::effects::VisualRng| margin_spot(rng, Vec2::new(w, h), shore);
     let z = z::SAND - 9.5;
     // Grain first, the most of it and the least of each.
@@ -1019,6 +1025,45 @@ pub fn animate_turnstiles(time: Res<Time>, mut logs: Query<(&TurnstileSprite, &m
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Neighbouring pool tiles turn their puddles their own ways, so a pond
+    /// is not a row of one shape, and every turn is within a full circle.
+    #[test]
+    fn neighbouring_puddles_turn_their_own_ways() {
+        for y in 0..6u8 {
+            for x in 0..6u8 {
+                let turn = pool_turn(tile_hash(x, y));
+                assert!((0.0..std::f32::consts::TAU).contains(&turn), "{turn}");
+                assert_ne!(
+                    tile_hash(x, y),
+                    tile_hash(x + 1, y),
+                    "({x}, {y}) and its right"
+                );
+                assert_ne!(tile_hash(x, y), tile_hash(x, y + 1), "({x}, {y}) and below");
+            }
+        }
+    }
+
+    /// The margin is the same every time a level is played, and a
+    /// different beach for a different level: same seed and size, same
+    /// scatter; another size or seed, another.
+    #[test]
+    fn a_level_keeps_its_own_beach() {
+        let seed = |w, h, s| margin_seed(&Board::new(w, h, s));
+        assert_eq!(seed(12, 9, 7), seed(12, 9, 7));
+        assert_ne!(seed(12, 9, 7), seed(12, 9, 8), "another seed");
+        assert_ne!(seed(12, 9, 7), seed(9, 12, 7), "the same area turned round");
+    }
+
+    /// An aged post's paint never fades past the point its wood needs: the
+    /// board stays solid, and the paint is what says whose post it is.
+    #[test]
+    fn a_posts_paint_never_fades_past_seventy_percent() {
+        for step in 0..=10 {
+            let alpha = post_alpha(step as f32 / 10.0);
+            assert!(alpha >= 0.7 - 1e-6, "{alpha} at {step}");
+        }
+    }
 
     /// The scenery keeps off the play: nothing lands on the board, its
     /// frame, or the tide that widens round it by the end of a round, and

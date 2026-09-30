@@ -1065,6 +1065,18 @@ pub fn moment_effects(
 mod tests {
     use super::*;
 
+    /// A splash asks the tile a creature is on, by the board's own count:
+    /// the pool it is in, and not the sand beside it or a row over.
+    #[test]
+    fn in_pool_reads_the_creatures_own_tile() {
+        let mut board = crate::sim::Board::new(5, 4, 1);
+        board.set_tile(2, 1, crate::sim::TileKind::Pool);
+        let index = |x: u16, y: u16| y * 5 + x;
+        assert!(in_pool(&board, index(2, 1)));
+        assert!(!in_pool(&board, index(1, 1)), "the sand beside it");
+        assert!(!in_pool(&board, index(2, 2)), "the row below");
+    }
+
     /// A splash is the step from sand into water, once: not every tile of
     /// a pool lane, not the step back out, and not a crab that was already
     /// wading when it was first seen.
