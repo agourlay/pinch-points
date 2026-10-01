@@ -1,13 +1,14 @@
 //! Match setup: the intermediary screen between the menu and a local versus
 //! round. Pick the seat count, how many seats the AI plays, the map, gull
-//! pressure, and round length; Enter starts the match.
+//! pressure, round length, and how many arrows each player may have
+//! standing; Enter starts the match.
 
 use crate::app::Screen;
 use crate::app::cycle::{Cycle, Turn};
 use crate::app::i18n::fill;
 use crate::app::palette;
 use crate::sim::BotLevel;
-use crate::sim::MAX_PLAYERS;
+use crate::sim::{MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER};
 use crate::transport::MatchTerms;
 use bevy::prelude::*;
 
@@ -151,11 +152,17 @@ pub enum Row {
     Map,
     Gulls,
     Round,
+    /// How many arrows each player may have standing at once.
+    Posts,
     Mode,
     /// What to call seat `n`. One row per seat in the match; typing into it
     /// renames that seat everywhere the game mentions it.
     Name(u8),
 }
+
+/// The range of the arrows dial. The default is the versus rule's three;
+/// one is a knife fight, and past six a beach is more arrow than sand.
+pub const POSTS_RANGE: std::ops::RangeInclusive<u8> = 1..=6;
 
 /// The most seats the AI can hold: everyone but one human.
 pub const MAX_BOTS: usize = MAX_PLAYERS - 1;
@@ -168,7 +175,7 @@ pub const CLASSIC_SEATS: u8 = 4;
 pub const WIDE_ENOUGH: u8 = 16;
 
 impl Row {
-    pub const ALL: [Row; 6 + MAX_BOTS + MAX_PLAYERS] = [
+    pub const ALL: [Row; 7 + MAX_BOTS + MAX_PLAYERS] = [
         Row::Players,
         Row::Bots,
         Row::BotLevel(0),
@@ -179,6 +186,7 @@ impl Row {
         Row::Map,
         Row::Gulls,
         Row::Round,
+        Row::Posts,
         Row::Mode,
         // Last on the list: the rows above are the ones every match needs,
         // and Enter on a name row types instead of starting the match.
@@ -210,6 +218,9 @@ pub struct MatchConfig {
     pub custom: usize,
     pub gulls: GullPressure,
     pub round: RoundLength,
+    /// Arrows each player may have standing. Placing one more takes the
+    /// oldest away, as the versus rule always has; only the count moves.
+    pub posts: u8,
     /// One round, best of three, or best of five.
     pub series: crate::app::tournament::SeriesLength,
     /// True when the next versus round should be built from this config.
@@ -226,6 +237,7 @@ impl Default for MatchConfig {
             custom: 0,
             gulls: GullPressure::Normal,
             round: RoundLength::Standard,
+            posts: MAX_SIGNPOSTS_PER_PLAYER as u8,
             series: crate::app::tournament::SeriesLength::Single,
             armed: false,
         }
@@ -246,6 +258,7 @@ impl MatchConfig {
             custom: 0,
             gulls: GullPressure::Normal,
             round: RoundLength::Standard,
+            posts: MAX_SIGNPOSTS_PER_PLAYER as u8,
             series: crate::app::tournament::SeriesLength::Single,
             armed: true,
         }
@@ -289,6 +302,8 @@ pub fn config_from_terms(terms: &MatchTerms) -> (MatchConfig, crate::app::teams:
         custom: 0,
         gulls: GullPressure::from_index(usize::from(terms.gulls)),
         round: RoundLength::from_index(usize::from(terms.round)),
+        // Not on the wire: an online round plays the versus rule's three.
+        posts: MAX_SIGNPOSTS_PER_PLAYER as u8,
         series: crate::app::tournament::SeriesLength::from_index(usize::from(terms.series)),
         armed: false,
     };

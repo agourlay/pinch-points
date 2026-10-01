@@ -373,6 +373,7 @@ pub static ES: Tr = Tr {
     match_map: "Playa",
     match_gulls: "Gaviotas",
     match_round: "Duración",
+    match_posts: "Flechas por jugador",
     match_mode: "Modo",
     match_name: "Nombre",
     match_name_empty: "- (Tab para nombrar)",

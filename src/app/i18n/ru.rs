@@ -380,6 +380,7 @@ pub static RU: Tr = Tr {
     match_map: "Карта",
     match_gulls: "Напор чаек",
     match_round: "Длина раунда",
+    match_posts: "Стрелок у каждого",
     match_mode: "Режим",
     match_name: "Имя",
     match_name_empty: "- (Tab: назвать)",

@@ -93,6 +93,7 @@ impl RoundOrigin<'_> {
                 };
                 board.set_gull_period(config.gulls.period());
                 board.set_round_length(Some(config.round.ticks()));
+                board.set_signpost_rule(config.posts, crate::sim::CapPolicy::Evict);
                 board
             }
             RoundOrigin::Unconfigured => classic_arena(sandbox, pads.max(2)),

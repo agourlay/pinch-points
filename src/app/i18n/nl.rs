@@ -373,6 +373,7 @@ pub static NL: Tr = Tr {
     match_map: "Strand",
     match_gulls: "Meeuwen",
     match_round: "Duur",
+    match_posts: "Pijlen per speler",
     match_mode: "Modus",
     match_name: "Naam",
     match_name_empty: "- (Tab voor een naam)",

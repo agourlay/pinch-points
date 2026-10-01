@@ -380,6 +380,7 @@ pub static DE: Tr = Tr {
     match_map: "Strand",
     match_gulls: "Möwen",
     match_round: "Rundenlänge",
+    match_posts: "Pfeile pro Spieler",
     match_mode: "Modus",
     match_name: "Name",
     match_name_empty: "- (Tab zum Benennen)",

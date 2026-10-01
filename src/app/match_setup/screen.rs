@@ -110,10 +110,11 @@ pub fn enter_match_setup(
             // rather than blanking: a card that shrinks around them jumps
             // while you turn the dial that adds them.
             let (mark, mut node, fill, edge, shadow) = menu_ui::screen_card();
+            node.row_gap = Val::Px(ROW_GAP);
             node.height = Val::Px(
                 2.0 * menu_ui::CARD_PAD_Y
                     + menu_ui::HEADING_H
-                    + ROWS as f32 * (menu_ui::ROW_H + menu_ui::ROW_GAP),
+                    + ROWS as f32 * (menu_ui::ROW_H + ROW_GAP),
             );
             node.justify_content = JustifyContent::FlexStart;
             wrap.spawn(Node {
@@ -203,6 +204,10 @@ pub fn enter_match_setup(
 /// clips, which is the same contract the settings card keeps.
 pub(super) const LABEL_W: f32 = 220.0;
 pub(super) const VALUE_W: f32 = 428.0;
+/// Tighter than the shell's gap: a full table of six shows every row the
+/// card has, and at the shell's gap they reach into the header bar once
+/// the arrows dial joined them. Only the cursor's band shows the seam.
+pub(super) const ROW_GAP: f32 = 0.0;
 /// The scale's row size, named rather than repeated: it happened to be
 /// the same number already, which is not the same as saying so.
 pub(super) const ROW_FONT: f32 = menu_ui::type_scale::ROW;
@@ -289,7 +294,9 @@ pub(super) fn live_rows(config: &MatchConfig) -> [bool; ROWS] {
     std::array::from_fn(|row| match Row::ALL[row] {
         Row::BotLevel(slot) => ai_seat(config, slot).is_some(),
         Row::Name(seat) => seat < config.seats,
-        Row::Players | Row::Bots | Row::Map | Row::Gulls | Row::Round | Row::Mode => true,
+        Row::Players | Row::Bots | Row::Map | Row::Gulls | Row::Round | Row::Posts | Row::Mode => {
+            true
+        }
     })
 }
 
@@ -371,6 +378,7 @@ pub fn match_setup_input(
         }
         Row::Gulls => config.gulls = config.gulls.cycled(turn),
         Row::Round => config.round = config.round.cycled(turn),
+        Row::Posts => config.posts = crate::app::cycle::dial(config.posts, turn, 1, POSTS_RANGE),
         Row::Mode => config.series = config.series.cycled(turn),
         // A name is typed, not stepped through.
         Row::Name(_) => {}
@@ -471,6 +479,7 @@ pub(super) fn row_text(
             tr.match_round.to_string(),
             dial(tr.round_names[config.round.index()]),
         ),
+        Row::Posts => (tr.match_posts.to_string(), dial(&config.posts.to_string())),
         Row::Mode => (
             tr.match_mode.to_string(),
             dial(tr.mode_names[config.series.index()]),

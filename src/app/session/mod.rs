@@ -253,6 +253,35 @@ mod tests {
         assert_eq!(RoundOrigin::Unconfigured.table(&config, &bare, 3).1, 3);
     }
 
+    /// The arrows dial on the setup card is the rule the round is played
+    /// under, on every kind of beach it builds, and an online round keeps
+    /// the versus three whatever this machine's card says.
+    #[test]
+    fn the_arrows_dial_is_the_rule_the_round_plays() {
+        use crate::app::match_setup::MapChoice;
+        for map in [MapChoice::Classic, MapChoice::GenLarge] {
+            for posts in match_setup::POSTS_RANGE {
+                let config = match_setup::MatchConfig {
+                    map,
+                    posts,
+                    ..armed(2, 1)
+                };
+                let board =
+                    RoundOrigin::Configured(&config).board(false, &Default::default(), false, 0);
+                assert_eq!(
+                    board.signpost_rule(),
+                    (posts, crate::sim::CapPolicy::Evict),
+                    "{map:?}"
+                );
+            }
+        }
+        let board = RoundOrigin::Online(&online_at(2)).board(false, &Default::default(), false, 0);
+        assert_eq!(
+            board.signpost_rule().0,
+            crate::sim::MAX_SIGNPOSTS_PER_PLAYER as u8
+        );
+    }
+
     /// Two of the sources are outside the game's control, and the count
     /// they give becomes the length of every per-seat loop: a seventh seat
     /// runs off the end of the `MAX_PLAYERS`-long scores in

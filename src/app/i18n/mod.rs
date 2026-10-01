@@ -518,6 +518,8 @@ struct Tr {
     pub match_map: &'static str,
     pub match_gulls: &'static str,
     pub match_round: &'static str,
+    /// The arrows-per-player dial on the match setup card.
+    pub match_posts: &'static str,
     pub match_mode: &'static str,
     /// Seat-naming row: its label, what an unnamed seat shows, and the hint
     /// shown while the row is being typed into.

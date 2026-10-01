@@ -373,6 +373,7 @@ pub static FR: Tr = Tr {
     match_map: "Plage",
     match_gulls: "Mouettes",
     match_round: "Durée",
+    match_posts: "Flèches par joueur",
     match_mode: "Mode",
     match_name: "Nom",
     match_name_empty: "- (Tab pour nommer)",

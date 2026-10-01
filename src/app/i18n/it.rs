@@ -373,6 +373,7 @@ pub static IT: Tr = Tr {
     match_map: "Spiaggia",
     match_gulls: "Gabbiani",
     match_round: "Durata",
+    match_posts: "Frecce a testa",
     match_mode: "Modalità",
     match_name: "Nome",
     match_name_empty: "- (Tab per il nome)",

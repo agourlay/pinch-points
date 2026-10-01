@@ -373,6 +373,7 @@ pub static EN: Tr = Tr {
     match_map: "Map",
     match_gulls: "Gull pressure",
     match_round: "Round length",
+    match_posts: "Arrows per player",
     match_mode: "Mode",
     match_name: "Name",
     match_name_empty: "- (Tab to name)",
