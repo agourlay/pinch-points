@@ -43,6 +43,26 @@ pub struct TierPip {
     index: u8,
 }
 
+/// One arrow slot on a chip, oldest first: an outline, filled for an
+/// arrow standing and drained by how much of its life is gone. One per
+/// arrow the rules allow, so the row is the cap, read at a glance.
+#[derive(Component)]
+pub struct ArrowDot {
+    seat: u8,
+    index: u8,
+}
+
+/// The fill inside an [`ArrowDot`]: its height is the arrow's life left.
+#[derive(Component)]
+pub struct ArrowFill {
+    seat: u8,
+    index: u8,
+}
+
+/// The most arrow slots a chip draws. The dial stops at six; a level file
+/// can ask for more, and past this the row would run into the score.
+const MAX_DOTS: u8 = 10;
+
 /// The crown icon shown on the current leader's chip.
 #[derive(Component)]
 pub struct LeaderCrown(pub u8);
@@ -59,8 +79,11 @@ pub struct RankDigit(pub u8);
 /// number; the rest shrink with their standing, with a gap between cards.
 /// Six of them still has to fit the column above the fold, so the tail is
 /// tighter than the head.
-const CHIP_TOPS: [f32; MAX_PLAYERS] = [10.0, 108.0, 172.0, 230.0, 284.0, 334.0];
-const CHIP_HEIGHTS: [f32; MAX_PLAYERS] = [88.0, 56.0, 50.0, 46.0, 42.0, 40.0];
+///
+/// Each chip holds three lines (name, castle tier, arrows), which sets the
+/// smallest: 56 is the three of them and the padding, with nothing spare.
+const CHIP_TOPS: [f32; MAX_PLAYERS] = [10.0, 112.0, 186.0, 256.0, 324.0, 390.0];
+const CHIP_HEIGHTS: [f32; MAX_PLAYERS] = [92.0, 66.0, 62.0, 60.0, 58.0, 56.0];
 const SCORE_PX: [f32; MAX_PLAYERS] = [46.0, 28.0, 24.0, 21.0, 19.0, 18.0];
 
 /// Rank medal colours: gold, silver, bronze, then driftwood for the rest.
@@ -144,6 +167,7 @@ fn spawn_score_chip(
     art: &crate::app::art::Art,
     seat: u8,
     label: String,
+    arrows: u8,
 ) {
     root.spawn((
         SidePanel(seat),
@@ -193,7 +217,7 @@ fn spawn_score_chip(
         chip.spawn(Node {
             flex_direction: FlexDirection::Column,
             flex_grow: 1.0,
-            row_gap: Val::Px(4.0),
+            row_gap: Val::Px(3.0),
             ..default()
         })
         .with_children(|mid| {
@@ -221,6 +245,42 @@ fn spawn_score_chip(
                         },
                         BackgroundColor(palette::PIP_OFF),
                     ));
+                }
+            });
+            // Upright where the tier pips lie flat, so the two rows of
+            // little marks do not read as one.
+            mid.spawn(Node {
+                column_gap: Val::Px(3.0),
+                ..default()
+            })
+            .with_children(|dots| {
+                for index in 0..arrows.min(MAX_DOTS) {
+                    dots.spawn((
+                        ArrowDot { seat, index },
+                        Node {
+                            width: Val::Px(6.0),
+                            height: Val::Px(9.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            border_radius: BorderRadius::all(Val::Px(2.0)),
+                            flex_direction: FlexDirection::Column,
+                            justify_content: JustifyContent::FlexEnd,
+                            overflow: Overflow::clip(),
+                            ..default()
+                        },
+                        BorderColor::all(palette::PIP_OFF),
+                        BackgroundColor(Color::NONE),
+                    ))
+                    .with_children(|dot| {
+                        dot.spawn((
+                            ArrowFill { seat, index },
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(0.0),
+                                ..default()
+                            },
+                            BackgroundColor(palette::PIP_ON),
+                        ));
+                    });
                 }
             });
         });
@@ -264,6 +324,7 @@ pub fn spawn_side_panels(
     settings: Res<GameSettings>,
     names: Res<crate::app::SeatNames>,
     art: Res<crate::app::art::Art>,
+    sim: Res<Sim>,
     bots: Res<Bots>,
     online: Res<Online>,
     playback: Res<Playback>,
@@ -278,9 +339,11 @@ pub fn spawn_side_panels(
             format!("{}{tag}", names.label(tr, seat))
         })
         .collect();
+    // The cap is the board's, set before the round and never during it.
+    let arrows = sim.0.signpost_rule().0;
     commands.spawn(sidebar(true)).with_children(|root| {
         for (seat, label) in labels.into_iter().enumerate() {
-            spawn_score_chip(root, &art, seat as u8, label);
+            spawn_score_chip(root, &art, seat as u8, label, arrows);
         }
     });
     spawn_clock_and_feed(&mut commands);
@@ -335,6 +398,31 @@ pub fn local_seat(online: &Online, playback_active: bool) -> Option<u8> {
         None if playback_active => None,
         None => Some(0),
     }
+}
+
+/// Whether `seat` is played at this screen: offline every seat the AI
+/// does not hold, since everyone sharing the keyboard and the pads is here;
+/// online only the chair this peer was dealt; and nobody's while watching,
+/// a recording or somebody else's beach. `local` is [`local_seat`]'s.
+///
+/// What the next-to-go mark is shown for. A table of AI is always at its
+/// cap, and marking their posts set half the beach wobbling for nobody.
+pub fn played_here(local: Option<u8>, online: bool, bots: &Bots, seat: u8) -> bool {
+    match local {
+        None => false,
+        Some(mine) if online => mine == seat,
+        Some(_) => bots.0.get(usize::from(seat)).is_some_and(Option::is_none),
+    }
+}
+
+/// How strongly the next-to-go marks show, `secs` into the round: the
+/// pulse the arrow on the beach and its dot on the chip share, so the eye
+/// ties the two together. Steady at full under reduced motion.
+pub fn next_to_go_pulse(secs: f32, reduced_motion: bool) -> f32 {
+    if reduced_motion {
+        return 1.0;
+    }
+    0.55 + 0.45 * (secs * std::f32::consts::TAU * 1.2).sin().abs()
 }
 
 /// The "(you)" / "(AI)" tag for a seat, shared by the panels and the
@@ -458,6 +546,66 @@ pub fn update_side_panels(
             palette::PIP_OFF
         };
         menu_ui::set_bg(&mut bg, target);
+    }
+}
+
+/// Keep every chip's arrow row current: a slot filled per arrow standing,
+/// oldest on the left and drained by its age, and the oldest picked out
+/// in gold, pulsing with its post on the beach, while planting another
+/// would cost it. That last only for the seats played at this screen.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn update_arrow_dots(
+    sim: Res<Sim>,
+    online: Res<Online>,
+    playback: Res<Playback>,
+    bots: Res<Bots>,
+    settings: Res<GameSettings>,
+    time: Res<Time>,
+    mut dots: Query<(&ArrowDot, &mut BorderColor)>,
+    mut fills: Query<(&ArrowFill, &mut Node, &mut BackgroundColor)>,
+    mut lives: Local<[Vec<f32>; MAX_PLAYERS]>,
+    mut marked: Local<[bool; MAX_PLAYERS]>,
+) {
+    let board = &sim.0;
+    let local = local_seat(&online, playback.0.is_some());
+    for (seat, out) in lives.iter_mut().enumerate() {
+        board.signpost_lives(seat as u8, out);
+        marked[seat] = played_here(local, online.0.is_some(), &bots, seat as u8)
+            && board.next_to_go(seat as u8).is_some();
+    }
+    let pulse = next_to_go_pulse(time.elapsed_secs(), settings.reduced_motion);
+    // The next to go is the oldest by definition, so the first slot.
+    let is_next = |seat: u8, index: u8| index == 0 && marked[usize::from(seat)];
+    for (dot, mut border) in &mut dots {
+        // The outline says whether an arrow stands there and the fill how
+        // long it has left. Told by the fill alone, an arrow about to run
+        // out was an empty slot to look at, and three standing read as one.
+        let standing = usize::from(dot.index) < lives[usize::from(dot.seat)].len();
+        let edge = BorderColor::all(if is_next(dot.seat, dot.index) {
+            palette::GOLD
+        } else if standing {
+            palette::PIP_ON
+        } else {
+            palette::PIP_OFF
+        });
+        if *border != edge {
+            *border = edge;
+        }
+    }
+    for (fill, mut node, mut bg) in &mut fills {
+        let life = lives[usize::from(fill.seat)]
+            .get(usize::from(fill.index))
+            .copied()
+            .unwrap_or(0.0);
+        let height = Val::Percent(100.0 * life);
+        if node.height != height {
+            node.height = height;
+        }
+        let ink = match is_next(fill.seat, fill.index) {
+            true => palette::GOLD.with_alpha(pulse),
+            false => palette::PIP_ON,
+        };
+        menu_ui::set_bg(&mut bg, ink);
     }
 }
 

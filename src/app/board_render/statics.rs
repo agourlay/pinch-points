@@ -49,6 +49,18 @@ pub struct SignpostShadow;
 #[derive(Component)]
 pub struct SignpostPaint;
 
+/// A gold glow behind the post the next placement will take: the same
+/// silhouette as the shadow, a size up, shown only on that one post.
+#[derive(Component)]
+pub struct SignpostHalo;
+
+/// How far the halo reaches past the post's own outline.
+const HALO_SCALE: f32 = 1.4;
+
+/// How far the next-to-go post rocks either way, in radians: a loose post
+/// in the sand, not a spinning one.
+const WOBBLE: f32 = 0.12;
+
 /// The board's size on its tile: a touch bigger than the flat arrow was,
 /// since the paint on it is what has to read and it sits inside the wood.
 const SIGN_SIZE: f32 = TILE * 0.94;
@@ -796,6 +808,13 @@ pub fn sync_signposts(
             ))
             .with_children(|parent| {
                 parent.spawn((
+                    SignpostHalo,
+                    image_sprite(&art.sign_shape, palette::GOLD, Vec2::splat(SIGN_SIZE)),
+                    Transform::from_translation(Vec3::new(0.0, 0.0, -0.04))
+                        .with_scale(Vec3::splat(HALO_SCALE)),
+                    Visibility::Hidden,
+                ));
+                parent.spawn((
                     SignpostShadow,
                     image_sprite(&art.sign_shape, SIGN_SHADOW, Vec2::splat(SIGN_SIZE)),
                     // Down-and-right in the board's own frame would swing
@@ -826,17 +845,25 @@ fn paint_color(owner: u8) -> Color {
 }
 
 /// Write what a post looks like *now*: how far it has settled after being
-/// planted, how worn it is, and how much life it has left.
+/// planted, how worn it is, how much life it has left, and whether it is
+/// the one the next placement will take.
+///
+/// That last is marked only for seats played at this screen (see
+/// [`crate::app::side_panels::played_here`]): it glows and rocks in the
+/// sand, in time with its dot on the owner's score chip.
 ///
 /// Wear keeps a post's ink and takes its edges instead of dimming it away
 /// (see [`post_alpha`]): a worn board is split and chipped
 /// ([`crate::app::art::Art::sign_board_worn`]) and its paint flaking.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn dress_signposts(
     time: Res<Time>,
     sim: Res<Sim>,
     art: Res<Art>,
     settings: Res<crate::app::settings::GameSettings>,
+    online: Res<crate::app::net::Online>,
+    playback: Res<crate::app::Playback>,
+    bots: Res<crate::app::Bots>,
     mut posts: Query<(&mut SignpostSprite, &mut Sprite, &mut Transform, &Children)>,
     mut shadows: Query<
         (&mut Sprite, &mut Transform),
@@ -844,6 +871,7 @@ pub fn dress_signposts(
             With<SignpostShadow>,
             Without<SignpostSprite>,
             Without<SignpostPaint>,
+            Without<SignpostHalo>,
         ),
     >,
     mut paints: Query<
@@ -852,11 +880,30 @@ pub fn dress_signposts(
             With<SignpostPaint>,
             Without<SignpostSprite>,
             Without<SignpostShadow>,
+            Without<SignpostHalo>,
+        ),
+    >,
+    mut halos: Query<
+        (&mut Sprite, &mut Visibility),
+        (
+            With<SignpostHalo>,
+            Without<SignpostSprite>,
+            Without<SignpostShadow>,
+            Without<SignpostPaint>,
         ),
     >,
 ) {
+    use crate::app::side_panels::{local_seat, next_to_go_pulse, played_here};
     let board = &sim.0;
     let dt = time.delta_secs();
+    let local = local_seat(&online, playback.0.is_some());
+    let next: [Option<(u8, u8)>; crate::sim::MAX_PLAYERS] = std::array::from_fn(|seat| {
+        played_here(local, online.0.is_some(), &bots, seat as u8)
+            .then(|| board.next_to_go(seat as u8))
+            .flatten()
+    });
+    let secs = time.elapsed_secs();
+    let pulse = next_to_go_pulse(secs, settings.reduced_motion);
     for (mut post, mut sprite, mut transform, children) in &mut posts {
         post.age += dt;
         if !on_board(board, post.x, post.y) {
@@ -897,7 +944,31 @@ pub fn dress_signposts(
             plant_pop(post.age)
         };
         transform.scale = Vec3::splat(pop * wither(fade));
+        let marked = next.get(usize::from(post.owner)).copied().flatten() == Some((post.x, post.y));
+        // Rocked about its heading, so the shadow below is worked out from
+        // the rotation it is actually drawn at.
+        let rock = match marked && !settings.reduced_motion {
+            true => WOBBLE * (secs * std::f32::consts::TAU * 2.4).sin(),
+            false => 0.0,
+        };
+        let rotation = layout::dir_rotation(post.dir) * Quat::from_rotation_z(rock);
+        if transform.rotation != rotation {
+            transform.rotation = rotation;
+        }
         for child in children {
+            if let Ok((mut halo, mut shown)) = halos.get_mut(*child) {
+                let want = match marked {
+                    true => Visibility::Inherited,
+                    false => Visibility::Hidden,
+                };
+                if *shown != want {
+                    *shown = want;
+                }
+                if marked {
+                    halo.color = palette::GOLD.with_alpha(pulse);
+                }
+                continue;
+            }
             if let Ok(mut coat) = paints.get_mut(*child) {
                 if coat.image != *paint_art {
                     coat.image = paint_art.clone();

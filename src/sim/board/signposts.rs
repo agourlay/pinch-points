@@ -71,16 +71,10 @@ impl Board {
             && self.signpost_count(player) >= self.rules.signpost_cap as usize
         {
             // CapPolicy::Evict (Reject was filtered above): drop the oldest.
-            let oldest = self
-                .signposts
-                .iter()
-                .enumerate()
-                .filter_map(|(i, slot)| slot.filter(|sp| sp.owner == player).map(|sp| (sp.seq, i)))
-                .min();
             // At the cap there is one to evict, unless the cap is zero,
             // which every parser refuses under Evict; a board built by
             // hand that way gets a refusal here rather than a panic.
-            let Some((_, i)) = oldest else {
+            let Some(i) = self.oldest_signpost(player) else {
                 return false;
             };
             self.signposts[i] = None;
@@ -149,6 +143,50 @@ impl Board {
                 let (x, y) = self.coords(tile);
                 (x as u8, y as u8, placed)
             })
+    }
+
+    /// The slot holding `player`'s oldest signpost: the first planted or
+    /// re-pointed, which is the one the cap takes and the one that runs out
+    /// first.
+    fn oldest_signpost(&self, player: PlayerId) -> Option<usize> {
+        self.signposts
+            .iter()
+            .enumerate()
+            .filter_map(|(i, slot)| slot.filter(|sp| sp.owner == player).map(|sp| (sp.seq, i)))
+            .min()
+            .map(|(_, i)| i)
+    }
+
+    /// The signpost `player` would lose to the next one they plant, if the
+    /// next one costs them one: under the evicting rule at the cap, their
+    /// oldest. `None` with room to spare, and always under puzzle rules,
+    /// where a full inventory refuses instead.
+    ///
+    /// The UI marks this post as the one about to go. Asked of the same
+    /// slot the eviction takes, so the mark cannot point at the wrong one.
+    pub fn next_to_go(&self, player: PlayerId) -> Option<(u8, u8)> {
+        if self.rules.cap_policy != CapPolicy::Evict
+            || self.signpost_count(player) < usize::from(self.rules.signpost_cap)
+        {
+            return None;
+        }
+        self.oldest_signpost(player)
+            .map(|i| self.coords_u8(i as u16))
+    }
+
+    /// How much life each of `player`'s signposts has left, oldest first,
+    /// into `out` (cleared first): the order the cap takes them in, and
+    /// under versus rules the order they run out in.
+    pub fn signpost_lives(&self, player: PlayerId, out: &mut Vec<f32>) {
+        out.clear();
+        let mut posts: Vec<&Signpost> = self
+            .signposts
+            .iter()
+            .flatten()
+            .filter(|sp| sp.owner == player)
+            .collect();
+        posts.sort_by_key(|sp| sp.seq);
+        out.extend(posts.into_iter().map(|sp| self.signpost_fade(sp)));
     }
 
     /// How many signposts `player` currently has on the board.

@@ -230,6 +230,54 @@ fn repointing_refreshes_health_and_age() {
     assert!(board.signpost_at(1, 0).is_none());
 }
 
+/// The post the UI marks as next to go is the one the next placement
+/// actually takes, re-pointing included, and nothing is marked with room
+/// to spare or under puzzle rules.
+#[test]
+fn the_next_to_go_is_the_one_the_cap_takes() {
+    let mut board = Board::new(8, 1, 0);
+    board.set_signpost_rule(3, CapPolicy::Evict);
+    for x in 0..2 {
+        assert!(board.place_signpost(0, x, 0, Up));
+    }
+    assert_eq!(board.next_to_go(0), None, "room for one more");
+    assert!(board.place_signpost(0, 2, 0, Up));
+    assert_eq!(board.next_to_go(0), Some((0, 0)), "at the cap: the oldest");
+    assert_eq!(board.next_to_go(1), None, "a rival's count is its own");
+    // Re-pointing the marked post makes it the newest: the mark moves on.
+    assert!(board.place_signpost(0, 0, 0, Down));
+    assert_eq!(board.next_to_go(0), Some((1, 0)));
+    // And the mark is a promise: the next placement takes that post.
+    let marked = board.next_to_go(0).expect("at the cap");
+    assert!(board.place_signpost(0, 4, 0, Up));
+    assert!(board.signpost_at(marked.0, marked.1).is_none());
+
+    let mut puzzle = Board::new(8, 1, 0);
+    puzzle.set_signpost_rule(1, CapPolicy::Reject);
+    assert!(puzzle.place_signpost(0, 0, 0, Up));
+    assert_eq!(puzzle.next_to_go(0), None, "a full inventory refuses");
+}
+
+/// Lives come back oldest first, the order the cap and the clock both
+/// take them in.
+#[test]
+fn signpost_lives_are_oldest_first() {
+    let mut board = Board::new(8, 1, 0);
+    let mut lives = Vec::new();
+    board.signpost_lives(0, &mut lives);
+    assert!(lives.is_empty());
+    // Planted right to left, so reading order is not age order.
+    assert!(board.place_signpost(0, 5, 0, Up));
+    for _ in 0..60 {
+        board.tick_idle();
+    }
+    assert!(board.place_signpost(0, 1, 0, Up));
+    board.signpost_lives(0, &mut lives);
+    assert_eq!(lives.len(), 2);
+    assert!(lives[0] < lives[1], "the older has less left: {lives:?}");
+    assert!((lives[1] - 1.0).abs() < f32::EPSILON, "fresh: {lives:?}");
+}
+
 /// `out_of_signposts` agrees with the rule it explains, and never fires
 /// where a fourth placement would simply take the oldest.
 #[test]

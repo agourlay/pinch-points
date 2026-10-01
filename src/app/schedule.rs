@@ -852,6 +852,7 @@ fn add_chrome_systems(app: &mut App) {
             hud::field_guide_visibility,
             hud::update_field_guide,
             side_panels::update_side_panels,
+            side_panels::update_arrow_dots.run_if(any_with_component::<side_panels::ArrowDot>),
             side_panels::update_side_clock.run_if(in_state(Screen::Versus)),
             (side_panels::collect_log, side_panels::collect_chat)
                 .chain()
