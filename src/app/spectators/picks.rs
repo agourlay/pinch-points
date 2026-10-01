@@ -59,31 +59,20 @@ pub struct PickCard(pub bool);
 /// Open while the host still takes calls, and a call already made can be
 /// changed until then. Repeated to the host once a second while the calls
 /// are open, since a pick is one datagram and UDP owes nobody that.
-#[allow(clippy::too_many_arguments)]
 pub fn spectator_pick_input(
-    mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
+    mut card: ListCard<PickCardUi, PickCard>,
+    keyboard: crate::app::keycaps::Keyboard,
     time: Res<Time>,
     settings: Res<crate::app::settings::GameSettings>,
-    (chat, events): (Res<SpectatorChat>, Res<SpectatorCard>),
-    phase: Res<State<crate::app::VersusPhase>>,
-    mut card: ResMut<PickCard>,
+    watching: Watching<SpectatorCard>,
     mut online: ResMut<Online>,
-    ui: Query<Entity, With<PickCardUi>>,
     mut resend: Local<f32>,
 ) {
-    let shut = |commands: &mut Commands, card: &mut PickCard| {
-        card.0 = false;
-        for entity in &ui {
-            commands.entity(entity).despawn();
-        }
-    };
-    let playing = *phase.get() == crate::app::VersusPhase::Running;
+    let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
     let open = online.0.as_ref().is_some_and(|s| s.stands.picks.open > 0);
-    if !is_spectating(&online) || chat.open() || events.0 || !playing || !open {
-        if card.0 {
-            shut(&mut commands, &mut card);
+    if !is_spectating(&online) || !watching.free() || watching.other_up() || !open {
+        if card.is_up() {
+            card.shut();
         }
         return;
     }
@@ -95,22 +84,21 @@ pub fn spectator_pick_input(
     {
         session.transport.send(NetMsg::SpectatorPick { seat });
     }
-    if !card.0 {
+    if !card.is_up() {
         if caps.just_pressed(&keys, 'P') {
-            card.0 = true;
-            spawn_pick_card(&mut commands, &settings, session);
+            spawn_pick_card(card.raise(), &settings, session);
         }
         return;
     }
     if keys.just_pressed(KeyCode::Escape) || caps.just_pressed(&keys, 'P') {
-        shut(&mut commands, &mut card);
+        card.shut();
         return;
     }
     if let Some(seat) = crate::app::menu_ui::number_pressed(&keys, usize::from(session.seats)) {
         let seat = seat as u8;
         session.stands.my_pick = Some(seat);
         session.transport.send(NetMsg::SpectatorPick { seat });
-        shut(&mut commands, &mut card);
+        card.shut();
     }
 }
 

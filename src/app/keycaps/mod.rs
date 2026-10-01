@@ -96,6 +96,15 @@ const BLOCKS: &[(&str, &[KeyCode])] = &[
     ("A/D", &[KeyCode::KeyA, KeyCode::KeyD]),
 ];
 
+/// The keyboard as the game reads it: the keys down this frame, and the
+/// caps that say which key carries which letter. Read together by every
+/// system that answers a mnemonic.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Keyboard<'w> {
+    pub keys: Res<'w, ButtonInput<KeyCode>>,
+    pub caps: Res<'w, KeyCaps>,
+}
+
 impl KeyCaps {
     /// What the cap says, if it differs from the QWERTY spelling.
     pub fn cap(&self, key: KeyCode) -> Option<char> {

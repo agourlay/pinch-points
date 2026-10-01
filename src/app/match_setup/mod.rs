@@ -274,6 +274,14 @@ impl MatchConfig {
 
 pub const BOT_LEVELS: [BotLevel; 3] = [BotLevel::Easy, BotLevel::Normal, BotLevel::Hard];
 
+/// The match being set up: its dials, and the shelf of handmade beaches
+/// the map dial walks.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Dials<'w> {
+    pub config: ResMut<'w, MatchConfig>,
+    pub beaches: Res<'w, CustomBeaches>,
+}
+
 /// The wire form of this screen's choices, for a host to send and every peer
 /// to build the same beach from. `teams` and `seed` are not on this screen:
 /// teams is a setting, and the seed is drawn when the match launches.

@@ -589,21 +589,60 @@ pub fn scale_card_frames(
     }
 }
 
+/// The window as the interface sees it: its size and pixel density, and
+/// the interface's own scale over both.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Viewport<'w, 's> {
+    windows: Query<'w, 's, &'static Window>,
+    ui_scale: Res<'w, UiScale>,
+}
+
+impl Viewport<'_, '_> {
+    /// The window's size in interface units, which is what anything laid
+    /// out against the interface measures in: its pixels over the
+    /// interface's scale. `None` on a frame with no window.
+    pub fn size(&self) -> Option<Vec2> {
+        let window = self.windows.single().ok()?;
+        Some(Vec2::new(window.width(), window.height()) / self.ui_scale.0.max(f32::EPSILON))
+    }
+
+    /// The interface's scale.
+    pub fn ui_scale(&self) -> f32 {
+        self.ui_scale.0
+    }
+
+    /// Physical pixels per logical one, 1 with no window to ask.
+    pub fn scale_factor(&self) -> f32 {
+        self.windows.iter().next().map_or(1.0, Window::scale_factor)
+    }
+}
+
+/// Every button a menu answers to: the keyboard, and the pads.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Buttons<'w, 's> {
+    pub keys: Res<'w, ButtonInput<KeyCode>>,
+    pub pads: Query<'w, 's, &'static Gamepad>,
+}
+
+impl Buttons<'_, '_> {
+    /// Whether any pad pressed `button` this frame.
+    pub fn pad(&self, button: GamepadButton) -> bool {
+        self.pads.iter().any(|pad| pad.just_pressed(button))
+    }
+}
+
+/// A card just made: what dressing it needs to know.
+type NewCard = (Entity, &'static mut Node, Option<&'static BorderColor>);
+
 /// Give a newborn card its tide line and its driftwood frame.
-#[allow(clippy::type_complexity)]
 pub fn dress_cards(
     mut commands: Commands,
     art: Res<crate::app::art::Art>,
-    ui_scale: Res<UiScale>,
-    windows: Query<&Window>,
-    mut cards: Query<(Entity, &mut Node, Option<&BorderColor>), Added<ShoreCard>>,
-    mut framed: Query<
-        (Entity, &mut Node, Option<&BorderColor>),
-        (Added<Framed>, Without<ShoreCard>),
-    >,
+    viewport: Viewport,
+    mut cards: Query<NewCard, Added<ShoreCard>>,
+    mut framed: Query<NewCard, (Added<Framed>, Without<ShoreCard>)>,
 ) {
-    let factor = windows.iter().next().map_or(1.0, Window::scale_factor);
-    let corner = frame_corner_scale(ui_scale.0, factor);
+    let corner = frame_corner_scale(viewport.ui_scale(), viewport.scale_factor());
     for (card, mut node, edge) in &mut framed {
         node.border_radius = BorderRadius::all(Val::Px(FRAMED_RADIUS));
         let frame = commands

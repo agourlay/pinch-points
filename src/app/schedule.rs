@@ -543,6 +543,7 @@ fn add_ui_systems(app: &mut App) {
             // the two never both set the screen from one keypress.
             (
                 update::poll_check,
+                menu_scene::paste_round,
                 menu_scene::menu_input,
                 menu_scene::update_menu_rows,
             )
@@ -647,7 +648,9 @@ fn add_play_systems(app: &mut App) {
                     .and_then(not(editor::editor_naming))
                     .and_then(keys_are_free),
             ),
-            play_input::setup_input.run_if(puzzle_setup.and_then(keys_are_free)),
+            (play_input::setup_input, play_input::browse_levels)
+                .chain()
+                .run_if(puzzle_setup.and_then(keys_are_free)),
             dev::debug_autoplay.run_if(puzzle_setup),
             hint::hint_input.run_if(puzzle_setup.or_else(puzzle_done).and_then(keys_are_free)),
             // One nested group so the tuple stays inside Bevy's arity limit

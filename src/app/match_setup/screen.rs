@@ -217,21 +217,24 @@ fn footer_ink() -> Color {
     palette::PARCHMENT.with_alpha(0.40)
 }
 
+/// A footer line under the card: its words, their ink, and the pill that
+/// turns the warning gold.
+type FooterLine = (
+    &'static MatchPadInfo,
+    &'static mut Text,
+    &'static mut TextColor,
+    &'static mut BackgroundColor,
+);
+
 /// Keep the controller footer current: the join hint, and who joined -
 /// and the note about beaches this table has grown too big for.
-#[allow(clippy::type_complexity)]
 pub fn update_match_pad_info(
     seats: Res<crate::app::gamepad::PadSeats>,
     menu: Res<MatchMenu>,
     config: Res<MatchConfig>,
     settings: Res<GameSettings>,
     beaches: Res<CustomBeaches>,
-    mut rows: Query<(
-        &MatchPadInfo,
-        &mut Text,
-        &mut TextColor,
-        &mut BackgroundColor,
-    )>,
+    mut rows: Query<FooterLine>,
     mut note: Query<&mut Text, (With<MatchBeachNote>, Without<MatchPadInfo>)>,
 ) {
     let tr = settings.tr();
@@ -300,18 +303,30 @@ pub(super) fn live_rows(config: &MatchConfig) -> [bool; ROWS] {
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+/// What starting the match sets going: the series, and the screen.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct MatchStart<'w> {
+    tournament: ResMut<'w, crate::app::tournament::Tournament>,
+    next_screen: ResMut<'w, NextState<Screen>>,
+}
+
 pub fn match_setup_input(
     keys: Res<ButtonInput<KeyCode>>,
-    beaches: Res<CustomBeaches>,
     mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
     mut menu: ResMut<MatchMenu>,
-    mut config: ResMut<MatchConfig>,
+    dials: Dials,
     mut settings: ResMut<GameSettings>,
-    mut tournament: ResMut<crate::app::tournament::Tournament>,
-    mut next_screen: ResMut<NextState<Screen>>,
+    start: MatchStart,
     pads: Res<crate::app::gamepad::PadSeats>,
 ) {
+    let Dials {
+        mut config,
+        beaches,
+    } = dials;
+    let MatchStart {
+        mut tournament,
+        mut next_screen,
+    } = start;
     if let Some(seat) = menu.naming {
         type_a_name(seat, &mut typed, &keys, &mut settings, &mut menu);
         return;

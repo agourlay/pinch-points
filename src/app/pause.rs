@@ -89,33 +89,55 @@ fn close(
     }
 }
 
+/// The pause card: whether it is up and where its cursor is, the freeze
+/// it holds, and the commands and entities that draw it.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PauseCard<'w, 's> {
+    commands: Commands<'w, 's>,
+    menu: ResMut<'w, PauseMenu>,
+    paused: ResMut<'w, Paused>,
+    ui: Query<'w, 's, Entity, With<PauseUi>>,
+}
+
+/// The two ways out of a round from the card: the menu, and the desktop.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Leaving<'w> {
+    next_screen: ResMut<'w, NextState<Screen>>,
+    exit: MessageWriter<'w, AppExit>,
+}
+
 /// Open, navigate, and act on the pause card. Runs on the play screens.
-#[allow(clippy::too_many_arguments)]
 pub fn pause_input(
-    mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
-    pads: Query<&Gamepad>,
+    card: PauseCard,
+    buttons: crate::app::menu_ui::Buttons,
     settings: Res<GameSettings>,
     screen: Res<State<Screen>>,
     phase: Res<State<Phase>>,
-    mut menu: ResMut<PauseMenu>,
-    mut paused: ResMut<Paused>,
     mut online: ResMut<Online>,
-    mut next_screen: ResMut<NextState<Screen>>,
-    mut exit: MessageWriter<AppExit>,
-    ui: Query<Entity, With<PauseUi>>,
+    leaving: Leaving,
 ) {
+    let PauseCard {
+        mut commands,
+        mut menu,
+        mut paused,
+        ui,
+    } = card;
+    let keys = &*buttons.keys;
+    let Leaving {
+        mut next_screen,
+        mut exit,
+    } = leaving;
     // Pads: Start toggles the card, but never during puzzle setup where
     // Start means "begin the run".
     let start_ok = !(*screen.get() == Screen::Puzzle && *phase.get() == Phase::Setup);
-    let pad_start = start_ok && pads.iter().any(|p| p.just_pressed(GamepadButton::Start));
+    let pad_start = start_ok && buttons.pad(GamepadButton::Start);
     // Nor on a puzzle's won or lost card, where Esc is the way back to
     // the stage list and a pause card would open under it for a frame.
     let done = *screen.get() == Screen::Puzzle && matches!(*phase.get(), Phase::Won | Phase::Lost);
     let escape = !done && keys.just_pressed(KeyCode::Escape);
-    let pad_up = pads.iter().any(|p| p.just_pressed(GamepadButton::DPadUp));
-    let pad_down = pads.iter().any(|p| p.just_pressed(GamepadButton::DPadDown));
-    let pad_accept = pads.iter().any(|p| p.just_pressed(GamepadButton::South));
+    let pad_up = buttons.pad(GamepadButton::DPadUp);
+    let pad_down = buttons.pad(GamepadButton::DPadDown);
+    let pad_accept = buttons.pad(GamepadButton::South);
 
     // A peer's pause opens the card here too, so a frozen beach is never
     // unexplained. Their Escape is as good as ours.
@@ -152,7 +174,7 @@ pub fn pause_input(
         close(&mut commands, &mut menu, &mut paused, &ui);
         return;
     }
-    menu.selected = menu_ui::nav(&keys, menu.selected, OPTIONS);
+    menu.selected = menu_ui::nav(keys, menu.selected, OPTIONS);
     // Up wins over a same-frame down, as it always has.
     let pad_nav = if pad_up {
         menu_ui::Nav::Up
@@ -162,7 +184,7 @@ pub fn pause_input(
         menu_ui::Nav::Stay
     };
     menu.selected = menu_ui::step(pad_nav, menu.selected, OPTIONS);
-    if menu_ui::enter(&keys) || pad_accept {
+    if menu_ui::enter(keys) || pad_accept {
         match PauseAction::ALL[menu.selected] {
             PauseAction::Continue => {
                 if let Some(session) = online.0.as_mut() {

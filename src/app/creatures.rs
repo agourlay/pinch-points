@@ -298,32 +298,56 @@ fn smoothing_alpha(
     }
 }
 
+/// The clocks a creature is drawn between ticks by: the frame's, the
+/// sim's fixed one, and the watch [`smoothing_alpha`] keeps on the tick.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Tween<'w, 's> {
+    time: Res<'w, Time>,
+    fixed_time: Res<'w, Time<Fixed>>,
+    watch: Local<'s, (u64, f32)>,
+}
+
+/// A crab's sprite, as the interpolation moves and dresses it.
+type CrabBody = (
+    &'static CrabSprite,
+    &'static mut Crowding,
+    &'static mut Transform,
+    &'static mut Sprite,
+    &'static Children,
+);
+
+/// The crabs on screen and the shadows under them.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct CrabSprites<'w, 's> {
+    bodies: Query<'w, 's, CrabBody, Without<CreatureShadow>>,
+    shadows: Query<'w, 's, &'static mut Transform, (With<CreatureShadow>, Without<CrabSprite>)>,
+}
+
 /// Interpolate each crab sprite between its previous and current sim position.
-#[allow(clippy::too_many_arguments)]
 pub fn interpolate_crabs(
     sim: Res<Sim>,
-    art: Res<Art>,
-    fixed_time: Res<Time<Fixed>>,
-    time: Res<Time>,
-    settings: Res<crate::app::settings::GameSettings>,
-    mut commands: Commands,
-    mut rng: ResMut<effects::VisualRng>,
+    fx: effects::Fx,
+    tween: Tween,
     mut glint_clock: Local<f32>,
-    mut watch: Local<(u64, f32)>,
     mut by_id: Local<HashMap<u32, Crab>>,
     mut crowds: Local<HashMap<u32, usize>>,
-    mut sprites: Query<
-        (
-            &CrabSprite,
-            &mut Crowding,
-            &mut Transform,
-            &mut Sprite,
-            &Children,
-        ),
-        Without<CreatureShadow>,
-    >,
-    mut shadows: Query<&mut Transform, (With<CreatureShadow>, Without<CrabSprite>)>,
+    crabs: CrabSprites,
 ) {
+    let effects::Fx {
+        mut commands,
+        art,
+        mut rng,
+        settings,
+    } = fx;
+    let Tween {
+        time,
+        fixed_time,
+        mut watch,
+    } = tween;
+    let CrabSprites {
+        bodies: mut sprites,
+        mut shadows,
+    } = crabs;
     let board = &sim.0;
     let alpha = smoothing_alpha(board.ticks(), &mut watch, time.delta_secs(), &fixed_time);
     by_id.clear();
@@ -447,13 +471,9 @@ pub fn interpolate_crabs(
 }
 
 /// Spawn sprites for new gulls, despawn sprites for departed ones.
-#[allow(clippy::too_many_arguments)]
 pub fn sync_gull_sprites(
-    mut commands: Commands,
     sim: Res<Sim>,
-    art: Res<Art>,
-    settings: Res<crate::app::settings::GameSettings>,
-    mut rng: ResMut<effects::VisualRng>,
+    fx: effects::Fx,
     mut live: Local<HashMap<u32, Gull>>,
     // The gulls that were on the board last frame, and the clock they were
     // on. A *sprite* being new is not a gull arriving: a level with gulls
@@ -462,6 +482,12 @@ pub fn sync_gull_sprites(
     mut before: Local<(Option<u64>, Vec<u32>)>,
     existing: Query<(Entity, &GullSprite)>,
 ) {
+    let effects::Fx {
+        mut commands,
+        art,
+        mut rng,
+        settings,
+    } = fx;
     let board = &sim.0;
     // A clock that has run backwards is a different board, whose gull ids
     // start again at zero, and a board at tick zero has not run at all:
@@ -516,6 +542,21 @@ pub fn sync_gull_sprites(
     seen.extend(board.gulls().iter().map(|gull| gull.id));
 }
 
+/// A gull's sprite, as the interpolation moves and dresses it.
+type GullBody = (
+    &'static GullSprite,
+    &'static mut Transform,
+    &'static mut Sprite,
+    &'static Children,
+);
+
+/// The gulls on screen and the shadows under them.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct GullSprites<'w, 's> {
+    bodies: Query<'w, 's, GullBody, Without<CreatureShadow>>,
+    shadows: Query<'w, 's, (&'static mut Transform, &'static mut Sprite), With<CreatureShadow>>,
+}
+
 /// Interpolate gull sprites, and fly the flying ones.
 ///
 /// A gull's hop is two to four tiles in a straight line (spec §3.5), and
@@ -533,27 +574,32 @@ pub fn sync_gull_sprites(
 /// border plank is thirteen pixels of a tile-sized frame, so a gull scaled
 /// far past its tile hangs over the edge of the board with nothing to
 /// occlude it.
-#[allow(clippy::too_many_arguments)]
 pub fn interpolate_gulls(
     sim: Res<Sim>,
-    art: Res<Art>,
-    fixed_time: Res<Time<Fixed>>,
-    time: Res<Time>,
-    settings: Res<crate::app::settings::GameSettings>,
-    mut commands: Commands,
-    mut rng: ResMut<effects::VisualRng>,
-    mut watch: Local<(u64, f32)>,
+    fx: effects::Fx,
+    tween: Tween,
     mut by_id: Local<HashMap<u32, Gull>>,
     // Gulls currently in the air. Presence is the flight: a gull that
     // turns up here without an entry has just taken off, and one whose
     // entry outlives its flight has just landed.
     mut aloft: Local<HashMap<u32, Flight>>,
-    mut sprites: Query<
-        (&GullSprite, &mut Transform, &mut Sprite, &Children),
-        Without<CreatureShadow>,
-    >,
-    mut shadows: Query<(&mut Transform, &mut Sprite), With<CreatureShadow>>,
+    gulls: GullSprites,
 ) {
+    let effects::Fx {
+        mut commands,
+        art,
+        mut rng,
+        settings,
+    } = fx;
+    let Tween {
+        time,
+        fixed_time,
+        mut watch,
+    } = tween;
+    let GullSprites {
+        bodies: mut sprites,
+        mut shadows,
+    } = gulls;
     let board = &sim.0;
     // Read before `smoothing_alpha`, which writes this frame's tick into
     // the watch: after it, the two always agree and the test below is dead.

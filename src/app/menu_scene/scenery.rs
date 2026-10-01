@@ -93,8 +93,7 @@ pub struct Scrim;
 pub fn tend_backdrop(
     mut commands: Commands,
     screen: Res<State<crate::app::Screen>>,
-    windows: Query<&Window>,
-    ui_scale: Res<UiScale>,
+    viewport: crate::app::menu_ui::Viewport,
     shore: Query<Entity, With<MenuShore>>,
     critters: Query<Entity, With<MenuCritter>>,
     scrim: Query<Entity, With<Scrim>>,
@@ -111,10 +110,9 @@ pub fn tend_backdrop(
     }
     let wants_scrim = *screen.get() != crate::app::Screen::Menu;
     if wants_scrim && scrim.is_empty() {
-        let Ok(window) = windows.single() else {
+        let Some(size) = viewport.size() else {
             return;
         };
-        let size = postcard_size(window, &ui_scale);
         commands.spawn((
             Scrim,
             Sprite::from_color(
@@ -130,21 +128,17 @@ pub fn tend_backdrop(
     }
 }
 
-/// The window's size in interface units: what the postcard is laid out in.
-///
-/// The camera over the postcard zooms by the interface's scale
-/// (`boot::fit_camera`), so a postcard this size fills the window and every
-/// pixel measure in this file is one of the interface's own. Laid out in
-/// window pixels, the scenery stayed its 720p size while the cards grew
-/// with the window, and on a big screen the props shrank to specks beside
-/// them.
-fn postcard_size(window: &Window, ui_scale: &UiScale) -> Vec2 {
-    Vec2::new(window.width(), window.height()) / ui_scale.0.max(f32::EPSILON)
-}
+// The postcard is laid out in the window's size in interface units
+// ([`crate::app::menu_ui::Viewport::size`]). The camera over it zooms by
+// the interface's scale (`boot::fit_camera`), so a postcard that size fills
+// the window and every pixel measure in this file is one of the
+// interface's own. Laid out in window pixels, the scenery stayed its 720p
+// size while the cards grew with the window, and on a big screen the props
+// shrank to specks beside them.
 
 /// The whole postcard, bottom to top: sand with shells, a wet line, the
 /// open sea up to the horizon, and sky above. World-space sprites behind
-/// the UI, in interface units ([`postcard_size`]).
+/// the UI, in interface units ([`crate::app::menu_ui::Viewport::size`]).
 fn spawn_shore(commands: &mut Commands, art: &art::Art, rng: &mut VisualRng, size: Vec2) {
     let (w, h) = (size.x, size.y);
     let bottom = -h / 2.0;
@@ -517,23 +511,20 @@ fn spawn_beach_props(
 /// (Re)build the shore whenever the window size changes or the menu is
 /// freshly entered: the backdrop is world-space and sized to the window,
 /// so maximizing must stretch it.
-#[allow(clippy::too_many_arguments)]
 pub fn refit_shore(
     mut commands: Commands,
     art: Res<art::Art>,
     mut rng: ResMut<VisualRng>,
-    windows: Query<&Window>,
-    ui_scale: Res<UiScale>,
+    viewport: crate::app::menu_ui::Viewport,
     mut last: Local<Vec2>,
     shore: Query<Entity, With<MenuShore>>,
     critters: Query<Entity, With<MenuCritter>>,
 ) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
     // In interface units, so turning the UI scale rebuilds it as surely as
     // resizing the window does.
-    let size = postcard_size(window, &ui_scale);
+    let Some(size) = viewport.size() else {
+        return;
+    };
     if *last == size && !shore.is_empty() {
         return;
     }
@@ -662,29 +653,47 @@ fn spawn_critter(
     }
 }
 
+/// A piece of the sea that rolls in place: the marker saying which, and
+/// what rolling it moves.
+type SeaPart<Marker> = (&'static Marker, &'static mut Transform, &'static mut Sprite);
+
+/// What moves on the postcard: the travellers, and the sea's two layers.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Movers<'w, 's> {
+    critters: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static mut MenuCritter,
+            &'static mut Transform,
+            &'static mut Sprite,
+        ),
+    >,
+    waves: Query<'w, 's, SeaPart<WaveSegment>, Without<MenuCritter>>,
+    foam: Query<'w, 's, SeaPart<ShoreFoam>, (Without<MenuCritter>, Without<WaveSegment>)>,
+}
+
 /// Every so often something traverses the postcard: crabs scuttle the
 /// sand, gulls glide the sky, clouds drift high, and little sailboats
 /// cross the sea with a gentle bob. Waves roll shoreward on a loop.
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn menu_ambience(
     mut commands: Commands,
     time: Res<Time>,
     art: Res<art::Art>,
     mut rng: ResMut<VisualRng>,
     mut countdown: Local<f32>,
-    windows: Query<&Window>,
-    ui_scale: Res<UiScale>,
-    mut critters: Query<(Entity, &mut MenuCritter, &mut Transform, &mut Sprite)>,
-    mut waves: Query<(&WaveSegment, &mut Transform, &mut Sprite), Without<MenuCritter>>,
-    mut foam: Query<
-        (&ShoreFoam, &mut Transform, &mut Sprite),
-        (Without<MenuCritter>, Without<WaveSegment>),
-    >,
+    viewport: crate::app::menu_ui::Viewport,
+    movers: Movers,
 ) {
-    let Ok(window) = windows.single() else {
+    let Movers {
+        mut critters,
+        mut waves,
+        mut foam,
+    } = movers;
+    let Some(size) = viewport.size() else {
         return;
     };
-    let size = postcard_size(window, &ui_scale);
     let (w, h) = (size.x, size.y);
     let dt = time.delta_secs();
 

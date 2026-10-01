@@ -89,9 +89,30 @@ pub(super) fn host_step(ask: HostAsk) -> HostStep {
     }
 }
 
+/// The way from the lobby into the arena: the session the match is
+/// played over, the series it belongs to, and the screen and phase that
+/// open on it.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct IntoArena<'w> {
+    online: ResMut<'w, Online>,
+    tournament: ResMut<'w, crate::app::tournament::Tournament>,
+    next_screen: ResMut<'w, NextState<Screen>>,
+    next_vphase: ResMut<'w, NextState<VersusPhase>>,
+}
+
+impl IntoArena<'_> {
+    /// Walk the table in: the session and the series take over, and the
+    /// round opens running.
+    fn walk_in(&mut self, session: OnlineSession, series: crate::app::tournament::Tournament) {
+        self.online.0 = Some(session);
+        *self.tournament = series;
+        self.next_vphase.set(VersusPhase::Running);
+        self.next_screen.set(Screen::Versus);
+    }
+}
+
 /// Hosting: announce on a timer, gather joiners (up to five rivals, plus
 /// onlookers), and launch on Enter (or once the auto-host quota fills).
-#[allow(clippy::too_many_arguments)]
 pub fn host_tick(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -99,10 +120,7 @@ pub fn host_tick(
     config: Res<MatchConfig>,
     beaches: Res<crate::app::match_setup::CustomBeaches>,
     mut state: ResMut<LobbyState>,
-    mut online: ResMut<Online>,
-    mut tournament: ResMut<crate::app::tournament::Tournament>,
-    mut next_screen: ResMut<NextState<Screen>>,
-    mut next_vphase: ResMut<NextState<VersusPhase>>,
+    mut arena: IntoArena,
 ) {
     let tr = settings.tr();
     let game_name = state.game_name.clone();
@@ -173,17 +191,7 @@ pub fn host_tick(
         quota,
     );
     if launch {
-        launch_the_match(
-            &mut state,
-            &settings,
-            &config,
-            &beaches,
-            joined,
-            &mut online,
-            &mut tournament,
-            &mut next_screen,
-            &mut next_vphase,
-        );
+        launch_the_match(&mut state, &settings, &config, &beaches, joined, &mut arena);
     }
 }
 
@@ -192,17 +200,13 @@ pub fn host_tick(
 ///
 /// Lifted out of `host_tick`, which had grown to nine jobs: this is the
 /// one of them with a beginning and an end.
-#[allow(clippy::too_many_arguments)]
 fn launch_the_match(
     state: &mut LobbyState,
     settings: &GameSettings,
     config: &MatchConfig,
     beaches: &crate::app::match_setup::CustomBeaches,
     joined: usize,
-    online: &mut Online,
-    tournament: &mut crate::app::tournament::Tournament,
-    next_screen: &mut NextState<Screen>,
-    next_vphase: &mut NextState<VersusPhase>,
+    arena: &mut IntoArena,
 ) {
     // The beacon does not stop at launch, it changes what it says: a
     // running beach cannot be joined, since lockstep has nothing to
@@ -296,13 +300,11 @@ fn launch_the_match(
     session.stay_on_air(announcer);
     session.home.from_lobby = true;
     session.home.game_name = state.game_name.clone();
-    online.0 = Some(session);
     // The series is part of the terms, so every peer knows it is one
     // and tallies the same rounds. Without that the host alone would
     // count, and only the host would see a champion.
-    *tournament = crate::app::tournament::Tournament::from_terms(terms, standing);
-    next_vphase.set(VersusPhase::Running);
-    next_screen.set(Screen::Versus);
+    let series = crate::app::tournament::Tournament::from_terms(terms, standing);
+    arena.walk_in(session, series);
 }
 
 /// Fold this tick's greetings and silences into the table: who has just

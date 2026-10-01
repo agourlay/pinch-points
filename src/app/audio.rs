@@ -96,6 +96,14 @@ pub(crate) fn sfx_gain(settings: &crate::app::settings::GameSettings, muted: &Mu
     if muted.0 { 0.0 } else { settings.sfx_gain() }
 }
 
+/// The three voices [`music_audible`] hears.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Loudness<'w> {
+    settings: Res<'w, crate::app::settings::GameSettings>,
+    muted: Res<'w, Muted>,
+    menu: Res<'w, crate::app::pause::PauseMenu>,
+}
+
 /// Whether the theme should be audible this frame. The pause card is the
 /// third voice here, and the one that is not a player preference: it holds
 /// the music down for as long as it is up and gives back exactly that.
@@ -378,20 +386,42 @@ fn once(
     }
 }
 
+/// What playing a one-shot takes: somewhere to spawn it, the sounds, and
+/// how loud the player wants them (see [`sfx_gain`]).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Speaker<'w, 's> {
+    commands: Commands<'w, 's>,
+    sounds: Res<'w, Sounds>,
+    settings: Res<'w, crate::app::settings::GameSettings>,
+    muted: Res<'w, Muted>,
+}
+
+/// The pads plugged in, and the requests that shake them.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Rumble<'w, 's> {
+    pads: Query<'w, 's, Entity, With<Gamepad>>,
+    requests: MessageWriter<'w, GamepadRumbleRequest>,
+}
+
 /// Map each sim event to its one-shot (and rumble where it matters).
-#[allow(clippy::too_many_arguments)]
 pub fn play_events(
-    mut commands: Commands,
+    speaker: Speaker,
     mut events: MessageReader<SimEvent>,
-    sounds: Res<Sounds>,
     screen: Res<State<Screen>>,
     sim: Res<Sim>,
-    settings: Res<crate::app::settings::GameSettings>,
-    muted: Res<Muted>,
-    pads: Query<Entity, With<Gamepad>>,
     cursors: Query<&crate::app::cursor::Cursor>,
-    mut rumble: MessageWriter<GamepadRumbleRequest>,
+    rumble: Rumble,
 ) {
+    let Speaker {
+        mut commands,
+        sounds,
+        settings,
+        muted,
+    } = speaker;
+    let Rumble {
+        pads,
+        requests: mut rumble,
+    } = rumble;
     let mut buzz = |ms: u64, strength: f32| {
         if !settings.rumble {
             return;
@@ -565,18 +595,20 @@ fn wanted(screen: Screen, phase: crate::app::VersusPhase) -> Option<Mood> {
 ///
 /// When a versus round is over the playing track fades and nothing takes
 /// its place (see [`wanted`]).
-#[allow(clippy::too_many_arguments)]
 pub fn rotate_music(
     mut commands: Commands,
     mut playlist: ResMut<MusicPlaylist>,
-    settings: Res<crate::app::settings::GameSettings>,
-    muted: Res<Muted>,
-    menu: Res<crate::app::pause::PauseMenu>,
+    loudness: Loudness,
     screen: Res<State<Screen>>,
     phase: Res<State<crate::app::VersusPhase>>,
     time: Res<Time>,
     playing: Query<(Entity, &Music), Without<FadingOut>>,
 ) {
+    let Loudness {
+        settings,
+        muted,
+        menu,
+    } = loudness;
     let mood = wanted(*screen.get(), *phase.get());
     let mut live = false;
     for (entity, music) in &playing {

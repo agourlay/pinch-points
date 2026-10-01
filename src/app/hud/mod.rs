@@ -4,9 +4,8 @@
 
 use crate::app::editor::EditorState;
 use crate::app::lobby::LobbyState;
-use crate::app::net::Online;
 use crate::app::settings::GameSettings;
-use crate::app::{Bots, Campaign, Phase, Playback, Screen, Seats, Sim, VersusPhase};
+use crate::app::{Campaign, Phase, Playback, Screen, Sim, VersusPhase};
 use crate::app::{menu_ui, palette};
 
 use bevy::prelude::*;
@@ -44,6 +43,15 @@ fn prompt_fit(natural: f32, room: f32) -> Option<f32> {
     (size >= PROMPT_MIN_PX).then_some(size)
 }
 
+/// The prompt line as `fit_prompt` sizes it: the words, the size and
+/// wrapping it is set in, and how wide it came out last frame.
+type PromptText = (
+    &'static Text,
+    &'static mut TextFont,
+    &'static mut TextLayout,
+    &'static bevy::text::TextLayoutInfo,
+);
+
 /// Keep the prompt on one line on the screens that have the crab legend
 /// just above it.
 ///
@@ -58,30 +66,20 @@ fn prompt_fit(natural: f32, room: f32) -> Option<f32> {
 ///
 /// Reads last frame's layout, so a new prompt is one frame at the old
 /// size before it settles.
-#[allow(clippy::type_complexity)]
 pub fn fit_prompt(
-    windows: Query<&Window>,
-    ui_scale: Res<UiScale>,
+    viewport: crate::app::menu_ui::Viewport,
     guides: Query<&Node, (With<FieldGuide>, Without<PromptLabel>)>,
-    mut prompts: Query<
-        (
-            &Text,
-            &mut TextFont,
-            &mut TextLayout,
-            &bevy::text::TextLayoutInfo,
-        ),
-        With<PromptLabel>,
-    >,
+    mut prompts: Query<PromptText, With<PromptLabel>>,
     // The line given up on: too long even at the fine print, and wrapped.
     // Held until the words change, or measuring the wrapped pill as if it
     // were the line would unwrap it and give up again, every other frame.
     mut too_long: Local<Option<String>>,
 ) {
     let legend_up = guides.iter().any(|node| node.display != Display::None);
-    let Ok(window) = windows.single() else {
+    let Some(size) = viewport.size() else {
         return;
     };
-    let room = window.width() / ui_scale.0.max(f32::EPSILON) * PROMPT_SHARE - 2.0 * PROMPT_PAD_X;
+    let room = size.x * PROMPT_SHARE - 2.0 * PROMPT_PAD_X;
     for (text, mut font, mut layout, info) in &mut prompts {
         let FontSize::Px(now) = font.font_size else {
             continue;
@@ -315,18 +313,25 @@ pub struct TideClock;
 /// `LEVEL_HINTS`); a test checks the table still says so.
 pub(crate) const KEY_LESSON_LEVEL: &str = "Welcome Ashore";
 
+/// What the player has run into on this level: how stuck they are, and
+/// the last placement refused.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct HintNotes<'w> {
+    stuck: Res<'w, crate::app::hint::Hints>,
+    denied: Res<'w, crate::app::hint::DeniedNote>,
+}
+
 /// Show a level's teaching hint while its signposts are being placed.
-#[allow(clippy::too_many_arguments)]
 pub fn update_hint(
     campaign: Res<Campaign>,
     screen: Res<State<Screen>>,
     phase: Res<State<Phase>>,
     settings: Res<GameSettings>,
     caps: Res<crate::app::keycaps::KeyCaps>,
-    stuck: Res<crate::app::hint::Hints>,
-    denied: Res<crate::app::hint::DeniedNote>,
+    notes: HintNotes,
     mut hints: Query<&mut Text, With<HintLabel>>,
 ) {
+    let HintNotes { stuck, denied } = notes;
     let line = if *screen.get() != Screen::Puzzle {
         String::new()
     } else {
@@ -412,88 +417,107 @@ pub fn update_tide_clock(
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
-pub fn update_hud(
-    sim: Res<Sim>,
-    campaign: Res<Campaign>,
-    screen: Res<State<Screen>>,
-    phase: Res<State<Phase>>,
-    vphase: Res<State<VersusPhase>>,
-    editor: Res<EditorState>,
-    online: Res<Online>,
-    playback: Res<Playback>,
-    lobby: Res<LobbyState>,
-    seats: Res<Seats>,
-    // Tupled: a system takes at most sixteen parameters, and this one was
-    // already there before the seat names arrived.
-    (settings, keycaps, names): (
-        Res<GameSettings>,
-        Res<crate::app::keycaps::KeyCaps>,
-        Res<crate::app::SeatNames>,
-    ),
-    bots: Res<Bots>,
-    library: Res<crate::app::replays::Library>,
-    // Tupled for the same reason as the pair above: sixteen is the limit.
-    (notice, match_menu, coop): (
-        Res<crate::app::RoundNotice>,
-        Res<crate::app::match_setup::MatchMenu>,
-        Res<crate::app::Coop>,
-    ),
-    // Tupled for the same reason again: sixteen is the limit.
-    (speed, tournament, pause_menu, spectators): (
-        Res<crate::app::replays::PlaybackSpeed>,
-        Res<crate::app::tournament::Tournament>,
-        Res<crate::app::pause::PauseMenu>,
-        Res<crate::app::spectators::SpectatorChat>,
-    ),
-    mut labels: ParamSet<(
-        Query<&mut Text, With<LevelLabel>>,
-        Query<&mut Text, With<PostsLabel>>,
-        Query<(&mut Text, &mut Node), With<PromptLabel>>,
-        Query<&mut Node, With<TitleBox>>,
-    )>,
-) {
-    let tr = settings.tr();
-    let lang = settings.language;
-    let said = text::screen_text(
-        *screen.get(),
-        &text::Readout {
-            tr,
-            lang,
-            sim: &sim,
-            campaign: &campaign,
-            coop: coop.in_play(&campaign),
-            phase: &phase,
-            vphase: &vphase,
-            editor: &editor,
-            online: &online,
-            playback: &playback,
-            lobby: &lobby,
-            tournament: &tournament,
-            seats: &seats,
-            settings: &settings,
-            keycaps: &keycaps,
-            names: &names,
-            bots: &bots,
-            library: &library,
-            notice: &notice,
-            match_menu: &match_menu,
-            paused: pause_menu.open,
+/// Where every screen is at: the states, and the menus whose row or card
+/// changes what the prompt may promise.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Modes<'w> {
+    screen: Res<'w, State<Screen>>,
+    phase: Res<'w, State<Phase>>,
+    vphase: Res<'w, State<VersusPhase>>,
+    editor: Res<'w, EditorState>,
+    lobby: Res<'w, LobbyState>,
+    match_menu: Res<'w, crate::app::match_setup::MatchMenu>,
+    pause_menu: Res<'w, crate::app::pause::PauseMenu>,
+    coop: Res<'w, crate::app::Coop>,
+}
+
+/// Everything the header, the status slot and the prompt are written from:
+/// the sources of a [`text::Readout`], read together every frame.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct HudSources<'w> {
+    modes: Modes<'w>,
+    seating: crate::app::side_panels::Seating<'w>,
+    sim: Res<'w, Sim>,
+    campaign: Res<'w, Campaign>,
+    settings: Res<'w, GameSettings>,
+    keycaps: Res<'w, crate::app::keycaps::KeyCaps>,
+    library: Res<'w, crate::app::replays::Library>,
+    notice: Res<'w, crate::app::RoundNotice>,
+    speed: Res<'w, crate::app::replays::PlaybackSpeed>,
+    tournament: Res<'w, crate::app::tournament::Tournament>,
+    spectators: Res<'w, crate::app::spectators::SpectatorChat>,
+}
+
+impl HudSources<'_> {
+    fn readout(&self) -> text::Readout<'_> {
+        let Self {
+            modes,
+            seating,
+            sim,
+            campaign,
+            settings,
+            keycaps,
+            library,
+            notice,
+            speed,
+            tournament,
+            spectators,
+        } = self;
+        text::Readout {
+            tr: settings.tr(),
+            lang: settings.language,
+            sim,
+            campaign,
+            coop: modes.coop.in_play(campaign),
+            phase: &modes.phase,
+            vphase: &modes.vphase,
+            editor: &modes.editor,
+            online: &seating.online,
+            playback: &seating.playback,
+            lobby: &modes.lobby,
+            tournament,
+            seats: &seating.seats,
+            settings,
+            keycaps,
+            names: &seating.names,
+            bots: &seating.bots,
+            library,
+            notice,
+            match_menu: &modes.match_menu,
+            paused: modes.pause_menu.open,
             spectator_typing: spectators.0.as_deref(),
-            crowd: online
+            crowd: seating
+                .online
                 .0
                 .as_ref()
                 .map_or_else(Default::default, |session| session.stands.crowd),
             speed: speed.0,
-        },
-    );
+        }
+    }
+}
+
+/// The header's four parts, written in turn.
+type HudLabels<'w, 's> = ParamSet<
+    'w,
+    's,
+    (
+        Query<'static, 'static, &'static mut Text, With<LevelLabel>>,
+        Query<'static, 'static, &'static mut Text, With<PostsLabel>>,
+        Query<'static, 'static, (&'static mut Text, &'static mut Node), With<PromptLabel>>,
+        Query<'static, 'static, &'static mut Node, With<TitleBox>>,
+    ),
+>;
+
+pub fn update_hud(sources: HudSources, mut labels: HudLabels) {
+    let screen = sources.modes.screen.get();
+    let said = text::screen_text(*screen, &sources.readout());
     if let Ok(mut text) = labels.p0().single_mut() {
         menu_ui::set_text(&mut text, &said.title);
     }
     if let Ok(mut node) = labels.p3().single_mut() {
         // A definite width rather than a maximum: the box is sized by the
         // text inside it, which a maximum does not reach.
-        let wanted = title_width(*screen.get());
+        let wanted = title_width(*screen);
         if node.width != wanted {
             node.width = wanted;
         }

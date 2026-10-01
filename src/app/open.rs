@@ -13,13 +13,10 @@ use bevy::log::{info, warn};
 /// and it can sit for as long as the browser it launched runs. So it is not
 /// waited on: a thread reaps it and logs how it went, and the notice says
 /// "handed to".
-#[cfg_attr(test, allow(clippy::unnecessary_wraps))]
 pub(crate) fn open_url(url: &str) -> std::io::Result<()> {
     #[cfg(test)]
     {
-        // Tests must not launch anyone's browser: they only note the ask.
-        tests::OPENED.lock().unwrap().push(url.to_string());
-        Ok(())
+        tests::stand_in(url)
     }
     #[cfg(not(test))]
     open_url_for_real(url)
@@ -60,4 +57,22 @@ fn open_url_for_real(url: &str) -> std::io::Result<()> {
 pub(crate) mod tests {
     /// Every address the page asked a browser for, in order.
     pub(crate) static OPENED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+    /// An address the stand-in fails to open, as a desktop with no opener
+    /// would: by the address rather than a switch, since tests run side by
+    /// side and a switch thrown by one would fail another's browser.
+    pub(crate) const UNOPENABLE: &str = "https://github.com/x/y/releases/tag/unopenable";
+
+    /// What tests get instead of a browser: the ask is noted, and nobody's
+    /// desktop is touched.
+    pub(super) fn stand_in(url: &str) -> std::io::Result<()> {
+        OPENED.lock().unwrap().push(url.to_string());
+        match url == UNOPENABLE {
+            true => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no opener on this desktop",
+            )),
+            false => Ok(()),
+        }
+    }
 }

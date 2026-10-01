@@ -585,18 +585,20 @@ pub fn kick_castles(
 /// Runs after [`sync_castles`], and must: the sprite being cheered is the
 /// one built at the *new* tier, and the events reaching this frame are the
 /// previous frame's (see the `Frame` sets), so it is already standing.
-#[allow(clippy::too_many_arguments)]
 pub fn cheer_tier_ups(
-    mut commands: Commands,
+    fx: crate::app::effects::Fx,
     mut events: MessageReader<crate::app::sim_events::SimEvent>,
     sim: Res<Sim>,
-    art: Res<Art>,
-    settings: Res<crate::app::settings::GameSettings>,
-    mut rng: ResMut<crate::app::effects::VisualRng>,
     mut trauma: ResMut<crate::app::effects::Trauma>,
     mut castles: Query<(&CastleSprite, &mut CastleKick)>,
 ) {
-    use crate::app::effects::{Burst, burst, ring};
+    use crate::app::effects::{Burst, Fx, burst, ring};
+    let Fx {
+        mut commands,
+        art,
+        mut rng,
+        settings,
+    } = fx;
     use crate::app::sim_events::SimEvent;
     let board = &sim.0;
     for event in events.read() {

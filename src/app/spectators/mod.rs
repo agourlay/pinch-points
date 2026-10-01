@@ -104,6 +104,81 @@ impl Stands {
     }
 }
 
+/// The resource saying whether one of the spectators' list cards is up.
+pub trait CardFlag: Resource + Component<Mutability = bevy::ecs::component::Mutable> {
+    fn is_up(&self) -> bool;
+    fn set_up(&mut self, up: bool);
+}
+
+impl CardFlag for PickCard {
+    fn is_up(&self) -> bool {
+        self.0
+    }
+    fn set_up(&mut self, up: bool) {
+        self.0 = up;
+    }
+}
+
+impl CardFlag for SpectatorCard {
+    fn is_up(&self) -> bool {
+        self.0
+    }
+    fn set_up(&mut self, up: bool) {
+        self.0 = up;
+    }
+}
+
+/// One of the spectators' list cards: whether it is up, the entities that
+/// draw it, and the commands that put it up and take it down.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct ListCard<'w, 's, Ui: Component, Flag: CardFlag> {
+    commands: Commands<'w, 's>,
+    flag: ResMut<'w, Flag>,
+    ui: Query<'w, 's, Entity, With<Ui>>,
+}
+
+impl<'w, 's, Ui: Component, Flag: CardFlag> ListCard<'w, 's, Ui, Flag> {
+    pub fn is_up(&self) -> bool {
+        self.flag.is_up()
+    }
+
+    /// Mark the card up, and hand back the commands to draw it with.
+    pub fn raise(&mut self) -> &mut Commands<'w, 's> {
+        self.flag.set_up(true);
+        &mut self.commands
+    }
+
+    /// Take the card down: the flag, and everything drawn for it.
+    pub fn shut(&mut self) {
+        self.flag.set_up(false);
+        for entity in &self.ui {
+            self.commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// Whether a spectator can make a call right now: not while typing, and
+/// only while the round runs. `Other` is the card a call must not open
+/// over, since both cards answer the number keys.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Watching<'w, Other: CardFlag> {
+    chat: Res<'w, SpectatorChat>,
+    phase: Res<'w, State<crate::app::VersusPhase>>,
+    other: Res<'w, Other>,
+}
+
+impl<Other: CardFlag> Watching<'_, Other> {
+    /// Nothing else has the keyboard and there is a round to call on.
+    pub fn free(&self) -> bool {
+        !self.chat.open() && *self.phase.get() == crate::app::VersusPhase::Running
+    }
+
+    /// The other card is up.
+    pub fn other_up(&self) -> bool {
+        self.other.is_up()
+    }
+}
+
 /// Whether this peer is a spectator: online, in a round, holding no seat.
 pub fn is_spectating(online: &Online) -> bool {
     online

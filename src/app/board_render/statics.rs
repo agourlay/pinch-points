@@ -844,6 +844,37 @@ fn paint_color(owner: u8) -> Color {
     palette::player_color(owner).lighter(0.08)
 }
 
+/// A post's shadow, told apart from the post and its other children so all
+/// of them can be written in the same pass.
+type ShadowOnly = (
+    With<SignpostShadow>,
+    Without<SignpostSprite>,
+    Without<SignpostPaint>,
+    Without<SignpostHalo>,
+);
+/// A post's paint, likewise.
+type PaintOnly = (
+    With<SignpostPaint>,
+    Without<SignpostSprite>,
+    Without<SignpostShadow>,
+    Without<SignpostHalo>,
+);
+/// A post's halo, likewise.
+type HaloOnly = (
+    With<SignpostHalo>,
+    Without<SignpostSprite>,
+    Without<SignpostShadow>,
+    Without<SignpostPaint>,
+);
+
+/// The children a post is drawn with besides its board.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PostParts<'w, 's> {
+    shadows: Query<'w, 's, (&'static mut Sprite, &'static mut Transform), ShadowOnly>,
+    paints: Query<'w, 's, &'static mut Sprite, PaintOnly>,
+    halos: Query<'w, 's, (&'static mut Sprite, &'static mut Visibility), HaloOnly>,
+}
+
 /// Write what a post looks like *now*: how far it has settled after being
 /// planted, how worn it is, how much life it has left, and whether it is
 /// the one the next placement will take.
@@ -855,50 +886,26 @@ fn paint_color(owner: u8) -> Color {
 /// Wear keeps a post's ink and takes its edges instead of dimming it away
 /// (see [`post_alpha`]): a worn board is split and chipped
 /// ([`crate::app::art::Art::sign_board_worn`]) and its paint flaking.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn dress_signposts(
     time: Res<Time>,
     sim: Res<Sim>,
     art: Res<Art>,
     settings: Res<crate::app::settings::GameSettings>,
-    online: Res<crate::app::net::Online>,
-    playback: Res<crate::app::Playback>,
-    bots: Res<crate::app::Bots>,
+    seating: crate::app::side_panels::Seating,
     mut posts: Query<(&mut SignpostSprite, &mut Sprite, &mut Transform, &Children)>,
-    mut shadows: Query<
-        (&mut Sprite, &mut Transform),
-        (
-            With<SignpostShadow>,
-            Without<SignpostSprite>,
-            Without<SignpostPaint>,
-            Without<SignpostHalo>,
-        ),
-    >,
-    mut paints: Query<
-        &mut Sprite,
-        (
-            With<SignpostPaint>,
-            Without<SignpostSprite>,
-            Without<SignpostShadow>,
-            Without<SignpostHalo>,
-        ),
-    >,
-    mut halos: Query<
-        (&mut Sprite, &mut Visibility),
-        (
-            With<SignpostHalo>,
-            Without<SignpostSprite>,
-            Without<SignpostShadow>,
-            Without<SignpostPaint>,
-        ),
-    >,
+    parts: PostParts,
 ) {
-    use crate::app::side_panels::{local_seat, next_to_go_pulse, played_here};
+    use crate::app::side_panels::next_to_go_pulse;
+    let PostParts {
+        mut shadows,
+        mut paints,
+        mut halos,
+    } = parts;
     let board = &sim.0;
     let dt = time.delta_secs();
-    let local = local_seat(&online, playback.0.is_some());
     let next: [Option<(u8, u8)>; crate::sim::MAX_PLAYERS] = std::array::from_fn(|seat| {
-        played_here(local, online.0.is_some(), &bots, seat as u8)
+        seating
+            .played_here(seat as u8)
             .then(|| board.next_to_go(seat as u8))
             .flatten()
     });

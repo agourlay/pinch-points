@@ -157,19 +157,30 @@ pub fn spawn_editor_ui(
         });
 }
 
+/// The palette's rows that light up for what is chosen: the brushes,
+/// their labels, and the level kinds.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PaletteRows<'w, 's> {
+    brushes: Query<'w, 's, (&'static PaletteRow, &'static mut BackgroundColor)>,
+    kinds: Query<'w, 's, (&'static KindRow, &'static mut BackgroundColor), Without<PaletteRow>>,
+    labels: Query<'w, 's, (&'static PaletteLabel, &'static mut TextColor)>,
+}
+
 /// Light the loaded brush and the chosen kind, and say what the cursor is
 /// standing on.
-#[allow(clippy::too_many_arguments)]
 pub fn update_editor_palette(
     state: Res<EditorState>,
     sim: Res<Sim>,
     settings: Res<GameSettings>,
     cursors: Query<&Cursor>,
-    mut rows: Query<(&PaletteRow, &mut BackgroundColor)>,
-    mut kinds: Query<(&KindRow, &mut BackgroundColor), Without<PaletteRow>>,
-    mut labels: Query<(&PaletteLabel, &mut TextColor)>,
+    palette_rows: PaletteRows,
     mut under: Query<&mut Text, With<UnderCursor>>,
 ) {
+    let PaletteRows {
+        brushes: mut rows,
+        mut kinds,
+        mut labels,
+    } = palette_rows;
     let tr = settings.tr();
     for (row, mut fill) in &mut kinds {
         let want = match row.0 == state.kind {

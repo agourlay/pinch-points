@@ -162,203 +162,110 @@ pub fn global_key_from_name(name: &str) -> Option<KeyCode> {
     GLOBAL_KEYS.into_iter().find(|&key| key_name(key) == name)
 }
 
-/// Keys a player may bind. Anything outside this list is ignored during
-/// capture, which keeps Escape (cancel), the [`GLOBAL_KEYS`] and the odd
-/// media key from being swallowed by a rebind.
+/// Keys a player may bind. Anything else is ignored during capture, which
+/// keeps Escape (cancel), Enter, the function keys, the [`GLOBAL_KEYS`] and
+/// the odd media key from being swallowed by a rebind.
 pub fn bindable(key: KeyCode) -> bool {
-    #[allow(clippy::enum_glob_use)]
-    use KeyCode::*;
-    !GLOBAL_KEYS.contains(&key)
-        && matches!(
-            key,
-            KeyA | KeyB
-                | KeyC
-                | KeyD
-                | KeyE
-                | KeyF
-                | KeyG
-                | KeyH
-                | KeyI
-                | KeyJ
-                | KeyK
-                | KeyL
-                | KeyM
-                | KeyN
-                | KeyO
-                | KeyP
-                | KeyQ
-                | KeyR
-                | KeyS
-                | KeyT
-                | KeyU
-                | KeyV
-                | KeyW
-                | KeyX
-                | KeyY
-                | KeyZ
-                | Digit0
-                | Digit1
-                | Digit2
-                | Digit3
-                | Digit4
-                | Digit5
-                | Digit6
-                | Digit7
-                | Digit8
-                | Digit9
-                | ArrowUp
-                | ArrowDown
-                | ArrowLeft
-                | ArrowRight
-                | Numpad0
-                | Numpad1
-                | Numpad2
-                | Numpad3
-                | Numpad4
-                | Numpad5
-                | Numpad6
-                | Numpad7
-                | Numpad8
-                | Numpad9
-                | NumpadEnter
-                | NumpadAdd
-                | NumpadSubtract
-                | NumpadMultiply
-                | NumpadDivide
-                | NumpadDecimal
-                | Space
-                | Tab
-                | Backspace
-                | Insert
-                | Delete
-                | Home
-                | End
-                | PageUp
-                | PageDown
-                | ShiftLeft
-                | ShiftRight
-                | ControlLeft
-                | ControlRight
-                | AltLeft
-                | AltRight
-                | Comma
-                | Period
-                | Slash
-                | Semicolon
-                | Quote
-                | BracketLeft
-                | BracketRight
-                | Backslash
-                | Minus
-                | Equal
-                | Backquote
-        )
+    !GLOBAL_KEYS.contains(&key) && BINDABLE.contains(&key)
 }
 
-/// The list of bindable keys, used to read a name back into a [`KeyCode`].
-/// Built from [`bindable`] so the two can never disagree.
+/// The bindable keys in the order the controls screen offers them, used
+/// to read a name back into a [`KeyCode`]. The one list [`bindable`]
+/// answers from too, so the two can never disagree.
 pub(crate) fn all_bindable() -> impl Iterator<Item = KeyCode> {
-    // KeyCode has no iterator, but every variant we accept is reachable
-    // from this catalogue of candidates.
-    CANDIDATES.iter().copied().filter(|&key| bindable(key))
+    BINDABLE
+        .iter()
+        .copied()
+        .filter(|key| !GLOBAL_KEYS.contains(key))
 }
 
-/// Every key the game could conceivably offer; `bindable` picks from it.
-const CANDIDATES: [KeyCode; 89] = {
-    #[allow(clippy::enum_glob_use)]
-    use KeyCode::*;
-    [
-        KeyA,
-        KeyB,
-        KeyC,
-        KeyD,
-        KeyE,
-        KeyF,
-        KeyG,
-        KeyH,
-        KeyI,
-        KeyJ,
-        KeyK,
-        KeyL,
-        KeyM,
-        KeyN,
-        KeyO,
-        KeyP,
-        KeyQ,
-        KeyR,
-        KeyS,
-        KeyT,
-        KeyU,
-        KeyV,
-        KeyW,
-        KeyX,
-        KeyY,
-        KeyZ,
-        Digit0,
-        Digit1,
-        Digit2,
-        Digit3,
-        Digit4,
-        Digit5,
-        Digit6,
-        Digit7,
-        Digit8,
-        Digit9,
-        ArrowUp,
-        ArrowDown,
-        ArrowLeft,
-        ArrowRight,
-        Numpad0,
-        Numpad1,
-        Numpad2,
-        Numpad3,
-        Numpad4,
-        Numpad5,
-        Numpad6,
-        Numpad7,
-        Numpad8,
-        Numpad9,
-        NumpadEnter,
-        NumpadAdd,
-        NumpadSubtract,
-        NumpadMultiply,
-        NumpadDivide,
-        NumpadDecimal,
-        Space,
-        Tab,
-        Backspace,
-        Insert,
-        Delete,
-        Home,
-        End,
-        PageUp,
-        PageDown,
-        ShiftLeft,
-        ShiftRight,
-        ControlLeft,
-        ControlRight,
-        AltLeft,
-        AltRight,
-        Comma,
-        Period,
-        Slash,
-        Semicolon,
-        Quote,
-        BracketLeft,
-        BracketRight,
-        Backslash,
-        Minus,
-        Equal,
-        Backquote,
-        Escape,
-        Enter,
-        F1,
-        F2,
-        F3,
-        F4,
-        F5,
-    ]
-};
+/// Every key a binding may use, the [`GLOBAL_KEYS`] among them since they
+/// sit in the alphabet; [`bindable`] takes those back out. KeyCode has no
+/// iterator of its own, so the list is written down.
+const BINDABLE: [KeyCode; 82] = [
+    KeyCode::KeyA,
+    KeyCode::KeyB,
+    KeyCode::KeyC,
+    KeyCode::KeyD,
+    KeyCode::KeyE,
+    KeyCode::KeyF,
+    KeyCode::KeyG,
+    KeyCode::KeyH,
+    KeyCode::KeyI,
+    KeyCode::KeyJ,
+    KeyCode::KeyK,
+    KeyCode::KeyL,
+    KeyCode::KeyM,
+    KeyCode::KeyN,
+    KeyCode::KeyO,
+    KeyCode::KeyP,
+    KeyCode::KeyQ,
+    KeyCode::KeyR,
+    KeyCode::KeyS,
+    KeyCode::KeyT,
+    KeyCode::KeyU,
+    KeyCode::KeyV,
+    KeyCode::KeyW,
+    KeyCode::KeyX,
+    KeyCode::KeyY,
+    KeyCode::KeyZ,
+    KeyCode::Digit0,
+    KeyCode::Digit1,
+    KeyCode::Digit2,
+    KeyCode::Digit3,
+    KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
+    KeyCode::Digit9,
+    KeyCode::ArrowUp,
+    KeyCode::ArrowDown,
+    KeyCode::ArrowLeft,
+    KeyCode::ArrowRight,
+    KeyCode::Numpad0,
+    KeyCode::Numpad1,
+    KeyCode::Numpad2,
+    KeyCode::Numpad3,
+    KeyCode::Numpad4,
+    KeyCode::Numpad5,
+    KeyCode::Numpad6,
+    KeyCode::Numpad7,
+    KeyCode::Numpad8,
+    KeyCode::Numpad9,
+    KeyCode::NumpadEnter,
+    KeyCode::NumpadAdd,
+    KeyCode::NumpadSubtract,
+    KeyCode::NumpadMultiply,
+    KeyCode::NumpadDivide,
+    KeyCode::NumpadDecimal,
+    KeyCode::Space,
+    KeyCode::Tab,
+    KeyCode::Backspace,
+    KeyCode::Insert,
+    KeyCode::Delete,
+    KeyCode::Home,
+    KeyCode::End,
+    KeyCode::PageUp,
+    KeyCode::PageDown,
+    KeyCode::ShiftLeft,
+    KeyCode::ShiftRight,
+    KeyCode::ControlLeft,
+    KeyCode::ControlRight,
+    KeyCode::AltLeft,
+    KeyCode::AltRight,
+    KeyCode::Comma,
+    KeyCode::Period,
+    KeyCode::Slash,
+    KeyCode::Semicolon,
+    KeyCode::Quote,
+    KeyCode::BracketLeft,
+    KeyCode::BracketRight,
+    KeyCode::Backslash,
+    KeyCode::Minus,
+    KeyCode::Equal,
+    KeyCode::Backquote,
+];
 
 /// The settings-file name for a key: Bevy's own spelling, which is stable
 /// and unambiguous. [`key_from_name`] is its inverse.

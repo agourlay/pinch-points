@@ -11,9 +11,10 @@ pub use feed::{EventLog, collect_chat, collect_log, update_log};
 use crate::app::net::Online;
 use crate::app::settings::GameSettings;
 use crate::app::teams::TeamMode;
-use crate::app::{Bots, Playback, Seats, Sim};
+use crate::app::{Bots, Playback, SeatNames, Seats, Sim};
 use crate::app::{menu_ui, palette};
 use crate::sim::MAX_PLAYERS;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 /// Width of each sidebar in px; `fit_camera` reserves this much on both
@@ -294,27 +295,18 @@ fn spawn_clock_and_feed(commands: &mut Commands) {
 }
 
 /// Spawn the sidebars after `load_versus` has set the seat count.
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_side_panels(
     mut commands: Commands,
-    seats: Res<Seats>,
+    seating: Seating,
     settings: Res<GameSettings>,
-    names: Res<crate::app::SeatNames>,
     art: Res<crate::app::art::Art>,
     sim: Res<Sim>,
-    bots: Res<Bots>,
-    online: Res<Online>,
-    playback: Res<Playback>,
     mut log: ResMut<EventLog>,
 ) {
     log.0.clear();
     let tr = settings.tr();
-    let local = local_seat(&online, playback.0.is_some());
-    let labels: Vec<String> = (0..seats.0.max(2))
-        .map(|seat| {
-            let tag = seat_tag(tr, &bots, local, seat);
-            format!("{}{tag}", names.label(tr, seat))
-        })
+    let labels: Vec<String> = (0..seating.seats.0.max(2))
+        .map(|seat| seating.label(tr, seat))
         .collect();
     // The cap is the board's, set before the round and never during it.
     let arrows = sim.0.signpost_rule().0;
@@ -357,6 +349,38 @@ pub fn leading_seats(
         }
     }
     leaders
+}
+
+/// Who sits where: the table, which chairs the AI holds and what everyone
+/// is called, and whether this screen is a peer's, a recording's or the
+/// keyboard's. Read together wherever a seat is labelled or a mark is
+/// shown only to the people it is for.
+#[derive(SystemParam)]
+pub struct Seating<'w> {
+    pub seats: Res<'w, Seats>,
+    pub bots: Res<'w, Bots>,
+    pub names: Res<'w, SeatNames>,
+    pub online: Res<'w, Online>,
+    pub playback: Res<'w, Playback>,
+}
+
+impl Seating<'_> {
+    /// The seat at this keyboard: see [`local_seat`].
+    pub fn local(&self) -> Option<u8> {
+        local_seat(&self.online, self.playback.0.is_some())
+    }
+
+    /// Whether `seat` is played at this screen: see [`played_here`].
+    pub fn played_here(&self, seat: u8) -> bool {
+        played_here(self.local(), self.online.0.is_some(), &self.bots, seat)
+    }
+
+    /// A seat's name with its "(you)" or "(AI)" tag, as the chips and the
+    /// results card write it.
+    pub fn label(&self, tr: &crate::app::i18n::Tr, seat: u8) -> String {
+        let tag = seat_tag(tr, &self.bots, self.local(), seat);
+        format!("{}{tag}", self.names.label(tr, seat))
+    }
 }
 
 /// The seat the person at this keyboard is playing, and `None` when
@@ -419,32 +443,55 @@ pub fn seat_tag(
     }
 }
 
+/// A chip's card: where it sits in the column and how it is coloured.
+type ChipFrame = (
+    &'static SidePanel,
+    &'static mut Node,
+    &'static mut BackgroundColor,
+    &'static mut BorderColor,
+);
+
+/// A chip's score number and how big it is drawn.
+type ChipScore = (
+    &'static mut SideScore,
+    &'static mut Text,
+    &'static mut TextFont,
+    &'static mut UiTransform,
+);
+
+/// Every part of the score chips that follows the standings.
+#[derive(SystemParam)]
+pub struct Chips<'w, 's> {
+    frames: Query<'w, 's, ChipFrame>,
+    scores: Query<'w, 's, ChipScore>,
+    crowns: Query<'w, 's, (&'static LeaderCrown, &'static mut Visibility)>,
+    medals: Query<'w, 's, (&'static RankMedal, &'static mut BackgroundColor), Without<SidePanel>>,
+    digits: Query<'w, 's, (&'static RankDigit, &'static mut Text), Without<SideScore>>,
+}
+
 /// Keep the chips sorted and sized by rank, the numbers current, and the
 /// crown on the leader (all writes guarded).
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn update_side_panels(
     online: Res<Online>,
     sim: Res<Sim>,
     seats: Res<Seats>,
     settings: Res<GameSettings>,
     time: Res<Time>,
-    mut panels: Query<(
-        &SidePanel,
-        &mut Node,
-        &mut BackgroundColor,
-        &mut BorderColor,
-    )>,
-    mut scores: Query<(&mut SideScore, &mut Text, &mut TextFont, &mut UiTransform)>,
-    mut crowns: Query<(&LeaderCrown, &mut Visibility)>,
-    mut medals: Query<(&RankMedal, &mut BackgroundColor), Without<SidePanel>>,
-    mut digits: Query<(&RankDigit, &mut Text), Without<SideScore>>,
+    mut chips: Chips,
     mut value: Local<String>,
 ) {
+    let Chips {
+        frames: panels,
+        scores,
+        crowns,
+        medals,
+        digits,
+    } = &mut chips;
     let board_scores = sim.0.scores();
     let mode = crate::app::teams::in_play(&settings, &online, seats.0);
     let leaders = leading_seats(board_scores, seats.0, mode);
     let rank = ranks(board_scores, seats.0);
-    for (panel, mut node, mut bg, mut border) in &mut panels {
+    for (panel, mut node, mut bg, mut border) in panels {
         let seat = panel.0 as usize;
         let r = rank[seat];
         let (top, height) = (Val::Px(CHIP_TOPS[r]), Val::Px(CHIP_HEIGHTS[r]));
@@ -470,13 +517,13 @@ pub fn update_side_panels(
             *border = edge;
         }
     }
-    for (medal, mut bg) in &mut medals {
+    for (medal, mut bg) in medals {
         menu_ui::set_bg(&mut bg, MEDALS[rank[medal.0 as usize]]);
     }
-    for (digit, mut text) in &mut digits {
+    for (digit, mut text) in digits {
         menu_ui::set_text(&mut text, PLACES[rank[digit.0 as usize]]);
     }
-    for (mut chip, mut text, mut font, mut transform) in &mut scores {
+    for (mut chip, mut text, mut font, mut transform) in scores {
         use std::fmt::Write;
         value.clear();
         let _ = write!(&mut *value, "{}", board_scores[chip.seat as usize]);
@@ -503,7 +550,7 @@ pub fn update_side_panels(
             transform.scale = pop;
         }
     }
-    for (crown, mut visibility) in &mut crowns {
+    for (crown, mut visibility) in crowns {
         let target = if leaders[crown.0 as usize] {
             Visibility::Inherited
         } else {
@@ -519,25 +566,20 @@ pub fn update_side_panels(
 /// oldest on the left and drained by its age, and the oldest picked out
 /// in gold, pulsing with its post on the beach, while planting another
 /// would cost it. That last only for the seats played at this screen.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn update_arrow_dots(
     sim: Res<Sim>,
-    online: Res<Online>,
-    playback: Res<Playback>,
-    bots: Res<Bots>,
+    seating: Seating,
     settings: Res<GameSettings>,
     time: Res<Time>,
     mut dots: Query<(&ArrowDot, &mut BorderColor)>,
     mut fills: Query<(&ArrowFill, &mut Node, &mut BackgroundColor)>,
     mut lives: Local<[Vec<f32>; MAX_PLAYERS]>,
-    mut marked: Local<[bool; MAX_PLAYERS]>,
 ) {
     let board = &sim.0;
-    let local = local_seat(&online, playback.0.is_some());
+    let mut marked = [false; MAX_PLAYERS];
     for (seat, out) in lives.iter_mut().enumerate() {
         board.signpost_lives(seat as u8, out);
-        marked[seat] = played_here(local, online.0.is_some(), &bots, seat as u8)
-            && board.next_to_go(seat as u8).is_some();
+        marked[seat] = seating.played_here(seat as u8) && board.next_to_go(seat as u8).is_some();
     }
     let pulse = next_to_go_pulse(time.elapsed_secs(), settings.reduced_motion);
     // The next to go is the oldest by definition, so the first slot.

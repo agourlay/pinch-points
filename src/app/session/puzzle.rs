@@ -17,19 +17,19 @@ pub(in crate::app) fn reset_puzzle_phase(mut next_phase: ResMut<NextState<Phase>
 
 /// Swap the sim to the campaign's current level and rebuild everything that
 /// renders from board identity (statics, signposts, crabs, cursor bounds).
-#[allow(clippy::too_many_arguments)]
 pub(in crate::app) fn handle_load_level(
-    mut commands: Commands,
+    mut stage: BoardStage,
     mut messages: MessageReader<LoadLevel>,
     campaign: Res<Campaign>,
-    art: Res<art::Art>,
-    mut pending: ResMut<PendingActions>,
-    mut sim: ResMut<Sim>,
+    play: Play,
     mut next_phase: ResMut<NextState<Phase>>,
-    mut paused: ResMut<Paused>,
     sprites: BoardSprites,
-    mut cursors: Query<(&mut cursor::Cursor, &mut Transform)>,
 ) {
+    let Play {
+        mut sim,
+        mut pending,
+        mut paused,
+    } = play;
     let Some(message) = messages.read().last() else {
         return;
     };
@@ -47,15 +47,13 @@ pub(in crate::app) fn handle_load_level(
     sim.0 = board;
     pending.0 = [PlayerAction::None; MAX_PLAYERS];
 
-    sprites.despawn_all(&mut commands);
-    board_render::spawn_static_board(&mut commands, &sim.0, &art);
+    sprites.despawn_all(&mut stage.commands);
     // Timed levels show the tide; update_waterline hides the bars when the
     // board has no round timer, so this is free for normal puzzles.
-    board_render::spawn_waterline(&mut commands);
-    board_render::spawn_water_foam(&mut commands, &art);
+    stage.lay_out(&sim.0);
     // The middle of the beach, and in co-op the second pair of hands a tile
     // to its right rather than on top of it, where it would hide.
-    for (mut cur, mut transform) in &mut cursors {
+    for (mut cur, mut transform) in &mut stage.cursors {
         let right = (sim.0.width() / 2 + cur.player).min(sim.0.width().saturating_sub(1));
         cur.x = right;
         cur.y = sim.0.height() / 2;

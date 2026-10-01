@@ -588,7 +588,6 @@ pub(super) fn row_text(
     (label.to_string(), value)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update_settings_ui(
     settings: Res<GameSettings>,
     caps: Res<crate::app::keycaps::KeyCaps>,

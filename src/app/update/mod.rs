@@ -535,6 +535,31 @@ mod tests {
             OPENED.lock().unwrap().last().map(String::as_str),
             Some("https://github.com/x/y/releases/tag/v9.0.3")
         );
+
+        // Yes on a desktop with nothing to open it: the line is the one
+        // that carries the address to type by hand.
+        app.world_mut().resource_mut::<RoundNotice>().0.clear();
+        let slot = Arc::new(OnceLock::new());
+        let _ = slot.set(Some(Release {
+            version: Version::parse("v9.0.4").unwrap(),
+            tag: "v9.0.4".to_string(),
+            url: crate::app::open::tests::UNOPENABLE.to_string(),
+            notes: String::new(),
+        }));
+        app.world_mut().resource_mut::<UpdateCheck>().reply = Some(slot);
+        app.update();
+        app.update();
+        assert_eq!(screen(&app), Screen::NewVersion);
+        tap(&mut app, KeyCode::Enter);
+        app.update();
+        assert_eq!(screen(&app), Screen::Menu);
+        assert_eq!(
+            app.world().resource::<RoundNotice>().0,
+            fill(
+                tr.update_open_failed,
+                &[("url", crate::app::open::tests::UNOPENABLE)]
+            )
+        );
     }
 
     /// Turning the check off in Settings, on the same run it was started,

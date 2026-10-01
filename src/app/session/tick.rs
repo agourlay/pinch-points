@@ -77,11 +77,8 @@ pub(super) fn ai_holding(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::app) fn advance_sim(
-    mut sim: ResMut<Sim>,
-    mut pending: ResMut<PendingActions>,
-    paused: Res<Paused>,
+    play: Play,
     mut online: ResMut<net::Online>,
     mut recorder: ResMut<Recorder>,
     mut playback: ResMut<Playback>,
@@ -89,6 +86,11 @@ pub(in crate::app) fn advance_sim(
     bots: Res<Bots>,
     mut tally: ResMut<awards::RoundTally>,
 ) {
+    let Play {
+        mut sim,
+        mut pending,
+        paused,
+    } = play;
     if paused.0 {
         return;
     }

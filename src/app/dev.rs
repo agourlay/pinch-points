@@ -358,6 +358,14 @@ pub(super) fn debug_tide(mut sim: ResMut<Sim>, online: Res<net::Online>, mut hoo
 /// Three hooks share the shape: read the environment into a `Local` so it
 /// is not re-read every frame, bail unless the round has run a few seconds,
 /// set a `fired` flag.
+/// The mid-round moments a screenshot can be taken of, each fired once.
+#[derive(Default)]
+pub(super) struct MomentHooks {
+    pause: OneShot,
+    over: OneShot,
+    interlude: OneShot,
+}
+
 #[derive(Default)]
 pub(super) struct OneShot {
     setting: Option<Option<String>>,
@@ -551,7 +559,6 @@ pub(super) fn debug_screenshot(
 /// the round over so the results card can be shot; `PINCH_INTERLUDE=1`
 /// leaves for the series interlude with a mid-series tally on the card.
 /// All inert unless set, like every hook here.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn debug_moments(
     sim: Res<Sim>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
@@ -559,10 +566,13 @@ pub(super) fn debug_moments(
     screen: Res<State<Screen>>,
     mut next_screen: ResMut<NextState<Screen>>,
     mut next_vphase: ResMut<NextState<crate::app::VersusPhase>>,
-    mut pause_hook: Local<OneShot>,
-    mut over_hook: Local<OneShot>,
-    mut interlude_hook: Local<OneShot>,
+    mut hooks: Local<MomentHooks>,
 ) {
+    let MomentHooks {
+        pause: pause_hook,
+        over: over_hook,
+        interlude: interlude_hook,
+    } = &mut *hooks;
     if *screen.get() != Screen::Versus {
         return;
     }

@@ -160,38 +160,41 @@ pub(in crate::app) fn clamp_seats(asked: u8) -> u8 {
     asked.clamp(2, MAX_PLAYERS as u8)
 }
 
-/// Where a versus round's board comes from. Bundled because there are six
-/// answers and a Bevy system takes sixteen parameters in total.
+/// Where a versus round's board comes from: six answers, and the pads
+/// plugged in, which seat a round nobody set up. Read by the cursor spawn
+/// too, one system earlier, since the same answer says how many cursors
+/// the round is played with.
 #[derive(bevy::ecs::system::SystemParam)]
-pub(in crate::app) struct RoundSource<'w> {
-    sandbox: Res<'w, Sandbox>,
-    online: Res<'w, net::Online>,
-    playback: Res<'w, Playback>,
-    config: Res<'w, match_setup::MatchConfig>,
-    beaches: Res<'w, match_setup::CustomBeaches>,
-    daily: Res<'w, Daily>,
-    resuming: ResMut<'w, Resuming>,
+pub(in crate::app) struct RoundSource<'w, 's> {
+    pub(in crate::app) pads: Query<'w, 's, &'static Gamepad>,
+    pub(in crate::app) sandbox: Res<'w, Sandbox>,
+    pub(in crate::app) online: Res<'w, net::Online>,
+    pub(in crate::app) playback: Res<'w, Playback>,
+    pub(in crate::app) config: Res<'w, match_setup::MatchConfig>,
+    pub(in crate::app) beaches: Res<'w, match_setup::CustomBeaches>,
+    pub(in crate::app) daily: Res<'w, Daily>,
+    pub(in crate::app) resuming: ResMut<'w, Resuming>,
 }
 
 /// Boot the versus arena: fresh board, sprites, running phase. Online
 /// sessions and replay playback use the same mode with a different board
 /// source and input path.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::app) fn load_versus(
-    mut commands: Commands,
-    art: Res<art::Art>,
+    mut stage: BoardStage,
     mut source: RoundSource,
     mut bots: ResMut<Bots>,
-    pads: Query<&Gamepad>,
     mut seats: ResMut<Seats>,
     mut recorder: ResMut<Recorder>,
-    mut sim: ResMut<Sim>,
+    play: Play,
     mut next_vphase: ResMut<NextState<VersusPhase>>,
-    mut paused: ResMut<Paused>,
-    mut pending: ResMut<PendingActions>,
-    mut cursors: Query<(&mut cursor::Cursor, &mut Transform)>,
 ) {
+    let Play {
+        mut sim,
+        mut pending,
+        mut paused,
+    } = play;
     let RoundSource {
+        pads,
         sandbox,
         online,
         playback,
@@ -226,11 +229,9 @@ pub(in crate::app) fn load_versus(
     recorder.0 = origin
         .recorded()
         .then(|| Replay::new(Level::from_board("Turf War", 3, sim.0.clone())));
-    board_render::spawn_static_board(&mut commands, &sim.0, &art);
-    board_render::spawn_waterline(&mut commands);
-    board_render::spawn_water_foam(&mut commands, &art);
+    stage.lay_out(&sim.0);
     pending.0 = [PlayerAction::None; MAX_PLAYERS];
-    for (mut cur, mut transform) in &mut cursors {
+    for (mut cur, mut transform) in &mut stage.cursors {
         (cur.x, cur.y) = cursor_home(&sim.0, cur.player);
         transform.translation = layout::tile_center(&sim.0, cur.x, cur.y).extend(layout::z::CURSOR);
     }
@@ -238,18 +239,28 @@ pub(in crate::app) fn load_versus(
     next_vphase.set(VersusPhase::Running);
 }
 
+/// What a round leaves behind: its recording, and the highlight reel
+/// being cut from it.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(in crate::app) struct RoundLog<'w> {
+    recorder: ResMut<'w, Recorder>,
+    reel_thread: ResMut<'w, ReelThread>,
+}
+
 /// Tear down per-round versus resources when leaving the mode.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::app) fn end_versus(
     mut online: ResMut<net::Online>,
     mut playback: ResMut<Playback>,
-    mut recorder: ResMut<Recorder>,
-    mut reel_thread: ResMut<ReelThread>,
+    log: RoundLog,
     mut pending: ResMut<PendingActions>,
     mut config: ResMut<match_setup::MatchConfig>,
     mut bots: ResMut<Bots>,
     mut next_vphase: ResMut<NextState<VersusPhase>>,
 ) {
+    let RoundLog {
+        mut recorder,
+        mut reel_thread,
+    } = log;
     // A session armed for another round outlives the screen: the interlude
     // is a doorway between rounds, not the end of the match. Everything
     // else is torn down and rebuilt as it is between local rounds.
@@ -332,18 +343,24 @@ pub(super) fn winner_name(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::app) fn check_versus_over(
     sim: Res<Sim>,
-    seats: Res<Seats>,
+    seating: side_panels::Seating,
     settings: Res<settings::GameSettings>,
-    online: Res<net::Online>,
-    seat_names: Res<SeatNames>,
-    mut recorder: ResMut<Recorder>,
+    log: RoundLog,
     mut highlight: ResMut<Highlight>,
-    mut reel_thread: ResMut<ReelThread>,
     mut next_vphase: ResMut<NextState<VersusPhase>>,
 ) {
+    let side_panels::Seating {
+        seats,
+        names: seat_names,
+        online,
+        ..
+    } = seating;
+    let RoundLog {
+        mut recorder,
+        mut reel_thread,
+    } = log;
     if sim.0.round_over() {
         // Spec §7.7: a finished round is a shareable replay.
         highlight.0 = None;

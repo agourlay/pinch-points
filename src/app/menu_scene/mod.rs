@@ -313,20 +313,37 @@ pub fn update_menu_rows(
     }
 }
 
+/// A pasted round is the other way onto a beach mid-play, and it does not
+/// belong to any one row: V works wherever the cursor is.
+pub fn paste_round(
+    keyboard: crate::app::keycaps::Keyboard,
+    settings: Res<GameSettings>,
+    mut clipboard: ResMut<Clipboard>,
+    mut notice: ResMut<crate::app::RoundNotice>,
+    mut resuming: ResMut<crate::app::Resuming>,
+    mut next_screen: ResMut<NextState<Screen>>,
+) {
+    if !keyboard.caps.just_pressed(&keyboard.keys, 'V') {
+        return;
+    }
+    match crate::app::suspend::round_from(crate::app::codes::paste(&mut clipboard), settings.tr()) {
+        Ok(round) => {
+            notice.0.clear();
+            resuming.0 = Some(round);
+            next_screen.set(Screen::Versus);
+        }
+        Err(complaint) => notice.0 = complaint,
+    }
+}
+
 /// The landing menu: W/S (or arrows) move the selection, Enter launches it,
 /// and the digit hotkeys still jump straight into any mode.
-#[allow(clippy::too_many_arguments)]
 pub fn menu_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut exit: MessageWriter<AppExit>,
     mut list: ResMut<MenuList>,
-    settings: Res<GameSettings>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
     mut campaign: ResMut<Campaign>,
     mut daily: ResMut<crate::app::Daily>,
-    mut resuming: ResMut<crate::app::Resuming>,
-    mut notice: ResMut<crate::app::RoundNotice>,
-    mut clipboard: ResMut<Clipboard>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     // Every other screen leaves on Esc, and the menu is the one screen with
@@ -335,22 +352,6 @@ pub fn menu_input(
     // got.
     if keys.just_pressed(KeyCode::Escape) {
         exit.write(AppExit::Success);
-        return;
-    }
-    // A pasted round is the other way onto a beach mid-play, and it does not
-    // belong to any one row: V works wherever the cursor is.
-    if caps.just_pressed(&keys, 'V') {
-        match crate::app::suspend::round_from(
-            crate::app::codes::paste(&mut clipboard),
-            settings.tr(),
-        ) {
-            Ok(round) => {
-                notice.0.clear();
-                resuming.0 = Some(round);
-                next_screen.set(Screen::Versus);
-            }
-            Err(complaint) => notice.0 = complaint,
-        }
         return;
     }
     list.selected = menu_ui::nav(&keys, list.selected, MENU_ENTRY_COUNT);

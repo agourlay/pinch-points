@@ -230,6 +230,32 @@ pub fn editor_testing(state: Res<EditorState>) -> bool {
     state.is_testing()
 }
 
+/// The beach being edited, and everything the editor knows about it.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Workbench<'w> {
+    sim: ResMut<'w, Sim>,
+    state: ResMut<'w, EditorState>,
+}
+
+/// What putting a different board on the sand takes (see
+/// [`replace_board`]): the commands, every sprite the old board drew, and
+/// the cursors to bring back to the middle.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct BoardSwap<'w, 's> {
+    commands: Commands<'w, 's>,
+    sprites: BoardSprites<'w, 's>,
+    cursors: Query<'w, 's, (&'static mut Cursor, &'static mut Transform)>,
+}
+
+/// The news an edit makes for the trophies: a level saved, a code handed
+/// out, a code taken in.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct EditorNews<'w> {
+    saved: MessageWriter<'w, crate::app::LevelSaved>,
+    shared: MessageWriter<'w, crate::app::CodeShared>,
+    taken: MessageWriter<'w, crate::app::CodeTaken>,
+}
+
 /// Put a different board on the sand: a resize or a pasted level.
 ///
 /// The load path's rule applies here too (see `BoardSprites` in
@@ -255,17 +281,19 @@ fn replace_board(
 
 /// Tile and creature painting under the cursor: walls, terrain, crabs,
 /// and gulls. The editor's command keys live in [`editor_commands`].
-#[allow(clippy::too_many_arguments)]
 pub fn editor_input(
-    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
     settings: Res<GameSettings>,
-    mut sim: ResMut<Sim>,
-    mut state: ResMut<EditorState>,
-    sprites: BoardSprites,
-    mut cursors: Query<(&mut Cursor, &mut Transform)>,
+    bench: Workbench,
+    swap: BoardSwap,
 ) {
+    let Workbench { mut sim, mut state } = bench;
+    let BoardSwap {
+        mut commands,
+        sprites,
+        mut cursors,
+    } = swap;
     // Naming swallows the keyboard: every letter is a letter, not a brush.
     if state.is_naming() {
         type_a_name(&mut typed, &keys, &mut state, settings.tr());
@@ -417,21 +445,26 @@ pub(super) fn level_here(state: &EditorState, board: &Board, name: &str) -> Leve
 /// every key is a letter, or an "o" in the name flips wrap and Escape
 /// leaves for the menu. The frame the name is committed is sat out here
 /// (see `EditorState::named`), because the gate lifts within that frame.
-#[allow(clippy::too_many_arguments)]
 pub fn editor_commands(
-    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    mut sim: ResMut<Sim>,
     settings: Res<GameSettings>,
+    bench: Workbench,
     mut clipboard: ResMut<Clipboard>,
-    mut state: ResMut<EditorState>,
-    mut saved: MessageWriter<crate::app::LevelSaved>,
-    mut shared: MessageWriter<crate::app::CodeShared>,
-    mut taken: MessageWriter<crate::app::CodeTaken>,
+    news: EditorNews,
     mut next_screen: ResMut<NextState<Screen>>,
-    sprites: BoardSprites,
-    mut cursors: Query<(&mut Cursor, &mut Transform)>,
+    swap: BoardSwap,
 ) {
+    let Workbench { mut sim, mut state } = bench;
+    let EditorNews {
+        mut saved,
+        mut shared,
+        mut taken,
+    } = news;
+    let BoardSwap {
+        mut commands,
+        sprites,
+        mut cursors,
+    } = swap;
     if matches!(state.mode, Mode::JustNamed) {
         state.mode = Mode::Painting;
         return;

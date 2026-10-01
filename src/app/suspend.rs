@@ -107,17 +107,16 @@ fn bot_from_token(token: &str) -> Option<Option<BotLevel>> {
 }
 
 /// The round in progress, as a share code on the clipboard (`C`).
-#[allow(clippy::too_many_arguments)]
 pub fn copy_round_code(
-    keys: Res<ButtonInput<KeyCode>>,
+    keyboard: crate::app::keycaps::Keyboard,
     settings: Res<crate::app::settings::GameSettings>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
     sim: Res<crate::app::Sim>,
     seats: Res<crate::app::Seats>,
     bots: Res<crate::app::Bots>,
     mut clipboard: ResMut<Clipboard>,
     mut feed: ResMut<crate::app::side_panels::EventLog>,
 ) {
+    let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
     if !caps.just_pressed(&keys, 'C') {
         return;
     }

@@ -161,18 +161,21 @@ fn credit_round(stats: &mut Stats, scratch: &mut RoundScratch, outcome: RoundOut
 }
 
 /// A versus round just ended: count it, the win, and the dry-castle win.
-#[allow(clippy::too_many_arguments)]
 pub fn record_round(
     mut commands: Commands,
     sim: Res<crate::app::Sim>,
-    seats: Res<crate::app::Seats>,
-    online: Res<Online>,
-    bots: Res<Bots>,
+    seating: crate::app::side_panels::Seating,
     daily: Res<crate::app::Daily>,
     tournament: Res<crate::app::tournament::Tournament>,
     mut trophies: Trophies,
     mut scratch: ResMut<RoundScratch>,
 ) {
+    let crate::app::side_panels::Seating {
+        seats,
+        online,
+        bots,
+        ..
+    } = seating;
     let Some(seat) = local_seat(&online, &bots) else {
         return;
     };

@@ -131,43 +131,31 @@ pub struct SpectatorCard(pub bool);
 /// Numbers rather than a cursor: a card with seven rows and a crowd
 /// behind it wants one press, not four. The keys are the same ones the
 /// menu already numbers its modes with.
-#[allow(clippy::too_many_arguments)]
 pub fn spectator_vote_input(
-    mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
+    mut card: ListCard<SpectatorCardUi, SpectatorCard>,
+    keyboard: crate::app::keycaps::Keyboard,
     settings: Res<crate::app::settings::GameSettings>,
-    chat: Res<SpectatorChat>,
-    phase: Res<State<crate::app::VersusPhase>>,
-    (mut card, pick): (ResMut<SpectatorCard>, Res<PickCard>),
+    watching: Watching<PickCard>,
     mut online: ResMut<Online>,
-    ui: Query<Entity, With<SpectatorCardUi>>,
 ) {
-    let shut = |commands: &mut Commands, card: &mut SpectatorCard| {
-        card.0 = false;
-        for entity in &ui {
-            commands.entity(entity).despawn();
-        }
-    };
+    let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
     // Typing takes the keyboard, losing a seat takes the job, and a round
     // that is over has no beach to call anything onto.
-    let playing = *phase.get() == crate::app::VersusPhase::Running;
-    if !is_spectating(&online) || chat.open() || !playing {
-        if card.0 {
-            shut(&mut commands, &mut card);
+    if !is_spectating(&online) || !watching.free() {
+        if card.is_up() {
+            card.shut();
         }
         return;
     }
-    if !card.0 {
+    if !card.is_up() {
         // Not over the other list: one card at a time, and both are numbers.
-        if caps.just_pressed(&keys, 'E') && !pick.0 {
-            card.0 = true;
-            spawn_card(&mut commands, &settings);
+        if caps.just_pressed(&keys, 'E') && !watching.other_up() {
+            spawn_card(card.raise(), &settings);
         }
         return;
     }
     if keys.just_pressed(KeyCode::Escape) || caps.just_pressed(&keys, 'E') {
-        shut(&mut commands, &mut card);
+        card.shut();
         return;
     }
     if let Some(at) = crate::app::menu_ui::number_pressed(&keys, SPECTATOR_EVENTS.len()) {
@@ -179,7 +167,7 @@ pub fn spectator_vote_input(
                 event: SPECTATOR_EVENTS[at].index() as u8,
             });
         }
-        shut(&mut commands, &mut card);
+        card.shut();
     }
 }
 

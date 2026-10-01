@@ -333,17 +333,20 @@ pub fn acts_for(screen: Screen, cursor: &Cursor) -> u8 {
 /// Versus cursors: online spawns only the local seat's cursor (rivals'
 /// placements arrive over the wire); local play seats two keyboard players
 /// plus one per extra connected gamepad.
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_versus_cursors(
     mut commands: Commands,
     art: Res<crate::app::art::Art>,
-    online: Res<crate::app::net::Online>,
-    playback: Res<crate::app::Playback>,
-    config: Res<crate::app::match_setup::MatchConfig>,
-    daily: Res<crate::app::Daily>,
-    resuming: Res<crate::app::Resuming>,
-    pads: Query<&Gamepad>,
+    source: crate::app::session::RoundSource,
 ) {
+    let crate::app::session::RoundSource {
+        online,
+        playback,
+        config,
+        daily,
+        resuming,
+        pads,
+        ..
+    } = source;
     // Before `load_versus` takes the resumed round, which is why this can
     // still read it. Its table is the round's own: one cursor per human
     // seat, and none for the AI's, or a keypress on the AI's keys steered

@@ -6,7 +6,6 @@
 
 use crate::app::cycle::Cycle;
 use crate::app::i18n::fill;
-use crate::app::match_setup::MatchConfig;
 use crate::app::menu_ui;
 use crate::app::palette;
 use crate::app::settings::GameSettings;
@@ -305,17 +304,19 @@ pub struct InterludeTimer(pub Timer);
 
 /// Entering the interlude advances the series bookkeeping (next round,
 /// rotated map, config re-armed) and shows the standings for a beat.
-#[allow(clippy::too_many_arguments)]
 pub fn enter_interlude(
     mut commands: Commands,
     settings: Res<GameSettings>,
     names: Res<crate::app::SeatNames>,
     seats: Res<Seats>,
     mut online: ResMut<crate::app::net::Online>,
-    mut config: ResMut<MatchConfig>,
-    beaches: Res<crate::app::match_setup::CustomBeaches>,
+    dials: crate::app::match_setup::Dials,
     mut tournament: ResMut<Tournament>,
 ) {
+    let crate::app::match_setup::Dials {
+        mut config,
+        beaches,
+    } = dials;
     let mode = crate::app::teams::in_play(&settings, &online, seats.0.max(2));
     // The session is through the doorway; the flag has done its work of
     // carrying it past `end_versus`. Online, the map and the seed are the

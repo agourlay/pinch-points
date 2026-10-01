@@ -43,6 +43,18 @@ pub struct Footfall {
     foot: Foot,
 }
 
+/// What putting a flourish on screen takes: somewhere to spawn it, the
+/// art, the dice it is thrown with, and the settings that say whether the
+/// player asked for less motion. Every system that decorates the beach
+/// reads these four together.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Fx<'w, 's> {
+    pub commands: Commands<'w, 's>,
+    pub art: Res<'w, Art>,
+    pub rng: ResMut<'w, VisualRng>,
+    pub settings: Res<'w, crate::app::settings::GameSettings>,
+}
+
 /// A cheap LCG for visual variety only. Never seed gameplay from this.
 #[derive(Resource)]
 pub struct VisualRng(u32);
@@ -763,18 +775,21 @@ pub fn crab_trails(
     footfalls.retain(|id, _| seen.contains(id));
 }
 
+/// A particle and whichever of the two ways it is drawn: a sprite, or a
+/// floating number.
+type ParticleParts = (
+    Entity,
+    &'static mut Particle,
+    &'static mut Transform,
+    Option<&'static mut Sprite>,
+    Option<&'static mut TextColor>,
+);
+
 /// Advance and expire particles: drift, fall, spin, grow, fade out.
-#[allow(clippy::type_complexity)]
 pub fn update_particles(
     time: Res<Time>,
     mut commands: Commands,
-    mut particles: Query<(
-        Entity,
-        &mut Particle,
-        &mut Transform,
-        Option<&mut Sprite>,
-        Option<&mut TextColor>,
-    )>,
+    mut particles: Query<ParticleParts>,
 ) {
     let dt = time.delta_secs();
     for (entity, mut particle, mut transform, sprite, text_color) in &mut particles {
@@ -814,16 +829,18 @@ pub fn update_particles(
 
 /// Turn sim events into their on-board moments: pips, puffs, flashes, and
 /// the shove the camera takes for the loud ones.
-#[allow(clippy::too_many_arguments)]
 pub fn moment_effects(
-    mut commands: Commands,
+    fx: Fx,
     mut events: MessageReader<SimEvent>,
-    art: Res<Art>,
     cursors: Query<&crate::app::cursor::Cursor>,
-    settings: Res<crate::app::settings::GameSettings>,
-    mut rng: ResMut<VisualRng>,
     mut trauma: ResMut<Trauma>,
 ) {
+    let Fx {
+        mut commands,
+        art,
+        mut rng,
+        settings,
+    } = fx;
     // Reduced motion keeps the news and drops the fireworks: the score pip
     // for a raid still floats up (it is the only place that number appears),
     // but the puffs, the scatter, the shake and the full-tile white flash

@@ -18,6 +18,26 @@ fn save_path() -> std::path::PathBuf {
     crate::app::paths::data_dir().join("progress.txt")
 }
 
+/// A campaign and how far up it the player has climbed: which stage is
+/// current, and which are open to them.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Ladder<'w> {
+    pub campaign: ResMut<'w, Campaign>,
+    pub progress: Res<'w, Progress>,
+}
+
+impl Ladder<'_> {
+    /// Make stage `at` the current one if it is open, answering whether it
+    /// was. A locked stage leaves the campaign where it stood.
+    pub fn climb_to(&mut self, at: usize) -> bool {
+        let open = self.progress.unlocked(&self.campaign, at);
+        if open {
+            self.campaign.index = at;
+        }
+        open
+    }
+}
+
 /// Kept as one set of names per list rather than one set of `kind:name`
 /// keys: the stage list asks after every tile every frame, and a key built
 /// per lookup is a hundred-odd allocations a frame.

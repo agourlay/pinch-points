@@ -584,18 +584,20 @@ pub fn exit_lobby(mut state: ResMut<LobbyState>) {
 }
 
 /// Lobby input: host, join by number, leave, and say something.
-#[allow(clippy::too_many_arguments)]
 pub fn lobby_input(
-    keys: Res<ButtonInput<KeyCode>>,
+    keyboard: crate::app::keycaps::Keyboard,
     mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
-    beaches: Res<crate::app::match_setup::CustomBeaches>,
     mut settings: ResMut<GameSettings>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
-    mut config: ResMut<MatchConfig>,
+    dials: crate::app::match_setup::Dials,
     mut state: ResMut<LobbyState>,
     mut next_screen: ResMut<NextState<Screen>>,
     pads: Query<&Gamepad>,
 ) {
+    let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
+    let crate::app::match_setup::Dials {
+        mut config,
+        beaches,
+    } = dials;
     let tr = settings.tr();
     let tr: &'static crate::app::i18n::Tr = tr;
     // A pad's North is quick chat: the one way a player with no keyboard

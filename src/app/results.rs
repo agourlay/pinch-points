@@ -8,7 +8,7 @@ use crate::app::palette;
 use crate::app::settings::GameSettings;
 use crate::app::side_panels::leading_seats;
 use crate::app::teams::TeamMode;
-use crate::app::{Bots, Campaign, Playback, Seats, Sim};
+use crate::app::{Campaign, Sim};
 use crate::sim::MAX_PLAYERS;
 use bevy::prelude::*;
 
@@ -263,26 +263,43 @@ fn crowd_rows(
     rows
 }
 
+/// What a finished round fed into besides its own scores: the day's best,
+/// the reel being cut from it, the series it belongs to, and the awards.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct RoundExtras<'w> {
+    daily: Res<'w, crate::app::Daily>,
+    highlight: Res<'w, crate::app::Highlight>,
+    stats: Res<'w, crate::app::achievements::Stats>,
+    tournament: Res<'w, crate::app::tournament::Tournament>,
+    tally: Res<'w, crate::app::awards::RoundTally>,
+}
+
 /// The tide-is-in standings card: winner headline, ranked scores in seat
 /// colours (with AI/you markers), the round's awards, and its total haul.
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_versus_results(
     mut commands: Commands,
     sim: Res<Sim>,
-    seats: Res<Seats>,
     settings: Res<GameSettings>,
-    names: Res<crate::app::SeatNames>,
     art: Res<crate::app::art::Art>,
     mut rng: ResMut<crate::app::effects::VisualRng>,
-    bots: Res<Bots>,
-    online: Res<Online>,
-    playback: Res<Playback>,
-    daily: Res<crate::app::Daily>,
-    highlight: Res<crate::app::Highlight>,
-    stats: Res<crate::app::achievements::Stats>,
-    tournament: Res<crate::app::tournament::Tournament>,
-    tally: Res<crate::app::awards::RoundTally>,
+    seating: crate::app::side_panels::Seating,
+    extras: RoundExtras,
 ) {
+    let local = seating.local();
+    let crate::app::side_panels::Seating {
+        seats,
+        bots,
+        names,
+        online,
+        ..
+    } = seating;
+    let RoundExtras {
+        daily,
+        highlight,
+        stats,
+        tournament,
+        tally,
+    } = extras;
     let board = &sim.0;
     let scores = board.scores();
     let count = seats.0.max(2);
@@ -303,7 +320,6 @@ pub fn spawn_versus_results(
         }
     }
 
-    let local = crate::app::side_panels::local_seat(&online, playback.0.is_some());
     let rows = standings_rows(&settings, &names, scores, count, mode, |seat| {
         crate::app::side_panels::seat_tag(tr, &bots, local, seat)
     });

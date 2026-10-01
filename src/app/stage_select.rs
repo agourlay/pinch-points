@@ -582,20 +582,40 @@ fn spawn_tile(
     });
 }
 
+/// What the stage list draws: the tiles and their numbers, the caption
+/// under the grid, and the hint line.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct StageUi<'w, 's> {
+    tiles: Query<
+        'w,
+        's,
+        (
+            &'static StageTile,
+            &'static mut BorderColor,
+            &'static mut BackgroundColor,
+        ),
+    >,
+    numbers: Query<'w, 's, (&'static StageNumber, &'static mut TextColor)>,
+    captions: Query<'w, 's, (&'static mut Text, &'static mut Node), With<StageCaption>>,
+    hints: HintLine<'w, 's>,
+}
+
 /// Paint the selection ring and the caption. The tile states themselves are
 /// fixed while the screen is up: nothing gets cleared from in here.
-#[allow(clippy::too_many_arguments)]
 pub fn update_stage_tiles(
     list: Res<StageList>,
     campaign: Res<Campaign>,
     progress: Res<Progress>,
     settings: Res<GameSettings>,
     caps: Res<crate::app::keycaps::KeyCaps>,
-    mut tiles: Query<(&StageTile, &mut BorderColor, &mut BackgroundColor)>,
-    mut numbers: Query<(&StageNumber, &mut TextColor)>,
-    mut captions: Query<(&mut Text, &mut Node), With<StageCaption>>,
-    mut hints: HintLine,
+    ui: StageUi,
 ) {
+    let StageUi {
+        mut tiles,
+        mut numbers,
+        mut captions,
+        mut hints,
+    } = ui;
     for (tile, mut border, mut fill) in &mut tiles {
         let state = TileState::of(&progress, &campaign, tile.0);
         let picked = tile.0 == list.selected;
@@ -660,18 +680,16 @@ pub fn update_stage_tiles(
 
 /// Arrows move, Enter plays an open stage, a locked one just says no, and
 /// on the Tide Pool's list C (or a pad's North) turns co-op on and off.
-#[allow(clippy::too_many_arguments)]
 pub fn stage_select_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
+    keyboard: crate::app::keycaps::Keyboard,
     pads: Query<&Gamepad>,
-    progress: Res<Progress>,
+    mut ladder: crate::app::progress::Ladder,
     mut coop: ResMut<crate::app::Coop>,
     mut list: ResMut<StageList>,
-    mut campaign: ResMut<Campaign>,
     mut denied: MessageWriter<PlacementDenied>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
+    let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
     // Read the layout, then move: the rows are settled and the cursor is
     // the only thing this system changes.
     let at = step(list.selected, &list.rows, &keys);
@@ -680,7 +698,7 @@ pub fn stage_select_input(
         || pads
             .iter()
             .any(|pad| pad.just_pressed(GamepadButton::North));
-    if toggled && campaign.kind == crate::app::CampaignKind::TidePool {
+    if toggled && ladder.campaign.kind == crate::app::CampaignKind::TidePool {
         coop.0 = !coop.0;
     }
     if keys.just_pressed(KeyCode::Escape) {
@@ -690,8 +708,7 @@ pub fn stage_select_input(
     if !menu_ui::enter(&keys) {
         return;
     }
-    if progress.unlocked(&campaign, list.selected) {
-        campaign.index = list.selected;
+    if ladder.climb_to(list.selected) {
         next_screen.set(Screen::Puzzle);
     } else {
         denied.write(PlacementDenied {

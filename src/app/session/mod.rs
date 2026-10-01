@@ -37,6 +37,37 @@ fn cursor_home(board: &Board, player: u8) -> (u8, u8) {
     )
 }
 
+/// The board in play, the actions queued for its next tick, and whether
+/// it is held: what loading a round resets and ticking one advances.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct Play<'w> {
+    sim: ResMut<'w, Sim>,
+    pending: ResMut<'w, PendingActions>,
+    paused: ResMut<'w, Paused>,
+}
+
+/// What laying a fresh board out takes: the commands and art to draw its
+/// statics with, and the cursors to set down on it. Both ways into a board
+/// (a versus round, a puzzle level) draw it the same way and home the
+/// cursors their own way.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct BoardStage<'w, 's> {
+    commands: Commands<'w, 's>,
+    art: Res<'w, art::Art>,
+    cursors: Query<'w, 's, (&'static mut cursor::Cursor, &'static mut Transform)>,
+}
+
+impl BoardStage<'_, '_> {
+    /// Draw everything about `board` that does not move: the sand and
+    /// walls, the waterline (hidden by `update_waterline` on a board with
+    /// no round timer) and the foam.
+    fn lay_out(&mut self, board: &Board) {
+        board_render::spawn_static_board(&mut self.commands, board, &self.art);
+        board_render::spawn_waterline(&mut self.commands);
+        board_render::spawn_water_foam(&mut self.commands, &self.art);
+    }
+}
+
 /// Every category of entity rendered from board state, bundled so the two
 /// teardown paths (screen exit and level reload) cannot drift apart: a
 /// missed category left turnstile sprites probing a smaller board and

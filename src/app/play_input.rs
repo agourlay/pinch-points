@@ -12,22 +12,17 @@ use crate::app::{Campaign, LoadLevel, PendingActions, Phase, PlacementDenied, Sc
 use crate::sim::PlayerAction;
 use bevy::prelude::*;
 
-/// Puzzle setup phase: spend the inventory directly on the board, Enter to
-/// run, N/P to jump between levels.
+/// Puzzle setup phase: spend the inventory directly on the board, and
+/// Enter to run. N/P, which jump between levels, are [`browse_levels`].
 ///
 /// Every cursor here places the one seat's arrows: in co-op the second is a
 /// second pair of hands (see [`crate::app::Coop`]), on the second seat's
 /// keys, and the IJKL one-hand preset stands down for it.
-#[allow(clippy::too_many_arguments)]
 pub fn setup_input(
     keys: Res<ButtonInput<KeyCode>>,
     settings: Res<GameSettings>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
-    progress: Res<crate::app::progress::Progress>,
     mut sim: ResMut<Sim>,
-    mut campaign: ResMut<Campaign>,
     mut next_phase: ResMut<NextState<Phase>>,
-    mut load: MessageWriter<LoadLevel>,
     mut denied: MessageWriter<PlacementDenied>,
     mut cursors: Query<&mut Cursor>,
 ) {
@@ -58,41 +53,45 @@ pub fn setup_input(
             let _ = sim.0.remove_signpost(0, hand.x, hand.y);
         }
     }
+    if keys.just_pressed(KeyCode::Enter) && cursors.iter().any(|c| c.player == 0) {
+        next_phase.set(Phase::Running);
+    }
+}
+
+/// N/P during puzzle setup: the next level or the one before, as far as
+/// the ladder goes. A stage not yet open is refused with the same flash
+/// and word as a placement that cannot go down.
+pub fn browse_levels(
+    keyboard: crate::app::keycaps::Keyboard,
+    mut ladder: crate::app::progress::Ladder,
+    mut load: MessageWriter<LoadLevel>,
+    mut denied: MessageWriter<PlacementDenied>,
+    mut cursors: Query<&mut Cursor>,
+) {
     let Some(mut cursor) = cursors.iter_mut().find(|c| c.player == 0) else {
         return;
     };
-    if keys.just_pressed(KeyCode::Enter) {
-        next_phase.set(Phase::Running);
-    }
-    if caps.just_pressed(&keys, 'N') {
-        // Browsing forward stops at the ladder: the stage list is the only
-        // way past a stage you have not cleared.
-        let next = (campaign.index + 1) % campaign.levels.len();
-        if progress.unlocked(&campaign, next) {
-            campaign.index = next;
-            load.write(LoadLevel { keep_posts: false });
-        } else {
-            cursor.flash = FLASH_SECS;
-            denied.write(PlacementDenied {
-                player: 0,
-                out_of_signposts: false,
-            });
-        }
-    }
-    if caps.just_pressed(&keys, 'P') {
-        // Backward wraps onto the end of the list, which is as locked as
-        // anything ahead: the same ladder, the same refusal.
-        let prev = (campaign.index + campaign.levels.len() - 1) % campaign.levels.len();
-        if progress.unlocked(&campaign, prev) {
-            campaign.index = prev;
-            load.write(LoadLevel { keep_posts: false });
-        } else {
-            cursor.flash = FLASH_SECS;
-            denied.write(PlacementDenied {
-                player: 0,
-                out_of_signposts: false,
-            });
-        }
+    let len = ladder.campaign.levels.len();
+    let at = ladder.campaign.index;
+    // Browsing forward stops at the ladder: the stage list is the only
+    // way past a stage you have not cleared. Backward wraps onto the end
+    // of the list, which is as locked as anything ahead: the same ladder,
+    // the same refusal.
+    let asked = if keyboard.caps.just_pressed(&keyboard.keys, 'N') {
+        (at + 1) % len
+    } else if keyboard.caps.just_pressed(&keyboard.keys, 'P') {
+        (at + len - 1) % len
+    } else {
+        return;
+    };
+    if ladder.climb_to(asked) {
+        load.write(LoadLevel { keep_posts: false });
+    } else {
+        cursor.flash = FLASH_SECS;
+        denied.write(PlacementDenied {
+            player: 0,
+            out_of_signposts: false,
+        });
     }
 }
 
@@ -440,7 +439,7 @@ mod tests {
         app.insert_resource(campaign_with(0, false));
         app.add_message::<LoadLevel>();
         app.add_message::<PlacementDenied>();
-        app.add_systems(Update, setup_input);
+        app.add_systems(Update, browse_levels);
         let mut cursor = Cursor::seated(0);
         (cursor.x, cursor.y) = (1, 1);
         app.world_mut().spawn((cursor, Transform::default()));
