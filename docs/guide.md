@@ -70,7 +70,8 @@ turn toward their claw side, then the other side, then back the way they
 came.
 
 **Arrows.** Your one verb: every creature crossing one turns that way.
-In versus you may have **3** standing (a fourth replaces your oldest), each
+In versus you may have **3** standing by default (the match setup and the
+lobby both set it, from 1 to 6; one past it replaces your oldest), each
 washes away after ~10 seconds, and two gull crossings destroy one.
 
 **Crabs** stream out of spawner holes and are banked by walking into any

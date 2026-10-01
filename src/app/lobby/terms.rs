@@ -14,16 +14,18 @@ pub enum Dial {
     Map,
     Gulls,
     Round,
+    Posts,
     Bots,
     Teams,
     Series,
 }
 
 impl Dial {
-    pub const ALL: [Dial; 6] = [
+    pub const ALL: [Dial; 7] = [
         Dial::Map,
         Dial::Gulls,
         Dial::Round,
+        Dial::Posts,
         Dial::Bots,
         Dial::Teams,
         Dial::Series,
@@ -55,6 +57,7 @@ impl Dial {
                 tr.match_round,
                 tr.round_names[config.round.index()].to_string(),
             ),
+            Dial::Posts => (tr.match_posts, config.posts.to_string()),
             Dial::Bots => (tr.match_ai, config.bots.to_string()),
             Dial::Teams => (tr.set_versus_mode, tr.team_modes[teams.index()].to_string()),
             Dial::Series => (
@@ -81,6 +84,14 @@ impl Dial {
             Dial::Map => crate::app::match_setup::cycle_map(config, turn, beaches),
             Dial::Gulls => config.gulls = config.gulls.cycled(turn),
             Dial::Round => config.round = config.round.cycled(turn),
+            Dial::Posts => {
+                config.posts = crate::app::cycle::dial(
+                    config.posts,
+                    turn,
+                    1,
+                    crate::app::match_setup::POSTS_RANGE,
+                );
+            }
             Dial::Bots => {
                 let step = i32::from(config.bots) + turn.signum();
                 config.bots = step.clamp(0, i32::from(room)) as u8;
@@ -190,6 +201,7 @@ mod dial_tests {
                     config.bots,
                     teams,
                     config.series,
+                    config.posts,
                 );
                 dial.turn(turn, &mut config, &mut teams, 2, &Default::default());
                 let after = (
@@ -199,9 +211,10 @@ mod dial_tests {
                     config.bots,
                     teams,
                     config.series,
+                    config.posts,
                 );
                 assert_ne!(before, after, "{dial:?} turned {turn:?} and did nothing");
-                // Exactly one of the six moved.
+                // Exactly one of the seven moved.
                 let moved = [
                     before.0 != after.0,
                     before.1 != after.1,
@@ -209,6 +222,7 @@ mod dial_tests {
                     before.3 != after.3,
                     before.4 != after.4,
                     before.5 != after.5,
+                    before.6 != after.6,
                 ];
                 assert_eq!(
                     moved.iter().filter(|m| **m).count(),
@@ -293,6 +307,7 @@ mod dial_tests {
         assert_eq!(terms.bots, config.bots);
         assert_eq!(terms.teams, teams.index() as u8);
         assert_eq!(terms.series, config.series.index() as u8);
+        assert_eq!(terms.posts, config.posts);
         assert_eq!(terms.seed, 7);
     }
 }

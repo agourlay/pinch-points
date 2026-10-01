@@ -36,6 +36,7 @@ pub fn board_from(terms: &MatchTerms, seats: u8, beach: &[u8]) -> crate::sim::Bo
     board.set_round_length(Some(
         RoundLength::from_index(usize::from(terms.round)).ticks(),
     ));
+    board.set_signpost_rule(posts_from(terms), crate::sim::CapPolicy::Evict);
     board
 }
 
@@ -52,6 +53,7 @@ pub fn board_for(terms: &MatchTerms, seats: u8) -> crate::sim::Board {
     board.set_round_length(Some(
         RoundLength::from_index(usize::from(terms.round)).ticks(),
     ));
+    board.set_signpost_rule(posts_from(terms), crate::sim::CapPolicy::Evict);
     board
 }
 

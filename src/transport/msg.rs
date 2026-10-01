@@ -289,7 +289,7 @@ const SPECTATOR_SEAT: u8 = u8::MAX;
 ///
 /// Held as plain numbers rather than the app's enums: this layer is the wire
 /// and knows nothing about menus. The app maps them at the edge.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct MatchTerms {
     /// Seats the AI holds, counting down from the top seat.
     pub bots: u8,
@@ -313,6 +313,28 @@ pub struct MatchTerms {
     /// they agree because they are counting the same deterministic boards,
     /// but only if they all know how many rounds take it.
     pub series: u8,
+    /// How many arrows each player may have standing. A count, not an
+    /// index, and not trusted: the app clamps it to its own dial's range.
+    pub posts: u8,
+}
+
+/// Written out because the arrows are not zero by default: terms nobody
+/// set play the versus rule's three, as every round did before the count
+/// travelled.
+impl Default for MatchTerms {
+    fn default() -> Self {
+        MatchTerms {
+            bots: 0,
+            bot_level: 0,
+            map: 0,
+            gulls: 0,
+            round: 0,
+            teams: 0,
+            seed: 0,
+            series: 0,
+            posts: crate::sim::MAX_SIGNPOSTS_PER_PLAYER as u8,
+        }
+    }
 }
 
 impl MatchTerms {
@@ -335,7 +357,7 @@ impl MatchTerms {
 }
 
 impl MatchTerms {
-    const BYTES: usize = 15;
+    const BYTES: usize = 16;
 
     fn encode(self) -> [u8; Self::BYTES] {
         let mut out = [0u8; Self::BYTES];
@@ -347,6 +369,7 @@ impl MatchTerms {
         out[5] = self.teams;
         out[6..14].copy_from_slice(&self.seed.to_le_bytes());
         out[14] = self.series;
+        out[15] = self.posts;
         out
     }
 
@@ -361,6 +384,7 @@ impl MatchTerms {
             teams: *bytes.get(5)?,
             seed,
             series: *bytes.get(14)?,
+            posts: *bytes.get(15)?,
         })
     }
 }

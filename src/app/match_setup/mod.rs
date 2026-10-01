@@ -164,6 +164,13 @@ pub enum Row {
 /// one is a knife fight, and past six a beach is more arrow than sand.
 pub const POSTS_RANGE: std::ops::RangeInclusive<u8> = 1..=6;
 
+/// The arrows a set of terms allows, inside the dial's range: the byte is
+/// whatever a host put there, and a cap of zero is a round nobody can play.
+/// Every peer clamps the same byte the same way, so they still agree.
+pub fn posts_from(terms: &MatchTerms) -> u8 {
+    terms.posts.clamp(*POSTS_RANGE.start(), *POSTS_RANGE.end())
+}
+
 /// The most seats the AI can hold: everyone but one human.
 pub const MAX_BOTS: usize = MAX_PLAYERS - 1;
 
@@ -282,6 +289,7 @@ pub fn terms(config: &MatchConfig, teams: crate::app::teams::TeamMode, seed: u64
         teams: teams.index() as u8,
         seed,
         series: config.series.index() as u8,
+        posts: config.posts,
     }
 }
 
@@ -302,8 +310,7 @@ pub fn config_from_terms(terms: &MatchTerms) -> (MatchConfig, crate::app::teams:
         custom: 0,
         gulls: GullPressure::from_index(usize::from(terms.gulls)),
         round: RoundLength::from_index(usize::from(terms.round)),
-        // Not on the wire: an online round plays the versus rule's three.
-        posts: MAX_SIGNPOSTS_PER_PLAYER as u8,
+        posts: posts_from(terms),
         series: crate::app::tournament::SeriesLength::from_index(usize::from(terms.series)),
         armed: false,
     };

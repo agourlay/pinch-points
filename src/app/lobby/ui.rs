@@ -616,15 +616,36 @@ fn spawn_table_face(
                         tr.lobby_card_players,
                         Val::Auto,
                         |body| {
-                            for row in 0..MAX_PLAYERS {
-                                body.spawn(Node {
-                                    padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
-                                    ..default()
-                                })
-                                .with_children(|line| {
-                                    line.spawn((PlayerRowName(row), row_text(21.0)));
-                                });
-                            }
+                            // Two to a line: six names one under another
+                            // pushed the terms card below it under the chat
+                            // line, and it holds a dial more than it did.
+                            // Read across, the seat order the numbers give.
+                            body.spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                flex_wrap: FlexWrap::Wrap,
+                                ..default()
+                            })
+                            .with_children(|grid| {
+                                for row in 0..MAX_PLAYERS {
+                                    grid.spawn(Node {
+                                        width: Val::Percent(50.0),
+                                        padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+                                        // Twelve characters is all this
+                                        // build lets a player type, but a
+                                        // name off the wire may be longer,
+                                        // and clips rather than wrapping.
+                                        overflow: Overflow::clip_x(),
+                                        ..default()
+                                    })
+                                    .with_children(|line| {
+                                        line.spawn((
+                                            PlayerRowName(row),
+                                            row_text(21.0),
+                                            TextLayout::no_wrap(),
+                                        ));
+                                    });
+                                }
+                            });
                         },
                     );
                     // The terms. Everyone sees them, since a joiner is
