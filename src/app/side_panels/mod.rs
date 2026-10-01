@@ -36,13 +36,6 @@ pub struct SideScore {
     bump: f32,
 }
 
-/// One castle-tier pip under a chip's score (filled up to the tier).
-#[derive(Component)]
-pub struct TierPip {
-    seat: u8,
-    index: u8,
-}
-
 /// One arrow slot on a chip, oldest first: an outline, filled for an
 /// arrow standing and drained by how much of its life is gone. One per
 /// arrow the rules allow, so the row is the cap, read at a glance.
@@ -80,10 +73,14 @@ pub struct RankDigit(pub u8);
 /// Six of them still has to fit the column above the fold, so the tail is
 /// tighter than the head.
 ///
-/// Each chip holds three lines (name, castle tier, arrows), which sets the
-/// smallest: 56 is the three of them and the padding, with nothing spare.
-const CHIP_TOPS: [f32; MAX_PLAYERS] = [10.0, 112.0, 186.0, 256.0, 324.0, 390.0];
-const CHIP_HEIGHTS: [f32; MAX_PLAYERS] = [92.0, 66.0, 62.0, 60.0, 58.0, 56.0];
+/// Each chip holds two lines, the name over the arrows, which sets the
+/// smallest: 48 is the two of them and the padding, with nothing spare.
+///
+/// There was a third, three castle-tier pips, gone because they said
+/// again what the number beside them says and the castle on the beach
+/// shows, and nobody could tell what they were for.
+const CHIP_TOPS: [f32; MAX_PLAYERS] = [10.0, 106.0, 172.0, 234.0, 294.0, 352.0];
+const CHIP_HEIGHTS: [f32; MAX_PLAYERS] = [88.0, 58.0, 54.0, 52.0, 50.0, 48.0];
 const SCORE_PX: [f32; MAX_PLAYERS] = [46.0, 28.0, 24.0, 21.0, 19.0, 18.0];
 
 /// Rank medal colours: gold, silver, bronze, then driftwood for the rest.
@@ -160,7 +157,7 @@ fn card(top: f32, height: Option<f32>) -> (Node, BorderColor, BackgroundColor, B
     )
 }
 
-/// One seat's score chip: rank medal, name over tier pips, the big number,
+/// One seat's score chip: rank medal, name over arrow dots, the big number,
 /// and a crown that only the leader shows.
 fn spawn_score_chip(
     root: &mut ChildSpawnerCommands,
@@ -213,7 +210,7 @@ fn spawn_score_chip(
                 TextColor(palette::MEDAL_DIGIT),
             ));
         });
-        // Name and castle-tier pips.
+        // Name, and the arrows under it.
         chip.spawn(Node {
             flex_direction: FlexDirection::Column,
             flex_grow: 1.0,
@@ -229,26 +226,6 @@ fn spawn_score_chip(
                 },
                 TextColor(palette::CHIP_NAME),
             ));
-            mid.spawn(Node {
-                column_gap: Val::Px(4.0),
-                ..default()
-            })
-            .with_children(|pips| {
-                for index in 0..3u8 {
-                    pips.spawn((
-                        TierPip { seat, index },
-                        Node {
-                            width: Val::Px(11.0),
-                            height: Val::Px(5.0),
-                            border_radius: BorderRadius::all(Val::Px(2.0)),
-                            ..default()
-                        },
-                        BackgroundColor(palette::PIP_OFF),
-                    ));
-                }
-            });
-            // Upright where the tier pips lie flat, so the two rows of
-            // little marks do not read as one.
             mid.spawn(Node {
                 column_gap: Val::Px(3.0),
                 ..default()
@@ -459,8 +436,7 @@ pub fn update_side_panels(
     )>,
     mut scores: Query<(&mut SideScore, &mut Text, &mut TextFont, &mut UiTransform)>,
     mut crowns: Query<(&LeaderCrown, &mut Visibility)>,
-    mut pips: Query<(&TierPip, &mut BackgroundColor), Without<SidePanel>>,
-    mut medals: Query<(&RankMedal, &mut BackgroundColor), (Without<SidePanel>, Without<TierPip>)>,
+    mut medals: Query<(&RankMedal, &mut BackgroundColor), Without<SidePanel>>,
     mut digits: Query<(&RankDigit, &mut Text), Without<SideScore>>,
     mut value: Local<String>,
 ) {
@@ -536,16 +512,6 @@ pub fn update_side_panels(
         if *visibility != target {
             *visibility = target;
         }
-    }
-    for (pip, mut bg) in &mut pips {
-        let tier = crate::sim::castle_tier(board_scores[pip.seat as usize]);
-        let filled = pip.index < tier;
-        let target = if filled {
-            palette::PIP_ON
-        } else {
-            palette::PIP_OFF
-        };
-        menu_ui::set_bg(&mut bg, target);
     }
 }
 

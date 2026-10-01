@@ -78,7 +78,8 @@ pub const UNLIT_RING: Color = Color::srgba(1.0, 1.0, 1.0, 0.22);
 /// The unfilled track behind the gold progress bars (achievements screen,
 /// stage list).
 pub const BAR_TRACK: Color = Color::srgba(1.0, 1.0, 1.0, 0.08);
-/// A castle-tier pip on the score chips, lit and unlit.
+/// An arrow slot on the score chips: the fill of an arrow standing, and
+/// the outline of a free slot.
 pub const PIP_ON: Color = Color::srgba(1.0, 1.0, 1.0, 0.95);
 pub const PIP_OFF: Color = Color::srgba(1.0, 1.0, 1.0, 0.25);
 /// The seat name on a score chip.
@@ -87,7 +88,7 @@ pub const CHIP_NAME: Color = Color::srgba(1.0, 1.0, 1.0, 0.92);
 /// score on a chip.
 ///
 /// Full white and meant to be, which is why it is written down: a chip
-/// carries three whites, the name at 0.92, the tier pips at 0.95, and the
+/// carries three whites, the name at 0.92, the arrow dots at 0.95, and the
 /// number, which is the thing being read across a room.
 pub const HUD_INK: Color = Color::WHITE;
 
