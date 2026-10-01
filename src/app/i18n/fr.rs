@@ -374,6 +374,7 @@ pub static FR: Tr = Tr {
     match_gulls: "Mouettes",
     match_round: "Durée",
     match_posts: "Flèches par joueur",
+    countdown_go: "PARTEZ !",
     match_mode: "Mode",
     match_name: "Nom",
     match_name_empty: "- (Tab pour nommer)",

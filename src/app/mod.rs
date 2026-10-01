@@ -37,6 +37,7 @@ pub(crate) fn postcard_screen(screen: Screen) -> bool {
 
 mod conditions;
 mod controls;
+mod countdown;
 mod creatures;
 mod cursor;
 mod cycle;
@@ -260,10 +261,19 @@ pub enum Phase {
     Lost,
 }
 
-/// Versus round flow: play until the tide, then results.
+/// Versus round flow: a count in, play until the tide, then results.
+///
+/// A round is entered in `Countdown`, which is where the phase rests
+/// between rounds, and `load_versus` moves it on to `Running` for a round
+/// that does not count in. Resting anywhere else let a round's first frame
+/// run before the count began: a phase asked for while the screen changes
+/// lands a frame later.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum VersusPhase {
+    /// The beach laid out and holding still while a count runs down, so
+    /// the table can read the map and find its castles (see `countdown`).
     #[default]
+    Countdown,
     Running,
     Over,
 }

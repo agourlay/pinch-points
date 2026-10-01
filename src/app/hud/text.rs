@@ -388,15 +388,21 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
     if status.is_empty() && r.crowd.watching > 0 {
         status = fill(tr.spectator_count, &[("n", &r.crowd.watching.to_string())]);
     }
+    // The count before a round shows the round's own keys: three seconds
+    // of a still beach is when a table reads them.
     let prompt = match vphase.get() {
         // A recording is watched, not played, but it *is* driven: the
         // transport bar at the foot of the board takes a pause and a
         // speed, and keys nobody is told about are keys nobody presses.
-        VersusPhase::Running if playback.0.is_some() => tr.prompt_replay_transport.to_string(),
+        VersusPhase::Countdown | VersusPhase::Running if playback.0.is_some() => {
+            tr.prompt_replay_transport.to_string()
+        }
         // Someone else's live match has no seat here, so no control
         // legend: a spectator holds nothing and places nothing. What they
         // do have is free hands, which is why they are the ones who talk.
-        VersusPhase::Running if online.0.as_ref().is_some_and(|s| s.session.watching()) => {
+        VersusPhase::Countdown | VersusPhase::Running
+            if online.0.as_ref().is_some_and(|s| s.session.watching()) =>
+        {
             match r.spectator_typing {
                 Some(line) => format!("> {line}_"),
                 // What the key does right now, in the crowd's own terms: a
@@ -439,11 +445,15 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
                 ),
             }
         }
-        VersusPhase::Running if online.0.is_some() || bots.0.iter().any(Option::is_some) => {
+        VersusPhase::Countdown | VersusPhase::Running
+            if online.0.is_some() || bots.0.iter().any(Option::is_some) =>
+        {
             tr.prompt_versus_short.to_string()
         }
-        VersusPhase::Running if settings.custom_binds() => tr.prompt_versus_custom.to_string(),
-        VersusPhase::Running => tr.prompt_versus_local.to_string(),
+        VersusPhase::Countdown | VersusPhase::Running if settings.custom_binds() => {
+            tr.prompt_versus_custom.to_string()
+        }
+        VersusPhase::Countdown | VersusPhase::Running => tr.prompt_versus_local.to_string(),
         // Whatever Enter actually does here, named by the one function the
         // key itself reads: a finished lobby match goes back to the lobby
         // together, a series plays on, and the prompt must not promise a

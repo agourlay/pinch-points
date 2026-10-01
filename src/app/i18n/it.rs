@@ -374,6 +374,7 @@ pub static IT: Tr = Tr {
     match_gulls: "Gabbiani",
     match_round: "Durata",
     match_posts: "Frecce a testa",
+    countdown_go: "VIA!",
     match_mode: "Modalità",
     match_name: "Nome",
     match_name_empty: "- (Tab per il nome)",

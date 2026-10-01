@@ -130,7 +130,9 @@ score lost, so the rest of the table has something to point at too.
   series with rotating maps and nameable seats. AI comes at three levels:
   easy fumbles, fierce reads the terrain and shoves gulls at the leader, and
   all three walk a cursor at a capped speed rather than reaching across the
-  board for free (`cargo run --example ladder` plays them off).
+  board for free (`cargo run --example ladder` plays them off). Every
+  round, local or online, opens on a **three-second count** with the beach
+  holding still, so the table can read the map and find its castles first.
 - **Beach Day**: eight score-attack challenge stages (timed goals, versus
   rules).
 - **Driftwood**: a level editor with a built-in solver, playtesting, and

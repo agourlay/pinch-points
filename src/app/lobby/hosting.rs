@@ -102,11 +102,11 @@ pub struct IntoArena<'w> {
 
 impl IntoArena<'_> {
     /// Walk the table in: the session and the series take over, and the
-    /// round opens running.
+    /// round opens on its count.
     fn walk_in(&mut self, session: OnlineSession, series: crate::app::tournament::Tournament) {
         self.online.0 = Some(session);
         *self.tournament = series;
-        self.next_vphase.set(VersusPhase::Running);
+        self.next_vphase.set(VersusPhase::Countdown);
         self.next_screen.set(Screen::Versus);
     }
 }

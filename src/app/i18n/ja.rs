@@ -370,6 +370,7 @@ pub static JA: Tr = Tr {
     match_gulls: "カモメの多さ",
     match_round: "試合の長さ",
     match_posts: "一人あたりの矢印",
+    countdown_go: "スタート!",
     match_mode: "やり方",
     match_name: "名前",
     match_name_empty: "- (Tabで名前)",

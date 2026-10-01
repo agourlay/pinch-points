@@ -325,7 +325,7 @@ fn walk_into_the_arena(
     // table back to.
     session.home.from_lobby = true;
     online.0 = Some(session);
-    next_vphase.set(VersusPhase::Running);
+    next_vphase.set(VersusPhase::Countdown);
     next_screen.set(Screen::Versus);
 }
 /// Joining: keep greeting the host until our seat assignment arrives

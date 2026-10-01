@@ -381,6 +381,7 @@ pub static RU: Tr = Tr {
     match_gulls: "Напор чаек",
     match_round: "Длина раунда",
     match_posts: "Стрелок у каждого",
+    countdown_go: "ВПЕРЁД!",
     match_mode: "Режим",
     match_name: "Имя",
     match_name_empty: "- (Tab: назвать)",

@@ -381,6 +381,7 @@ pub static DE: Tr = Tr {
     match_gulls: "Möwen",
     match_round: "Rundenlänge",
     match_posts: "Pfeile pro Spieler",
+    countdown_go: "LOS!",
     match_mode: "Modus",
     match_name: "Name",
     match_name_empty: "- (Tab zum Benennen)",

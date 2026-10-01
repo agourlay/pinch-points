@@ -374,6 +374,7 @@ pub static NL: Tr = Tr {
     match_gulls: "Meeuwen",
     match_round: "Duur",
     match_posts: "Pijlen per speler",
+    countdown_go: "START!",
     match_mode: "Modus",
     match_name: "Naam",
     match_name_empty: "- (Tab voor een naam)",

@@ -374,6 +374,7 @@ pub static ES: Tr = Tr {
     match_gulls: "Gaviotas",
     match_round: "Duración",
     match_posts: "Flechas por jugador",
+    countdown_go: "¡YA!",
     match_mode: "Modo",
     match_name: "Nombre",
     match_name_empty: "- (Tab para nombrar)",

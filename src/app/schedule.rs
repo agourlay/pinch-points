@@ -165,6 +165,7 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.init_resource::<effects::VisualRng>();
     app.init_resource::<effects::Trauma>();
     app.init_resource::<pause::PauseMenu>();
+    app.init_resource::<countdown::Countdown>();
     app.init_resource::<spectators::SpectatorChat>();
     app.init_resource::<spectators::SpectatorCard>();
     app.init_resource::<spectators::PickCard>();
@@ -269,6 +270,7 @@ fn add_screen_transitions(app: &mut App) {
             match_setup::refresh_custom_beaches,
             cursor::spawn_versus_cursors,
             load_versus,
+            countdown::show_countdown,
             resolve_seat_names,
             side_panels::spawn_side_panels,
             achievements::reset_round_scratch,
@@ -378,6 +380,7 @@ fn add_screen_transitions(app: &mut App) {
             menu_ui::despawn_marked::<side_panels::SidePanelRoot>,
             menu_ui::despawn_marked::<effects::Particle>,
             menu_ui::despawn_marked::<effects::Hop>,
+            menu_ui::despawn_marked::<countdown::CountdownText>,
             announce::clear_announcements,
             pause::reset_pause,
             spectators::forget_spectating,
@@ -863,6 +866,12 @@ fn add_chrome_systems(app: &mut App) {
             side_panels::update_log,
             hud::update_tide_clock,
             hud::update_hint,
+            (
+                countdown::run_countdown
+                    .run_if(in_state(Screen::Versus).and_then(in_state(VersusPhase::Countdown))),
+                countdown::draw_countdown.run_if(any_with_component::<countdown::CountdownText>),
+            )
+                .chain(),
             (replays::tend_replay_bar, replays::update_replay_bar).chain(),
             // The reel lands after the card is up; the card's line waits.
             (poll_reel, results::update_highlight_line)

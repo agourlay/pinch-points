@@ -137,6 +137,14 @@ impl RoundOrigin<'_> {
         }
     }
 
+    /// Whether the round opens on a countdown: one played from its first
+    /// tick does, the same rounds that are recorded. A recording starts
+    /// at once, and so does a round joined or resumed part way, which is
+    /// already moving.
+    pub(super) fn counts_in(&self) -> bool {
+        self.recorded()
+    }
+
     /// Whether the round is recorded as it is played. A replay is a
     /// recording already, and a round picked back up or caught up with
     /// mid-round has no first tick to record from: the board arrives as it
@@ -186,7 +194,7 @@ pub(in crate::app) fn load_versus(
     mut seats: ResMut<Seats>,
     mut recorder: ResMut<Recorder>,
     play: Play,
-    mut next_vphase: ResMut<NextState<VersusPhase>>,
+    mut opening: countdown::Opening,
 ) {
     let Play {
         mut sim,
@@ -236,7 +244,7 @@ pub(in crate::app) fn load_versus(
         transform.translation = layout::tile_center(&sim.0, cur.x, cur.y).extend(layout::z::CURSOR);
     }
     paused.0 = false;
-    next_vphase.set(VersusPhase::Running);
+    opening.open(origin.counts_in());
 }
 
 /// What a round leaves behind: its recording, and the highlight reel
@@ -275,9 +283,9 @@ pub(in crate::app) fn end_versus(
     config.armed = false;
     bots.0 = [None; MAX_PLAYERS];
     // Never leak a queued action or a stale Over phase into the next round
-    // or another mode.
+    // or another mode. The phase goes back to where a round is entered.
     pending.0 = [PlayerAction::None; MAX_PLAYERS];
-    next_vphase.set(VersusPhase::Running);
+    next_vphase.set(VersusPhase::Countdown);
 }
 
 /// Resolve what each seat is called this round; chained right after
