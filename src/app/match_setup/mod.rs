@@ -318,9 +318,15 @@ pub struct Dials<'w> {
 pub fn terms(config: &MatchConfig, teams: crate::app::teams::TeamMode, seed: u64) -> MatchTerms {
     MatchTerms {
         bots: config.bots,
-        // Every AI seat plays at the top seat's level: the wire carries one
-        // difficulty, and a lobby has no per-seat rows to fill anyway.
-        bot_level: config.level(config.seats.saturating_sub(1)).index() as u8,
+        // Every AI seat plays at the top AI seat's level: the wire carries
+        // one difficulty, and a lobby has no per-seat rows to fill anyway.
+        // A seat dialled to a bot on the couch has no level to give.
+        bot_level: config.controllers[..usize::from(config.seats).min(MAX_PLAYERS)]
+            .iter()
+            .rev()
+            .find_map(|controller| controller.ai())
+            .unwrap_or_default()
+            .index() as u8,
         map: config.map.index() as u8,
         gulls: config.gulls.index() as u8,
         round: config.round.index() as u8,
@@ -444,6 +450,22 @@ use screen::{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Hosting from a couch whose top seat was dialled to a bot: the wire
+    /// carries one AI level, and it is the one an AI seat was set to, not
+    /// the default a bot's seat reads as.
+    #[test]
+    fn a_bot_on_the_couch_does_not_set_the_lobbys_ai_level() {
+        let mut config = MatchConfig {
+            seats: 3,
+            bots: 2,
+            ..MatchConfig::default()
+        };
+        config.controllers[2] = SeatController::Bot;
+        config.controllers[1] = SeatController::Ai(BotLevel::Hard);
+        let terms = terms(&config, crate::app::teams::TeamMode::Solo, 1);
+        assert_eq!(terms.bot_level, BotLevel::Hard.index() as u8);
+    }
 
     /// A match needs somebody for player 1 to play: an AI, a pad that
     /// pressed Start, or a second person at P2's keys. Two humans on the

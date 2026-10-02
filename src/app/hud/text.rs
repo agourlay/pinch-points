@@ -450,7 +450,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
             }
         }
         VersusPhase::Countdown | VersusPhase::Running
-            if online.0.is_some() || controllers.ai_count() > 0 =>
+            if online.0.is_some() || controllers.machine_count() > 0 =>
         {
             tr.prompt_versus_short.to_string()
         }
@@ -1194,6 +1194,59 @@ mod tests {
             // The mute key is global and still works, so it stays on the end.
             assert!(paused.ends_with(EN.prompt_mute), "{screen:?}: {paused}");
         }
+    }
+
+    /// P1 against a bot has one cursor, like P1 against the AI: the
+    /// prompt names P1's keys alone, not a P2 whose keys drive nothing.
+    #[test]
+    fn a_match_against_a_bot_prompts_for_one_player() {
+        use crate::app::{Campaign, CampaignKind, Controllers, Playback, SeatController, Seats};
+
+        let levels = campaign_levels();
+        let builtins = levels.len();
+        let campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        };
+        let settings = GameSettings::default();
+        let said = |controllers: &Controllers| {
+            versus_text(&Readout {
+                tr: &EN,
+                lang: Lang::En,
+                sim: &Sim(Board::new(9, 7, 1)),
+                campaign: &campaign,
+                coop: false,
+                phase: &State::new(Phase::Setup),
+                vphase: &State::new(VersusPhase::Running),
+                editor: &EditorState::default(),
+                online: &Online::default(),
+                playback: &Playback::default(),
+                lobby: &LobbyState::default(),
+                tournament: &crate::app::tournament::Tournament::default(),
+                seats: &Seats(2),
+                settings: &settings,
+                keycaps: &crate::app::keycaps::KeyCaps::default(),
+                names: &crate::app::SeatNames::default(),
+                controllers,
+                library: &crate::app::replays::Library::default(),
+                notice: &crate::app::RoundNotice::default(),
+                match_menu: &crate::app::match_setup::MatchMenu::default(),
+                paused: false,
+                spectator_typing: None,
+                crowd: Default::default(),
+                speed: 1,
+            })
+            .prompt
+        };
+        let mut against_ai = Controllers::default();
+        against_ai.0[1] = SeatController::Ai(crate::sim::BotLevel::Normal);
+        let mut against_bot = Controllers::default();
+        against_bot.0[1] = SeatController::Bot;
+        assert_eq!(said(&against_ai), EN.prompt_versus_short);
+        assert_eq!(said(&against_bot), EN.prompt_versus_short);
+        assert_eq!(said(&Controllers::default()), EN.prompt_versus_local);
     }
 
     /// And the prompt line says so too. The screen census below builds its

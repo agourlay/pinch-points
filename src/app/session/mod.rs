@@ -282,6 +282,31 @@ mod tests {
         assert_eq!(bot_seats(&idle), Controllers::default());
     }
 
+    /// A round copied with a bot in it keeps that seat off the keyboard:
+    /// pasted back, the bot is not there, so the AI that stands in for a
+    /// bot holds it, rather than a person's keys or nobody at all.
+    #[test]
+    fn a_bots_seat_is_saved_as_the_ai_that_stands_in_for_it() {
+        let mut config = armed(3, 2);
+        config.controllers[2] = SeatController::Bot;
+        config.controllers[1] = SeatController::Ai(BotLevel::Hard);
+        let table = bot_seats(&config);
+        assert_eq!(table.0[2], SeatController::Bot);
+        let saved = table.levels();
+        assert_eq!(saved[0], None, "the person stays a person");
+        assert_eq!(saved[1], Some(BotLevel::Hard));
+        assert_eq!(
+            saved[2],
+            Some(crate::app::bot_seats::STAND_IN),
+            "the bot's seat is the stand-in AI's"
+        );
+        let resumed = Controllers::from_levels(saved);
+        assert_eq!(
+            resumed.0[2],
+            SeatController::Ai(crate::app::bot_seats::STAND_IN)
+        );
+    }
+
     /// A replay's board with castles for `seats` seats.
     fn recorded(seats: u8) -> Replay {
         Replay::new(Level::from_board(

@@ -185,9 +185,24 @@ impl Controllers {
         self.0.iter().filter(|c| c.ai().is_some()).count()
     }
 
-    /// The AI seats and nothing else, the shape a saved round keeps.
+    /// How many seats play themselves, the AI's and the bots': the seats
+    /// nobody at this machine's keys has a cursor in.
+    pub fn machine_count(&self) -> usize {
+        self.0
+            .iter()
+            .filter(|c| c.ai().is_some() || **c == SeatController::Bot)
+            .count()
+    }
+
+    /// The AI seats and nothing else, the shape a saved round keeps. A
+    /// bot's seat is saved as the AI that stands in for a bot, since the
+    /// bot is not there when the round is picked up again.
     pub fn levels(&self) -> [Option<BotLevel>; MAX_PLAYERS] {
-        self.0.map(SeatController::ai)
+        self.0.map(|c| match c {
+            SeatController::Bot => Some(crate::app::bot_seats::STAND_IN),
+            SeatController::Ai(level) => Some(level),
+            SeatController::Local | SeatController::Remote => None,
+        })
     }
 
     /// A table from the AI seats alone: everyone else plays at this machine.
