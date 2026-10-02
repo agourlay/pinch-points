@@ -193,10 +193,17 @@ impl Beach {
             Beach::File(_, level) => level.board(),
             Beach::Map(MapChoice::Classic) => crate::sim::classic_arena_seeded(seed, false, seats),
             Beach::Generated | Beach::Map(_) => {
+                // Past the seats a classic-sized beach holds, the game
+                // gives way to the extra-large one (`match_setup::settle_map`),
+                // and so does the arena.
                 let map = match self {
                     Beach::Map(map) => *map,
-                    Beach::Generated | Beach::File(..) if seats > 4 => MapChoice::GenLarge,
-                    Beach::Generated | Beach::File(..) => MapChoice::GenClassic,
+                    Beach::Generated | Beach::File(..)
+                        if crate::app::match_setup::holds(MapChoice::GenClassic, seats) =>
+                    {
+                        MapChoice::GenClassic
+                    }
+                    Beach::Generated | Beach::File(..) => MapChoice::GenXl,
                 };
                 let (w, h) = map.size();
                 let mut board = crate::sim::generate_arena(seed, seats, w, h);
@@ -349,5 +356,32 @@ mod tests {
         assert!(Beach::Generated.check(7).is_err());
         let board = Beach::Generated.board(3, 6, RoundLength::Short);
         assert_eq!(board.castle_seats(), 6);
+    }
+
+    /// `--map generated` is the beach the game deals the same table: the
+    /// classic-sized generator for four or fewer, and the one it gives way
+    /// to past four (`match_setup::settle_map`, the lobby's `map_for`). A
+    /// bot tuned in the arena meets the board it was tuned on.
+    #[test]
+    fn a_generated_arena_is_the_beach_the_game_deals() {
+        for seats in 2..=MAX_PLAYERS as u8 {
+            let board = Beach::Generated.board(3, seats, RoundLength::Short);
+            let mut config = crate::app::match_setup::MatchConfig {
+                map: MapChoice::GenClassic,
+                seats,
+                ..Default::default()
+            };
+            crate::app::match_setup::settle_map(&mut config, &Default::default());
+            let (w, h) = config.map.size();
+            // The generator may widen a beach by a column for five or six.
+            let widened = seats >= 5 && board.width() == w + 1;
+            assert!(
+                board.width() == w || widened,
+                "{seats} seats: {} wide, the game's is {w}",
+                board.width()
+            );
+            assert_eq!(board.height(), h, "{seats} seats");
+            assert_eq!(config.map.wraps(), board.wrap(), "{seats} seats");
+        }
     }
 }

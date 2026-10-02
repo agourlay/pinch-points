@@ -20,15 +20,24 @@ use crate::sim::{Board, PlayerAction, PlayerId, fair_walk, hand_steps};
 pub use crate::sim::{FAIR_LIFT, FAIR_TICKS_PER_TILE};
 
 /// One seat's hand.
+///
+/// The hand's pace belongs to the walk, not to the order: a walk goes on,
+/// lift and all, for as long as the hand keeps moving, whatever it is
+/// walking to. A new order mid-walk only changes where it goes, so asking
+/// for the next tile every tick is a held key, not a fresh first step
+/// every tick. A hand still for a key's repeat has let go, and its next
+/// walk starts afresh with a free first tile.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SeatCursor {
     pub at: (u8, u8),
     /// The order being walked to, if one is.
     order: Option<Act>,
-    /// Where the walk to it began.
-    from: (u8, u8),
-    /// Ticks since the order was given.
+    /// Ticks since this walk began.
     walked: u32,
+    /// Tiles the hand has moved since this walk began.
+    steps: u32,
+    /// Ticks since the hand last had somewhere to go.
+    still: u32,
 }
 
 impl SeatCursor {
@@ -40,8 +49,9 @@ impl SeatCursor {
         SeatCursor {
             at,
             order: None,
-            from: at,
             walked: 0,
+            steps: 0,
+            still: FAIR_TICKS_PER_TILE,
         }
     }
 
@@ -57,7 +67,9 @@ impl SeatCursor {
     /// Under the rule, `place`, `remove` and `move` set a new order that
     /// replaces any still walking; `none` never cancels one, so a bot need
     /// not repeat itself every tick; `clear` needs no walk, as the
-    /// clear-all key needs none for a person.
+    /// clear-all key needs none for a person, and the walk goes on under
+    /// it (an order it brings home lands on the next tick, one action a
+    /// tick being all a seat has).
     pub fn step(
         &mut self,
         board: &Board,
@@ -75,39 +87,55 @@ impl SeatCursor {
             );
         }
         match act {
-            Act::None => {}
-            Act::Clear => return (sim_action(board, seat, act), Some(act)),
-            // The same tile asked for again is the same walk, whatever is
-            // to be done at the end of it: a bot repeating itself does not
-            // start over, lift and all, every time it speaks.
-            Act::Place { .. } | Act::Remove { .. } | Act::Move { .. }
-                if self.order.and_then(Act::target) == act.target() =>
-            {
-                self.order = Some(act);
-            }
-            Act::Place { .. } | Act::Remove { .. } | Act::Move { .. } => {
-                self.order = Some(act);
-                self.from = self.at;
-                self.walked = 0;
-            }
+            Act::None | Act::Clear => {}
+            Act::Place { .. } | Act::Remove { .. } | Act::Move { .. } => self.order = Some(act),
         }
-        let Some(order) = self.order else {
-            return (PlayerAction::None, None);
+        let target = self
+            .order
+            .map(|order| clamp(board, order.target().unwrap_or(self.at)));
+        self.walk(target);
+        if act == Act::Clear {
+            return (sim_action(board, seat, act), Some(act));
+        }
+        match self.order {
+            Some(order) if target == Some(self.at) => {
+                self.order = None;
+                (sim_action(board, seat, order), Some(order))
+            }
+            _ => (PlayerAction::None, None),
+        }
+    }
+
+    /// One tick of the hand toward `target`, as far as the walk's pace
+    /// allows. A hand held back by the pace is still holding the key; only
+    /// one with nowhere to go has let it go.
+    fn walk(&mut self, target: Option<(u8, u8)>) {
+        let walking = match target {
+            Some(target) if target != self.at => {
+                if self.still >= FAIR_TICKS_PER_TILE {
+                    self.walked = 0;
+                    self.steps = 0;
+                }
+                // The most tiles a held key has covered by now.
+                let mut allowed = 1;
+                while fair_walk(allowed + 1) <= self.walked {
+                    allowed += 1;
+                }
+                let n = allowed
+                    .saturating_sub(self.steps)
+                    .min(hand_steps(self.at, target));
+                self.at = along(self.at, target, n);
+                self.steps += n;
+                true
+            }
+            _ => false,
         };
-        let target = clamp(board, order.target().unwrap_or(self.at));
-        let distance = hand_steps(self.from, target);
-        // As far along the walk as the ticks since the order allow.
-        let reached = (0..=distance)
-            .rev()
-            .find(|&steps| fair_walk(steps) <= self.walked)
-            .unwrap_or(0);
-        self.at = along(self.from, target, reached);
-        self.walked += 1;
-        if self.at != target {
-            return (PlayerAction::None, None);
-        }
-        self.order = None;
-        (sim_action(board, seat, order), Some(order))
+        self.still = if walking {
+            0
+        } else {
+            self.still.saturating_add(1)
+        };
+        self.walked = self.walked.saturating_add(1);
     }
 }
 
@@ -237,5 +265,43 @@ mod tests {
         );
         hand.step(&board, 0, Act::Move { x: 0, y: 0 }, true);
         assert_eq!(hand.order(), Some(Act::Move { x: 0, y: 0 }));
+    }
+
+    /// Clearing is the clear-all key, pressed while the other hand keeps
+    /// walking: the walk does not stop for it.
+    #[test]
+    fn clearing_every_tick_does_not_freeze_the_walk() {
+        let board = classic_arena(false, 2);
+        let mut hand = SeatCursor::home(&board, 0);
+        let (x, y) = hand.at;
+        let far = Act::Move { x: x + 6, y };
+        hand.step(&board, 0, far, true);
+        for _ in 0..fair_walk(6) + 5 {
+            hand.step(&board, 0, Act::Clear, true);
+        }
+        assert_eq!(hand.at, (x + 6, y), "the hand walked on under the clears");
+    }
+
+    /// A tile at a time, asked for every tick, is a held key and walks at a
+    /// held key's pace, lift and all: not a tile a tick.
+    #[test]
+    fn a_step_at_a_time_walks_no_faster_than_a_held_key() {
+        let board = classic_arena(false, 2);
+        let mut hand = SeatCursor::home(&board, 0);
+        let start = hand.at;
+        let ticks = 20;
+        for _ in 0..ticks {
+            let (x, y) = hand.at;
+            hand.step(&board, 0, Act::Move { x: x + 1, y }, true);
+        }
+        let moved = hand_steps(start, hand.at);
+        let held = (0..=ticks)
+            .filter(|&s| fair_walk(s) < ticks)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            moved <= held,
+            "{moved} tiles in {ticks} ticks, where a held key goes {held}"
+        );
     }
 }

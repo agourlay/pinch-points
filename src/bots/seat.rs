@@ -208,6 +208,11 @@ impl BotDriver {
     }
 
     fn reply(&mut self, reply: Reply, at: Instant, t: u64, journal: &mut Journal) -> bool {
+        // A seat out of the game (forfeited, or never ready) plays nothing,
+        // whatever its bot goes on sending.
+        if !self.playing() {
+            return false;
+        }
         if reply.tick > t {
             let _ = writeln!(
                 journal.log,
@@ -246,6 +251,10 @@ impl BotDriver {
             .as_ref()
             .is_none_or(|(held, _)| held.tick < reply.tick)
         {
+            // Its `wait` holds from the moment it is read: a reply taken
+            // between ticks asks not to be sent the very next one, which is
+            // decided before anything commits.
+            self.awake_at = reply.tick + 1 + u64::from(reply.wait);
             self.in_hand = Some((reply, at));
         }
         unblocked
@@ -257,7 +266,6 @@ impl BotDriver {
         let Some((reply, at)) = self.in_hand.take() else {
             return Act::None;
         };
-        self.awake_at = reply.tick + 1 + u64::from(reply.wait);
         self.log(&reply, at, journal);
         reply.act
     }
@@ -327,6 +335,12 @@ pub fn refusal(board: &Board, seat: PlayerId, action: PlayerAction) -> Option<Re
 /// What became of `act` once the tick ran: `refused` is what the board
 /// said before it, `after` the board the tick left. `None` for an act with
 /// nothing to report (`none`, `move`).
+///
+/// The board the tick left has the last word. Seats act one at a time in
+/// the tick's order, so a tile taken before the tick can be given up by a
+/// seat ahead in the order and then placed on, and a free one taken by a
+/// seat ahead: either way, a post of this seat's stamped this tick is a
+/// placement that landed, and no such post is one that did not.
 pub fn outcome(
     act: Act,
     action: PlayerAction,
@@ -337,6 +351,13 @@ pub fn outcome(
 ) -> Option<Outcome> {
     if matches!(act, Act::None | Act::Move { .. }) {
         return None;
+    }
+    if let PlayerAction::Place { x, y, .. } = action
+        && after
+            .signpost_at(x, y)
+            .is_some_and(|post| post.owner == seat && post.placed == tick)
+    {
+        return Some(Outcome::Accepted);
     }
     Some(match (refused, action) {
         (Some(why), _) => Outcome::Refused(why),
@@ -443,5 +464,107 @@ mod tests {
         // An answer for a tick never sent is not believed.
         assert!(!seat.take(reply(9, place), 2, &mut journal));
         assert_eq!(seat.order(&mut journal), Act::None);
+    }
+
+    fn quiet() -> (Vec<u8>, impl FnMut(String)) {
+        (Vec::new(), |_: String| {})
+    }
+
+    /// A `wait` read between ticks is a wait for the very next one: the
+    /// seat is not sent the tick it asked to sleep through.
+    #[test]
+    fn a_wait_read_between_ticks_skips_the_next_one() {
+        let (mut log, mut console) = quiet();
+        let mut journal = Journal {
+            log: &mut log,
+            console: &mut console,
+            echo_notes: false,
+            game: 1,
+        };
+        let mut seat = BotDriver::new(0, 0, "b".into(), true, Duration::from_millis(33));
+        seat.ready = true;
+        let now = Instant::now();
+        seat.sent(0, now);
+        let GameMsg::Reply {
+            mut reply, seat: s, ..
+        } = reply(0, Act::None)
+        else {
+            unreachable!()
+        };
+        reply.wait = 5;
+        // Read in the drain at the top of tick 1, before anything commits.
+        seat.take(
+            GameMsg::Reply {
+                seat: s,
+                reply,
+                at: now,
+            },
+            1,
+            &mut journal,
+        );
+        assert_eq!(seat.turn(1, now), Turn::Skip, "it asked to sleep");
+        assert_eq!(seat.turn(6, now), Turn::Send, "and wakes when it said");
+    }
+
+    /// A seat that forfeited plays nothing, whatever its bot goes on
+    /// sending.
+    #[test]
+    fn a_forfeited_seat_does_nothing_its_bot_says() {
+        let (mut log, mut console) = quiet();
+        let mut journal = Journal {
+            log: &mut log,
+            console: &mut console,
+            echo_notes: false,
+            game: 1,
+        };
+        let mut seat = BotDriver::new(0, 0, "b".into(), true, Duration::from_millis(33));
+        seat.forfeit = true;
+        let place = Act::Place {
+            x: 1,
+            y: 1,
+            dir: crate::sim::Direction::Up,
+        };
+        seat.take(reply(0, place), 3, &mut journal);
+        assert_eq!(seat.order(&mut journal), Act::None);
+    }
+
+    /// Seats act one at a time, so a tile one seat gives up is free for
+    /// the next in the tick's order: a placement that took it was
+    /// accepted, whatever the board said before the tick.
+    #[test]
+    fn a_tile_freed_earlier_in_the_tick_is_an_accepted_placement() {
+        use crate::sim::{Direction, TileKind};
+        let mut board = Board::new(6, 3, 1);
+        board.set_tile(0, 1, TileKind::Castle(0));
+        board.set_tile(5, 1, TileKind::Castle(1));
+        board.set_signpost_rule(3, crate::sim::CapPolicy::Evict);
+        assert!(board.place_signpost(0, 2, 1, Direction::Up));
+        // Tick 0 leads with seat 0.
+        let mut actions = [PlayerAction::None; crate::sim::MAX_PLAYERS];
+        actions[0] = PlayerAction::Remove { x: 2, y: 1 };
+        actions[1] = PlayerAction::Place {
+            x: 2,
+            y: 1,
+            dir: Direction::Down,
+        };
+        let tick = board.ticks();
+        let refused = refusal(&board, 1, actions[1]);
+        assert_eq!(
+            refused,
+            Some(Refusal::RivalPost),
+            "before the tick, it is taken"
+        );
+        board.tick(&actions);
+        let post = board.signpost_at(2, 1).expect("seat 1's post");
+        assert_eq!(post.owner, 1, "seat 0 went first and let it go");
+        let act = Act::Place {
+            x: 2,
+            y: 1,
+            dir: Direction::Down,
+        };
+        assert_eq!(
+            outcome(act, actions[1], refused, &board, 1, tick),
+            Some(Outcome::Accepted)
+        );
     }
 }
