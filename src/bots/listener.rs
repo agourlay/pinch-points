@@ -166,11 +166,34 @@ struct Route {
 
 /// A game's line to the listener: what its seats send, and the board it
 /// publishes for their lookaheads. Dropping it closes the route.
+///
+/// The receiver sits behind a lock only so a link can live in a Bevy
+/// resource, which has to be shareable; one game reads it at a time.
 pub struct GameLink {
-    pub rx: Receiver<GameMsg>,
+    rx: Mutex<Receiver<GameMsg>>,
     pub view: Arc<Mutex<Option<View>>>,
     game: u32,
     shared: Arc<Shared>,
+}
+
+impl GameLink {
+    /// The next thing a seat said, if anything is waiting.
+    pub fn try_recv(&self) -> Option<GameMsg> {
+        lock(&self.rx).try_recv().ok()
+    }
+
+    /// The next thing a seat says, waiting up to `timeout` for it.
+    pub fn recv_timeout(
+        &self,
+        timeout: Duration,
+    ) -> Result<GameMsg, std::sync::mpsc::RecvTimeoutError> {
+        lock(&self.rx).recv_timeout(timeout)
+    }
+
+    /// Write to one of this game's bots.
+    pub fn send(&self, id: BotId, msg: &Value) -> bool {
+        send(&mut lock(&self.shared.registry), id, msg)
+    }
 }
 
 impl Drop for GameLink {
@@ -210,6 +233,10 @@ struct Shared {
     registry: Mutex<Registry>,
     config: Mutex<Config>,
     events: Mutex<Sender<Event>>,
+    /// Every address an accept loop is listening on, to wake it when the
+    /// listener closes.
+    bound: Mutex<Vec<SocketAddr>>,
+    closed: std::sync::atomic::AtomicBool,
 }
 
 /// A held lock, whatever a panicking thread left it as: the registry is
@@ -235,6 +262,8 @@ impl Listener {
             registry: Mutex::new(Registry::default()),
             config: Mutex::new(config),
             events: Mutex::new(events),
+            bound: Mutex::new(vec![addr]),
+            closed: std::sync::atomic::AtomicBool::new(false),
         });
         let accepting = Arc::clone(&shared);
         std::thread::Builder::new()
@@ -245,6 +274,46 @@ impl Listener {
 
     pub fn local_addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Listen on a second address too, into the same registry: a card that
+    /// listened on this machine alone, opened to the LAN. Returns where the
+    /// new socket landed.
+    pub fn also_listen(&self, addr: SocketAddr) -> std::io::Result<SocketAddr> {
+        let socket = TcpListener::bind(addr)?;
+        let bound = socket.local_addr()?;
+        lock(&self.shared.bound).push(bound);
+        let accepting = Arc::clone(&self.shared);
+        std::thread::Builder::new()
+            .name("bot-accept".into())
+            .spawn(move || accept_loop(&socket, &accepting))?;
+        Ok(bound)
+    }
+
+    /// Stop listening and drop every bot: the sockets close, the threads
+    /// end. The arena and a cup never need to, since their process ends;
+    /// the game opens a listener for a card and closes it with the card.
+    pub fn close(&self) {
+        use std::sync::atomic::Ordering;
+        if self.shared.closed.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        // Each accept loop is woken by a connection of its own, and sees
+        // the flag before it serves anybody.
+        for addr in lock(&self.shared.bound).iter() {
+            let wake = match addr.ip() {
+                ip if ip.is_unspecified() => SocketAddr::new([127, 0, 0, 1].into(), addr.port()),
+                _ => *addr,
+            };
+            let _ = TcpStream::connect_timeout(&wake, Duration::from_millis(200));
+        }
+        let mut registry = lock(&self.shared.registry);
+        for bot in &mut registry.bots {
+            if let Some(conn) = bot.conn.take() {
+                let _ = conn.stream.shutdown(Shutdown::Both);
+            }
+        }
+        registry.routes.clear();
     }
 
     /// Add a way in (a cup's per-author invite, a card's next key).
@@ -321,7 +390,7 @@ impl Listener {
             },
         );
         GameLink {
-            rx,
+            rx: Mutex::new(rx),
             view,
             game,
             shared: Arc::clone(&self.shared),
@@ -338,6 +407,9 @@ impl Listener {
 
 fn accept_loop(socket: &TcpListener, shared: &Arc<Shared>) {
     for stream in socket.incoming() {
+        if shared.closed.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         let Ok(stream) = stream else {
             continue;
         };

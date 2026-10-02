@@ -415,6 +415,16 @@ impl LobbyState {
         table_of(peers, tr, me)
     }
 
+    /// What the beach under the cursor is called, for a card that is about
+    /// to join it: its name, or its address when it gave none.
+    pub fn joining_beach(&self) -> Option<String> {
+        let host = &self.hosts[self.selected_index()?];
+        Some(match host.name.is_empty() {
+            true => host.addr.to_string(),
+            false => host.name.clone(),
+        })
+    }
+
     /// Where the cursor sits in the current list, if the beach it names is
     /// still on the air.
     pub fn selected_index(&self) -> Option<usize> {

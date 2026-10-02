@@ -198,7 +198,7 @@ impl Match<'_, '_> {
             if !waiting {
                 return;
             }
-            let msg = match self.link.rx.recv_timeout(Duration::from_millis(50)) {
+            let msg = match self.link.recv_timeout(Duration::from_millis(50)) {
                 Ok(msg) => msg,
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => return,
@@ -275,7 +275,7 @@ impl Match<'_, '_> {
             if now >= until {
                 return;
             }
-            match self.link.rx.recv_timeout(until - now) {
+            match self.link.recv_timeout(until - now) {
                 Ok(msg) => {
                     if self.take(msg, t) {
                         expecting = expecting.saturating_sub(1);
@@ -353,7 +353,7 @@ impl Match<'_, '_> {
         }
         // Whatever arrived since the last tick (a late reply, a bot coming
         // back) is taken first: it decides who is sent this one.
-        while let Ok(msg) = self.link.rx.try_recv() {
+        while let Some(msg) = self.link.try_recv() {
             self.take(msg, t);
         }
         let sent_at = Instant::now();
@@ -450,7 +450,7 @@ impl Match<'_, '_> {
         // Replies still in flight for the last ticks are drained so their
         // timing counts.
         let t = self.spec.board.ticks();
-        while let Ok(msg) = self.link.rx.try_recv() {
+        while let Some(msg) = self.link.try_recv() {
             self.take(msg, t);
         }
         let n = self.n();

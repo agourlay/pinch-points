@@ -5,6 +5,7 @@
 //! form stay readable without the UI wrapped around them.
 
 use super::*;
+use crate::app::SeatController;
 use crate::app::i18n::fill;
 use crate::app::menu_ui;
 use crate::app::settings::GameSettings;
@@ -21,6 +22,8 @@ pub struct MatchMenu {
     /// had no way to, so nothing could tell two people sharing it from
     /// one person who set the table for two.
     pub p2_here: bool,
+    /// The `PINCH_LAUNCH` hook has pressed its Enter.
+    pub launched: bool,
 }
 
 /// Whether player 1 would have anybody to play against: an AI in the
@@ -283,13 +286,32 @@ pub(super) fn ai_seat(config: &MatchConfig, slot: u8) -> Option<u8> {
     (slot < config.bots).then(|| config.seats - 1 - slot)
 }
 
-/// Step the difficulty of the AI seat behind `slot`. A dead slot (the row
-/// is hidden) changes nothing.
+/// What a seat that is not played here can be, in the order its dial
+/// steps through them: the AI at each difficulty, then a bot.
+const OPPONENTS: [SeatController; 4] = [
+    SeatController::Ai(BotLevel::Easy),
+    SeatController::Ai(BotLevel::Normal),
+    SeatController::Ai(BotLevel::Hard),
+    SeatController::Bot,
+];
+
+/// Step what holds the seat behind `slot`: easier or fiercer AI, or a bot
+/// connected over the network. A dead slot (the row is hidden) changes
+/// nothing.
 pub(super) fn cycle_ai_level(config: &mut MatchConfig, slot: u8, turn: Turn) {
     if let Some(seat) = ai_seat(config, slot) {
-        let level = config.level(seat).cycled(turn);
-        config.controllers[usize::from(seat)] = SeatController::Ai(level);
+        let now = config.controllers[usize::from(seat)];
+        let at = OPPONENTS.iter().position(|c| *c == now).unwrap_or(1);
+        let next = crate::app::cycle::dial(at as u8, turn, 1, 0..=OPPONENTS.len() as u8 - 1);
+        config.controllers[usize::from(seat)] = OPPONENTS[usize::from(next)];
     }
+}
+
+/// The seats a bot holds in the match as set up.
+pub fn bot_seat_list(config: &MatchConfig) -> Vec<u8> {
+    (0..config.seats)
+        .filter(|&seat| config.controller(seat) == SeatController::Bot)
+        .collect()
 }
 
 /// Which rows are showing right now: the AI-level rows appear one per AI
@@ -304,11 +326,57 @@ pub(super) fn live_rows(config: &MatchConfig) -> [bool; ROWS] {
     })
 }
 
-/// What starting the match sets going: the series, and the screen.
+/// What starting the match sets going: the series, the screen, and the
+/// doorway the table's bots come in by.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct MatchStart<'w> {
     tournament: ResMut<'w, crate::app::tournament::Tournament>,
     next_screen: ResMut<'w, NextState<Screen>>,
+    bots: ResMut<'w, crate::app::bot_seats::BotSeats>,
+}
+
+impl MatchStart<'_> {
+    /// Put the match on: armed, the series begun, the arena opened.
+    fn launch(&mut self, config: &mut MatchConfig) {
+        config.armed = true;
+        *self.tournament = if config.series.is_series() {
+            crate::app::tournament::Tournament::start(config.series)
+        } else {
+            crate::app::tournament::Tournament::default()
+        };
+        self.next_screen.set(Screen::Versus);
+    }
+
+    /// Whether the table's bots are all in, opening the doorway for any
+    /// that are not. A table with no bot seat is ready at once.
+    fn bots_in(&mut self, config: &MatchConfig, tr: &crate::app::i18n::Tr) -> bool {
+        use crate::app::bot_seats::{Doorway, Waiting};
+        let seats = bot_seat_list(config);
+        if seats.is_empty() {
+            self.bots.door = None;
+            return true;
+        }
+        if self.bots.door.is_none() {
+            match Doorway::open() {
+                Ok(door) => self.bots.door = Some(door),
+                Err(e) => {
+                    self.bots.feedback =
+                        crate::app::i18n::fill(tr.door_could_not_listen, &[("e", &e.to_string())]);
+                    return false;
+                }
+            }
+        }
+        let Some(door) = &mut self.bots.door else {
+            return false;
+        };
+        door.seat_bots(&seats);
+        door.poll();
+        if door.ready() {
+            return true;
+        }
+        self.bots.waiting = Some(Waiting::Couch);
+        false
+    }
 }
 
 pub fn match_setup_input(
@@ -324,10 +392,23 @@ pub fn match_setup_input(
         mut config,
         beaches,
     } = dials;
-    let MatchStart {
-        mut tournament,
-        mut next_screen,
-    } = start;
+    let mut start = start;
+    // A doorway card is up: its keys are its own, and the match goes on
+    // the moment the last bot is in.
+    if start.bots.waiting.is_some() {
+        if start
+            .bots
+            .door
+            .as_ref()
+            .is_some_and(crate::app::bot_seats::Doorway::ready)
+        {
+            start.bots.waiting = None;
+            start.bots.feedback.clear();
+            start.launch(&mut config);
+        }
+        typed.clear();
+        return;
+    }
     if let Some(seat) = menu.naming {
         type_a_name(seat, &mut typed, &keys, &mut settings, &mut menu);
         return;
@@ -336,7 +417,7 @@ pub fn match_setup_input(
     // or the first keystroke of a rename arrives with a backlog.
     typed.clear();
     if keys.just_pressed(KeyCode::Escape) {
-        next_screen.set(Screen::Menu);
+        start.next_screen.set(Screen::Menu);
         return;
     }
     // Tab opens a name for typing, not Enter: on a name row Enter could
@@ -352,18 +433,17 @@ pub fn match_setup_input(
     if p2_pressed(&keys, &settings) {
         menu.p2_here = true;
     }
-    if menu_ui::enter(&keys) {
+    // The dev hook's Enter, pressed once for an unattended run.
+    let hooked = crate::app::dev::launch() && !std::mem::replace(&mut menu.launched, true);
+    if menu_ui::enter(&keys) || hooked {
         // Nobody to play: the footer already says what to do about it.
         if !has_an_opponent(&config, pads.0.len(), menu.p2_here) {
             return;
         }
-        config.armed = true;
-        *tournament = if config.series.is_series() {
-            crate::app::tournament::Tournament::start(config.series)
-        } else {
-            crate::app::tournament::Tournament::default()
-        };
-        next_screen.set(Screen::Versus);
+        // Bots first: a match never starts with a seat nothing is driving.
+        if start.bots_in(&config, settings.tr()) {
+            start.launch(&mut config);
+        }
         return;
     }
     menu.selected = menu_ui::nav_live(&keys, menu.selected, &live_rows(&config));
@@ -475,10 +555,13 @@ pub(super) fn row_text(
         Row::BotLevel(slot) => {
             let seat = ai_seat(config, slot).unwrap_or(0);
             let who = crate::app::seat_label(tr, seat);
-            (
-                format!("{} {who}", tr.match_ai_level),
-                dial(tr.bot_levels[config.level(seat).index()]),
-            )
+            let value = match config.controller(seat) {
+                SeatController::Bot => tr.match_bot,
+                SeatController::Ai(_) | SeatController::Local | SeatController::Remote => {
+                    tr.bot_levels[config.level(seat).index()]
+                }
+            };
+            (format!("{} {who}", tr.match_ai_level), dial(value))
         }
         // What the dial is *not* offering rides under the card, not here:
         // the value is one fixed-width cell, and the sentence runs off the

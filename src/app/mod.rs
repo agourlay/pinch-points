@@ -12,6 +12,7 @@ mod awards;
 mod binds;
 mod board_render;
 mod boot;
+mod bot_seats;
 pub mod campaign;
 pub(crate) mod clock;
 mod codes;

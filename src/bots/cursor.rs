@@ -77,6 +77,14 @@ impl SeatCursor {
         match act {
             Act::None => {}
             Act::Clear => return (sim_action(board, seat, act), Some(act)),
+            // The same tile asked for again is the same walk, whatever is
+            // to be done at the end of it: a bot repeating itself does not
+            // start over, lift and all, every time it speaks.
+            Act::Place { .. } | Act::Remove { .. } | Act::Move { .. }
+                if self.order.and_then(Act::target) == act.target() =>
+            {
+                self.order = Some(act);
+            }
             Act::Place { .. } | Act::Remove { .. } | Act::Move { .. } => {
                 self.order = Some(act);
                 self.from = self.at;
@@ -188,6 +196,30 @@ mod tests {
         let (action, done) = hand.step(&board, 0, act, true);
         assert_eq!(done, Some(act), "landed on the tick it was asked for");
         assert_ne!(action, PlayerAction::None);
+    }
+
+    #[test]
+    fn asking_again_for_the_tile_being_walked_to_keeps_walking() {
+        let board = classic_arena(false, 2);
+        let mut hand = SeatCursor::home(&board, 0);
+        let (x, y) = hand.at;
+        let far = Act::Place {
+            x: x + 6,
+            y: y + 6,
+            dir: Direction::Up,
+        };
+        let mut ticks = 0;
+        loop {
+            // Repeated every few ticks, as a bot that re-decides would.
+            let act = if ticks % 4 == 0 { far } else { Act::None };
+            let (action, _) = hand.step(&board, 0, act, true);
+            if action != PlayerAction::None {
+                break;
+            }
+            ticks += 1;
+            assert!(ticks < 100, "a repeated order never landed");
+        }
+        assert_eq!(ticks, fair_walk(6));
     }
 
     #[test]

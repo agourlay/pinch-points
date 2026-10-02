@@ -87,7 +87,7 @@ pub(in crate::app) fn advance_sim(
     mut recorder: ResMut<Recorder>,
     mut playback: ResMut<Playback>,
     speed: Res<replays::PlaybackSpeed>,
-    controllers: Res<Controllers>,
+    mut drivers: crate::app::bot_seats::Drivers,
     mut tally: ResMut<awards::RoundTally>,
 ) {
     let Play {
@@ -135,7 +135,7 @@ pub(in crate::app) fn advance_sim(
         let sim_board = &mut sim.bypass_change_detection().0;
         let recording = &mut recorder.bypass_change_detection().0;
         let tally = &mut *tally;
-        let controllers = &*controllers;
+        let controllers = &*drivers.controllers;
         // The level every peer gives an abandoned seat, from the terms the
         // table agreed on, so the chair plays the same on all of them.
         let level = {
@@ -208,10 +208,14 @@ pub(in crate::app) fn advance_sim(
         return;
     }
     let mut actions = std::mem::take(&mut pending.0);
-    fill_bot_actions(&sim.0, &controllers, &mut actions);
+    fill_bot_actions(&sim.0, &drivers.controllers, &mut actions);
+    // The bots' seats: the newest reply each has in hand, through its
+    // hand on the beach, then the next tick out to them after this one.
+    let committed = drivers.commit(&sim.0, &mut actions);
     let before = awards::Reading::of(&sim.0);
     sim.0.tick(&actions);
     tally.observe(before, &sim.0, &actions);
+    drivers.after(&sim.0, committed);
     if let Some(replay) = &mut recorder.0 {
         replay.record(actions);
         // One input a tick from the first, or the replay plays out a

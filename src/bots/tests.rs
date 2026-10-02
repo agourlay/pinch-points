@@ -543,3 +543,26 @@ fn a_per_author_key_names_the_owner_and_one_owner_enters_once() {
     let answer = second.next().expect("answer");
     assert_eq!(answer["type"], "error", "{answer}");
 }
+
+#[test]
+fn a_closed_listener_lets_its_port_and_its_bots_go() {
+    let (listener, events) = listen(Admission::Open);
+    let addr = listener.local_addr();
+    let (mut bot, _) = Client::register(addr, "Leaving", None);
+    let Ok(Event::Registered(_)) = events.recv_timeout(Duration::from_secs(5)) else {
+        panic!("no registration event");
+    };
+    listener.close();
+    // The bot hears the end of its connection.
+    while bot.next().is_some() {}
+    // And the port is free to take again.
+    let mut again = None;
+    for _ in 0..50 {
+        if let Ok(socket) = std::net::TcpListener::bind(addr) {
+            again = Some(socket);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(again.is_some(), "the port was never let go");
+}

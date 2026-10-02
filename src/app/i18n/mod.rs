@@ -726,6 +726,58 @@ struct Tr {
     pub ed_arena_ok: &'static str,
     pub ed_arena_needs_seats: &'static str,
     pub ed_arena_no_crabs: &'static str,
+
+    // --- bot seats (docs/bot-seats.md) ---
+    /// The AI row's value for a seat a bot holds: a program somebody
+    /// wrote, connected over the network (`docs/bot-seats.md`).
+    pub match_bot: &'static str,
+    /// The doorway card's heading on a couch: bots to fill this table.
+    pub door_title_table: &'static str,
+    /// The doorway card's heading when joining a beach as a bot.
+    pub door_title_join: &'static str,
+    /// Over the connection strings: what to do with them.
+    pub door_start_with: &'static str,
+    /// A chair whose bot has not registered yet.
+    pub door_waiting: &'static str,
+    /// A chair whose bot has: its name and build, and its round trip.
+    pub door_connected: &'static str,
+    /// The doorway card once its bot is in, while the beach is greeted.
+    pub door_joining: &'static str,
+    /// The doorway card's keys, showing this machine's strings.
+    pub door_prompt: &'static str,
+    /// The doorway card's keys, showing the LAN's.
+    pub door_prompt_lan: &'static str,
+    /// A string went on the clipboard.
+    pub door_copied: &'static str,
+    /// The doorway could not open: no port to listen on.
+    pub door_could_not_listen: &'static str,
+    /// What a bot's seat is called: its name and its owner's. The game
+    /// sets this, never the bot.
+    pub bot_owned: &'static str,
+    /// A bot that gave no owner.
+    pub bot_unowned: &'static str,
+    /// A bot's connection went and the grace ran out: the AI took its
+    /// chair.
+    pub bot_stand_in: &'static str,
+    /// And it came back.
+    pub bot_back: &'static str,
+    /// The host's dial for letting bots in, and its two positions.
+    pub lobby_bots_dial: &'static str,
+    pub lobby_bots_values: [&'static str; 2],
+    /// Tried to join as a bot a beach that is not taking any.
+    pub lobby_no_bots: &'static str,
+    /// After a beach's name on the list, when it takes bots.
+    pub lobby_bots_tag: &'static str,
+    /// The host is choosing whom to ask to leave.
+    pub lobby_kick_ask: &'static str,
+    /// The feed, when somebody was asked to leave.
+    pub lobby_kicked_feed: &'static str,
+    /// The status line of the one who was.
+    pub lobby_kicked_you: &'static str,
+    /// The replay shelf: any replay file can be watched by dropping it.
+    pub replay_drop_hint: &'static str,
+    /// A dropped file that is not a replay this build plays.
+    pub replay_drop_bad: &'static str,
 }
 }
 

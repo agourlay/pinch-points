@@ -129,6 +129,7 @@ mod tests {
         app.init_resource::<Playback>();
         app.init_resource::<replays::PlaybackSpeed>();
         app.init_resource::<Controllers>();
+        app.init_resource::<crate::app::bot_seats::BotSeats>();
         app.init_resource::<awards::RoundTally>();
         app.add_systems(Update, advance_sim);
         app

@@ -53,6 +53,25 @@ pub(super) fn direct_join() -> Option<String> {
     std::env::var("PINCH_JOIN").ok()
 }
 
+/// `PINCH_BOT_SEATS=n`: the top n of the AI's seats are left to bots
+/// instead, for the match-setup hook and a hosted lobby.
+pub(super) fn bot_seats() -> Option<u8> {
+    std::env::var("PINCH_BOT_SEATS").ok()?.parse().ok()
+}
+
+/// `PINCH_LAUNCH`: start the match on the setup screen as if Enter had
+/// been pressed, opening the doorway for any bot seats.
+pub(crate) fn launch() -> bool {
+    std::env::var("PINCH_LAUNCH").is_ok()
+}
+
+/// `PINCH_BOT_KEY=KEY`: the doorway's first chair takes this key rather
+/// than a fresh one, so a script can start its bot with a string it knew
+/// in advance. Never for a doorway on the LAN: the key is the lock.
+pub(crate) fn bot_key() -> Option<crate::bots::connstr::Key> {
+    crate::bots::connstr::Key::parse(&std::env::var("PINCH_BOT_KEY").ok()?)
+}
+
 /// `PINCH_BOTS=n`: n AI players in a hosted lobby match (and in the direct
 /// `PINCH_HOST`/`PINCH_JOIN` pair, where both sides must set it because
 /// there is no lobby to agree it for them).
@@ -282,6 +301,10 @@ pub(super) fn kickoff(
                 .unwrap_or(config.seats)
                 .clamp(2, crate::sim::MAX_PLAYERS as u8);
             config.bots = bots().unwrap_or(config.bots).min(config.seats - 1);
+            for slot in 0..bot_seats().unwrap_or(0).min(config.bots) {
+                let seat = usize::from(config.seats - 1 - slot);
+                config.controllers[seat] = crate::app::SeatController::Bot;
+            }
             next_screen.set(Screen::MatchSetup);
         }
         DevHook::Replay => {

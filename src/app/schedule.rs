@@ -149,6 +149,7 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.init_resource::<Highlight>();
     app.init_resource::<ReelThread>();
     app.init_resource::<Controllers>();
+    app.init_resource::<bot_seats::BotSeats>();
     app.init_resource::<art::Art>();
     app.init_resource::<match_setup::MatchConfig>();
     app.init_resource::<match_setup::CustomBeaches>();
@@ -283,6 +284,8 @@ fn add_screen_transitions(app: &mut App) {
             load_versus,
             countdown::show_countdown,
             resolve_seat_names,
+            // Bots' seats are named for their bots, over what was resolved.
+            bot_seats::begin_round,
             side_panels::spawn_side_panels,
             achievements::reset_round_scratch,
         )
@@ -303,6 +306,7 @@ fn add_screen_transitions(app: &mut App) {
         (
             menu_scene::enter_menu,
             tournament::reset_on_menu,
+            bot_seats::close_door,
             // Whatever kept a session alive between rounds, the menu is the
             // end of it: the socket closes and the beach comes off the air.
             |mut online: ResMut<net::Online>| online.0 = None,
@@ -387,6 +391,7 @@ fn add_screen_transitions(app: &mut App) {
             menu_ui::despawn_marked::<cursor::PostGhost>,
             despawn_board_sprites,
             end_versus,
+            bot_seats::end_round,
             menu_ui::despawn_marked::<results::ResultsPanel>,
             menu_ui::despawn_marked::<side_panels::SidePanelRoot>,
             menu_ui::despawn_marked::<effects::Particle>,
@@ -612,6 +617,7 @@ fn add_ui_systems(app: &mut App) {
             )
                 .chain()
                 .run_if(in_state(Screen::Versus).and_then(keys_are_free)),
+            bot_seats::announce.run_if(in_state(Screen::Versus)),
             (
                 gamepad::pad_claim_seats,
                 match_setup::match_setup_input,
@@ -620,6 +626,11 @@ fn add_ui_systems(app: &mut App) {
             )
                 .chain()
                 .run_if(in_state(Screen::MatchSetup)),
+            // After the screens' own input, which stands down while a
+            // doorway card is up, so the card's Esc is read once.
+            (bot_seats::door_input, bot_seats::door_card)
+                .chain()
+                .run_if(in_state(Screen::MatchSetup).or_else(in_state(Screen::Lobby))),
         )
             .chain()
             .in_set(Frame::Ui),

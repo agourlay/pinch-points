@@ -994,6 +994,7 @@ mod tests {
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<MatchMenu>();
         app.init_resource::<MatchConfig>();
+        app.init_resource::<crate::app::bot_seats::BotSeats>();
         app.init_resource::<CustomBeaches>();
         app.init_resource::<crate::app::tournament::Tournament>();
         app.init_resource::<crate::app::gamepad::PadSeats>();
