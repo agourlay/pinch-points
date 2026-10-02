@@ -198,6 +198,15 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
             num(lure, "ticks_left")?
         );
     }
+    // Read as 0 from a listener older than the field, which is what it
+    // always was read as.
+    let quiet = tick
+        .get("lure_cooldown")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if quiet > 0 {
+        let _ = writeln!(out, "cooldown: {quiet}");
+    }
     if let Some(event) = tick.get("event").filter(|e| !e.is_null()) {
         let left = num(event, "ticks_left")?;
         match text(event, "name")? {
@@ -223,7 +232,10 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     // off the last event's tick.
     if let Some(last) = tick.get("last_event").filter(|e| !e.is_null()) {
         let fired = num(last, "tick")?;
-        let quiet = u64::from(crate::sim::EVENT_COOLDOWN).saturating_sub(now.saturating_sub(fired));
+        // An event fires during tick `fired`, after that tick's count
+        // down, so the board one tick on still has the whole spell left.
+        let since = now.saturating_sub(fired).saturating_sub(1);
+        let quiet = u64::from(crate::sim::EVENT_COOLDOWN).saturating_sub(since);
         if quiet > 0 {
             let _ = writeln!(out, "event_cooldown: {quiet}");
         }
@@ -347,5 +359,59 @@ mod tests {
     #[test]
     fn a_generated_beach_rebuilds_from_what_a_bot_sees() {
         rebuilt_matches_the_lookahead(generate_arena(11, 4, 16, 11), 900);
+    }
+
+    /// The quiet spells after a lure and after a tide event are clocks
+    /// anyone watching can read, and the rebuilt board keeps both to the
+    /// tick: a molt banked in the lure's quiet spell starts no lure, and
+    /// the roulette does not spin a tick early.
+    #[test]
+    fn the_quiet_spells_rebuild_to_the_tick() {
+        let mut board = classic_arena(false, 2);
+        for _ in 0..100 {
+            board.tick_idle();
+        }
+        let fired = board.ticks() - 1;
+        let text = format!(
+            "{}events: on\ncooldown: 400\nevent_cooldown: {}\nlast_event: 0 {fired}\n",
+            board.to_snapshot(),
+            crate::sim::EVENT_COOLDOWN
+        );
+        let board = Board::parse_snapshot(&text).expect("a board in two quiet spells");
+        let names = vec!["a".to_string(); 2];
+        let kinds = vec![SeatKind::Bot; 2];
+        let table = Table {
+            game: 1,
+            names: &names,
+            kinds: &kinds,
+            clock: Clock {
+                live: false,
+                deadline_ms: 33,
+                input_delay: 0,
+            },
+            cursor: false,
+        };
+        let hello = protocol::hello(&board, &table, 0, false);
+        let tick = protocol::tick(
+            &board,
+            1,
+            &You {
+                seat: 0,
+                last: None,
+            },
+            &[],
+        );
+        let theirs = board_from(&hello, &tick).expect("rebuilds").to_snapshot();
+        let ours = board.lookahead(LOOKAHEAD_SEED).to_snapshot();
+        let line = |snapshot: &str, key: &str| {
+            snapshot
+                .lines()
+                .find(|l| l.starts_with(key))
+                .map(str::to_string)
+        };
+        for key in ["cooldown:", "event_cooldown:"] {
+            assert!(line(&ours, key).is_some(), "{key} in {ours}");
+            assert_eq!(line(&theirs, key), line(&ours, key), "{key}");
+        }
     }
 }

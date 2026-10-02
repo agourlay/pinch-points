@@ -44,9 +44,28 @@ Console commands while registration is open: start, invite NAME, list.
   --fair-cursor on|off     walk every seat's cursor at a person's pace
   --forfeit-after S        how long a game waits for a missing bot (default 60)
   --seed S                 the first beach's seed and the draw's (default random)
-  --id NAME                the cup's name in replay ids and the folder (default t1)
+  --id NAME                the cup's name in replay ids and the folder, at most 24
+                           characters (default t1)
   --out DIR                where replays, logs and standings go (default ./cup-<id>)
 ";
+
+/// The longest cup id: every replay id is the cup's and a game number
+/// (`autumn-g1042`), and a bot asks for one by it, so the two together
+/// stay well inside what a request may carry
+/// ([`REPLAY_ID_CAP`](super::protocol::REPLAY_ID_CAP)).
+const MAX_ID: usize = 24;
+
+/// Make sure the cup can write where it was told to, before anybody
+/// registers: finding out after the field has assembled ends the cup with
+/// everyone waiting.
+fn ready_out(out: &std::path::Path) -> Result<(), String> {
+    let say = |e: std::io::Error| format!("--out {}: {e}", out.display());
+    std::fs::create_dir_all(out).map_err(say)?;
+    let probe = out.join(".pinch-cup-probe");
+    std::fs::write(&probe, b"").map_err(say)?;
+    let _ = std::fs::remove_file(probe);
+    Ok(())
+}
 
 /// What the organiser asked for.
 struct Plan {
@@ -113,6 +132,9 @@ fn plan(args: Vec<String>) -> Result<Plan, String> {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         return Err("--id is letters, digits, - and _".into());
+    }
+    if id.len() > MAX_ID {
+        return Err(format!("--id is at most {MAX_ID} characters"));
     }
     let out = args
         .value("out")?
@@ -189,6 +211,7 @@ enum Input {
 }
 
 fn serve(plan: Plan) -> Result<(), String> {
+    ready_out(&plan.out)?;
     let shared_key = Key::draw();
     let admission = if plan.open {
         Admission::Open
@@ -271,7 +294,6 @@ fn serve(plan: Plan) -> Result<(), String> {
         let _ = tx.send(Input::Closed);
     });
     let (bots, console_open) = register(&plan, &listener, &rx, &host, port)?;
-    listener.close_registration();
     let mut entrants: Vec<Entrant> = bots
         .iter()
         .filter_map(|&id| listener.bot(id))
@@ -337,6 +359,41 @@ fn print_invite(listener: &Listener, host: &str, port: u16, owner: &str) {
     );
 }
 
+/// Whether a field can be drawn into this cup's tables, and why not: the
+/// draw refuses a field too small to seat a table, or with too few owners
+/// to keep one owner's bots apart.
+fn drawable(plan: &Plan, owners: &[Option<String>]) -> Result<(), String> {
+    let seats = usize::from(plan.seats);
+    let beaches = plan.seeds as usize;
+    let tables = plan
+        .tables
+        .unwrap_or_else(|| draw::tables_for(owners.len(), seats, beaches));
+    draw::draw(owners, seats, beaches, tables, plan.seed).map(|_| ())
+}
+
+/// Close registration and take the field as it stands, if it can be
+/// drawn; otherwise open registration again and say why.
+///
+/// The field is everyone the listener took, read once registration is
+/// closed: a bot that registered while the console was still hearing
+/// about the others has a token, and plays.
+fn try_start(plan: &Plan, listener: &Listener) -> Result<Vec<BotId>, String> {
+    listener.close_registration();
+    let bots = listener.bots();
+    let owners: Vec<Option<String>> = bots
+        .iter()
+        .map(|b| b.owner.clone())
+        .chain(plan.house.iter().map(|_| None))
+        .collect();
+    match drawable(plan, &owners) {
+        Ok(()) => Ok(bots.iter().map(|b| b.id).collect()),
+        Err(why) => {
+            listener.reopen_registration();
+            Err(why)
+        }
+    }
+}
+
 /// Take registrations until the organiser says start, or the field is
 /// big enough to start on its own.
 fn register(
@@ -349,12 +406,21 @@ fn register(
     let mut bots: Vec<BotId> = Vec::new();
     let mut console_open = true;
     let enough = |bots: &[BotId]| bots.len() + plan.house.len() >= usize::from(plan.seats);
+    // What stopped the last try at starting on its own, said once.
+    let mut held_up: Option<String> = None;
     loop {
         if let Some(n) = plan.start_when
             && bots.len() >= n
             && enough(&bots)
         {
-            return Ok((bots, console_open));
+            match try_start(plan, listener) {
+                Ok(field) => return Ok((field, console_open)),
+                Err(why) if held_up.as_ref() != Some(&why) => {
+                    println!("  not starting yet: {why}");
+                    held_up = Some(why);
+                }
+                Err(_) => {}
+            }
         }
         let Ok(input) = rx.recv() else {
             return Err("the console closed".into());
@@ -399,16 +465,10 @@ fn register(
                     .split_once(' ')
                     .map_or((line, ""), |(c, r)| (c, r.trim()))
                 {
-                    ("start", _) => {
-                        if enough(&bots) {
-                            return Ok((bots, console_open));
-                        }
-                        println!(
-                            "  not yet: {} entrant(s) cannot fill a {}-seat table",
-                            bots.len() + plan.house.len(),
-                            plan.seats
-                        );
-                    }
+                    ("start", _) => match try_start(plan, listener) {
+                        Ok(field) => return Ok((field, console_open)),
+                        Err(why) => println!("  not yet: {why}"),
+                    },
                     ("invite", name) if !name.is_empty() => {
                         if plan.open {
                             println!("  registration is open to anyone; there are no keys to bind");
@@ -818,6 +878,132 @@ mod tests {
         assert!(dir.join("g1.replay").exists() && dir.join("g2.replay").exists());
         let schedule = std::fs::read_to_string(dir.join("schedule.txt")).expect("schedule");
         assert!(schedule.contains("g1  beach 1") && schedule.contains("g2  beach 1"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A cup's id ends up in every replay id, which a bot asks for by name:
+    /// one too long to ask for is refused up front.
+    #[test]
+    fn a_cup_id_too_long_to_fetch_replays_by_is_refused() {
+        assert!(plan(args(&format!("--id {}", "a".repeat(MAX_ID + 1)))).is_err());
+        let longest = plan(args(&format!("--id {}", "a".repeat(MAX_ID)))).expect("plan");
+        // Its thousandth game's replay can still be asked for.
+        let line = serde_json::json!({"type": "replay", "id": format!("{}-g1000", longest.id)})
+            .to_string();
+        assert_eq!(
+            super::super::protocol::parse_incoming(&line),
+            super::super::protocol::Incoming::Replay {
+                id: format!("{}-g1000", longest.id)
+            }
+        );
+    }
+
+    fn quiet_plan(seats: u8, per_owner: usize, start_when: Option<usize>) -> Plan {
+        Plan {
+            listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+            seeds: 1,
+            seats,
+            house: vec![],
+            tables: None,
+            start_when,
+            invites: vec![],
+            open: true,
+            per_owner,
+            parallel_cap: 8,
+            beach: Beach::Map(crate::app::match_setup::MapChoice::Classic),
+            round: RoundLength::Short,
+            deadline: 33,
+            fair: false,
+            forfeit_after: Duration::from_secs(1),
+            seed: 1,
+            id: "x".into(),
+            out: std::env::temp_dir(),
+        }
+    }
+
+    /// Register a bot over the wire, and wait for the listener to say so.
+    fn enter(listener: &Listener, name: &str, owner: &str) -> std::net::TcpStream {
+        let mut stream = std::net::TcpStream::connect(listener.local_addr()).expect("connect");
+        let msg =
+            serde_json::json!({"type": "register", "protocol": 1, "name": name, "owner": owner});
+        writeln!(stream, "{msg}").expect("write");
+        let mut line = String::new();
+        std::io::BufReader::new(stream.try_clone().expect("clone"))
+            .read_line(&mut line)
+            .expect("read");
+        assert!(line.contains("registered"), "{line}");
+        stream
+    }
+
+    fn listener_for(plan: &Plan) -> Listener {
+        let mut config = Config::new(Admission::Open);
+        config.per_owner = Some(plan.per_owner);
+        Listener::bind(plan.listen, config).expect("bind").0
+    }
+
+    /// Bots that registered while the field was being counted play: the
+    /// cup is everyone the listener took, not the ones the console had
+    /// heard about when it started.
+    #[test]
+    fn every_bot_that_registered_before_the_close_plays() {
+        let plan = quiet_plan(2, 1, Some(2));
+        let listener = listener_for(&plan);
+        let _bots: Vec<_> = ["A", "B", "C"]
+            .iter()
+            .map(|name| enter(&listener, name, name))
+            .collect();
+        let (tx, rx) = mpsc::channel();
+        for id in 0..3 {
+            tx.send(Input::Event(Event::Registered(id))).expect("send");
+        }
+        let (bots, _) = register(&plan, &listener, &rx, "h", 1).expect("starts");
+        assert_eq!(bots.len(), 3, "a bot with a token and no games: {bots:?}");
+    }
+
+    /// A field whose owners are too few to keep their bots apart does not
+    /// start: the draw would refuse it once registration had closed, and
+    /// the whole cup would end there.
+    #[test]
+    fn a_field_the_draw_cannot_seat_does_not_start() {
+        let plan = quiet_plan(4, 2, None);
+        let listener = listener_for(&plan);
+        let _bots: Vec<_> = [
+            ("a1", "a"),
+            ("a2", "a"),
+            ("b1", "b"),
+            ("b2", "b"),
+            ("c1", "c"),
+            ("c2", "c"),
+        ]
+        .iter()
+        .map(|(name, owner)| enter(&listener, name, owner))
+        .collect();
+        let (tx, rx) = mpsc::channel();
+        for id in 0..6 {
+            tx.send(Input::Event(Event::Registered(id))).expect("send");
+        }
+        tx.send(Input::Line("start".into())).expect("send");
+        drop(tx);
+        let started = register(&plan, &listener, &rx, "h", 1);
+        assert!(
+            started.is_err(),
+            "three owners started a four-seat cup that keeps owners apart"
+        );
+        // And registration is open again for the entrant it is waiting on.
+        let _d = enter(&listener, "d1", "d");
+    }
+
+    /// Where the cup writes is checked before anybody registers, not after
+    /// the field has waited for it.
+    #[test]
+    fn an_out_folder_that_cannot_be_written_is_said_up_front() {
+        let file = std::env::temp_dir().join(format!("pinch-cup-out-{}", std::process::id()));
+        std::fs::write(&file, "not a folder").expect("write");
+        assert!(ready_out(&file.join("cup")).is_err());
+        let dir = std::env::temp_dir().join(format!("pinch-cup-ok-{}", std::process::id()));
+        ready_out(&dir).expect("a folder it can write");
+        assert!(dir.is_dir());
+        let _ = std::fs::remove_file(file);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

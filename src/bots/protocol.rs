@@ -25,6 +25,9 @@ pub const NOTE_CAP: usize = 4 * 1024;
 pub const NAME_CAP: usize = 32;
 /// How long the other display strings (owner, version) may be.
 pub const LABEL_CAP: usize = 32;
+/// How long a replay id a bot asks for may be: room for any cup's id
+/// (`cup --id`, at most 24) and a game number.
+pub const REPLAY_ID_CAP: usize = 48;
 
 pub fn dir_token(dir: Direction) -> &'static str {
     match dir {
@@ -295,6 +298,7 @@ pub fn tick(board: &Board, game: u32, you: &You, cursors: &[Option<(u8, u8)>]) -
             json!({"name": event_token(event), "tick": at})
         }),
         "lure": board.lure().map(|(owner, left)| json!({"owner": owner, "ticks_left": left})),
+        "lure_cooldown": board.lure_cooldown(),
         "claw_call": board.in_claw_call(),
         "surge": board.in_surge(),
     })
@@ -422,6 +426,13 @@ pub enum Incoming {
         game: Option<u32>,
         why: String,
     },
+    /// A request the listener answers with an error (a `simulate` it cannot
+    /// read, a `ready` for no game): never a reply to a tick, so it costs
+    /// the bot nothing but the error.
+    BadRequest {
+        game: Option<u32>,
+        why: String,
+    },
 }
 
 fn uint(v: &Value, field: &str) -> Option<u64> {
@@ -435,10 +446,12 @@ fn coord(v: &Value, field: &str) -> Result<u8, String> {
 }
 
 /// Cut a display string to `cap` characters, dropping control characters:
-/// names are drawn on screen and written into logs, never interpreted.
+/// names are drawn on screen and written into logs, never interpreted. A
+/// `|` becomes a `/`, since a replay's `names:` line is split on it.
 pub fn tidy(text: &str, cap: usize) -> String {
     text.chars()
         .filter(|c| !c.is_control())
+        .map(|c| if c == '|' { '/' } else { c })
         .take(cap)
         .collect::<String>()
         .trim()
@@ -514,7 +527,7 @@ pub fn parse_incoming(line: &str) -> Incoming {
         }),
         Some("ready") => match game {
             Some(game) => Incoming::Ready { game },
-            None => Incoming::Garbled {
+            None => Incoming::BadRequest {
                 game: None,
                 why: "`ready` names no game".to_string(),
             },
@@ -526,12 +539,12 @@ pub fn parse_incoming(line: &str) -> Incoming {
             id: v
                 .get("id")
                 .and_then(Value::as_str)
-                .map(|id| tidy(id, 32))
+                .map(|id| tidy(id, REPLAY_ID_CAP))
                 .unwrap_or_default(),
         },
         Some("simulate") => {
             let Some(game) = game else {
-                return Incoming::Garbled {
+                return Incoming::BadRequest {
                     game: None,
                     why: "`simulate` names no game".to_string(),
                 };
@@ -549,7 +562,7 @@ pub fn parse_incoming(line: &str) -> Incoming {
                 match parse_act(step) {
                     Ok(act) => plan.push(Planned { at, act }),
                     Err(why) => {
-                        return Incoming::Garbled {
+                        return Incoming::BadRequest {
                             game: Some(game),
                             why: format!("simulate plan: {why}"),
                         };
@@ -729,5 +742,41 @@ mod tests {
         assert_eq!(r.name, "Greedy[31m");
         assert_eq!(r.owner, None);
         assert_eq!(r.parallel, 1);
+    }
+
+    /// A name or an owner ends up in a replay's `names:` line, which is
+    /// split on `|`: one holding it would hand the seats after it the
+    /// wrong names.
+    #[test]
+    fn a_name_cannot_carry_the_replay_separator() {
+        let line = json!({
+            "type": "register", "protocol": 1, "name": "a|b", "owner": "c|d",
+        })
+        .to_string();
+        let Incoming::Register(r) = parse_incoming(&line) else {
+            panic!("a registration");
+        };
+        assert!(!r.name.contains('|'), "{:?}", r.name);
+        assert!(!r.owner.unwrap_or_default().contains('|'));
+    }
+
+    /// A `simulate` with a plan this protocol cannot read is a request
+    /// answered with an error, not a reply to the tick: it must not stand
+    /// for the bot's move.
+    #[test]
+    fn a_garbled_simulate_is_a_bad_request_not_an_answer() {
+        let line = json!({
+            "type": "simulate", "game": 7, "ticks": 60,
+            "plan": [{"at": 0, "act": "place", "x": 5, "y": 2}],
+        })
+        .to_string();
+        assert!(
+            matches!(
+                parse_incoming(&line),
+                Incoming::BadRequest { game: Some(7), .. }
+            ),
+            "{:?}",
+            parse_incoming(&line)
+        );
     }
 }

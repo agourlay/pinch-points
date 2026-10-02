@@ -114,7 +114,23 @@ impl Replay {
         // Written only when there is something to say, so a replay of an
         // unnamed local round is byte-for-byte what it always was.
         if self.names.iter().any(|n| !n.is_empty()) {
-            let _ = writeln!(out, "{NAMES_MARK} {}", self.names.join("|"));
+            // A name is somebody's to choose, a bot's included: the
+            // separator and line breaks in one would cost the seats after
+            // it their names, or the file its shape.
+            let names: Vec<String> = self
+                .names
+                .iter()
+                .map(|n| {
+                    n.chars()
+                        .map(|c| match c {
+                            '|' => '/',
+                            c if c.is_control() => ' ',
+                            c => c,
+                        })
+                        .collect()
+                })
+                .collect();
+            let _ = writeln!(out, "{NAMES_MARK} {}", names.join("|"));
         }
         if self.kinds.iter().any(|k| *k != SeatKind::Human) {
             let kinds: Vec<&str> = self.kinds.iter().map(|k| k.token()).collect();
@@ -235,6 +251,21 @@ mod tests {
         assert!(!plain.to_text().contains("names:"));
         let plain_back = Replay::parse(&plain.to_text()).expect("round trip");
         assert!(plain_back.names.iter().all(String::is_empty));
+    }
+
+    /// A name holding the line's own separator, or a line break, is written
+    /// so the seats after it keep theirs: a bot names itself.
+    #[test]
+    fn a_name_cannot_break_the_names_line() {
+        let mut replay = Replay::new(arena());
+        replay.names[0] = "a|b\nc".into();
+        replay.names[1] = "Bo".into();
+        replay.record([PlayerAction::None; MAX_PLAYERS]);
+        let back = Replay::parse(&replay.to_text()).expect("round trip");
+        assert!(!back.names[0].contains('|'), "{:?}", back.names[0]);
+        assert!(back.names[0].starts_with('a'), "{:?}", back.names[0]);
+        assert_eq!(back.names[1], "Bo");
+        assert_eq!(back.inputs.len(), 1);
     }
 
     /// What held each seat survives the trip, a couch round writes no line

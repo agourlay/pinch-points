@@ -566,3 +566,220 @@ fn a_closed_listener_lets_its_port_and_its_bots_go() {
     }
     assert!(again.is_some(), "the port was never let go");
 }
+
+fn registered(events: &Receiver<Event>) -> usize {
+    loop {
+        match events.recv_timeout(Duration::from_secs(5)) {
+            Ok(Event::Registered(id)) => return id,
+            Ok(_) => {}
+            Err(_) => panic!("no registration event"),
+        }
+    }
+}
+
+/// A request that draws an error must not pay for itself: a bot sending
+/// nothing but `register` again is a flood, and is dropped as one.
+#[test]
+fn a_flood_of_requests_answered_with_errors_is_still_a_flood() {
+    let (listener, _events) = listen(Admission::Open);
+    let (mut bot, _) = Client::register(listener.local_addr(), "Drum", None);
+    let again = json!({"type": "register", "protocol": 1, "name": "Drum"}).to_string();
+    for _ in 0..2000 {
+        if writeln!(bot.stream, "{again}").is_err() {
+            break;
+        }
+    }
+    let mut flooding = false;
+    while let Some(msg) = bot.next() {
+        if msg["type"] == "error" && msg["fatal"] == true {
+            flooding = msg["message"] == "flooding";
+            break;
+        }
+    }
+    assert!(flooding, "two thousand registers and still welcome");
+}
+
+/// Wrong keys from an address lock its keys out, not its tokens: a bot
+/// coming back with its own token is let in, and a stale token is no
+/// strike against anyone sharing the address (behind a cup's proxy, say).
+#[test]
+fn a_locked_out_address_still_takes_a_bot_back_by_its_token() {
+    let key = Key::draw();
+    let (listener, events) = listen(Admission::Keys(vec![invite(&key, None)]));
+    let addr = listener.local_addr();
+    let (keeper, answer) = Client::register(addr, "Keeper", Some(&key));
+    let token = answer["token"].as_str().expect("token").to_string();
+    let id = registered(&events);
+    // Three stale tokens cost nobody anything.
+    for _ in 0..3 {
+        let mut stale = Client::connect(addr);
+        stale.send(&json!({"type": "register", "protocol": 1, "token": "0".repeat(26)}));
+        assert_eq!(stale.next().expect("answer")["type"], "error");
+    }
+    let (_other, answer) = Client::register(addr, "Other", Some(&key));
+    assert_eq!(answer["type"], "registered", "{answer}");
+    // Three wrong keys lock the address's keys out...
+    for _ in 0..3 {
+        let (_c, answer) = Client::register(addr, "Guess", Some(&Key::draw()));
+        assert_eq!(answer["type"], "error");
+    }
+    let (_c, answer) = Client::register(addr, "Late", Some(&key));
+    assert_eq!(answer["type"], "error", "the keys are locked out");
+    // ...and not the bot that drops and comes back with its token.
+    drop(keeper);
+    while listener.connected(id) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let mut back = Client::connect(addr);
+    back.send(&json!({"type": "register", "protocol": 1, "token": token}));
+    let answer = back.next().expect("answer");
+    assert_eq!(answer["type"], "registered", "{answer}");
+}
+
+/// Connections that never register are capped, so a few hundred silent
+/// ones cannot use up the machine; one over the cap is told so at once,
+/// and the places come back as they go.
+#[test]
+fn silent_connections_are_capped_and_told_so_at_once() {
+    let (listener, _events) = listen(Admission::Open);
+    let addr = listener.local_addr();
+    let mut silent: Vec<Client> = Vec::new();
+    for _ in 0..8 {
+        silent.push(Client::connect(addr));
+    }
+    // Each has been taken in before the next is tried.
+    std::thread::sleep(Duration::from_millis(200));
+    let started = std::time::Instant::now();
+    let mut over = Client::connect(addr);
+    let answer = over.next().expect("an answer");
+    assert_eq!(answer["type"], "error");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "told after {:?}",
+        started.elapsed()
+    );
+    drop(silent);
+    std::thread::sleep(Duration::from_millis(200));
+    let (_bot, answer) = Client::register(addr, "Patient", None);
+    assert_eq!(answer["type"], "registered", "{answer}");
+}
+
+/// A lookahead runs off the game's lock: the game publishes its board
+/// through it every tick, and must never wait out somebody's 600 ticks of
+/// thinking to do so.
+#[test]
+fn a_lookahead_does_not_hold_the_game_up() {
+    use super::listener::{View, lock};
+    let (listener, events) = listen(Admission::Open);
+    let (mut bot, _) = Client::register(listener.local_addr(), "Thinker", None);
+    let id = registered(&events);
+    let link = listener.open_game(7, vec![(id, 0)]);
+    let board = crate::sim::classic_arena(false, 2);
+    let ticks = 3000;
+    let alone = std::time::Instant::now();
+    super::lookahead::run(&board, 0, ticks, &[]);
+    let alone = alone.elapsed();
+    *lock(&link.view) = Some(View {
+        board,
+        cursors: vec![None, None],
+        budget: vec![ticks, ticks],
+    });
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let thinker = {
+        let done = std::sync::Arc::clone(&done);
+        std::thread::spawn(move || {
+            bot.send(&json!({"type": "simulate", "game": 7, "ticks": ticks, "plan": []}));
+            let answer = bot.next().expect("simulated");
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+            answer
+        })
+    };
+    let mut longest = Duration::ZERO;
+    while !done.load(std::sync::atomic::Ordering::SeqCst) {
+        let asked = std::time::Instant::now();
+        drop(lock(&link.view));
+        longest = longest.max(asked.elapsed());
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let answer = thinker.join().expect("thinker");
+    assert_eq!(answer["type"], "simulated", "{answer}");
+    assert!(
+        longest < alone / 2,
+        "the game waited {longest:?} for a lookahead that takes {alone:?}"
+    );
+}
+
+/// A bot that asks for replays and never reads them is dropped once a
+/// couple of megabytes are waiting for it, not after hundreds of them.
+#[test]
+fn a_bot_that_asks_for_replays_and_never_reads_is_dropped() {
+    let (listener, events) = listen(Admission::Open);
+    let (mut bot, _) = Client::register(listener.local_addr(), "Hoarder", None);
+    let id = registered(&events);
+    listener.keep_replay("big".into(), vec![id], "x".repeat(200 * 1024));
+    let ask = json!({"type": "replay", "id": "big"}).to_string();
+    for _ in 0..150 {
+        if writeln!(bot.stream, "{ask}").is_err() {
+            break;
+        }
+    }
+    let mut dropped = false;
+    while let Ok(event) = events.recv_timeout(Duration::from_secs(5)) {
+        if matches!(event, Event::Dropped(gone) if gone == id) {
+            dropped = true;
+            break;
+        }
+    }
+    assert!(
+        dropped,
+        "30 MB asked for and never read, and still connected"
+    );
+}
+
+/// A `simulate` the listener cannot read is answered with an error and is
+/// no answer to the tick: the bot's reply after it is its move.
+#[test]
+fn a_garbled_lookahead_is_an_error_and_not_the_move() {
+    let (listener, events) = listen(Admission::Open);
+    let (mut bot, _) = Client::register(listener.local_addr(), "Fumble", None);
+    let id = registered(&events);
+    let player = std::thread::spawn(move || {
+        let mut after = None;
+        while let Some(msg) = bot.next() {
+            match msg["type"].as_str() {
+                Some("hello") => bot.send(&json!({"type": "ready", "game": 7})),
+                Some("tick") if msg["tick"] == 0 => {
+                    bot.send(&json!({
+                        "type": "simulate", "game": 7, "ticks": 10,
+                        "plan": [{"at": 0, "act": "place", "x": 9, "y": 1}],
+                    }));
+                    after = bot.next();
+                    bot.send(&json!({"game": 7, "tick": 0, "act": "place", "x": 9, "y": 0, "dir": "down"}));
+                }
+                Some("tick") => bot.send(&json!({"game": 7, "tick": msg["tick"], "act": "none"})),
+                Some("end") => return after,
+                _ => {}
+            }
+        }
+        panic!("no end");
+    });
+    let (result, _) = play(
+        &listener,
+        spec(
+            little_beach(10),
+            vec![Seat::Bot(id), Seat::Ai(BotLevel::Easy)],
+            1000,
+        ),
+    );
+    let after = player.join().expect("player").expect("an answer");
+    assert_eq!(after["type"], "error", "{after}");
+    assert_eq!(after["game"], 7, "{after}");
+    let placed = result.replay.inputs.first().map(|actions| actions[0]);
+    assert!(
+        matches!(
+            placed,
+            Some(crate::sim::PlayerAction::Place { x: 9, y: 0, .. })
+        ),
+        "{placed:?}"
+    );
+}

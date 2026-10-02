@@ -385,7 +385,9 @@ party's game.
   entrant (8 by default), so no one bot can make a listener do the work of
   many.
 - **Wrong keys cost the sender, not the key.** Three wrong keys from one
-  address and that address is refused for a minute. The key itself never
+  address and that address's keys are refused for a minute (a token, too
+  long to guess, is never refused for it, so a bot behind the same proxy
+  as a guesser still gets back in). The key itself never
   rotates on a wrong guess, or anyone on the LAN could keep a host's card
   changing just by guessing badly.
 - **Tokens are secrets.** Random, never printed, never logged, never in
@@ -1061,8 +1063,12 @@ from it:
   every tick; a bot slower than its deadline then sank under boards it
   would never read. It still holds each tick its deadline, so it plays a
   tick behind, and the ticks it misses are skipped as if it had waited.
-- **The flood allowance grows with every line sent to a bot**, so a fast
-  bot answering thousands of fast-forward ticks a second is not a flood.
+- **The flood allowance grows with every line a game sends a bot**, so a
+  fast bot answering thousands of fast-forward ticks a second is not a
+  flood. What the listener says back to a bot's own requests (errors,
+  replays, lookaheads) earns nothing, or a request that drew an error
+  would pay for itself. The queue to a bot that stops reading is capped
+  in bytes, not lines.
 - **A bot's seat is called "Greedy (Ana)"**, not "Greedy (Ana's bot)": a
   name on the wire is twelve characters, and the robot beside it says the
   rest on every screen.

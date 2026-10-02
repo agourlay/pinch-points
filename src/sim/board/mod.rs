@@ -842,6 +842,12 @@ impl Board {
         self.lure
     }
 
+    /// Ticks left in the quiet spell after a lure, when a molt banked
+    /// starts none. Public: anyone who watched the lure end can count it.
+    pub fn lure_cooldown(&self) -> u32 {
+        self.lure_cooldown
+    }
+
     /// Whether Right Claws is running: a right-clawed crab banks double
     /// and a left-clawed one costs. Read by the bots, who would otherwise
     /// go on herding whatever is nearest and hand their points back.

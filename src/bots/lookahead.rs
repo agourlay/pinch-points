@@ -56,37 +56,73 @@ pub fn happened_json(tick: u64, what: Happened) -> Value {
     }
 }
 
-/// Answer one `simulate` for `seat`, charging its budget for this tick.
-pub fn answer(view: &mut View, game: u32, seat: PlayerId, ticks: u32, plan: &[Planned]) -> Value {
+/// A lookahead paid for: the board it runs from and how far, copied out of
+/// the game's [`View`] so the run itself holds no lock. The game publishes
+/// its board through that lock every tick, and a 600-tick run held under
+/// it would hold the table up with it.
+pub struct Charged {
+    board: Board,
+    cursors: Vec<Option<(u8, u8)>>,
+    ticks: u32,
+}
+
+/// Charge one `simulate` for `seat` to its budget for this tick, or say
+/// why not.
+pub fn charge(view: &mut View, game: u32, seat: PlayerId, ticks: u32) -> Result<Charged, Value> {
     let Some(budget) = view.budget.get_mut(usize::from(seat)) else {
-        return json!({"type": "error", "message": "no such seat"});
+        return Err(json!({"type": "error", "message": "no such seat"}));
     };
     if *budget == 0 {
-        return json!({
+        return Err(json!({
             "type": "error", "game": game,
             "message": "lookahead budget for this tick is spent",
-        });
+        }));
     }
     let ticks = ticks.min(*budget);
     *budget -= ticks;
-    let (end, events) = run(&view.board, seat, ticks, plan);
-    // A lookahead stops where the round does.
-    let ticks = end.ticks() - view.board.ticks();
-    let mut state = protocol::tick(&end, game, &You { seat, last: None }, &view.cursors);
-    // Crabs the copy spawned are a guess about their kind and claw: when
-    // they come is public, what they are is not.
-    let known = view.board.crabs_spawned();
-    if let Some(crabs) = state["crabs"].as_array_mut() {
-        for crab in crabs {
-            if crab["id"].as_u64().is_some_and(|id| id >= u64::from(known)) {
-                crab["predicted"] = json!(true);
+    Ok(Charged {
+        board: view.board.clone(),
+        cursors: view.cursors.clone(),
+        ticks,
+    })
+}
+
+/// Answer one `simulate` for `seat`, charging its budget for this tick.
+#[cfg(test)]
+pub fn answer(view: &mut View, game: u32, seat: PlayerId, ticks: u32, plan: &[Planned]) -> Value {
+    match charge(view, game, seat, ticks) {
+        Ok(charged) => charged.answer(game, seat, plan),
+        Err(refused) => refused,
+    }
+}
+
+impl Charged {
+    /// Run it, and say what came of it.
+    pub fn answer(self, game: u32, seat: PlayerId, plan: &[Planned]) -> Value {
+        let Charged {
+            board,
+            cursors,
+            ticks,
+        } = self;
+        let (end, events) = run(&board, seat, ticks, plan);
+        // A lookahead stops where the round does.
+        let ticks = end.ticks() - board.ticks();
+        let mut state = protocol::tick(&end, game, &You { seat, last: None }, &cursors);
+        // Crabs the copy spawned are a guess about their kind and claw:
+        // when they come is public, what they are is not.
+        let known = board.crabs_spawned();
+        if let Some(crabs) = state["crabs"].as_array_mut() {
+            for crab in crabs {
+                if crab["id"].as_u64().is_some_and(|id| id >= u64::from(known)) {
+                    crab["predicted"] = json!(true);
+                }
             }
         }
+        json!({
+            "type": "simulated", "game": game, "ticks": ticks,
+            "state": state, "events": events,
+        })
     }
-    json!({
-        "type": "simulated", "game": game, "ticks": ticks,
-        "state": state, "events": events,
-    })
 }
 
 /// Run `board`'s lookahead copy `ticks` forward with `plan` for `seat`.

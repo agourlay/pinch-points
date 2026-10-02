@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -32,15 +33,26 @@ const REGISTER_WITHIN: Duration = Duration::from_secs(10);
 const WRONG_KEYS: u32 = 3;
 /// How long an address that guessed badly is turned away.
 const LOCKOUT: Duration = Duration::from_secs(60);
-/// Lines queued for a bot that is not reading before it is dropped. A
-/// tick message is about 10 KB, so this is a couple of megabytes.
+/// Lines queued for a bot that is not reading before it is dropped.
 const QUEUE: usize = 256;
-/// The flood valve. A bot earns the right to send by being sent things:
-/// every line the listener writes it is worth `PER_LINE` messages back (a
-/// reply and a few lookaheads), so a fast bot in a fast-forward game,
-/// answering thousands of ticks a second, is never mistaken for a flood.
-/// On top of that it may send `PER_SECOND` a second of its own accord, and
-/// save up to `BURST`.
+/// Bytes queued for a bot that is not reading before it is dropped: a
+/// couple of megabytes, whatever the lines are (a tick is about 10 KB, a
+/// replay a few hundred). A single line bigger than this still goes out
+/// to a bot with nothing else waiting.
+const QUEUE_BYTES: usize = 2 * 1024 * 1024;
+/// Connections that have not registered yet, in all and from one address.
+/// Each holds a thread for up to [`REGISTER_WITHIN`], so without a cap a
+/// few hundred silent connections would use the machine up.
+const PENDING: usize = 64;
+const PENDING_PER_ADDR: usize = 8;
+/// The flood valve. A bot earns the right to send by being sent things by
+/// a game: every tick (or hello, or end) written to it is worth `PER_LINE`
+/// messages back (a reply and a few lookaheads), so a fast bot in a
+/// fast-forward game, answering thousands of ticks a second, is never
+/// mistaken for a flood. What the listener says back to the bot's own
+/// requests (errors, replays, lookaheads) earns nothing, or a request that
+/// draws an error would pay for itself. On top of that it may send
+/// `PER_SECOND` a second of its own accord, and save up to `BURST`.
 const BURST: f64 = 400.0;
 const PER_SECOND: f64 = 50.0;
 const PER_LINE: f64 = 6.0;
@@ -192,7 +204,8 @@ impl GameLink {
 
     /// Write to one of this game's bots.
     pub fn send(&self, id: BotId, msg: &Value) -> bool {
-        send(&mut lock(&self.shared.registry), id, msg)
+        let line = line_of(msg);
+        send_line(&mut lock(&self.shared.registry), id, line, true)
     }
 }
 
@@ -206,6 +219,8 @@ struct Conn {
     serial: u64,
     tx: SyncSender<Arc<str>>,
     stream: TcpStream,
+    /// Bytes handed to the writer and not yet written.
+    queued: Arc<AtomicUsize>,
 }
 
 struct Bot {
@@ -225,6 +240,8 @@ struct Registry {
     /// Finished games' replays, and who may fetch them.
     replays: HashMap<String, (Vec<BotId>, Arc<str>)>,
     wrong_keys: HashMap<IpAddr, (u32, Option<Instant>)>,
+    /// Connections not registered yet, by address.
+    pending: HashMap<IpAddr, usize>,
     next_serial: u64,
     next_ping: u64,
 }
@@ -313,7 +330,6 @@ impl Listener {
     /// end. The arena and a cup never need to, since their process ends;
     /// the game opens a listener for a card and closes it with the card.
     pub fn close(&self) {
-        use std::sync::atomic::Ordering;
         if self.shared.closed.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -381,6 +397,14 @@ impl Listener {
         config.max_bots = Some(registered);
     }
 
+    /// Take registrations again after [`close_registration`]: a cup that
+    /// closed to count its field and found it could not be drawn.
+    ///
+    /// [`close_registration`]: Listener::close_registration
+    pub fn reopen_registration(&self) {
+        lock(&self.shared.config).max_bots = None;
+    }
+
     pub fn bot(&self, id: BotId) -> Option<BotInfo> {
         lock(&self.shared.registry)
             .bots
@@ -420,10 +444,11 @@ impl Listener {
         }
     }
 
-    /// Write one message to a bot. False if it is not connected, or was
-    /// just dropped for not reading.
+    /// Write one of a game's messages to a bot. False if it is not
+    /// connected, or was just dropped for not reading.
     pub fn send(&self, id: BotId, msg: &Value) -> bool {
-        send(&mut lock(&self.shared.registry), id, msg)
+        let line = line_of(msg);
+        send_line(&mut lock(&self.shared.registry), id, line, true)
     }
 
     /// Open a game's route: its seats' messages come to the returned link.
@@ -465,7 +490,7 @@ fn wake_address(addr: SocketAddr) -> SocketAddr {
 fn accept_loop(socket: &TcpListener, shared: &Arc<Shared>) {
     let me = socket.local_addr().ok();
     for stream in socket.incoming() {
-        if shared.closed.load(std::sync::atomic::Ordering::SeqCst)
+        if shared.closed.load(Ordering::SeqCst)
             || me.is_some_and(|me| lock(&shared.stopped).contains(&me))
         {
             return;
@@ -537,15 +562,15 @@ fn serve(stream: TcpStream, shared: &Arc<Shared>) {
     // Nagle meeting delayed ACKs can hold a small line for 40 ms, longer
     // than a whole deadline.
     let _ = stream.set_nodelay(true);
-    if locked_out(shared, peer.ip()) {
+    let Some(pending) = Pending::take(shared, peer.ip()) else {
         refuse(
             stream,
             shared,
             peer,
-            "too many wrong keys from this address; try again in a minute",
+            "too many connections waiting to register; try again shortly",
         );
         return;
-    }
+    };
     let _ = stream.set_read_timeout(Some(REGISTER_WITHIN));
     let Ok(read_half) = stream.try_clone() else {
         return;
@@ -567,8 +592,23 @@ fn serve(stream: TcpStream, shared: &Arc<Shared>) {
             return;
         }
     };
+    // The lockout guards the keys, which are short enough to guess at. A
+    // token is not, so a bot coming back with one is never turned away
+    // for what somebody else at its address (behind the same proxy, say)
+    // got wrong.
+    if register.token.is_none() && locked_out(shared, peer.ip()) {
+        refuse(
+            stream,
+            shared,
+            peer,
+            "too many wrong keys from this address; try again in a minute",
+        );
+        return;
+    }
     let _ = stream.set_read_timeout(None);
-    let (id, serial) = match register_bot(shared, &stream, peer, register) {
+    let registered = register_bot(shared, &stream, peer, register);
+    drop(pending);
+    let (id, serial) = match registered {
         Ok(ok) => ok,
         Err(why) => {
             refuse(stream, shared, peer, &why);
@@ -577,6 +617,41 @@ fn serve(stream: TcpStream, shared: &Arc<Shared>) {
     };
     read_loop(&mut reader, shared, id, serial);
     disconnect(shared, id, serial);
+}
+
+/// A connection's place among those waiting to register, given back when
+/// it registers or goes.
+struct Pending<'a> {
+    shared: &'a Shared,
+    ip: IpAddr,
+}
+
+impl<'a> Pending<'a> {
+    fn take(shared: &'a Shared, ip: IpAddr) -> Option<Pending<'a>> {
+        let mut registry = lock(&shared.registry);
+        let all: usize = registry.pending.values().sum();
+        let here = registry.pending.entry(ip).or_insert(0);
+        if all >= PENDING || *here >= PENDING_PER_ADDR {
+            if *here == 0 {
+                registry.pending.remove(&ip);
+            }
+            return None;
+        }
+        *here += 1;
+        Some(Pending { shared, ip })
+    }
+}
+
+impl Drop for Pending<'_> {
+    fn drop(&mut self) {
+        let mut registry = lock(&self.shared.registry);
+        if let Some(here) = registry.pending.get_mut(&self.ip) {
+            *here -= 1;
+            if *here == 0 {
+                registry.pending.remove(&self.ip);
+            }
+        }
+    }
 }
 
 fn locked_out(shared: &Shared, ip: IpAddr) -> bool {
@@ -619,12 +694,13 @@ fn register_bot(
     }
     let writer = stream.try_clone().map_err(|e| e.to_string())?;
     // A reconnect: the token is who the bot is, and nothing else is asked.
+    // A wrong one is no strike against the address: a token is too long
+    // to guess, and a stale one is a bot that outlived its listener, not
+    // somebody trying keys.
     if let Some(token) = &register.token {
         let token = Token::from_wire(token);
         let mut registry = lock(&shared.registry);
         let Some(id) = registry.bots.iter().position(|b| b.token == token) else {
-            drop(registry);
-            wrong_key(shared, peer.ip());
             return Err("that token is not one this listener issued".to_string());
         };
         let serial = attach(&mut registry, id, writer);
@@ -752,10 +828,18 @@ fn attach(registry: &mut Registry, id: BotId, stream: TcpStream) -> u64 {
     let Ok(writer) = stream.try_clone() else {
         return serial;
     };
+    let queued = Arc::new(AtomicUsize::new(0));
+    let written = Arc::clone(&queued);
     let _ = std::thread::Builder::new()
         .name("bot-write".into())
-        .spawn(move || write_loop(writer, &rx));
-    if let Some(old) = registry.bots[id].conn.replace(Conn { serial, tx, stream }) {
+        .spawn(move || write_loop(writer, &rx, &written));
+    let conn = Conn {
+        serial,
+        tx,
+        stream,
+        queued,
+    };
+    if let Some(old) = registry.bots[id].conn.replace(conn) {
         let _ = old.stream.shutdown(Shutdown::Both);
     }
     serial
@@ -764,31 +848,55 @@ fn attach(registry: &mut Registry, id: BotId, stream: TcpStream) -> u64 {
 /// Write a connection's lines until its sender goes, then close it. The
 /// close is here, after the queue is drained, so the last thing said to a
 /// bot (a fatal error, say) reaches it before the socket shuts.
-fn write_loop(mut stream: TcpStream, rx: &Receiver<Arc<str>>) {
+fn write_loop(mut stream: TcpStream, rx: &Receiver<Arc<str>>, queued: &AtomicUsize) {
     let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
     for line in rx {
-        if stream.write_all(line.as_bytes()).is_err() {
+        let written = stream.write_all(line.as_bytes());
+        queued.fetch_sub(line.len(), Ordering::SeqCst);
+        if written.is_err() {
             break;
         }
     }
     let _ = stream.shutdown(Shutdown::Both);
 }
 
+/// A message as the line that carries it. Made before the registry is
+/// locked: a replay or a lookahead's answer is a lot of text to write out.
+fn line_of(msg: &Value) -> Arc<str> {
+    format!("{msg}\n").into()
+}
+
+/// Answer a bot: an error, a replay, a lookahead. Earns it nothing.
 fn send(registry: &mut Registry, id: BotId, msg: &Value) -> bool {
+    send_line(registry, id, line_of(msg), false)
+}
+
+/// Queue a line for bot `id`. `earns` for a game's own lines, which the
+/// bot is owed the right to answer (see [`PER_LINE`]).
+fn send_line(registry: &mut Registry, id: BotId, line: Arc<str>, earns: bool) -> bool {
     let Some(bot) = registry.bots.get_mut(id) else {
         return false;
     };
     let Some(conn) = &bot.conn else {
         return false;
     };
-    let line: Arc<str> = format!("{msg}\n").into();
+    let len = line.len();
+    let waiting = conn.queued.load(Ordering::SeqCst);
+    // A bot that has stopped reading is dropped rather than waited for.
+    if waiting > 0 && waiting + len > QUEUE_BYTES {
+        let _ = conn.stream.shutdown(Shutdown::Both);
+        return false;
+    }
+    conn.queued.fetch_add(len, Ordering::SeqCst);
     match conn.tx.try_send(line) {
         Ok(()) => {
-            bot.allowance.credit();
+            if earns {
+                bot.allowance.credit();
+            }
             true
         }
-        // A bot that has stopped reading is dropped rather than waited for.
         Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+            conn.queued.fetch_sub(len, Ordering::SeqCst);
             let _ = conn.stream.shutdown(Shutdown::Both);
             false
         }
@@ -970,16 +1078,28 @@ fn handle(shared: &Arc<Shared>, id: BotId, msg: Incoming, at: Instant) {
                 }
             }
         }
+        Incoming::BadRequest { game, why } => {
+            let mut error = json!({"type": "error", "message": why});
+            if let Some(game) = game {
+                error["game"] = json!(game);
+            }
+            send(&mut registry, id, &error);
+        }
         Incoming::Replay { id: replay } => {
-            let answer = match registry.replays.get(&replay) {
-                Some((players, text)) if players.contains(&id) => {
-                    json!({"type": "replay", "id": replay, "text": &**text})
-                }
-                _ => {
+            let text = match registry.replays.get(&replay) {
+                Some((players, text)) if players.contains(&id) => Some(Arc::clone(text)),
+                _ => None,
+            };
+            // A replay is a few hundred kilobytes to write out, done with
+            // the registry let go: every game's every tick goes through it.
+            drop(registry);
+            let answer = line_of(&match text {
+                Some(text) => json!({"type": "replay", "id": replay, "text": &*text}),
+                None => {
                     json!({"type": "error", "message": format!("no replay {replay:?} of a game you played")})
                 }
-            };
-            send(&mut registry, id, &answer);
+            });
+            send_line(&mut lock(&shared.registry), id, answer, false);
         }
         Incoming::Register(_) => {
             send(
@@ -998,18 +1118,20 @@ fn handle(shared: &Arc<Shared>, id: BotId, msg: Incoming, at: Instant) {
                 return;
             };
             // The lookahead runs on this connection's own thread, with the
-            // registry let go: a bot's thinking is never a hitch anyone
-            // else feels.
+            // registry and the game's view both let go: it is paid for
+            // and copied under the view's lock, and run without it. A
+            // bot's thinking is never a hitch anyone else feels, its own
+            // game included.
             drop(registry);
-            let answer = {
-                let mut view = lock(&view);
-                match view.as_mut() {
-                    Some(view) => lookahead::answer(view, game, seat, ticks, &plan),
-                    None => json!({"type": "error", "message": "the game has not started"}),
-                }
+            let charged = match lock(&view).as_mut() {
+                Some(view) => lookahead::charge(view, game, seat, ticks),
+                None => Err(json!({"type": "error", "message": "the game has not started"})),
             };
-            let mut registry = lock(&shared.registry);
-            send(&mut registry, id, &answer);
+            let answer = line_of(&match charged {
+                Ok(charged) => charged.answer(game, seat, &plan),
+                Err(refused) => refused,
+            });
+            send_line(&mut lock(&shared.registry), id, answer, false);
         }
     }
 }

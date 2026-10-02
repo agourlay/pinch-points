@@ -213,7 +213,7 @@ cannot:
  "turnstiles": [{"x": 6, "y": 4, "next": "right"}],
  "event": {"name": "gull_mania", "ticks_left": 120},
  "last_event": {"name": "gull_mania", "tick": 1054},
- "lure": null, "claw_call": false, "surge": false}
+ "lure": null, "lure_cooldown": 0, "claw_call": false, "surge": false}
 ```
 
 | Field | |
@@ -232,6 +232,7 @@ cannot:
 | `event` | The timed tide event running (`crab_mania`, `gull_mania`, `speed_up`, `slow_down`, `right_claws`) and its ticks left, or `null`. |
 | `last_event` | The last tide event of any kind and the tick it fired (`monopoly`, `gull_attack`, `fresh_sand` and `castle_swap` are instant). |
 | `lure` | A molting crab's lure: whose castle every loose crab is walking to, and for how long. |
+| `lure_cooldown` | Ticks left in the quiet spell after a lure ends, when a molting crab banked starts no new one; 0 outside it. |
 | `claw_call` | Right Claws is on: a right-clawed crab banks double, a left-clawed one costs its value. |
 | `surge` | The last 30 seconds: gulls come twice as often. |
 
@@ -340,7 +341,12 @@ reply names a target and the cursor walks there before the action lands:
 - `move` is an order with nothing at the end of it.
 - `none` means "no new order". A walk in progress carries on: you do not
   have to repeat yourself every tick, and a `wait` does not stop the walk.
-- `clear` needs no walk, as the clear-all key needs none.
+- `clear` needs no walk, as the clear-all key needs none, and the walk
+  goes on under it. An order it brings home lands on the next tick.
+- The pace belongs to the walk, not the order: a new order while the
+  cursor is walking changes where it goes, not how fast. Asking for the
+  next tile every tick is a held key, lift and all. A cursor with nowhere
+  to go for 3 ticks has let go, and its next walk starts afresh.
 
 Your cursor is in every tick's `cursors`. `you.last` reports the action
 when it lands, not when you asked. The game's AI walks by the same rule,
@@ -410,9 +416,15 @@ Every listener treats every byte it receives as hostile.
 
 - A line longer than 64 KiB closes the connection.
 - A bot that floods (more than about 200 messages a second, after a
-  burst) has messages dropped, and is then disconnected.
-- Three wrong keys or tokens from one address and that address is refused
-  for a minute.
+  burst) has messages dropped, and is then disconnected. Ticks you are sent
+  earn you room to answer; errors, replays and lookahead answers do not.
+- Three wrong keys from one address and that address's keys are refused
+  for a minute. A token is never refused for it, and a wrong token is no
+  strike: a bot coming back with its own token always gets in.
+- A connection has ten seconds to register, and only a few may be
+  waiting to register at once, from one address or in all.
+- A `simulate` the listener cannot read is answered with an `error` naming
+  the game; it is not a reply, so your move for the tick still counts.
 - Names are display text: control characters are removed, and they are cut
   to 32 characters.
 - A bot that stops reading its socket is disconnected once a couple of
