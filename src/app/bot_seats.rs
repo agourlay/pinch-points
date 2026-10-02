@@ -1703,12 +1703,25 @@ mod tests {
             == 1));
         door.keep_a_chair_open(true);
         drop(bot);
+        // `arrived` stops counting the bot the moment the listener sees it
+        // go; its chair goes when the poll reads the drop, a moment later.
+        let settled = |d: &Doorway| {
+            d.arrived(&crate::app::i18n::EN).is_empty()
+                && d.chairs.len() == 1
+                && d.chairs[0].bot.is_none()
+        };
+        for _ in 0..400 {
+            door.poll();
+            door.keep_a_chair_open(true);
+            if settled(&door) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
         assert!(
-            poll_until(&mut door, |d| d.arrived(&crate::app::i18n::EN).is_empty()),
-            "a dead bot is still at the beach"
+            settled(&door),
+            "a dead bot is still at the beach: {} chairs",
+            door.chairs.len()
         );
-        door.keep_a_chair_open(true);
-        assert_eq!(door.chairs.len(), 1, "{} chairs", door.chairs.len());
-        assert!(door.chairs[0].bot.is_none());
     }
 }

@@ -17,7 +17,7 @@ use super::protocol::{self, Incoming, PROTOCOL, Register, Reply};
 use crate::sim::{Board, PlayerId};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
@@ -436,6 +436,16 @@ impl Listener {
             .map(|b| b.info.clone())
             .collect()
     }
+
+    /// How many lines bot `id` may still send before it is refused.
+    #[cfg(test)]
+    pub fn allowance(&self, id: BotId) -> f64 {
+        lock(&self.shared.registry).bots[id].allowance.level
+    }
+
+    /// What a bot may hold in hand and no more, once it stops earning.
+    #[cfg(test)]
+    pub const BURST: f64 = BURST;
 
     pub fn connected(&self, id: BotId) -> bool {
         lock(&self.shared.registry)
@@ -1007,6 +1017,30 @@ impl Allowance {
     }
 }
 
+/// Read and throw away what the bot is still sending, for a moment, before
+/// its connection closes. A socket closed with unread input is reset, and a
+/// reset can throw away the error on its way out: a bot that floods would
+/// never learn why it was let go.
+fn hang_up(reader: &mut BufReader<TcpStream>) {
+    let until = Instant::now() + Duration::from_secs(1);
+    let _ = reader
+        .get_ref()
+        .set_read_timeout(Some(Duration::from_millis(50)));
+    let mut sink = [0u8; 4096];
+    while Instant::now() < until {
+        match reader.read(&mut sink) {
+            Ok(0) => return,
+            Ok(_) => {}
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) => {}
+            Err(_) => return,
+        }
+    }
+}
+
 fn read_loop(reader: &mut BufReader<TcpStream>, shared: &Arc<Shared>, id: BotId, serial: u64) {
     let mut buf = Vec::new();
     loop {
@@ -1021,6 +1055,8 @@ fn read_loop(reader: &mut BufReader<TcpStream>, shared: &Arc<Shared>, id: BotId,
                         id,
                         &json!({"type": "error", "fatal": true, "message": "a line longer than 64 KiB"}),
                     );
+                    drop(registry);
+                    hang_up(reader);
                 }
                 return;
             }
@@ -1041,6 +1077,8 @@ fn read_loop(reader: &mut BufReader<TcpStream>, shared: &Arc<Shared>, id: BotId,
                         id,
                         &json!({"type": "error", "fatal": true, "message": "flooding"}),
                     );
+                    drop(registry);
+                    hang_up(reader);
                     return;
                 }
                 continue;

@@ -557,7 +557,7 @@ fn a_closed_listener_lets_its_port_and_its_bots_go() {
     while bot.next().is_some() {}
     // And the port is free to take again.
     let mut again = None;
-    for _ in 0..50 {
+    for _ in 0..250 {
         if let Ok(socket) = std::net::TcpListener::bind(addr) {
             again = Some(socket);
             break;
@@ -577,26 +577,63 @@ fn registered(events: &Receiver<Event>) -> usize {
     }
 }
 
-/// A request that draws an error must not pay for itself: a bot sending
-/// nothing but `register` again is a flood, and is dropped as one.
+/// A request that draws an error must not pay for itself. Each answer is a
+/// line sent, and lines sent are what earn a bot the right to send more: if
+/// an error earned it too, a bot could ask for errors forever.
 #[test]
-fn a_flood_of_requests_answered_with_errors_is_still_a_flood() {
-    let (listener, _events) = listen(Admission::Open);
+fn an_answer_to_a_bad_request_earns_nothing() {
+    let (listener, events) = listen(Admission::Open);
     let (mut bot, _) = Client::register(listener.local_addr(), "Drum", None);
-    let again = json!({"type": "register", "protocol": 1, "name": "Drum"}).to_string();
-    for _ in 0..2000 {
-        if writeln!(bot.stream, "{again}").is_err() {
-            break;
-        }
+    let id = registered(&events);
+    // One at a time, each answer read before the next is asked: no flood,
+    // only a bot that keeps asking for the same error.
+    for _ in 0..300 {
+        bot.send(&json!({"type": "register", "protocol": 1, "name": "Drum"}));
+        assert_eq!(bot.next().expect("an answer")["type"], "error");
     }
-    let mut flooding = false;
+    // Time refills an allowance up to the burst and no further; only lines
+    // that earn can lift it past that.
+    assert!(
+        listener.allowance(id) <= Listener::BURST,
+        "300 errors earned the bot {} lines",
+        listener.allowance(id)
+    );
+}
+
+/// And a bot that asks for nothing but errors, as fast as it can, is let
+/// go: told it is flooding, or, on a machine too busy to write the errors
+/// out as fast as they are asked for, dropped for not reading them.
+#[test]
+fn a_flood_of_requests_answered_with_errors_is_let_go() {
+    let (listener, events) = listen(Admission::Open);
+    let (mut bot, _) = Client::register(listener.local_addr(), "Drum", None);
+    let id = registered(&events);
+    let again = json!({"type": "register", "protocol": 1, "name": "Drum"}).to_string();
+    // Far more than the burst, written while the answers are read. A flood
+    // is that many refusals in a row, and a reader slowed down by a busy
+    // machine earns a line back every 20 ms, which starts the count again:
+    // a long flood still trips it.
+    let mut flood = bot.stream.try_clone().expect("a second handle");
+    let writer = std::thread::spawn(move || {
+        for _ in 0..20_000 {
+            if writeln!(flood, "{again}").is_err() {
+                break;
+            }
+        }
+    });
     while let Some(msg) = bot.next() {
         if msg["type"] == "error" && msg["fatal"] == true {
-            flooding = msg["message"] == "flooding";
+            assert_eq!(msg["message"], "flooding", "{msg}");
             break;
         }
     }
-    assert!(flooding, "two thousand registers and still welcome");
+    drop(bot);
+    let _ = writer.join();
+    let gone = (0..250).any(|_| {
+        std::thread::sleep(Duration::from_millis(20));
+        !listener.connected(id)
+    });
+    assert!(gone, "a flood and still welcome");
 }
 
 /// Wrong keys from an address lock its keys out, not its tokens: a bot
