@@ -591,6 +591,35 @@ fn catch_up_on_the_feed(state: &LobbyState, peer: usize) {
 
 /// Say something to every peer at the table, as the host. An empty `who`
 /// is the lobby speaking rather than a player.
+/// The host asks the peer at place `at` of the table (1 is the host's own)
+/// to leave: it is told, and forgotten, and everyone else hears why the
+/// chair is empty. The table is the host and the peers who came to play,
+/// in order, which is how the AT THIS BEACH card numbers them.
+pub(super) fn ask_to_leave(state: &mut LobbyState, tr: &'static crate::app::i18n::Tr, at: usize) {
+    let Some(hosted) = state.hosted_mut() else {
+        return;
+    };
+    let Some(peer) = (0..hosted.peers.len())
+        .filter(|&peer| hosted.peers.get(peer).is_some_and(|p| !p.watch))
+        .nth(at.wrapping_sub(2))
+    else {
+        return;
+    };
+    let who = hosted
+        .peers
+        .get(peer)
+        .map_or_else(String::new, |p| p.name.clone());
+    // Said a few times: it is one datagram, and the one the network eats
+    // would leave a peer greeting a host that has forgotten it.
+    for _ in 0..3 {
+        hosted.transport.send_to(peer, NetMsg::Kicked);
+    }
+    hosted.forget_peer(peer);
+    let notice = fill(tr.lobby_kicked_feed, &[("p", &who)]);
+    state.say("", &notice);
+    announce_to_table(state, "", &notice);
+}
+
 pub(super) fn announce_to_table(state: &LobbyState, who: &str, line: &str) {
     if let Some(hosted) = state.hosted() {
         hosted.transport.send(NetMsg::chat(who, line));
@@ -780,6 +809,77 @@ mod tests {
         assert!(should_launch(2, false, false, Some(2)));
         assert!(should_launch(2, true, false, Some(2)));
         assert!(!should_launch(1, false, false, Some(2)), "not filled yet");
+    }
+
+    /// The host asks the second place at its table to leave: that peer is
+    /// told, the host forgets it, and the bot flag its greeting carried
+    /// was on its row until then.
+    #[test]
+    fn a_peer_asked_to_leave_is_told_and_forgotten() {
+        let mut state = LobbyState {
+            standing: Standing::hosting(
+                Announcer::new(0xC0FFEE).expect("announcer"),
+                UdpTransport::host(0).expect("game socket"),
+            ),
+            ..LobbyState::default()
+        };
+        let port = state
+            .hosted()
+            .expect("hosting")
+            .transport
+            .local_addr()
+            .expect("addr")
+            .port();
+        let mut bot = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        bot.send(NetMsg::hello_bot("Greedy (Ana)"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let hosted = state.hosted_mut().expect("hosting");
+            let picked = work_the_socket(hosted, 0.0, crate::transport::OnAir::default());
+            for (from, told) in picked.greeted {
+                hosted.peers.row(from).name = told;
+            }
+            if hosted
+                .peers
+                .get(0)
+                .is_some_and(|peer| peer.name == "Greedy (Ana)")
+            {
+                break;
+            }
+        }
+        assert!(
+            state
+                .hosted()
+                .expect("hosting")
+                .peers
+                .get(0)
+                .is_some_and(|p| p.bot),
+            "the greeting said a bot drives this seat"
+        );
+        assert_eq!(
+            state.roster_kinds(),
+            vec![crate::sim::SeatKind::Human, crate::sim::SeatKind::Bot]
+        );
+        ask_to_leave(&mut state, &crate::app::i18n::EN, 2);
+        assert_eq!(state.hosted().expect("hosting").peers.len(), 0, "forgotten");
+        assert!(
+            state
+                .chat
+                .iter()
+                .any(|said| said.line.contains("asked to leave"))
+        );
+        let mut told = false;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            told |= bot
+                .recv_all()
+                .into_iter()
+                .any(|(msg, _)| msg == NetMsg::Kicked);
+            if told {
+                break;
+            }
+        }
+        assert!(told, "the peer was told why");
     }
 
     /// Chat is the one message that names its own sender, and the host is

@@ -945,7 +945,7 @@ mod tests {
     fn what_holds_a_seat_survives_the_wire() {
         for bot in [false, true] {
             let hello = NetMsg::Hello {
-                name: wire_name("Greedy (Ana's bot)"),
+                name: wire_name("Greedy (Ana)"),
                 bot,
             };
             assert_eq!(NetMsg::decode(&hello.clone().encode()), Some(hello));

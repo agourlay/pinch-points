@@ -191,6 +191,9 @@ pub struct Joined {
     /// The round as it stands, arriving in parts, for a watcher who
     /// greeted a beach mid-round (`net::catch_up`).
     catching_up: crate::app::net::catch_up::Assembly,
+    /// Joining as a bot (route 1): the seat's name, "Greedy (Ana)",
+    /// greeted with the flag that says a bot will drive it.
+    pub bot: Option<String>,
 }
 
 impl Joined {
@@ -208,13 +211,19 @@ impl Joined {
             played_seed: None,
             terms: None,
             catching_up: Default::default(),
+            bot: None,
         }
     }
 
     /// A beach walked back into from a finished round: the host was
     /// talking moments ago, so this is a beach, not an unanswered address,
     /// until the silence rule says otherwise, and it greets again at once.
-    pub fn returned(transport: UdpTransport, watching: bool, played_seed: u64) -> Joined {
+    pub fn returned(
+        transport: UdpTransport,
+        watching: bool,
+        played_seed: u64,
+        bot: Option<String>,
+    ) -> Joined {
         Joined {
             transport,
             watching,
@@ -225,6 +234,15 @@ impl Joined {
             played_seed: Some(played_seed),
             terms: None,
             catching_up: Default::default(),
+            bot,
+        }
+    }
+
+    /// What this peer greets the host with: a bot's seat says so.
+    pub fn greeting(&self, name: &str) -> NetMsg {
+        match &self.bot {
+            Some(seat) => NetMsg::hello_bot(seat),
+            None => greeting(self.watching, name),
         }
     }
 
@@ -244,6 +262,8 @@ pub enum Intent {
     /// Take the beach at this address, which is on no row: it was typed
     /// out because no beacon from it ever arrived.
     Dial(SocketAddr),
+    /// Take the beach on this row as a bot (route 1): a doorway first.
+    JoinBot(usize),
 }
 
 /// One line in the feed, kept as who said it and what, rather than as the
@@ -304,6 +324,9 @@ pub struct LobbyState {
     pub game_name: String,
     pub feedback: String,
     auto_done: bool,
+    /// The host pressed K and is picking whom to ask to leave: the next
+    /// number is a seat at the table, Esc is never mind.
+    pub kicking: bool,
 }
 
 impl LobbyState {
@@ -539,6 +562,7 @@ fn settle_back_in(
         watching,
         host,
         played_seed,
+        bot,
     } = returned;
     if host {
         // A host that never announced (the direct pair) has no beach to
@@ -558,7 +582,7 @@ fn settle_back_in(
             announce_in: 0.0,
         });
     } else {
-        state.standing = Standing::Joining(Joined::returned(transport, watching, played_seed));
+        state.standing = Standing::Joining(Joined::returned(transport, watching, played_seed, bot));
         state.feedback = match watching {
             true => tr.lobby_watching,
             false => tr.lobby_aboard,
@@ -619,6 +643,45 @@ pub fn exit_lobby(mut state: ResMut<LobbyState>) {
     *state = LobbyState::default();
 }
 
+/// The ways out of the lobby a key can take: to another screen, or
+/// through a doorway for a bot.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct LobbyExits<'w> {
+    next_screen: ResMut<'w, NextState<Screen>>,
+    bots: ResMut<'w, crate::app::bot_seats::BotSeats>,
+}
+
+/// B on a beach: open a doorway for the bot that will join it.
+fn open_door_for(
+    state: &mut LobbyState,
+    bots: &mut crate::app::bot_seats::BotSeats,
+    tr: &'static crate::app::i18n::Tr,
+    at: usize,
+) {
+    let Some(host) = state.hosts.get(at) else {
+        return;
+    };
+    if !host.bots {
+        state.feedback = tr.lobby_no_bots.to_string();
+        return;
+    }
+    if !host.has_room() {
+        state.feedback = tr.lobby_beach_full.to_string();
+        return;
+    }
+    let addr = host.addr;
+    state.selected = Some(addr);
+    match crate::app::bot_seats::Doorway::open() {
+        Ok(mut door) => {
+            door.seat_bots(&[0]);
+            bots.door = Some(door);
+            bots.join_to = Some(addr);
+            bots.waiting = Some(crate::app::bot_seats::Waiting::Join);
+        }
+        Err(e) => state.feedback = fill(tr.door_could_not_listen, &[("e", &e.to_string())]),
+    }
+}
+
 /// Lobby input: host, join by number, leave, and say something.
 pub fn lobby_input(
     keyboard: crate::app::keycaps::Keyboard,
@@ -626,10 +689,30 @@ pub fn lobby_input(
     mut settings: ResMut<GameSettings>,
     dials: crate::app::match_setup::Dials,
     mut state: ResMut<LobbyState>,
-    mut next_screen: ResMut<NextState<Screen>>,
+    exits: LobbyExits,
     pads: Query<&Gamepad>,
 ) {
     let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
+    let LobbyExits {
+        mut next_screen,
+        mut bots,
+    } = exits;
+    // A doorway card is up for a bot about to join a beach: its keys are
+    // its own (see `bot_seats::door_input`), and the moment its bot is in,
+    // this game dials the beach as that bot's seat.
+    if bots.waiting.is_some() {
+        typed.clear();
+        let tr = settings.tr();
+        if let Some(door) = &bots.door
+            && door.ready()
+            && let Some(addr) = bots.join_to
+        {
+            let name = door.named_for(tr, &settings.names[0]);
+            bots.waiting = None;
+            dial_as(&mut state, &settings, tr, addr, name);
+        }
+        return;
+    }
     let crate::app::match_setup::Dials {
         mut config,
         beaches,
@@ -698,6 +781,35 @@ pub fn lobby_input(
     if auto_watch {
         state.set_watching(true);
     }
+    // B: join the beach under the cursor as a bot, through a doorway. The
+    // dev hook presses it on the first beach heard.
+    if crate::app::dev::auto_join_bot() && !state.auto_done && !state.hosts.is_empty() {
+        state.auto_done = true;
+        open_door_for(&mut state, &mut bots, tr, 0);
+        return;
+    }
+    let join_bot = match intent {
+        Some(Intent::JoinBot(at)) => Some(at),
+        _ if intent.is_none()
+            && caps.just_pressed(&keys, 'B')
+            && !state.standing().at_a_beach()
+            && state.typing.is_none() =>
+        {
+            state.selected_index()
+        }
+        _ => None,
+    };
+    if let Some(at) = join_bot {
+        if settings.names[0].trim().is_empty() && intent.is_none() {
+            state.typing = Some(
+                Typing::player_name(Intent::JoinBot(at), &settings.names[0])
+                    .or_suggest(|| suggested_name(tr)),
+            );
+        } else {
+            open_door_for(&mut state, &mut bots, tr, at);
+        }
+        return;
+    }
     let step = host_step(HostAsk {
         answered: intent == Some(Intent::Host),
         pressed_h: caps.just_pressed(&keys, 'H'),
@@ -745,6 +857,24 @@ pub fn lobby_input(
                 state.feedback = fill(tr.lobby_could_not_host, &[("e", &e.to_string())]);
             }
         }
+    }
+    // K: ask somebody to leave. The next number names them, Esc does not.
+    if state.hosting() && state.typing.is_none() && caps.just_pressed(&keys, 'K') {
+        state.kicking = true;
+        return;
+    }
+    if state.kicking {
+        if keys.just_pressed(KeyCode::Escape) || !state.hosting() {
+            state.kicking = false;
+            return;
+        }
+        if let Some(at) =
+            crate::app::menu_ui::number_pressed(&keys, crate::app::menu_ui::NUMBER_KEYS.len())
+        {
+            state.kicking = false;
+            ask_to_leave(&mut state, tr, at + 1);
+        }
+        return;
     }
     if state.hosting() {
         turn_the_dials(
@@ -1020,6 +1150,7 @@ mod homecoming_tests {
                 watching: false,
                 host: true,
                 played_seed: 42,
+                bot: None,
             },
             &EN,
         );
@@ -1057,6 +1188,7 @@ mod homecoming_tests {
                 watching: false,
                 host: true,
                 played_seed: 0,
+                bot: None,
             },
             &EN,
         );
@@ -1084,6 +1216,7 @@ mod homecoming_tests {
                 watching: true,
                 host: false,
                 played_seed: 42,
+                bot: None,
             },
             &EN,
         );

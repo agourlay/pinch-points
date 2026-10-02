@@ -490,6 +490,10 @@ enum Frame {
 fn add_frame_systems(app: &mut App) {
     app.add_systems(FixedUpdate, advance_sim.run_if(sim_should_run));
     app.add_systems(Update, watch::pump);
+    app.add_systems(
+        Update,
+        watch::dropped_replays.run_if(in_state(Screen::Menu).or_else(in_state(Screen::Replays))),
+    );
     // A hosted beach keeps its beacon up for the whole match, not just the
     // lobby, so a player arriving late sees a game in progress with a chair
     // free rather than an empty network. In `Update` rather than beside the

@@ -1,7 +1,9 @@
 # Bot seats: design
 
-**Status:** being built, from 2026-10-02. Phases 2 (the protocol and the
-arena) and 3 (cups) are in; the bot author's contract is `bot-protocol.md`.
+**Status:** being built, from 2026-10-02. Phases 1 to 5 are in (seat
+controllers, the protocol and the arena, cups, the fair cursor, and Join
+as bot); the bot author's contract is `bot-protocol.md`. Where the build
+departs from this design it says so below, under *As built*.
 
 ## Goal
 

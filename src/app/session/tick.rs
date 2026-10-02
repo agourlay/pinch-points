@@ -124,9 +124,22 @@ pub(in crate::app) fn advance_sim(
         // frame its own placement would have had, and that placement waits
         // rather than being thrown away.
         let call = session.stands.pending_call;
-        let action = match call {
-            Some(event) => PlayerAction::CallEvent(event),
-            None => local.map_or(PlayerAction::None, |seat| pending.0[seat]),
+        let controllers = &*drivers.controllers;
+        let bots = &mut *drivers.bots;
+        // A seat this peer's bot drives (route 1) commits the bot's act
+        // where a person's would commit a keypress: on the frame the
+        // lockstep is about to take, which is `input_delay` ahead.
+        let driven = bots
+            .online_seat()
+            .filter(|&seat| local == Some(usize::from(seat)) && call.is_none());
+        let frame = session.session.next_commit();
+        let (action, bot_act) = match (call, driven) {
+            (Some(event), _) => (PlayerAction::CallEvent(event), None),
+            (None, Some(_)) => bots.commit_online(&sim.0),
+            (None, None) => (
+                local.map_or(PlayerAction::None, |seat| pending.0[seat]),
+                None,
+            ),
         };
         // Borrowed past change detection: a mutable borrow marks the
         // resource changed whether or not a frame runs, and while a peer is
@@ -135,7 +148,6 @@ pub(in crate::app) fn advance_sim(
         let sim_board = &mut sim.bypass_change_detection().0;
         let recording = &mut recorder.bypass_change_detection().0;
         let tally = &mut *tally;
-        let controllers = &*drivers.controllers;
         // The level every peer gives an abandoned seat, from the terms the
         // table agreed on, so the chair plays the same on all of them.
         let level = {
@@ -158,9 +170,11 @@ pub(in crate::app) fn advance_sim(
                     at,
                     &mut frame_actions,
                 );
+                bots.before_frame(at, sim_board);
                 let before = awards::Reading::of(sim_board);
                 sim_board.tick(&frame_actions);
                 tally.observe(before, sim_board, &frame_actions);
+                bots.after_frame(at, sim_board);
                 // The board is at the lockstep's frame: the hash sent for a
                 // frame is this board's, and a late watcher is handed this
                 // board as that frame. Once the tide is in the board stops
@@ -182,6 +196,14 @@ pub(in crate::app) fn advance_sim(
                 advanced = true;
             }
         });
+        if driven.is_some() {
+            if committed {
+                bots.committed(frame, bot_act, action);
+            }
+            // The board as it now stands goes out to the bot, whose answer
+            // is committed on the next tick.
+            bots.send_online(&sim.bypass_change_detection().0);
+        }
         // Late watchers who greeted this tick are sent the round now, off
         // the board as the lockstep's frame leaves it.
         session.send_catch_ups(&sim.bypass_change_detection().0);

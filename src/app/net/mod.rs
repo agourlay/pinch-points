@@ -47,6 +47,9 @@ pub struct OnlineSession {
     /// the one row it has, the host, and calls the round off when that goes
     /// quiet.
     pub(crate) peers: PeerBook,
+    /// This peer's seat is driven by a bot connected to this machine
+    /// (route 1): it greets with the flag that says so, between rounds too.
+    pub bot: bool,
     /// What each seat is called, agreed at the handshake so every peer
     /// shows the same table. Empty entries fall back to seat labels; local
     /// couch names never apply to an online round.
@@ -297,6 +300,8 @@ pub struct LobbyReturn {
     /// lobby that has just walked out of it must read the repeat as
     /// stale rather than as an invitation straight back in.
     pub played_seed: u64,
+    /// Joiner side, as a bot's seat (route 1): its name, to greet with.
+    pub bot: Option<String>,
 }
 
 #[derive(Resource, Default)]
@@ -346,6 +351,7 @@ impl OnlineSession {
             terms,
             beach: Vec::new(),
             peers: PeerBook::default(),
+            bot: false,
             names: Default::default(),
             kinds: Default::default(),
             hashes: HashCheck::default(),
@@ -419,6 +425,7 @@ impl OnlineSession {
     pub fn back_to_the_lobby(mut self) -> LobbyReturn {
         let host = self.is_host();
         let watching = self.watching();
+        let seat = self.session.seat();
         // Each peer under the name its chair carried, which is the one
         // every screen showed, and the plan's chairs given up: back in the
         // lobby the plan is dealt again, and only who watches survives it.
@@ -436,7 +443,8 @@ impl OnlineSession {
             terms,
             beach: _,
             peers,
-            names: _,
+            bot,
+            names,
             kinds: _,
             hashes: _,
             stall: _,
@@ -465,6 +473,9 @@ impl OnlineSession {
             watching,
             host,
             played_seed: terms.seed,
+            bot: seat
+                .filter(|_| bot)
+                .map(|seat| names[usize::from(seat)].clone()),
         }
     }
 

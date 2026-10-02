@@ -38,6 +38,12 @@ pub(super) fn auto_join() -> bool {
     std::env::var("PINCH_LOBBY_JOIN").is_ok()
 }
 
+/// `PINCH_LOBBY_JOIN_BOT`: join the first LAN host the lobby hears as a
+/// bot (route 1), opening the doorway for it unattended.
+pub(super) fn auto_join_bot() -> bool {
+    std::env::var("PINCH_LOBBY_JOIN_BOT").is_ok()
+}
+
 /// `PINCH_LOBBY_WATCH`: the same, but as a spectator.
 pub(super) fn auto_watch() -> bool {
     std::env::var("PINCH_LOBBY_WATCH").is_ok()
@@ -173,7 +179,11 @@ impl DevHook {
     /// process environment.
     pub(super) fn from_env(var: impl Fn(&str) -> Option<String>) -> Option<DevHook> {
         let set = |name: &str| var(name).is_some();
-        if set("PINCH_LOBBY_HOST") || set("PINCH_LOBBY_JOIN") || set("PINCH_LOBBY_WATCH") {
+        if set("PINCH_LOBBY_HOST")
+            || set("PINCH_LOBBY_JOIN")
+            || set("PINCH_LOBBY_JOIN_BOT")
+            || set("PINCH_LOBBY_WATCH")
+        {
             return Some(DevHook::Lobby);
         }
         if set("PINCH_HOST") || set("PINCH_JOIN") {
@@ -777,6 +787,7 @@ mod tests {
         for (var, expected) in [
             ("PINCH_LOBBY_HOST", DevHook::Lobby),
             ("PINCH_LOBBY_JOIN", DevHook::Lobby),
+            ("PINCH_LOBBY_JOIN_BOT", DevHook::Lobby),
             ("PINCH_HOST", DevHook::Online),
             ("PINCH_JOIN", DevHook::Online),
             ("PINCH_SANDBOX", DevHook::Sandbox),

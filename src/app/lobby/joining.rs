@@ -69,7 +69,7 @@ pub(super) fn which_beach(ask: JoinAsk, hosts: &[HostEntry]) -> Pick {
         // Neither of these is a row of this list: hosting is not joining,
         // and a dialled address was typed because it is on no row.
         // Both are dealt with by the caller.
-        (Some(Intent::Host | Intent::Dial(_)), _) => return Pick::Nothing,
+        (Some(Intent::Host | Intent::Dial(_) | Intent::JoinBot(_)), _) => return Pick::Nothing,
         (None, true) => Some(0),
         (None, false) => digit.or(enter_on),
     };
@@ -233,13 +233,26 @@ pub(super) fn dial_at(
     tr: &'static crate::app::i18n::Tr,
     addr: SocketAddr,
 ) {
+    dial_as(state, settings, tr, addr, None);
+}
+
+/// Dial `addr`, as a bot's seat named `bot` if there is one (route 1).
+pub(super) fn dial_as(
+    state: &mut LobbyState,
+    settings: &GameSettings,
+    tr: &'static crate::app::i18n::Tr,
+    addr: SocketAddr,
+    bot: Option<String>,
+) {
     match UdpTransport::join(addr) {
         Ok(transport) => {
-            let watching = state.watching();
-            transport.send(greeting(watching, &settings.names[0]));
+            let watching = state.watching() && bot.is_none();
+            let mut joined = Joined::dialled(transport, watching);
+            joined.bot = bot;
+            joined.transport.send(joined.greeting(&settings.names[0]));
             // Calling, not aboard: nothing has answered yet, and on UDP
             // an open socket is no evidence that anything will.
-            state.standing = Standing::Joining(Joined::dialled(transport, watching));
+            state.standing = Standing::Joining(joined);
             state.feedback = fill(tr.lobby_calling, &[("a", &addr.to_string())]);
         }
         Err(e) => state.feedback = fill(tr.lobby_could_not_join, &[("e", &e.to_string())]),
@@ -324,6 +337,7 @@ fn walk_into_the_arena(
     // Formed here, so a finished match knows it has a lobby to walk this
     // table back to.
     session.home.from_lobby = true;
+    session.bot = joined.bot.is_some();
     online.0 = Some(session);
     next_vphase.set(VersusPhase::Countdown);
     next_screen.set(Screen::Versus);
@@ -372,10 +386,11 @@ pub fn join_tick(
     let mut kicked = false;
     let mut host_terms: Option<MatchTerms> = None;
     let mut heard = false;
+    let hello = say_hello.then(|| joined.greeting(&settings.names[0]));
     let transport = &mut joined.transport;
     {
-        if say_hello {
-            transport.send(greeting(joined.watching, &settings.names[0]));
+        if let Some(hello) = hello {
+            transport.send(hello);
         }
         for (msg, _) in transport.recv_all() {
             // Anything at all, even a message this screen throws away, is

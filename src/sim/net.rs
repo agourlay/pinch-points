@@ -478,6 +478,12 @@ impl Lockstep {
         Some(actions)
     }
 
+    /// The frame the next local commit will be for: what a seat driven
+    /// from elsewhere (a bot) needs to match its outcome to a frame.
+    pub fn next_commit(&self) -> u32 {
+        self.next_commit
+    }
+
     pub fn frame(&self) -> u32 {
         self.frame
     }

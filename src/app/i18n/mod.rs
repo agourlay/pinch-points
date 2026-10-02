@@ -751,8 +751,9 @@ struct Tr {
     pub door_copied: &'static str,
     /// The doorway could not open: no port to listen on.
     pub door_could_not_listen: &'static str,
-    /// What a bot's seat is called: its name and its owner's. The game
-    /// sets this, never the bot.
+    /// What a bot's seat is called: its name and its owner's, the robot
+    /// beside it saying the rest. The game sets this, never the bot, and it
+    /// travels in a name's twelve characters, so it is kept short.
     pub bot_owned: &'static str,
     /// A bot that gave no owner.
     pub bot_unowned: &'static str,

@@ -44,6 +44,7 @@ the game's window.
 - [Limits](#limits)
 - [The rules](#the-rules), precisely enough to port the sim
 - [The author's loop](#the-authors-loop): `arena`, the log, `watch`, `--trace`
+- [Playing with people](#playing-with-people)
 - [Cups](#cups)
 
 ## Connecting
@@ -507,6 +508,34 @@ printed at the end of every run.
 
 **Watch.** `pinch-points watch FILE` opens the game and plays a replay at
 full fidelity, with the seat names on screen.
+
+## Playing with people
+
+The same bot, unchanged, can take a seat beside people in the game
+itself. The game opens a doorway, a card showing the connection string,
+and the bot that registers with it takes the seat. Nothing in the
+protocol differs; what differs is in `hello`:
+
+- **On a couch.** In Turf War's match setup, turn a seat's AI dial past
+  "fierce" to "bot". Starting the match shows a string per bot seat
+  (`C` copies one, `L` opens the doorway to the LAN for a friend's
+  laptop), and the match begins the moment the last bot is in. The clock
+  is `live` with `input_delay` 0.
+- **At a LAN party (Join as bot).** In the Beach Lobby, put the cursor on
+  a beach that shows a robot ("Bots welcome") and press `B`. Your game
+  shows the string; start your bot with it, and your game joins the
+  party as an ordinary player whose seat your bot drives, named for your
+  bot and you, "Greedy (Ana)". You watch the match from your own screen,
+  with your bot's notes in the game's log. The clock is `live` with
+  `input_delay` 3: every seat's input is committed three ticks ahead for
+  the whole table, so aim where a crab will be, as a person online does.
+
+With a person at the table the fair cursor is on, for your bot and the
+game's AI alike. A bot whose connection drops idles for five seconds and
+then the game's AI stands in for it, until it comes back with its token.
+A bot always wears a robot beside its name on every screen at the table;
+the game sets it, never the bot. The host can ask anyone to leave (`K`
+in the lobby, then their number).
 
 ## Cups
 

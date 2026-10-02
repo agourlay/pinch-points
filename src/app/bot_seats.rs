@@ -169,8 +169,19 @@ impl Doorway {
         Some((name, self.listener.rtt(info.id)))
     }
 
+    /// The seat name for a bot joining a party from this machine (route
+    /// 1): its owner is whoever is at this machine, not what it declared.
+    pub fn named_for(&self, tr: &crate::app::i18n::Tr, owner: &str) -> Option<String> {
+        let info = self.listener.bot(self.chairs.first()?.bot?)?;
+        Some(match owner.trim().is_empty() {
+            true => fill(tr.bot_unowned, &[("bot", &info.name)]),
+            false => fill(tr.bot_owned, &[("bot", &info.name), ("o", owner.trim())]),
+        })
+    }
+
     /// What the seat a bot holds is called: its registered name and its
-    /// owner's, "Greedy (Ana's bot)", or "Greedy (bot)" if it gave none.
+    /// owner's, "Greedy (Ana)", or its name alone if it gave none. The
+    /// robot beside it on every screen says it is a bot.
     pub fn seat_name(&self, tr: &crate::app::i18n::Tr, seat: u8) -> Option<String> {
         let chair = self.chairs.iter().find(|chair| chair.seat == seat)?;
         let info = self.listener.bot(chair.bot?)?;
@@ -192,6 +203,11 @@ pub enum News {
 
 /// One round played with bots in it.
 pub struct BotRound {
+    /// Online (route 1), the one seat this peer plays, whose bot's acts are
+    /// committed to the lockstep for a frame ahead: each with the frame it
+    /// lands on, so its outcome can be read when that frame is played.
+    online: Option<u8>,
+    in_flight: std::collections::VecDeque<(u32, Act, PlayerAction, Option<Refusal>)>,
     link: GameLink,
     game: u32,
     drivers: Vec<BotDriver>,
@@ -353,6 +369,26 @@ impl BotRound {
         }
     }
 
+    /// The act for this peer's own seat online, and what it carried out.
+    fn commit_online(
+        &mut self,
+        board: &Board,
+        news: &mut Vec<(u8, News)>,
+    ) -> (PlayerAction, Option<Act>) {
+        let mut actions = [PlayerAction::None; MAX_PLAYERS];
+        let committed = self.commit(board, &mut actions, news);
+        committed
+            .into_iter()
+            .next()
+            .map_or((PlayerAction::None, None), |c| (c.action, c.act))
+    }
+
+    /// Send the board as it now stands to every bot awake for it, without
+    /// any outcome to report first (online, outcomes arrive with frames).
+    fn send_next(&mut self, board: &Board) {
+        self.after(board, Vec::new());
+    }
+
     /// The round is over: every bot is told how it went.
     fn finish(&self, board: &Board) {
         let n = self.names.len();
@@ -380,6 +416,8 @@ pub struct BotSeats {
     pub waiting: Option<Waiting>,
     /// What the card has to say about the last key pressed on it.
     pub feedback: String,
+    /// The beach a bot is joining once it has registered (route 1).
+    pub join_to: Option<SocketAddr>,
     games: u32,
 }
 
@@ -390,6 +428,76 @@ pub enum Waiting {
     Couch,
     /// Join the beach picked in the lobby as a bot (route 1).
     Join,
+}
+
+impl BotSeats {
+    /// Online, the seat this peer's bot drives, if one does (route 1).
+    pub fn online_seat(&self) -> Option<u8> {
+        self.round.as_ref()?.online
+    }
+
+    /// Online, the act for this peer's own seat, for the lockstep to
+    /// commit.
+    pub fn commit_online(&mut self, board: &Board) -> (PlayerAction, Option<Act>) {
+        let BotSeats { round, news, .. } = self;
+        match round {
+            Some(round) => round.commit_online(board, news),
+            None => (PlayerAction::None, None),
+        }
+    }
+
+    /// The lockstep took the act for `frame`: remember it until the frame
+    /// is played, when its outcome is known.
+    pub fn committed(&mut self, frame: u32, act: Option<Act>, action: PlayerAction) {
+        if let (Some(round), Some(act)) = (self.round.as_mut(), act) {
+            round.in_flight.push_back((frame, act, action, None));
+            while round.in_flight.len() > 64 {
+                round.in_flight.pop_front();
+            }
+        }
+    }
+
+    /// `frame` is about to be played from `board`: what the sim would say
+    /// to this seat's act on it.
+    pub fn before_frame(&mut self, frame: u32, board: &Board) {
+        let Some(round) = self.round.as_mut() else {
+            return;
+        };
+        let Some(seat) = round.online else {
+            return;
+        };
+        for entry in round.in_flight.iter_mut().filter(|e| e.0 == frame) {
+            entry.3 = refusal(board, seat, entry.2);
+        }
+    }
+
+    /// `frame` was played: what became of this seat's act on it.
+    pub fn after_frame(&mut self, frame: u32, board: &Board) {
+        let Some(round) = self.round.as_mut() else {
+            return;
+        };
+        let Some(seat) = round.online else {
+            return;
+        };
+        while let Some(&(at, act, action, refused)) = round.in_flight.front() {
+            if at > frame {
+                break;
+            }
+            round.in_flight.pop_front();
+            if at == frame
+                && let Some(result) = outcome(act, action, refused, board, seat, u64::from(frame))
+            {
+                round.last[usize::from(seat)] = Some((act.token(), result));
+            }
+        }
+    }
+
+    /// Online, after the tick: the board as it now stands to the bot.
+    pub fn send_online(&mut self, board: &Board) {
+        if let Some(round) = self.round.as_mut() {
+            round.send_next(board);
+        }
+    }
 }
 
 impl BotSeats {
@@ -432,24 +540,49 @@ impl Drivers<'_> {
     }
 }
 
+/// Who sits where as a round opens, as the bots' seats need it.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct RoundTable<'w> {
+    controllers: Res<'w, Controllers>,
+    online: Res<'w, crate::app::net::Online>,
+    names: ResMut<'w, SeatNames>,
+    kinds: Res<'w, SeatKinds>,
+}
+
 /// Open the round's bot seats, on entering the arena: a driver and a hand
 /// for every seat a bot holds, `hello` to each, and the seat named for its
 /// bot. Chained after the names are resolved, which it overwrites for
 /// those seats, and before the panels are drawn from them.
+///
+/// Online the one seat a bot can hold here is this peer's own, when it
+/// joined as a bot (route 1): its name came over the wire with the rest.
 pub fn begin_round(
-    controllers: Res<Controllers>,
+    table: RoundTable,
     sim: Res<Sim>,
     settings: Res<crate::app::settings::GameSettings>,
-    mut names: ResMut<SeatNames>,
-    kinds: Res<SeatKinds>,
     mut bots: ResMut<BotSeats>,
     mut recorder: ResMut<crate::app::Recorder>,
 ) {
+    let RoundTable {
+        controllers,
+        online,
+        mut names,
+        kinds,
+    } = table;
     bots.round = None;
     bots.news.clear();
-    let seats: Vec<u8> = (0..MAX_PLAYERS as u8)
-        .filter(|&seat| controllers.0[usize::from(seat)] == SeatController::Bot)
-        .collect();
+    let mine = online
+        .0
+        .as_ref()
+        .filter(|session| session.bot)
+        .and_then(|session| session.session.seat());
+    let seats: Vec<u8> = match mine {
+        Some(seat) => vec![seat],
+        None if online.0.is_some() => Vec::new(),
+        None => (0..MAX_PLAYERS as u8)
+            .filter(|&seat| controllers.0[usize::from(seat)] == SeatController::Bot)
+            .collect(),
+    };
     if seats.is_empty() {
         return;
     }
@@ -459,13 +592,15 @@ pub fn begin_round(
         return;
     };
     let tr = settings.tr();
-    for &seat in &seats {
-        if let Some(name) = door.seat_name(tr, seat) {
-            names.0[usize::from(seat)] = name;
+    if mine.is_none() {
+        for &seat in &seats {
+            if let Some(name) = door.seat_name(tr, seat) {
+                names.0[usize::from(seat)] = name;
+            }
         }
-    }
-    if let Some(replay) = &mut recorder.0 {
-        replay.names = names.0.clone();
+        if let Some(replay) = &mut recorder.0 {
+            replay.names = names.0.clone();
+        }
     }
     let board = &sim.0;
     let n = usize::from(board.seats_in_play()).max(2);
@@ -473,12 +608,13 @@ pub fn begin_round(
     let mut drivers = Vec::new();
     let mut routes = Vec::new();
     for &seat in &seats {
-        let Some(id) = door
-            .chairs
-            .iter()
-            .find(|c| c.seat == seat)
-            .and_then(|c| c.bot)
-        else {
+        // Online the doorway's one chair is the bot's, whichever seat the
+        // host dealt this peer.
+        let chair = match mine {
+            Some(_) => door.chairs.first(),
+            None => door.chairs.iter().find(|c| c.seat == seat),
+        };
+        let Some(id) = chair.and_then(|c| c.bot) else {
             continue;
         };
         routes.push((id, seat));
@@ -496,6 +632,8 @@ pub fn begin_round(
         cursors[usize::from(seat)] = Some(SeatCursor::home(board, seat));
     }
     let round = BotRound {
+        online: mine,
+        in_flight: std::collections::VecDeque::new(),
         link,
         game,
         drivers,
@@ -508,7 +646,12 @@ pub fn begin_round(
         clock: Clock {
             live: true,
             deadline_ms: LIVE_DEADLINE_MS,
-            input_delay: 0,
+            // Online every seat's input is committed this far ahead for the
+            // whole table, a bot's like a person's.
+            input_delay: match mine {
+                Some(_) => crate::sim::DEFAULT_DELAY,
+                None => 0,
+            },
         },
         log: Box::new(std::io::sink()),
     };
@@ -775,7 +918,7 @@ mod tests {
         );
         assert!(door.chairs[0].bot.is_none());
         let tr = &crate::app::i18n::EN;
-        assert_eq!(door.seat_name(tr, 3).as_deref(), Some("Greedy (Ana's bot)"));
+        assert_eq!(door.seat_name(tr, 3).as_deref(), Some("Greedy (Ana)"));
         // A seat that stops wanting a bot gives its chair up; one that
         // keeps wanting one keeps its bot.
         door.seat_bots(&[3]);

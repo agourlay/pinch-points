@@ -192,8 +192,10 @@ pub fn enter_library(
 ) {
     library.kept = shelf();
     library.settle();
-    library.feedback.clear();
     let tr = settings.tr();
+    // Any replay file at all can be watched, from a cup's folder or a
+    // friend's message: the status line says how, until it has news.
+    library.feedback = tr.replay_drop_hint.to_string();
     commands
         .spawn((LibraryUi, menu_ui::between_bars()))
         .with_children(|wrap| {

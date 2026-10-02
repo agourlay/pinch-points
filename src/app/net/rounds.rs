@@ -135,8 +135,11 @@ impl OnlineSession {
                 .session
                 .seat()
                 .map_or("", |seat| &self.names[usize::from(seat)]);
-            self.transport
-                .send(crate::app::lobby::greeting(self.watching(), me));
+            let hello = match self.bot {
+                true => NetMsg::hello_bot(me),
+                false => crate::app::lobby::greeting(self.watching(), me),
+            };
+            self.transport.send(hello);
         }
         for (msg, from) in self.transport.recv_all() {
             self.mark_heard(from);

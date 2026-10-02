@@ -379,7 +379,11 @@ pub fn spawn_versus_cursors(
     }
     if let Some(session) = &online.0 {
         // A spectator has no cursor: there is no seat for it to place from.
-        if let Some(seat) = session.session.seat() {
+        // Nor does a seat a bot drives from this machine: the keys here are
+        // not what plays it.
+        if let Some(seat) = session.session.seat()
+            && !session.bot
+        {
             cursor_sprite(&mut commands, &art, seat);
         }
         return;

@@ -106,3 +106,36 @@ pub fn install(mut watch: ResMut<Watch>, mut playback: ResMut<Playback>) {
         playback.0 = Some((replay, 0));
     }
 }
+
+/// A replay file dropped on the window, from the menu or the replay shelf:
+/// watched at once. The way in for a player who never opens a terminal,
+/// handed the replay of a cup's final or a friend's arena game.
+pub fn dropped_replays(
+    mut drops: MessageReader<bevy::window::FileDragAndDrop>,
+    settings: Res<crate::app::settings::GameSettings>,
+    mut playback: ResMut<Playback>,
+    mut library: ResMut<crate::app::replays::Library>,
+    mut notice: ResMut<crate::app::RoundNotice>,
+    mut next_screen: ResMut<NextState<Screen>>,
+) {
+    for drop in drops.read() {
+        let bevy::window::FileDragAndDrop::DroppedFile { path_buf, .. } = drop else {
+            continue;
+        };
+        let read = std::fs::read_to_string(path_buf)
+            .map_err(|e| e.to_string())
+            .and_then(|text| Replay::parse(&text));
+        match read {
+            Ok(replay) => {
+                playback.0 = Some((replay, 0));
+                next_screen.set(Screen::Versus);
+                return;
+            }
+            Err(e) => {
+                let why = crate::app::i18n::fill(settings.tr().replay_drop_bad, &[("e", &e)]);
+                library.feedback.clone_from(&why);
+                notice.0 = why;
+            }
+        }
+    }
+}
