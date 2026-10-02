@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Greedy: an example Pinch Points bot, in plain Python 3 with no packages.
 
-    python3 greedy.py pinch://127.0.0.1:47710/7F3K-9QXA
+    python3 greedy.py pinch://127.0.0.1:47710/7F3K-9QXA [--name N] [--owner O] [--parallel K]
 
 It keeps a map of which way is home from every tile, and each time it acts
 it tries a handful of signposts: for the crabs worth the most that are not
@@ -17,7 +17,6 @@ It is meant to be read and changed. The protocol is docs/bot-protocol.md.
 import json
 import socket
 import sys
-import time
 from collections import deque
 
 NAME = "Greedy"
@@ -242,11 +241,26 @@ def decide(beach, tick):
     return {"act": "place", "x": best[0], "y": best[1], "dir": best[2], "note": "gain %.1f" % best_gain}
 
 
+def options(argv):
+    """greedy.py STRING [--name NAME] [--owner OWNER] [--parallel N]"""
+    if len(argv) < 2 or argv[1].startswith("--"):
+        raise SystemExit("usage: greedy.py pinch://HOST:PORT[/KEY] [--name NAME] [--owner OWNER] [--parallel N]")
+    opts = {"string": argv[1], "name": NAME, "owner": None, "parallel": 1}
+    rest = argv[2:]
+    while rest:
+        flag = rest.pop(0)
+        if flag in ("--name", "--owner", "--parallel") and rest:
+            opts[flag[2:]] = rest.pop(0)
+        else:
+            raise SystemExit("unknown option %s" % flag)
+    opts["parallel"] = int(opts["parallel"])
+    return opts
+
+
 def main():
-    if len(sys.argv) < 2:
-        raise SystemExit("usage: greedy.py pinch://HOST:PORT[/KEY] [name]")
-    host, port, key = parse_connection_string(sys.argv[1])
-    name = sys.argv[2] if len(sys.argv) > 2 else NAME
+    opts = options(sys.argv)
+    host, port, key = parse_connection_string(opts["string"])
+    name = opts["name"]
     sock = socket.create_connection((host, port))
     # Nagle's algorithm can hold a small line for 40 ms, longer than the
     # whole deadline: switch it off first.
@@ -257,7 +271,10 @@ def main():
         stream.write(json.dumps(msg, separators=(",", ":")) + "\n")
         stream.flush()
 
-    register = {"type": "register", "protocol": 1, "name": name, "version": VERSION}
+    register = {"type": "register", "protocol": 1, "name": name, "version": VERSION,
+                "parallel": opts["parallel"]}
+    if opts["owner"]:
+        register["owner"] = opts["owner"]
     if key:
         register["key"] = key
     send(register)

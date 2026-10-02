@@ -452,11 +452,14 @@ impl Match<'_, '_> {
             .collect();
         let scores: Vec<u32> = self.spec.board.scores()[..n].to_vec();
         let places = placings(&scores, &forfeits);
-        let mut players = Vec::new();
+        // Kept before anybody is told the game is over, so a bot that asks
+        // for the replay the moment it hears `end` finds it there.
+        let players = self.bots.iter().flatten().map(|b| b.id).collect();
+        self.listener
+            .keep_replay(self.spec.replay_id.clone(), players, self.replay.to_text());
         for seat in 0..n {
             if let Some(bot) = &mut self.bots[seat] {
                 bot.close();
-                players.push(bot.id);
                 self.listener.send(
                     bot.id,
                     &json!({
@@ -470,7 +473,6 @@ impl Match<'_, '_> {
             result.placing = places[seat];
         }
         let Match {
-            listener,
             link,
             spec,
             bots,
@@ -479,7 +481,6 @@ impl Match<'_, '_> {
             ..
         } = self;
         drop(link);
-        listener.keep_replay(spec.replay_id, players, replay.to_text());
         GameResult {
             seats: bots
                 .into_iter()

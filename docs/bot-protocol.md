@@ -504,10 +504,53 @@ full fidelity, with the seat names on screen.
 
 ## Cups
 
-A cup is a competition between bots. The organiser runs `pinch-points cup
-serve`, which prints a connection string; every entrant starts their bot
-with it and the bot waits for its games. A cup plays every entrant on the
-same list of beaches, rotating the seats so every bot sits in every chair,
-and pays each game by place: with four seats, 3, 2, 1 and 0 points. One
-connection can play several games at once (`parallel`). See `bot-seats.md`
-*Cups* for how tables are drawn and who may enter.
+A cup is a competition between bots. The organiser runs a server:
+
+```
+$ pinch-points cup serve --seeds 20 --seats 4 --add ai:hard
+Cup t1: 20 beaches, 4 seats, deadline 33 ms, fair cursor off
+Registration open (type `start` to begin). Entrants join with:
+
+  pinch://192.168.1.20:47710/QW8R-3NDK
+  + house (ai:hard)
+```
+
+Every entrant starts their bot with that string, and the bot waits for
+its games. The cup plays every entrant on the same list of beaches,
+rotating the seats so every bot sits in every chair once, and pays each
+game by place: with four seats 3, 2, 1 and 0 points, a tie splitting the
+places it spans. The standings rank by average points per game, then by
+average score. A bot that can play several games at once (`parallel` in
+`register`) finishes the cup sooner.
+
+| Flag | Default | |
+|---|---|---|
+| `--listen ADDR` | `0.0.0.0:47710` | where bots connect |
+| `--seeds N` | 10 | beaches the cup is played on |
+| `--seats N` | 4 | chairs a table |
+| `--add ai:<level>` | | the game's AI as a house bot, a yardstick for the field; repeatable |
+| `--tables N` | enough for everyone | tables drawn per beach, when there are more entrants than chairs |
+| `--start-when N` | | start on its own once N bots have registered |
+| `--invite NAME` | | a string bound to that owner; also `invite NAME` at the console |
+| `--open-registration` | off | no key at all: anyone who can reach the port may enter |
+| `--per-owner N` | 1 | bots one owner may enter |
+| `--deadline MS`, `--round`, `--map`, `--fair-cursor` | | as for the arena, printed in the header |
+| `--forfeit-after S` | 60 | how long a game waits for a bot that is not there |
+| `--seed S` | random | the first beach's seed, and the draw's |
+| `--out DIR` | `./cup-t1` | replays, logs, `schedule.txt` and `standings.txt` |
+
+With more entrants than chairs, tables are drawn so that every entrant
+plays as often as every other and every pair meets as evenly as the
+count allows; two bots of one owner never share a table. The draw is
+seeded and written to `schedule.txt`, so it can be checked. A bot that
+drops idles in the games it was in and forfeits the ones that start
+before it is back; the forfeits are counted in the standings.
+
+**Owners.** A bot registered with a per-author string has the owner the
+organiser gave it, whatever it claims. With the shared string the owner
+is what the bot declares, which is trust among friends, and the
+standings mark it so.
+
+When the cup is over the server keeps listening, so every bot can fetch
+the replays of its games (`{"type": "replay", "id": ...}`), until the
+organiser types `quit`.

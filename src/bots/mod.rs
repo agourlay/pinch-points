@@ -13,8 +13,10 @@
 pub mod arena;
 pub mod cli;
 pub mod connstr;
+pub mod cup;
 pub mod cursor;
 pub mod diff;
+pub mod draw;
 pub mod game;
 pub mod listener;
 pub mod lookahead;
@@ -31,6 +33,7 @@ pub fn subcommand(args: &[String]) -> Option<std::process::ExitCode> {
     let rest = rest.to_vec();
     let outcome = match command.as_str() {
         "arena" => arena::run(rest),
+        "cup" => cup::run(rest),
         "watch" => watch(&rest),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
@@ -50,6 +53,7 @@ pub fn subcommand(args: &[String]) -> Option<std::process::ExitCode> {
 const USAGE: &str = "\
 pinch-points                 open the game
 pinch-points arena ...       play bots against the game's AI or each other
+pinch-points cup serve ...   run a competition between bots
 pinch-points watch FILE      watch a replay in the game's window
 
 `pinch-points <command> --help` says more. Writing a bot: docs/bot-protocol.md

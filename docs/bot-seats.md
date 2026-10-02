@@ -1,7 +1,7 @@
 # Bot seats: design
 
-**Status:** being built, from 2026-10-02. Phase 2 (the protocol and the
-arena) is in; the bot author's contract is `bot-protocol.md`.
+**Status:** being built, from 2026-10-02. Phases 2 (the protocol and the
+arena) and 3 (cups) are in; the bot author's contract is `bot-protocol.md`.
 
 ## Goal
 
@@ -957,8 +957,9 @@ What a cup adds is the question of who gets in, and how many times.
   - **The draw never seats two bots of one owner at the same table.** If
     the field is too small to keep them apart, the cup refuses to start
     and says why, rather than quietly scheduling a table that can collude.
-- **Where the owner comes from.** `cup invite NAME` prints a per-author
-  string, bound to that owner, and a bot registering with it has the
+- **Where the owner comes from.** `invite NAME` at the cup's console (or
+  `--invite NAME` when it starts) prints a per-author string, bound to that
+  owner, and a bot registering with it has the
   owner the organiser gave it, whatever it claims. With the shared invite
   or open registration the owner is the one the bot declares, which is
   trust among friends and is labelled as such in the standings. A cup

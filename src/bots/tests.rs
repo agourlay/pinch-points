@@ -505,3 +505,41 @@ fn garbage_counts_as_none_and_is_logged() {
     assert!(log.contains("teleport"), "{log}");
     assert_eq!(result.seats[0].rejected, 0);
 }
+
+#[test]
+fn a_per_author_key_names_the_owner_and_one_owner_enters_once() {
+    let shared = Key::draw();
+    let ana = Key::draw();
+    let mut config = Config::new(Admission::Keys(vec![invite(&shared, None)]));
+    config.per_owner = Some(1);
+    let (listener, events) =
+        Listener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), config).expect("bind");
+    listener.invite(Invite {
+        key: ana.clone(),
+        uses: None,
+        owner: Some("Ana".into()),
+        slot: None,
+    });
+    let addr = listener.local_addr();
+    // Whatever it claims, a bot on Ana's key is Ana's.
+    let mut client = Client::connect(addr);
+    client.send(&json!({
+        "type": "register", "protocol": 1, "name": "Sly", "owner": "Somebody Else",
+        "key": ana.to_string(),
+    }));
+    assert_eq!(client.next().expect("answer")["type"], "registered");
+    let Ok(Event::Registered(id)) = events.recv_timeout(Duration::from_secs(5)) else {
+        panic!("no registration event");
+    };
+    let info = listener.bot(id).expect("info");
+    assert_eq!(info.owner.as_deref(), Some("Ana"));
+    assert!(!info.owner_declared);
+    // A second bot declaring Ana on the shared key is one too many.
+    let mut second = Client::connect(addr);
+    second.send(&json!({
+        "type": "register", "protocol": 1, "name": "Sly2", "owner": "ana",
+        "key": shared.to_string(),
+    }));
+    let answer = second.next().expect("answer");
+    assert_eq!(answer["type"], "error", "{answer}");
+}
