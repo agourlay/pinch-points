@@ -198,12 +198,12 @@ fn verdict(sweeps: &[Sweep]) {
 ///
 /// Measured, budgeted:
 ///
-/// | sweep | 2026-08-22 | 2026-09-17 | 2026-09-18 | budget |
-/// |---|---|---|---|---|
-/// | generated 2p 12x9  | 0.3 | 0.7 | 1.2 | 2.0 |
-/// | generated 4p 12x9  | 1.3 | 1.0 | 1.0 | 2.5 |
-/// | generated 4p 16x11 | 1.2 | 1.3 | 1.0 | 3.0 |
-/// | generated 6p 21x13 | 2.5 | 2.7 | 1.4 | 3.5 |
+/// | sweep | 2026-08-22 | 2026-09-17 | 2026-09-18 | 2026-10-02 | budget |
+/// |---|---|---|---|---|---|
+/// | generated 2p 12x9  | 0.3 | 0.7 | 1.2 | 0.2 | 2.0 |
+/// | generated 4p 12x9  | 1.3 | 1.0 | 1.0 | 0.7 | 2.5 |
+/// | generated 4p 16x11 | 1.2 | 1.3 | 1.0 | 1.4 | 3.0 |
+/// | generated 6p 21x13 | 2.5 | 2.7 | 1.4 | 1.2 | 3.5 |
 ///
 /// The 2026-09-18 column is a different experiment, not a better reading
 /// of the old one: Right Claws put a ninth face on the roulette, so every
@@ -212,6 +212,12 @@ fn verdict(sweeps: &[Sweep]) {
 /// a seat, and that the six-seat figure which had been sitting at 2.7 has
 /// come back to the middle, which is what a run of noise does and what a
 /// real asymmetry would not.
+///
+/// The 2026-10-02 column is the AI walking under the fair cursor rule
+/// (`sim::fair_walk`): every level at a person's pace, diagonals allowed,
+/// where each used to walk at a pace of its own. Another re-roll, measured
+/// beside the build before it on the same night (1.2, 1.0, 1.0 and 1.4),
+/// and nothing about it biased a seat.
 ///
 /// The six-seat budget is still the uncomfortable one and its headroom is
 /// the thinnest on purpose: `tally` calls anything past about two worth

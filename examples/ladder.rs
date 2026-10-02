@@ -120,6 +120,13 @@ fn duel(a: BotLevel, b: BotLevel, rounds: u64, bar: &ProgressBar) -> (f64, f64, 
 /// that cannot win more than half its rounds is not a step, but the three
 /// levels are close enough at the bottom that a wide margin would fail on
 /// sampling noise at the default 40 rounds.
+///
+/// Measured 2026-10-02, when every level began walking at the fair
+/// cursor's one pace rather than its own (Easy had been slower than a
+/// person, Fierce faster): easy-normal 15.7/84.3, normal-fierce 38.4/61.6,
+/// easy-fierce 12.5/87.5, against 14.6/85.4, 38.0/62.0 and 13.8/86.2 the
+/// build before. The ladder never stood on the hand: the levels differ in
+/// what they see and choose.
 const LADDER_EDGE: f64 = 0.52;
 
 fn main() {
