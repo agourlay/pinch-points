@@ -287,7 +287,8 @@ pub(super) fn ai_seat(config: &MatchConfig, slot: u8) -> Option<u8> {
 /// is hidden) changes nothing.
 pub(super) fn cycle_ai_level(config: &mut MatchConfig, slot: u8, turn: Turn) {
     if let Some(seat) = ai_seat(config, slot) {
-        config.bot_levels[seat as usize] = config.bot_levels[seat as usize].cycled(turn);
+        let level = config.level(seat).cycled(turn);
+        config.controllers[usize::from(seat)] = SeatController::Ai(level);
     }
 }
 
@@ -476,7 +477,7 @@ pub(super) fn row_text(
             let who = crate::app::seat_label(tr, seat);
             (
                 format!("{} {who}", tr.match_ai_level),
-                dial(tr.bot_levels[config.bot_levels[seat as usize].index()]),
+                dial(tr.bot_levels[config.level(seat).index()]),
             )
         }
         // What the dial is *not* offering rides under the card, not here:

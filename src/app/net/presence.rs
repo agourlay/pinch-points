@@ -14,7 +14,7 @@ use crate::app::cycle::Cycle;
 use crate::app::i18n::fill;
 use crate::app::settings::GameSettings;
 use crate::app::side_panels::EventLog;
-use crate::app::{Bots, Paused, RoundNotice, Screen, SeatNames, palette};
+use crate::app::{Controllers, Paused, RoundNotice, Screen, SeatController, SeatNames, palette};
 use crate::sim::BotLevel;
 
 /// How long a round waits on a silent player before handing their seat to
@@ -335,7 +335,7 @@ pub(crate) fn abandon_the_departed(
     settings: Res<GameSettings>,
     names: Res<SeatNames>,
     mut online: ResMut<Online>,
-    mut bots: ResMut<Bots>,
+    mut controllers: ResMut<Controllers>,
     mut log: ResMut<EventLog>,
 ) {
     let Some(session) = &mut online.0 else {
@@ -348,13 +348,13 @@ pub(crate) fn abandon_the_departed(
     // so reading it is how this stays one piece of code rather than two.
     // A seat that already has a bot in it is a seat already announced.
     for (seat, _) in &session.abandoned {
-        let Some(slot) = bots.0.get_mut(usize::from(*seat)) else {
+        let Some(slot) = controllers.0.get_mut(usize::from(*seat)) else {
             continue;
         };
-        if slot.is_some() {
+        if slot.ai().is_some() {
             continue;
         }
-        *slot = Some(level);
+        *slot = SeatController::Ai(level);
         log.push(
             fill(tr.online_seat_abandoned, &[("p", &names.label(tr, *seat))]),
             palette::player_color(*seat),
@@ -1002,7 +1002,7 @@ mod tests {
         app.insert_resource(Paused(false));
         app.insert_resource(GameSettings::default());
         app.init_resource::<SeatNames>();
-        app.init_resource::<Bots>();
+        app.init_resource::<Controllers>();
         app.init_resource::<EventLog>();
 
         let mut session = OnlineSession::new(
@@ -1029,7 +1029,7 @@ mod tests {
             .advance_by(std::time::Duration::from_millis(500));
         app.update();
         assert_eq!(
-            app.world().resource::<Bots>().0[1],
+            app.world().resource::<Controllers>().ai(1),
             None,
             "gave up on them after half a second"
         );
@@ -1041,7 +1041,7 @@ mod tests {
             .advance_by(std::time::Duration::from_secs(6));
         app.update();
         assert!(
-            app.world().resource::<Bots>().0[1].is_some(),
+            app.world().resource::<Controllers>().ai(1).is_some(),
             "the empty castle has nobody in it"
         );
         let log = app.world().resource::<EventLog>();
@@ -1049,15 +1049,15 @@ mod tests {
 
         // The round really does move again, with the AI supplying the seat.
         let mut board = classic_arena(false, 2);
-        let bots = Bots(app.world().resource::<Bots>().0);
-        let bots = &bots;
+        let controllers = *app.world().resource::<Controllers>();
+        let controllers = &controllers;
         let mut online = app.world_mut().resource_mut::<Online>();
         let session = online.0.as_mut().expect("a session");
         let mut moved = 0;
         for _ in 0..40 {
             session.pump(PlayerAction::None, |net| {
                 while let Some(mut actions) = net.session.advance() {
-                    fill_bot_actions(&board, bots, &mut actions);
+                    fill_bot_actions(&board, controllers, &mut actions);
                     board.tick(&actions);
                     moved += 1;
                 }

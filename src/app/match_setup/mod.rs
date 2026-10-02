@@ -3,10 +3,10 @@
 //! pressure, round length, and how many arrows each player may have
 //! standing; Enter starts the match.
 
-use crate::app::Screen;
 use crate::app::cycle::{Cycle, Turn};
 use crate::app::i18n::fill;
 use crate::app::palette;
+use crate::app::{Screen, SeatController};
 use crate::sim::BotLevel;
 use crate::sim::{MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER};
 use crate::transport::MatchTerms;
@@ -214,10 +214,16 @@ const ROWS: usize = Row::ALL.len();
 #[derive(Resource)]
 pub struct MatchConfig {
     pub seats: u8,
+    /// How many of the top seats are not played at this machine's keys.
+    /// A count rather than a flag a seat, because the people sit low and
+    /// everything else high: the keyboard and the pads deal the human
+    /// seats from P1 upward.
     pub bots: u8,
-    /// Difficulty per seat, so one player can spar with a fierce rival and
-    /// an easy one at the same table. Only the AI-held seats are read.
-    pub bot_levels: [BotLevel; MAX_PLAYERS],
+    /// What holds each of those top seats: the AI at its own difficulty, so
+    /// one player can spar with a fierce rival and an easy one at the same
+    /// table. Only the seats `bots` counts are read; the rest keep their
+    /// choice for when the count comes back up to them.
+    pub controllers: [SeatController; MAX_PLAYERS],
     pub map: MapChoice,
     /// Which handmade beach, when `map` is [`MapChoice::Custom`]. An index
     /// into [`CustomBeaches`], which is read fresh each time the dial is
@@ -239,7 +245,7 @@ impl Default for MatchConfig {
         MatchConfig {
             seats: 2,
             bots: 0,
-            bot_levels: [BotLevel::Normal; MAX_PLAYERS],
+            controllers: [SeatController::Ai(BotLevel::Normal); MAX_PLAYERS],
             map: MapChoice::Classic,
             custom: 0,
             gulls: GullPressure::Normal,
@@ -252,6 +258,24 @@ impl Default for MatchConfig {
 }
 
 impl MatchConfig {
+    /// Who decides for `seat`: a person here for the low seats, and the
+    /// seat's own choice for the top `bots`.
+    pub fn controller(&self, seat: u8) -> SeatController {
+        if seat < self.seats.saturating_sub(self.bots) {
+            SeatController::Local
+        } else {
+            self.controllers[usize::from(seat).min(MAX_PLAYERS - 1)]
+        }
+    }
+
+    /// The AI difficulty `seat` would play at: its own, or the default for
+    /// a seat set to something other than the AI.
+    pub fn level(&self, seat: u8) -> BotLevel {
+        self.controllers[usize::from(seat).min(MAX_PLAYERS - 1)]
+            .ai()
+            .unwrap_or_default()
+    }
+
     /// The daily challenge's table: today's arena, three fierce bots, a
     /// standard round. Its own value rather than a write into the player's
     /// config, which would come back from the daily showing this on the
@@ -260,7 +284,7 @@ impl MatchConfig {
         MatchConfig {
             seats: 4,
             bots: 3,
-            bot_levels: [BotLevel::Hard; MAX_PLAYERS],
+            controllers: [SeatController::Ai(BotLevel::Hard); MAX_PLAYERS],
             map: MapChoice::GenClassic,
             custom: 0,
             gulls: GullPressure::Normal,
@@ -290,7 +314,7 @@ pub fn terms(config: &MatchConfig, teams: crate::app::teams::TeamMode, seed: u64
         bots: config.bots,
         // Every AI seat plays at the top seat's level: the wire carries one
         // difficulty, and a lobby has no per-seat rows to fill anyway.
-        bot_level: config.bot_levels[usize::from(config.seats.saturating_sub(1))].index() as u8,
+        bot_level: config.level(config.seats.saturating_sub(1)).index() as u8,
         map: config.map.index() as u8,
         gulls: config.gulls.index() as u8,
         round: config.round.index() as u8,
@@ -313,7 +337,8 @@ pub fn config_from_terms(terms: &MatchTerms) -> (MatchConfig, crate::app::teams:
     let config = MatchConfig {
         seats: bots.max(2),
         bots,
-        bot_levels: [BotLevel::from_index(usize::from(terms.bot_level)); MAX_PLAYERS],
+        controllers: [SeatController::Ai(BotLevel::from_index(usize::from(terms.bot_level)));
+            MAX_PLAYERS],
         map: MapChoice::from_index(usize::from(terms.map)),
         custom: 0,
         gulls: GullPressure::from_index(usize::from(terms.gulls)),
@@ -488,7 +513,6 @@ mod tests {
                         let config = MatchConfig {
                             seats,
                             bots,
-                            bot_levels: [BotLevel::Normal; MAX_PLAYERS],
                             map,
                             gulls: GullPressure::Frenzy,
                             round: RoundLength::Long,
@@ -1108,15 +1132,15 @@ mod tests {
         };
         cycle_ai_level(&mut config, 0, Turn::Right); // seat 4: normal -> fierce
         cycle_ai_level(&mut config, 2, Turn::Left); // seat 2: normal -> easy
-        assert_eq!(config.bot_levels, {
-            let mut want = [BotLevel::Normal; MAX_PLAYERS];
-            want[1] = BotLevel::Easy; // seat 2, stepped down
-            want[3] = BotLevel::Hard; // seat 4, stepped up
+        assert_eq!(config.controllers, {
+            let mut want = [SeatController::Ai(BotLevel::Normal); MAX_PLAYERS];
+            want[1] = SeatController::Ai(BotLevel::Easy); // seat 2, stepped down
+            want[3] = SeatController::Ai(BotLevel::Hard); // seat 4, stepped up
             want
         });
         // A slot with no AI behind it is inert.
         config.bots = 1;
         cycle_ai_level(&mut config, 2, Turn::Right);
-        assert_eq!(config.bot_levels[1], BotLevel::Easy);
+        assert_eq!(config.controllers[1], SeatController::Ai(BotLevel::Easy));
     }
 }

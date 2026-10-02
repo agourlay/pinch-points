@@ -5,18 +5,16 @@
 use super::*;
 use std::sync::{Arc, OnceLock};
 
-/// Which seats the AI holds this round, and at what level. The AI always
-/// takes the top seats, so the humans keep P1 downward.
-pub(in crate::app) fn bot_seats(
-    config: &match_setup::MatchConfig,
-) -> [Option<BotLevel>; MAX_PLAYERS] {
-    let mut bots = [None; MAX_PLAYERS];
+/// Who decides for each seat this round, by this machine's setup. The
+/// people take P1 upward and whatever is not played here the top seats.
+pub(in crate::app) fn bot_seats(config: &match_setup::MatchConfig) -> Controllers {
+    let mut table = Controllers::default();
     if config.armed {
-        for seat in (config.seats - config.bots)..config.seats {
-            bots[seat as usize] = Some(config.bot_levels[seat as usize]);
+        for seat in 0..config.seats {
+            table.0[usize::from(seat)] = config.controller(seat);
         }
     }
-    bots
+    table
 }
 
 /// Where a versus round comes from, which decides its board, its table
@@ -100,7 +98,7 @@ impl RoundOrigin<'_> {
         }
     }
 
-    /// Which seats an AI holds, and how many seats there are.
+    /// Who decides for each seat, and how many seats there are.
     ///
     /// Online, the AI seats are part of the agreed terms; a resumed round
     /// brings its own table; everywhere else they come from this machine's
@@ -111,17 +109,27 @@ impl RoundOrigin<'_> {
         config: &match_setup::MatchConfig,
         board: &Board,
         pads: u8,
-    ) -> ([Option<BotLevel>; MAX_PLAYERS], u8) {
-        let bots = match self {
-            RoundOrigin::Resumed(round) => return (round.bots, round.seats),
+    ) -> (Controllers, u8) {
+        let controllers = match self {
+            RoundOrigin::Resumed(round) => {
+                return (Controllers::from_levels(round.bots), round.seats);
+            }
+            // The AI seats are the terms'; this peer plays its own seat and
+            // every other one is somebody's down the wire.
             RoundOrigin::Online(session) => {
-                match_setup::bot_seats_from(&session.terms, session.seats)
+                let ai = match_setup::bot_seats_from(&session.terms, session.seats);
+                let mine = session.session.seat().map(usize::from);
+                Controllers(std::array::from_fn(|seat| match ai[seat] {
+                    Some(level) => SeatController::Ai(level),
+                    None if Some(seat) == mine => SeatController::Local,
+                    None => SeatController::Remote,
+                }))
             }
             RoundOrigin::Replay(_) | RoundOrigin::Configured(_) | RoundOrigin::Unconfigured => {
                 bot_seats(config)
             }
         };
-        (bots, clamp_seats(self.asked_seats(board, pads)))
+        (controllers, clamp_seats(self.asked_seats(board, pads)))
     }
 
     /// How many seats this way into a round asks for, before the clamp.
@@ -190,7 +198,7 @@ pub(in crate::app) struct RoundSource<'w, 's> {
 pub(in crate::app) fn load_versus(
     mut stage: BoardStage,
     mut source: RoundSource,
-    mut bots: ResMut<Bots>,
+    mut controllers: ResMut<Controllers>,
     mut seats: ResMut<Seats>,
     mut recorder: ResMut<Recorder>,
     play: Play,
@@ -227,7 +235,7 @@ pub(in crate::app) fn load_versus(
         RoundOrigin::Unconfigured
     };
     sim.0 = origin.board(daily.active, beaches, sandbox.0, pad_count);
-    (bots.0, seats.0) = origin.table(config, &sim.0, pad_count);
+    (*controllers, seats.0) = origin.table(config, &sim.0, pad_count);
     // Every per-seat array is indexed by this, and every table needs two.
     debug_assert!(
         (2..=MAX_PLAYERS as u8).contains(&seats.0),
@@ -262,7 +270,7 @@ pub(in crate::app) fn end_versus(
     log: RoundLog,
     mut pending: ResMut<PendingActions>,
     mut config: ResMut<match_setup::MatchConfig>,
-    mut bots: ResMut<Bots>,
+    mut controllers: ResMut<Controllers>,
     mut next_vphase: ResMut<NextState<VersusPhase>>,
 ) {
     let RoundLog {
@@ -281,7 +289,7 @@ pub(in crate::app) fn end_versus(
     // that is gone.
     reel_thread.0 = None;
     config.armed = false;
-    bots.0 = [None; MAX_PLAYERS];
+    *controllers = Controllers::default();
     // Never leak a queued action or a stale Over phase into the next round
     // or another mode. The phase goes back to where a round is entered.
     pending.0 = [PlayerAction::None; MAX_PLAYERS];

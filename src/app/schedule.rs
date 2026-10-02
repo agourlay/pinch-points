@@ -148,7 +148,7 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.init_resource::<awards::RoundTally>();
     app.init_resource::<Highlight>();
     app.init_resource::<ReelThread>();
-    app.init_resource::<Bots>();
+    app.init_resource::<Controllers>();
     app.init_resource::<art::Art>();
     app.init_resource::<match_setup::MatchConfig>();
     app.init_resource::<match_setup::CustomBeaches>();

@@ -288,7 +288,7 @@ pub fn spawn_versus_results(
     let local = seating.local();
     let crate::app::side_panels::Seating {
         seats,
-        bots,
+        controllers,
         names,
         online,
         ..
@@ -321,7 +321,7 @@ pub fn spawn_versus_results(
     }
 
     let rows = standings_rows(&settings, &names, scores, count, mode, |seat| {
-        crate::app::side_panels::seat_tag(tr, &bots, local, seat)
+        crate::app::side_panels::seat_tag(tr, &controllers, local, seat)
     });
     let haul = board.crabs_banked();
     let awards = award_rows(&settings, &names, &tally, board, seats.0, mode);

@@ -480,7 +480,7 @@ impl HudSources<'_> {
             settings,
             keycaps,
             names: &seating.names,
-            bots: &seating.bots,
+            controllers: &seating.controllers,
             library,
             notice,
             match_menu: &modes.match_menu,

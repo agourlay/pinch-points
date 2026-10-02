@@ -4,27 +4,23 @@
 use super::save::save;
 use super::ui::spawn_toast;
 use super::{ACHIEVEMENTS, PuzzleAttempt, RoundScratch, Stats, Unlocked};
-use crate::app::Bots;
 use crate::app::audio::{Muted, Sounds, play_chime, sfx_gain};
 use crate::app::net::Online;
 use crate::app::settings::GameSettings;
 use crate::app::sim_events::SimEvent;
+use crate::app::{Controllers, SeatController};
 use crate::sim::CrabKind;
 use bevy::prelude::*;
 
 /// The seat whose deeds count: the online session seat, else seat 0, and
-/// never a bot seat.
-fn local_seat(online: &Online, bots: &Bots) -> Option<u8> {
+/// only when a person here is playing it, never the AI or a bot.
+fn local_seat(online: &Online, controllers: &Controllers) -> Option<u8> {
     // Watching someone else's match earns nothing.
     let seat = match &online.0 {
         Some(session) => session.session.seat()?,
         None => 0,
     };
-    if bots.0[seat as usize].is_some() {
-        None
-    } else {
-        Some(seat)
-    }
+    (controllers.0[usize::from(seat)] == SeatController::Local).then_some(seat)
 }
 
 /// What every system that can earn a trophy needs: the record it adds to,
@@ -61,11 +57,11 @@ pub fn track_events(
     mut commands: Commands,
     mut events: MessageReader<SimEvent>,
     online: Res<Online>,
-    bots: Res<Bots>,
+    controllers: Res<Controllers>,
     mut trophies: Trophies,
     mut scratch: ResMut<RoundScratch>,
 ) {
-    let Some(seat) = local_seat(&online, &bots) else {
+    let Some(seat) = local_seat(&online, &controllers) else {
         for _ in events.read() {}
         return;
     };
@@ -173,10 +169,10 @@ pub fn record_round(
     let crate::app::side_panels::Seating {
         seats,
         online,
-        bots,
+        controllers,
         ..
     } = seating;
-    let Some(seat) = local_seat(&online, &bots) else {
+    let Some(seat) = local_seat(&online, &controllers) else {
         return;
     };
     trophies.stats.rounds += 1;

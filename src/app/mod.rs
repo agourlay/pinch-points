@@ -140,9 +140,60 @@ pub struct Paused(pub bool);
 #[derive(Resource, Default)]
 pub struct Recorder(pub Option<Replay>);
 
-/// Which seats are bot-driven this round, and at what difficulty.
-#[derive(Resource, Default)]
-pub struct Bots(pub [Option<BotLevel>; MAX_PLAYERS]);
+/// What decides for a seat: the one description of who sits where, which
+/// the fixed tick reads to fill each seat's action (`docs/bot-seats.md`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SeatController {
+    /// A person at this machine, on the keyboard or a pad, through a cursor.
+    #[default]
+    Local,
+    /// A seat another peer owns: its inputs arrive over the wire, and this
+    /// machine never decides for it.
+    Remote,
+    /// The game's AI at a difficulty. A pure function of the board, so
+    /// online every peer computes it and its moves never cross the wire.
+    Ai(BotLevel),
+    /// A bot connected to this machine over the bot protocol. Unlike the
+    /// AI it is owned by the one game it connected to, as a person's seat
+    /// is, and its actions travel like a keyboard's.
+    Bot,
+}
+
+impl SeatController {
+    /// The AI's level, when the AI holds the seat.
+    pub fn ai(self) -> Option<BotLevel> {
+        match self {
+            SeatController::Ai(level) => Some(level),
+            SeatController::Local | SeatController::Remote | SeatController::Bot => None,
+        }
+    }
+}
+
+/// Who decides for every seat this round.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Controllers(pub [SeatController; MAX_PLAYERS]);
+
+impl Controllers {
+    /// The AI's level at `seat`, if the AI holds it.
+    pub fn ai(&self, seat: usize) -> Option<BotLevel> {
+        self.0.get(seat).copied().and_then(SeatController::ai)
+    }
+
+    /// How many seats the AI holds.
+    pub fn ai_count(&self) -> usize {
+        self.0.iter().filter(|c| c.ai().is_some()).count()
+    }
+
+    /// The AI seats and nothing else, the shape a saved round keeps.
+    pub fn levels(&self) -> [Option<BotLevel>; MAX_PLAYERS] {
+        self.0.map(SeatController::ai)
+    }
+
+    /// A table from the AI seats alone: everyone else plays at this machine.
+    pub fn from_levels(levels: [Option<BotLevel>; MAX_PLAYERS]) -> Controllers {
+        Controllers(levels.map(|level| level.map_or(SeatController::Local, SeatController::Ai)))
+    }
+}
 
 /// A loaded replay being watched, and the next input index to feed.
 #[derive(Resource, Default)]

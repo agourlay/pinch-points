@@ -11,7 +11,7 @@ pub use feed::{EventLog, collect_chat, collect_log, update_log};
 use crate::app::net::Online;
 use crate::app::settings::GameSettings;
 use crate::app::teams::TeamMode;
-use crate::app::{Bots, Playback, SeatNames, Seats, Sim};
+use crate::app::{Controllers, Playback, SeatController, SeatNames, Seats, Sim};
 use crate::app::{menu_ui, palette};
 use crate::sim::MAX_PLAYERS;
 use bevy::ecs::system::SystemParam;
@@ -358,7 +358,7 @@ pub fn leading_seats(
 #[derive(SystemParam)]
 pub struct Seating<'w> {
     pub seats: Res<'w, Seats>,
-    pub bots: Res<'w, Bots>,
+    pub controllers: Res<'w, Controllers>,
     pub names: Res<'w, SeatNames>,
     pub online: Res<'w, Online>,
     pub playback: Res<'w, Playback>,
@@ -372,13 +372,18 @@ impl Seating<'_> {
 
     /// Whether `seat` is played at this screen: see [`played_here`].
     pub fn played_here(&self, seat: u8) -> bool {
-        played_here(self.local(), self.online.0.is_some(), &self.bots, seat)
+        played_here(
+            self.local(),
+            self.online.0.is_some(),
+            &self.controllers,
+            seat,
+        )
     }
 
     /// A seat's name with its "(you)" or "(AI)" tag, as the chips and the
     /// results card write it.
     pub fn label(&self, tr: &crate::app::i18n::Tr, seat: u8) -> String {
-        let tag = seat_tag(tr, &self.bots, self.local(), seat);
+        let tag = seat_tag(tr, &self.controllers, self.local(), seat);
         format!("{}{tag}", self.names.label(tr, seat))
     }
 }
@@ -408,11 +413,11 @@ pub fn local_seat(online: &Online, playback_active: bool) -> Option<u8> {
 ///
 /// What the next-to-go mark is shown for. A table of AI is always at its
 /// cap, and marking their posts set half the beach wobbling for nobody.
-pub fn played_here(local: Option<u8>, online: bool, bots: &Bots, seat: u8) -> bool {
+pub fn played_here(local: Option<u8>, online: bool, controllers: &Controllers, seat: u8) -> bool {
     match local {
         None => false,
         Some(mine) if online => mine == seat,
-        Some(_) => bots.0.get(usize::from(seat)).is_some_and(Option::is_none),
+        Some(_) => controllers.0.get(usize::from(seat)) == Some(&SeatController::Local),
     }
 }
 
@@ -430,11 +435,11 @@ pub fn next_to_go_pulse(secs: f32, reduced_motion: bool) -> f32 {
 /// results card.
 pub fn seat_tag(
     tr: &crate::app::i18n::Tr,
-    bots: &Bots,
+    controllers: &Controllers,
     local: Option<u8>,
     seat: u8,
 ) -> &'static str {
-    if bots.0[seat as usize].is_some() {
+    if controllers.ai(usize::from(seat)).is_some() {
         tr.tag_ai
     } else if local == Some(seat) {
         tr.tag_you
@@ -763,8 +768,8 @@ mod seat_tag_tests {
             "and a spectator holds none"
         );
 
-        let bots = Bots::default();
-        let tag = |local, seat| seat_tag(&EN, &bots, local, seat);
+        let controllers = Controllers::default();
+        let tag = |local, seat| seat_tag(&EN, &controllers, local, seat);
         assert_eq!(tag(Some(0), 0), EN.tag_you);
         assert_eq!(tag(Some(0), 1), "");
         assert_eq!(tag(None, 0), "", "nobody's chair is the spectator's");

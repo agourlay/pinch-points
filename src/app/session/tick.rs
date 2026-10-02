@@ -12,12 +12,16 @@ use super::*;
 /// seat's action is never overwritten, since theirs arrived over the wire.
 pub(crate) fn fill_bot_actions(
     board: &Board,
-    bots: &Bots,
+    controllers: &Controllers,
     actions: &mut [PlayerAction; MAX_PLAYERS],
 ) {
-    debug_assert_eq!(actions.len(), bots.0.len(), "a seat with no bot slot");
+    debug_assert_eq!(
+        actions.len(),
+        controllers.0.len(),
+        "a seat with no controller"
+    );
     for (seat, action) in actions.iter_mut().enumerate() {
-        if let Some(level) = bots.0[seat]
+        if let Some(level) = controllers.ai(seat)
             && matches!(action, PlayerAction::None)
         {
             *action = bot_action(board, seat as u8, level);
@@ -28,7 +32,7 @@ pub(crate) fn fill_bot_actions(
 /// The same thing for a round being played over the wire, where a seat can
 /// become an AI part-way through.
 ///
-/// [`Bots`] carries no frame. It is set when the notice reaches the shell,
+/// [`Controllers`] carries no frame. It is set when the notice reaches the shell,
 /// which is a different instant on every peer: the host's own decision,
 /// and a datagram on everybody else, landing on a peer that may still have
 /// frames in hand it has not simulated yet. Filling from it alone put a
@@ -41,14 +45,14 @@ pub(crate) fn fill_bot_actions(
 /// and the chair turns AI in the same place everywhere.
 fn fill_online_bots(
     board: &Board,
-    bots: &Bots,
+    controllers: &Controllers,
     abandoned: &[(u8, u32)],
     level: BotLevel,
     frame: u32,
     actions: &mut [PlayerAction; MAX_PLAYERS],
 ) {
     for (seat, action) in actions.iter_mut().enumerate() {
-        if let Some(level) = ai_holding(bots, abandoned, level, seat, frame)
+        if let Some(level) = ai_holding(controllers, abandoned, level, seat, frame)
             && matches!(action, PlayerAction::None)
         {
             *action = bot_action(board, seat as u8, level);
@@ -62,7 +66,7 @@ fn fill_online_bots(
 /// before frame zero. One given up on mid-round is an AI from the frame
 /// the notice named, and a human with a human's inputs before it.
 pub(super) fn ai_holding(
-    bots: &Bots,
+    controllers: &Controllers,
     abandoned: &[(u8, u32)],
     level: BotLevel,
     seat: usize,
@@ -73,7 +77,7 @@ pub(super) fn ai_holding(
         .find(|(gone, _)| usize::from(*gone) == seat)
     {
         Some((_, at)) => (frame >= *at).then_some(level),
-        None => bots.0[seat],
+        None => controllers.ai(seat),
     }
 }
 
@@ -83,7 +87,7 @@ pub(in crate::app) fn advance_sim(
     mut recorder: ResMut<Recorder>,
     mut playback: ResMut<Playback>,
     speed: Res<replays::PlaybackSpeed>,
-    bots: Res<Bots>,
+    controllers: Res<Controllers>,
     mut tally: ResMut<awards::RoundTally>,
 ) {
     let Play {
@@ -131,7 +135,7 @@ pub(in crate::app) fn advance_sim(
         let sim_board = &mut sim.bypass_change_detection().0;
         let recording = &mut recorder.bypass_change_detection().0;
         let tally = &mut *tally;
-        let bots = &*bots;
+        let controllers = &*controllers;
         // The level every peer gives an abandoned seat, from the terms the
         // table agreed on, so the chair plays the same on all of them.
         let level = {
@@ -148,7 +152,7 @@ pub(in crate::app) fn advance_sim(
                 let at = net.session.frame().saturating_sub(1);
                 fill_online_bots(
                     sim_board,
-                    bots,
+                    controllers,
                     &net.abandoned,
                     level,
                     at,
@@ -204,7 +208,7 @@ pub(in crate::app) fn advance_sim(
         return;
     }
     let mut actions = std::mem::take(&mut pending.0);
-    fill_bot_actions(&sim.0, &bots, &mut actions);
+    fill_bot_actions(&sim.0, &controllers, &mut actions);
     let before = awards::Reading::of(&sim.0);
     sim.0.tick(&actions);
     tally.observe(before, &sim.0, &actions);

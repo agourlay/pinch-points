@@ -112,7 +112,7 @@ pub fn copy_round_code(
     settings: Res<crate::app::settings::GameSettings>,
     sim: Res<crate::app::Sim>,
     seats: Res<crate::app::Seats>,
-    bots: Res<crate::app::Bots>,
+    controllers: Res<crate::app::Controllers>,
     mut clipboard: ResMut<Clipboard>,
     mut feed: ResMut<crate::app::side_panels::EventLog>,
 ) {
@@ -122,7 +122,7 @@ pub fn copy_round_code(
     }
     let round = Suspended {
         seats: seats.0,
-        bots: bots.0,
+        bots: controllers.levels(),
         board: sim.0.clone(),
     };
     let tr = settings.tr();

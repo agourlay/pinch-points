@@ -10,7 +10,9 @@ use crate::app::lobby::LobbyState;
 use crate::app::net::Online;
 use crate::app::settings::GameSettings;
 use crate::app::teams::TeamMode;
-use crate::app::{Bots, Campaign, CampaignKind, Phase, Playback, Screen, Seats, Sim, VersusPhase};
+use crate::app::{
+    Campaign, CampaignKind, Controllers, Phase, Playback, Screen, Seats, Sim, VersusPhase,
+};
 use crate::sim::{Goal, LURE_TICKS, TICKS_PER_SECOND, TideEvent};
 use bevy::prelude::*;
 
@@ -301,7 +303,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         names,
         playback,
         online,
-        bots,
+        controllers,
         vphase,
         tournament,
         speed,
@@ -316,8 +318,8 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
             Some(seat) => fill(tr.title_online, &[("p", &names.label(tr, seat))]),
             None => tr.title_watching.to_string(),
         }
-    } else if bots.0.iter().any(Option::is_some) {
-        let count = bots.0.iter().filter(|b| b.is_some()).count();
+    } else if controllers.ai_count() > 0 {
+        let count = controllers.ai_count();
         fill(
             tr.title_vs_ai,
             &[("n", &count.to_string()), ("p", &names.label(tr, 0))],
@@ -446,7 +448,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
             }
         }
         VersusPhase::Countdown | VersusPhase::Running
-            if online.0.is_some() || bots.0.iter().any(Option::is_some) =>
+            if online.0.is_some() || controllers.ai_count() > 0 =>
         {
             tr.prompt_versus_short.to_string()
         }
@@ -493,7 +495,7 @@ pub(super) struct Readout<'a> {
     /// learned state rather than a preference.
     pub keycaps: &'a crate::app::keycaps::KeyCaps,
     pub names: &'a crate::app::SeatNames,
-    pub bots: &'a Bots,
+    pub controllers: &'a Controllers,
     pub library: &'a crate::app::replays::Library,
     /// What the menu has to say about a round code copied or pasted.
     pub notice: &'a crate::app::RoundNotice,
@@ -644,7 +646,7 @@ mod tests {
     /// without a HUD arm shows the last screen's header.
     #[test]
     fn every_screen_names_itself_and_its_keys() {
-        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
         use crate::sim::{Board, campaign_levels};
 
         let levels = campaign_levels();
@@ -674,7 +676,7 @@ mod tests {
             settings: &settings,
             keycaps: &keycaps,
             names: &crate::app::SeatNames::default(),
-            bots: &Bots::default(),
+            controllers: &Controllers::default(),
             library: &crate::app::replays::Library::default(),
             notice: &crate::app::RoundNotice::default(),
             match_menu: &crate::app::match_setup::MatchMenu::default(),
@@ -709,7 +711,7 @@ mod tests {
     /// `Playback::default()`, so the transport prompt never ran there.
     #[test]
     fn no_prompt_names_the_mute_key_twice() {
-        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
         use crate::sim::{Replay, campaign_levels};
 
         let levels = campaign_levels();
@@ -746,7 +748,7 @@ mod tests {
                 settings: &settings,
                 keycaps: &crate::app::keycaps::KeyCaps::default(),
                 names: &crate::app::SeatNames::default(),
-                bots: &Bots::default(),
+                controllers: &Controllers::default(),
                 library: &crate::app::replays::Library::default(),
                 notice: &crate::app::RoundNotice::default(),
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
@@ -890,7 +892,7 @@ mod tests {
     #[test]
     fn a_spectators_prompt_says_what_the_tide_key_will_do() {
         use crate::app::spectators::Crowd;
-        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
 
         let levels = campaign_levels();
         let builtins = levels.len();
@@ -927,7 +929,7 @@ mod tests {
                 settings: &settings,
                 keycaps: &crate::app::keycaps::KeyCaps::default(),
                 names: &crate::app::SeatNames::default(),
-                bots: &Bots::default(),
+                controllers: &Controllers::default(),
                 library: &crate::app::replays::Library::default(),
                 notice: &crate::app::RoundNotice::default(),
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
@@ -991,7 +993,7 @@ mod tests {
     /// `after_round` exists to keep every reader agreeing on.
     #[test]
     fn a_spectator_is_told_the_key_that_actually_lets_it_out() {
-        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
 
         let levels = campaign_levels();
         let builtins = levels.len();
@@ -1029,7 +1031,7 @@ mod tests {
                 settings: &settings,
                 keycaps: &crate::app::keycaps::KeyCaps::default(),
                 names: &crate::app::SeatNames::default(),
-                bots: &Bots::default(),
+                controllers: &Controllers::default(),
                 library: &crate::app::replays::Library::default(),
                 notice: &crate::app::RoundNotice::default(),
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
@@ -1069,7 +1071,7 @@ mod tests {
     /// its own consequences.
     #[test]
     fn the_table_is_told_it_has_an_audience_when_nothing_louder_is_saying_anything() {
-        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
 
         let levels = campaign_levels();
         let builtins = levels.len();
@@ -1102,7 +1104,7 @@ mod tests {
                 settings: &settings,
                 keycaps: &crate::app::keycaps::KeyCaps::default(),
                 names: &crate::app::SeatNames::default(),
-                bots: &Bots::default(),
+                controllers: &Controllers::default(),
                 library: &crate::app::replays::Library::default(),
                 notice: &crate::app::RoundNotice::default(),
                 match_menu: &crate::app::match_setup::MatchMenu::default(),
@@ -1136,7 +1138,7 @@ mod tests {
     /// rows in front of them.
     #[test]
     fn the_prompt_names_the_pause_cards_keys_while_it_is_up() {
-        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
 
         let levels = campaign_levels();
         let builtins = levels.len();
@@ -1167,7 +1169,7 @@ mod tests {
                     settings: &settings,
                     keycaps: &crate::app::keycaps::KeyCaps::default(),
                     names: &crate::app::SeatNames::default(),
-                    bots: &Bots::default(),
+                    controllers: &Controllers::default(),
                     library: &crate::app::replays::Library::default(),
                     notice: &crate::app::RoundNotice::default(),
                     match_menu: &crate::app::match_setup::MatchMenu::default(),
@@ -1196,7 +1198,7 @@ mod tests {
     #[test]
     fn the_prompt_carries_a_local_series_on_rather_than_offering_the_menu() {
         use crate::app::tournament::{SeriesLength, Tournament};
-        use crate::app::{Bots, Campaign, CampaignKind, Playback, Seats};
+        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
 
         let levels = campaign_levels();
         let builtins = levels.len();
@@ -1225,7 +1227,7 @@ mod tests {
                 settings: &settings,
                 keycaps: &crate::app::keycaps::KeyCaps::default(),
                 names: &crate::app::SeatNames::default(),
-                bots: &Bots::default(),
+                controllers: &Controllers::default(),
                 library: &crate::app::replays::Library::default(),
                 notice: &crate::app::RoundNotice::default(),
                 match_menu: &crate::app::match_setup::MatchMenu::default(),

@@ -128,7 +128,7 @@ mod tests {
         app.init_resource::<Recorder>();
         app.init_resource::<Playback>();
         app.init_resource::<replays::PlaybackSpeed>();
-        app.init_resource::<Bots>();
+        app.init_resource::<Controllers>();
         app.init_resource::<awards::RoundTally>();
         app.add_systems(Update, advance_sim);
         app
@@ -183,14 +183,17 @@ mod tests {
     fn the_daily_seats_one_human_against_three_hard_bots() {
         let daily = match_setup::MatchConfig::daily();
         assert!(daily.armed, "ready to launch as it is");
-        let bots = bot_seats(&daily);
-        assert_eq!(bots[0], None, "the player's chair");
+        let table = bot_seats(&daily);
+        assert_eq!(table.0[0], SeatController::Local, "the player's chair");
         assert_eq!(
-            &bots[1..4],
-            &[Some(BotLevel::Hard); 3],
+            &table.0[1..4],
+            &[SeatController::Ai(BotLevel::Hard); 3],
             "three fierce rivals"
         );
-        assert!(bots[4..].iter().all(Option::is_none), "and no more chairs");
+        assert!(
+            table.0[4..].iter().all(|c| *c == SeatController::Local),
+            "and no more chairs"
+        );
         let player = match_setup::MatchConfig::default();
         assert_ne!(player.seats, daily.seats, "the player's own is untouched");
     }
@@ -225,9 +228,9 @@ mod tests {
     #[test]
     fn the_ai_takes_the_top_seats() {
         let mut config = armed(4, 2);
-        config.bot_levels[3] = BotLevel::Hard;
-        config.bot_levels[2] = BotLevel::Easy;
-        assert_eq!(bot_seats(&config), {
+        config.controllers[3] = SeatController::Ai(BotLevel::Hard);
+        config.controllers[2] = SeatController::Ai(BotLevel::Easy);
+        assert_eq!(bot_seats(&config).levels(), {
             let mut want = [None; MAX_PLAYERS];
             want[2] = Some(BotLevel::Easy);
             want[3] = Some(BotLevel::Hard);
@@ -236,7 +239,7 @@ mod tests {
         // An unarmed config is a dev hook or a replay: nobody is botted.
         let mut idle = armed(4, 3);
         idle.armed = false;
-        assert_eq!(bot_seats(&idle), [None; MAX_PLAYERS]);
+        assert_eq!(bot_seats(&idle), Controllers::default());
     }
 
     /// A replay's board with castles for `seats` seats.
@@ -382,9 +385,9 @@ mod tests {
         let mut here = classic_arena_seeded(0x51DE, false, 4);
         let mut there = classic_arena_seeded(0x51DE, false, 4);
         // Two humans in the low seats, two AI behind them: a 2v2 online match.
-        let mut bots = Bots::default();
-        bots.0[2] = Some(BotLevel::Normal);
-        bots.0[3] = Some(BotLevel::Hard);
+        let mut bots = Controllers::default();
+        bots.0[2] = SeatController::Ai(BotLevel::Normal);
+        bots.0[3] = SeatController::Ai(BotLevel::Hard);
 
         let pressed = PlayerAction::Place {
             x: 4,
@@ -487,7 +490,7 @@ mod tests {
     /// agreed on, and not one frame sooner.
     ///
     /// Found by killing a real joiner: every peer desynced within a second
-    /// of the drop. `Bots` says which seats the AI holds and nothing about
+    /// of the drop. `Controllers` says which seats the AI holds and nothing about
     /// when it took them, so `fill_bot_actions` filled the chair from the
     /// instant the notice reached each shell. That instant is the host's
     /// own decision on the host and a datagram everywhere else, and a peer
@@ -496,7 +499,7 @@ mod tests {
     /// is what a player pressing nothing sends, so this was most of them.
     #[test]
     fn an_abandoned_seat_turns_ai_on_the_frame_the_table_agreed_on() {
-        let bots = Bots([None, None, Some(BotLevel::Normal), None, None, None]);
+        let bots = Controllers::from_levels([None, None, Some(BotLevel::Normal), None, None, None]);
         // Seat 1 walked out, and the round agreed to empty it from 300.
         let abandoned = [(1u8, 300u32)];
         let at = |seat, frame| ai_holding(&bots, &abandoned, BotLevel::Hard, seat, frame);
@@ -526,8 +529,8 @@ mod tests {
     #[test]
     fn a_recorded_round_plays_back_to_the_board_it_left() {
         let mut app = sim_app();
-        app.world_mut().resource_mut::<Bots>().0[0] = Some(BotLevel::Normal);
-        app.world_mut().resource_mut::<Bots>().0[1] = Some(BotLevel::Hard);
+        app.world_mut().resource_mut::<Controllers>().0[0] = SeatController::Ai(BotLevel::Normal);
+        app.world_mut().resource_mut::<Controllers>().0[1] = SeatController::Ai(BotLevel::Hard);
         let start = app.world().resource::<Sim>().0.clone();
         app.world_mut().resource_mut::<Recorder>().0 =
             Some(Replay::new(Level::from_board("Turf War", 3, start)));
