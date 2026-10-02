@@ -530,6 +530,15 @@ protocol differs; what differs is in `hello`:
   `input_delay` 3: every seat's input is committed three ticks ahead for
   the whole table, so aim where a crab will be, as a person online does.
 
+- **Straight to a host.** A host whose beach takes bots shows a string
+  under its Bots dial, `pinch://192.168.1.20:47710/M2QD-7WTR`. A bot
+  anywhere on the network connects with it, no game window needed on its
+  side, and takes a chair at the table; the host plays its moves to
+  everyone. The key is good once and redrawn for the next bot, so come
+  back with your token, never the key. The seat reads with the owner you
+  declare, which the host cannot check. The clock is `live` with
+  `input_delay` 3.
+
 With a person at the table the fair cursor is on, for your bot and the
 game's AI alike. A bot whose connection drops idles for five seconds and
 then the game's AI stands in for it, until it comes back with its token.

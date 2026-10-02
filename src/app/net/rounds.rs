@@ -353,7 +353,15 @@ impl OnlineSession {
                 wins: new_wins,
             }
         });
-        let humans = 1 + plan.iter().flatten().count() as u8;
+        let people = 1 + plan.iter().flatten().count() as u8;
+        // The bots that came straight to this host (route 2) sit after the
+        // people again, as many as there are chairs for.
+        let mut bots_here = std::mem::take(&mut self.bots_here);
+        bots_here.truncate(MAX_PLAYERS - usize::from(people));
+        for (i, bot) in bots_here.iter_mut().enumerate() {
+            bot.0 = people + i as u8;
+        }
+        let humans = people + bots_here.len() as u8;
         // A beach needs two castles, and a host whose table has emptied is
         // still entitled to another round, against the AI, since playing
         // itself is not a round. The same floor `seat_count` keeps.
@@ -374,10 +382,16 @@ impl OnlineSession {
                 names[usize::from(*seat)] = name.to_string();
             }
         }
+        for (seat, _, name) in &bots_here {
+            names[usize::from(*seat)].clone_from(name);
+        }
         let wire = wire_table(&names);
         // What holds each seat: the host a person, a peer whatever it
-        // greeted as, the top seats the AI.
+        // greeted as, the host's bots bots, the top seats the AI.
         let mut kinds = [crate::sim::SeatKind::Human; MAX_PLAYERS];
+        for (seat, ..) in &bots_here {
+            kinds[usize::from(*seat)] = crate::sim::SeatKind::Bot;
+        }
         for (peer, slot) in plan.iter().enumerate() {
             if let Some(seat) = slot
                 && self.peers.get(peer).is_some_and(|row| row.bot)
@@ -405,6 +419,9 @@ impl OnlineSession {
         self.peers.deal(&plan);
         self.begin_round(seats, Some(0), terms, names);
         self.kinds = kinds;
+        let spoken: Vec<u8> = bots_here.iter().map(|(seat, ..)| *seat).collect();
+        self.session.speak_for(&spoken);
+        self.bots_here = bots_here;
         self.series_standing = standing;
         self.next_round = true;
         standing

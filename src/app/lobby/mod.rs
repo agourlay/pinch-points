@@ -327,6 +327,9 @@ pub struct LobbyState {
     /// The host pressed K and is picking whom to ask to leave: the next
     /// number is a seat at the table, Esc is never mind.
     pub kicking: bool,
+    /// The string a bot connects straight to this beach with (route 2),
+    /// while the host says bots are welcome and there is a chair for one.
+    pub bot_string: Option<String>,
 }
 
 impl LobbyState {
@@ -872,7 +875,7 @@ pub fn lobby_input(
             crate::app::menu_ui::number_pressed(&keys, crate::app::menu_ui::NUMBER_KEYS.len())
         {
             state.kicking = false;
-            ask_to_leave(&mut state, tr, at + 1);
+            ask_to_leave(&mut state, &mut bots, tr, at + 1);
         }
         return;
     }

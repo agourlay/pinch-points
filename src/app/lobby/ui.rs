@@ -431,17 +431,29 @@ pub fn update_lobby_list(
 /// Say why the map dial is offering none of the host's own beaches, under
 /// the terms it belongs to. A system of its own because
 /// [`update_lobby_terms`] already reaches for `Text` twice.
+///
+/// When there is no such thing to say and the host takes bots, the line
+/// under the Bots dial is the string a bot connects straight to this beach
+/// with (route 2), redrawn each time a bot spends it.
 pub fn update_lobby_beach_note(
     settings: Res<GameSettings>,
     config: Res<MatchConfig>,
     beaches: Res<crate::app::match_setup::CustomBeaches>,
+    state: Res<LobbyState>,
     mut note: Query<&mut Text, With<DialBeachNote>>,
 ) {
     let Ok(mut text) = note.single_mut() else {
         return;
     };
-    let line =
-        crate::app::match_setup::beaches_note(&config, settings.tr(), &beaches).unwrap_or_default();
+    let line = crate::app::match_setup::beaches_note(&config, settings.tr(), &beaches)
+        .or_else(|| {
+            state
+                .hosting()
+                .then(|| state.bot_string.clone())
+                .flatten()
+                .map(|string| format!("{}: {string}", settings.tr().lobby_bots_dial))
+        })
+        .unwrap_or_default();
     crate::app::menu_ui::set_text(&mut text, &line);
 }
 

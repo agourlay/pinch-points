@@ -126,21 +126,23 @@ pub(in crate::app) fn advance_sim(
         let call = session.stands.pending_call;
         let controllers = &*drivers.controllers;
         let bots = &mut *drivers.bots;
-        // A seat this peer's bot drives (route 1) commits the bot's act
-        // where a person's would commit a keypress: on the frame the
-        // lockstep is about to take, which is `input_delay` ahead.
-        let driven = bots
-            .online_seat()
-            .filter(|&seat| local == Some(usize::from(seat)) && call.is_none());
+        // Seats bots drive from this machine commit their acts where a
+        // person's would commit a keypress, on the frame the lockstep is
+        // about to take, `input_delay` ahead: this peer's own seat when it
+        // joined as a bot (route 1), the host's bots besides (route 2).
         let frame = session.session.next_commit();
-        let (action, bot_act) = match (call, driven) {
-            (Some(event), _) => (PlayerAction::CallEvent(event), None),
-            (None, Some(_)) => bots.commit_online(&sim.0),
-            (None, None) => (
-                local.map_or(PlayerAction::None, |seat| pending.0[seat]),
-                None,
-            ),
+        let driven = bots.commit_online(&sim.0);
+        let own = local.and_then(|seat| driven.iter().find(|(s, ..)| usize::from(*s) == seat));
+        let action = match (call, own) {
+            (Some(event), _) => PlayerAction::CallEvent(event),
+            (None, Some(&(_, action, _))) => action,
+            (None, None) => local.map_or(PlayerAction::None, |seat| pending.0[seat]),
         };
+        let extra: Vec<(u8, PlayerAction)> = driven
+            .iter()
+            .filter(|(seat, ..)| Some(usize::from(*seat)) != local)
+            .map(|&(seat, action, _)| (seat, action))
+            .collect();
         // Borrowed past change detection: a mutable borrow marks the
         // resource changed whether or not a frame runs, and while a peer is
         // stalled none does. `observe_sim` reads the flag to skip a board
@@ -155,7 +157,7 @@ pub(in crate::app) fn advance_sim(
             BotLevel::from_index(usize::from(session.terms.bot_level))
         };
         let mut advanced = false;
-        let committed = session.pump(action, |net| {
+        let committed = session.pump_with(action, &extra, |net| {
             if let Some(mut frame_actions) = net.session.advance() {
                 // The lockstep carries only the humans; the AI seats are
                 // derived from the frame every peer has just agreed on,
@@ -196,12 +198,18 @@ pub(in crate::app) fn advance_sim(
                 advanced = true;
             }
         });
-        if driven.is_some() {
+        if !driven.is_empty() {
             if committed {
-                bots.committed(frame, bot_act, action);
+                for &(seat, action, act) in &driven {
+                    // A call took this peer's own frame; its bot's act
+                    // did not go out on it.
+                    if call.is_none() || Some(usize::from(seat)) != local {
+                        bots.committed(frame, seat, act, action);
+                    }
+                }
             }
-            // The board as it now stands goes out to the bot, whose answer
-            // is committed on the next tick.
+            // The board as it now stands goes out to the bots, whose
+            // answers are committed on the next tick.
             bots.send_online(&sim.bypass_change_detection().0);
         }
         // Late watchers who greeted this tick are sent the round now, off

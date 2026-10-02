@@ -1,9 +1,10 @@
 # Bot seats: design
 
-**Status:** being built, from 2026-10-02. Phases 1 to 5 are in (seat
-controllers, the protocol and the arena, cups, the fair cursor, and Join
-as bot); the bot author's contract is `bot-protocol.md`. Where the build
-departs from this design it says so below, under *As built*.
+**Status:** built, 2026-10-02: phases 1 to 6 (seat controllers, the
+protocol and the arena, cups, the fair cursor, Join as bot, and straight
+to the host). Phase 7 (watching a cup live) is left for later, as the
+design says. The bot author's contract is `bot-protocol.md`. Where the
+build departs from this design it says so at the end, under *As built*.
 
 ## Goal
 
@@ -1040,3 +1041,38 @@ Each phase is useful on its own.
   at a party.
 - **Protocol stability promise.** How long an old protocol version stays
   supported once version 2 exists.
+
+## As built
+
+What the build settled that the design left open, and where it parted
+from it:
+
+- **The fair cursor walks diagonally**, as a person holding two arrow
+  keys does, and moves like one: the first tile at once, the second after
+  the lift (8 ticks, the 0.28 s repeat delay), then one every 3 ticks. One
+  statement in the sim (`fair_walk`) for the game's AI and a bot's virtual
+  cursor alike. Every AI level now walks at that one pace (Hard used to be
+  faster than any person); the ladder and the seat budgets were re-measured
+  and did not move.
+- **The game's AI walks under the fair cursor in every match the game
+  sets up**, since every one has a person in it. In the arena and a cup
+  with the rule off it has an instant hand, as the bots do.
+- **A bot busy with a tick is not sent the next one.** The design sent
+  every tick; a bot slower than its deadline then sank under boards it
+  would never read. It still holds each tick its deadline, so it plays a
+  tick behind, and the ticks it misses are skipped as if it had waited.
+- **The flood allowance grows with every line sent to a bot**, so a fast
+  bot answering thousands of fast-forward ticks a second is not a flood.
+- **A bot's seat is called "Greedy (Ana)"**, not "Greedy (Ana's bot)": a
+  name on the wire is twelve characters, and the robot beside it says the
+  rest on every screen.
+- **Seat controllers**: `Local` carries no input binding (the keyboard and
+  pads still deal seats from P1 up), and `MatchConfig` keeps its seat and
+  AI counts beside a controller per seat, for the same reason.
+- **`cup invite NAME`** is `invite NAME` at the cup's console, or
+  `--invite NAME` when it starts: an invite is drawn by the running server.
+- **Kicking** is in the lobby, before a match: K, then the seat's number.
+- **The "open replay" entry** is a replay file dropped on the window, on
+  the menu or the replay shelf, which says so: the game has no file dialog.
+- **The route-two string** shows under the host's Bots dial rather than
+  on a card of its own.

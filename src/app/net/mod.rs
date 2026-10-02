@@ -50,6 +50,10 @@ pub struct OnlineSession {
     /// This peer's seat is driven by a bot connected to this machine
     /// (route 1): it greets with the flag that says so, between rounds too.
     pub bot: bool,
+    /// Host side, route 2: the bots connected straight to this host, each
+    /// with the seat it holds this round and what it is called. The host
+    /// commits their inputs as well as its own.
+    pub bots_here: Vec<(u8, crate::bots::listener::BotId, String)>,
     /// What each seat is called, agreed at the handshake so every peer
     /// shows the same table. Empty entries fall back to seat labels; local
     /// couch names never apply to an online round.
@@ -352,6 +356,7 @@ impl OnlineSession {
             beach: Vec::new(),
             peers: PeerBook::default(),
             bot: false,
+            bots_here: Vec::new(),
             names: Default::default(),
             kinds: Default::default(),
             hashes: HashCheck::default(),
@@ -444,6 +449,7 @@ impl OnlineSession {
             beach: _,
             peers,
             bot,
+            bots_here: _,
             names,
             kinds: _,
             hashes: _,
@@ -540,8 +546,23 @@ impl OnlineSession {
     /// every frame that has complete inputs via `tick`. Records hashes on
     /// the [`HASH_INTERVAL`] cadence. Returns whether the local action was
     /// committed (false = at the commit lead; retry it next tick).
-    pub fn pump(&mut self, local_action: PlayerAction, mut tick: impl FnMut(&mut Self)) -> bool {
-        let committed = self.session.commit_local(local_action).is_some();
+    pub fn pump(&mut self, local_action: PlayerAction, tick: impl FnMut(&mut Self)) -> bool {
+        self.pump_with(local_action, &[], tick)
+    }
+
+    /// [`Self::pump`] for a peer that speaks for other seats besides its
+    /// own (a host with bots connected to it): `extra` is their actions for
+    /// the frame being committed.
+    pub fn pump_with(
+        &mut self,
+        local_action: PlayerAction,
+        extra: &[(u8, PlayerAction)],
+        mut tick: impl FnMut(&mut Self),
+    ) -> bool {
+        let committed = self
+            .session
+            .commit_local_with(local_action, extra)
+            .is_some();
         // The newest commit and the whole resend tail behind it, in one
         // datagram: see `NetMsg::Inputs` for what that is worth at a full
         // table. To the table and the watchers, never to the queue: a peer in

@@ -98,6 +98,8 @@ pub struct IntoArena<'w> {
     tournament: ResMut<'w, crate::app::tournament::Tournament>,
     next_screen: ResMut<'w, NextState<Screen>>,
     next_vphase: ResMut<'w, NextState<VersusPhase>>,
+    /// The doorway bots come straight to this beach by (route 2).
+    bots: ResMut<'w, crate::app::bot_seats::BotSeats>,
 }
 
 impl IntoArena<'_> {
@@ -132,7 +134,11 @@ pub fn host_tick(
     // too, so the table is never empty; seats are the hard limit rather
     // than the configured count, since an AI seat gives way to a player
     // who turns up for it.
-    let taken = 1 + hosted.players_aboard() as u8;
+    // Bots straight to this beach (route 2) come in by a doorway on the
+    // LAN while the host says they are welcome, one single-use key at a
+    // time, and are let go the moment it says they are not.
+    let arrived = host_the_bots(&mut arena.bots, &config, tr, hosted.players_aboard());
+    let taken = 1 + hosted.players_aboard() as u8 + arrived.len() as u8;
     let on_air = crate::transport::OnAir {
         name: &game_name,
         host: &settings.names[0],
@@ -154,6 +160,18 @@ pub fn host_tick(
     // that stays wrong until somebody joins or leaves.
     state.table = state.roster(tr, &settings.names[0]);
     state.table_kinds = state.roster_kinds();
+    // The bots that came straight here sit after the people.
+    for (_, name) in &arrived {
+        if state.table.len() < MAX_PLAYERS {
+            state.table.push(name.clone());
+            state.table_kinds.push(crate::sim::SeatKind::Bot);
+        }
+    }
+    state.bot_string = arena
+        .bots
+        .door
+        .as_ref()
+        .and_then(crate::app::bot_seats::Doorway::open_string);
     if do_announce && let Some(hosted) = state.hosted() {
         let names = crate::transport::wire_table(&state.table);
         // The dials travel with the roster so a joiner's terms card shows
@@ -175,8 +193,11 @@ pub fn host_tick(
             hosted.transport.local_addr().ok().map(|addr| addr.port()),
         )
     });
-    if joined > 0 {
-        state.feedback = gathering_feedback(tr, &config, players_aboard, watchers_aboard);
+    // A bot that came straight here is a rival aboard like any other.
+    let rivals = joined + arrived.len();
+    if rivals > 0 {
+        let aboard = players_aboard + arrived.len();
+        state.feedback = gathering_feedback(tr, &config, aboard, watchers_aboard);
     } else {
         // The last peer timed out: without this the line kept saying "1
         // rival aboard" over an empty table until somebody else turned up,
@@ -188,7 +209,7 @@ pub fn host_tick(
     }
     let quota = crate::app::dev::auto_host_quota();
     let launch = should_launch(
-        joined,
+        rivals,
         state.typing.is_some(),
         crate::app::menu_ui::enter(&keys),
         quota,
@@ -196,6 +217,38 @@ pub fn host_tick(
     if launch {
         launch_the_match(&mut state, &settings, &config, &beaches, joined, &mut arena);
     }
+}
+
+/// Keep the doorway for bots straight to this beach (route 2) as the host
+/// wants it, and say who has come in by it.
+fn host_the_bots(
+    bots: &mut crate::app::bot_seats::BotSeats,
+    config: &MatchConfig,
+    tr: &'static crate::app::i18n::Tr,
+    people: usize,
+) -> Vec<(crate::bots::listener::BotId, String)> {
+    if !config.bots_welcome {
+        bots.door = None;
+        return Vec::new();
+    }
+    if bots.door.is_none() {
+        match crate::app::bot_seats::Doorway::open_lan() {
+            Ok(door) => bots.door = Some(door),
+            Err(e) => {
+                bots.feedback = fill(tr.door_could_not_listen, &[("e", &e.to_string())]);
+                return Vec::new();
+            }
+        }
+    }
+    let Some(door) = &mut bots.door else {
+        return Vec::new();
+    };
+    door.poll();
+    let arrived = door.arrived(tr);
+    // The host's own chair and each person's come first.
+    let room = 1 + people + arrived.len() < MAX_PLAYERS;
+    door.keep_a_chair_open(room);
+    arrived
 }
 
 /// Put the match on: seat everyone who came to play, agree the terms, and
@@ -227,7 +280,21 @@ fn launch_the_match(
     };
     debug_assert_eq!(joined, peers.len());
     let plan = seat_plan(&peers);
-    let humans = 1 + plan.iter().filter(|seat| seat.is_some()).count() as u8;
+    let people = 1 + plan.iter().filter(|seat| seat.is_some()).count() as u8;
+    // The bots that came straight here (route 2) sit after the people, as
+    // many as there are chairs for; the host speaks for each of them.
+    let bots_here: Vec<(u8, crate::bots::listener::BotId, String)> = arena
+        .bots
+        .door
+        .as_ref()
+        .map(|door| door.arrived(settings.tr()))
+        .unwrap_or_default()
+        .into_iter()
+        .take(MAX_PLAYERS - usize::from(people))
+        .enumerate()
+        .map(|(i, (id, name))| (people + i as u8, id, name))
+        .collect();
+    let humans = people + bots_here.len() as u8;
     // AI seats come from the host's match setup, and sit behind the
     // humans. The host's dials and its team-scoring setting travel with
     // them: a match is played on one set of terms, not four.
@@ -265,10 +332,16 @@ fn launch_the_match(
             names[usize::from(*seat)].clone_from(&peer.name);
         }
     }
+    for (seat, _, name) in &bots_here {
+        names[usize::from(*seat)].clone_from(name);
+    }
     let wire_names = crate::transport::wire_table(&names);
     // What holds each seat: the host's own a person, a peer's whatever its
-    // greeting said, and the top seats the AI's.
+    // greeting said, the host's bots bots, and the top seats the AI's.
     let mut kinds = [crate::sim::SeatKind::Human; MAX_PLAYERS];
+    for (seat, ..) in &bots_here {
+        kinds[usize::from(*seat)] = crate::sim::SeatKind::Bot;
+    }
     for (peer, slot) in plan.iter().enumerate() {
         if let Some(seat) = slot
             && peers.get(peer).is_some_and(|peer| peer.bot)
@@ -316,6 +389,9 @@ fn launch_the_match(
     session.peers.deal(&plan);
     session.names = names;
     session.kinds = kinds;
+    let spoken: Vec<u8> = bots_here.iter().map(|(seat, ..)| *seat).collect();
+    session.session.speak_for(&spoken);
+    session.bots_here = bots_here;
     session.stay_on_air(announcer);
     session.home.from_lobby = true;
     session.home.game_name = state.game_name.clone();
@@ -595,14 +671,30 @@ fn catch_up_on_the_feed(state: &LobbyState, peer: usize) {
 /// to leave: it is told, and forgotten, and everyone else hears why the
 /// chair is empty. The table is the host and the peers who came to play,
 /// in order, which is how the AT THIS BEACH card numbers them.
-pub(super) fn ask_to_leave(state: &mut LobbyState, tr: &'static crate::app::i18n::Tr, at: usize) {
+pub(super) fn ask_to_leave(
+    state: &mut LobbyState,
+    bots: &mut crate::app::bot_seats::BotSeats,
+    tr: &'static crate::app::i18n::Tr,
+    at: usize,
+) {
     let Some(hosted) = state.hosted_mut() else {
         return;
     };
-    let Some(peer) = (0..hosted.peers.len())
+    let people: Vec<usize> = (0..hosted.peers.len())
         .filter(|&peer| hosted.peers.get(peer).is_some_and(|p| !p.watch))
-        .nth(at.wrapping_sub(2))
-    else {
+        .collect();
+    // Past the people sit the bots that came straight here.
+    if let Some(bot) = at.checked_sub(2 + people.len())
+        && let Some(door) = &mut bots.door
+        && let Some((id, who)) = door.arrived(tr).get(bot).cloned()
+    {
+        door.let_go(id);
+        let notice = fill(tr.lobby_kicked_feed, &[("p", &who)]);
+        state.say("", &notice);
+        announce_to_table(state, "", &notice);
+        return;
+    }
+    let Some(&peer) = people.get(at.wrapping_sub(2)) else {
         return;
     };
     let who = hosted
@@ -860,7 +952,12 @@ mod tests {
             state.roster_kinds(),
             vec![crate::sim::SeatKind::Human, crate::sim::SeatKind::Bot]
         );
-        ask_to_leave(&mut state, &crate::app::i18n::EN, 2);
+        ask_to_leave(
+            &mut state,
+            &mut crate::app::bot_seats::BotSeats::default(),
+            &crate::app::i18n::EN,
+            2,
+        );
         assert_eq!(state.hosted().expect("hosting").peers.len(), 0, "forgotten");
         assert!(
             state

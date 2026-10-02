@@ -120,6 +120,11 @@ pub struct Lockstep {
     /// The agreed frame the session freezes on, if a peer has called a
     /// pause. See [`Lockstep::pause_at`].
     pause_at: Option<u32>,
+    /// Seats this peer commits for besides its own: a host speaking for
+    /// the bots connected to it (route 2 of `docs/bot-seats.md`). Each gets
+    /// an input on every frame the local seat does, so the table never
+    /// waits on one; to the other peers they are players like any other.
+    also: Vec<PlayerId>,
     /// The highest pause frame ever lifted here, by our own resume or a
     /// peer's. A `Pause` naming that frame or an earlier one is an echo of
     /// a pause that is over and is ignored. Without this the pause flapped:
@@ -188,6 +193,7 @@ impl Lockstep {
             next_commit: delay,
             pending: BTreeMap::new(),
             history: Vec::new(),
+            also: Vec::new(),
             pause_at: None,
             lifted: None,
         };
@@ -327,6 +333,47 @@ impl Lockstep {
     /// to send to every peer, or `None` if the sim has fallen too far behind
     /// (a stalled peer) or the session is paused. The caller should retry
     /// the action next frame rather than let commits run unboundedly ahead.
+    /// Speak for `seats` too, from the next commit on (see `also`). Seats
+    /// that are not players of this session are ignored.
+    pub fn speak_for(&mut self, seats: &[PlayerId]) {
+        self.also = seats
+            .iter()
+            .copied()
+            .filter(|seat| self.players.contains(seat) && Some(*seat) != self.local)
+            .collect();
+    }
+
+    /// The seats this peer speaks for besides its own.
+    pub fn speaks_for(&self) -> &[PlayerId] {
+        &self.also
+    }
+
+    /// [`Self::commit_local`], and on the same frame an input for every
+    /// seat this peer speaks for: the one given in `extra`, or nothing for
+    /// a seat it does not name. All or none: a commit refused for the local
+    /// seat is refused for every seat.
+    pub fn commit_local_with(
+        &mut self,
+        action: PlayerAction,
+        extra: &[(PlayerId, PlayerAction)],
+    ) -> Option<InputMsg> {
+        let msg = self.commit_local(action)?;
+        for seat in self.also.clone() {
+            let given = extra
+                .iter()
+                .find(|(s, _)| *s == seat)
+                .map_or(PlayerAction::None, |(_, a)| *a);
+            let given = decode_action(encode_action(given));
+            self.slot(msg.frame)[usize::from(seat)] = Some(given);
+            self.history.push(InputMsg {
+                player: seat,
+                frame: msg.frame,
+                action: given,
+            });
+        }
+        Some(msg)
+    }
+
     pub fn commit_local(&mut self, action: PlayerAction) -> Option<InputMsg> {
         if self.watching() {
             return None; // nothing to commit, and nobody waiting for it
@@ -506,6 +553,45 @@ impl Lockstep {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A host speaking for a bot's seat commits an input for it on every
+    /// frame it commits its own, and a joiner plays that seat like any
+    /// other player's: frames advance on both, with the bot's moves in.
+    #[test]
+    fn a_host_speaks_for_its_bots_and_the_table_hears_them() {
+        let players = vec![0, 1, 2];
+        let mut host = Lockstep::new(0, players.clone(), DEFAULT_DELAY);
+        host.speak_for(&[2, 7]);
+        assert_eq!(host.speaks_for(), &[2], "only seats at the table");
+        let mut joiner = Lockstep::new(1, players, DEFAULT_DELAY);
+        let place = PlayerAction::Place {
+            x: 3,
+            y: 4,
+            dir: Direction::Up,
+        };
+        let mut played = Vec::new();
+        for _ in 0..20 {
+            let mine = host
+                .commit_local_with(PlayerAction::None, &[(2, place)])
+                .expect("committed");
+            let theirs = joiner.commit_local(PlayerAction::None).expect("committed");
+            for msg in host.recent_commits().to_vec() {
+                joiner.receive(msg);
+            }
+            host.receive(theirs);
+            assert_eq!(mine.player, 0);
+            while let Some(frame) = joiner.advance() {
+                played.push(frame);
+            }
+            while host.advance().is_some() {}
+        }
+        assert!(played.len() > 10, "the joiner was never waiting on the bot");
+        assert!(
+            played.iter().any(|frame| frame[2] == place),
+            "and played the bot's moves"
+        );
+        assert_eq!(host.frame(), joiner.frame());
+    }
     use crate::sim::board::Board;
     use crate::sim::{CrabKind, Handedness, Spawner, TileKind};
 

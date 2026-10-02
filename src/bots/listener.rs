@@ -316,6 +316,16 @@ impl Listener {
         registry.routes.clear();
     }
 
+    /// Close one bot's connection: a host asked it to leave. It can come
+    /// back with its token, but a host that has given its chair away will
+    /// not route it anywhere.
+    pub fn disconnect(&self, id: BotId) {
+        let mut registry = lock(&self.shared.registry);
+        if let Some(conn) = registry.bots.get_mut(id).and_then(|bot| bot.conn.take()) {
+            let _ = conn.stream.shutdown(Shutdown::Both);
+        }
+    }
+
     /// Add a way in (a cup's per-author invite, a card's next key).
     pub fn invite(&self, invite: Invite) {
         let mut config = lock(&self.shared.config);
