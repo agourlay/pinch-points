@@ -217,7 +217,10 @@ fn verdict(sweeps: &[Sweep]) {
 /// (`sim::fair_walk`): every level at a person's pace, diagonals allowed,
 /// where each used to walk at a pace of its own. Another re-roll, measured
 /// beside the build before it on the same night (1.2, 1.0, 1.0 and 1.4),
-/// and nothing about it biased a seat.
+/// and nothing about it biased a seat. Later that night the AI's hand
+/// started each round at its castle rather than anywhere at once, and
+/// the sweeps read 0.9, 1.5, 1.5 and 1.2: inside every budget, and no
+/// seat favoured.
 ///
 /// The six-seat budget is still the uncomfortable one and its headroom is
 /// the thinnest on purpose: `tally` calls anything past about two worth

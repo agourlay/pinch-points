@@ -126,7 +126,9 @@ fn duel(a: BotLevel, b: BotLevel, rounds: u64, bar: &ProgressBar) -> (f64, f64, 
 /// person, Fierce faster): easy-normal 15.7/84.3, normal-fierce 38.4/61.6,
 /// easy-fierce 12.5/87.5, against 14.6/85.4, 38.0/62.0 and 13.8/86.2 the
 /// build before. The ladder never stood on the hand: the levels differ in
-/// what they see and choose.
+/// what they see and choose. Later that night the hand began each round
+/// at its castle rather than anywhere at once: 14.0/86.0, 34.0/66.0 and
+/// 12.8/87.2 at the default rounds, the ladder still climbing.
 const LADDER_EDGE: f64 = 0.52;
 
 fn main() {
