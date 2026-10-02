@@ -145,7 +145,7 @@ impl OnlineSession {
             self.mark_heard(from);
             match msg {
                 NetMsg::Hello { name, bot } => {
-                    if host {
+                    if host && !self.refuse_a_bot(from, bot) {
                         self.peers.row(from).bot = bot;
                         let answer = self.answer_greeting(from, &name_from_wire(&name), false);
                         self.transport.send_to(from, answer);
@@ -205,8 +205,9 @@ impl OnlineSession {
                 // Calls are for a round being played, and this one is over.
                 | NetMsg::SpectatorPick { .. }
                 | NetMsg::CrowdPicks { .. }
-                | NetMsg::Incompatible { .. }
-                | NetMsg::Kicked => {}
+                | NetMsg::Incompatible { .. } => {}
+                // The host asked us to leave while the card was up.
+                NetMsg::Kicked => self.kicked |= !host,
             }
         }
         // After the socket is drained, so a greeting that arrived in this
@@ -298,6 +299,20 @@ impl OnlineSession {
     /// Host: note that a peer asked to watch rather than play.
     pub(super) fn note_watch_wish(&mut self, peer: usize) {
         self.peers.row(peer).watch = true;
+    }
+
+    /// Host: a greeting that says a bot drives the peer, at a beach whose
+    /// host said bots are not welcome. The peer is asked to go and is
+    /// never dealt a chair; it stops greeting, and is forgotten with the
+    /// silent. A peer already seated keeps its seat: the dial does not
+    /// turn mid-match, so it was welcome when it sat down.
+    pub(super) fn refuse_a_bot(&mut self, from: usize, bot: bool) -> bool {
+        if !bot || self.home.bots_welcome || self.peers.seat_of(from).is_some() {
+            return false;
+        }
+        self.peers.row(from).watch = true;
+        self.transport.send_to(from, NetMsg::Kicked);
+        true
     }
 
     /// The name a peer index goes by, from its greeting: its seat's name if
@@ -928,6 +943,67 @@ mod next_round_tests {
         assert_eq!(host.bots_here[0].0, 1, "the bot moved up a chair");
         assert_eq!(next.wins[1], 2, "and took its two wins with it");
         assert_eq!(next.wins[2], 0);
+    }
+
+    /// A bot greeting a host whose beach said bots are not welcome is
+    /// asked to go, and dealt no chair, on the results card as in the
+    /// lobby. Welcome, the same greeting is taken in.
+    #[test]
+    fn a_bot_is_turned_away_where_bots_are_not_welcome() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(1),
+        );
+        host.home.bots_welcome = false;
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut bot = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        bot.send(NetMsg::hello_bot("Greedy"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() > 0 {
+                break;
+            }
+        }
+        let mut told = false;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            told |= bot
+                .recv_all()
+                .into_iter()
+                .any(|(msg, _)| msg == NetMsg::Kicked);
+            if told {
+                break;
+            }
+        }
+        assert!(told, "the bot was asked to go");
+        assert!(
+            host.peers.get(0).is_some_and(|row| row.watch && !row.bot),
+            "and is dealt no chair"
+        );
+        assert_eq!(host.next_plan(1), vec![None]);
+
+        // Welcome: the same greeting is a player at the table.
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(1),
+        );
+        host.home.bots_welcome = true;
+        let port = host.transport.local_addr().expect("addr").port();
+        let bot = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        bot.send(NetMsg::hello_bot("Greedy"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.peers.get(0).is_some_and(|row| row.bot) {
+                break;
+            }
+        }
+        assert!(host.peers.get(0).is_some_and(|row| row.bot && !row.watch));
     }
 
     /// A peer in line for the next round is not sent this one.

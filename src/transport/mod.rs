@@ -92,7 +92,17 @@ pub struct UdpTransport {
     /// Host side: register unknown senders as new peers (up to `max_peers`).
     accept_new: bool,
     max_peers: usize,
+    /// Host side: addresses asked to leave. A greeting already in flight
+    /// when the host forgot one, or a peer that missed every `Kicked`,
+    /// would otherwise be taken back as a new peer the moment it next
+    /// spoke. Each is told again instead. A person who means to come back
+    /// dials again, from a fresh socket and so a fresh address.
+    turned_away: Vec<SocketAddr>,
 }
+
+/// How many turned-away addresses a host remembers, oldest forgotten
+/// first: enough for any evening, and bounded whoever keeps knocking.
+const TURNED_AWAY: usize = 64;
 
 /// This machine's address on the network it would reach a beach over, or
 /// `None` if it has no route out of itself.
@@ -124,6 +134,7 @@ impl UdpTransport {
             peers: Vec::new(),
             accept_new: true,
             max_peers: MAX_PEERS,
+            turned_away: Vec::new(),
         })
     }
 
@@ -140,6 +151,7 @@ impl UdpTransport {
             peers: vec![peer],
             accept_new: false,
             max_peers: 1,
+            turned_away: Vec::new(),
         })
     }
 
@@ -220,6 +232,24 @@ impl UdpTransport {
         }
     }
 
+    /// Ask a peer to leave and keep it out: it is told (a few times, since
+    /// one datagram is the one the network eats), forgotten like
+    /// [`Self::forget`], and anything more from its address is answered
+    /// with the same word rather than taken in as a new peer.
+    pub fn turn_away(&mut self, index: usize) {
+        let Some(&addr) = self.peers.get(index) else {
+            return;
+        };
+        for _ in 0..3 {
+            self.send_to(index, NetMsg::Kicked);
+        }
+        self.forget(index);
+        if self.turned_away.len() >= TURNED_AWAY {
+            self.turned_away.remove(0);
+        }
+        self.turned_away.push(addr);
+    }
+
     /// Send to one peer by index (host relaying / seat assignment).
     pub fn send_to(&self, index: usize, msg: NetMsg) {
         debug_assert!(
@@ -257,6 +287,10 @@ impl UdpTransport {
                         }
                         continue;
                     };
+                    if self.turned_away.contains(&from) {
+                        let _ = self.socket.send_to(&NetMsg::Kicked.encode(), from);
+                        continue;
+                    }
                     let index = match self.peers.iter().position(|p| *p == from) {
                         Some(index) => index,
                         None if self.accept_new && self.peers.len() < self.max_peers => {
@@ -283,6 +317,42 @@ pub use wire::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A peer asked to leave stays out. Its greeting already in flight, or
+    /// the next one from a joiner that missed the word, is answered with
+    /// the word again rather than taking a fresh place at the table.
+    #[test]
+    fn a_peer_turned_away_is_not_taken_back() {
+        let mut host = UdpTransport::host(0).expect("bind");
+        let port = host.local_addr().expect("addr").port();
+        let mut joiner = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        let settle = |host: &mut UdpTransport| {
+            for _ in 0..40 {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                if !host.recv_all().is_empty() {
+                    break;
+                }
+            }
+        };
+        joiner.send(NetMsg::hello("Bo"));
+        settle(&mut host);
+        assert_eq!(host.peer_count(), 1, "Bo is aboard");
+        host.turn_away(0);
+        assert_eq!(host.peer_count(), 0);
+        // Bo greets again, as a joiner does every second.
+        joiner.send(NetMsg::hello("Bo"));
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            assert!(host.recv_all().is_empty(), "nothing from Bo is taken in");
+        }
+        assert_eq!(host.peer_count(), 0, "and Bo has no place at the table");
+        let kicked = joiner
+            .recv_all()
+            .into_iter()
+            .filter(|(msg, _)| *msg == NetMsg::Kicked)
+            .count();
+        assert!(kicked > 3, "told on the way out and told again: {kicked}");
+    }
 
     /// A host on another build answers the greeting instead of ignoring it,
     /// so the joiner learns why nothing is happening, and the stranger

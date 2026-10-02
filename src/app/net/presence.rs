@@ -427,7 +427,9 @@ pub(crate) fn leave_a_hostless_round(
         return;
     };
     let tr = settings.tr();
-    let why = if session.dropped() {
+    let why = if session.kicked {
+        tr.lobby_kicked_you
+    } else if session.dropped() {
         tr.online_dropped
     } else if session.host_gone() {
         tr.online_host_gone
@@ -614,6 +616,62 @@ mod tests {
         let (screen, why) = walked_out(false);
         assert_eq!(screen, Screen::Menu, "a hand-wired pair has no hall");
         assert_eq!(why, crate::app::i18n::EN.online_host_gone);
+    }
+
+    /// A joiner the host asks to leave while the results card is up, or
+    /// mid-round, hears it and walks out with the reason. Ignored, it
+    /// greeted on and was seated again at the next round.
+    #[test]
+    fn a_joiner_asked_to_leave_on_the_card_walks_out() {
+        let mut host = UdpTransport::host(0).expect("host socket");
+        let port = host.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        joiner.home.from_lobby = true;
+        // The joiner greets from the card; the host turns it away.
+        let mut greeted = false;
+        for _ in 0..200 {
+            joiner.poll_between_rounds(1.0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            if !host.recv_all().is_empty() {
+                greeted = true;
+                break;
+            }
+        }
+        assert!(greeted, "the joiner greeted");
+        host.turn_away(0);
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            joiner.poll_between_rounds(0.0);
+            if joiner.kicked {
+                break;
+            }
+        }
+        assert!(joiner.kicked, "the joiner heard it");
+
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<RoundNotice>();
+        app.insert_resource(Online(Some(joiner)));
+        app.add_systems(Update, leave_a_hostless_round);
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Lobby
+        );
+        assert_eq!(
+            app.world().resource::<RoundNotice>().0,
+            crate::app::i18n::EN.lobby_kicked_you,
+            "and was told why"
+        );
     }
 
     /// A table reading the scores together is not a table whose host has

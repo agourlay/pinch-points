@@ -50,6 +50,11 @@ pub struct OnlineSession {
     /// This peer's seat is driven by a bot connected to this machine
     /// (route 1): it greets with the flag that says so, between rounds too.
     pub bot: bool,
+    /// Joiner side: the host asked this peer to leave. Said with `Kicked`,
+    /// which can arrive mid-round or on the results card as well as in the
+    /// lobby, and walks the joiner out with the reason rather than leaving
+    /// it greeting a host that has forgotten it.
+    pub kicked: bool,
     /// Host side, route 2: the bots connected straight to this host, each
     /// with the seat it holds this round and what it is called. The host
     /// commits their inputs as well as its own.
@@ -356,6 +361,7 @@ impl OnlineSession {
             beach: Vec::new(),
             peers: PeerBook::default(),
             bot: false,
+            kicked: false,
             bots_here: Vec::new(),
             names: Default::default(),
             kinds: Default::default(),
@@ -449,6 +455,7 @@ impl OnlineSession {
             beach: _,
             peers,
             bot,
+            kicked: _,
             bots_here: _,
             names,
             kinds: _,
@@ -612,7 +619,7 @@ impl OnlineSession {
                 // repeat what it is until it stops. A watcher is told it is
                 // watching, so the seat it gets is not one.
                 NetMsg::Hello { name, bot } => {
-                    if host {
+                    if host && !self.refuse_a_bot(from, bot) {
                         self.peers.row(from).bot = bot;
                         let answer = self.answer_greeting(from, &name_from_wire(&name), false);
                         self.transport.send_to(from, answer);
@@ -731,8 +738,10 @@ impl OnlineSession {
                 // Someone on another build is talking to this port. Every
                 // peer in a running match paired before it started, so this
                 // is a stranger, not a member: the match plays on without it.
-                // Kicking happens in the lobby, never mid-round.
-                NetMsg::Incompatible { .. } | NetMsg::Kicked => {}
+                NetMsg::Incompatible { .. } => {}
+                // The host asked us to leave. It turns this address away
+                // from now on, so there is no round left here for us.
+                NetMsg::Kicked => self.kicked |= !host,
                 // Only a host hands these out, and a host never receives
                 // one: a joiner in the queue is still in the lobby, and so
                 // is a watcher being caught up.

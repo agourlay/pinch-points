@@ -480,6 +480,9 @@ struct Picked {
     /// The once-a-second tick fell this frame, so the roster goes out too.
     announced: bool,
     greeted: Vec<(usize, String)>,
+    /// Peers that greeted as bots at a beach that does not welcome them,
+    /// turned away once the batch is read.
+    unwelcome: Vec<usize>,
     said: Vec<(
         usize,
         crate::transport::WireName,
@@ -531,6 +534,14 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             }
             // Round things, and the lobby has no round to call one in.
             NetMsg::SpectatorVote { .. } | NetMsg::SpectatorTally { .. } => {}
+            // A bot at a beach that has said bots are not welcome is
+            // asked to go, once the socket is drained: forgetting it now
+            // would shift the indices the rest of this batch carries.
+            NetMsg::Hello { bot: true, .. } if !on_air.bots => {
+                if !picked.unwelcome.contains(&from) {
+                    picked.unwelcome.push(from);
+                }
+            }
             NetMsg::Hello { name, bot } => {
                 peers.row(from).bot = bot;
                 let told = crate::transport::name_from_wire(&name);
@@ -578,6 +589,23 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             | NetMsg::Incompatible { .. }
             | NetMsg::Kicked => {}
         }
+    }
+    // Highest first, so each index still names the peer it was read from.
+    picked.unwelcome.sort_unstable();
+    for &peer in picked.unwelcome.iter().rev() {
+        transport.turn_away(peer);
+        peers.forget(peer);
+    }
+    // And everyone after a forgotten peer moved up one place per peer.
+    let unwelcome = &picked.unwelcome;
+    let moved = |from: usize| from - unwelcome.iter().filter(|&&gone| gone < from).count();
+    picked.greeted.retain(|(from, _)| !unwelcome.contains(from));
+    picked.said.retain(|(from, ..)| !unwelcome.contains(from));
+    for (from, _) in &mut picked.greeted {
+        *from = moved(*from);
+    }
+    for (from, ..) in &mut picked.said {
+        *from = moved(*from);
     }
     for (from, name, text) in picked.said.iter() {
         crate::app::net::relay(
@@ -701,12 +729,9 @@ pub(super) fn ask_to_leave(
         .peers
         .get(peer)
         .map_or_else(String::new, |p| p.name.clone());
-    // Said a few times: it is one datagram, and the one the network eats
-    // would leave a peer greeting a host that has forgotten it.
-    for _ in 0..3 {
-        hosted.transport.send_to(peer, NetMsg::Kicked);
-    }
-    hosted.forget_peer(peer);
+    // Told, forgotten, and kept out: a greeting already on its way would
+    // otherwise seat it again as a ghost row (`UdpTransport::turn_away`).
+    hosted.turn_away(peer);
     let notice = fill(tr.lobby_kicked_feed, &[("p", &who)]);
     state.say("", &notice);
     announce_to_table(state, "", &notice);
@@ -927,7 +952,11 @@ mod tests {
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(5));
             let hosted = state.hosted_mut().expect("hosting");
-            let picked = work_the_socket(hosted, 0.0, crate::transport::OnAir::default());
+            let welcome = crate::transport::OnAir {
+                bots: true,
+                ..crate::transport::OnAir::default()
+            };
+            let picked = work_the_socket(hosted, 0.0, welcome);
             for (from, told) in picked.greeted {
                 hosted.peers.row(from).name = told;
             }
@@ -977,6 +1006,68 @@ mod tests {
             }
         }
         assert!(told, "the peer was told why");
+    }
+
+    /// A beach that said bots are not welcome turns a bot's greeting
+    /// away: told to go, and kept off the table. A person greeting in the
+    /// same batch, after it, keeps their own place and name.
+    #[test]
+    fn a_bot_is_not_seated_where_bots_are_not_welcome() {
+        let mut state = LobbyState {
+            standing: Standing::hosting(
+                Announcer::new(0xB07).expect("announcer"),
+                UdpTransport::host(0).expect("game socket"),
+            ),
+            ..LobbyState::default()
+        };
+        let port = state
+            .hosted()
+            .expect("hosting")
+            .transport
+            .local_addr()
+            .expect("addr")
+            .port();
+        let mut bot = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        let person = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        bot.send(NetMsg::hello_bot("Greedy (Ana)"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        person.send(NetMsg::hello("Bo"));
+        let unwelcome = crate::transport::OnAir {
+            bots: false,
+            ..crate::transport::OnAir::default()
+        };
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let hosted = state.hosted_mut().expect("hosting");
+            let picked = work_the_socket(hosted, 0.0, unwelcome);
+            for (from, told) in picked.greeted {
+                hosted.peers.row(from).name = told;
+            }
+            if hosted.peers.get(0).is_some_and(|peer| peer.name == "Bo") {
+                break;
+            }
+        }
+        let hosted = state.hosted().expect("hosting");
+        assert_eq!(hosted.peers.len(), 1, "only the person is at the table");
+        assert_eq!(hosted.transport.peer_count(), 1);
+        assert!(
+            hosted
+                .peers
+                .get(0)
+                .is_some_and(|p| p.name == "Bo" && !p.bot)
+        );
+        let mut told = false;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            told |= bot
+                .recv_all()
+                .into_iter()
+                .any(|(msg, _)| msg == NetMsg::Kicked);
+            if told {
+                break;
+            }
+        }
+        assert!(told, "the bot was told to go");
     }
 
     /// Chat is the one message that names its own sender, and the host is

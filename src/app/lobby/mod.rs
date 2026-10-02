@@ -138,6 +138,12 @@ impl Hosted {
         self.peers.forget(peer);
     }
 
+    /// Ask a peer to leave, and keep it out of this beach.
+    pub(super) fn turn_away(&mut self, peer: usize) {
+        self.transport.turn_away(peer);
+        self.peers.forget(peer);
+    }
+
     /// Peers here to play, the ones who fill the seats. Capped at the five
     /// chairs beside the host's: seats run out long before the socket
     /// does, which takes [`MAX_PEERS`](crate::transport::MAX_PEERS), and
