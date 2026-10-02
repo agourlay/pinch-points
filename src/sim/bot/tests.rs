@@ -127,8 +127,10 @@ fn only_fierce_chases_a_jackpot_across_the_board() {
         // Eleven steps out, with room ahead of it: a crab flat against a
         // wall has no tile in front to post on.
         board.spawn_crab(14, 1, Direction::Up, Handedness::Left, CrabKind::Golden);
+        // What it chooses, not how fast its hand gets there: the walk
+        // from its castle has a test of its own.
         (0..40).find_map(|_| {
-            let action = bot_action(&board, 1, level);
+            let action = bot_action_with(&board, 1, level, Hand::Instant);
             board.tick_idle();
             matches!(action, PlayerAction::Place { .. }).then_some(action)
         })
@@ -174,10 +176,18 @@ fn a_bot_pays_for_the_walk_to_the_tile() {
     board.tick_idle();
     assert!(hand_arrived(&board, 1, 8, 6), "arrived at last");
 
-    // With nothing of its own standing, it has been idle long enough to
-    // be anywhere.
-    let empty = arena();
-    assert!(hand_arrived(&empty, 1, 8, 6));
+    // With nothing of its own standing, its hand starts at its castle on
+    // the round's first tick and walks from there like anyone's.
+    let mut empty = arena();
+    let castle = empty.castle_of(1).expect("seat 1 has a castle");
+    assert!(hand_arrived(&empty, 1, castle.0, castle.1), "home already");
+    let walk = fair_walk(hand_steps(castle, (8, 6)));
+    assert!(walk > 0, "the corner is a walk from the castle");
+    assert!(!hand_arrived(&empty, 1, 8, 6), "no teleporting from home");
+    for _ in 0..walk {
+        empty.tick_idle();
+    }
+    assert!(hand_arrived(&empty, 1, 8, 6), "walked from home");
 }
 
 /// With the rule off, an all-bot match's AI places anywhere at once; with
@@ -361,7 +371,8 @@ fn hard_steers_gulls_at_the_leader() {
 fn first_window_action(board: &Board, level: BotLevel) -> PlayerAction {
     let mut board = board.clone();
     loop {
-        let action = bot_action(&board, 1, level);
+        // The decision alone: the hand's walk from home has its own test.
+        let action = bot_action_with(&board, 1, level, Hand::Instant);
         if !level.acts_on(1, board.ticks()) {
             board.tick_idle();
             continue;

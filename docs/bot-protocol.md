@@ -350,9 +350,12 @@ reply names a target and the cursor walks there before the action lands:
 
 Your cursor is in every tick's `cursors`. `you.last` reports the action
 when it lands, not when you asked. The game's AI walks by the same rule,
-from wherever it last placed, so under the rule nobody at the table has a
-faster hand than a person; with the rule off it places anywhere at once,
-as a bot does.
+from wherever it last placed, or from its castle when none of its posts
+stands, so under the rule nobody at the table has a faster hand than a
+person; with the rule off it places anywhere at once, as a bot does. Its
+hand is read off the board rather than kept, so time it spent idle counts
+toward its next walk, as it would for a person who moved their cursor
+ahead while waiting.
 
 ## Looking ahead: `simulate`
 

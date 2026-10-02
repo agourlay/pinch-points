@@ -313,16 +313,24 @@ fn worth_the_walk(
 
 /// Whether the bot's cursor has had time to reach `(x, y)` since its last
 /// placement, walking under the fair cursor rule. With nothing of its
-/// standing it has been idle for at least a signpost's lifetime, which is
-/// longer than any walk across a beach.
+/// standing its hand is at its castle, where a person's cursor and a bot's
+/// start, as of the round's first tick: the opening placement walks like
+/// anyone's, rather than landing anywhere at once.
+///
+/// The hand is read off the board, never kept, so every peer derives the
+/// same one. Time spent idle counts toward the walk, as it does for a
+/// person who moved their cursor ahead while waiting.
 ///
 /// Every level walks at the same pace: the rule is a person's speed, and a
 /// fiercer bot is fiercer in what it sees and chooses, never in a hand no
 /// person at the table could match.
 fn hand_arrived(board: &Board, player: PlayerId, x: u8, y: u8) -> bool {
-    let Some((from_x, from_y, since)) = board.newest_signpost_of(player) else {
-        return true;
-    };
+    let (from_x, from_y, since) = board.newest_signpost_of(player).unwrap_or_else(|| {
+        let (x, y) = board
+            .castle_of(player)
+            .unwrap_or((board.width() / 2, board.height() / 2));
+        (x, y, 0)
+    });
     let walk = fair_walk(hand_steps((from_x, from_y), (x, y)));
     board.ticks().saturating_sub(since) >= u64::from(walk)
 }

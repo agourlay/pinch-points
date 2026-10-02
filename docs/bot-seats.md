@@ -1058,7 +1058,12 @@ from it:
   and did not move.
 - **The game's AI walks under the fair cursor in every match the game
   sets up**, since every one has a person in it. In the arena and a cup
-  with the rule off it has an instant hand, as the bots do.
+  with the rule off it has an instant hand, as the bots do. Its hand is
+  stateless, read off the board so every peer derives the same one: at
+  its newest standing post as of the tick it was placed, or at its castle
+  as of the round's first tick when none stands. Idle time counts toward
+  the next walk, the way a person can move their cursor ahead while
+  waiting; it never lands anything from nowhere.
 - **A bot busy with a tick is not sent the next one.** The design sent
   every tick; a bot slower than its deadline then sank under boards it
   would never read. It still holds each tick its deadline, so it plays a
