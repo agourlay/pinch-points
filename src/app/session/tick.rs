@@ -131,7 +131,13 @@ pub(in crate::app) fn advance_sim(
         // about to take, `input_delay` ahead: this peer's own seat when it
         // joined as a bot (route 1), the host's bots besides (route 2).
         let frame = session.session.next_commit();
-        let driven = bots.commit_online(&sim.0);
+        // A pause stops the bots' hands with the table: an order taken
+        // now would be walked and landed on frames nobody commits. What
+        // they said meanwhile is read when it lifts.
+        let driven = match session.session.paused() {
+            true => Vec::new(),
+            false => bots.commit_online(&sim.0),
+        };
         let own = local.and_then(|seat| driven.iter().find(|(s, ..)| usize::from(*s) == seat));
         let action = match (call, own) {
             (Some(event), _) => PlayerAction::CallEvent(event),
@@ -202,7 +208,7 @@ pub(in crate::app) fn advance_sim(
             if committed {
                 for &(seat, action, act) in &driven {
                     // A call took this peer's own frame; its bot's act
-                    // did not go out on it.
+                    // did not go out on it, and goes on the next.
                     if call.is_none() || Some(usize::from(seat)) != local {
                         bots.committed(frame, seat, act, action);
                     }
@@ -210,7 +216,10 @@ pub(in crate::app) fn advance_sim(
             }
             // The board as it now stands goes out to the bots, whose
             // answers are committed on the next tick.
-            bots.send_online(&sim.bypass_change_detection().0);
+            bots.send_online(
+                &sim.bypass_change_detection().0,
+                recorder.bypass_change_detection().0.as_ref(),
+            );
         }
         // Late watchers who greeted this tick are sent the round now, off
         // the board as the lockstep's frame leaves it.
@@ -245,7 +254,6 @@ pub(in crate::app) fn advance_sim(
     let before = awards::Reading::of(&sim.0);
     sim.0.tick(&actions);
     tally.observe(before, &sim.0, &actions);
-    drivers.after(&sim.0, committed);
     if let Some(replay) = &mut recorder.0 {
         replay.record(actions);
         // One input a tick from the first, or the replay plays out a
@@ -255,4 +263,7 @@ pub(in crate::app) fn advance_sim(
             "a recording out of step with its round"
         );
     }
+    // After the recording, which is the replay kept for the bots once the
+    // tide is in.
+    drivers.after(&sim.0, committed, recorder.0.as_ref());
 }

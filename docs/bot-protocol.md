@@ -284,7 +284,9 @@ evicts), `no_post` (a removal or clear with nothing of yours there).
 {"type": "end", "game": 17, "scores": [12, 3, 20, 7], "placing": 1, "replay": "t1-g17"}
 ```
 
-`placing` is 1 for first; seats that tie share a place.
+`placing` is 1 for first; seats that tie share a place. `replay` is the
+id to fetch the game's replay with (see *Replays*), or `null` when
+nothing was recorded.
 
 ## Clocks and deadlines
 

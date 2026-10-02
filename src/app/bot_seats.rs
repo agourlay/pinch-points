@@ -18,7 +18,7 @@ use crate::bots::listener::{Admission, BotId, Config, Event, GameLink, Invite, L
 use crate::bots::lookahead;
 use crate::bots::protocol::{self, Act, Clock, Outcome, SeatKind, Table, You};
 use crate::bots::seat::{BotDriver, Journal, Turn, act_of, outcome, placings, refusal};
-use crate::sim::{Board, BotLevel, MAX_PLAYERS, PlayerAction, Refusal, bot_action};
+use crate::sim::{Board, BotLevel, MAX_PLAYERS, PlayerAction, Refusal, Replay, bot_action};
 use bevy::prelude::*;
 use std::net::SocketAddr;
 use std::sync::mpsc::Receiver;
@@ -29,6 +29,10 @@ const NO_SEAT: &str = "the table filled up before this bot had a seat";
 
 /// How long a dropped bot's seat idles before the game's AI stands in.
 pub const GRACE: Duration = Duration::from_secs(5);
+
+/// The level the game's AI plays a bot's seat at while the bot is away,
+/// and the seat's level in a round copied with a bot in it.
+pub const STAND_IN: BotLevel = BotLevel::Normal;
 
 /// The one deadline a bot at a table with people gets: a tick.
 const LIVE_DEADLINE_MS: u32 = 1000 / crate::sim::TICKS_PER_SECOND;
@@ -56,6 +60,10 @@ pub struct Doorway {
     pub showing_lan: bool,
     pub chairs: Vec<Chair>,
     next_chair: u32,
+    /// Each chair is a seat's (a couch's bot seats, a bot joining a
+    /// party), rather than the next of however many come (a host's door):
+    /// a bot that goes leaves its seat wanting a bot, with a fresh key.
+    seats_fixed: bool,
 }
 
 impl Drop for Doorway {
@@ -83,6 +91,7 @@ impl Doorway {
             showing_lan: false,
             chairs: Vec::new(),
             next_chair: 0,
+            seats_fixed: false,
         })
     }
 
@@ -105,6 +114,7 @@ impl Doorway {
             showing_lan: true,
             chairs: Vec::new(),
             next_chair: 0,
+            seats_fixed: false,
         })
     }
 
@@ -124,25 +134,30 @@ impl Doorway {
         }
         let open = self.chairs.iter().any(|chair| chair.bot.is_none());
         if !open {
-            let seat = self.chairs.len() as u8;
-            let key = match (self.next_chair, crate::app::dev::bot_key()) {
-                (0, Some(key)) => key,
-                _ => Key::draw(),
-            };
-            let chair = Chair {
-                id: self.next_chair,
-                seat,
-                key,
-                bot: None,
-            };
+            let id = self.next_chair;
             self.next_chair += 1;
-            self.listener.invite(Invite {
-                key: chair.key.clone(),
-                uses: Some(1),
-                owner: None,
-                slot: Some(chair.id),
-            });
+            let chair = self.keyed_chair(id, self.chairs.len() as u8);
             self.chairs.push(chair);
+        }
+    }
+
+    /// Chair `id` for `seat`, empty, with a fresh single-use key let in.
+    fn keyed_chair(&self, id: u32, seat: u8) -> Chair {
+        let key = match (id, crate::app::dev::bot_key()) {
+            (0, Some(key)) => key,
+            _ => Key::draw(),
+        };
+        self.listener.invite(Invite {
+            key: key.clone(),
+            uses: Some(1),
+            owner: None,
+            slot: Some(id),
+        });
+        Chair {
+            id,
+            seat,
+            key,
+            bot: None,
         }
     }
 
@@ -161,7 +176,9 @@ impl Doorway {
         self.chairs
             .iter()
             .filter_map(|chair| {
-                let info = self.listener.bot(chair.bot?)?;
+                // Only those still here: one gone is not seated.
+                let id = chair.bot.filter(|&id| self.listener.connected(id))?;
+                let info = self.listener.bot(id)?;
                 let name = match info.owner {
                     Some(owner) => fill(tr.bot_owned, &[("bot", &info.name), ("o", &owner)]),
                     None => fill(tr.bot_unowned, &[("bot", &info.name)]),
@@ -201,46 +218,63 @@ impl Doorway {
     /// seat still wanting one keeps it, and a seat new to the list gets a
     /// fresh, single-use key.
     pub fn seat_bots(&mut self, seats: &[u8]) {
+        self.seats_fixed = true;
         self.chairs.retain(|chair| seats.contains(&chair.seat));
         for &seat in seats {
             if self.chairs.iter().any(|chair| chair.seat == seat) {
                 continue;
             }
-            let key = match (self.next_chair, crate::app::dev::bot_key()) {
-                (0, Some(key)) => key,
-                _ => Key::draw(),
-            };
-            let chair = Chair {
-                id: self.next_chair,
-                seat,
-                key,
-                bot: None,
-            };
+            let id = self.next_chair;
             self.next_chair += 1;
-            self.listener.invite(Invite {
-                key: chair.key.clone(),
-                uses: Some(1),
-                owner: None,
-                slot: Some(chair.id),
-            });
+            let chair = self.keyed_chair(id, seat);
             self.chairs.push(chair);
         }
         self.chairs.sort_by_key(|chair| chair.seat);
     }
 
     /// Take what the listener heard: each registration sits its bot in the
-    /// chair its key was printed for.
+    /// chair its key was printed for, and a bot that went gives its chair
+    /// up, which finishes with it: started again it registers afresh,
+    /// under the same name. A seat's chair gets a fresh key for the next
+    /// bot; at a host's door the chair goes, and the next bot takes the
+    /// one kept open.
     pub fn poll(&mut self) {
-        let events = self
-            .events
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        while let Ok(event) = events.try_recv() {
-            if let Event::Registered(id) = event
-                && let Some(info) = self.listener.bot(id)
-                && let Some(chair) = self.chairs.iter_mut().find(|c| Some(c.id) == info.slot)
-            {
-                chair.bot = Some(id);
+        let heard: Vec<Event> = {
+            let events = self
+                .events
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            std::iter::from_fn(|| events.try_recv().ok()).collect()
+        };
+        for event in heard {
+            match event {
+                Event::Registered(id) => {
+                    if let Some(info) = self.listener.bot(id)
+                        && let Some(chair) = self
+                            .chairs
+                            .iter_mut()
+                            .find(|c| Some(c.id) == info.slot && c.bot.is_none())
+                    {
+                        chair.bot = Some(id);
+                    }
+                }
+                // Read late: a bot that has come back since keeps its chair.
+                Event::Dropped(id) if !self.listener.connected(id) => {
+                    let Some(at) = self.chairs.iter().position(|c| c.bot == Some(id)) else {
+                        continue;
+                    };
+                    self.listener.retire(id);
+                    match self.seats_fixed {
+                        true => {
+                            let (chair, seat) = (self.chairs[at].id, self.chairs[at].seat);
+                            self.chairs[at] = self.keyed_chair(chair, seat);
+                        }
+                        false => {
+                            self.chairs.remove(at);
+                        }
+                    }
+                }
+                Event::Dropped(_) | Event::Reconnected(_) | Event::Refused(..) => {}
             }
         }
     }
@@ -339,7 +373,20 @@ pub struct BotRound {
     cursors: [Option<SeatCursor>; MAX_PLAYERS],
     last: [Option<(&'static str, Outcome)>; MAX_PLAYERS],
     dropped_at: [Option<Instant>; MAX_PLAYERS],
+    /// Since when a seat's bot has been sent something and said nothing:
+    /// a connection that hangs without closing is as gone as one that
+    /// closed, and the AI stands in for it the same way.
+    quiet_since: [Option<Instant>; MAX_PLAYERS],
     standing_in: [bool; MAX_PLAYERS],
+    /// How long a seat waits on a bot that is gone before the AI stands
+    /// in: [`GRACE`], shorter in the tests.
+    grace: Duration,
+    /// Online, the act each seat handed the lockstep that it has not yet
+    /// taken: a paused or stalled commit hands it back, and it goes out
+    /// again on the next, rather than being walked past and lost.
+    unconfirmed: [Option<(PlayerAction, Option<Act>)>; MAX_PLAYERS],
+    /// Every bot has been told the round is over.
+    finished: bool,
     names: Vec<String>,
     kinds: Vec<SeatKind>,
     clock: Clock,
@@ -366,6 +413,76 @@ pub struct Committed {
 }
 
 impl BotRound {
+    /// Open a round for the bots in `seats`: a driver and a hand for each,
+    /// their game routed to this round, and `hello` to every one that is
+    /// connected. `names` and `kinds` are the whole table's.
+    fn open(
+        door: &Doorway,
+        board: &Board,
+        seats: &[(u8, BotId)],
+        names: Vec<String>,
+        kinds: Vec<SeatKind>,
+        online: bool,
+        game: u32,
+    ) -> BotRound {
+        let deadline = Duration::from_millis(u64::from(LIVE_DEADLINE_MS));
+        let drivers: Vec<BotDriver> = seats
+            .iter()
+            .map(|&(seat, id)| {
+                let name = names.get(usize::from(seat)).cloned().unwrap_or_default();
+                BotDriver::new(id, seat, name, door.listener.connected(id), deadline)
+            })
+            .collect();
+        let link = door
+            .listener
+            .open_game(game, seats.iter().map(|&(seat, id)| (id, seat)).collect());
+        let mut cursors = [None; MAX_PLAYERS];
+        for &(seat, _) in seats {
+            cursors[usize::from(seat)] = Some(SeatCursor::home(board, seat));
+        }
+        let now = Instant::now();
+        let mut quiet_since = [None; MAX_PLAYERS];
+        for &(seat, _) in seats {
+            // Waiting on its `ready` from the start.
+            quiet_since[usize::from(seat)] = Some(now);
+        }
+        let round = BotRound {
+            online,
+            in_flight: std::collections::VecDeque::new(),
+            link,
+            game,
+            drivers,
+            cursors,
+            last: [None; MAX_PLAYERS],
+            dropped_at: [None; MAX_PLAYERS],
+            quiet_since,
+            standing_in: [false; MAX_PLAYERS],
+            grace: GRACE,
+            unconfirmed: [None; MAX_PLAYERS],
+            finished: false,
+            names,
+            kinds,
+            clock: Clock {
+                live: true,
+                deadline_ms: LIVE_DEADLINE_MS,
+                // Online every seat's input is committed this far ahead for
+                // the whole table, a bot's like a person's.
+                input_delay: match online {
+                    true => crate::sim::DEFAULT_DELAY,
+                    false => 0,
+                },
+            },
+            log: Box::new(std::io::sink()),
+        };
+        for driver in &round.drivers {
+            if driver.connected {
+                let hello = protocol::hello(board, &round.table(), driver.seat, false);
+                round.link.send(driver.id, &hello);
+            }
+        }
+        round
+    }
+
     fn table(&self) -> Table<'_> {
         Table {
             game: self.game,
@@ -394,23 +511,36 @@ impl BotRound {
                 | crate::bots::listener::GameMsg::Back { seat } => *seat,
             };
             if let Some(driver) = self.drivers.iter_mut().find(|d| d.seat == seat) {
+                // Anything at all from it: it is not hung.
+                if let Some(quiet) = self.quiet_since.get_mut(usize::from(seat)) {
+                    *quiet = None;
+                }
                 driver.take(msg, t, &mut journal);
             }
         }
-        // A bot comes back by resuming: `hello` again before its next tick.
+        // A bot comes back by resuming (`hello` again before its next
+        // tick), or by speaking again after a silence.
         let now = Instant::now();
         for driver in &mut self.drivers {
             let seat = usize::from(driver.seat);
-            if driver.connected {
-                if std::mem::take(&mut self.standing_in[seat]) {
-                    news.push((driver.seat, News::Back));
+            let gone_for = match driver.connected {
+                true => {
+                    self.dropped_at[seat] = None;
+                    self.quiet_since[seat].map(|since| now.duration_since(since))
                 }
-                self.dropped_at[seat] = None;
-            } else {
-                let since = *self.dropped_at[seat].get_or_insert(now);
-                if !self.standing_in[seat] && now.duration_since(since) >= GRACE {
-                    self.standing_in[seat] = true;
-                    news.push((driver.seat, News::StandIn));
+                false => Some(now.duration_since(*self.dropped_at[seat].get_or_insert(now))),
+            };
+            match gone_for {
+                Some(gone) if gone >= self.grace => {
+                    if !std::mem::replace(&mut self.standing_in[seat], true) {
+                        news.push((driver.seat, News::StandIn));
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    if std::mem::take(&mut self.standing_in[seat]) {
+                        news.push((driver.seat, News::Back));
+                    }
                 }
             }
         }
@@ -436,9 +566,13 @@ impl BotRound {
         for driver in &mut self.drivers {
             let seat = driver.seat;
             let slot = usize::from(seat);
-            let (action, act) = if self.standing_in[slot] {
+            let (action, act) = if let Some(held) = self.unconfirmed[slot] {
+                // Online, what the lockstep has not taken yet goes again,
+                // with the hand and the bot's order held where they are.
+                held
+            } else if self.standing_in[slot] {
                 // The AI walks by the same rule, read off the board.
-                let action = bot_action(board, seat, BotLevel::Normal);
+                let action = bot_action(board, seat, STAND_IN);
                 (action, act_of(action))
             } else {
                 let order = driver.order(&mut journal);
@@ -448,6 +582,9 @@ impl BotRound {
                 }
             };
             actions[slot] = action;
+            if self.online && action != PlayerAction::None {
+                self.unconfirmed[slot] = Some((action, act));
+            }
             committed.push(Committed {
                 seat,
                 act,
@@ -500,6 +637,7 @@ impl BotRound {
             let msg = protocol::tick(board, self.game, &you, &cursors);
             if self.link.send(self.drivers[i].id, &msg) {
                 self.drivers[i].sent(t, now);
+                self.quiet_since[usize::from(seat)].get_or_insert(now);
             }
         }
     }
@@ -523,15 +661,31 @@ impl BotRound {
         self.after(board, Vec::new());
     }
 
-    /// The round is over: every bot is told how it went.
-    fn finish(&self, board: &Board) {
+    /// The round is over: every bot is told how it went, once, however
+    /// many steps the tide stays in for. The round's recording is kept
+    /// first, so a bot that asks for the replay `end` names the moment it
+    /// hears it finds it there; with nothing recorded, `end` names none.
+    fn finish(&mut self, board: &Board, door: Option<&Doorway>, replay: Option<&Replay>) {
+        if std::mem::replace(&mut self.finished, true) {
+            return;
+        }
         let n = self.names.len();
         let scores: Vec<u32> = board.scores()[..n].to_vec();
         let places = placings(&scores, &vec![false; n]);
+        let kept = match (door, replay) {
+            (Some(door), Some(replay)) => {
+                let id = format!("p-g{}", self.game);
+                let players = self.drivers.iter().map(|driver| driver.id).collect();
+                door.listener
+                    .keep_replay(id.clone(), players, replay.to_text());
+                Some(id)
+            }
+            _ => None,
+        };
         for driver in &self.drivers {
             let msg = serde_json::json!({
                 "type": "end", "game": self.game, "scores": scores,
-                "placing": places[usize::from(driver.seat)], "replay": format!("p-g{}", self.game),
+                "placing": places[usize::from(driver.seat)], "replay": kept,
             });
             self.link.send(driver.id, &msg);
         }
@@ -598,8 +752,17 @@ impl BotSeats {
     }
 
     /// The lockstep took `seat`'s act for `frame`: remember it until the
-    /// frame is played, when its outcome is known.
+    /// frame is played, when its outcome is known. One it did not take
+    /// (paused, stalled, or the frame given to a tide call) is not passed
+    /// here, and goes out again on the next commit.
     pub fn committed(&mut self, frame: u32, seat: u8, act: Option<Act>, action: PlayerAction) {
+        if let Some(held) = self
+            .round
+            .as_mut()
+            .and_then(|round| round.unconfirmed.get_mut(usize::from(seat)))
+        {
+            *held = None;
+        }
         if let (Some(round), Some(act)) = (self.round.as_mut(), act) {
             round.in_flight.push_back(InFlight {
                 frame,
@@ -651,9 +814,44 @@ impl BotSeats {
     }
 
     /// Online, after the tick: the board as it now stands to the bots.
-    pub fn send_online(&mut self, board: &Board) {
-        if let Some(round) = self.round.as_mut() {
+    /// `replay` is the round's recording so far, kept for the bots once
+    /// the tide is in.
+    pub fn send_online(&mut self, board: &Board, replay: Option<&Replay>) {
+        let BotSeats { door, round, .. } = self;
+        if let Some(round) = round.as_mut() {
             round.send_next(board);
+            if board.round_over() {
+                round.finish(board, door.as_ref(), replay);
+            }
+        }
+    }
+
+    /// Fill the bot seats' actions for the tick about to run from `board`.
+    /// `None` when no bot holds a seat.
+    pub fn commit(
+        &mut self,
+        board: &Board,
+        actions: &mut [PlayerAction; MAX_PLAYERS],
+    ) -> Option<Vec<Committed>> {
+        let BotSeats { round, news, .. } = self;
+        Some(round.as_mut()?.commit(board, actions, news))
+    }
+
+    /// After a tick on this machine: outcomes, the next tick out, and the
+    /// end of the round if this was it, with `replay` kept for the bots.
+    pub fn after(
+        &mut self,
+        board: &Board,
+        committed: Option<Vec<Committed>>,
+        replay: Option<&Replay>,
+    ) {
+        let BotSeats { door, round, .. } = self;
+        let (Some(round), Some(committed)) = (round.as_mut(), committed) else {
+            return;
+        };
+        round.after(board, committed);
+        if board.round_over() {
+            round.finish(board, door.as_ref(), replay);
         }
     }
 }
@@ -674,27 +872,23 @@ pub struct Drivers<'w> {
 }
 
 impl Drivers<'_> {
-    /// Fill the bot seats' actions for the tick about to run from `board`.
-    /// `None` when no bot holds a seat.
+    /// See [`BotSeats::commit`].
     pub fn commit(
         &mut self,
         board: &Board,
         actions: &mut [PlayerAction; MAX_PLAYERS],
     ) -> Option<Vec<Committed>> {
-        let BotSeats { round, news, .. } = &mut *self.bots;
-        Some(round.as_mut()?.commit(board, actions, news))
+        self.bots.commit(board, actions)
     }
 
-    /// After the tick: outcomes, the next tick out, and the end of the
-    /// round if this was it.
-    pub fn after(&mut self, board: &Board, committed: Option<Vec<Committed>>) {
-        let (Some(round), Some(committed)) = (self.bots.round.as_mut(), committed) else {
-            return;
-        };
-        round.after(board, committed);
-        if board.round_over() {
-            round.finish(board);
-        }
+    /// After the tick: see [`BotSeats::after`].
+    pub fn after(
+        &mut self,
+        board: &Board,
+        committed: Option<Vec<Committed>>,
+        replay: Option<&Replay>,
+    ) {
+        self.bots.after(board, committed, replay);
     }
 }
 
@@ -781,68 +975,32 @@ pub fn begin_round(
     }
     let board = &sim.0;
     let n = usize::from(board.seats_in_play()).max(2);
-    let deadline = Duration::from_millis(u64::from(LIVE_DEADLINE_MS));
-    let mut drivers = Vec::new();
-    let mut routes = Vec::new();
-    for &seat in &seats {
-        // Online the doorway's one chair is the bot's, whichever seat the
-        // host dealt this peer.
-        let id = match (mine, hosted.iter().find(|(s, _)| *s == seat)) {
-            (Some(_), _) => door.chairs.first().and_then(|c| c.bot),
-            (None, Some(&(_, id))) => Some(id),
-            (None, None) => door
-                .chairs
-                .iter()
-                .find(|c| c.seat == seat)
-                .and_then(|c| c.bot),
-        };
-        let Some(id) = id else {
-            continue;
-        };
-        routes.push((id, seat));
-        drivers.push(BotDriver::new(
-            id,
-            seat,
-            names.0[usize::from(seat)].clone(),
-            door.listener.connected(id),
-            deadline,
-        ));
-    }
-    let link = door.listener.open_game(game, routes);
-    let mut cursors = [None; MAX_PLAYERS];
-    for &seat in &seats {
-        cursors[usize::from(seat)] = Some(SeatCursor::home(board, seat));
-    }
-    let round = BotRound {
-        online: online.0.is_some(),
-        in_flight: std::collections::VecDeque::new(),
-        link,
+    let held: Vec<(u8, BotId)> = seats
+        .iter()
+        .filter_map(|&seat| {
+            // Online the doorway's one chair is the bot's, whichever seat
+            // the host dealt this peer.
+            let id = match (mine, hosted.iter().find(|(s, _)| *s == seat)) {
+                (Some(_), _) => door.chairs.first().and_then(|c| c.bot),
+                (None, Some(&(_, id))) => Some(id),
+                (None, None) => door
+                    .chairs
+                    .iter()
+                    .find(|c| c.seat == seat)
+                    .and_then(|c| c.bot),
+            };
+            Some((seat, id?))
+        })
+        .collect();
+    let round = BotRound::open(
+        door,
+        board,
+        &held,
+        (0..n).map(|seat| names.label(tr, seat as u8)).collect(),
+        kinds.0[..n].to_vec(),
+        online.0.is_some(),
         game,
-        drivers,
-        cursors,
-        last: [None; MAX_PLAYERS],
-        dropped_at: [None; MAX_PLAYERS],
-        standing_in: [false; MAX_PLAYERS],
-        names: (0..n).map(|seat| names.label(tr, seat as u8)).collect(),
-        kinds: kinds.0[..n].to_vec(),
-        clock: Clock {
-            live: true,
-            deadline_ms: LIVE_DEADLINE_MS,
-            // Online every seat's input is committed this far ahead for the
-            // whole table, a bot's like a person's.
-            input_delay: match online.0.is_some() {
-                true => crate::sim::DEFAULT_DELAY,
-                false => 0,
-            },
-        },
-        log: Box::new(std::io::sink()),
-    };
-    for driver in &round.drivers {
-        if driver.connected {
-            let hello = protocol::hello(board, &round.table(), driver.seat, false);
-            round.link.send(driver.id, &hello);
-        }
-    }
+    );
     bots.round = Some(round);
 }
 
@@ -1267,5 +1425,290 @@ mod tests {
         door.seat_bots(&[3]);
         assert_eq!(door.chairs.len(), 1);
         assert!(door.ready());
+    }
+
+    /// A bot on the other end of a socket, reading what the game says.
+    struct TestBot {
+        stream: std::net::TcpStream,
+        reader: BufReader<std::net::TcpStream>,
+    }
+
+    impl TestBot {
+        fn register(string: &str) -> TestBot {
+            let parsed = ConnString::parse(string).expect("a string the card printed");
+            let stream =
+                std::net::TcpStream::connect((parsed.host.as_str(), parsed.port)).expect("connect");
+            let reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut bot = TestBot { stream, reader };
+            let key = parsed.key.map(|k| k.to_string()).unwrap_or_default();
+            bot.send(&serde_json::json!({
+                "type": "register", "protocol": 1, "name": "Greedy", "key": key,
+            }));
+            let mut answer = String::new();
+            bot.stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("timeout");
+            let _ = bot.reader.read_line(&mut answer);
+            assert!(answer.contains("\"registered\""), "{answer}");
+            bot
+        }
+
+        fn send(&mut self, msg: &serde_json::Value) {
+            writeln!(self.stream, "{msg}").expect("write");
+        }
+
+        /// The next message of type `kind`, skipping the others, if one
+        /// comes within `within`.
+        fn next(&mut self, kind: &str, within: Duration) -> Option<serde_json::Value> {
+            let until = Instant::now() + within;
+            loop {
+                let left = until.checked_duration_since(Instant::now())?;
+                self.stream
+                    .set_read_timeout(Some(left.max(Duration::from_millis(1))))
+                    .expect("timeout");
+                let mut line = String::new();
+                match self.reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => return None,
+                    Ok(_) => {}
+                }
+                let msg: serde_json::Value = serde_json::from_str(&line).expect("json");
+                if msg["type"] == kind {
+                    return Some(msg);
+                }
+            }
+        }
+    }
+
+    /// Poll `door` until `done` holds, for a few seconds at most.
+    fn poll_until(door: &mut Doorway, done: impl Fn(&Doorway) -> bool) -> bool {
+        for _ in 0..400 {
+            door.poll();
+            if done(door) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    /// Seat 1's castle, and the board two seats play on.
+    const CASTLE: (u8, u8) = (7, 5);
+
+    fn beach() -> Board {
+        let mut board = Board::new(9, 7, 3);
+        board.set_tile(1, 1, crate::sim::TileKind::Castle(0));
+        board.set_tile(CASTLE.0, CASTLE.1, crate::sim::TileKind::Castle(1));
+        board
+    }
+
+    /// A round with a bot registered in seat 1, against a person in seat 0.
+    fn a_round_with_a_bot(online: bool) -> (BotSeats, TestBot, Board) {
+        let mut door = Doorway::open().expect("a port on this machine");
+        door.seat_bots(&[1]);
+        let bot = TestBot::register(&door.string(&door.chairs[0]));
+        assert!(poll_until(&mut door, |d| d.ready()), "the bot sat down");
+        let id = door.chairs[0].bot.expect("seated");
+        let board = beach();
+        let round = BotRound::open(
+            &door,
+            &board,
+            &[(1, id)],
+            vec!["Ana".into(), "Greedy".into()],
+            vec![SeatKind::Human, SeatKind::Bot],
+            online,
+            1,
+        );
+        let bots = BotSeats {
+            door: Some(door),
+            round: Some(round),
+            ..BotSeats::default()
+        };
+        (bots, bot, board)
+    }
+
+    fn over(mut board: Board) -> (Board, Replay) {
+        let replay = Replay::new(crate::sim::Level::from_board("T", 3, board.clone()));
+        board.set_round_length(Some(1));
+        board.tick_idle();
+        assert!(board.round_over());
+        (board, replay)
+    }
+
+    /// The `end` a couch bot is sent names a replay it can fetch, and it is
+    /// sent once, however many steps the tide stays in for.
+    #[test]
+    fn a_couch_bot_is_told_once_and_can_fetch_the_replay_it_is_told_of() {
+        let (mut bots, mut bot, board) = a_round_with_a_bot(false);
+        let (board, replay) = over(board);
+        bots.after(&board, Some(Vec::new()), Some(&replay));
+        let end = bot
+            .next("end", Duration::from_secs(5))
+            .expect("told the round is over");
+        let id = end["replay"].as_str().expect("a replay named").to_string();
+        bot.send(&serde_json::json!({"type": "replay", "id": id}));
+        let mut answer = String::new();
+        bot.stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        bot.reader.read_line(&mut answer).expect("an answer");
+        let answer: serde_json::Value = serde_json::from_str(&answer).expect("json");
+        assert_eq!(answer["type"], "replay", "{answer}");
+        assert_eq!(answer["text"], replay.to_text());
+        // The tide stays in; the bot has been told.
+        bots.after(&board, Some(Vec::new()), Some(&replay));
+        assert!(
+            bot.next("end", Duration::from_millis(300)).is_none(),
+            "told twice"
+        );
+    }
+
+    /// Online, a bot seat is told the round is over like a couch one.
+    #[test]
+    fn an_online_bot_is_told_when_the_round_is_over() {
+        let (mut bots, mut bot, board) = a_round_with_a_bot(true);
+        let (board, replay) = over(board);
+        bots.send_online(&board, Some(&replay));
+        assert!(
+            bot.next("end", Duration::from_secs(5)).is_some(),
+            "no end for an online bot"
+        );
+    }
+
+    /// Online, an act the lockstep did not take (a pause, a stall) is
+    /// handed over again on the next commit, not lost with the walk that
+    /// led to it.
+    #[test]
+    fn an_act_the_lockstep_did_not_take_goes_out_again() {
+        let (mut bots, mut bot, board) = a_round_with_a_bot(true);
+        bot.next("hello", Duration::from_secs(5)).expect("hello");
+        bot.send(&serde_json::json!({"type": "ready", "game": 1}));
+        let (x, y) = (CASTLE.0 - 1, CASTLE.1);
+        bot.send(&serde_json::json!({
+            "game": 1, "tick": 0, "act": "place", "x": x, "y": y, "dir": "left",
+        }));
+        let place = PlayerAction::Place {
+            x,
+            y,
+            dir: crate::sim::Direction::Left,
+        };
+        let mut landed = None;
+        for _ in 0..400 {
+            let driven = bots.commit_online(&board);
+            if let Some(&(1, action, act)) = driven.first()
+                && action == place
+            {
+                landed = Some(act);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let act = landed.expect("the place landed");
+        // Not committed: the next commit carries it again.
+        let again = bots.commit_online(&board);
+        assert_eq!(again.first().map(|d| d.1), Some(place), "the act was lost");
+        // Committed: it is done with.
+        bots.committed(5, 1, act, place);
+        let after = bots.commit_online(&board);
+        assert_eq!(after.first().map(|d| d.1), Some(PlayerAction::None));
+    }
+
+    /// A placement the board refused before the tick, on a tile an earlier
+    /// seat freed during it, stands: the bot is told it was accepted.
+    #[test]
+    fn a_place_on_a_tile_freed_earlier_in_the_tick_is_accepted() {
+        let (mut bots, _bot, mut board) = a_round_with_a_bot(false);
+        let (x, y) = (CASTLE.0 - 1, CASTLE.1);
+        let dir = crate::sim::Direction::Left;
+        assert!(board.place_signpost(1, x, y, dir));
+        board.tick_idle();
+        let round = bots.round.as_mut().expect("a round");
+        round.after(
+            &board,
+            vec![Committed {
+                seat: 1,
+                act: Some(Act::Place { x, y, dir }),
+                action: PlayerAction::Place { x, y, dir },
+                refused: Some(Refusal::RivalPost),
+            }],
+        );
+        assert_eq!(round.last[1], Some(("place", Outcome::Accepted)));
+    }
+
+    /// A bot that is connected but says nothing (hung, or its machine left
+    /// the network without closing) is stood in for like one that dropped,
+    /// and has its seat back once it speaks.
+    #[test]
+    fn a_silent_bot_is_stood_in_for_and_gets_its_seat_back() {
+        let (mut bots, mut bot, board) = a_round_with_a_bot(false);
+        bots.round.as_mut().expect("a round").grace = Duration::from_millis(50);
+        let mut actions = [PlayerAction::None; MAX_PLAYERS];
+        let mut stood_in = false;
+        for _ in 0..100 {
+            let committed = bots.commit(&board, &mut actions);
+            bots.after(&board, committed, None);
+            if bots.news.contains(&(1, News::StandIn)) {
+                stood_in = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(stood_in, "nobody stood in for a silent bot");
+        bots.news.clear();
+        bot.send(&serde_json::json!({"type": "ready", "game": 1}));
+        let mut back = false;
+        for _ in 0..400 {
+            let committed = bots.commit(&board, &mut actions);
+            if bots.news.contains(&(1, News::Back)) {
+                back = true;
+                break;
+            }
+            bots.after(&board, committed, None);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(back, "the bot spoke and did not get its seat back");
+    }
+
+    /// A bot that goes before the match starts gives its chair up: the
+    /// card stops counting it, and its seat gets a fresh key.
+    #[test]
+    fn a_bot_that_goes_gives_its_chair_up() {
+        let mut door = Doorway::open().expect("a port on this machine");
+        door.seat_bots(&[1]);
+        let spent = door.string(&door.chairs[0]);
+        let bot = TestBot::register(&spent);
+        assert!(poll_until(&mut door, |d| d.ready()));
+        drop(bot);
+        assert!(
+            poll_until(&mut door, |d| !d.ready()),
+            "a dead bot kept its chair"
+        );
+        assert!(door.arrived(&crate::app::i18n::EN).is_empty());
+        assert_eq!(door.chairs.len(), 1, "the seat still wants a bot");
+        assert_ne!(door.string(&door.chairs[0]), spent, "a fresh key");
+        // And a bot can take it with that key.
+        let _next = TestBot::register(&door.string(&door.chairs[0]));
+        assert!(poll_until(&mut door, |d| d.ready()));
+    }
+
+    /// The same at a host's door (route 2), where chairs are not seats:
+    /// the dead bot's chair goes, and one chair stays open for the next.
+    #[test]
+    fn a_bot_that_leaves_a_hosts_door_is_not_seated() {
+        let mut door = Doorway::open().expect("a port on this machine");
+        door.keep_a_chair_open(true);
+        let bot = TestBot::register(&door.open_string().expect("an open chair"));
+        assert!(poll_until(&mut door, |d| d
+            .arrived(&crate::app::i18n::EN)
+            .len()
+            == 1));
+        door.keep_a_chair_open(true);
+        drop(bot);
+        assert!(
+            poll_until(&mut door, |d| d.arrived(&crate::app::i18n::EN).is_empty()),
+            "a dead bot is still at the beach"
+        );
+        door.keep_a_chair_open(true);
+        assert_eq!(door.chairs.len(), 1, "{} chairs", door.chairs.len());
+        assert!(door.chairs[0].bot.is_none());
     }
 }

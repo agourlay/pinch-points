@@ -231,6 +231,9 @@ struct Bot {
     rtts: Vec<Duration>,
     pings: HashMap<u64, Instant>,
     allowance: Allowance,
+    /// Gone, and its chair given away ([`Listener::retire`]): its token no
+    /// longer brings it back, and its name is free for a bot started anew.
+    retired: bool,
 }
 
 #[derive(Default)]
@@ -369,6 +372,20 @@ impl Listener {
         // The writer drains the queue and then shuts the socket.
         if let Some(bot) = registry.bots.get_mut(id) {
             bot.conn = None;
+        }
+    }
+
+    /// Finish with a bot that went and whose chair was given away: its
+    /// token no longer brings it back, and its name is free, so the same
+    /// bot started again registers afresh rather than being told its name
+    /// is taken by the one that died.
+    pub fn retire(&self, id: BotId) {
+        let mut registry = lock(&self.shared.registry);
+        if let Some(bot) = registry.bots.get_mut(id) {
+            bot.retired = true;
+            if let Some(conn) = bot.conn.take() {
+                let _ = conn.stream.shutdown(Shutdown::Both);
+            }
         }
     }
 
@@ -700,7 +717,11 @@ fn register_bot(
     if let Some(token) = &register.token {
         let token = Token::from_wire(token);
         let mut registry = lock(&shared.registry);
-        let Some(id) = registry.bots.iter().position(|b| b.token == token) else {
+        let Some(id) = registry
+            .bots
+            .iter()
+            .position(|b| b.token == token && !b.retired)
+        else {
             return Err("that token is not one this listener issued".to_string());
         };
         let serial = attach(&mut registry, id, writer);
@@ -753,7 +774,7 @@ fn register_bot(
     if registry
         .bots
         .iter()
-        .any(|b| b.info.name.eq_ignore_ascii_case(&register.name))
+        .any(|b| !b.retired && b.info.name.eq_ignore_ascii_case(&register.name))
     {
         return Err(format!("the name {:?} is taken here", register.name));
     }
@@ -803,6 +824,7 @@ fn register_bot(
         rtts: Vec::new(),
         pings: HashMap::new(),
         allowance: Allowance::new(),
+        retired: false,
     });
     drop(config);
     let serial = attach(&mut registry, id, writer);
