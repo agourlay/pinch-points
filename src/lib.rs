@@ -32,6 +32,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod app;
+pub mod bots;
 pub mod gif;
 pub mod highlight;
 pub mod lzw;

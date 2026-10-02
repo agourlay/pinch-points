@@ -19,6 +19,13 @@ pub fn now_secs() -> u64 {
 /// fields. Shared because the shelf of kept rounds stamps them and the
 /// daily challenge names its day.
 pub fn civil_date(days: u32) -> (u32, u32) {
+    let (_, month, day) = civil_ymd(days);
+    (day, month)
+}
+
+/// The civil date a day count lands on, as `(year, month, day)`, UTC: the
+/// same algorithm with the year kept, for the arena's file stamps.
+pub fn civil_ymd(days: u32) -> (i64, u32, u32) {
     let z = i64::from(days) + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
@@ -27,8 +34,8 @@ pub fn civil_date(days: u32) -> (u32, u32) {
     let mp = (5 * doy + 2) / 153;
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let _year = yoe + era * 400 + i64::from(month <= 2);
-    (day as u32, month as u32)
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month as u32, day as u32)
 }
 
 /// A fresh seed for a locally configured round, from the clock's

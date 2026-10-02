@@ -92,7 +92,7 @@ impl Board {
         self.spawn_gull(x as u8, y as u8, dir);
     }
 
-    fn roll_takeoff(&mut self) -> u32 {
+    pub(super) fn roll_takeoff(&mut self) -> u32 {
         TAKEOFF_MIN + self.rng.next_u32() % (TAKEOFF_MAX - TAKEOFF_MIN + 1)
     }
 

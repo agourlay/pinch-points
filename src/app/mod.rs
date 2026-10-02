@@ -13,7 +13,7 @@ mod binds;
 mod board_render;
 mod boot;
 pub mod campaign;
-mod clock;
+pub(crate) mod clock;
 mod codes;
 /// Whether `screen` stands on the shared beach postcard. One list, asked
 /// by the run condition and by the backdrop tender, so a new screen
@@ -64,7 +64,7 @@ mod menu_ui;
 pub mod net;
 mod open;
 pub mod palette;
-mod paths;
+pub(crate) mod paths;
 mod pause;
 pub mod progress;
 pub mod replays;
@@ -81,10 +81,21 @@ mod teams;
 mod tournament;
 mod typing;
 pub mod update;
+mod watch;
 
 pub use campaign::{Campaign, CampaignKind, Coop};
 pub use daily::Daily;
 pub use schedule::run;
+
+/// Open the game on one replay file (`pinch-points watch FILE`).
+pub fn watch_file(replay: Replay) {
+    schedule::run_with(watch::file(replay));
+}
+
+/// Open the game on an arena's games as they are played (`arena --watch`).
+pub fn watch_live(feed: std::sync::mpsc::Receiver<crate::bots::game::Feed>) {
+    schedule::run_with(watch::live(feed));
+}
 
 use crate::app::i18n::fill;
 use crate::sim::{

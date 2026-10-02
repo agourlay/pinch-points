@@ -1,8 +1,8 @@
 //! Replays (spec §7.7): the starting level plus the per-tick input list.
 //! Playing it back through `Board::tick` reproduces the match bit-for-bit.
 //!
-//! Text format: a `replay-v1` header, an optional `names:` line, the level
-//! text, then `inputs:` with one
+//! Text format: a `replay-v2` header, an optional `names:` line, an
+//! optional `kinds:` line, the level text, then `inputs:` with one
 //! line per tick: six hex digits per seat (full x, full y, op/dir byte), so
 //! `MAX_PLAYERS` of them, where a bare `.` is the common all-idle tick. A
 //! full byte per axis, like the wire (spec §7.6), so boards wider than 16
@@ -25,6 +25,39 @@ pub struct Replay {
     /// business to supply: a replay that fell back to the local couch names
     /// would put this machine's P1 on somebody else's crabs.
     pub names: [String; MAX_PLAYERS],
+    /// What held each seat: a person, the game's AI, or a bot over the
+    /// protocol. `watch` draws it beside the name, so nobody watching is
+    /// surprised by what was playing.
+    pub kinds: [SeatKind; MAX_PLAYERS],
+}
+
+/// What kind of thing holds a seat, as the bot protocol, the replay and the
+/// standings name it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SeatKind {
+    #[default]
+    Human,
+    Ai,
+    Bot,
+}
+
+impl SeatKind {
+    pub fn token(self) -> &'static str {
+        match self {
+            SeatKind::Human => "human",
+            SeatKind::Ai => "ai",
+            SeatKind::Bot => "bot",
+        }
+    }
+
+    pub fn from_token(token: &str) -> Option<SeatKind> {
+        match token {
+            "human" => Some(SeatKind::Human),
+            "ai" => Some(SeatKind::Ai),
+            "bot" => Some(SeatKind::Bot),
+            _ => None,
+        }
+    }
 }
 
 /// The rules a recording was played under, not just the shape of the file.
@@ -40,6 +73,15 @@ const INPUTS_MARK: &str = "inputs:";
 /// rather than inside it: the level format knows nothing about who was
 /// holding the controller, and should not have to.
 const NAMES_MARK: &str = "names:";
+/// Seat kinds, one line, `|` between them, after the names.
+///
+/// A line inside the header rather than a new format version, by the
+/// rule the format already keeps: a build from before kinds were kept
+/// hands this line to the level parser, which refuses a key it does not
+/// know, so an older game refuses such a recording outright rather than
+/// half-reading it. Written only when some seat was not a person, so a
+/// plain couch round is byte for byte what it always was.
+const KINDS_MARK: &str = "kinds:";
 
 impl Replay {
     pub fn new(level: Level) -> Replay {
@@ -47,6 +89,7 @@ impl Replay {
             level,
             inputs: Vec::new(),
             names: Default::default(),
+            kinds: Default::default(),
         }
     }
 
@@ -72,6 +115,10 @@ impl Replay {
         // unnamed local round is byte-for-byte what it always was.
         if self.names.iter().any(|n| !n.is_empty()) {
             let _ = writeln!(out, "{NAMES_MARK} {}", self.names.join("|"));
+        }
+        if self.kinds.iter().any(|k| *k != SeatKind::Human) {
+            let kinds: Vec<&str> = self.kinds.iter().map(|k| k.token()).collect();
+            let _ = writeln!(out, "{KINDS_MARK} {}", kinds.join("|"));
         }
         out.push_str(&self.level.to_text());
         let _ = writeln!(out, "{INPUTS_MARK}");
@@ -104,6 +151,18 @@ impl Replay {
                     *slot = name.trim().to_string();
                 }
                 (names, rest)
+            }
+            None => (Default::default(), rest),
+        };
+        let (kinds, rest) = match rest.strip_prefix(KINDS_MARK) {
+            Some(after) => {
+                let (line, rest) = after.split_once('\n').unwrap_or((after, ""));
+                let mut kinds = [SeatKind::Human; MAX_PLAYERS];
+                for (slot, kind) in kinds.iter_mut().zip(line.trim().split('|')) {
+                    *slot = SeatKind::from_token(kind.trim())
+                        .ok_or_else(|| format!("no seat kind {:?}", kind.trim()))?;
+                }
+                (kinds, rest)
             }
             None => (Default::default(), rest),
         };
@@ -141,6 +200,7 @@ impl Replay {
             level,
             inputs,
             names,
+            kinds,
         })
     }
 }
@@ -175,6 +235,33 @@ mod tests {
         assert!(!plain.to_text().contains("names:"));
         let plain_back = Replay::parse(&plain.to_text()).expect("round trip");
         assert!(plain_back.names.iter().all(String::is_empty));
+    }
+
+    /// What held each seat survives the trip, a couch round writes no line
+    /// for it, and the line is one an older build refuses rather than
+    /// skips: its level parser does not know the key.
+    #[test]
+    fn a_replay_remembers_what_held_each_seat() {
+        let level = arena();
+        let mut replay = Replay::new(level.clone());
+        replay.names[0] = "Greedy".into();
+        replay.kinds[0] = SeatKind::Bot;
+        replay.kinds[1] = SeatKind::Ai;
+        replay.record([PlayerAction::None; MAX_PLAYERS]);
+        let text = replay.to_text();
+        assert!(text.contains("kinds: bot|ai|human"));
+        let back = Replay::parse(&text).expect("round trip");
+        assert_eq!(
+            back.kinds[..3],
+            [SeatKind::Bot, SeatKind::Ai, SeatKind::Human]
+        );
+        assert!(!Replay::new(level).to_text().contains("kinds:"));
+        let level_part = text
+            .split_once("kinds:")
+            .map(|(_, rest)| rest)
+            .expect("kinds");
+        assert!(Level::parse(&format!("kinds:{level_part}")).is_err());
+        assert!(Replay::parse(&text.replace("kinds: bot", "kinds: robot")).is_err());
     }
 
     #[test]

@@ -7,7 +7,13 @@
 use super::*;
 
 pub fn run() {
+    run_with(watch::Watch::default());
+}
+
+/// The game, opened on whatever `watching` says to watch (usually nothing).
+pub(super) fn run_with(watching: watch::Watch) {
     let mut app = App::new();
+    app.insert_resource(watching);
     embedded::register(&mut app);
     // Read before the window is built, so a fullscreen player never sees a
     // window open and then grow. The same read seeds the resources below.
@@ -213,6 +219,7 @@ fn add_startup(app: &mut App) {
             achievements::load,
             progress::load,
             dev::kickoff,
+            watch::begin,
             // Off-thread; the menu polls for the answer.
             update::start_check,
         ),
@@ -268,6 +275,9 @@ fn add_screen_transitions(app: &mut App) {
             // A local match on a handmade beach reads it off the shelf, so
             // the shelf has to be current before the board is built.
             match_setup::refresh_custom_beaches,
+            // An arena being watched puts its next game on first, so the
+            // cursors and the board both see it.
+            watch::install,
             cursor::spawn_versus_cursors,
             load_versus,
             countdown::show_countdown,
@@ -473,6 +483,7 @@ enum Frame {
 /// systems grouped into the [`Frame`] sets.
 fn add_frame_systems(app: &mut App) {
     app.add_systems(FixedUpdate, advance_sim.run_if(sim_should_run));
+    app.add_systems(Update, watch::pump);
     // A hosted beach keeps its beacon up for the whole match, not just the
     // lobby, so a player arriving late sees a game in progress with a chair
     // free rather than an empty network. In `Update` rather than beside the

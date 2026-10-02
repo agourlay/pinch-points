@@ -7,26 +7,104 @@
 
 use super::*;
 
+/// Why the sim turned an action down. Read off the same branches that
+/// decide it, so a bot hearing a reason is hearing the rule that applied.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Refusal {
+    /// The action named a seat that does not exist.
+    NoSeat,
+    OffBoard,
+    Rock,
+    Castle,
+    Spawner,
+    Turnstile,
+    Kelp,
+    Pool,
+    /// Somebody else's signpost stands there.
+    RivalPost,
+    /// Every post is spent and this board refuses rather than evicts.
+    OutOfPosts,
+    /// A removal aimed at a tile with no signpost on it.
+    NoPost,
+}
+
+impl Refusal {
+    /// The tile's own objection to a signpost, if it has one: only sand
+    /// takes one.
+    fn of_tile(tile: TileKind) -> Option<Refusal> {
+        match tile {
+            TileKind::Empty => None,
+            TileKind::Rock => Some(Refusal::Rock),
+            TileKind::Castle(_) => Some(Refusal::Castle),
+            TileKind::Spawner(_) => Some(Refusal::Spawner),
+            TileKind::Turnstile { .. } => Some(Refusal::Turnstile),
+            TileKind::Kelp => Some(Refusal::Kelp),
+            TileKind::Pool => Some(Refusal::Pool),
+        }
+    }
+
+    /// The protocol's word for it (see `docs/bot-protocol.md`).
+    pub fn token(self) -> &'static str {
+        match self {
+            Refusal::NoSeat => "no_seat",
+            Refusal::OffBoard => "off_board",
+            Refusal::Rock => "rock",
+            Refusal::Castle => "castle",
+            Refusal::Spawner => "spawner",
+            Refusal::Turnstile => "turnstile",
+            Refusal::Kelp => "kelp",
+            Refusal::Pool => "pool",
+            Refusal::RivalPost => "rival_post",
+            Refusal::OutOfPosts => "out_of_posts",
+            Refusal::NoPost => "no_post",
+        }
+    }
+}
+
 impl Board {
     /// Whether a placement at `(x, y)` would succeed, without mutating.
     /// Mirrors [`Board::place_signpost`] exactly; the UI uses it for instant
     /// denied feedback on a queued (not yet applied) action.
     pub fn can_place_signpost(&self, player: PlayerId, x: u8, y: u8) -> bool {
-        if seat(player).is_none() || !self.in_bounds(i32::from(x), i32::from(y)) {
-            return false;
+        self.placement_refusal(player, x, y).is_none()
+    }
+
+    /// Why a placement at `(x, y)` would be refused, or `None` when it
+    /// would stand. The rule itself: [`Board::can_place_signpost`] is this
+    /// with the reason thrown away, so the two cannot disagree, and a bot
+    /// is told the same reason the sim acted on.
+    pub fn placement_refusal(&self, player: PlayerId, x: u8, y: u8) -> Option<Refusal> {
+        if seat(player).is_none() {
+            return Some(Refusal::NoSeat);
+        }
+        if !self.in_bounds(i32::from(x), i32::from(y)) {
+            return Some(Refusal::OffBoard);
         }
         let t = self.index(i32::from(x), i32::from(y)) as usize;
-        if self.grid.tiles[t] != TileKind::Empty {
-            return false;
+        if let Some(refusal) = Refusal::of_tile(self.grid.tiles[t]) {
+            return Some(refusal);
         }
         match self.signposts[t] {
             // Your own signpost re-points in place; a rival's blocks.
-            Some(sp) => sp.owner == player,
+            Some(sp) => (sp.owner != player).then_some(Refusal::RivalPost),
             // Empty tile: at the cap, only the evicting rule still places.
-            None => {
-                self.signpost_count(player) < self.rules.signpost_cap as usize
-                    || self.rules.cap_policy == CapPolicy::Evict
-            }
+            None => (self.signpost_count(player) >= self.rules.signpost_cap as usize
+                && self.rules.cap_policy != CapPolicy::Evict)
+                .then_some(Refusal::OutOfPosts),
+        }
+    }
+
+    /// Why a removal at `(x, y)` would do nothing, or `None` when it would
+    /// take a post up. The same rule as [`Board::remove_signpost`].
+    pub fn removal_refusal(&self, player: PlayerId, x: u8, y: u8) -> Option<Refusal> {
+        if !self.in_bounds(i32::from(x), i32::from(y)) {
+            return Some(Refusal::OffBoard);
+        }
+        let t = self.index(i32::from(x), i32::from(y)) as usize;
+        match self.signposts[t] {
+            Some(sp) if sp.owner == player => None,
+            Some(_) => Some(Refusal::RivalPost),
+            None => Some(Refusal::NoPost),
         }
     }
 
@@ -40,19 +118,11 @@ impl Board {
     /// under `Evict` it is never true, the placement succeeding and taking
     /// the oldest in trade.
     pub fn out_of_signposts(&self, player: PlayerId, x: u8, y: u8) -> bool {
-        if self.rules.cap_policy != CapPolicy::Reject
-            || seat(player).is_none()
-            || !self.in_bounds(i32::from(x), i32::from(y))
-        {
-            return false;
-        }
-        let t = self.index(i32::from(x), i32::from(y)) as usize;
         // The inventory has to be the *only* thing in the way: a rock with
         // a spent inventory refuses for two reasons, and a post in hand
-        // would not have gone there either.
-        self.grid.tiles[t] == TileKind::Empty
-            && self.signposts[t].is_none()
-            && self.signpost_count(player) >= self.rules.signpost_cap as usize
+        // would not have gone there either. The refusal names the tile
+        // first, so it says "out of posts" only when nothing else would.
+        self.placement_refusal(player, x, y) == Some(Refusal::OutOfPosts)
     }
 
     /// Spec §3.3: signposts go on empty sand only, not on castles, rocks,

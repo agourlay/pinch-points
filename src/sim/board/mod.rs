@@ -974,12 +974,14 @@ mod events;
 mod geometry;
 mod gulls;
 mod hashing;
+mod lookahead;
 mod signposts;
 mod snapshot;
 #[cfg(test)]
 mod tests;
 
 pub use events::{Mania, Tempo, TideEvent};
+pub use signposts::Refusal;
 
 pub use geometry::Grid;
 pub(crate) use geometry::Walker;

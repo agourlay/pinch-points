@@ -1,6 +1,7 @@
 # Bot seats: design
 
-**Status:** proposal, 2026-09-29. Nothing here is built yet.
+**Status:** being built, from 2026-10-02. Phase 2 (the protocol and the
+arena) is in; the bot author's contract is `bot-protocol.md`.
 
 ## Goal
 

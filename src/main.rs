@@ -1,6 +1,11 @@
-//! Pinch Points. Currently boots straight into the Tide Pool puzzle campaign
-//! (spec §5.1); mode select arrives with later milestones.
+//! Pinch Points: the game, or one of its bot commands (`arena`, `cup`,
+//! `watch`) when the command line names one.
 
-fn main() {
+fn main() -> std::process::ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = pinch_points::bots::subcommand(&args) {
+        return code;
+    }
     pinch_points::app::run();
+    std::process::ExitCode::SUCCESS
 }
