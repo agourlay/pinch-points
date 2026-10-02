@@ -945,6 +945,41 @@ mod tests {
         assert_eq!(host.session.player_count(), 1, "still waiting on a ghost");
         assert_eq!(host.seats, 2, "a beach needs two castles");
         assert_eq!(host.terms.bots, 1, "and somebody in the other one");
+        assert!(
+            host.abandoned.is_empty(),
+            "a new round has given up on nobody yet"
+        );
+    }
+
+    /// A joiner told, last round, that some seat was given up on must not
+    /// carry it into the next. Re-seated at that number, it would read
+    /// itself dropped and walk out, and its seat would play the AI from
+    /// the old frame on.
+    #[test]
+    fn last_rounds_dropped_seat_is_not_this_rounds() {
+        let mut joiner = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(2, vec![0, 1, 2], DEFAULT_DELAY),
+            3,
+            MatchTerms::default(),
+        );
+        // Seat one was given up on at frame 40 of the round just played.
+        joiner.abandoned.push((1, 40));
+        // Next round, one fewer at the table: this joiner moves up to one.
+        joiner.take_up(crate::app::net::Invitation {
+            seats: 2,
+            seat: Some(1),
+            terms: MatchTerms {
+                seed: 9,
+                ..MatchTerms::default()
+            },
+            names: Default::default(),
+            kinds: [0; MAX_PLAYERS],
+            standing: None,
+            beach: Vec::new(),
+        });
+        assert!(joiner.abandoned.is_empty());
+        assert!(!joiner.dropped(), "its new seat was never given up on");
     }
 
     /// A host never gives up on itself: its own slot is empty whenever it

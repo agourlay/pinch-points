@@ -333,9 +333,19 @@ impl OnlineSession {
     ) -> Option<SeriesStanding> {
         let peers = self.transport.peer_count();
         let plan = self.next_plan(peers);
+        let people = 1 + plan.iter().flatten().count() as u8;
+        // The bots that came straight to this host (route 2) sit after the
+        // people again, as many as there are chairs for.
+        let mut bots_here = std::mem::take(&mut self.bots_here);
+        bots_here.truncate(MAX_PLAYERS - usize::from(people));
+        let bots_were: Vec<u8> = bots_here.iter().map(|(seat, ..)| *seat).collect();
+        for (i, bot) in bots_here.iter_mut().enumerate() {
+            bot.0 = people + i as u8;
+        }
         let standing = standing.map(|SeriesStanding { round, wins }| {
             // The wins follow the chairs: seat 0 is always the host's, and
-            // each peer's new seat inherits what its old seat had won.
+            // each peer's new seat inherits what its old seat had won, and
+            // so does each of the host's bots.
             let mut new_wins = [0u8; MAX_PLAYERS];
             new_wins[0] = wins[0];
             for (peer, slot) in plan.iter().enumerate() {
@@ -345,6 +355,9 @@ impl OnlineSession {
                     new_wins[usize::from(*new_seat)] = wins[usize::from(old_seat)];
                 }
             }
+            for ((new_seat, ..), old_seat) in bots_here.iter().zip(&bots_were) {
+                new_wins[usize::from(*new_seat)] = wins[usize::from(*old_seat)];
+            }
             // The number of the round about to begin: the caller passes
             // the one just played, and every peer shows the same next
             // number without each counting for itself.
@@ -353,14 +366,6 @@ impl OnlineSession {
                 wins: new_wins,
             }
         });
-        let people = 1 + plan.iter().flatten().count() as u8;
-        // The bots that came straight to this host (route 2) sit after the
-        // people again, as many as there are chairs for.
-        let mut bots_here = std::mem::take(&mut self.bots_here);
-        bots_here.truncate(MAX_PLAYERS - usize::from(people));
-        for (i, bot) in bots_here.iter_mut().enumerate() {
-            bot.0 = people + i as u8;
-        }
         let humans = people + bots_here.len() as u8;
         // A beach needs two castles, and a host whose table has emptied is
         // still entitled to another round, against the AI, since playing
@@ -463,6 +468,10 @@ impl OnlineSession {
         });
         self.hashes.reset();
         self.resume_echo = 0;
+        // Seats given up on were last round's seats, at last round's
+        // frames. The seats are dealt afresh, so a stale entry would read
+        // a re-seated player as dropped and hand its chair to the AI.
+        self.abandoned.clear();
         // A new round is everyone's from its first frame.
         self.catch_up = Default::default();
         self.stands.new_round();
@@ -888,6 +897,37 @@ mod next_round_tests {
         assert_eq!(next.wins[2], 0, "and nothing of Bo's was left for anyone");
         assert_eq!(host.names[1], "Cy", "the name moved with the chair too");
         assert_eq!(host.series_standing, Some(next), "and the host holds it");
+    }
+
+    /// A bot that came straight to the host (route 2) keeps its wins
+    /// across rounds like anyone else. Its chair is re-dealt behind the
+    /// people every round, and the tally has to follow it there.
+    #[test]
+    fn a_hosts_bot_keeps_its_wins_into_the_next_round() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1, 2], DEFAULT_DELAY),
+            3,
+            terms(1),
+        );
+        let _sockets = gather(&mut host, &["Bo"]);
+        host.peers.deal(&[Some(1)]);
+        host.names[0] = "Anna".into();
+        host.names[1] = "Bo".into();
+        host.bots_here = vec![(2, 7, "Greedy".into())];
+        let standing = SeriesStanding {
+            round: 2,
+            wins: [0, 0, 2, 0, 0, 0],
+        };
+        // Bo leaves, so the bot moves up from seat two to seat one.
+        host.transport.forget(0);
+        host.peers.forget(0);
+        let next = host
+            .call_next_round(terms(2), Some(standing))
+            .expect("a series has a standing");
+        assert_eq!(host.bots_here[0].0, 1, "the bot moved up a chair");
+        assert_eq!(next.wins[1], 2, "and took its two wins with it");
+        assert_eq!(next.wins[2], 0);
     }
 
     /// A peer in line for the next round is not sent this one.
