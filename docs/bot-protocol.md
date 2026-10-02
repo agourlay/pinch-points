@@ -537,7 +537,9 @@ protocol differs; what differs is in `hello`:
   everyone. The key is good once and redrawn for the next bot, so come
   back with your token, never the key. The seat reads with the owner you
   declare, which the host cannot check. The clock is `live` with
-  `input_delay` 3.
+  `input_delay` 3. The string is shown only while the table has a chair
+  for a bot; a bot that registered but is dealt no seat when the match
+  starts (people took the chairs first) gets a fatal `error` saying so.
 
 With a person at the table the fair cursor is on, for your bot and the
 game's AI alike. A bot whose connection drops idles for five seconds and

@@ -658,6 +658,9 @@ pub fn exit_lobby(mut state: ResMut<LobbyState>) {
 pub struct LobbyExits<'w> {
     next_screen: ResMut<'w, NextState<Screen>>,
     bots: ResMut<'w, crate::app::bot_seats::BotSeats>,
+    /// Whether a round is under way, which a joiner walking into the
+    /// arena is part of before the screen changes.
+    online: Res<'w, Online>,
 }
 
 /// B on a beach: open a doorway for the bot that will join it.
@@ -705,7 +708,9 @@ pub fn lobby_input(
     let LobbyExits {
         mut next_screen,
         mut bots,
+        online,
     } = exits;
+    bots.leave_the_beach(state.joined().is_some() || online.0.is_some());
     // A doorway card is up for a bot about to join a beach: its keys are
     // its own (see `bot_seats::door_input`), and the moment its bot is in,
     // this game dials the beach as that bot's seat.

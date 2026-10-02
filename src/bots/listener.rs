@@ -236,6 +236,9 @@ struct Shared {
     /// Every address an accept loop is listening on, to wake it when the
     /// listener closes.
     bound: Mutex<Vec<SocketAddr>>,
+    /// Addresses no longer listened on, though the listener goes on: a
+    /// card's LAN socket, closed again. Their accept loops end on waking.
+    stopped: Mutex<Vec<SocketAddr>>,
     closed: std::sync::atomic::AtomicBool,
 }
 
@@ -263,6 +266,7 @@ impl Listener {
             config: Mutex::new(config),
             events: Mutex::new(events),
             bound: Mutex::new(vec![addr]),
+            stopped: Mutex::new(Vec::new()),
             closed: std::sync::atomic::AtomicBool::new(false),
         });
         let accepting = Arc::clone(&shared);
@@ -290,6 +294,21 @@ impl Listener {
         Ok(bound)
     }
 
+    /// Stop listening on one address opened by [`Self::also_listen`],
+    /// keeping the rest: a card opened to the LAN and closed again. The
+    /// bots already in stay in, whichever way they came.
+    pub fn stop_listening(&self, addr: SocketAddr) {
+        {
+            let mut bound = lock(&self.shared.bound);
+            let Some(at) = bound.iter().position(|a| *a == addr) else {
+                return;
+            };
+            bound.remove(at);
+        }
+        lock(&self.shared.stopped).push(addr);
+        let _ = TcpStream::connect_timeout(&wake_address(addr), Duration::from_millis(200));
+    }
+
     /// Stop listening and drop every bot: the sockets close, the threads
     /// end. The arena and a cup never need to, since their process ends;
     /// the game opens a listener for a card and closes it with the card.
@@ -301,11 +320,7 @@ impl Listener {
         // Each accept loop is woken by a connection of its own, and sees
         // the flag before it serves anybody.
         for addr in lock(&self.shared.bound).iter() {
-            let wake = match addr.ip() {
-                ip if ip.is_unspecified() => SocketAddr::new([127, 0, 0, 1].into(), addr.port()),
-                _ => *addr,
-            };
-            let _ = TcpStream::connect_timeout(&wake, Duration::from_millis(200));
+            let _ = TcpStream::connect_timeout(&wake_address(*addr), Duration::from_millis(200));
         }
         let mut registry = lock(&self.shared.registry);
         for bot in &mut registry.bots {
@@ -323,6 +338,30 @@ impl Listener {
         let mut registry = lock(&self.shared.registry);
         if let Some(conn) = registry.bots.get_mut(id).and_then(|bot| bot.conn.take()) {
             let _ = conn.stream.shutdown(Shutdown::Both);
+        }
+    }
+
+    /// Tell one bot why it is being let go, and close its connection once
+    /// that has been written: the table filled up before it had a seat.
+    pub fn dismiss(&self, id: BotId, why: &str) {
+        let mut registry = lock(&self.shared.registry);
+        send(
+            &mut registry,
+            id,
+            &json!({"type": "error", "fatal": true, "message": why}),
+        );
+        // The writer drains the queue and then shuts the socket.
+        if let Some(bot) = registry.bots.get_mut(id) {
+            bot.conn = None;
+        }
+    }
+
+    /// Take back the keys printed for a slot nobody has taken: a key for
+    /// a chair that is no longer there seats nobody.
+    pub fn withdraw(&self, slot: u32) {
+        let mut config = lock(&self.shared.config);
+        if let Admission::Keys(keys) = &mut config.admission {
+            keys.retain(|invite| invite.slot != Some(slot));
         }
     }
 
@@ -415,9 +454,20 @@ impl Listener {
     }
 }
 
+/// Where to connect to wake the accept loop listening on `addr`.
+fn wake_address(addr: SocketAddr) -> SocketAddr {
+    match addr.ip() {
+        ip if ip.is_unspecified() => SocketAddr::new([127, 0, 0, 1].into(), addr.port()),
+        _ => addr,
+    }
+}
+
 fn accept_loop(socket: &TcpListener, shared: &Arc<Shared>) {
+    let me = socket.local_addr().ok();
     for stream in socket.incoming() {
-        if shared.closed.load(std::sync::atomic::Ordering::SeqCst) {
+        if shared.closed.load(std::sync::atomic::Ordering::SeqCst)
+            || me.is_some_and(|me| lock(&shared.stopped).contains(&me))
+        {
             return;
         }
         let Ok(stream) = stream else {

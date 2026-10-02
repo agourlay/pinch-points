@@ -24,6 +24,9 @@ use std::net::SocketAddr;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+/// What a bot that came in but was dealt no seat is told as it goes.
+const NO_SEAT: &str = "the table filled up before this bot had a seat";
+
 /// How long a dropped bot's seat idles before the game's AI stands in.
 pub const GRACE: Duration = Duration::from_secs(5);
 
@@ -108,9 +111,19 @@ impl Doorway {
     /// Keep one chair open for the next bot while there is room for it:
     /// once a bot has taken the open one, a fresh key is drawn for the next,
     /// so a key read off the screen is worth nothing once it is spent.
+    /// With no room the open chair is withdrawn, key and all, so the
+    /// string stops being shown and a bot started with it is refused
+    /// rather than registered to a seat that is not there.
     pub fn keep_a_chair_open(&mut self, room: bool) {
+        if !room {
+            for chair in self.chairs.iter().filter(|chair| chair.bot.is_none()) {
+                self.listener.withdraw(chair.id);
+            }
+            self.chairs.retain(|chair| chair.bot.is_some());
+            return;
+        }
         let open = self.chairs.iter().any(|chair| chair.bot.is_none());
-        if room && !open {
+        if !open {
             let seat = self.chairs.len() as u8;
             let key = match (self.next_chair, crate::app::dev::bot_key()) {
                 (0, Some(key)) => key,
@@ -162,6 +175,26 @@ impl Doorway {
     pub fn let_go(&mut self, id: BotId) {
         self.chairs.retain(|chair| chair.bot != Some(id));
         self.listener.disconnect(id);
+    }
+
+    /// A host's round has been dealt, with these of its bots seated
+    /// (route 2). Every other bot that came in is told it has no seat and
+    /// let go: the people and the bots before it took the chairs, and left
+    /// registered it would hear nothing but pings. The open chair is
+    /// withdrawn too, since nobody is dealt in until the table is back in
+    /// the lobby, which opens one again.
+    pub fn seat_the_table(&mut self, seated: &[BotId]) {
+        let unseated: Vec<BotId> = self
+            .chairs
+            .iter()
+            .filter_map(|chair| chair.bot)
+            .filter(|id| !seated.contains(id))
+            .collect();
+        for id in unseated {
+            self.chairs.retain(|chair| chair.bot != Some(id));
+            self.listener.dismiss(id, NO_SEAT);
+        }
+        self.keep_a_chair_open(false);
     }
 
     /// Chairs for exactly these seats: a chair already holding a bot for a
@@ -219,14 +252,24 @@ impl Doorway {
 
     /// Show the strings on the LAN address rather than this machine's,
     /// listening there too from the first time it is asked for.
+    /// Turned back, the LAN socket closes again: a card showing this
+    /// machine's strings is not still taking bots from the network.
     pub fn toggle_lan(&mut self) -> std::io::Result<()> {
-        if self.lan.is_none() {
-            self.lan = Some(
-                self.listener
-                    .also_listen(SocketAddr::from(([0, 0, 0, 0], 0)))?,
-            );
+        match self.lan {
+            // A host's doorway listens on the LAN and nowhere else.
+            Some(lan) if lan == self.here => {}
+            Some(lan) => {
+                self.listener.stop_listening(lan);
+                self.lan = None;
+            }
+            None => {
+                self.lan = Some(
+                    self.listener
+                        .also_listen(SocketAddr::from(([0, 0, 0, 0], 0)))?,
+                );
+            }
         }
-        self.showing_lan = !self.showing_lan;
+        self.showing_lan = self.lan.is_some();
         Ok(())
     }
 
@@ -522,6 +565,20 @@ pub enum Waiting {
 }
 
 impl BotSeats {
+    /// The doorway a bot joined a beach through (route 1) is for that
+    /// beach alone. Once this machine is no longer at it (asked to leave,
+    /// never answered, on another build, or gone of its own accord),
+    /// the doorway closes and its bot is let go, rather than sitting
+    /// registered on this machine's port with nowhere to play.
+    /// `at_the_beach` is whether this machine is still greeting it or
+    /// playing at it.
+    pub fn leave_the_beach(&mut self, at_the_beach: bool) {
+        if self.join_to.is_some() && self.waiting.is_none() && !at_the_beach {
+            self.door = None;
+            self.join_to = None;
+        }
+    }
+
     /// Online, the seats bots drive from this machine: this peer's own
     /// (route 1), or the host's bots (route 2).
     pub fn online_seats(&self) -> Vec<u8> {
@@ -689,6 +746,13 @@ pub fn begin_round(
                 .collect()
         })
         .unwrap_or_default();
+    if mine.is_none()
+        && online.0.as_ref().is_some_and(|session| session.is_host())
+        && let Some(door) = &mut bots.door
+    {
+        let seated: Vec<BotId> = hosted.iter().map(|(_, id)| *id).collect();
+        door.seat_the_table(&seated);
+    }
     let seats: Vec<u8> = match mine {
         Some(seat) => vec![seat],
         None if online.0.is_some() => hosted.iter().map(|(seat, _)| *seat).collect(),
@@ -1012,6 +1076,167 @@ mod tests {
             .expect("read");
         assert!(answer.contains("registered"), "{answer}");
         stream
+    }
+
+    /// A bot that joined a beach through this machine (route 1) is let go
+    /// once the machine is no longer at that beach: asked to leave, never
+    /// answered, or on another build. Its doorway does not linger.
+    #[test]
+    fn a_failed_join_as_a_bot_closes_its_doorway() {
+        let mut bots = BotSeats {
+            door: Some(Doorway::open().expect("a port on this machine")),
+            join_to: Some(SocketAddr::from(([127, 0, 0, 1], 1))),
+            ..BotSeats::default()
+        };
+        let here = bots.door.as_ref().expect("open").here;
+        // Still at the beach: nothing changes.
+        bots.leave_the_beach(true);
+        assert!(bots.door.is_some());
+        // While the card waits for its bot, nothing has been dialled yet.
+        bots.waiting = Some(Waiting::Join);
+        bots.leave_the_beach(false);
+        assert!(bots.door.is_some(), "the card is still up");
+        // Dialled, and then put out of the beach.
+        bots.waiting = None;
+        bots.leave_the_beach(false);
+        assert!(bots.door.is_none(), "the doorway closed");
+        assert!(bots.join_to.is_none());
+        // And its port with it.
+        let mut refused = false;
+        for _ in 0..100 {
+            if std::net::TcpStream::connect_timeout(&here, Duration::from_millis(50)).is_err() {
+                refused = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(refused, "nobody listens on {here} any more");
+        // A host's doorway (route 2) has no beach to leave.
+        let mut host = BotSeats {
+            door: Some(Doorway::open().expect("a port on this machine")),
+            ..BotSeats::default()
+        };
+        host.leave_the_beach(false);
+        assert!(host.door.is_some());
+    }
+
+    /// Wait for the doorway to seat a bot in chair `at`.
+    fn seated(door: &mut Doorway, at: usize) {
+        for _ in 0..200 {
+            door.poll();
+            if door.chairs.get(at).is_some_and(|chair| chair.bot.is_some()) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("no bot sat in chair {at}");
+    }
+
+    /// Try to register with a string, and say what came back.
+    fn try_register(string: &str, name: &str) -> String {
+        let parsed = ConnString::parse(string).expect("a string the card printed");
+        let Ok(mut stream) = std::net::TcpStream::connect_timeout(
+            &format!("{}:{}", parsed.host, parsed.port)
+                .parse()
+                .expect("an address"),
+            Duration::from_millis(200),
+        ) else {
+            return "refused".to_string();
+        };
+        let key = parsed.key.map(|k| k.to_string()).unwrap_or_default();
+        let line = serde_json::json!({
+            "type": "register", "protocol": 1, "name": name, "key": key,
+        });
+        let _ = writeln!(stream, "{line}");
+        let mut answer = String::new();
+        let _ = BufReader::new(stream).read_line(&mut answer);
+        answer
+    }
+
+    /// A full table withdraws its open chair: the string stops being
+    /// shown, and a bot started with it anyway is refused rather than
+    /// registered to a seat that is not there.
+    #[test]
+    fn a_full_table_withdraws_its_open_chair() {
+        let mut door = Doorway::open().expect("a port on this machine");
+        door.keep_a_chair_open(true);
+        let string = door.open_string().expect("a chair is open");
+        door.keep_a_chair_open(false);
+        assert_eq!(door.open_string(), None, "no string is shown");
+        assert!(door.chairs.is_empty());
+        let answer = try_register(&string, "Late");
+        assert!(answer.contains("error"), "refused: {answer}");
+        // Room again: a fresh chair, with a key of its own.
+        door.keep_a_chair_open(true);
+        let fresh = door.open_string().expect("a chair is open again");
+        assert_ne!(fresh, string, "the old key is not reissued");
+    }
+
+    /// A bot that came in but was dealt no seat is told why and let go,
+    /// and the chair a bot could still come in by is withdrawn while the
+    /// round is played.
+    #[test]
+    fn a_bot_dealt_no_seat_is_told_and_let_go() {
+        let mut door = Doorway::open().expect("a port on this machine");
+        door.keep_a_chair_open(true);
+        let first = register(&door.open_string().expect("open"), "First", "Ana");
+        seated(&mut door, 0);
+        door.keep_a_chair_open(true);
+        let second = register(&door.open_string().expect("open"), "Second", "Bo");
+        seated(&mut door, 1);
+        door.keep_a_chair_open(true);
+        let late = door.open_string().expect("a third chair is open");
+        let tr = &crate::app::i18n::EN;
+        let ids: Vec<BotId> = door.arrived(tr).into_iter().map(|(id, _)| id).collect();
+        // The table had room for the first bot only.
+        door.seat_the_table(&ids[..1]);
+        assert_eq!(door.arrived(tr).len(), 1, "the second bot was let go");
+        assert_eq!(door.open_string(), None, "and no chair is open mid-round");
+        second
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        let mut said = String::new();
+        let mut reader = BufReader::new(second);
+        while reader.read_line(&mut said).is_ok_and(|n| n > 0) {
+            if said.contains("error") {
+                break;
+            }
+        }
+        assert!(said.contains(NO_SEAT), "told why: {said}");
+        let answer = try_register(&late, "Late");
+        assert!(
+            answer.contains("error"),
+            "the open key was taken back: {answer}"
+        );
+        drop(first);
+    }
+
+    /// Opened to the LAN and turned back, the card stops listening there:
+    /// showing this machine's strings again is not still taking bots from
+    /// the network.
+    #[test]
+    fn turning_the_lan_off_closes_its_socket() {
+        let mut door = Doorway::open().expect("a port on this machine");
+        door.toggle_lan().expect("listen on the LAN");
+        let lan = door.lan.expect("a LAN socket");
+        assert!(door.showing_lan);
+        let wake = SocketAddr::from(([127, 0, 0, 1], lan.port()));
+        assert!(std::net::TcpStream::connect_timeout(&wake, Duration::from_millis(200)).is_ok());
+        door.toggle_lan().expect("back to this machine");
+        assert!(!door.showing_lan);
+        let mut refused = false;
+        for _ in 0..100 {
+            if std::net::TcpStream::connect_timeout(&wake, Duration::from_millis(50)).is_err() {
+                refused = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(refused, "nobody listens on {wake} any more");
+        // And on again, on a socket of its own.
+        door.toggle_lan().expect("listen on the LAN again");
+        assert!(door.showing_lan);
+        assert!(door.lan.is_some());
     }
 
     #[test]
