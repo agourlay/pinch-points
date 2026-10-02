@@ -10,6 +10,7 @@ use crate::app::{Playback, Screen, VersusPhase};
 use crate::bots::game::Feed;
 use crate::sim::Replay;
 use bevy::prelude::*;
+use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::sync::mpsc::Receiver;
 
@@ -20,8 +21,9 @@ pub struct Watch {
     file: Option<Replay>,
     /// An arena's games as they are played.
     live: Option<Mutex<Receiver<Feed>>>,
-    /// The arena's next game, held until the one on screen is over.
-    next: Option<Replay>,
+    /// The arena's next games, oldest first, held until the one on screen
+    /// is over. Ticks go to the newest: that is the game being played.
+    next: VecDeque<Replay>,
 }
 
 /// Open the game on `replay` and nothing else.
@@ -54,6 +56,9 @@ pub fn begin(
 
 /// Every frame: take what the arena has played since the last one. A new
 /// game waits for the one on screen to finish and its card to be read.
+/// One that starts while nothing is on screen (the viewer went to the
+/// menu) goes straight on, and the games that were waiting are let go:
+/// the viewer walked away from them, and the arena has moved on.
 pub fn pump(
     mut watch: ResMut<Watch>,
     mut playback: ResMut<Playback>,
@@ -74,13 +79,14 @@ pub fn pump(
         match feed {
             Feed::Start(replay) => {
                 if playback.0.is_none() && *screen.get() != Screen::Versus {
+                    next.clear();
                     playback.0 = Some((*replay, 0));
                     next_screen.set(Screen::Versus);
                 } else {
-                    *next = Some(*replay);
+                    next.push_back(*replay);
                 }
             }
-            Feed::Tick(actions) => match (next.as_mut(), playback.0.as_mut()) {
+            Feed::Tick(actions) => match (next.back_mut(), playback.0.as_mut()) {
                 (Some(queued), _) => queued.record(actions),
                 (None, Some((replay, _))) => replay.record(actions),
                 (None, None) => {}
@@ -88,7 +94,7 @@ pub fn pump(
         }
     }
     // The card stays up long enough to read, then the next game starts.
-    if *screen.get() == Screen::Versus && *vphase.get() == VersusPhase::Over && next.is_some() {
+    if *screen.get() == Screen::Versus && *vphase.get() == VersusPhase::Over && !next.is_empty() {
         *over_for += time.delta_secs();
         if *over_for > 4.0 {
             *over_for = 0.0;
@@ -102,7 +108,7 @@ pub fn pump(
 /// On entering the arena: the next game, if one is waiting, becomes the
 /// one on screen. Before anything reads the playback.
 pub fn install(mut watch: ResMut<Watch>, mut playback: ResMut<Playback>) {
-    if let Some(replay) = watch.next.take() {
+    if let Some(replay) = watch.next.pop_front() {
         playback.0 = Some((replay, 0));
     }
 }
@@ -137,5 +143,86 @@ pub fn dropped_replays(
                 notice.0 = why;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::{Level, MAX_PLAYERS, PlayerAction, classic_arena};
+    use std::sync::mpsc::{self, Sender};
+
+    fn game(name: &str) -> Box<Replay> {
+        let mut replay = Replay::new(Level::from_board("Arena", 3, classic_arena(false, 2)));
+        replay.names[0] = name.into();
+        Box::new(replay)
+    }
+
+    fn arena_window() -> (App, Sender<Feed>) {
+        let (tx, rx) = mpsc::channel();
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_state::<VersusPhase>();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(live(rx));
+        app.insert_resource(Playback::default());
+        app.add_systems(Update, pump);
+        app.add_systems(OnEnter(Screen::Versus), install);
+        // What leaving the arena does to the playback (`end_versus`).
+        app.add_systems(OnExit(Screen::Versus), |mut playback: ResMut<Playback>| {
+            playback.0 = None;
+        });
+        (app, tx)
+    }
+
+    fn on_screen(app: &App) -> Option<(String, usize)> {
+        app.world()
+            .resource::<Playback>()
+            .0
+            .as_ref()
+            .map(|(replay, _)| (replay.names[0].clone(), replay.inputs.len()))
+    }
+
+    /// A viewer who leaves for the menu while a game waits its turn, and
+    /// comes back on the arena's next game, watches that game: not the one
+    /// that waited, and not one made of the two games' ticks together.
+    #[test]
+    fn a_game_started_after_leaving_is_the_one_watched() {
+        let (mut app, feed) = arena_window();
+        let tick = [PlayerAction::None; MAX_PLAYERS];
+        feed.send(Feed::Start(game("g1"))).expect("feed");
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Versus
+        );
+        // Game 2 starts while game 1 is still on screen, and waits.
+        feed.send(Feed::Start(game("g2"))).expect("feed");
+        feed.send(Feed::Tick(tick)).expect("feed");
+        app.update();
+        assert_eq!(on_screen(&app), Some(("g1".into(), 0)));
+        // The viewer leaves for the menu.
+        app.world_mut()
+            .resource_mut::<NextState<Screen>>()
+            .set(Screen::Menu);
+        app.update();
+        assert_eq!(on_screen(&app), None);
+        // Game 3 starts, and is put on.
+        feed.send(Feed::Start(game("g3"))).expect("feed");
+        for _ in 0..3 {
+            feed.send(Feed::Tick(tick)).expect("feed");
+        }
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Versus
+        );
+        assert_eq!(on_screen(&app), Some(("g3".into(), 3)));
+        feed.send(Feed::Tick(tick)).expect("feed");
+        app.update();
+        assert_eq!(on_screen(&app), Some(("g3".into(), 4)));
     }
 }
