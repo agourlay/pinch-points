@@ -43,6 +43,8 @@ pub struct HostEntry {
     /// The round has begun: not joinable now, but queueable if there is
     /// room, and the queue is admitted when the round ends.
     pub running: bool,
+    /// It takes bots ("Bots welcome").
+    pub bots: bool,
     pub age: f32,
 }
 
@@ -131,6 +133,7 @@ pub(super) fn refresh_hosts(
                 taken,
                 seats,
                 running,
+                bots,
             } => {
                 let mut fresh = HostEntry {
                     addr,
@@ -140,6 +143,7 @@ pub(super) fn refresh_hosts(
                     taken: *taken,
                     seats: *seats,
                     running: *running,
+                    bots: *bots,
                     age: 0.0,
                 };
                 match hosts.iter_mut().find(|host| same_beach(host, *id, addr)) {
@@ -241,6 +245,7 @@ mod list_tests {
                 taken,
                 seats,
                 running,
+                bots: false,
             },
         )
     }
@@ -265,6 +270,7 @@ mod list_tests {
             taken,
             seats,
             running,
+            bots: false,
             age: 0.0,
         }
     }
@@ -457,6 +463,7 @@ mod list_tests {
                     taken: 2,
                     seats: 6,
                     running: false,
+                    bots: false,
                 },
             )
         };
@@ -499,6 +506,7 @@ mod list_tests {
                     taken: 1,
                     seats: 6,
                     running: false,
+                    bots: false,
                 },
             ),
             (
@@ -510,6 +518,7 @@ mod list_tests {
                     taken: 1,
                     seats: 6,
                     running: false,
+                    bots: false,
                 },
             ),
         ];

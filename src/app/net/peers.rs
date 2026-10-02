@@ -47,6 +47,9 @@ pub struct Peer {
     /// The seat it called to win this round, as a spectator. On the row
     /// so it moves with the peer when one before it is forgotten.
     pub pick: Option<u8>,
+    /// Its greeting said a bot drives its seat. The game behind the
+    /// greeting sets this, never the name, so the seat wears the robot.
+    pub bot: bool,
 }
 
 impl Peer {

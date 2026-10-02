@@ -138,6 +138,7 @@ pub fn host_tick(
         host: &settings.names[0],
         taken,
         seats: MAX_PLAYERS as u8,
+        bots: config.bots_welcome,
     };
     let picked = work_the_socket(hosted, time.delta_secs(), on_air);
     let do_announce = picked.announced;
@@ -152,6 +153,7 @@ pub fn host_tick(
     // sent on every beacon tick so a lost one costs a second, not a screen
     // that stays wrong until somebody joins or leaves.
     state.table = state.roster(tr, &settings.names[0]);
+    state.table_kinds = state.roster_kinds();
     if do_announce && let Some(hosted) = state.hosted() {
         let names = crate::transport::wire_table(&state.table);
         // The dials travel with the roster so a joiner's terms card shows
@@ -163,6 +165,7 @@ pub fn host_tick(
             seats: state.table.len().min(MAX_PLAYERS) as u8,
             names,
             terms,
+            kinds: crate::transport::wire_kinds(&state.table_kinds),
         });
     }
     let (players_aboard, watchers_aboard, port) = state.hosted().map_or((0, 0, None), |hosted| {
@@ -263,6 +266,20 @@ fn launch_the_match(
         }
     }
     let wire_names = crate::transport::wire_table(&names);
+    // What holds each seat: the host's own a person, a peer's whatever its
+    // greeting said, and the top seats the AI's.
+    let mut kinds = [crate::sim::SeatKind::Human; MAX_PLAYERS];
+    for (peer, slot) in plan.iter().enumerate() {
+        if let Some(seat) = slot
+            && peers.get(peer).is_some_and(|peer| peer.bot)
+        {
+            kinds[usize::from(*seat)] = crate::sim::SeatKind::Bot;
+        }
+    }
+    for seat in humans..seats {
+        kinds[usize::from(seat)] = crate::sim::SeatKind::Ai;
+    }
+    let wire_kinds = crate::transport::wire_kinds(&kinds);
     // Seats go to the peers that came to play, in peer order; the
     // onlookers - and anyone the table ran out of chairs for - are told
     // they are watching.
@@ -279,6 +296,7 @@ fn launch_the_match(
                 seat: *slot,
                 terms,
                 names: wire_names,
+                kinds: wire_kinds,
                 standing,
                 beach: beach.clone(),
             },
@@ -297,9 +315,11 @@ fn launch_the_match(
     session.peers = peers;
     session.peers.deal(&plan);
     session.names = names;
+    session.kinds = kinds;
     session.stay_on_air(announcer);
     session.home.from_lobby = true;
     session.home.game_name = state.game_name.clone();
+    session.home.bots_welcome = config.bots_welcome;
     // The series is part of the terms, so every peer knows it is one
     // and tallies the same rounds. Without that the host alone would
     // count, and only the host would see a champion.
@@ -435,7 +455,8 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             }
             // Round things, and the lobby has no round to call one in.
             NetMsg::SpectatorVote { .. } | NetMsg::SpectatorTally { .. } => {}
-            NetMsg::Hello { name } => {
+            NetMsg::Hello { name, bot } => {
+                peers.row(from).bot = bot;
                 let told = crate::transport::name_from_wire(&name);
                 if !told.is_empty() {
                     picked.greeted.push((from, told));
@@ -478,7 +499,8 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             | NetMsg::CatchUp { .. }
             | NetMsg::SpectatorPick { .. }
             | NetMsg::CrowdPicks { .. }
-            | NetMsg::Incompatible { .. } => {}
+            | NetMsg::Incompatible { .. }
+            | NetMsg::Kicked => {}
         }
     }
     for (from, name, text) in picked.said.iter() {

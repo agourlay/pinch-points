@@ -21,6 +21,8 @@ pub struct Invitation {
     pub seat: Option<u8>,
     pub terms: MatchTerms,
     pub names: [crate::transport::WireName; MAX_PLAYERS],
+    /// What holds each seat, in wire form (`transport::kind_byte`).
+    pub kinds: [u8; MAX_PLAYERS],
     /// Where the series stands, as the host says. A peer that greeted
     /// mid-series is seated with the table's own tally rather than
     /// starting a fresh one. `None` for a single round.
@@ -68,11 +70,13 @@ impl OnlineSession {
             seat,
             terms,
             names,
+            kinds,
             standing,
             beach,
         } = invitation;
         self.beach = beach;
         self.begin_round(seats, seat, terms, table_from_wire(&names));
+        self.kinds = kinds.map(crate::transport::kind_from_byte);
         self.series_standing = standing;
     }
 
@@ -137,8 +141,9 @@ impl OnlineSession {
         for (msg, from) in self.transport.recv_all() {
             self.mark_heard(from);
             match msg {
-                NetMsg::Hello { name } => {
+                NetMsg::Hello { name, bot } => {
                     if host {
+                        self.peers.row(from).bot = bot;
                         let answer = self.answer_greeting(from, &name_from_wire(&name), false);
                         self.transport.send_to(from, answer);
                     }
@@ -155,6 +160,7 @@ impl OnlineSession {
                     seat,
                     terms,
                     names,
+                    kinds,
                     standing,
                     beach,
                 } => {
@@ -164,6 +170,7 @@ impl OnlineSession {
                             seat,
                             terms,
                             names,
+                            kinds,
                             standing,
                             beach,
                         });
@@ -195,7 +202,8 @@ impl OnlineSession {
                 // Calls are for a round being played, and this one is over.
                 | NetMsg::SpectatorPick { .. }
                 | NetMsg::CrowdPicks { .. }
-                | NetMsg::Incompatible { .. } => {}
+                | NetMsg::Incompatible { .. }
+                | NetMsg::Kicked => {}
             }
         }
         // After the socket is drained, so a greeting that arrived in this
@@ -274,6 +282,7 @@ impl OnlineSession {
             seats: self.seats,
             names: wire_table(&self.names),
             terms: self.terms,
+            kinds: crate::transport::wire_kinds(&self.kinds),
         }
     }
 
@@ -363,6 +372,19 @@ impl OnlineSession {
             }
         }
         let wire = wire_table(&names);
+        // What holds each seat: the host a person, a peer whatever it
+        // greeted as, the top seats the AI.
+        let mut kinds = [crate::sim::SeatKind::Human; MAX_PLAYERS];
+        for (peer, slot) in plan.iter().enumerate() {
+            if let Some(seat) = slot
+                && self.peers.get(peer).is_some_and(|row| row.bot)
+            {
+                kinds[usize::from(*seat)] = crate::sim::SeatKind::Bot;
+            }
+        }
+        for seat in terms.humans(seats)..seats {
+            kinds[usize::from(seat)] = crate::sim::SeatKind::Ai;
+        }
         for (peer, slot) in plan.iter().enumerate() {
             self.transport.send_to(
                 peer,
@@ -371,6 +393,7 @@ impl OnlineSession {
                     seat: *slot,
                     terms,
                     names: wire,
+                    kinds: crate::transport::wire_kinds(&kinds),
                     standing,
                     beach: self.beach.clone(),
                 },
@@ -378,6 +401,7 @@ impl OnlineSession {
         }
         self.peers.deal(&plan);
         self.begin_round(seats, Some(0), terms, names);
+        self.kinds = kinds;
         self.series_standing = standing;
         self.next_round = true;
         standing
@@ -409,6 +433,14 @@ impl OnlineSession {
         self.seats = seats;
         self.terms = terms;
         self.names = names;
+        // The AI holds the top seats; anything else a person until the
+        // round's kinds say otherwise, which its caller writes after this.
+        self.kinds = std::array::from_fn(|seat| {
+            match seat >= usize::from(terms.humans(seats)) && seat < usize::from(seats) {
+                true => crate::sim::SeatKind::Ai,
+                false => crate::sim::SeatKind::Human,
+            }
+        });
         self.hashes.reset();
         self.resume_echo = 0;
         // A new round is everyone's from its first frame.
@@ -445,6 +477,7 @@ impl OnlineSession {
             seat,
             terms: self.terms,
             names: wire_table(&self.names),
+            kinds: crate::transport::wire_kinds(&self.kinds),
             standing: self.series_standing,
             beach: self.beach.clone(),
         }

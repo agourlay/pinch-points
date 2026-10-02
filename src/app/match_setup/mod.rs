@@ -238,6 +238,10 @@ pub struct MatchConfig {
     pub series: crate::app::tournament::SeriesLength,
     /// True when the next versus round should be built from this config.
     pub armed: bool,
+    /// A beach hosted on these dials takes bots ("Bots welcome"). The
+    /// host's to turn in the lobby, said in the beacon so the list shows
+    /// it before anyone walks up.
+    pub bots_welcome: bool,
 }
 
 impl Default for MatchConfig {
@@ -253,6 +257,7 @@ impl Default for MatchConfig {
             posts: MAX_SIGNPOSTS_PER_PLAYER as u8,
             series: crate::app::tournament::SeriesLength::Single,
             armed: false,
+            bots_welcome: true,
         }
     }
 }
@@ -292,6 +297,7 @@ impl MatchConfig {
             posts: MAX_SIGNPOSTS_PER_PLAYER as u8,
             series: crate::app::tournament::SeriesLength::Single,
             armed: true,
+            bots_welcome: false,
         }
     }
 }
@@ -346,6 +352,7 @@ pub fn config_from_terms(terms: &MatchTerms) -> (MatchConfig, crate::app::teams:
         posts: posts_from(terms),
         series: crate::app::tournament::SeriesLength::from_index(usize::from(terms.series)),
         armed: false,
+        bots_welcome: true,
     };
     (
         config,

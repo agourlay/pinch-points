@@ -321,9 +321,11 @@ pub(in crate::app) fn resolve_seat_names(
     // time, by when an online round's names have gone with its session.
     // What held each seat, by the same rule: the recording's own, else
     // the table this round is played at.
-    *kinds = match &playback.0 {
-        Some((replay, _)) => SeatKinds(replay.kinds),
-        None => SeatKinds::of(&controllers),
+    *kinds = match (&playback.0, &online.0) {
+        (Some((replay, _)), _) => SeatKinds(replay.kinds),
+        // The table's word, which knows a rival's bot from a rival.
+        (None, Some(session)) => SeatKinds(session.kinds),
+        (None, None) => SeatKinds::of(&controllers),
     };
     if let Some(replay) = &mut recorder.0 {
         replay.names = names.0.clone();

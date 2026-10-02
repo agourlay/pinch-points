@@ -78,6 +78,14 @@ pub struct TableView;
 #[derive(Component)]
 pub struct PlayerRowName(pub usize);
 
+/// The robot beside a name at the table, shown when a bot holds the place.
+#[derive(Component)]
+pub struct PlayerRowRobot(pub usize);
+
+/// The robot on a row of the beach list, shown when that beach takes bots.
+#[derive(Component)]
+pub struct ListRowRobot(pub usize);
+
 #[derive(Component)]
 pub struct DialRow(pub usize);
 
@@ -111,6 +119,7 @@ pub enum LobbyCard {
 /// with no asset server behind it.
 #[derive(Default)]
 pub struct LobbyArt {
+    robot: Handle<Image>,
     boat: Handle<Image>,
     castle: Handle<Image>,
     star: Handle<Image>,
@@ -121,6 +130,7 @@ pub struct LobbyArt {
 impl LobbyArt {
     pub fn from_art(art: &crate::app::art::Art) -> Self {
         Self {
+            robot: art.robot.clone(),
             boat: art.boat.clone(),
             castle: art.castle.clone(),
             star: art.star.clone(),
@@ -209,6 +219,40 @@ fn line_at(chat: &[Said], row: usize) -> Option<&Said> {
     // How far back from the newest, which sits on the last row.
     let back = (CHAT_LINES - 1).checked_sub(row)?;
     chat.len().checked_sub(back + 1).map(|at| &chat[at])
+}
+
+/// The robots: beside a bot at the table, and on a beach that takes bots.
+pub fn update_lobby_robots(
+    state: Res<LobbyState>,
+    mut at_table: Query<(&PlayerRowRobot, &mut Node, &mut ImageNode), Without<ListRowRobot>>,
+    mut on_list: Query<(&ListRowRobot, &mut Visibility, &mut ImageNode), Without<PlayerRowRobot>>,
+) {
+    for (row, mut node, mut image) in &mut at_table {
+        let bot = state.table.get(row.0).is_some()
+            && state.table_kinds.get(row.0) == Some(&crate::sim::SeatKind::Bot);
+        crate::app::menu_ui::set_shown(&mut node, bot);
+        let tint = seat_tone(row.0);
+        if image.color != tint {
+            image.color = tint;
+        }
+    }
+    let listing = !state.standing().at_a_beach();
+    for (row, mut shown, mut image) in &mut on_list {
+        let host = listing
+            .then(|| state.hosts.get(state.scroll + row.0))
+            .flatten();
+        let want = match host {
+            Some(host) if host.bots => Visibility::Inherited,
+            Some(_) | None => Visibility::Hidden,
+        };
+        if *shown != want {
+            *shown = want;
+        }
+        let tint = palette::PARCHMENT.with_alpha(0.8);
+        if image.color != tint {
+            image.color = tint;
+        }
+    }
 }
 
 /// Paint the table: everyone at this beach, the local player first.
@@ -424,6 +468,12 @@ pub fn update_lobby_terms(
                 .map(|t| crate::app::match_setup::config_from_terms(&t))
         })
         .flatten();
+    // Whether the beach takes bots is not one of the terms; a joiner
+    // reads it off the beacon that listed the beach.
+    let joined = joined.map(|(mut cfg, mode)| {
+        cfg.bots_welcome = state.selected_entry().is_some_and(|entry| entry.bots);
+        (cfg, mode)
+    });
     let (config, team_mode): (&MatchConfig, _) = match &joined {
         Some((cfg, mode)) => (cfg, *mode),
         None => (&config, settings.team_mode),
@@ -562,6 +612,18 @@ fn spawn_browse_face(
                                 LobbyCell(row, ListCol::Name),
                                 list_cell(21.0, Val::Px(NAME_COL), 0.0),
                             ));
+                            // "Bots welcome", before anyone walks up.
+                            line.spawn((
+                                ListRowRobot(row),
+                                ImageNode::new(art.robot.clone()),
+                                Node {
+                                    width: Val::Px(20.0),
+                                    height: Val::Px(20.0),
+                                    flex_shrink: 0.0,
+                                    ..default()
+                                },
+                                Visibility::Hidden,
+                            ));
                             line.spawn((
                                 LobbyCell(row, ListCol::Host),
                                 list_cell(17.0, Val::Px(HOST_COL), 0.0),
@@ -638,6 +700,18 @@ fn spawn_table_face(
                                         ..default()
                                     })
                                     .with_children(|line| {
+                                        line.spawn((
+                                            PlayerRowRobot(row),
+                                            ImageNode::new(art.robot.clone()),
+                                            Node {
+                                                width: Val::Px(18.0),
+                                                height: Val::Px(18.0),
+                                                margin: UiRect::right(Val::Px(4.0)),
+                                                flex_shrink: 0.0,
+                                                display: Display::None,
+                                                ..default()
+                                            },
+                                        ));
                                         line.spawn((
                                             PlayerRowName(row),
                                             row_text(21.0),
@@ -809,6 +883,7 @@ mod list_row_tests {
             taken,
             seats: 6,
             running,
+            bots: false,
             age: 0.0,
         }
     }

@@ -368,7 +368,8 @@ pub fn join_tick(
     let mut mismatch = None;
     let mut queued = None;
     let mut said: Vec<(crate::transport::WireName, crate::transport::WireChat)> = Vec::new();
-    let mut table: Option<Vec<String>> = None;
+    let mut table: Option<(Vec<String>, [u8; MAX_PLAYERS])> = None;
+    let mut kicked = false;
     let mut host_terms: Option<MatchTerms> = None;
     let mut heard = false;
     let transport = &mut joined.transport;
@@ -387,6 +388,7 @@ pub fn join_tick(
                     seat,
                     terms,
                     names,
+                    kinds,
                     standing,
                     beach,
                 } => {
@@ -395,10 +397,13 @@ pub fn join_tick(
                         seat,
                         terms,
                         names,
+                        kinds,
                         standing,
                         beach,
                     })
                 }
+                // The host asked us to go: back to the list.
+                NetMsg::Kicked => kicked = true,
                 // A watcher at a beach mid-round: the round as it stands,
                 // part by part, until there is a whole of it to walk into.
                 NetMsg::CatchUp {
@@ -427,15 +432,21 @@ pub fn join_tick(
                 | NetMsg::CrowdPicks { .. } => {}
                 // Who else is here. A joiner has spoken to nobody but the
                 // host and would otherwise sit at an apparently empty beach.
-                NetMsg::Roster { names, terms, .. } => {
+                NetMsg::Roster {
+                    names,
+                    terms,
+                    kinds,
+                    ..
+                } => {
                     // The table is the leading run of named seats: the
                     // host sends it in seat order and pads the rest.
-                    table = Some(
+                    table = Some((
                         crate::transport::table_from_wire(&names)
                             .into_iter()
                             .take_while(|name| !name.is_empty())
                             .collect(),
-                    );
+                        kinds,
+                    ));
                     host_terms = Some(terms);
                 }
                 NetMsg::Hello { .. }
@@ -465,7 +476,18 @@ pub fn join_tick(
         );
         return;
     }
-    if let Some(table) = table {
+    if kicked {
+        state.let_go();
+        state.table.clear();
+        state.feedback = settings.tr().lobby_kicked_you.to_string();
+        return;
+    }
+    if let Some((table, kinds)) = table {
+        state.table_kinds = kinds
+            .iter()
+            .take(table.len())
+            .map(|&byte| crate::transport::kind_from_byte(byte))
+            .collect();
         state.table = table;
     }
     if let Some(terms) = host_terms
@@ -539,6 +561,7 @@ mod tests {
                 taken: *taken,
                 seats: *seats,
                 running: false,
+                bots: false,
                 age: 0.0,
             })
             .collect()
@@ -912,6 +935,7 @@ mod tests {
                 ..MatchTerms::default()
             },
             names: [[0u8; crate::transport::WIRE_NAME]; MAX_PLAYERS],
+            kinds: [0; crate::sim::MAX_PLAYERS],
             standing: None,
             beach: Vec::new(),
         };

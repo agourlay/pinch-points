@@ -48,6 +48,9 @@ pub enum Beacon {
         taken: u8,
         seats: u8,
         running: bool,
+        /// The host takes bots: a peer may join as one ("Bots welcome").
+        /// False from a build that never said, which predates bots.
+        bots: bool,
     },
     /// Going away for good: the host is leaving the lobby. Lobbies drop the
     /// beach on hearing it instead of waiting out the silence.
@@ -108,7 +111,9 @@ pub(super) const BEACON_ID_AT: usize = BEACON_SEATS_AT + 1;
 /// a beacon from the older build loses all but its beach name.
 pub(super) const BEACON_TABLE_BYTES: usize = BEACON_ID_AT + 8;
 pub(super) const BEACON_HOST_AT: usize = BEACON_TABLE_BYTES;
-pub(super) const BEACON_BYTES: usize = BEACON_HOST_AT + WIRE_NAME;
+/// Whether the beach takes bots, one byte, last.
+pub(super) const BEACON_BOTS_AT: usize = BEACON_HOST_AT + WIRE_NAME;
+pub(super) const BEACON_BYTES: usize = BEACON_BOTS_AT + 1;
 
 /// The receive buffer for a beacon, which must hold the largest one whole:
 /// UDP truncates a datagram to the buffer given, so a short buffer would
@@ -200,6 +205,8 @@ pub struct OnAir<'a> {
     pub host: &'a str,
     pub taken: u8,
     pub seats: u8,
+    /// "Bots welcome": a peer may join this beach as a bot.
+    pub bots: bool,
 }
 
 /// Listens for host announcements on one of the [`LOBBY_PORTS`].
@@ -274,6 +281,7 @@ impl Discovery {
                                     taken,
                                     seats,
                                     running: kind == Some(BEACON_RUNNING),
+                                    bots: len > BEACON_BOTS_AT && buf[BEACON_BOTS_AT] == 1,
                                 }
                             }
                         };
@@ -424,6 +432,7 @@ impl Announcer {
             host,
             taken,
             seats,
+            bots,
         } = on_air;
         let mut packet = ANNOUNCE_MAGIC.to_vec();
         packet.extend_from_slice(&game_port.to_le_bytes());
@@ -433,6 +442,7 @@ impl Announcer {
         packet.push(seats);
         packet.extend_from_slice(&self.id.to_le_bytes());
         packet.extend_from_slice(&wire_name(host));
+        packet.push(u8::from(bots));
         debug_assert_eq!(packet.len(), BEACON_BYTES);
         let round = self.sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let wide = wide_ports(round, times > 1);
@@ -576,6 +586,7 @@ mod tests {
             host: "Anna",
             taken,
             seats: 6,
+            bots: true,
         };
         let open = heard(&mut discovery, &|| announcer.announce(48123, told(3)));
         let (host, beacon) = open.first().expect("host discovered");
@@ -589,10 +600,12 @@ mod tests {
             taken,
             seats,
             running,
+            bots,
         } = beacon.clone()
         else {
             panic!("an open beach, not {beacon:?}")
         };
+        assert!(bots, "the beach said it takes bots");
         assert_eq!(
             (name.as_str(), whose.as_str(), taken, seats, running),
             ("Room 3", "Anna", 3, 6, false),
@@ -643,6 +656,7 @@ mod tests {
         packet.push(6);
         packet.extend_from_slice(&u64::MAX.to_le_bytes());
         packet.extend_from_slice(&wire_name("WWWWWWWWWWWWWWWWWWWWWWWW"));
+        packet.push(1);
         assert!(
             packet.len() <= MAX_BEACON,
             "{} bytes of beacon, {MAX_BEACON}-byte buffer",
@@ -695,6 +709,7 @@ mod tests {
                 taken: 2,
                 seats: 6,
                 running: false,
+                bots: false,
             },
             "everything it said, and nothing invented for what it did not"
         );
@@ -740,6 +755,7 @@ mod tests {
                 taken: 0,
                 seats: 0,
                 running: false,
+                bots: false,
             },
             "nameless and tableless, listed by address as it always was"
         );
@@ -768,6 +784,7 @@ mod tests {
         running.push(6);
         running.extend_from_slice(&0x5EA5u64.to_le_bytes());
         running.extend_from_slice(&wire_name("Anna"));
+        running.push(1);
         assert_eq!(running.len(), BEACON_BYTES);
         let mut old = ANNOUNCE_MAGIC.to_vec();
         old.extend_from_slice(&48127u16.to_le_bytes());
@@ -800,6 +817,7 @@ mod tests {
                 taken: 0,
                 seats: 0,
                 running: false,
+                bots: false,
             },
             "an open beach, not the kind of the packet before it"
         );

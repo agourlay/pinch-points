@@ -18,10 +18,13 @@ pub enum Dial {
     Bots,
     Teams,
     Series,
+    /// Whether a peer may join as a bot ("Bots welcome"). Said in the
+    /// beacon, so the list shows it before anyone walks up.
+    Welcome,
 }
 
 impl Dial {
-    pub const ALL: [Dial; 7] = [
+    pub const ALL: [Dial; 8] = [
         Dial::Map,
         Dial::Gulls,
         Dial::Round,
@@ -29,6 +32,7 @@ impl Dial {
         Dial::Bots,
         Dial::Teams,
         Dial::Series,
+        Dial::Welcome,
     ];
 
     /// The row as it reads: what it sets, and what it is set to.
@@ -64,6 +68,10 @@ impl Dial {
                 tr.match_mode,
                 tr.mode_names[config.series.index()].to_string(),
             ),
+            Dial::Welcome => (
+                tr.lobby_bots_dial,
+                tr.lobby_bots_values[usize::from(!config.bots_welcome)].to_string(),
+            ),
         }
     }
 
@@ -98,6 +106,7 @@ impl Dial {
             }
             Dial::Teams => *teams = teams.cycled(turn),
             Dial::Series => config.series = config.series.cycled(turn),
+            Dial::Welcome => config.bots_welcome = !config.bots_welcome,
         }
     }
 }
@@ -202,6 +211,7 @@ mod dial_tests {
                     teams,
                     config.series,
                     config.posts,
+                    config.bots_welcome,
                 );
                 dial.turn(turn, &mut config, &mut teams, 2, &Default::default());
                 let after = (
@@ -212,9 +222,10 @@ mod dial_tests {
                     teams,
                     config.series,
                     config.posts,
+                    config.bots_welcome,
                 );
                 assert_ne!(before, after, "{dial:?} turned {turn:?} and did nothing");
-                // Exactly one of the seven moved.
+                // Exactly one of the eight moved.
                 let moved = [
                     before.0 != after.0,
                     before.1 != after.1,
@@ -223,6 +234,7 @@ mod dial_tests {
                     before.4 != after.4,
                     before.5 != after.5,
                     before.6 != after.6,
+                    before.7 != after.7,
                 ];
                 assert_eq!(
                     moved.iter().filter(|m| **m).count(),

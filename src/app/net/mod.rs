@@ -51,6 +51,9 @@ pub struct OnlineSession {
     /// shows the same table. Empty entries fall back to seat labels; local
     /// couch names never apply to an online round.
     pub names: [String; MAX_PLAYERS],
+    /// What holds each seat, agreed with the names: a bot wears the robot
+    /// on every screen at the table.
+    pub kinds: [crate::sim::SeatKind; MAX_PLAYERS],
     /// The peers' state hashes against our own, and the first frame they
     /// disagreed on, if ever.
     hashes: HashCheck,
@@ -98,6 +101,8 @@ pub struct Home {
     /// What the beach is called, for the beacon it keeps up while the round
     /// runs. Not a player's name: the list is choosing between games.
     pub game_name: String,
+    /// Whether the beach takes bots, for the beacon it keeps up.
+    pub bots_welcome: bool,
     announce_in: f32,
     /// Whether this session was formed in the beach lobby, which is the
     /// only place a finished match has to walk its table back to: the
@@ -122,6 +127,7 @@ impl Home {
         Home {
             announcer: Farewell::silent(),
             game_name: String::new(),
+            bots_welcome: false,
             announce_in: 0.0,
             from_lobby: false,
             greet_in: 0.0,
@@ -341,6 +347,7 @@ impl OnlineSession {
             beach: Vec::new(),
             peers: PeerBook::default(),
             names: Default::default(),
+            kinds: Default::default(),
             hashes: HashCheck::default(),
             stall: StallWatch::default(),
             abandoned: Vec::new(),
@@ -385,6 +392,7 @@ impl OnlineSession {
                 host: &self.names[0],
                 taken,
                 seats: MAX_PLAYERS as u8,
+                bots: self.home.bots_welcome,
             },
         );
     }
@@ -429,6 +437,7 @@ impl OnlineSession {
             beach: _,
             peers,
             names: _,
+            kinds: _,
             hashes: _,
             stall: _,
             abandoned: _,
@@ -443,6 +452,7 @@ impl OnlineSession {
         let Home {
             announcer,
             game_name,
+            bots_welcome: _,
             announce_in: _,
             from_lobby: _,
             greet_in: _,
@@ -569,8 +579,9 @@ impl OnlineSession {
                 // A peer that missed the Start datagram keeps greeting us;
                 // repeat what it is until it stops. A watcher is told it is
                 // watching, so the seat it gets is not one.
-                NetMsg::Hello { name } => {
+                NetMsg::Hello { name, bot } => {
                     if host {
+                        self.peers.row(from).bot = bot;
                         let answer = self.answer_greeting(from, &name_from_wire(&name), false);
                         self.transport.send_to(from, answer);
                     }
@@ -652,6 +663,7 @@ impl OnlineSession {
                     seat,
                     terms,
                     names,
+                    kinds,
                     standing,
                     beach,
                 } if !host && self.is_next_round(&terms) => {
@@ -665,6 +677,7 @@ impl OnlineSession {
                         seat,
                         terms,
                         names,
+                        kinds,
                         standing,
                         beach,
                     });
@@ -686,7 +699,8 @@ impl OnlineSession {
                 // Someone on another build is talking to this port. Every
                 // peer in a running match paired before it started, so this
                 // is a stranger, not a member: the match plays on without it.
-                NetMsg::Incompatible { .. } => {}
+                // Kicking happens in the lobby, never mid-round.
+                NetMsg::Incompatible { .. } | NetMsg::Kicked => {}
                 // Only a host hands these out, and a host never receives
                 // one: a joiner in the queue is still in the lobby, and so
                 // is a watcher being caught up.
@@ -1191,7 +1205,7 @@ mod homecoming_tests {
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 for (msg, from) in session.transport.recv_all() {
                     match msg {
-                        NetMsg::Hello { name } => {
+                        NetMsg::Hello { name, .. } => {
                             let told = name_from_wire(&name);
                             session.remember_peer_name(from, &told);
                         }
@@ -1210,6 +1224,7 @@ mod homecoming_tests {
                         | NetMsg::CatchUp { .. }
                         | NetMsg::SpectatorPick { .. }
                         | NetMsg::CrowdPicks { .. }
+                        | NetMsg::Kicked
                         | NetMsg::Incompatible { .. } => {}
                     }
                 }

@@ -9,8 +9,9 @@ use super::*;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum NetMsg {
     /// Handshake ping; the host learns the peer's address (and what to
-    /// call them) from it.
-    Hello { name: WireName },
+    /// call them) from it, and whether a bot is driving its seat: the
+    /// game sets that flag, never the name, so the table always knows.
+    Hello { name: WireName, bot: bool },
     /// Handshake ping from a peer that wants to watch, not play. Repeated
     /// like `Hello` until a `Start` lands.
     ///
@@ -45,6 +46,9 @@ pub enum NetMsg {
         seat: Option<u8>,
         terms: MatchTerms,
         names: [WireName; crate::sim::MAX_PLAYERS],
+        /// What holds each seat (see [`kind_byte`]): the round names its
+        /// bots, so every peer draws the robot on them.
+        kinds: [u8; crate::sim::MAX_PLAYERS],
         /// Where the series stands as this round begins, or `None` for a
         /// single round. On the wire the absence is a round number of
         /// zero, which no series ever reaches.
@@ -103,7 +107,13 @@ pub enum NetMsg {
         /// match it is joining rather than its own setup screen's idea of
         /// one. Everything but the seed is meaningful before the launch.
         terms: MatchTerms,
+        /// What holds each place at the table (see [`kind_byte`]), so a
+        /// bot wears the robot on every screen in the room.
+        kinds: [u8; crate::sim::MAX_PLAYERS],
     },
+    /// Host → one peer: the host asked you to leave. The peer goes back to
+    /// choosing a beach, and the host forgets it.
+    Kicked,
     /// A line said in the lobby, and who said it. The sender names itself
     /// rather than the host stamping it: a joiner's greeting is the only
     /// other place the host learns a name, and a peer that never greeted
@@ -198,6 +208,15 @@ impl NetMsg {
     pub fn hello(name: &str) -> NetMsg {
         NetMsg::Hello {
             name: wire_name(name),
+            bot: false,
+        }
+    }
+
+    /// The greeting of a game whose seat a bot will drive.
+    pub fn hello_bot(name: &str) -> NetMsg {
+        NetMsg::Hello {
+            name: wire_name(name),
+            bot: true,
         }
     }
 
@@ -250,12 +269,13 @@ const TAG_SPECTATOR_TALLY: u8 = 14;
 const TAG_CATCH_UP: u8 = 15;
 const TAG_SPECTATOR_PICK: u8 = 16;
 const TAG_CROWD_PICKS: u8 = 17;
+const TAG_KICKED: u8 = 18;
 /// The last of them, which `peek_version` uses to tell one of ours from
 /// stray traffic on the port.
 ///
 /// It said `TAG_INPUTS` through two more tags, so a build of another
 /// version sending the spectators' two was ignored rather than told why.
-const HIGHEST_TAG: u8 = TAG_CROWD_PICKS;
+const HIGHEST_TAG: u8 = TAG_KICKED;
 
 /// Inputs one datagram may carry.
 ///
@@ -283,6 +303,36 @@ pub const CATCH_UP_PARTS: u8 = 32;
 /// the range of real seats, so it cannot collide with one. A wire detail:
 /// everything above this file says `None`.
 const SPECTATOR_SEAT: u8 = u8::MAX;
+
+/// What holds a seat, as one byte on the wire: 0 a person, 1 the game's
+/// AI, 2 a bot. Anything else reads as a person, which is what a seat is
+/// unless somebody says otherwise.
+pub fn kind_byte(kind: crate::sim::SeatKind) -> u8 {
+    match kind {
+        crate::sim::SeatKind::Human => 0,
+        crate::sim::SeatKind::Ai => 1,
+        crate::sim::SeatKind::Bot => 2,
+    }
+}
+
+/// A table's kinds in wire form, a byte a seat; places past the table
+/// are people, which is what a byte of nought says.
+pub fn wire_kinds(kinds: &[crate::sim::SeatKind]) -> [u8; crate::sim::MAX_PLAYERS] {
+    let mut out = [0u8; crate::sim::MAX_PLAYERS];
+    for (slot, kind) in out.iter_mut().zip(kinds) {
+        *slot = kind_byte(*kind);
+    }
+    out
+}
+
+/// The kind a byte names; see [`kind_byte`].
+pub fn kind_from_byte(byte: u8) -> crate::sim::SeatKind {
+    match byte {
+        1 => crate::sim::SeatKind::Ai,
+        2 => crate::sim::SeatKind::Bot,
+        _ => crate::sim::SeatKind::Human,
+    }
+}
 
 /// Everything about a match that every peer has to agree on, or the boards
 /// diverge (or, for `teams`, two peers score the same round differently).
@@ -433,11 +483,12 @@ impl NetMsg {
             NetMsg::CatchUp { .. } => vec![TAG_CATCH_UP],
             NetMsg::SpectatorPick { .. } => vec![TAG_SPECTATOR_PICK],
             NetMsg::CrowdPicks { .. } => vec![TAG_CROWD_PICKS],
+            NetMsg::Kicked => vec![TAG_KICKED],
             NetMsg::Incompatible { version } => return vec![TAG_INCOMPATIBLE, version],
         };
         bytes.push(PROTOCOL_VERSION);
         match self {
-            NetMsg::Incompatible { .. } => {}
+            NetMsg::Incompatible { .. } | NetMsg::Kicked => {}
             NetMsg::Resume { frame } => bytes.extend_from_slice(&frame.to_le_bytes()),
             NetMsg::Queued { ahead } => bytes.push(ahead),
             NetMsg::Abandoned { seat, frame } => {
@@ -452,14 +503,20 @@ impl NetMsg {
                 seats,
                 names,
                 terms,
+                kinds,
             } => {
                 bytes.push(seats);
                 for name in names {
                     bytes.extend_from_slice(&name);
                 }
                 bytes.extend_from_slice(&terms.encode());
+                bytes.extend_from_slice(&kinds);
             }
-            NetMsg::Hello { name } | NetMsg::Watch { name } => bytes.extend_from_slice(&name),
+            NetMsg::Hello { name, bot } => {
+                bytes.extend_from_slice(&name);
+                bytes.push(u8::from(bot));
+            }
+            NetMsg::Watch { name } => bytes.extend_from_slice(&name),
             NetMsg::Inputs(ref inputs) => {
                 // Count first, then that many fixed-width inputs. A batch
                 // past the cap is truncated rather than sent whole: the
@@ -485,6 +542,7 @@ impl NetMsg {
                 seat,
                 terms,
                 names,
+                kinds,
                 standing,
                 beach,
             } => {
@@ -494,6 +552,7 @@ impl NetMsg {
                 for name in names {
                     bytes.extend_from_slice(&name);
                 }
+                bytes.extend_from_slice(&kinds);
                 // Round zero is "no series", as `SPECTATOR_SEAT` is "no
                 // seat": both are numbers the real thing never takes.
                 let SeriesStanding { round, wins } = standing.unwrap_or(SeriesStanding {
@@ -566,7 +625,9 @@ impl NetMsg {
         match tag {
             TAG_HELLO => Some(NetMsg::Hello {
                 name: body.get(..WIRE_NAME)?.try_into().ok()?,
+                bot: *body.get(WIRE_NAME)? != 0,
             }),
+            TAG_KICKED => Some(NetMsg::Kicked),
             TAG_WATCH => Some(NetMsg::Watch {
                 name: body.get(..WIRE_NAME)?.try_into().ok()?,
             }),
@@ -618,7 +679,12 @@ impl NetMsg {
                 }
                 let seat = (seat != SPECTATOR_SEAT).then_some(seat);
                 debug_assert!(seat.is_none_or(|seat| seat < seats));
-                let series_at = 2 + MatchTerms::BYTES + WIRE_NAME * crate::sim::MAX_PLAYERS;
+                let kinds_at = 2 + MatchTerms::BYTES + WIRE_NAME * crate::sim::MAX_PLAYERS;
+                let kinds: [u8; crate::sim::MAX_PLAYERS] = body
+                    .get(kinds_at..kinds_at + crate::sim::MAX_PLAYERS)?
+                    .try_into()
+                    .ok()?;
+                let series_at = kinds_at + crate::sim::MAX_PLAYERS;
                 let round = *body.get(series_at)?;
                 let wins: [u8; crate::sim::MAX_PLAYERS] = body
                     .get(series_at + 1..series_at + 1 + crate::sim::MAX_PLAYERS)?
@@ -637,6 +703,7 @@ impl NetMsg {
                     seat,
                     terms,
                     names,
+                    kinds,
                     standing,
                     beach,
                 })
@@ -694,11 +761,18 @@ impl NetMsg {
             TAG_ROSTER => {
                 let table = body.get(1..)?;
                 let names = read_table(table)?;
-                let terms = MatchTerms::decode(table.get(WIRE_NAME * crate::sim::MAX_PLAYERS..)?)?;
+                let terms_at = WIRE_NAME * crate::sim::MAX_PLAYERS;
+                let terms = MatchTerms::decode(table.get(terms_at..)?)?;
+                let kinds_at = terms_at + MatchTerms::BYTES;
+                let kinds = table
+                    .get(kinds_at..kinds_at + crate::sim::MAX_PLAYERS)?
+                    .try_into()
+                    .ok()?;
                 Some(NetMsg::Roster {
                     seats: *body.first()?,
                     names,
                     terms,
+                    kinds,
                 })
             }
             TAG_CHAT => Some(NetMsg::Chat {
@@ -738,7 +812,11 @@ mod tests {
     fn every_message_fits_the_receive_buffer() {
         let widest = wire_name("WWWWWWWWWWWWWWWWWWWWWWWW");
         for msg in [
-            NetMsg::Hello { name: widest },
+            NetMsg::Hello {
+                name: widest,
+                bot: true,
+            },
+            NetMsg::Kicked,
             NetMsg::Chat {
                 name: widest,
                 text: wire_chat(&"W".repeat(CHAT_CHARS)),
@@ -748,6 +826,7 @@ mod tests {
                 seat: Some(5),
                 terms: MatchTerms::default(),
                 names: [widest; crate::sim::MAX_PLAYERS],
+                kinds: [0; crate::sim::MAX_PLAYERS],
                 // The widest a Start gets: a full table of longest names
                 // and the largest beach the sender will hand it.
                 standing: None,
@@ -860,6 +939,52 @@ mod tests {
         );
     }
 
+    /// A bot is said to be one in every message that names a seat: the
+    /// greeting's flag, and the kinds the roster and the start carry.
+    #[test]
+    fn what_holds_a_seat_survives_the_wire() {
+        for bot in [false, true] {
+            let hello = NetMsg::Hello {
+                name: wire_name("Greedy (Ana's bot)"),
+                bot,
+            };
+            assert_eq!(NetMsg::decode(&hello.clone().encode()), Some(hello));
+        }
+        let kinds = wire_kinds(&[
+            crate::sim::SeatKind::Human,
+            crate::sim::SeatKind::Bot,
+            crate::sim::SeatKind::Ai,
+        ]);
+        assert_eq!(kinds, [0, 2, 1, 0, 0, 0]);
+        let roster = NetMsg::Roster {
+            seats: 3,
+            names: [wire_name("x"); crate::sim::MAX_PLAYERS],
+            terms: MatchTerms::default(),
+            kinds,
+        };
+        assert_eq!(NetMsg::decode(&roster.clone().encode()), Some(roster));
+        let start = NetMsg::Start {
+            seats: 3,
+            seat: Some(1),
+            terms: MatchTerms::default(),
+            names: [wire_name("x"); crate::sim::MAX_PLAYERS],
+            kinds,
+            standing: None,
+            beach: vec![1, 2, 3],
+        };
+        assert_eq!(NetMsg::decode(&start.clone().encode()), Some(start));
+        assert_eq!(
+            NetMsg::decode(&NetMsg::Kicked.encode()),
+            Some(NetMsg::Kicked)
+        );
+        assert_eq!(kind_from_byte(2), crate::sim::SeatKind::Bot);
+        assert_eq!(
+            kind_from_byte(99),
+            crate::sim::SeatKind::Human,
+            "unknown reads as a person"
+        );
+    }
+
     /// [`MAX_BEACH_BYTES`] is what the sender trusts, so it has to be a
     /// number this encoder agrees with: the widest possible invitation
     /// carrying the largest allowed beach must still fit the buffer, with
@@ -872,6 +997,7 @@ mod tests {
             seat: Some(5),
             terms: MatchTerms::default(),
             names: [widest; crate::sim::MAX_PLAYERS],
+            kinds: [0; crate::sim::MAX_PLAYERS],
             standing: None,
             beach: vec![0xAB; MAX_BEACH_BYTES],
         }
@@ -1027,6 +1153,7 @@ mod tests {
                     ..MatchTerms::default()
                 },
                 names: std::array::from_fn(|i| wire_name(&format!("Seat {i}"))),
+                kinds: [0; crate::sim::MAX_PLAYERS],
                 standing: None,
                 beach: b"a handmade beach".to_vec(),
             },
@@ -1040,6 +1167,7 @@ mod tests {
                     ..MatchTerms::default()
                 },
                 names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
+                kinds: [0; crate::sim::MAX_PLAYERS],
                 standing: Some(SeriesStanding {
                     round: 3,
                     wins: [1, 0, 1, 0, 0, 0],
@@ -1056,6 +1184,7 @@ mod tests {
             NetMsg::Roster {
                 seats: 4,
                 names: std::array::from_fn(|i| wire_name(&format!("P{i}"))),
+                kinds: [0; crate::sim::MAX_PLAYERS],
                 terms: MatchTerms {
                     bots: 1,
                     map: 3,
@@ -1084,6 +1213,7 @@ mod tests {
             seat: Some(5),
             terms: MatchTerms::default(),
             names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
+            kinds: [0; crate::sim::MAX_PLAYERS],
             standing: None,
             beach: Vec::new(),
         };
@@ -1118,6 +1248,7 @@ mod tests {
                         ..MatchTerms::default()
                     },
                     names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
+                    kinds: [0; crate::sim::MAX_PLAYERS],
                     standing: None,
                     beach: Vec::new(),
                 }
@@ -1183,6 +1314,7 @@ mod wire_fuzz_probe {
                 seat: Some(2),
                 terms: MatchTerms::default(),
                 names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
+                kinds: [0; crate::sim::MAX_PLAYERS],
                 standing: None,
                 beach: Vec::new(),
             }

@@ -32,8 +32,11 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// name, 13 is where a spectator arriving mid-round started being sent
 /// the round as it stands (`CatchUp`) instead of a place in line, and 14
 /// is where spectators started calling the winner (`SpectatorPick`,
-/// `CrowdPicks`), and 15 is where the terms started carrying how many
-/// arrows each player may have standing.
+/// `CrowdPicks`), 15 is where the terms started carrying how many
+/// arrows each player may have standing, and 16 is where the game's AI
+/// started walking under the fair cursor, every seat started saying what
+/// holds it (a person, the AI, or a bot: the greeting's flag, the roster's
+/// and the start's kinds), and a host could ask a peer to leave.
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in
@@ -43,7 +46,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// frozen for all time**: it is how a build tells "I cannot read this"
 /// apart from "I disagree with this", however the rest of the format
 /// moves.
-pub const PROTOCOL_VERSION: u8 = 15;
+pub const PROTOCOL_VERSION: u8 = 16;
 
 /// Connections a host accepts: five rivals (a six-seat table) and everyone
 /// else who turned up. How many of them get a seat is the lobby's
@@ -78,7 +81,7 @@ const MAX_DATAGRAM: usize = 1024;
 /// bytes and fits; one with a crab on every tile packs to over 1300.
 ///
 /// `a_start_carrying_the_largest_beach_still_fits` holds the arithmetic.
-pub const MAX_BEACH_BYTES: usize = 832;
+pub const MAX_BEACH_BYTES: usize = 824;
 
 /// A non-blocking UDP endpoint. A joiner talks to one peer (the host); a
 /// host accepts up to [`MAX_PEERS`] of them, five rivals and a few

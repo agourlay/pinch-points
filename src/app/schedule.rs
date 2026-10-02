@@ -580,6 +580,7 @@ fn add_ui_systems(app: &mut App) {
                 lobby::update_lobby_list,
                 lobby::update_lobby_view,
                 lobby::update_lobby_players,
+                lobby::update_lobby_robots,
                 lobby::update_lobby_terms,
                 lobby::update_lobby_beach_note,
                 lobby::update_lobby_chat,

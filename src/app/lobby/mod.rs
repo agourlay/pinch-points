@@ -293,6 +293,9 @@ pub struct LobbyState {
     /// and told to a joiner by [`NetMsg::Roster`], since a joiner has only
     /// ever spoken to the host and would otherwise think itself alone.
     pub table: Vec<String>,
+    /// What holds each place in [`Self::table`], so a bot at the beach
+    /// wears the robot on the card that lists who is there.
+    pub table_kinds: Vec<crate::sim::SeatKind>,
     /// What this beach is called, once its host has said. Announced in
     /// place of the host's own name: the list is choosing between games.
     /// Beside the standing rather than inside [`Hosted`] because it is
@@ -415,6 +418,11 @@ impl LobbyState {
         table_of(peers, tr, me)
     }
 
+    /// The beach under the cursor, as its beacon described it.
+    pub fn selected_entry(&self) -> Option<&HostEntry> {
+        self.hosts.get(self.selected_index()?)
+    }
+
     /// What the beach under the cursor is called, for a card that is about
     /// to join it: its name, or its address when it gave none.
     pub fn joining_beach(&self) -> Option<String> {
@@ -423,6 +431,24 @@ impl LobbyState {
             true => host.addr.to_string(),
             false => host.name.clone(),
         })
+    }
+
+    /// What holds each place in [`Self::roster`]: the host a person, every
+    /// peer that came to play whatever its greeting said.
+    pub fn roster_kinds(&self) -> Vec<crate::sim::SeatKind> {
+        let nobody = PeerBook::default();
+        let peers = self.hosted().map_or(&nobody, |hosted| &hosted.peers);
+        std::iter::once(crate::sim::SeatKind::Human)
+            .chain(
+                peers
+                    .iter()
+                    .filter(|peer| !peer.watch)
+                    .map(|peer| match peer.bot {
+                        true => crate::sim::SeatKind::Bot,
+                        false => crate::sim::SeatKind::Human,
+                    }),
+            )
+            .collect()
     }
 
     /// Where the cursor sits in the current list, if the beach it names is
@@ -768,7 +794,8 @@ mod tests {
         assert_eq!(
             greeting(false, "Bo"),
             NetMsg::Hello {
-                name: crate::transport::wire_name("Bo")
+                name: crate::transport::wire_name("Bo"),
+                bot: false,
             },
         );
     }
@@ -789,6 +816,7 @@ mod tests {
                 taken,
                 seats,
                 running,
+                bots: false,
             },
         )
     }

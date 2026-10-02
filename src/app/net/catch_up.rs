@@ -204,6 +204,7 @@ fn unpack(packed: &[u8], frame: u32) -> Option<CaughtUp> {
         seat: None,
         terms,
         names,
+        kinds,
         standing,
         beach,
     } = start
@@ -216,6 +217,7 @@ fn unpack(packed: &[u8], frame: u32) -> Option<CaughtUp> {
             seat: None,
             terms,
             names,
+            kinds,
             standing,
             beach,
         },
@@ -236,6 +238,7 @@ mod tests {
             seat: None,
             terms: MatchTerms::default(),
             names: [wire_name("WWWWWWWWWWWWWWWWWWWWWWWW"); MAX_PLAYERS],
+            kinds: [0; MAX_PLAYERS],
             standing: None,
             beach: Vec::new(),
         }
@@ -340,6 +343,7 @@ mod tests {
             seat: Some(1),
             terms: MatchTerms::default(),
             names: [wire_name(""); MAX_PLAYERS],
+            kinds: [0; crate::sim::MAX_PLAYERS],
             standing: None,
             beach: Vec::new(),
         };
