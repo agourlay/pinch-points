@@ -72,6 +72,29 @@ one still in progress.
   before it ships.
 - **Beach Day**, **Replay**, **Daily Challenge**, **Achievements**.
 
+## Bots
+
+Write your own bot, in any language, and play it against the game's AI,
+against other people's bots, or beside your friends. A bot is a program
+you run yourself that connects to the game over TCP and answers each
+tick with a move; the game never runs anyone's code.
+
+```
+$ pinch-points arena --seat ai:easy --open 1
+Waiting for 1 bot. Start it with:
+
+  pinch://127.0.0.1:47710/H4TN-C2LV
+
+$ python3 bots/python/greedy.py pinch://127.0.0.1:47710/H4TN-C2LV
+```
+
+`pinch-points cup serve` runs a competition between bots, `pinch-points
+watch FILE` plays any replay in the game, and a bot can take a seat on
+the couch or join a LAN party. The protocol, the clocks and every
+command are in [`docs/bot-protocol.md`](docs/bot-protocol.md), and
+[`bots/python/greedy.py`](bots/python/greedy.py) is a whole bot in one
+file to start from.
+
 ## Controls
 
 | | Move | Place | Remove | Clear all |
@@ -93,6 +116,8 @@ menu is navigable from a pad, and the interface speaks eight languages.
   development hooks.
 - [`docs/pinch-points-spec.md`](docs/pinch-points-spec.md): the design
   document.
+- [`docs/bot-protocol.md`](docs/bot-protocol.md): writing a bot, and
+  [`docs/bot-seats.md`](docs/bot-seats.md), the design behind it.
 - [`docs/backlog.md`](docs/backlog.md): remaining ideas.
 
 ## Building
