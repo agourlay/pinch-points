@@ -116,15 +116,7 @@ impl RoundOrigin<'_> {
             }
             // The AI seats are the terms'; this peer plays its own seat and
             // every other one is somebody's down the wire.
-            RoundOrigin::Online(session) => {
-                let ai = match_setup::bot_seats_from(&session.terms, session.seats);
-                let mine = session.session.seat().map(usize::from);
-                Controllers(std::array::from_fn(|seat| match ai[seat] {
-                    Some(level) => SeatController::Ai(level),
-                    None if Some(seat) == mine => SeatController::Local,
-                    None => SeatController::Remote,
-                }))
-            }
+            RoundOrigin::Online(session) => online_controllers(session),
             RoundOrigin::Replay(_) | RoundOrigin::Configured(_) | RoundOrigin::Unconfigured => {
                 bot_seats(config)
             }
@@ -165,6 +157,31 @@ impl RoundOrigin<'_> {
             RoundOrigin::Configured(_) | RoundOrigin::Unconfigured => true,
         }
     }
+}
+
+/// Who decides for each seat of an online round, from this peer's side.
+///
+/// The AI seats are the terms'. This peer plays its own seat, unless it
+/// joined as a bot (route 1), and the bots that came straight to this host
+/// (route 2) play theirs. A seat a bot drives is a bot's, not this
+/// machine's person's: it earns nobody's trophies and is not "(you)".
+/// Every other seat is somebody's down the wire.
+pub(super) fn online_controllers(session: &net::OnlineSession) -> Controllers {
+    let ai = match_setup::bot_seats_from(&session.terms, session.seats);
+    let mine = session.session.seat().map(usize::from);
+    let driven = |seat: usize| {
+        (Some(seat) == mine && session.bot)
+            || session
+                .bots_here
+                .iter()
+                .any(|(bot, ..)| usize::from(*bot) == seat)
+    };
+    Controllers(std::array::from_fn(|seat| match ai[seat] {
+        Some(level) => SeatController::Ai(level),
+        None if driven(seat) => SeatController::Bot,
+        None if Some(seat) == mine => SeatController::Local,
+        None => SeatController::Remote,
+    }))
 }
 
 /// A seat count the per-seat arrays can hold. Two of the sources are not

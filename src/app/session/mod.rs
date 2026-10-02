@@ -199,6 +199,45 @@ mod tests {
         assert_ne!(player.seats, daily.seats, "the player's own is untouched");
     }
 
+    /// A seat a bot drives online is a bot's, not this machine's person's:
+    /// joined as a bot (route 1) or come straight to the host (route 2),
+    /// it earns no trophies and is not tagged "(you)", both of which key
+    /// on `Local`.
+    #[test]
+    fn a_seat_a_bot_drives_online_is_not_the_players() {
+        let session = |seat: u8, bot: bool, bots_here: Vec<u8>| {
+            let mut session = net::OnlineSession::new(
+                crate::transport::UdpTransport::host(0).expect("socket"),
+                crate::sim::Lockstep::new(seat, vec![0, 1, 2], crate::sim::DEFAULT_DELAY),
+                3,
+                crate::transport::MatchTerms::default(),
+            );
+            session.bot = bot;
+            session.bots_here = bots_here
+                .into_iter()
+                .map(|seat| (seat, 0, "Greedy".to_string()))
+                .collect();
+            session
+        };
+        // A person at seat one: their own chair, the others down the wire.
+        let table = online_controllers(&session(1, false, vec![]));
+        assert_eq!(table.0[1], SeatController::Local);
+        assert_eq!(table.0[0], SeatController::Remote);
+        // Route 1: this peer's own seat is its bot's.
+        let table = online_controllers(&session(1, true, vec![]));
+        assert_eq!(
+            table.0[1],
+            SeatController::Bot,
+            "the bot's, not the person's"
+        );
+        assert_eq!(table.0[0], SeatController::Remote);
+        // Route 2: the host plays seat zero, its bot seat two.
+        let table = online_controllers(&session(0, false, vec![2]));
+        assert_eq!(table.0[0], SeatController::Local);
+        assert_eq!(table.0[2], SeatController::Bot);
+        assert_eq!(table.0[1], SeatController::Remote);
+    }
+
     /// The AI fills from the top seat down, each with its own level, and
     /// leaves the human seats alone.
     /// Boards from the shelf or a pasted code can be any size at all, and
