@@ -179,9 +179,7 @@ fn standings_rows(
             })
             .collect();
     }
-    let mut order: Vec<u8> = (0..seats).collect();
-    order.sort_by_key(|&seat| std::cmp::Reverse(scores[seat as usize]));
-    order
+    standing_order(scores, seats)
         .iter()
         .enumerate()
         .map(|(place, &seat)| {
@@ -197,6 +195,14 @@ fn standings_rows(
             )
         })
         .collect()
+}
+
+/// The seats best first, the order a free-for-all's standings are written
+/// in: by score, and by seat between equals.
+fn standing_order(scores: &[u32; MAX_PLAYERS], seats: u8) -> Vec<u8> {
+    let mut order: Vec<u8> = (0..seats).collect();
+    order.sort_by_key(|&seat| std::cmp::Reverse(scores[seat as usize]));
+    order
 }
 
 /// The round's awards as card lines, each in the colour of the first seat
@@ -272,6 +278,7 @@ pub struct RoundExtras<'w> {
     stats: Res<'w, crate::app::achievements::Stats>,
     tournament: Res<'w, crate::app::tournament::Tournament>,
     tally: Res<'w, crate::app::awards::RoundTally>,
+    kinds: Res<'w, crate::app::SeatKinds>,
 }
 
 /// The tide-is-in standings card: winner headline, ranked scores in seat
@@ -299,6 +306,7 @@ pub fn spawn_versus_results(
         stats,
         tournament,
         tally,
+        kinds,
     } = extras;
     let board = &sim.0;
     let scores = board.scores();
@@ -358,9 +366,42 @@ pub fn spawn_versus_results(
                 height: Val::Px(6.0),
                 ..default()
             });
-            for (line, color) in rows {
+            // A bot wears the robot beside its line. The rows keep one
+            // left edge between them, so a slot is held on every row of a
+            // table with any bot at it.
+            let seat_rows: Vec<Option<u8>> = match mode {
+                TeamMode::Solo => standing_order(scores, count)
+                    .into_iter()
+                    .map(Some)
+                    .collect(),
+                TeamMode::Pairs | TeamMode::Trios => vec![None; rows.len()],
+            };
+            let any_bot = seat_rows.iter().flatten().any(|&seat| kinds.bot(seat));
+            for ((line, color), seat) in rows.into_iter().zip(seat_rows) {
                 let row = card_text(23.0, color);
-                card.spawn((Text::new(line), row.0, row.1));
+                if !any_bot {
+                    card.spawn((Text::new(line), row.0, row.1));
+                    continue;
+                }
+                card.spawn(Node {
+                    column_gap: Val::Px(6.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|line_row| {
+                    match seat.filter(|&seat| kinds.bot(seat)) {
+                        Some(seat) => {
+                            line_row.spawn(crate::app::side_panels::robot_icon(&art, seat, 22.0));
+                        }
+                        None => {
+                            line_row.spawn(Node {
+                                width: Val::Px(22.0),
+                                ..default()
+                            });
+                        }
+                    }
+                    line_row.spawn((Text::new(line), row.0, row.1));
+                });
             }
             if !awards.is_empty() {
                 card.spawn(Node {

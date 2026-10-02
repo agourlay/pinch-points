@@ -390,6 +390,29 @@ pub struct Seats(pub u8);
 #[derive(Resource, Default)]
 pub struct SeatNames(pub [String; MAX_PLAYERS]);
 
+/// What held each seat this round: a person, the game's AI, or a bot. Read
+/// wherever a name is drawn, so a bot always wears the robot (see
+/// [`crate::app::art::Art::robot`]). Resolved with the names: a replay's
+/// own, the table's online, this machine's controllers otherwise.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SeatKinds(pub [crate::sim::SeatKind; MAX_PLAYERS]);
+
+impl SeatKinds {
+    /// Whether a bot holds `seat`.
+    pub fn bot(&self, seat: u8) -> bool {
+        self.0.get(usize::from(seat)) == Some(&crate::sim::SeatKind::Bot)
+    }
+
+    /// The kinds a table of controllers makes.
+    pub fn of(controllers: &Controllers) -> SeatKinds {
+        SeatKinds(controllers.0.map(|c| match c {
+            SeatController::Local | SeatController::Remote => crate::sim::SeatKind::Human,
+            SeatController::Ai(_) => crate::sim::SeatKind::Ai,
+            SeatController::Bot => crate::sim::SeatKind::Bot,
+        }))
+    }
+}
+
 impl SeatNames {
     /// The name to show for `seat`, or the localized "P{n}" fallback.
     pub fn label(&self, tr: &i18n::Tr, seat: u8) -> String {

@@ -166,6 +166,7 @@ fn spawn_score_chip(
     seat: u8,
     label: String,
     arrows: u8,
+    bot: bool,
 ) {
     root.spawn((
         SidePanel(seat),
@@ -219,14 +220,24 @@ fn spawn_score_chip(
             ..default()
         })
         .with_children(|mid| {
-            mid.spawn((
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
-                    ..default()
-                },
-                TextColor(palette::CHIP_NAME),
-            ));
+            mid.spawn(Node {
+                column_gap: Val::Px(5.0),
+                align_items: AlignItems::Center,
+                ..default()
+            })
+            .with_children(|line| {
+                if bot {
+                    line.spawn(robot_icon(art, seat, 18.0));
+                }
+                line.spawn((
+                    Text::new(label),
+                    TextFont {
+                        font_size: FontSize::Px(menu_ui::type_scale::BODY),
+                        ..default()
+                    },
+                    TextColor(palette::CHIP_NAME),
+                ));
+            });
             mid.spawn(Node {
                 column_gap: Val::Px(3.0),
                 ..default()
@@ -286,6 +297,21 @@ fn spawn_score_chip(
     });
 }
 
+/// The bot tag beside a name: the robot's head in the seat's colour, `px`
+/// square. The game sets it from what holds the seat, never from the name,
+/// so a bot that calls itself after a friend still wears it.
+pub fn robot_icon(art: &crate::app::art::Art, seat: u8, px: f32) -> impl Bundle {
+    (
+        ImageNode::new(art.robot.clone()).with_color(palette::player_color(seat).lighter(0.3)),
+        Node {
+            width: Val::Px(px),
+            height: Val::Px(px),
+            flex_shrink: 0.0,
+            ..default()
+        },
+    )
+}
+
 /// The right sidebar: the big tide clock over the event feed.
 fn spawn_clock_and_feed(commands: &mut Commands) {
     commands.spawn(sidebar(false)).with_children(|root| {
@@ -298,6 +324,7 @@ fn spawn_clock_and_feed(commands: &mut Commands) {
 pub fn spawn_side_panels(
     mut commands: Commands,
     seating: Seating,
+    kinds: Res<crate::app::SeatKinds>,
     settings: Res<GameSettings>,
     art: Res<crate::app::art::Art>,
     sim: Res<Sim>,
@@ -312,7 +339,8 @@ pub fn spawn_side_panels(
     let arrows = sim.0.signpost_rule().0;
     commands.spawn(sidebar(true)).with_children(|root| {
         for (seat, label) in labels.into_iter().enumerate() {
-            spawn_score_chip(root, &art, seat as u8, label, arrows);
+            let seat = seat as u8;
+            spawn_score_chip(root, &art, seat, label, arrows, kinds.bot(seat));
         }
     });
     spawn_clock_and_feed(&mut commands);

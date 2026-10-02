@@ -304,8 +304,10 @@ pub(in crate::app) fn resolve_seat_names(
     online: Res<net::Online>,
     playback: Res<Playback>,
     settings: Res<settings::GameSettings>,
+    controllers: Res<Controllers>,
     mut recorder: ResMut<Recorder>,
     mut names: ResMut<SeatNames>,
+    mut kinds: ResMut<SeatKinds>,
 ) {
     names.0 = match (&playback.0, &online.0) {
         // A replay is watched, not played: the names belong to the round on
@@ -317,8 +319,15 @@ pub(in crate::app) fn resolve_seat_names(
     // And stamp them onto the round being recorded, created one system
     // earlier before anybody knew who was playing. Now rather than at save
     // time, by when an online round's names have gone with its session.
+    // What held each seat, by the same rule: the recording's own, else
+    // the table this round is played at.
+    *kinds = match &playback.0 {
+        Some((replay, _)) => SeatKinds(replay.kinds),
+        None => SeatKinds::of(&controllers),
+    };
     if let Some(replay) = &mut recorder.0 {
         replay.names = names.0.clone();
+        replay.kinds = kinds.0;
     }
 }
 

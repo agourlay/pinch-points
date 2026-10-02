@@ -74,6 +74,9 @@ pub struct Art {
     pub vignette: Handle<Image>,
     /// A hollow circle: the shockwave shape every "here" effect swells in.
     pub ring: Handle<Image>,
+    /// The bot tag: a robot's head, white, tinted the seat's colour and
+    /// drawn beside the name wherever a bot holds the seat.
+    pub robot: Handle<Image>,
     /// One flag chip per language, in [`ALL_LANGS`] order. Read through
     /// [`Art::flag`] rather than indexed directly.
     pub flags: [Handle<Image>; ALL_LANGS.len()],
@@ -127,6 +130,7 @@ impl Art {
             moat: Default::default(),
             feather: Default::default(),
             ramp: Default::default(),
+            robot: Default::default(),
             vignette: Default::default(),
             ring: Default::default(),
             flags: Default::default(),
@@ -184,6 +188,7 @@ impl Art {
             ramp,
             vignette,
             ring,
+            robot,
             flags,
         } = self;
         [
@@ -229,6 +234,7 @@ impl Art {
             ramp,
             vignette,
             ring,
+            robot,
         ]
         .into_iter()
         .chain(flags)
@@ -393,6 +399,7 @@ impl FromWorld for Art {
             moat: assets.load("sprites/moat.png"),
             feather: assets.load("sprites/feather.png"),
             ramp: assets.load("sprites/ramp.png"),
+            robot: assets.load("sprites/robot.png"),
             vignette: assets.load("sprites/vignette.png"),
             ring: assets.load("sprites/ring.png"),
             // Named by the language's settings key, so the set follows

@@ -178,6 +178,7 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.init_resource::<audio::Muted>();
     app.init_resource::<Daily>();
     app.init_resource::<SeatNames>();
+    app.init_resource::<SeatKinds>();
     app.init_resource::<tournament::Tournament>();
     app.init_resource::<side_panels::EventLog>();
     app.init_resource::<announce::Announcer>();

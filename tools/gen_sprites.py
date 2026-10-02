@@ -893,3 +893,27 @@ img, d = canvas()
 d.ellipse([px(6, 6), px(90, 90)], outline=WHITE, width=7 * S)
 d.ellipse([px(13, 13), px(83, 83)], outline=(255, 255, 255, 110), width=3 * S)
 save(img, "ring")
+
+# --- robot: the bot tag, a robot's head, tintable -----------------------------
+# Drawn beside a name wherever a bot holds the seat: the panels, the results
+# card, the lobby's table and a replay. The game sets it, never the name, so
+# nobody mistakes a bot for a friend (docs/bot-seats.md). The fonts have no
+# robot glyph, which is why it is a sprite. White, so the engine tints it
+# the seat's own colour; the face is cut out so the colour behind shows
+# through it.
+img, d = canvas()
+# antenna: a stalk and a ball
+d.line([px(48, 22), px(48, 10)], fill=WHITE, width=6 * S)
+d.ellipse([px(41, 3), px(55, 17)], fill=WHITE)
+# ears
+d.rounded_rectangle([px(8, 42), px(18, 66)], radius=4 * S, fill=WHITE)
+d.rounded_rectangle([px(78, 42), px(88, 66)], radius=4 * S, fill=WHITE)
+# the head
+d.rounded_rectangle([px(15, 22), px(81, 88)], radius=16 * S, fill=WHITE)
+# the face: two round eyes and a grille for a mouth, cut through
+d.ellipse([px(27, 40), px(43, 56)], fill=(0, 0, 0, 0))
+d.ellipse([px(53, 40), px(69, 56)], fill=(0, 0, 0, 0))
+d.rounded_rectangle([px(30, 66), px(66, 76)], radius=3 * S, fill=(0, 0, 0, 0))
+for x in (39, 48, 57):
+    d.line([px(x, 66), px(x, 76)], fill=WHITE, width=3 * S)
+save(img, "robot")
