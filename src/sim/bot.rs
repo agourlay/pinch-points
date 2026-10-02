@@ -94,18 +94,6 @@ impl BotLevel {
         !matches!(self, BotLevel::Easy)
     }
 
-    /// Ticks the bot's cursor spends crossing one tile: the bot has a hand to
-    /// walk to a tile, as a player does, and this is how fast it is. A default
-    /// human cursor covers a tile in under three ticks, so Normal matches a
-    /// player and Fierce stays within reach of one.
-    fn cursor_ticks_per_tile(self) -> u64 {
-        match self {
-            BotLevel::Easy => 4,
-            BotLevel::Normal => 3,
-            BotLevel::Hard => 2,
-        }
-    }
-
     fn recruit_radius(self) -> i32 {
         match self {
             BotLevel::Easy => 4,
@@ -144,8 +132,43 @@ impl BotLevel {
 /// How far from a rival castle a Hard bot will weaponize a passing gull.
 const ATTACK_RADIUS: i32 = 6;
 
-/// Ticks before a held cursor starts repeating, matching the human default.
-const CURSOR_LIFT: u64 = 8;
+/// The fair cursor's lift: ticks before a held key starts repeating, the
+/// human default of 0.28 s (`GameSettings::repeat_delay`).
+pub const FAIR_LIFT: u32 = 8;
+/// The fair cursor's pace once a key repeats: a tile every three ticks, the
+/// human default of 0.09 s (`GameSettings::repeat_interval`).
+pub const FAIR_TICKS_PER_TILE: u32 = 3;
+
+/// How long a person's hand takes to cross `steps` tiles, holding the keys
+/// down: the first tap moves a tile at once, the next waits out the lift,
+/// and each after that the repeat.
+///
+/// The fair cursor's one statement (`docs/bot-seats.md`): every seat that
+/// is not a person walks by it, the game's AI here and a bot's virtual
+/// cursor in `bots::cursor`, so neither out-walks the other or a person.
+pub fn fair_walk(steps: u32) -> u32 {
+    match steps {
+        0 | 1 => 0,
+        far => FAIR_LIFT + (far - 2) * FAIR_TICKS_PER_TILE,
+    }
+}
+
+/// Tiles between two, as a hand walks them: diagonally, one step a tile in
+/// both directions at once, the way two held arrow keys move a cursor.
+pub fn hand_steps((ax, ay): (u8, u8), (bx, by): (u8, u8)) -> u32 {
+    u32::from(ax.abs_diff(bx).max(ay.abs_diff(by)))
+}
+
+/// How a seat's hand reaches a tile.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Hand {
+    /// At a person's pace ([`fair_walk`]). Every match with a person in it.
+    #[default]
+    Fair,
+    /// Anywhere at once: an all-bot match with the fair cursor rule off,
+    /// where every seat is equally instant and nobody is there to be fair to.
+    Instant,
+}
 
 /// Why the bot wants this tile. A gull bearing down on your castle is worth
 /// spending your last signpost on, since it carries off half the bank,
@@ -162,14 +185,27 @@ enum Intent {
 ///
 /// A bot's cursor is wherever it last placed a signpost, read off the board
 /// rather than stored, so the bot stays a pure function of the state and
-/// every peer of an online match derives the same move for it.
+/// every peer of an online match derives the same move for it. It walks
+/// under the fair cursor rule, which every match with a person in it plays
+/// by.
 pub fn bot_action(board: &Board, player: PlayerId, level: BotLevel) -> PlayerAction {
+    bot_action_with(board, player, level, Hand::Fair)
+}
+
+/// [`bot_action`] with the hand named: [`Hand::Instant`] is for all-bot
+/// matches played with the fair cursor rule off.
+pub fn bot_action_with(
+    board: &Board,
+    player: PlayerId,
+    level: BotLevel,
+    hand: Hand,
+) -> PlayerAction {
     let (wanted, intent) = decide(board, player, level);
     let wanted = fumble(wanted, player, level, board.ticks(), board.seed());
     // Only a placement has a tile to walk to, or a post to cost; nothing
     // else waits or weighs.
     if let PlayerAction::Place { x, y, .. } = wanted
-        && (!hand_arrived(board, player, level, x, y)
+        && ((hand == Hand::Fair && !hand_arrived(board, player, x, y))
             || !worth_the_walk(board, player, level, x, y, intent))
     {
         return PlayerAction::None;
@@ -276,22 +312,19 @@ fn worth_the_walk(
 }
 
 /// Whether the bot's cursor has had time to reach `(x, y)` since its last
-/// placement. With nothing of its standing it has been idle for at least a
-/// signpost's lifetime, which is longer than any walk across a beach.
-fn hand_arrived(board: &Board, player: PlayerId, level: BotLevel, x: u8, y: u8) -> bool {
+/// placement, walking under the fair cursor rule. With nothing of its
+/// standing it has been idle for at least a signpost's lifetime, which is
+/// longer than any walk across a beach.
+///
+/// Every level walks at the same pace: the rule is a person's speed, and a
+/// fiercer bot is fiercer in what it sees and chooses, never in a hand no
+/// person at the table could match.
+fn hand_arrived(board: &Board, player: PlayerId, x: u8, y: u8) -> bool {
     let Some((from_x, from_y, since)) = board.newest_signpost_of(player) else {
         return true;
     };
-    let steps = u64::from(x.abs_diff(from_x)) + u64::from(y.abs_diff(from_y));
-    // Charged the way a player's hand works: the first tap moves a tile at
-    // once and only a held key waits for the repeat, so a neighbouring tile
-    // is free and a trip across the beach costs about what it costs a
-    // human.
-    let walk = match steps {
-        0 | 1 => 0,
-        far => CURSOR_LIFT + (far - 1) * level.cursor_ticks_per_tile(),
-    };
-    board.ticks().saturating_sub(since) >= walk
+    let walk = fair_walk(hand_steps((from_x, from_y), (x, y)));
+    board.ticks().saturating_sub(since) >= u64::from(walk)
 }
 
 /// What the bot wants to do this tick.

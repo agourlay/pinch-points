@@ -119,7 +119,7 @@ fn spec_on(board: Board, seats: Vec<Seat>, deadline_ms: u32, live: bool) -> Game
             deadline_ms,
             input_delay: 0,
         },
-        fair_cursor: None,
+        fair_cursor: false,
         forfeit_after: Duration::from_millis(300),
         ready_within: Duration::from_secs(5),
     }

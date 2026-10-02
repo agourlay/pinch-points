@@ -9,7 +9,6 @@
 
 use super::cli::{self, Args, Beach};
 use super::connstr::{ConnString, DEFAULT_PORT, Key, reachable_host};
-use super::cursor::TICKS_PER_TILE;
 use super::draw::{self, Fixture};
 use super::game::{self, GameResult, GameSpec, Seat, SeatResult, Sinks};
 use super::listener::{Admission, BotId, Config, Event, Invite, Listener};
@@ -572,7 +571,7 @@ fn play_fixture(
             deadline_ms: plan.deadline,
             input_delay: 0,
         },
-        fair_cursor: plan.fair.then_some(TICKS_PER_TILE),
+        fair_cursor: plan.fair,
         forfeit_after: plan.forfeit_after,
         ready_within: Duration::from_secs(10),
     };

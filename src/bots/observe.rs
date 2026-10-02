@@ -305,7 +305,7 @@ mod tests {
                 deadline_ms: 33,
                 input_delay: 0,
             },
-            cursor: None,
+            cursor: false,
         };
         for _ in 0..warmup {
             let mut actions = [PlayerAction::None; MAX_PLAYERS];

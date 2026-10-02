@@ -326,10 +326,13 @@ ignores `input_delay` plays well in the arena and misses at a party.
 match with a person in it, and off by default in the arena and cups
 (`--fair-cursor on` turns it on).
 
-Under the rule your seat has a cursor that moves at a person's pace, one
-tile every `cursor.ticks_per_tile` ticks, diagonally when it needs to (a
-person holding two arrow keys does). Your reply names a target and the
-cursor walks there before the action lands:
+Under the rule your seat has a cursor that moves at a person's pace, as a
+held arrow key moves one: the first tile at once, the next after
+`cursor.lift` ticks (8), then one every `cursor.ticks_per_tile` ticks (3),
+diagonally when it needs to (a person holding two arrow keys does). A walk
+of `d` tiles takes 0 ticks for `d <= 1`, else `lift + (d - 2) *
+ticks_per_tile`, where `d` is the larger of the two axes' distances. Your
+reply names a target and the cursor walks there before the action lands:
 
 - `place` and `remove` set a new order: walk to that tile, then act. It
   replaces any order still walking.
@@ -339,7 +342,10 @@ cursor walks there before the action lands:
 - `clear` needs no walk, as the clear-all key needs none.
 
 Your cursor is in every tick's `cursors`. `you.last` reports the action
-when it lands, not when you asked.
+when it lands, not when you asked. The game's AI walks by the same rule,
+from wherever it last placed, so under the rule nobody at the table has a
+faster hand than a person; with the rule off it places anywhere at once,
+as a bot does.
 
 ## Looking ahead: `simulate`
 

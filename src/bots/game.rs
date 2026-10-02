@@ -15,7 +15,9 @@ use super::lookahead;
 use super::protocol::{self, Act, Clock, Outcome, SeatKind, Table, You};
 pub use super::seat::SeatResult;
 use super::seat::{BotDriver, Journal, Turn, act_of, outcome, placings, refusal};
-use crate::sim::{Board, BotLevel, Level, MAX_PLAYERS, PlayerAction, PlayerId, Replay, bot_action};
+use crate::sim::{
+    Board, BotLevel, Hand, Level, MAX_PLAYERS, PlayerAction, PlayerId, Replay, bot_action_with,
+};
 use serde_json::{Value, json};
 use std::io::Write;
 use std::sync::mpsc::{RecvTimeoutError, Sender};
@@ -57,8 +59,8 @@ pub struct GameSpec {
     pub seats: Vec<Seat>,
     pub names: Vec<String>,
     pub clock: Clock,
-    /// The fair cursor's pace, when the rule is on.
-    pub fair_cursor: Option<u32>,
+    /// The fair cursor rule: every seat's hand walks at a person's pace.
+    pub fair_cursor: bool,
     /// How long a bot that is not connected when the game starts is waited
     /// for before its seat is played idle and scored as a forfeit.
     pub forfeit_after: Duration,
@@ -302,7 +304,12 @@ impl Match<'_, '_> {
                     bot.order(&mut journal)
                 }
                 (None, Seat::Ai(level)) => {
-                    let action = bot_action(board, player, level);
+                    let hand = if self.spec.fair_cursor {
+                        Hand::Fair
+                    } else {
+                        Hand::Instant
+                    };
+                    let action = bot_action_with(board, player, level, hand);
                     actions[seat] = action;
                     if let Some(act) = act_of(action) {
                         self.cursors[seat].at = act.target().unwrap_or(self.cursors[seat].at);

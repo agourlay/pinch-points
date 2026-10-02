@@ -149,40 +149,64 @@ fn only_fierce_chases_a_jackpot_across_the_board() {
 
 /// The bot's hand has to walk. A placement far from its last one has to
 /// wait out the trip; the tile it is already standing on is free; and the
-/// walk is charged the way a player's cursor actually moves.
+/// walk is charged the way a player's cursor actually moves, diagonals and
+/// all, at the one pace every seat that is not a person walks at.
 #[test]
 fn a_bot_pays_for_the_walk_to_the_tile() {
     let mut board = arena();
     // Its hand is at (1,1) as of tick 0.
     assert!(board.place_signpost(1, 1, 1, Direction::Up));
-    let level = BotLevel::Normal;
 
-    // Right next door is one keypress: free, like a player's first tap.
-    assert!(hand_arrived(&board, 1, level, 2, 1));
-    assert!(hand_arrived(&board, 1, level, 1, 1), "already there");
+    // Right next door is one keypress: free, like a player's first tap,
+    // and a diagonal neighbour is next door too.
+    assert!(hand_arrived(&board, 1, 2, 1));
+    assert!(hand_arrived(&board, 1, 2, 2));
+    assert!(hand_arrived(&board, 1, 1, 1), "already there");
 
-    // The far corner is twelve steps away: 8 + 11*3 = 41 ticks.
-    assert!(!hand_arrived(&board, 1, level, 8, 6), "no teleporting");
-    for _ in 0..40 {
+    // The far corner (8,6) is seven steps away walking diagonally:
+    // 8 + 5*3 = 23 ticks.
+    assert_eq!(fair_walk(hand_steps((1, 1), (8, 6))), 23);
+    assert!(!hand_arrived(&board, 1, 8, 6), "no teleporting");
+    for _ in 0..22 {
         board.tick_idle();
     }
-    assert!(!hand_arrived(&board, 1, level, 8, 6), "still walking");
+    assert!(!hand_arrived(&board, 1, 8, 6), "still walking");
     board.tick_idle();
-    assert!(hand_arrived(&board, 1, level, 8, 6), "arrived at last");
-
-    // A fiercer bot's hand is quicker over the same ground.
-    let mut fresh = arena();
-    assert!(fresh.place_signpost(1, 1, 1, Direction::Up));
-    for _ in 0..30 {
-        fresh.tick_idle();
-    }
-    assert!(hand_arrived(&fresh, 1, BotLevel::Hard, 8, 6));
-    assert!(!hand_arrived(&fresh, 1, BotLevel::Easy, 8, 6));
+    assert!(hand_arrived(&board, 1, 8, 6), "arrived at last");
 
     // With nothing of its own standing, it has been idle long enough to
     // be anywhere.
     let empty = arena();
-    assert!(hand_arrived(&empty, 1, BotLevel::Easy, 8, 6));
+    assert!(hand_arrived(&empty, 1, 8, 6));
+}
+
+/// With the rule off, an all-bot match's AI places anywhere at once; with
+/// it on, the same decision waits for the walk.
+#[test]
+fn an_instant_hand_skips_the_walk_the_fair_one_takes() {
+    let mut board = arena();
+    assert!(board.place_signpost(1, 1, 1, Direction::Up));
+    // A crab far from the hand, heading somewhere the bot cares about.
+    board.spawn_crab(8, 5, Direction::Left, Handedness::Left, CrabKind::Giant);
+    let mut fair_first = None;
+    let mut instant_first = None;
+    for _ in 0..200 {
+        if fair_first.is_none()
+            && bot_action_with(&board, 1, BotLevel::Hard, Hand::Fair) != PlayerAction::None
+        {
+            fair_first = Some(board.ticks());
+        }
+        if instant_first.is_none()
+            && bot_action_with(&board, 1, BotLevel::Hard, Hand::Instant) != PlayerAction::None
+        {
+            instant_first = Some(board.ticks());
+        }
+        board.tick_idle();
+    }
+    let (Some(fair), Some(instant)) = (fair_first, instant_first) else {
+        panic!("the bot never acted: fair {fair_first:?}, instant {instant_first:?}");
+    };
+    assert!(instant <= fair, "the instant hand is never slower");
 }
 
 /// The gate only ever holds a placement back, and it holds the same way

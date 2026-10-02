@@ -21,7 +21,10 @@ pub use board::{
     SIGNPOST_LIFETIME, SPILL_CAP, SUBUNITS_PER_TILE, SURGE_TICKS, Signpost, SignpostHealth,
     Spawner, TICKS_PER_SECOND, TIER_FLOORS, Tempo, TideEvent, TileKind, castle_tier,
 };
-pub use bot::{BotLevel, bot_action};
+pub use bot::{
+    BotLevel, FAIR_LIFT, FAIR_TICKS_PER_TILE, Hand, bot_action, bot_action_with, fair_walk,
+    hand_steps,
+};
 pub use campaign::{campaign_levels, challenge_levels};
 pub use crab::{Crab, CrabKind, Handedness};
 pub use direction::Direction;

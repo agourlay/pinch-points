@@ -8,7 +8,6 @@
 
 use super::cli::{self, Args, Beach};
 use super::connstr::{ConnString, DEFAULT_PORT, Key, reachable_host};
-use super::cursor::TICKS_PER_TILE;
 use super::game::{self, Feed, GameResult, GameSpec, Seat, Sinks};
 use super::listener::{Admission, BotId, Config, Event, Invite, Listener};
 use super::protocol::Clock;
@@ -346,7 +345,7 @@ fn play(plan: Plan, feed: Option<Sender<Feed>>) -> Result<(), String> {
             seats: table.clone(),
             names: names.clone(),
             clock,
-            fair_cursor: fair.then_some(TICKS_PER_TILE),
+            fair_cursor: fair,
             forfeit_after: Duration::from_secs(60),
             ready_within: Duration::from_secs(10),
         };

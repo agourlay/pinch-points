@@ -98,8 +98,8 @@ pub struct Table<'a> {
     pub names: &'a [String],
     pub kinds: &'a [SeatKind],
     pub clock: Clock,
-    /// The fair cursor's pace, when the rule is on.
-    pub cursor: Option<u32>,
+    /// The fair cursor rule.
+    pub cursor: bool,
 }
 
 /// `hello`: the start of a game for `seat`.
@@ -180,9 +180,14 @@ pub fn hello(board: &Board, table: &Table, seat: PlayerId, resumed: bool) -> Val
             "deadline_ms": table.clock.deadline_ms,
             "input_delay": table.clock.input_delay,
         },
-        "cursor": match table.cursor {
-            Some(pace) => json!({"fair": true, "ticks_per_tile": pace}),
-            None => json!({"fair": false}),
+        "cursor": if table.cursor {
+            json!({
+                "fair": true,
+                "lift": crate::sim::FAIR_LIFT,
+                "ticks_per_tile": crate::sim::FAIR_TICKS_PER_TILE,
+            })
+        } else {
+            json!({"fair": false})
         },
     });
     if resumed {
@@ -602,7 +607,7 @@ mod tests {
                 deadline_ms: 33,
                 input_delay: 0,
             },
-            cursor: None,
+            cursor: false,
         }
     }
 
