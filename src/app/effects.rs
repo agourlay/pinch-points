@@ -633,7 +633,7 @@ fn splash(commands: &mut Commands, rng: &mut VisualRng, art: &Art, pos: Vec2, si
 /// Whether the tile at `index` is a pool.
 fn in_pool(board: &crate::sim::Board, index: u16) -> bool {
     let (x, y) = board.coords_u8(index);
-    board.tile_at(x, y) == crate::sim::TileKind::Pool
+    board.tile_at(x, y) == TileKind::Pool
 }
 
 /// Whether a creature that was `was` in a pool last frame, and is `now`,
@@ -1087,7 +1087,7 @@ mod tests {
     #[test]
     fn in_pool_reads_the_creatures_own_tile() {
         let mut board = crate::sim::Board::new(5, 4, 1);
-        board.set_tile(2, 1, crate::sim::TileKind::Pool);
+        board.set_tile(2, 1, TileKind::Pool);
         let index = |x: u16, y: u16| y * 5 + x;
         assert!(in_pool(&board, index(2, 1)));
         assert!(!in_pool(&board, index(1, 1)), "the sand beside it");

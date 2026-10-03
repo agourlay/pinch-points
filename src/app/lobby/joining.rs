@@ -950,7 +950,7 @@ mod tests {
                 ..MatchTerms::default()
             },
             names: [[0u8; crate::transport::WIRE_NAME]; MAX_PLAYERS],
-            kinds: [0; crate::sim::MAX_PLAYERS],
+            kinds: [0; MAX_PLAYERS],
             standing: None,
             beach: Vec::new(),
         };

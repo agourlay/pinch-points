@@ -343,7 +343,7 @@ mod tests {
             seat: Some(1),
             terms: MatchTerms::default(),
             names: [wire_name(""); MAX_PLAYERS],
-            kinds: [0; crate::sim::MAX_PLAYERS],
+            kinds: [0; MAX_PLAYERS],
             standing: None,
             beach: Vec::new(),
         };

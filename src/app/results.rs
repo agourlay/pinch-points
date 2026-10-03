@@ -82,7 +82,7 @@ fn winner_castle(
             // blob under the gate rather than ground under the castle.
             ImageNode::new(art.puddle.clone())
                 .with_color(Color::srgba(0.84, 0.77, 0.62, 0.9))
-                .with_mode(bevy::ui::widget::NodeImageMode::Stretch),
+                .with_mode(NodeImageMode::Stretch),
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(side / 2.0 - mound.x / 2.0),

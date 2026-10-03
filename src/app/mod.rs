@@ -199,7 +199,7 @@ impl Controllers {
     /// bot is not there when the round is picked up again.
     pub fn levels(&self) -> [Option<BotLevel>; MAX_PLAYERS] {
         self.0.map(|c| match c {
-            SeatController::Bot => Some(crate::app::bot_seats::STAND_IN),
+            SeatController::Bot => Some(bot_seats::STAND_IN),
             SeatController::Ai(level) => Some(level),
             SeatController::Local | SeatController::Remote => None,
         })

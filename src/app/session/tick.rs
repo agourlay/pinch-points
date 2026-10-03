@@ -87,7 +87,7 @@ pub(in crate::app) fn advance_sim(
     mut recorder: ResMut<Recorder>,
     mut playback: ResMut<Playback>,
     speed: Res<replays::PlaybackSpeed>,
-    mut drivers: crate::app::bot_seats::Drivers,
+    mut drivers: bot_seats::Drivers,
     mut tally: ResMut<awards::RoundTally>,
 ) {
     let Play {

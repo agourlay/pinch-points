@@ -63,7 +63,7 @@ fn spawn_card(commands: &mut Commands, settings: &GameSettings) {
             wrap.spawn(menu_ui::screen_card()).with_children(|card| {
                 card.spawn((
                     Text::new(tr.pause_title),
-                    crate::app::menu_ui::display_font(30.0),
+                    menu_ui::display_font(30.0),
                     TextColor(palette::GOLD),
                 ));
                 card.spawn(Node {
@@ -109,7 +109,7 @@ pub struct Leaving<'w> {
 /// Open, navigate, and act on the pause card. Runs on the play screens.
 pub fn pause_input(
     card: PauseCard,
-    buttons: crate::app::menu_ui::Buttons,
+    buttons: menu_ui::Buttons,
     settings: Res<GameSettings>,
     screen: Res<State<Screen>>,
     phase: Res<State<Phase>>,

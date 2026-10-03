@@ -195,10 +195,7 @@ impl GameLink {
     }
 
     /// The next thing a seat says, waiting up to `timeout` for it.
-    pub fn recv_timeout(
-        &self,
-        timeout: Duration,
-    ) -> Result<GameMsg, std::sync::mpsc::RecvTimeoutError> {
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<GameMsg, mpsc::RecvTimeoutError> {
         lock(&self.rx).recv_timeout(timeout)
     }
 

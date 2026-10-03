@@ -609,7 +609,7 @@ mod door_tests {
         app.init_resource::<LobbyState>();
         app.init_resource::<MatchConfig>();
         app.init_resource::<crate::app::bot_seats::BotSeats>();
-        app.init_resource::<crate::app::net::Online>();
+        app.init_resource::<Online>();
         app.init_resource::<crate::app::match_setup::CustomBeaches>();
         app.insert_resource(GameSettings::default());
         app.init_resource::<crate::app::keycaps::KeyCaps>();
@@ -692,7 +692,7 @@ mod door_tests {
         app.init_resource::<LobbyState>();
         app.init_resource::<MatchConfig>();
         app.init_resource::<crate::app::bot_seats::BotSeats>();
-        app.init_resource::<crate::app::net::Online>();
+        app.init_resource::<Online>();
         app.init_resource::<crate::app::match_setup::CustomBeaches>();
         app.insert_resource(GameSettings::default());
         app.init_resource::<crate::app::keycaps::KeyCaps>();

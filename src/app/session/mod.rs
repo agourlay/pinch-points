@@ -129,7 +129,7 @@ mod tests {
         app.init_resource::<Playback>();
         app.init_resource::<replays::PlaybackSpeed>();
         app.init_resource::<Controllers>();
-        app.init_resource::<crate::app::bot_seats::BotSeats>();
+        app.init_resource::<bot_seats::BotSeats>();
         app.init_resource::<awards::RoundTally>();
         app.add_systems(Update, advance_sim);
         app
@@ -297,14 +297,11 @@ mod tests {
         assert_eq!(saved[1], Some(BotLevel::Hard));
         assert_eq!(
             saved[2],
-            Some(crate::app::bot_seats::STAND_IN),
+            Some(bot_seats::STAND_IN),
             "the bot's seat is the stand-in AI's"
         );
         let resumed = Controllers::from_levels(saved);
-        assert_eq!(
-            resumed.0[2],
-            SeatController::Ai(crate::app::bot_seats::STAND_IN)
-        );
+        assert_eq!(resumed.0[2], SeatController::Ai(bot_seats::STAND_IN));
     }
 
     /// A replay's board with castles for `seats` seats.

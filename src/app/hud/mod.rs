@@ -67,7 +67,7 @@ type PromptText = (
 /// Reads last frame's layout, so a new prompt is one frame at the old
 /// size before it settles.
 pub fn fit_prompt(
-    viewport: crate::app::menu_ui::Viewport,
+    viewport: menu_ui::Viewport,
     guides: Query<&Node, (With<FieldGuide>, Without<PromptLabel>)>,
     mut prompts: Query<PromptText, With<PromptLabel>>,
     // The line given up on: too long even at the fine print, and wrapped.

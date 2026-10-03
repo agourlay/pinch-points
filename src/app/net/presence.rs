@@ -1024,7 +1024,7 @@ mod tests {
         // Seat one was given up on at frame 40 of the round just played.
         joiner.abandoned.push((1, 40));
         // Next round, one fewer at the table: this joiner moves up to one.
-        joiner.take_up(crate::app::net::Invitation {
+        joiner.take_up(Invitation {
             seats: 2,
             seat: Some(1),
             terms: MatchTerms {

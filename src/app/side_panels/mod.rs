@@ -154,7 +154,7 @@ fn card(top: f32, height: Option<f32>) -> (Node, BorderColor, BackgroundColor, B
         },
         BorderColor::all(palette::CARD_EDGE),
         BackgroundColor(palette::CARD_BG),
-        crate::app::menu_ui::card_shadow(),
+        menu_ui::card_shadow(),
     )
 }
 
@@ -302,7 +302,7 @@ fn spawn_score_chip(
         chip.spawn((
             SideScore { seat, bump: 0.0 },
             Text::new("0"),
-            crate::app::menu_ui::display_font(SCORE_PX[seat as usize]),
+            menu_ui::display_font(SCORE_PX[seat as usize]),
             TextColor(palette::HUD_INK),
         ));
         // The crown perches on the card's top-right corner.

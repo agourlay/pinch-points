@@ -258,7 +258,7 @@ fn spawn_banner(
                 card.spawn((
                     BannerPart { ink, fill: None },
                     Text::new(headline),
-                    crate::app::menu_ui::display_font(46.0),
+                    menu_ui::display_font(46.0),
                     TextColor(ink.with_alpha(0.0)),
                 ));
                 card.spawn((

@@ -117,7 +117,7 @@ pub fn install(mut watch: ResMut<Watch>, mut playback: ResMut<Playback>) {
 /// watched at once. The way in for a player who never opens a terminal,
 /// handed the replay of a cup's final or a friend's arena game.
 pub fn dropped_replays(
-    mut drops: MessageReader<bevy::window::FileDragAndDrop>,
+    mut drops: MessageReader<FileDragAndDrop>,
     settings: Res<crate::app::settings::GameSettings>,
     mut playback: ResMut<Playback>,
     mut library: ResMut<crate::app::replays::Library>,
@@ -125,7 +125,7 @@ pub fn dropped_replays(
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     for drop in drops.read() {
-        let bevy::window::FileDragAndDrop::DroppedFile { path_buf, .. } = drop else {
+        let FileDragAndDrop::DroppedFile { path_buf, .. } = drop else {
             continue;
         };
         let read = std::fs::read_to_string(path_buf)

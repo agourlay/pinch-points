@@ -376,8 +376,7 @@ impl MatchStart<'_> {
             match Doorway::open() {
                 Ok(door) => self.bots.door = Some(door),
                 Err(e) => {
-                    self.bots.feedback =
-                        crate::app::i18n::fill(tr.door_could_not_listen, &[("e", &e.to_string())]);
+                    self.bots.feedback = fill(tr.door_could_not_listen, &[("e", &e.to_string())]);
                     return false;
                 }
             }

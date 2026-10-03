@@ -605,7 +605,7 @@ fn a_launched_round_seats_every_peer_on_the_same_beach() {
         seat: Some(1),
         terms,
         names: std::array::from_fn(|i| wire_name(&format!("Seat {i}"))),
-        kinds: [0; pinch_points::sim::MAX_PLAYERS],
+        kinds: [0; MAX_PLAYERS],
         standing: None,
         beach: packed.clone(),
     };
