@@ -18,6 +18,13 @@ pub(super) fn window_size() -> Option<(f32, f32)> {
     Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
 }
 
+/// `PINCH_ON_TOP=1`: keep the window above every other, so a screen
+/// recording of its corner of the desktop (`ffmpeg -f x11grab`) films the
+/// game rather than whatever the window manager left in front of it.
+pub(super) fn on_top() -> bool {
+    std::env::var("PINCH_ON_TOP").is_ok()
+}
+
 /// Whether this run keeps a window whatever the settings say:
 /// `PINCH_WINDOW` sized it, or `PINCH_SCREENSHOT` came to photograph it
 /// (see [`crate::app::settings::window_mode`]).
@@ -371,7 +378,8 @@ fn only_off_the_wire(online: &net::Online, var: &str) -> bool {
     false
 }
 
-/// Dev hook: `PINCH_TIDE=<0-8>` fires a real tide event a few seconds in,
+/// Dev hook: `PINCH_TIDE=<0-8>` fires a real tide event a few seconds in
+/// (or `PINCH_TIDE_AT` seconds in),
 /// rather than the banner alone, so what the event *does* can be watched.
 /// Seven is the castle swap.
 pub(super) fn debug_tide(mut sim: ResMut<Sim>, online: Res<net::Online>, mut hook: Local<OneShot>) {
@@ -401,7 +409,8 @@ pub(super) struct MomentHooks {
 
 #[derive(Default)]
 pub(super) struct OneShot {
-    setting: Option<Option<String>>,
+    /// The variable and its `_AT` override, read on the first frame.
+    setting: Option<(Option<String>, Option<u64>)>,
     fired: bool,
 }
 
@@ -417,11 +426,19 @@ impl OneShot {
     }
 
     /// The same, for a hook that wants the round further along than most.
+    ///
+    /// `<var>_AT=<s>` moves any hook to that many seconds into the round,
+    /// for a moment wanted on a beach that has filled up: a lure or a
+    /// Crab Mania four seconds in has hardly a crab to show.
     fn due_after(&mut self, var: &str, ticks: u64, seconds: u64) -> Option<String> {
-        let setting = self
-            .setting
-            .get_or_insert_with(|| std::env::var(var).ok())
-            .clone()?;
+        let (setting, at) = self.setting.get_or_insert_with(|| {
+            let at = std::env::var(format!("{var}_AT"))
+                .ok()
+                .and_then(|s| s.parse().ok());
+            (std::env::var(var).ok(), at)
+        });
+        let setting = setting.clone()?;
+        let seconds = at.unwrap_or(seconds);
         if self.fired || ticks < seconds * u64::from(crate::sim::TICKS_PER_SECOND) {
             return None;
         }
@@ -430,23 +447,11 @@ impl OneShot {
     }
 }
 
-/// Dev hook: `PINCH_LURE=<seat>` starts a lure a few seconds in, which is
-/// otherwise something you wait for a molting crab to do. `PINCH_LURE_AT=<s>`
-/// starts it that many seconds in instead, on a beach that has filled up.
-pub(super) fn debug_lure(
-    mut sim: ResMut<Sim>,
-    online: Res<net::Online>,
-    mut hook: Local<OneShot>,
-    mut at: Local<Option<u64>>,
-) {
-    // Env lookups allocate; resolve this one once, not every frame.
-    let at = *at.get_or_insert_with(|| {
-        std::env::var("PINCH_LURE_AT")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(OneShot::WAIT)
-    });
-    let Some(which) = hook.due_after("PINCH_LURE", sim.0.ticks(), at) else {
+/// Dev hook: `PINCH_LURE=<seat>` starts a lure a few seconds in (or
+/// `PINCH_LURE_AT` seconds in), which is otherwise something you wait for
+/// a molting crab to do.
+pub(super) fn debug_lure(mut sim: ResMut<Sim>, online: Res<net::Online>, mut hook: Local<OneShot>) {
+    let Some(which) = hook.due("PINCH_LURE", sim.0.ticks()) else {
         return;
     };
     if only_off_the_wire(&online, "PINCH_LURE") {

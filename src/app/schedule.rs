@@ -32,6 +32,11 @@ pub(super) fn run_with(watching: watch::Watch) {
                         bevy::window::WindowResolution::new(w as u32, h as u32)
                     }),
                     mode,
+                    window_level: if dev::on_top() {
+                        bevy::window::WindowLevel::AlwaysOnTop
+                    } else {
+                        default()
+                    },
                     ..default()
                 }),
                 ..default()
