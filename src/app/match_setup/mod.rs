@@ -443,8 +443,8 @@ pub fn settle_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
 
 #[cfg(test)]
 use screen::{
-    LABEL_W, ROW_FONT, VALUE_W, ai_seat, cycle_ai_level, has_an_opponent, live_rows, p2_pressed,
-    row_text,
+    LABEL_W, ROW_FONT, VALUE_W, ai_seat, card_height, cycle_ai_level, has_an_opponent, live_rows,
+    p2_pressed, row_text,
 };
 
 #[cfg(test)]
@@ -599,6 +599,57 @@ mod tests {
             "the match card and its company are {across}px of the {}px they \
              are allowed ({card}px of it the card)",
             crate::app::settings::DESIGN_W
+        );
+    }
+
+    /// The most rows a table can show at once: six seats, five of them AI,
+    /// is every name and every AI level besides the dials.
+    fn fullest_table() -> usize {
+        (2..=MAX_PLAYERS as u8)
+            .flat_map(|seats| {
+                (0..seats).map(move |bots| MatchConfig {
+                    seats,
+                    bots,
+                    ..MatchConfig::default()
+                })
+            })
+            .map(|config| live_rows(&config).iter().filter(|live| **live).count())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// A full table fits the card with every row at the height it lays out
+    /// at. Sized for rows at their least, the card ran a table of six with
+    /// five AI past its frame: the last name sat on the wood.
+    #[test]
+    fn the_fullest_table_fits_its_card() {
+        let rows = fullest_table();
+        assert_eq!(rows, ROWS, "a full table shows every row");
+        let needed = 2.0 * crate::app::menu_ui::CARD_PAD_Y
+            + crate::app::menu_ui::HEADING_H
+            + rows as f32 * crate::app::menu_ui::row_pitch(ROW_FONT);
+        assert!(
+            card_height() >= needed,
+            "the card is {}px for {needed}px of rows",
+            card_height()
+        );
+    }
+
+    /// And on the shortest window the interface is drawn for, where the
+    /// card has to shrink to the room between the bars, the rows can close
+    /// up enough to fit it, with the lines under the card still below it.
+    #[test]
+    fn the_fullest_table_closes_up_to_fit_the_design_window() {
+        use crate::app::menu_ui::{BAR_H, CARD_PAD_Y, HEADING_H, ROW_H, type_scale};
+        let squeezed = 2.0 * CARD_PAD_Y + HEADING_H + fullest_table() as f32 * ROW_H;
+        // The beach note, the two controller lines (a padded line each),
+        // and the column's gap between the four.
+        let footer =
+            20.0 + 2.0 * (type_scale::BODY * crate::app::menu_ui::LINE_HEIGHT + 6.0) + 3.0 * 10.0;
+        let room = crate::app::settings::DESIGN_H - 2.0 * BAR_H;
+        assert!(
+            squeezed + footer <= room,
+            "{squeezed}px of card and {footer}px under it, in {room}px"
         );
     }
 

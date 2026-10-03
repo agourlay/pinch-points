@@ -311,8 +311,27 @@ pub fn band(picked: bool) -> Color {
 /// card an inch too short for a full table.
 pub const ROW_H: f32 = 25.0;
 pub const ROW_GAP: f32 = 2.0;
-/// A group heading with the margin under it.
-pub const HEADING_H: f32 = 20.0;
+/// The air above and below a row's text, inside the row.
+const ROW_PAD_Y: f32 = 3.0;
+
+/// How tall a row of `font`-sized text lays out when nothing squeezes it:
+/// its line and the row's padding. Taller than [`ROW_H`], which is only
+/// the least a row keeps; a row squeezed down to that spills its text into
+/// the next, and the last one onto the card's frame.
+pub fn row_pitch(font: f32) -> f32 {
+    (font * LINE_HEIGHT + 2.0 * ROW_PAD_Y).max(ROW_H)
+}
+/// A group heading with the margin under it: the heading's line, at the
+/// line height Bevy gives text by default, and the air under it. Derived,
+/// because a guess of 20 left the match setup card four pixels short, and
+/// with every row of a full table at its minimum that put the last one on
+/// the card's frame.
+pub const HEADING_H: f32 = HEADING_FONT * LINE_HEIGHT + HEADING_MARGIN;
+/// The heading's type size, and the air between it and the first row.
+const HEADING_FONT: f32 = 15.0;
+const HEADING_MARGIN: f32 = 6.0;
+/// Bevy's default line height, as a multiple of the font size.
+pub const LINE_HEIGHT: f32 = 1.2;
 
 /// The shape of a row inside a card: its own padding, its own corner, and
 /// a background the cursor fills in.
@@ -324,7 +343,7 @@ pub fn card_row() -> (Node, BackgroundColor) {
             // of twelve slots holding two rounds is still twelve slots
             // tall, so pasting a third does not resize the card under it.
             min_height: Val::Px(ROW_H),
-            padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
+            padding: UiRect::axes(Val::Px(10.0), Val::Px(ROW_PAD_Y)),
             border_radius: BorderRadius::all(Val::Px(7.0)),
             ..default()
         },
@@ -732,7 +751,7 @@ pub fn heading_row(
             flex_direction: FlexDirection::Row,
             align_items: AlignItems::Center,
             column_gap: Val::Px(8.0),
-            margin: UiRect::bottom(Val::Px(6.0)),
+            margin: UiRect::bottom(Val::Px(HEADING_MARGIN)),
             width: Val::Percent(100.0),
             ..default()
         })
@@ -752,7 +771,7 @@ pub fn heading_row(
             }
             head.spawn((
                 Text::new(heading),
-                display_font(15.0),
+                display_font(HEADING_FONT),
                 TextColor(palette::IDLE_ROW),
             ));
             head.spawn((

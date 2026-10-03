@@ -114,14 +114,16 @@ pub fn enter_match_setup(
             // while you turn the dial that adds them.
             let (mark, mut node, fill, edge, shadow) = menu_ui::screen_card();
             node.row_gap = Val::Px(ROW_GAP);
-            node.height = Val::Px(
-                2.0 * menu_ui::CARD_PAD_Y
-                    + menu_ui::HEADING_H
-                    + ROWS as f32 * (menu_ui::ROW_H + ROW_GAP),
-            );
+            node.height = Val::Px(card_height());
             node.justify_content = JustifyContent::FlexStart;
             wrap.spawn(Node {
+                // A column, so the card's height is the axis it shrinks
+                // along, and free to shrink itself: held to its content,
+                // this line kept a full table's card at full height on a
+                // short window and ran it under the header.
+                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
+                min_height: Val::Px(0.0),
                 ..default()
             })
             .with_children(|line| {
@@ -188,6 +190,20 @@ pub fn enter_match_setup(
                 ));
             }
         });
+}
+
+/// Tall enough for every row at once, each at the height it lays out at.
+///
+/// A full table of six with five of them AI shows every row there is. On a
+/// window too short for that the card shrinks to the room between the bars
+/// (see [`menu_ui::screen_card`]) and its rows close up, down to
+/// [`menu_ui::ROW_H`]; on one with room it keeps them at their own height.
+/// Sized for rows at their least instead, a full table ran its last row
+/// onto the frame on every screen, the room unused.
+pub(super) fn card_height() -> f32 {
+    2.0 * menu_ui::CARD_PAD_Y
+        + menu_ui::HEADING_H
+        + ROWS as f32 * (menu_ui::row_pitch(ROW_FONT) + ROW_GAP)
 }
 
 /// Label gutter and value gutter, the value including the `< >` the dial
