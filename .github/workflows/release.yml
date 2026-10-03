@@ -13,6 +13,10 @@ jobs:
     permissions:
       contents: write
     strategy:
+      # One leg failing used to cancel the rest: v0.7.0 lost four builds
+      # that were fine to an arm leg that was not. Each leg uploads its
+      # own archive, so let every one finish.
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
@@ -64,7 +68,21 @@ jobs:
           haskell: true
           large-packages: true
           docker-images: true
-          swap-storage: true
+          # Kept: memory, not disk, is what a fat-LTO link runs short of.
+          swap-storage: false
+      # v0.7.0's arm leg was killed twice at the same point, about ten
+      # minutes into compiling and linking the game crate itself, with swap
+      # removed above on a 15 GiB runner. The same link peaks at 6.7 GB on
+      # x86, so this is insurance on the one build nobody gets to casually
+      # retry: eight more gigabytes of swap, on whichever disk has room.
+      - name: Add swap
+        if: runner.os == 'Linux'
+        run: |
+          sudo fallocate -l 8G /swapfile-release
+          sudo chmod 600 /swapfile-release
+          sudo mkswap /swapfile-release
+          sudo swapon /swapfile-release
+          free -h
       # Bevy links three system libraries on Linux and finds them through
       # pkg-config: wayland-client (winit's Wayland backend, and the clipboard
       # `system_clipboard` reaches for), alsa (audio), udev (gamepads).
