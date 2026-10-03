@@ -432,23 +432,37 @@ pub fn save_and_despawn<M: Component>(
 }
 
 /// Spawn `count` empty text rows tagged by `make(row)`, in display order.
+///
+/// The rows share one left edge, in a column the card centres as a whole.
+/// Centred one by one, as a card lays out its children, labels of
+/// different lengths each started somewhere else and the `>` marker
+/// wandered from row to row.
 pub fn spawn_rows<M: Component>(
     parent: &mut ChildSpawnerCommands,
     count: usize,
     font_px: f32,
     make: impl Fn(usize) -> M,
 ) {
-    for row in 0..count {
-        parent.spawn((
-            make(row),
-            Text::new(""),
-            TextFont {
-                font_size: FontSize::Px(font_px),
-                ..default()
-            },
-            TextColor(Color::WHITE),
-        ));
-    }
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::FlexStart,
+            row_gap: Val::Px(ROW_GAP),
+            ..default()
+        })
+        .with_children(|column| {
+            for row in 0..count {
+                column.spawn((
+                    make(row),
+                    Text::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(font_px),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            }
+        });
 }
 
 /// Write text only when it changed: an unchanged `Text` write still
