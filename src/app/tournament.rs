@@ -234,6 +234,21 @@ pub fn record_series_round(
     }
 }
 
+/// One contender's line in the series tally.
+pub struct Standing {
+    pub who: String,
+    /// A star per round won.
+    pub stars: String,
+    pub color: Color,
+}
+
+impl Standing {
+    /// Name and stars as one line, for a tally written inline.
+    pub fn line(&self) -> String {
+        format!("{}  {}", self.who, self.stars)
+    }
+}
+
 /// The series tally, one row per contender: who, and a star per round won.
 /// Solo rows are seats; team rows are teams, because a pair holding two
 /// rounds between them has won two, not four.
@@ -243,7 +258,7 @@ pub fn standings(
     tournament: &Tournament,
     mode: TeamMode,
     seats: u8,
-) -> Vec<(String, Color)> {
+) -> Vec<Standing> {
     (0..mode.teams(seats))
         .map(|team| {
             let face = crate::app::teams::face_of(mode, team, seats);
@@ -253,10 +268,11 @@ pub fn standings(
             } else {
                 crate::app::teams::label(settings, names, mode, team, seats)
             };
-            (
-                format!("{who}  {}", "*".repeat(usize::from(wins))),
-                palette::player_color(face),
-            )
+            Standing {
+                who,
+                stars: "*".repeat(usize::from(wins)),
+                color: palette::player_color(face),
+            }
         })
         .collect()
 }
@@ -364,17 +380,33 @@ pub fn enter_interlude(
                     menu_ui::display_font(menu_ui::type_scale::DISPLAY),
                     TextColor(palette::GOLD),
                 ));
-                for (line, color) in standings(&settings, &names, &tournament, mode, seats.0.max(2))
-                {
-                    card.spawn((
-                        Text::new(line),
-                        TextFont {
-                            font_size: FontSize::Px(menu_ui::type_scale::HEADING),
-                            ..default()
-                        },
-                        TextColor(color),
-                    ));
-                }
+                // A table, names in one column and stars in the next, so
+                // every name starts at one edge and every tally at another.
+                // Centred line by line, names of different lengths each
+                // started somewhere else and their stars with them.
+                card.spawn(Node {
+                    display: Display::Grid,
+                    grid_template_columns: RepeatedGridTrack::auto(2),
+                    column_gap: Val::Px(14.0),
+                    justify_items: JustifyItems::Start,
+                    ..default()
+                })
+                .with_children(|table| {
+                    let standings = standings(&settings, &names, &tournament, mode, seats.0.max(2));
+                    for Standing { who, stars, color } in standings {
+                        for cell in [who, stars] {
+                            table.spawn((
+                                Text::new(cell),
+                                TextFont {
+                                    font_size: FontSize::Px(menu_ui::type_scale::HEADING),
+                                    ..default()
+                                },
+                                TextLayout::no_wrap(),
+                                TextColor(color),
+                            ));
+                        }
+                    }
+                });
             });
         });
 }

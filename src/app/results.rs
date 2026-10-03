@@ -477,15 +477,20 @@ pub fn spawn_versus_results(
                     ..default()
                 })
                 .with_children(|series| {
-                    for (line, color) in crate::app::tournament::standings(
+                    for standing in crate::app::tournament::standings(
                         &settings,
                         &names,
                         &tournament,
                         mode,
                         count,
                     ) {
-                        let entry = card_text(SERIES_FONT, color);
-                        series.spawn((Text::new(line), entry.0, entry.1, TextLayout::no_wrap()));
+                        let entry = card_text(SERIES_FONT, standing.color);
+                        series.spawn((
+                            Text::new(standing.line()),
+                            entry.0,
+                            entry.1,
+                            TextLayout::no_wrap(),
+                        ));
                     }
                 });
                 if tournament.is_decided() {
