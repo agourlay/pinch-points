@@ -273,12 +273,12 @@ impl GameSettings {
         !self.custom_binds() && self.commit == CommitScheme::Arrows
     }
 
-    /// Sound-effect gain, 0.0–1.0, with the on/off switch folded in. Zero
+    /// Sound-effect gain, 0.0 to [`SFX_TRIM`], with the on/off switch folded in. Zero
     /// means silence, so callers test the gain rather than the switch and
     /// the slider separately, and a one-shot at zero gain is not spawned.
     pub fn sfx_gain(&self) -> f32 {
         if self.sfx_on {
-            f32::from(self.sfx_volume) / 100.0
+            f32::from(self.sfx_volume) / 100.0 * SFX_TRIM
         } else {
             0.0
         }
@@ -618,6 +618,13 @@ impl GameSettings {
 /// (-7.1 dB, `theme_b`) just under full scale: see the test beside
 /// [`GameSettings::music_gain`].
 pub const MUSIC_LIFT: f32 = 2.2;
+
+/// How much quieter the effects play than their slider reads.
+///
+/// Even with the music lifted, a playtest still heard the effects over
+/// it. Trimmed by about three decibels, the default puts the two about
+/// level, and a saved setting keeps its number and plays quieter.
+pub const SFX_TRIM: f32 = 0.7;
 
 /// The window the interface was laid out for. Every card, gutter and
 /// offset on every screen is a number of these pixels, so a window smaller
@@ -1011,14 +1018,14 @@ mod tests {
         assert_eq!(settings.language, Lang::En);
     }
 
-    /// At the defaults the music sits a little under the effects, not lost
-    /// under them, and the slider at the top does not clip the loudest
+    /// At the defaults the music sits about level with the effects, not
+    /// lost under them, and the slider at the top does not clip the loudest
     /// track. The loudness is the files' own, measured with
     /// `ffmpeg -i FILE -af volumedetect -f null -` (mean over the theme
     /// tracks and over the round's effects); re-measure them when the
     /// tracks are regenerated.
     #[test]
-    fn the_music_sits_just_under_the_effects() {
+    fn the_music_sits_level_with_the_effects() {
         const TRACK_MEAN_DB: f32 = -23.0;
         const EFFECT_MEAN_DB: f32 = -18.7;
         const LOUDEST_TRACK_PEAK_DB: f32 = -7.1;
@@ -1028,7 +1035,7 @@ mod tests {
         let effects = EFFECT_MEAN_DB + db(stock.sfx_gain());
         let under = effects - music;
         assert!(
-            (2.0..=6.0).contains(&under),
+            (-2.0..=2.0).contains(&under),
             "the music plays {under:.1} dB under the effects"
         );
         let top = GameSettings {
