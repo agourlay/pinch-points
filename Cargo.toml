@@ -7,7 +7,7 @@ repository = "https://github.com/agourlay/pinch-points"
 license = "Apache-2.0"
 keywords = ["game", "bevy", "puzzle", "multiplayer", "chuchu-rocket"]
 categories = ["games"]
-exclude = ["docs/", ".github/"]
+exclude = ["docs/", ".github/", "site/", "tools/"]
 
 [dependencies]
 bevy = { version = "0.19.1", features = ["wav", "vorbis", "system_clipboard"] }
