@@ -431,9 +431,22 @@ impl OneShot {
 }
 
 /// Dev hook: `PINCH_LURE=<seat>` starts a lure a few seconds in, which is
-/// otherwise something you wait for a molting crab to do.
-pub(super) fn debug_lure(mut sim: ResMut<Sim>, online: Res<net::Online>, mut hook: Local<OneShot>) {
-    let Some(which) = hook.due("PINCH_LURE", sim.0.ticks()) else {
+/// otherwise something you wait for a molting crab to do. `PINCH_LURE_AT=<s>`
+/// starts it that many seconds in instead, on a beach that has filled up.
+pub(super) fn debug_lure(
+    mut sim: ResMut<Sim>,
+    online: Res<net::Online>,
+    mut hook: Local<OneShot>,
+    mut at: Local<Option<u64>>,
+) {
+    // Env lookups allocate; resolve this one once, not every frame.
+    let at = *at.get_or_insert_with(|| {
+        std::env::var("PINCH_LURE_AT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(OneShot::WAIT)
+    });
+    let Some(which) = hook.due_after("PINCH_LURE", sim.0.ticks(), at) else {
         return;
     };
     if only_off_the_wire(&online, "PINCH_LURE") {
