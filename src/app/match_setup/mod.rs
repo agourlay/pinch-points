@@ -625,7 +625,7 @@ mod tests {
     fn the_fullest_table_fits_its_card() {
         let rows = fullest_table();
         assert_eq!(rows, ROWS, "a full table shows every row");
-        let needed = 2.0 * crate::app::menu_ui::CARD_PAD_Y
+        let needed = 2.0 * crate::app::menu_ui::CARD_PAD
             + crate::app::menu_ui::HEADING_H
             + rows as f32 * crate::app::menu_ui::row_pitch(ROW_FONT);
         assert!(
@@ -640,12 +640,13 @@ mod tests {
     /// up enough to fit it, with the lines under the card still below it.
     #[test]
     fn the_fullest_table_closes_up_to_fit_the_design_window() {
-        use crate::app::menu_ui::{BAR_H, CARD_PAD_Y, HEADING_H, ROW_H, type_scale};
-        let squeezed = 2.0 * CARD_PAD_Y + HEADING_H + fullest_table() as f32 * ROW_H;
+        use crate::app::menu_ui::{BAR_H, CARD_PAD, HEADING_H, ROW_H, type_scale};
+        let squeezed = 2.0 * CARD_PAD + HEADING_H + fullest_table() as f32 * ROW_H;
         // The beach note, the two controller lines (a padded line each),
         // and the column's gap between the four.
-        let footer =
-            20.0 + 2.0 * (type_scale::BODY * crate::app::menu_ui::LINE_HEIGHT + 6.0) + 3.0 * 10.0;
+        let footer = 20.0
+            + 2.0 * (type_scale::BODY * crate::app::menu_ui::LINE_HEIGHT + 6.0)
+            + 3.0 * super::screen::FOOTER_GAP;
         let room = crate::app::settings::DESIGN_H - 2.0 * BAR_H;
         assert!(
             squeezed + footer <= room,

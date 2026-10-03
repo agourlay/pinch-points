@@ -107,7 +107,13 @@ pub fn enter_match_setup(
     settle_map(&mut config, &beaches);
     let tr = settings.tr();
     commands
-        .spawn((MatchUi, menu_ui::between_bars()))
+        .spawn((
+            MatchUi,
+            Node {
+                row_gap: Val::Px(FOOTER_GAP),
+                ..menu_ui::between_bars()
+            },
+        ))
         .with_children(|wrap| {
             // A fixed height, because the rows that come and go fold away
             // rather than blanking: a card that shrinks around them jumps
@@ -201,7 +207,7 @@ pub fn enter_match_setup(
 /// Sized for rows at their least instead, a full table ran its last row
 /// onto the frame on every screen, the room unused.
 pub(super) fn card_height() -> f32 {
-    2.0 * menu_ui::CARD_PAD_Y
+    2.0 * menu_ui::CARD_PAD
         + menu_ui::HEADING_H
         + ROWS as f32 * (menu_ui::row_pitch(ROW_FONT) + ROW_GAP)
 }
@@ -227,6 +233,11 @@ pub(super) const VALUE_W: f32 = 428.0;
 /// card has, and at the shell's gap they reach into the header bar once
 /// the arrows dial joined them. Only the cursor's band shows the seam.
 pub(super) const ROW_GAP: f32 = 0.0;
+
+/// The gap between the card and each line under it, closer than the
+/// shell's ten: a full table's card at 720p needs the room for its own
+/// padding inside the wood.
+pub(super) const FOOTER_GAP: f32 = 4.0;
 /// The scale's row size, named rather than repeated: it happened to be
 /// the same number already, which is not the same as saying so.
 pub(super) const ROW_FONT: f32 = menu_ui::type_scale::ROW;

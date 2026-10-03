@@ -203,8 +203,10 @@ pub fn centred_overlay() -> Node {
     }
 }
 
-/// The padding above and below a card's contents.
-pub const CARD_PAD_Y: f32 = 16.0;
+/// The padding round a card's contents: the driftwood frame drawn over
+/// the card's edge ([`FRAME_PX`]) and clear room inside it. At 16 the top
+/// row sat three pixels under the wood and the sides nine.
+pub const CARD_PAD: f32 = FRAME_PX + 12.0;
 
 /// The shell's card: a deep fill behind a gold hairline, the shape every
 /// list screen is drawn on. Menu, stage list, trophies, settings, key
@@ -227,7 +229,7 @@ pub fn screen_card() -> (ShoreCard, Node, BackgroundColor, BorderColor, BoxShado
             // to spare. A card whose rows really do not fit is no better
             // off either way.
             min_height: Val::Px(0.0),
-            padding: UiRect::axes(Val::Px(22.0), Val::Px(CARD_PAD_Y)),
+            padding: UiRect::all(Val::Px(CARD_PAD)),
             border: UiRect::all(Val::Px(1.0)),
             border_radius: BorderRadius::all(Val::Px(16.0)),
             ..default()
@@ -678,6 +680,7 @@ pub fn dress_cards(
     let corner = frame_corner_scale(viewport.ui_scale(), viewport.scale_factor());
     for (card, mut node, edge) in &mut framed {
         node.border_radius = BorderRadius::all(Val::Px(FRAMED_RADIUS));
+        clear_the_wood(&mut node);
         let frame = commands
             .spawn(frame_bundle(&art, edge.map(|edge| edge.top), corner))
             .id();
@@ -685,6 +688,7 @@ pub fn dress_cards(
     }
     for (card, mut node, edge) in &mut cards {
         node.border_radius = BorderRadius::all(Val::Px(FRAMED_RADIUS));
+        clear_the_wood(&mut node);
         // The last row keeps its feet dry whatever padding the card chose.
         let dry = Val::Px(FOAM_DEPTH + 4.0);
         if px_of(node.padding.bottom).unwrap_or(0.0) < FOAM_DEPTH {
@@ -700,6 +704,22 @@ pub fn dress_cards(
             .spawn(frame_bundle(&art, edge.map(|edge| edge.top), corner))
             .id();
         commands.entity(card).insert_children(0, &[tide, frame]);
+    }
+}
+
+/// Hold a framed card's contents [`CARD_PAD`] in from its edge at the top
+/// and the sides, whatever padding the card chose: the frame is drawn over
+/// the card, so anything nearer runs up against the wood. The foot is the
+/// tide's to set.
+fn clear_the_wood(node: &mut Node) {
+    for side in [
+        &mut node.padding.top,
+        &mut node.padding.left,
+        &mut node.padding.right,
+    ] {
+        if px_of(*side).is_some_and(|px| px < CARD_PAD) {
+            *side = Val::Px(CARD_PAD);
+        }
     }
 }
 

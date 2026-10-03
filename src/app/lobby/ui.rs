@@ -292,7 +292,7 @@ fn card(
                 // Room at the foot for the tide to come in without
                 // washing over the last row.
                 // Clear of the driftwood frame round it (`menu_ui::Framed`).
-                padding: UiRect::all(Val::Px(18.0))
+                padding: UiRect::all(Val::Px(crate::app::menu_ui::CARD_PAD))
                     .with_bottom(Val::Px(crate::app::menu_ui::FOAM_DEPTH + 6.0)),
                 border: UiRect::all(Val::Px(2.0)),
                 border_radius: BorderRadius::all(Val::Px(12.0)),
