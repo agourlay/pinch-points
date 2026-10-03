@@ -128,6 +128,15 @@ fn results_card(commands: &mut Commands) -> Entity {
         .id()
 }
 
+/// The series under the standings: each seat's wins at this size, this
+/// far apart, wrapping to lines no wider than this. Wide enough for the
+/// widest entry there is, a team of three twelve-letter names with three
+/// wins (see `the_series_fits_the_card`), and two seats to a line when
+/// every name is that long.
+const SERIES_FONT: f32 = 23.0;
+const SERIES_GAP: f32 = 24.0;
+const SERIES_W: f32 = 600.0;
+
 fn card_text(size: f32, color: Color) -> (TextFont, TextColor) {
     (
         TextFont {
@@ -457,13 +466,28 @@ pub fn spawn_versus_results(
                     round.0,
                     round.1,
                 ));
-                let series: Vec<String> =
-                    crate::app::tournament::standings(&settings, &names, &tournament, mode, count)
-                        .into_iter()
-                        .map(|(line, _)| line)
-                        .collect();
-                let score = card_text(23.0, palette::GOLD);
-                card.spawn((Text::new(series.join("  ·  ")), score.0, score.1));
+                // Each seat's wins in its own colour, as many to a line as
+                // fit. One gold line joined with dots ran a table of six
+                // past the card's frame, and six full names past the window.
+                card.spawn(Node {
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::Center,
+                    column_gap: Val::Px(SERIES_GAP),
+                    max_width: Val::Px(SERIES_W),
+                    ..default()
+                })
+                .with_children(|series| {
+                    for (line, color) in crate::app::tournament::standings(
+                        &settings,
+                        &names,
+                        &tournament,
+                        mode,
+                        count,
+                    ) {
+                        let entry = card_text(SERIES_FONT, color);
+                        series.spawn((Text::new(line), entry.0, entry.1, TextLayout::no_wrap()));
+                    }
+                });
                 if tournament.is_decided() {
                     if let Some(champ) = tournament.winner(mode, count) {
                         let (who, seat) = crate::app::tournament::champion_name(
@@ -771,6 +795,26 @@ mod tests {
             .set(Phase::Setup);
         app.update();
         assert_eq!(cards(&mut app), 0, "and gone again on retry");
+    }
+
+    /// The series line fits the card at its widest. A team of three with
+    /// the longest names a seat can carry and the most wins a series can
+    /// give is one entry, and has to fit a line on its own; the card around
+    /// the lines has to fit the window the interface is drawn for.
+    #[test]
+    fn the_series_fits_the_card() {
+        use crate::app::i18n::metrics::text_px;
+        use crate::app::settings::{DESIGN_W, NAME_MAX};
+        let name = "M".repeat(NAME_MAX);
+        let trio = [name.as_str(); 3].join("+");
+        let widest = format!("{trio}  ***");
+        let px = text_px(&widest, SERIES_FONT);
+        assert!(px <= SERIES_W, "{widest:?} is {px}px of {SERIES_W}");
+        // Two solo seats of the longest name share a line.
+        let solo = text_px(&format!("{name}  ***"), SERIES_FONT);
+        assert!(2.0 * solo + SERIES_GAP <= SERIES_W, "{solo}px a seat");
+        let card = SERIES_W + 2.0 * 22.0;
+        assert!(card <= DESIGN_W, "a {card}px card");
     }
 
     /// The standings run best-first, carry each seat's marker, and in 2v2
