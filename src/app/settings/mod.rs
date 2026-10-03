@@ -284,11 +284,12 @@ impl GameSettings {
         }
     }
 
-    /// Music gain, 0.0–1.0: the sink volume, wherever it is set. Switched
-    /// off reads as zero, the same as the slider at the bottom.
+    /// Music gain, 0.0 to [`MUSIC_LIFT`]: the sink volume, wherever it is
+    /// set. Switched off reads as zero, the same as the slider at the
+    /// bottom.
     pub fn music_gain(&self) -> f32 {
         if self.music_on {
-            f32::from(self.music_volume) / 100.0
+            f32::from(self.music_volume) / 100.0 * MUSIC_LIFT
         } else {
             0.0
         }
@@ -605,6 +606,18 @@ impl GameSettings {
         let _ = crate::app::paths::write_atomic(&settings_path(), self.to_text(caps));
     }
 }
+
+/// How much louder the music plays than its slider reads.
+///
+/// The tracks are mastered quieter than the effects: about -23 dB on
+/// average against -19 for the effects (measured with ffmpeg's
+/// `volumedetect`), and the effects' slider starts higher. At one to one
+/// the music sat some ten decibels under the effects at the defaults,
+/// and a playtest heard it as missing. Lifted, the default sits about four
+/// under, and the slider at the top still leaves the loudest track's peak
+/// (-7.1 dB, `theme_b`) just under full scale: see the test beside
+/// [`GameSettings::music_gain`].
+pub const MUSIC_LIFT: f32 = 2.2;
 
 /// The window the interface was laid out for. Every card, gutter and
 /// offset on every screen is a number of these pixels, so a window smaller
@@ -996,6 +1009,34 @@ mod tests {
         assert_eq!(settings.pad_deadzone, 80);
         assert!(settings.repeat_delay <= 0.5);
         assert_eq!(settings.language, Lang::En);
+    }
+
+    /// At the defaults the music sits a little under the effects, not lost
+    /// under them, and the slider at the top does not clip the loudest
+    /// track. The loudness is the files' own, measured with
+    /// `ffmpeg -i FILE -af volumedetect -f null -` (mean over the theme
+    /// tracks and over the round's effects); re-measure them when the
+    /// tracks are regenerated.
+    #[test]
+    fn the_music_sits_just_under_the_effects() {
+        const TRACK_MEAN_DB: f32 = -23.0;
+        const EFFECT_MEAN_DB: f32 = -18.7;
+        const LOUDEST_TRACK_PEAK_DB: f32 = -7.1;
+        let db = |gain: f32| 20.0 * gain.log10();
+        let stock = GameSettings::default();
+        let music = TRACK_MEAN_DB + db(stock.music_gain());
+        let effects = EFFECT_MEAN_DB + db(stock.sfx_gain());
+        let under = effects - music;
+        assert!(
+            (2.0..=6.0).contains(&under),
+            "the music plays {under:.1} dB under the effects"
+        );
+        let top = GameSettings {
+            music_volume: 100,
+            ..GameSettings::default()
+        };
+        let peak = LOUDEST_TRACK_PEAK_DB + db(top.music_gain());
+        assert!(peak <= 0.0, "the music clips at the top: {peak:.1} dB");
     }
 
     /// A settings.txt from before the switches existed comes up with the
