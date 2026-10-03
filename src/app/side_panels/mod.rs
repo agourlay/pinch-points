@@ -164,7 +164,7 @@ fn spawn_score_chip(
     root: &mut ChildSpawnerCommands,
     art: &crate::app::art::Art,
     seat: u8,
-    label: String,
+    (name, tag): (String, &'static str),
     arrows: u8,
     bot: bool,
 ) {
@@ -216,6 +216,10 @@ fn spawn_score_chip(
         chip.spawn(Node {
             flex_direction: FlexDirection::Column,
             flex_grow: 1.0,
+            // Free to be narrower than the name, which clips: wrapped, a
+            // long name and its tag took two lines and put the arrows on
+            // the chip's edge.
+            min_width: Val::Px(0.0),
             row_gap: Val::Px(3.0),
             ..default()
         })
@@ -229,14 +233,35 @@ fn spawn_score_chip(
                 if bot {
                     line.spawn(robot_icon(art, seat, 18.0));
                 }
-                line.spawn((
-                    Text::new(label),
-                    TextFont {
-                        font_size: FontSize::Px(menu_ui::type_scale::BODY),
-                        ..default()
-                    },
-                    TextColor(palette::CHIP_NAME),
-                ));
+                let font = TextFont {
+                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
+                    ..default()
+                };
+                line.spawn(Node {
+                    min_width: Val::Px(0.0),
+                    overflow: Overflow::clip_x(),
+                    ..default()
+                })
+                .with_children(|clip| {
+                    clip.spawn((
+                        Text::new(name),
+                        font.clone(),
+                        TextLayout::no_wrap(),
+                        TextColor(palette::CHIP_NAME),
+                    ));
+                });
+                if !tag.is_empty() {
+                    line.spawn((
+                        Text::new(tag.trim_start()),
+                        font,
+                        TextLayout::no_wrap(),
+                        TextColor(palette::CHIP_NAME),
+                        Node {
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                    ));
+                }
             });
             mid.spawn(Node {
                 column_gap: Val::Px(3.0),
@@ -332,8 +357,8 @@ pub fn spawn_side_panels(
 ) {
     log.0.clear();
     let tr = settings.tr();
-    let labels: Vec<String> = (0..seating.seats.0.max(2))
-        .map(|seat| seating.label(tr, seat))
+    let labels: Vec<(String, &'static str)> = (0..seating.seats.0.max(2))
+        .map(|seat| seating.name_and_tag(tr, seat))
         .collect();
     // The cap is the board's, set before the round and never during it.
     let arrows = sim.0.signpost_rule().0;
@@ -408,11 +433,11 @@ impl Seating<'_> {
         )
     }
 
-    /// A seat's name with its "(you)" or "(AI)" tag, as the chips and the
-    /// results card write it.
-    pub fn label(&self, tr: &crate::app::i18n::Tr, seat: u8) -> String {
+    /// A seat's name and its "(you)" or "(AI)" tag, apart: a chip clips a
+    /// long name and never its tag.
+    pub fn name_and_tag(&self, tr: &crate::app::i18n::Tr, seat: u8) -> (String, &'static str) {
         let tag = seat_tag(tr, &self.controllers, self.local(), seat);
-        format!("{}{tag}", self.names.label(tr, seat))
+        (self.names.label(tr, seat), tag)
     }
 }
 
