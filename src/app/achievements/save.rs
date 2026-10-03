@@ -163,6 +163,7 @@ pub fn load(mut commands: Commands) {
         .unwrap_or_default();
     commands.insert_resource(stats);
     commands.init_resource::<super::RoundScratch>();
+    commands.init_resource::<super::Unsaved>();
     commands.insert_resource(unlocked);
 }
 

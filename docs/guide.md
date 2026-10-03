@@ -317,7 +317,9 @@ deliberately.
   seconds into a versus round, for shooting them. `PINCH_NET_PROBE=1`
   submits one scripted signpost mid-round over the wire, and `PINCH_ST_EXEC`
   runs every schedule on the single-threaded executor, for the CPU
-  measurement. `PINCH_WINDOW=<w>x<h>` opens a window at a given size (it
+  measurement. `PINCH_FRAMES=1` prints the frame times every five seconds
+  (mean, 99th percentile, worst) and every frame over 20 ms as it happens,
+  which shows a stutter a vsynced frame rate hides. `PINCH_WINDOW=<w>x<h>` opens a window at a given size (it
   and `PINCH_SCREENSHOT` both keep the game out of fullscreen), and
   `PINCH_SCREENSHOT=<path>` with `PINCH_SCREENSHOT_AT=<seconds>` took every
   picture in this guide. `PINCH_NO_UPDATE` skips the release check for a

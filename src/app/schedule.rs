@@ -935,6 +935,10 @@ fn add_finish_systems(app: &mut App) {
             .chain()
             .in_set(Frame::Finish),
     );
+    app.add_systems(Update, dev::frame_times);
+    // Last, so an exit asked for anywhere in the frame is seen in it: the
+    // app stops once the frame is over.
+    app.add_systems(Last, achievements::save_on_exit);
 }
 
 use conditions::*;

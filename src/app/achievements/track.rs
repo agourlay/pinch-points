@@ -3,7 +3,7 @@
 
 use super::save::save;
 use super::ui::spawn_toast;
-use super::{ACHIEVEMENTS, PuzzleAttempt, RoundScratch, Stats, Unlocked};
+use super::{ACHIEVEMENTS, PuzzleAttempt, RoundScratch, Stats, Unlocked, Unsaved};
 use crate::app::audio::{Muted, Sounds, play_chime, sfx_gain};
 use crate::app::net::Online;
 use crate::app::settings::GameSettings;
@@ -33,6 +33,7 @@ pub struct Trophies<'w> {
     pub settings: Res<'w, GameSettings>,
     sounds: Option<Res<'w, Sounds>>,
     muted: Res<'w, Muted>,
+    unsaved: ResMut<'w, Unsaved>,
 }
 
 impl Trophies<'_> {
@@ -40,6 +41,22 @@ impl Trophies<'_> {
     /// and save both: once, after the caller's own changes, because a save
     /// is a sync to disk on the frame thread.
     pub fn credit(&mut self, commands: &mut Commands) {
+        self.unlock(commands);
+        self.save();
+    }
+
+    /// The same for a change made in the middle of a round, which is
+    /// written out only when it earned something: see [`Unsaved`].
+    pub fn tally(&mut self, commands: &mut Commands) {
+        if self.unlock(commands) {
+            self.save();
+        } else {
+            self.unsaved.0 = true;
+        }
+    }
+
+    /// Whether anything new was unlocked.
+    fn unlock(&mut self, commands: &mut Commands) -> bool {
         unlock_new(
             commands,
             &self.stats,
@@ -47,8 +64,12 @@ impl Trophies<'_> {
             &self.settings,
             &self.muted,
             &self.sounds,
-        );
+        )
+    }
+
+    fn save(&mut self) {
         save(&self.stats, &self.unlocked);
+        self.unsaved.0 = false;
     }
 }
 
@@ -112,7 +133,7 @@ pub fn track_events(
         }
     }
     if changed {
-        trophies.credit(&mut commands);
+        trophies.tally(&mut commands);
     }
 }
 
@@ -224,8 +245,24 @@ pub fn record_round(
 }
 
 /// Persist on leaving a play screen so a mid-round quit loses nothing.
-pub fn save_now(stats: Res<Stats>, unlocked: Res<Unlocked>) {
+pub fn save_now(stats: Res<Stats>, unlocked: Res<Unlocked>, mut unsaved: ResMut<Unsaved>) {
     save(&stats, &unlocked);
+    unsaved.0 = false;
+}
+
+/// Persist what a round has not written yet when the game is closed in
+/// the middle of one: quit from the pause card, or the window closed. The
+/// screen is never left then, so [`save_now`] does not run.
+pub fn save_on_exit(
+    mut exits: MessageReader<AppExit>,
+    stats: Res<Stats>,
+    unlocked: Res<Unlocked>,
+    mut unsaved: ResMut<Unsaved>,
+) {
+    if exits.read().count() > 0 && unsaved.0 {
+        save(&stats, &unlocked);
+        unsaved.0 = false;
+    }
 }
 
 /// A level was saved out of the editor: one trophy for building a beach of
@@ -362,8 +399,9 @@ fn unlock_new(
     settings: &GameSettings,
     muted: &Muted,
     sounds: &Option<Res<Sounds>>,
-) {
+) -> bool {
     let tr = settings.tr();
+    let mut any = false;
     for (index, achievement) in ACHIEVEMENTS.iter().enumerate() {
         // `insert` says whether the id was new, so no `contains` before
         // it. The threshold goes first: it is a compare, cheaper than
@@ -371,6 +409,7 @@ fn unlock_new(
         if !achievement.met(stats) || !unlocked.0.insert(achievement.id) {
             continue;
         }
+        any = true;
         spawn_toast(commands, tr.ach_names[index], tr.ach_descs[index]);
         if let Some(sounds) = sounds {
             play_chime(commands, sounds, sfx_gain(settings, muted));
@@ -379,6 +418,7 @@ fn unlock_new(
     // Saved by the caller, once: every one of them writes the stats it just
     // changed anyway, and a save is a sync to disk on the frame thread.
     // Saving here as well cost two per unlock and three for a double.
+    any
 }
 
 #[cfg(test)]
@@ -395,6 +435,71 @@ mod tests {
 
     fn scratch(raids: u32, banked: u32) -> RoundScratch {
         RoundScratch { raids, banked }
+    }
+
+    /// A world `track_events` and `save_on_exit` can run in, with every
+    /// trophy already earned or none of them.
+    fn tracking(all_unlocked: bool) -> App {
+        let mut app = App::new();
+        app.add_message::<SimEvent>();
+        app.add_message::<AppExit>();
+        app.init_resource::<Stats>();
+        app.init_resource::<RoundScratch>();
+        app.init_resource::<Unsaved>();
+        app.init_resource::<GameSettings>();
+        app.init_resource::<Muted>();
+        app.init_resource::<Online>();
+        app.init_resource::<Controllers>();
+        let mut unlocked = Unlocked::default();
+        if all_unlocked {
+            unlocked.0.extend(ACHIEVEMENTS.iter().map(|a| a.id));
+        }
+        app.insert_resource(unlocked);
+        app
+    }
+
+    fn eaten(app: &mut App) {
+        app.world_mut()
+            .write_message(SimEvent::CrabEaten { pos: Vec2::ZERO });
+        let _ = app.world_mut().run_system_once(track_events);
+    }
+
+    /// A crab eaten in the middle of a round is counted and not written:
+    /// a save is a sync to disk on the frame thread, and a busy beach
+    /// stuttered with one for every crab. It waits for the game to close.
+    #[test]
+    fn a_change_mid_round_is_kept_until_the_game_closes() {
+        let mut app = tracking(true);
+        eaten(&mut app);
+        assert_eq!(app.world().resource::<Stats>().gulls_fed, 1, "counted");
+        assert!(app.world().resource::<Unsaved>().0, "and not written yet");
+        // Closing the game writes it.
+        app.world_mut().write_message(AppExit::Success);
+        let _ = app.world_mut().run_system_once(save_on_exit);
+        assert!(
+            !app.world().resource::<Unsaved>().0,
+            "written on the way out"
+        );
+    }
+
+    /// One that earns a trophy is written at once, so an unlock the player
+    /// was just shown is never lost.
+    #[test]
+    fn a_change_that_earns_a_trophy_is_written_at_once() {
+        let mut app = tracking(false);
+        // The first crab home earns the first trophy there is.
+        app.world_mut().write_message(SimEvent::CrabBanked {
+            id: 0,
+            owner: 0,
+            pos: Vec2::ZERO,
+            keep: Vec2::ZERO,
+            value: 1,
+            kind: CrabKind::Common,
+            handed: crate::sim::Handedness::Right,
+        });
+        let _ = app.world_mut().run_system_once(track_events);
+        assert!(!app.world().resource::<Unlocked>().0.is_empty(), "unlocked");
+        assert!(!app.world().resource::<Unsaved>().0, "and written");
     }
 
     /// Winning untouched earns the dry-castle trophy; winning after a raid

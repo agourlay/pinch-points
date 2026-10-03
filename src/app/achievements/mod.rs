@@ -13,6 +13,17 @@ pub(super) fn save_path() -> std::path::PathBuf {
     crate::app::paths::data_dir().join("achievements.txt")
 }
 
+/// Stats changed since they were last written out.
+///
+/// A bank by the local seat, a crab eaten anywhere: a busy round on a big
+/// beach is several a second, and a save is a sync to disk, tens of
+/// milliseconds on the frame thread. Writing each one stuttered the game
+/// every time a crab came home. Such a change is kept here instead and
+/// written when something earns a trophy, when the round ends, when the
+/// screen is left, and when the game is closed.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Unsaved(pub bool);
+
 /// Lifetime counters for the local player.
 #[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
 pub struct Stats {
@@ -417,7 +428,7 @@ pub use save::load;
 use save::{parse, to_text};
 pub use track::{
     record_codes, record_level_built, record_puzzle, record_round, reset_puzzle_attempt,
-    reset_round_scratch, save_now, track_events, track_puzzle_attempt,
+    reset_round_scratch, save_now, save_on_exit, track_events, track_puzzle_attempt,
 };
 pub use ui::{
     AchievementsUi, achievements_input, enter_achievements, update_shelf_scrollbar, update_toasts,

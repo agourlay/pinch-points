@@ -587,6 +587,42 @@ pub(super) fn debug_screenshot(
     }
 }
 
+/// Dev hook: with `PINCH_FRAMES=1`, every five seconds print the frames'
+/// average, 99th percentile and worst time to stderr. For judging a
+/// screen's cost from its frame times rather than its CPU, which a vsynced
+/// frame hides: a build that spends twice as long per frame still shows
+/// the same frame rate until it misses one.
+pub(super) fn frame_times(
+    time: Res<Time<Real>>,
+    mut on: Local<Option<bool>>,
+    mut frames: Local<Vec<f32>>,
+    mut since: Local<f32>,
+) {
+    if !*on.get_or_insert_with(|| std::env::var("PINCH_FRAMES").is_ok()) {
+        return;
+    }
+    let dt = time.delta_secs() * 1000.0;
+    if dt > 20.0 {
+        eprintln!("slow frame at {:.3}s: {dt:.1} ms", time.elapsed_secs());
+    }
+    frames.push(dt);
+    *since += dt;
+    if *since < 5000.0 {
+        return;
+    }
+    let mut sorted = std::mem::take(&mut *frames);
+    sorted.sort_by(f32::total_cmp);
+    let n = sorted.len();
+    let mean = sorted.iter().sum::<f32>() / n as f32;
+    eprintln!(
+        "frames: {n} in {:.1}s, mean {mean:.2} ms, p99 {:.2} ms, worst {:.2} ms",
+        *since / 1000.0,
+        sorted[(n * 99 / 100).min(n - 1)],
+        sorted[n - 1],
+    );
+    *since = 0.0;
+}
+
 /// Dev hook: mid-round moments for screenshots. `PINCH_PAUSE=1` raises the
 /// pause card a couple of seconds into a versus round; `PINCH_OVER=1` calls
 /// the round over so the results card can be shot; `PINCH_INTERLUDE=1`
