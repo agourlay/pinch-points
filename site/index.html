@@ -112,6 +112,7 @@
     <li><b>Daily Challenge</b> same for everyone</li>
     <li><b>Replays</b> shareable as text</li>
     <li><b>50 trophies</b> to go after</li>
+    <li><b>Bots</b> write your own</li>
   </ul>
 </section>
 
@@ -125,6 +126,28 @@
     press Enter, you are in.</p>
     <p>Up to six players, AI to fill the empty seats, a chat while you wait,
     and room for anyone else to watch.</p>
+  </div>
+</section>
+
+<section class="bots">
+  <pre class="term" aria-label="Starting an arena, then a bot that joins it"><span class="prompt">$</span> pinch-points arena --seat ai:easy --open 1
+Waiting for 1 bot. Start it with:
+
+  pinch://127.0.0.1:47710/H4TN-C2LV
+
+<span class="prompt">$</span> python3 greedy.py pinch://127.0.0.1:47710/H4TN-C2LV</pre>
+  <div>
+    <h2>Write your own bot</h2>
+    <p>A bot is a program you run yourself, in any language: it connects
+    over TCP, reads the board each tick and answers with a move. The game
+    never runs anyone's code.</p>
+    <p>Play it against the game's AI, run a cup between friends' bots, or
+    seat it beside you on the couch or in a LAN party.</p>
+    <p class="links">
+      <a href="https://github.com/agourlay/pinch-points/blob/master/bots/python/greedy.py">A whole bot to start from</a>
+      (one file of plain Python) ·
+      <a href="https://github.com/agourlay/pinch-points/blob/master/docs/bot-protocol.md">The protocol</a>
+    </p>
   </div>
 </section>
 

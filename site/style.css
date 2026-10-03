@@ -170,6 +170,44 @@ main h2 {
   .together { grid-template-columns: 1fr; gap: 24px; }
 }
 
+/* ---- bots ---- */
+
+/* A terminal where the lobby has its picture: a bot is something you
+   start from one. Text first this time, on the left, so the page zigzags. */
+.bots {
+  display: grid;
+  grid-template-columns: 2fr 3fr;
+  gap: 40px;
+  align-items: center;
+}
+
+.bots > div { order: -1; }
+.bots p { margin: 0 0 12px; color: var(--ink-soft); }
+.bots p:last-child { margin-bottom: 0; }
+.bots .links { color: var(--ink-soft); }
+
+/* A grid item, so free to shrink below its widest line: held to it, a
+   phone's page ran sideways. The lines scroll inside the box instead. */
+.term {
+  min-width: 0;
+  margin: 0;
+  padding: 22px 24px;
+  border-radius: 14px;
+  background: var(--term);
+  color: var(--term-ink);
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  overflow-x: auto;
+  box-shadow: 0 14px 34px var(--shadow);
+}
+
+.term .prompt { opacity: 0.55; user-select: none; }
+
+@media (max-width: 820px) {
+  .bots { grid-template-columns: 1fr; gap: 24px; }
+}
+
 /* ---- gallery ---- */
 
 .gallery {
