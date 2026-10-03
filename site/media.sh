@@ -7,8 +7,12 @@
 # copies site/media, so a PNG changed without this keeps its old picture on
 # the site.
 #
-# The hero video (site/media/hero.webm and hero.mp4) is recorded by hand;
-# with ffmpeg on the PATH, its poster is remade from the first frame here too.
+# The hero video (site/media/hero.webm and hero.mp4) is recorded by hand:
+# a release build with PINCH_WINDOW=1280x720 PINCH_ON_TOP=1, filmed with
+# `ffmpeg -f x11grab` at the window's corner (PINCH_TIDE_AT and
+# PINCH_LURE_AT stage the moments). Without PINCH_ON_TOP the grab films
+# whatever window sits in front. With ffmpeg on the PATH, its poster is
+# remade from the first frame here too.
 #
 # Needs python3 with Pillow.
 set -eu
