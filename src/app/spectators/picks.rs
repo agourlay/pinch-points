@@ -61,14 +61,14 @@ pub struct PickCard(pub bool);
 /// are open, since a pick is one datagram and UDP owes nobody that.
 pub fn spectator_pick_input(
     mut card: ListCard<PickCardUi, PickCard>,
-    keyboard: crate::app::keycaps::Keyboard,
+    keyboard: crate::app::keycaps::KeyboardMut,
     time: Res<Time>,
     settings: Res<crate::app::settings::GameSettings>,
     watching: Watching<SpectatorCard>,
     mut online: ResMut<Online>,
     mut resend: Local<f32>,
 ) {
-    let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
+    let crate::app::keycaps::KeyboardMut { mut keys, caps } = keyboard;
     let open = online.0.as_ref().is_some_and(|s| s.stands.picks.open > 0);
     if !is_spectating(&online) || !watching.free() || watching.other_up() || !open {
         if card.is_up() {
@@ -92,6 +92,8 @@ pub fn spectator_pick_input(
     }
     if keys.just_pressed(KeyCode::Escape) || caps.just_pressed(&keys, 'P') {
         card.shut();
+        // Or the pause card, behind it in the frame, opens on the same Esc.
+        crate::app::menu_ui::spend(&mut keys, &[KeyCode::Escape]);
         return;
     }
     if let Some(seat) = crate::app::menu_ui::number_pressed(&keys, usize::from(session.seats)) {

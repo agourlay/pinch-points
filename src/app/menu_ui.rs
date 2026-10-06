@@ -142,6 +142,23 @@ pub fn enter(keys: &ButtonInput<KeyCode>) -> bool {
     keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter)
 }
 
+/// Use up the keys that just closed something, so nothing later in the
+/// frame reads them again.
+///
+/// A card or a line of chat closes on Enter or Escape, and the systems
+/// behind it run later in the same frame and see the same press: the
+/// Enter that sent a spectator's line also left the results card, and
+/// the Escape that dropped it opened the pause card. Only the press is
+/// spent; the key is still held, and lets go as it always would.
+pub fn spend(keys: &mut ButtonInput<KeyCode>, codes: &[KeyCode]) {
+    for &code in codes {
+        keys.clear_just_pressed(code);
+    }
+}
+
+/// The keys that end a line or put a card away.
+pub const CLOSERS: [KeyCode; 3] = [KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Escape];
+
 /// A/D (or arrow) adjustment, as the turn of a dial.
 pub fn left_right(keys: &ButtonInput<KeyCode>) -> Option<Turn> {
     if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {

@@ -42,6 +42,11 @@ pub struct PauseMenu {
     /// opened, and a card that handed the round back running whatever it
     /// found would start the recording again with no key pressed.
     held: bool,
+    /// Whether the card was raised for this player alone: a spectator's,
+    /// which stops nothing, since a watcher does not get to freeze the
+    /// match. The table's pause did not raise it, so the table playing on
+    /// does not put it away either.
+    own: bool,
     selected: usize,
 }
 
@@ -149,11 +154,15 @@ pub fn pause_input(
             // What to hand back on the way out: a replay stopped from its
             // own transport must still be stopped when the card closes.
             menu.held = paused.0;
+            menu.own = false;
             match online.0.as_mut() {
                 // Online: the peers agree on a frame to stop at, and the sim
                 // halts there by itself. Freezing the local ticker instead
                 // would stop the network pump that carries the resume.
-                Some(session) if !peer_paused => session.request_pause(),
+                Some(session) if !peer_paused => {
+                    menu.own = session.watching();
+                    session.request_pause();
+                }
                 Some(_) => {}
                 None => paused.0 = true,
             }
@@ -169,8 +178,10 @@ pub fn pause_input(
         close(&mut commands, &mut menu, &mut paused, &ui);
         return;
     }
-    // A peer resumed: everyone plays on.
-    if online.0.is_some() && !peer_paused {
+    // A peer resumed: everyone plays on. A spectator's own card was never
+    // the table's, and stays up until they close it. It used to be shut
+    // on the very next frame, so "Esc: menu" could not reach the menu.
+    if online.0.is_some() && !peer_paused && !menu.own {
         close(&mut commands, &mut menu, &mut paused, &ui);
         return;
     }
@@ -291,6 +302,49 @@ mod tests {
         assert!(!app.world().resource::<PauseMenu>().open, "the card closed");
         assert!(!app.world().resource::<Paused>().0, "and unfroze");
         assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
+    }
+
+    /// A spectator's Escape opens a card of their own. The lockstep names
+    /// no frame for a watcher, so the table never pauses, and the card used
+    /// to read that as "a peer resumed" and shut itself the next frame:
+    /// "Esc: menu" on the spectator's prompt led nowhere.
+    #[test]
+    fn a_spectators_card_stays_up() {
+        use crate::app::net::OnlineSession;
+        use crate::sim::{DEFAULT_DELAY, Lockstep};
+        use crate::transport::{MatchTerms, UdpTransport};
+
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_state::<Phase>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<PauseMenu>();
+        app.init_resource::<Paused>();
+        app.insert_resource(GameSettings::default());
+        app.add_message::<AppExit>();
+        let watcher = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::observer(vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        assert!(watcher.watching());
+        app.insert_resource(Online(Some(watcher)));
+        app.add_systems(Update, pause_input);
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(app.world().resource::<PauseMenu>().open, "still up");
     }
 
     /// The card takes the keyboard while it is up.

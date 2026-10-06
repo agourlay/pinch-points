@@ -141,6 +141,9 @@ pub fn done_input(
         }
         campaign.index += 1;
         load.write(LoadLevel { keep_posts: false });
+        // An R in the same frame would reload with this stage's posts
+        // carried onto the next one.
+        return;
     }
     if caps.just_pressed(&keys, 'R') {
         load.write(LoadLevel { keep_posts: true });
@@ -221,6 +224,7 @@ pub fn versus_input(
 /// once the match is over, Enter takes everyone back to the lobby.
 pub fn versus_over_input(
     keys: Res<ButtonInput<KeyCode>>,
+    pause: Res<crate::app::pause::PauseMenu>,
     mut tournament: ResMut<crate::app::tournament::Tournament>,
     mut online: ResMut<crate::app::net::Online>,
     mut homecoming: ResMut<crate::app::lobby::Homecoming>,
@@ -236,7 +240,10 @@ pub fn versus_over_input(
         next_screen.set(Screen::Interlude);
         return;
     }
-    if !crate::app::menu_ui::enter(&keys) {
+    // The pause card's Enter is the card's. Not gated in the schedule like
+    // the other play keys, because the invitation above is followed with
+    // the card up or not.
+    if pause.open || !crate::app::menu_ui::enter(&keys) {
         return;
     }
     match after_round(&online, series_on) {
@@ -269,6 +276,25 @@ pub fn versus_over_input(
             homecoming.0 = Some(session.back_to_the_lobby());
             next_screen.set(Screen::Lobby);
         }
+    }
+}
+
+/// What Enter does when the tide is in, named by the one function the key
+/// itself reads.
+///
+/// The prompt line, the spectators' line and the results card all want
+/// it, and each used to spell it out for itself: a flat "Enter: menu" for
+/// a spectator walked back to the lobby, and "Enter: next round" on the
+/// card of a joiner whose Enter leaves the series.
+pub fn enter_door(
+    tr: &crate::app::i18n::Tr,
+    online: &crate::app::net::Online,
+    series_on: bool,
+) -> &'static str {
+    match after_round(online, series_on) {
+        AfterRound::NextRound => tr.tour_next,
+        AfterRound::Lobby => tr.prompt_enter_lobby,
+        AfterRound::Menu => tr.prompt_enter_menu,
     }
 }
 

@@ -681,6 +681,23 @@ mod tests {
         assert!(heard(&app).is_empty(), "and nobody heard it");
     }
 
+    /// The key that closes a line is used up by it. The results card and
+    /// the pause card run later in the same frame: the Enter that said a
+    /// line on the results card also walked the spectator out of the
+    /// match, and the Escape that dropped one opened the pause card.
+    #[test]
+    fn the_key_that_closes_a_line_is_not_read_again() {
+        for closer in [KeyCode::Enter, KeyCode::Escape] {
+            let mut app = beach(None);
+            tap(&mut app, KeyCode::KeyT);
+            type_char(&mut app, "g");
+            tap(&mut app, closer);
+            assert_eq!(saying(&app), None);
+            let keys = app.world().resource::<ButtonInput<KeyCode>>();
+            assert!(!keys.just_pressed(closer), "{closer:?} was spent");
+        }
+    }
+
     /// A player's T is a player's T. A letter taken for a chat line is a
     /// letter taken out of the round, which is why only the seatless type.
     #[test]

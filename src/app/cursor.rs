@@ -876,6 +876,7 @@ mod tests {
         let mut app = beach(2);
         app.init_resource::<Tournament>();
         app.init_resource::<crate::app::lobby::Homecoming>();
+        app.init_resource::<crate::app::pause::PauseMenu>();
         app.add_systems(Update, versus_over_input);
         let host = seat == 0;
         let transport = match host {
@@ -974,6 +975,18 @@ mod tests {
             "the host calls the next round instead"
         );
         assert!(app.world().resource::<Homecoming>().0.is_none());
+    }
+
+    /// With the pause card up over the results card, Enter is the card's.
+    /// It used to reach both: the host's "Back to menu" called the next
+    /// round for the whole table first, then left it.
+    #[test]
+    fn the_pause_card_keeps_its_enter() {
+        let mut app = results_card(0, true, true);
+        app.world_mut()
+            .resource_mut::<crate::app::pause::PauseMenu>()
+            .open = true;
+        assert_eq!(pressing_enter(&mut app), Screen::Versus);
     }
 
     /// The Enter that ends the match must not also start the next one.

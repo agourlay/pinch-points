@@ -133,12 +133,12 @@ pub struct SpectatorCard(pub bool);
 /// menu already numbers its modes with.
 pub fn spectator_vote_input(
     mut card: ListCard<SpectatorCardUi, SpectatorCard>,
-    keyboard: crate::app::keycaps::Keyboard,
+    keyboard: crate::app::keycaps::KeyboardMut,
     settings: Res<crate::app::settings::GameSettings>,
     watching: Watching<PickCard>,
     mut online: ResMut<Online>,
 ) {
-    let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
+    let crate::app::keycaps::KeyboardMut { mut keys, caps } = keyboard;
     // Typing takes the keyboard, losing a seat takes the job, and a round
     // that is over has no beach to call anything onto.
     if !is_spectating(&online) || !watching.free() {
@@ -156,6 +156,8 @@ pub fn spectator_vote_input(
     }
     if keys.just_pressed(KeyCode::Escape) || caps.just_pressed(&keys, 'E') {
         card.shut();
+        // Or the pause card, behind it in the frame, opens on the same Esc.
+        crate::app::menu_ui::spend(&mut keys, &[KeyCode::Escape]);
         return;
     }
     if let Some(at) = crate::app::menu_ui::number_pressed(&keys, SPECTATOR_EVENTS.len()) {

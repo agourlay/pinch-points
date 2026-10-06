@@ -700,10 +700,17 @@ fn add_play_systems(app: &mut App) {
                 hint::note_denials,
             ),
             play_input::running_input.run_if(puzzle_running.and_then(keys_are_free)),
-            play_input::done_input.run_if(puzzle_done),
+            // Under the pause card a pad's Start can open on the card,
+            // and the card's South is the card's, not "next stage".
+            play_input::done_input.run_if(puzzle_done.and_then(keys_are_free)),
             check_outcome.run_if(puzzle_running),
             play_input::versus_input.run_if(versus_running.and_then(keys_are_free)),
-            suspend::copy_round_code.run_if(versus_running.and_then(keys_are_free)),
+            // C is a letter in a spectator's line of chat.
+            suspend::copy_round_code.run_if(
+                versus_running
+                    .and_then(keys_are_free)
+                    .and_then(not(text_entry_open)),
+            ),
             (
                 dev::debug_net_probe,
                 dev::debug_autopilot,

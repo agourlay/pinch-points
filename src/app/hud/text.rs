@@ -280,22 +280,6 @@ pub(super) fn puzzle_text(
 /// The busiest screen there is, and the one that reads off the most: it
 /// takes the whole [`Readout`] rather than ten of its fields, where the
 /// order of two `&Res`es of the same shape was checked by eyesight.
-/// What Enter does when the tide is in, named by the one function the key
-/// itself reads.
-///
-/// Both the players' card and the spectators' want this line, and the
-/// spectators' used to spell it out for itself: a flat "Enter: menu",
-/// while `versus_over_input` walked a spectator that came from a lobby
-/// back to the lobby with everybody else.
-fn enter_door(tr: &Tr, online: &Online, series_on: bool) -> &'static str {
-    use crate::app::play_input::AfterRound;
-    match crate::app::play_input::after_round(online, series_on) {
-        AfterRound::NextRound => tr.tour_next,
-        AfterRound::Lobby => tr.prompt_enter_lobby,
-        AfterRound::Menu => tr.prompt_enter_menu,
-    }
-}
-
 pub(super) fn versus_text(r: &Readout) -> HudText {
     let Readout {
         tr,
@@ -445,7 +429,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
                 None => format!(
                     "{} | {}",
                     tr.lobby_chat_hint,
-                    enter_door(tr, online, tournament.is_running())
+                    crate::app::play_input::enter_door(tr, online, tournament.is_running())
                 ),
             }
         }
@@ -462,7 +446,9 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         // key itself reads: a finished lobby match goes back to the lobby
         // together, a series plays on, and the prompt must not promise a
         // door the key does not open.
-        VersusPhase::Over => enter_door(tr, online, tournament.is_running()).to_string(),
+        VersusPhase::Over => {
+            crate::app::play_input::enter_door(tr, online, tournament.is_running()).to_string()
+        }
     };
     HudText::new(mode, status, prompt)
 }

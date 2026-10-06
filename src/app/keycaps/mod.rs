@@ -105,6 +105,14 @@ pub struct Keyboard<'w> {
     pub caps: Res<'w, KeyCaps>,
 }
 
+/// [`Keyboard`] for a system that also spends the press it answers (see
+/// `menu_ui::spend`).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct KeyboardMut<'w> {
+    pub keys: ResMut<'w, ButtonInput<KeyCode>>,
+    pub caps: Res<'w, KeyCaps>,
+}
+
 impl KeyCaps {
     /// What the cap says, if it differs from the QWERTY spelling.
     pub fn cap(&self, key: KeyCode) -> Option<char> {

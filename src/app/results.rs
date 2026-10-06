@@ -507,7 +507,9 @@ pub fn spawn_versus_results(
                     }
                 } else {
                     let hint = card_text(17.0, CARD_TEXT.darker(0.15));
-                    card.spawn((Text::new(tr.tour_next), hint.0, hint.1));
+                    let door =
+                        crate::app::play_input::enter_door(tr, &online, tournament.is_running());
+                    card.spawn((Text::new(door), hint.0, hint.1));
                 }
             }
         });

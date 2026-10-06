@@ -22,7 +22,7 @@ impl SpectatorChat {
 /// The key is read only for a spectator, so a player's T is still a player's
 /// T: nothing here can take a letter out of a round being played.
 pub fn spectator_chat_input(
-    keys: Res<ButtonInput<KeyCode>>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
     caps: Res<crate::app::keycaps::KeyCaps>,
     mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
     settings: Res<crate::app::settings::GameSettings>,
@@ -48,12 +48,14 @@ pub fn spectator_chat_input(
     let said = crate::app::lobby::type_a_line(&mut typed, line);
     if keys.just_pressed(KeyCode::Escape) {
         chat.0 = None;
+        crate::app::menu_ui::spend(&mut keys, &crate::app::menu_ui::CLOSERS);
         return;
     }
     let Some(said) = said else {
         return;
     };
     chat.0 = None;
+    crate::app::menu_ui::spend(&mut keys, &crate::app::menu_ui::CLOSERS);
     if said.trim().is_empty() {
         return;
     }
