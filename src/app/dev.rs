@@ -667,9 +667,12 @@ pub(super) fn debug_moments(
         .due_after("PINCH_PAUSE", sim.0.ticks(), 2)
         .is_some()
     {
-        // A synthetic Escape, so the real pause path opens the card: the
-        // input plugin clears the press at the next frame's start.
+        // A synthetic Escape, so the real pause path opens the card. Let
+        // go of at once: the input plugin clears only the `just_` sets, so
+        // a key left pressed stays held and swallows the real Escape that
+        // should close the card. `just_pressed` survives the release.
         keys.press(KeyCode::Escape);
+        keys.release(KeyCode::Escape);
     }
     if over_hook
         .due_after("PINCH_OVER", sim.0.ticks(), 2)

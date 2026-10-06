@@ -351,12 +351,17 @@ pub fn spawn_versus_cursors(
     // still read it. Its table is the round's own: one cursor per human
     // seat, and none for the AI's, or a keypress on the AI's keys steered
     // its crabs over the head of the bot.
+    //
+    // By seat, not by head-count: the AI's seats need not be the top ones.
+    // An online seat given up on mid-round passes to the AI where it sits,
+    // and its code says so, so counting heads put a cursor on that seat
+    // and left the human above it with none.
     if let Some(round) = &resuming.0 {
-        let humans = round.bots[..usize::from(round.seats)]
-            .iter()
-            .filter(|bot| bot.is_none())
-            .count() as u8;
-        spawn_cursors(&mut commands, &art, humans);
+        for (seat, bot) in round.bots[..usize::from(round.seats)].iter().enumerate() {
+            if bot.is_none() {
+                cursor_sprite(&mut commands, &art, seat as u8);
+            }
+        }
         return;
     }
     let daily_config = crate::app::match_setup::MatchConfig::daily();

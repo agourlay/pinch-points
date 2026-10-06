@@ -422,8 +422,12 @@ pub fn play_events(
         pads,
         requests: mut rumble,
     } = rumble;
+    // The whole table's knocks, felt by whoever holds a pad here, which
+    // is nobody while a replay or someone else's match is watched: no
+    // cursor, no hands on the beach.
+    let hands_here = !cursors.is_empty();
     let mut buzz = |ms: u64, strength: f32| {
-        if !settings.rumble {
+        if !settings.rumble || !hands_here {
             return;
         }
         for gamepad in &pads {

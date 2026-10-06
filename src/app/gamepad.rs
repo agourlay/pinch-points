@@ -17,13 +17,55 @@ use crate::sim::{Direction, MAX_PLAYERS, PlayerAction};
 use bevy::input::gamepad::{GamepadRumbleIntensity, GamepadRumbleRequest};
 use bevy::prelude::*;
 
-/// Pad claims, in claim order. Pad index `i` (claimed, or connection order
-/// when no ceremony ran) drives the `i`-th human seat **counting from the
-/// top**: with cursors for P1 and P2, pad 0 is P2 and pad 1 is P1; with
-/// four humans, pad 0 is P4. This makes keyboard+pad, two pads, and two
+/// Pad claims, in claim order, and every pad seen, in the order it was
+/// first plugged in. Pad index `i` (the claimed pads, then the rest in
+/// plug order) drives the `i`-th human seat **counting from the top**:
+/// with cursors for P1 and P2, pad 0 is P2 and pad 1 is P1; with four
+/// humans, pad 0 is P4. This makes keyboard+pad, two pads, and two
 /// keyboards all work for two players with zero setup.
 #[derive(Resource, Default)]
-pub struct PadSeats(pub Vec<Entity>);
+pub struct PadSeats(pub Vec<Entity>, PlugOrder);
+
+/// Every pad seen, in the order it was first plugged in, unplugged ones
+/// included until the round is over. A pad that drops out keeps its place
+/// for the rest of the round, so the pads after it do
+/// not each move up a seat: counted live, P1's pad took over P2's cursor
+/// the moment P2's battery died, and kept it after P2 plugged back in.
+/// The same pad back (the engine gives it its old entity) finds its place
+/// still there; a different one takes the first place left empty.
+#[derive(Default)]
+pub struct PlugOrder(Vec<Entity>);
+
+/// Keep the plug order, and let go of pads that are gone.
+///
+/// Only between rounds. Mid-round an unplugged pad's place (and claim)
+/// holds its seat, empty, rather than handing the seat to the next pad
+/// in line; afterwards both are let go, or a pad unplugged after a couch
+/// match left every other pad dead for the rest of the session.
+pub fn keep_pad_order(
+    pads: Query<Entity, With<Gamepad>>,
+    screen: Res<State<Screen>>,
+    mut seats: ResMut<PadSeats>,
+) {
+    let PadSeats(claims, PlugOrder(order)) = &mut *seats;
+    for pad in &pads {
+        if order.contains(&pad) {
+            continue;
+        }
+        match order.iter().position(|&seen| !pads.contains(seen)) {
+            Some(empty) => order[empty] = pad,
+            None => order.push(pad),
+        }
+    }
+    let in_a_round = matches!(
+        screen.get(),
+        Screen::Puzzle | Screen::Versus | Screen::Interlude
+    );
+    if !in_a_round {
+        claims.retain(|&claimed| pads.contains(claimed));
+        order.retain(|&seen| pads.contains(seen));
+    }
+}
 
 /// The pad entity at claim/connection index `index`.
 ///
@@ -35,10 +77,24 @@ fn nth_pad_entity(
     claims: &PadSeats,
     index: usize,
 ) -> Option<Entity> {
-    if claims.0.is_empty() {
-        return pads.iter().nth(index).map(|(entity, _)| entity);
-    }
-    let entity = *claims.0.get(index)?;
+    let PadSeats(claimed, PlugOrder(order)) = claims;
+    // A pad not yet in the plug order (plugged in this frame) still
+    // counts, after every pad that is.
+    let fresh = pads
+        .iter()
+        .map(|(entity, _)| entity)
+        .filter(|pad| !order.contains(pad));
+    let entity = claimed
+        .iter()
+        .copied()
+        .chain(
+            order
+                .iter()
+                .copied()
+                .chain(fresh)
+                .filter(|pad| !claimed.contains(pad)),
+        )
+        .nth(index)?;
     pads.contains(entity).then_some(entity)
 }
 
@@ -61,6 +117,20 @@ fn nth_pad<'a>(
 /// single local cursor, which therefore takes the first free pad whatever
 /// its seat.
 fn pad_index_of(settings: &GameSettings, players: &[u8], player: u8) -> Option<usize> {
+    // A lone cursor is the one person at this machine, whatever seat the
+    // network dealt it, and plays by P1's settings row: the keyboard does
+    // (`keymap(&settings, 0, ..)` online), so the pad has to as well. Read
+    // by the dealt seat, a joiner in seat two whose P2 row said "keys" had
+    // a dead pad all match.
+    if let [only] = players
+        && *only == player
+    {
+        return match seat_choice(settings, 0) {
+            Some(SeatInput::Keys) => None,
+            Some(SeatInput::Pad(n)) => Some(usize::from(n)),
+            Some(SeatInput::Auto) | None => Some(0),
+        };
+    }
     match seat_choice(settings, player) {
         Some(SeatInput::Keys) => return None,
         Some(SeatInput::Pad(n)) => return Some(usize::from(n)),
@@ -322,35 +392,69 @@ pub fn pad_menu_bridge(
     pads: Query<&Gamepad>,
     screen: Res<State<Screen>>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut bridged: ResMut<Bridged>,
 ) {
-    // Each button with its key, and the key the lobby hears instead.
-    const MAP: [(GamepadButton, KeyCode, KeyCode); 6] = [
-        (GamepadButton::DPadUp, KeyCode::KeyW, KeyCode::ArrowUp),
-        (GamepadButton::DPadDown, KeyCode::KeyS, KeyCode::ArrowDown),
-        (GamepadButton::DPadLeft, KeyCode::KeyA, KeyCode::ArrowLeft),
-        (GamepadButton::DPadRight, KeyCode::KeyD, KeyCode::ArrowRight),
-        (GamepadButton::South, KeyCode::Enter, KeyCode::Enter),
-        (GamepadButton::East, KeyCode::Escape, KeyCode::Escape),
-    ];
     let quits = *screen.get() == Screen::Menu;
     let lobby = *screen.get() == Screen::Lobby;
     for pad in &pads {
-        for (button, key, lobby_key) in MAP {
-            // The press is what is suppressed, never the release. A press
-            // that changes the screen is let go of on the screen it opened,
-            // so suppressing the release would strand the synthesized key
-            // in `pressed` for ever, and `ButtonInput::press` reports
-            // `just_pressed` only for a key it was not already holding.
-            // For the same reason the release lets go of both keys the
-            // button can mean: one pressed on the menu and released in the
-            // lobby is still holding the menu's key.
+        for (button, key, lobby_key) in BRIDGE {
             let muted = quits && button == GamepadButton::East;
             if pad.just_pressed(button) && !muted {
-                keys.press(if lobby { lobby_key } else { key });
+                let key = if lobby { lobby_key } else { key };
+                keys.press(key);
+                if !bridged.0.contains(&key) {
+                    bridged.0.push(key);
+                }
             }
-            if pad.just_released(button) {
-                keys.release(key);
-                keys.release(lobby_key);
+        }
+    }
+}
+
+/// Each bridged button with its key, and the key the lobby hears instead.
+const BRIDGE: [(GamepadButton, KeyCode, KeyCode); 6] = [
+    (GamepadButton::DPadUp, KeyCode::KeyW, KeyCode::ArrowUp),
+    (GamepadButton::DPadDown, KeyCode::KeyS, KeyCode::ArrowDown),
+    (GamepadButton::DPadLeft, KeyCode::KeyA, KeyCode::ArrowLeft),
+    (GamepadButton::DPadRight, KeyCode::KeyD, KeyCode::ArrowRight),
+    (GamepadButton::South, KeyCode::Enter, KeyCode::Enter),
+    (GamepadButton::East, KeyCode::Escape, KeyCode::Escape),
+];
+
+/// The keys the bridge is holding down for a pad, to let go of when the
+/// button comes up.
+#[derive(Resource, Default)]
+pub struct Bridged(Vec<KeyCode>);
+
+/// Let go of a bridged key when its button comes up, on every screen.
+///
+/// The press is what the bridge's screens decide, never the release. A
+/// press that changes the screen is let go of on the screen it opened,
+/// often one the bridge does not run on (South on the stage list opens a
+/// puzzle in setup), and a release left to the bridge stranded the
+/// synthesized key in `pressed` for good: `ButtonInput::press` reports
+/// `just_pressed` only for a key it was not already holding, so the next
+/// Enter on the won card did nothing. Only keys the bridge pressed are
+/// let go, so a keyboard player's own held W is not.
+pub fn pad_bridge_release(
+    pads: Query<&Gamepad>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut bridged: ResMut<Bridged>,
+) {
+    if bridged.0.is_empty() {
+        return;
+    }
+    for pad in &pads {
+        for (button, key, lobby_key) in BRIDGE {
+            if !pad.just_released(button) {
+                continue;
+            }
+            // Both keys the button can mean: one pressed on the menu and
+            // released in the lobby is still holding the menu's key.
+            for key in [key, lobby_key] {
+                if let Some(at) = bridged.0.iter().position(|&held| held == key) {
+                    bridged.0.swap_remove(at);
+                    keys.release(key);
+                }
             }
         }
     }
@@ -370,12 +474,16 @@ pub fn pad_claim_seats(
     for (entity, pad) in &pads {
         if pad.just_pressed(GamepadButton::Start)
             && !seats.0.contains(&entity)
-            && seats.0.len() < KEYBOARD_SEATS + PAD_SEATS
+            && seats.0.len() < PAD_SEATS
         {
             seats.0.push(entity);
+            // A seat for every claim above the keyboard's two, taken from
+            // the AI when the table is already that big: a friend who
+            // pressed Start to join seat three was otherwise left steering
+            // P2 while the AI kept seat three.
             let needed = (KEYBOARD_SEATS + seats.0.len()) as u8;
             config.seats = config.seats.max(needed).min(MAX_PLAYERS as u8);
-            config.bots = config.bots.min(config.seats - 1);
+            config.bots = config.bots.min(config.seats.saturating_sub(needed));
         }
     }
 }
@@ -472,6 +580,19 @@ mod tests {
         assert_eq!(pad_index_of(&auto, &[0, 1], 2), None, "no cursor, no pad");
     }
 
+    /// Online the one cursor plays by P1's settings row whatever seat the
+    /// network dealt it, as its keyboard does. Read by the dealt seat, a
+    /// joiner in seat two whose P2 row said "keys" had a dead pad.
+    #[test]
+    fn a_lone_cursor_plays_by_the_first_row() {
+        let pad_for_p1 = with([SeatInput::Auto, SeatInput::Keys]);
+        assert_eq!(pad_index_of(&pad_for_p1, &[1], 1), Some(0));
+        let keys_for_p1 = with([SeatInput::Keys, SeatInput::Auto]);
+        assert_eq!(pad_index_of(&keys_for_p1, &[1], 1), None);
+        let named = with([SeatInput::Pad(2), SeatInput::Keys]);
+        assert_eq!(pad_index_of(&named, &[3], 3), Some(2));
+    }
+
     /// A seat that names a controller gets that one, and the seat that
     /// would have inherited it under the top-down rule does not.
     #[test]
@@ -504,6 +625,51 @@ mod tests {
         assert_eq!(pad_index_of(&both, &[0, 1], 1), Some(1));
         // And a third seat skips the claimed one.
         assert_eq!(pad_index_of(&both, &[0, 1, 2], 2), Some(0));
+    }
+
+    /// A pad's Start takes a seat from the AI when the table has no free
+    /// one, and only the four seats above the keyboard's two are there to
+    /// be claimed.
+    #[test]
+    fn a_claim_takes_a_seat_from_the_ai() {
+        use crate::app::match_setup::MatchConfig;
+        let mut app = App::new();
+        app.init_resource::<PadSeats>();
+        app.insert_resource(MatchConfig {
+            seats: 4,
+            bots: 2,
+            ..MatchConfig::default()
+        });
+        for _ in 0..6 {
+            app.world_mut().spawn(Gamepad::default());
+        }
+        app.add_systems(Update, pad_claim_seats);
+        let pads: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<Gamepad>>()
+            .iter(app.world())
+            .collect();
+        let start = |app: &mut App, pad: Entity| {
+            let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
+            gamepad.digital_mut().press(GamepadButton::Start);
+            app.update();
+            let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
+            gamepad.digital_mut().release(GamepadButton::Start);
+            gamepad.digital_mut().clear();
+        };
+        start(&mut app, pads[0]);
+        let config = app.world().resource::<MatchConfig>();
+        assert_eq!(
+            (config.seats, config.bots),
+            (4, 1),
+            "seat three is a person"
+        );
+        for &pad in &pads[1..] {
+            start(&mut app, pad);
+        }
+        assert_eq!(app.world().resource::<PadSeats>().0.len(), PAD_SEATS);
+        let config = app.world().resource::<MatchConfig>();
+        assert_eq!((config.seats, config.bots), (6, 0));
     }
 
     /// A world with `seats` cursors and `pads` controllers plugged in.
@@ -563,6 +729,33 @@ mod tests {
             raid(&mut app, 0).is_empty(),
             "seat one is on the keyboard and has nothing to buzz"
         );
+    }
+
+    /// A pad dropping out mid-round leaves the other where it was. Counted
+    /// live, P1's pad moved onto P2's seat the moment P2's pad went, and
+    /// stayed there after it came back.
+    #[test]
+    fn an_unplugged_pad_does_not_move_the_others_up() {
+        let mut app = table(2, 2);
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.add_systems(Update, keep_pad_order.before(rumble_on_raid));
+        app.update();
+        let top = raid(&mut app, 1);
+        let bottom = raid(&mut app, 0);
+        assert_eq!((top.len(), bottom.len()), (1, 1));
+        assert_ne!(top, bottom);
+
+        app.world_mut().entity_mut(top[0]).remove::<Gamepad>();
+        assert_eq!(raid(&mut app, 0), bottom, "P1 keeps its own pad");
+        assert!(raid(&mut app, 1).is_empty(), "P2's seat waits, empty");
+
+        app.world_mut()
+            .entity_mut(top[0])
+            .insert(Gamepad::default());
+        assert_eq!(raid(&mut app, 1), top, "and P2's pad comes back to it");
+        assert_eq!(raid(&mut app, 0), bottom);
     }
 
     /// Two pads, two seats: each seat's own controller and only that one.
@@ -645,8 +838,16 @@ mod tests {
         app.init_state::<Screen>();
         app.insert_resource(State::new(screen));
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<Bridged>();
         app.world_mut().spawn(Gamepad::default());
-        app.add_systems(Update, pad_menu_bridge);
+        app.add_systems(
+            Update,
+            (
+                pad_menu_bridge.run_if(not(in_state(Screen::Puzzle))),
+                pad_bridge_release,
+            )
+                .chain(),
+        );
         app
     }
 
@@ -737,6 +938,38 @@ mod tests {
                 .resource::<ButtonInput<KeyCode>>()
                 .pressed(KeyCode::Escape),
             "the synthesized Escape must not be left held on the menu"
+        );
+    }
+
+    /// The same when the screen opened is one the bridge does not run on:
+    /// South on the stage list opens a puzzle in setup, and the Enter it
+    /// left held there swallowed the next press of Enter on the won card.
+    #[test]
+    fn a_press_that_leaves_the_bridge_behind_still_releases_its_key() {
+        let mut app = bridged(Screen::StageSelect);
+        press(&mut app, GamepadButton::South);
+        assert!(
+            app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .just_pressed(KeyCode::Enter)
+        );
+        app.insert_resource(State::new(Screen::Puzzle));
+        let pad = app
+            .world_mut()
+            .query_filtered::<Entity, With<Gamepad>>()
+            .single(app.world())
+            .expect("one pad");
+        app.world_mut()
+            .get_mut::<Gamepad>(pad)
+            .expect("the pad")
+            .digital_mut()
+            .release(GamepadButton::South);
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::Enter),
+            "let go of on a screen the bridge does not run on"
         );
     }
 

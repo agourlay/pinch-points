@@ -174,6 +174,7 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.init_resource::<replays::Library>();
     app.init_resource::<replays::PlaybackSpeed>();
     app.init_resource::<gamepad::PadSeats>();
+    app.init_resource::<gamepad::Bridged>();
     app.init_resource::<effects::VisualRng>();
     app.init_resource::<effects::Trauma>();
     app.init_resource::<pause::PauseMenu>();
@@ -552,21 +553,30 @@ fn add_ui_systems(app: &mut App) {
     app.add_systems(
         Update,
         (
-            gamepad::pad_menu_bridge.run_if(
-                in_state(Screen::Menu)
-                    .or_else(in_state(Screen::Settings))
-                    .or_else(in_state(Screen::Controls))
-                    .or_else(in_state(Screen::MatchSetup))
-                    .or_else(in_state(Screen::Lobby))
-                    .or_else(in_state(Screen::StageSelect))
-                    .or_else(in_state(Screen::Language))
-                    .or_else(in_state(Screen::NewVersion))
-                    .or_else(versus_over)
-                    .or_else(
-                        in_state(Screen::Puzzle)
-                            .and_then(in_state(Phase::Won).or_else(in_state(Phase::Lost))),
-                    ),
-            ),
+            (
+                gamepad::keep_pad_order,
+                gamepad::pad_menu_bridge.run_if(
+                    in_state(Screen::Menu)
+                        .or_else(in_state(Screen::Settings))
+                        .or_else(in_state(Screen::Controls))
+                        .or_else(in_state(Screen::MatchSetup))
+                        .or_else(in_state(Screen::Lobby))
+                        .or_else(in_state(Screen::StageSelect))
+                        .or_else(in_state(Screen::Language))
+                        .or_else(in_state(Screen::NewVersion))
+                        .or_else(in_state(Screen::Replays))
+                        .or_else(in_state(Screen::Achievements))
+                        .or_else(versus_over)
+                        .or_else(
+                            in_state(Screen::Puzzle)
+                                .and_then(in_state(Phase::Won).or_else(in_state(Phase::Lost))),
+                        ),
+                ),
+                // On every screen: a press lets go wherever its finger comes
+                // off, which is often a screen the bridge does not run on.
+                gamepad::pad_bridge_release,
+            )
+                .chain(),
             // The check's answer is read on the menu, and a newer release
             // takes the menu to the page. Before the menu's own input, so
             // the two never both set the screen from one keypress.
