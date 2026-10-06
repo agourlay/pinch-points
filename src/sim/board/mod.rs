@@ -518,6 +518,12 @@ impl Board {
         self.tide.last
     }
 
+    /// Whose sparkling crab spun the most recent tide event, `None` when
+    /// it was called instead (a spectators' vote).
+    pub fn event_spun_by(&self) -> Option<PlayerId> {
+        self.tide.spun_by
+    }
+
     pub fn golden_banked(&self) -> u32 {
         self.golden_banked
     }
@@ -745,16 +751,9 @@ impl Board {
     /// negative is a player who has stopped playing, and this game is for
     /// children.
     pub(super) fn credit_bank(&mut self, owner: PlayerId, crab: &Crab) {
-        let value = crab.kind.value();
+        let points = crab.bank_points(self.in_claw_call());
         let score = &mut self.scores[owner as usize];
-        if self.tide.claw_call == 0 {
-            *score += value;
-            return;
-        }
-        match crab.handed {
-            Handedness::Right => *score += value * 2,
-            Handedness::Left => *score = score.saturating_sub(value),
-        }
+        *score = score.saturating_add_signed(points);
     }
 
     /// A walker's step this tick: the tempo-adjusted speed, halved (never
@@ -858,13 +857,7 @@ impl Board {
     /// What a crab is worth to whoever banks it right now, which is not
     /// always what its kind says. `None` for one that would cost.
     pub fn bank_worth(&self, crab: &Crab) -> Option<u32> {
-        if !self.in_claw_call() {
-            return Some(crab.kind.value());
-        }
-        match crab.handed {
-            Handedness::Right => Some(crab.kind.value() * 2),
-            Handedness::Left => None,
-        }
+        u32::try_from(crab.bank_points(self.in_claw_call())).ok()
     }
 
     /// Crabs banked since the start, all players combined.

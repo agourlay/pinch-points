@@ -514,14 +514,14 @@ fn swapped(before: &[Held], now: &[Held]) -> bool {
 /// [`score_pip`]: crate::app::effects::score_pip
 fn gains<'a>(
     events: impl IntoIterator<Item = &'a crate::app::sim_events::SimEvent>,
-) -> [u32; crate::sim::MAX_PLAYERS] {
+) -> [i32; crate::sim::MAX_PLAYERS] {
     use crate::app::sim_events::SimEvent;
-    let mut gained = [0u32; crate::sim::MAX_PLAYERS];
+    let mut gained = [0i32; crate::sim::MAX_PLAYERS];
     for event in events {
-        if let SimEvent::CrabBanked { owner, value, .. } = event
+        if let SimEvent::CrabBanked { owner, points, .. } = event
             && let Some(total) = gained.get_mut(usize::from(*owner))
         {
-            *total = total.saturating_add(*value);
+            *total = total.saturating_add(*points);
         }
     }
     gained
@@ -559,7 +559,8 @@ pub fn kick_castles(
         kick.0 = if calm { 0.0 } else { 1.0 };
         crate::app::effects::score_pip(
             &mut commands,
-            format!("+{points}"),
+            // Signed: a left claw banked under a Right Claws call costs.
+            format!("{points:+}"),
             layout::tile_center(board, sprite.x, sprite.y) + Vec2::new(0.0, TILE * 0.35),
             palette::player_color(owner).lighter(0.15),
         );
@@ -764,14 +765,14 @@ mod tests {
         );
     }
 
-    /// A crab of `kind` worth `value` walking into `owner`'s keep.
-    fn bank(owner: u8, value: u32) -> SimEvent {
+    /// A crab worth `points` walking into `owner`'s keep.
+    fn bank(owner: u8, points: i32) -> SimEvent {
         SimEvent::CrabBanked {
             id: 0,
             owner,
             pos: Vec2::ZERO,
             keep: Vec2::ZERO,
-            value,
+            points,
             kind: CrabKind::Common,
             handed: crate::sim::Handedness::Right,
         }
@@ -810,7 +811,7 @@ mod tests {
             gained[1], 0,
             "and a seat that banked nothing floats nothing"
         );
-        assert_eq!(gained.iter().sum::<u32>(), 8, "nothing counted twice");
+        assert_eq!(gained.iter().sum::<i32>(), 8, "nothing counted twice");
         // A seat past the end of the table is dropped rather than indexed
         // off it: the owner rides in on an observed event, and every other
         // reader of one is careful about that.

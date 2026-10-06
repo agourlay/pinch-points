@@ -16,7 +16,7 @@ use crate::app::menu_ui;
 use crate::app::palette;
 use crate::app::settings::GameSettings;
 use crate::app::sim_events::SimEvent;
-use crate::sim::{CrabKind, PlayerId, TideEvent};
+use crate::sim::{PlayerId, TideEvent};
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
@@ -144,12 +144,10 @@ pub fn collect_announcements(
 ) {
     for event in events.read() {
         match event {
-            SimEvent::TideEventFired { event } => announcer.push(Announcement::Tide(*event)),
-            SimEvent::CrabBanked {
-                owner,
-                kind: CrabKind::Molting,
-                ..
-            } => announcer.push(Announcement::Lure(*owner)),
+            SimEvent::TideEventFired { event, .. } => {
+                announcer.push(Announcement::Tide(*event));
+            }
+            SimEvent::LureStarted { owner } => announcer.push(Announcement::Lure(*owner)),
             SimEvent::SurgeStarted => announcer.push(Announcement::Surge),
             SimEvent::CrabBanked { .. }
             | SimEvent::CrabEaten { .. }
@@ -346,6 +344,7 @@ mod tests {
 
         app.world_mut().write_message(SimEvent::TideEventFired {
             event: TideEvent::CastleSwap,
+            by: None,
         });
         app.world_mut().write_message(SimEvent::SurgeStarted);
         app.update();

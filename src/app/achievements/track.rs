@@ -92,20 +92,32 @@ pub fn track_events(
             SimEvent::CrabBanked { owner, kind, .. } if *owner == seat => {
                 trophies.stats.banked += 1;
                 scratch.banked += 1;
+                // Molts and sparkling crabs count where they start what the
+                // trophy names (`LureStarted`, `TideEventFired`), because
+                // not every one banked does: never in a lure's quiet spell
+                // or the wheel's cooldown, and never by Monopoly's sweep.
                 match kind {
                     CrabKind::Golden => trophies.stats.golden += 1,
-                    CrabKind::Molting => trophies.stats.lures += 1,
-                    CrabKind::Sparkling => trophies.stats.events += 1,
                     CrabKind::Giant => trophies.stats.giants += 1,
-                    CrabKind::Common | CrabKind::Juvenile => {}
+                    CrabKind::Common
+                    | CrabKind::Juvenile
+                    | CrabKind::Molting
+                    | CrabKind::Sparkling => {}
                 }
                 changed = true;
             }
             // The roulette trophy wants variety, so remember *which* events
             // have come up rather than how many. Any seat's sparkling crab
             // spins a wheel everyone plays under.
-            SimEvent::TideEventFired { event } => {
+            SimEvent::TideEventFired { event, by } => {
                 trophies.stats.events_seen |= 1 << event.index();
+                if *by == Some(seat) {
+                    trophies.stats.events += 1;
+                }
+                changed = true;
+            }
+            SimEvent::LureStarted { owner } if *owner == seat => {
+                trophies.stats.lures += 1;
                 changed = true;
             }
             SimEvent::CrabEaten { .. } => {
@@ -118,6 +130,7 @@ pub fn track_events(
                 changed = true;
             }
             SimEvent::CrabBanked { .. }
+            | SimEvent::LureStarted { .. }
             | SimEvent::CastleRaided { .. }
             | SimEvent::CrabSpawned { .. }
             | SimEvent::GullArrived
@@ -296,7 +309,6 @@ pub fn record_puzzle(
     mut commands: Commands,
     progress: Res<crate::app::progress::Progress>,
     campaign: Res<crate::app::Campaign>,
-    sim: Res<crate::app::Sim>,
     attempt: Res<PuzzleAttempt>,
     mut trophies: Trophies,
 ) {
@@ -310,7 +322,7 @@ pub fn record_puzzle(
     // stage.
     let level = campaign.current();
     if attempt.unbeaten {
-        if sim.0.signpost_count(0) < usize::from(level.posts) {
+        if attempt.spent < usize::from(level.posts) {
             trophies.stats.under_par += 1;
         }
         if level.posts >= DEEP_POSTS {
@@ -365,6 +377,12 @@ pub fn track_puzzle_attempt(
         loads -= 1;
     }
     attempt.retries += loads;
+}
+
+/// A run begins: note what it was given to work with (see
+/// `PuzzleAttempt::spent`).
+pub fn note_posts_spent(sim: Res<crate::app::Sim>, mut attempt: ResMut<PuzzleAttempt>) {
+    attempt.spent = sim.0.signpost_count(0);
 }
 
 /// Entering the puzzle screen starts a fresh attempt: coming back to a
@@ -493,7 +511,7 @@ mod tests {
             owner: 0,
             pos: Vec2::ZERO,
             keep: Vec2::ZERO,
-            value: 1,
+            points: 1,
             kind: CrabKind::Common,
             handed: crate::sim::Handedness::Right,
         });

@@ -364,6 +364,9 @@ pub fn pad_setup_input(
         if pad.just_pressed(GamepadButton::LeftTrigger) {
             let _ = sim.0.remove_signpost(0, cursor.x, cursor.y);
         }
+        if pad.just_pressed(GamepadButton::RightTrigger) {
+            crate::app::play_input::clear_setup(&mut sim);
+        }
         if pad.just_pressed(GamepadButton::Start) {
             next_phase.set(Phase::Running);
         }

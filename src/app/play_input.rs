@@ -52,9 +52,24 @@ pub fn setup_input(
         if keys.just_pressed(map.remove) {
             let _ = sim.0.remove_signpost(0, hand.x, hand.y);
         }
+        if keys.just_pressed(map.clear_all) {
+            clear_setup(&mut sim);
+        }
     }
     if keys.just_pressed(KeyCode::Enter) && cursors.iter().any(|c| c.player == 0) {
         next_phase.set(Phase::Running);
+    }
+}
+
+/// Clear-all in a puzzle's setup: every arrow up at once. The board is
+/// still, so there is no tick to space the removals over as versus does.
+/// The controls table, the guide and the pad's help all promise this key
+/// in a puzzle too, where it used to do nothing.
+pub fn clear_setup(sim: &mut Sim) {
+    while let Some((x, y)) = sim.0.first_signpost_of(0) {
+        if !sim.0.remove_signpost(0, x, y) {
+            break;
+        }
     }
 }
 
@@ -350,6 +365,25 @@ mod tests {
         let alone = crate::app::net::Online::default();
         assert_eq!(after_round(&alone, true), AfterRound::NextRound);
         assert_eq!(after_round(&alone, false), AfterRound::Menu);
+    }
+
+    /// Clear-all in setup takes every arrow up at once.
+    #[test]
+    fn clear_all_empties_a_puzzle_setup() {
+        let level = campaign_levels()
+            .into_iter()
+            .find(|level| level.posts >= 2)
+            .expect("a stage with two arrows");
+        let mut sim = Sim(level.board());
+        let mut placed = 0;
+        for (x, y, _) in sim.0.tiles().collect::<Vec<_>>() {
+            if placed < 2 && sim.0.place_signpost(0, x, y, crate::sim::Direction::Up) {
+                placed += 1;
+            }
+        }
+        assert_eq!(sim.0.signpost_count(0), 2);
+        clear_setup(&mut sim);
+        assert_eq!(sim.0.signpost_count(0), 0);
     }
 
     /// Three shipped stages, and one of the player's own behind them when

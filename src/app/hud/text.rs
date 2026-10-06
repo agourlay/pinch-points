@@ -261,17 +261,28 @@ pub(super) fn puzzle_text(
     };
     let prompt = match phase.get() {
         Phase::Setup if level.posts == 0 => tr.prompt_setup_no_posts.to_string(),
-        Phase::Setup if used >= level.posts as usize => tr.prompt_setup_full.to_string(),
         Phase::Setup if custom_keys => tr.prompt_setup_custom.to_string(),
         // Two sets of hands, so both sets of keys: the solo line names one.
         Phase::Setup if coop => tr.prompt_setup_coop.to_string(),
+        // Full is only full under a fixed inventory. A Beach Day stage
+        // evicts: its fourth arrow replaces the oldest, as its own hint
+        // says, so "remove one first" would be wrong there. After the two
+        // above, because this line names the stock key, and neither a
+        // rebound key nor the second pair of hands is Space.
+        Phase::Setup
+            if used >= level.posts as usize
+                && sim.0.signpost_rule().1 == crate::sim::CapPolicy::Reject =>
+        {
+            tr.prompt_setup_full.to_string()
+        }
         Phase::Setup => tr.prompt_setup.to_string(),
         Phase::Running => tr.prompt_running.to_string(),
         // On the last level the card says the run is over and Enter goes
         // home; a prompt line still offering "next level" under it is the
         // game arguing with itself.
         Phase::Won if campaign.is_last() => tr.last_level.to_string(),
-        Phase::Won => tr.prompt_won.to_string(),
+        Phase::Won if level.goal.saves_every_crab() => tr.prompt_won.to_string(),
+        Phase::Won => tr.prompt_won_goal.to_string(),
         Phase::Lost => tr.prompt_lost.to_string(),
     };
     HudText::new(title, status, prompt)
@@ -433,13 +444,15 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
                 ),
             }
         }
+        // Rebound keys first: the short legend against the AI or online
+        // names the stock keys too, and input reads the player's own.
+        VersusPhase::Countdown | VersusPhase::Running if !settings.stock_legend() => {
+            tr.prompt_versus_custom.to_string()
+        }
         VersusPhase::Countdown | VersusPhase::Running
             if online.0.is_some() || controllers.machine_count() > 0 =>
         {
             tr.prompt_versus_short.to_string()
-        }
-        VersusPhase::Countdown | VersusPhase::Running if settings.custom_binds() => {
-            tr.prompt_versus_custom.to_string()
         }
         VersusPhase::Countdown | VersusPhase::Running => tr.prompt_versus_local.to_string(),
         // Whatever Enter actually does here, named by the one function the

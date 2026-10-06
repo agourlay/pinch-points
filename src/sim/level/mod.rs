@@ -108,6 +108,18 @@ pub enum Goal {
     Golden,
 }
 
+impl Goal {
+    /// Whether winning means no crab was lost: every one banked, or none
+    /// eaten. A stage asking for a number of them, or for the golden one,
+    /// can be won with crabs given to the gulls, sometimes on purpose.
+    pub fn saves_every_crab(self) -> bool {
+        match self {
+            Goal::AllCrabs | Goal::Survive => true,
+            Goal::Bank(_) | Goal::Golden => false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PuzzleOutcome {
     Running,

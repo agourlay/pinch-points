@@ -25,6 +25,10 @@ pub struct Hints {
     level: Option<(CampaignKind, usize)>,
     /// Failed runs on it.
     losses: u32,
+    /// Whether the level carries a solution to take a step from. A
+    /// player's own level and a pasted one have none, and offering H there
+    /// promised a hint the key then could not give.
+    answerable: bool,
     /// The placement being shown, if the player asked for one.
     shown: Option<Placement>,
 }
@@ -32,7 +36,7 @@ pub struct Hints {
 impl Hints {
     /// Whether the player has failed enough to be offered a way in.
     pub fn offered(&self) -> bool {
-        self.losses >= STUCK_AFTER
+        self.answerable && self.losses >= STUCK_AFTER
     }
 
     pub fn showing(&self) -> bool {
@@ -41,10 +45,11 @@ impl Hints {
 
     /// Forget everything: a different level, or a fresh look at this one.
     /// A whole struct literal, so a new field cannot survive a reset unseen.
-    fn reset(&mut self, level: (CampaignKind, usize)) {
+    fn reset(&mut self, campaign: &Campaign) {
         *self = Hints {
-            level: Some(level),
+            level: Some(level_of(campaign)),
             losses: 0,
+            answerable: !campaign.current().solution.is_empty(),
             shown: None,
         };
     }
@@ -93,7 +98,7 @@ pub fn tick_denied_note(time: Res<Time>, campaign: Res<Campaign>, mut note: ResM
 /// Count a failed run, and start over when the level changes.
 pub fn record_loss(campaign: Res<Campaign>, mut hints: ResMut<Hints>) {
     if hints.level != Some(level_of(&campaign)) {
-        hints.reset(level_of(&campaign));
+        hints.reset(&campaign);
     }
     hints.losses += 1;
     // A new attempt is a clean board; the ghost is re-shown on request.
@@ -103,7 +108,7 @@ pub fn record_loss(campaign: Res<Campaign>, mut hints: ResMut<Hints>) {
 /// Drop the hint when the level does.
 pub fn reset_on_level(campaign: Res<Campaign>, mut hints: ResMut<Hints>) {
     if hints.level != Some(level_of(&campaign)) {
-        hints.reset(level_of(&campaign));
+        hints.reset(&campaign);
     } else {
         hints.shown = None;
     }
@@ -343,6 +348,7 @@ mod tests {
         // about the key just pressed.
         let stuck = Hints {
             losses: STUCK_AFTER,
+            answerable: true,
             ..Default::default()
         };
         assert_eq!(
@@ -387,25 +393,46 @@ mod tests {
     /// Losses only count toward the level they happened on.
     #[test]
     fn switching_levels_starts_the_count_over() {
-        let mut hints = Hints::default();
+        let mut hints = Hints {
+            answerable: true,
+            ..Hints::default()
+        };
         for _ in 0..STUCK_AFTER {
             hints.level = Some((CampaignKind::TidePool, 4));
             hints.losses += 1;
         }
         assert!(hints.offered());
-        hints.reset((CampaignKind::TidePool, 5));
+        hints.reset(&campaign_at(5));
         assert!(!hints.offered(), "a new level is not a stuck one");
     }
 
+    /// A level with no solution to take a step from (the player's own, or
+    /// a pasted one) never offers H, however stuck: the key has nothing
+    /// to show there.
+    #[test]
+    fn no_solution_no_offer() {
+        // Stage six: the earlier ones with no arrows to place carry none.
+        let mut campaign = campaign_at(5);
+        let mut hints = Hints::default();
+        hints.reset(&campaign);
+        hints.losses = STUCK_AFTER;
+        assert!(hints.offered(), "a shipped stage has its answer");
+        let index = campaign.index;
+        campaign.levels[index].solution.clear();
+        hints.reset(&campaign);
+        hints.losses = STUCK_AFTER;
+        assert!(!hints.offered());
+    }
+
     /// The same index in the other list is a different level: three
-    /// losses on Tide Pool's fourth do not open a hint on Beach Day's.
+    /// losses on Tide Pool's sixth do not open a hint on Beach Day's.
     #[test]
     fn the_other_list_at_the_same_index_is_another_level() {
         use bevy::ecs::system::RunSystemOnce;
 
         let mut app = App::new();
         app.init_resource::<Hints>();
-        app.insert_resource(campaign_at(4));
+        app.insert_resource(campaign_at(5));
         for _ in 0..STUCK_AFTER {
             let _ = app.world_mut().run_system_once(record_loss);
         }
@@ -414,7 +441,7 @@ mod tests {
         let _ = app.world_mut().run_system_once(reset_on_level);
         assert!(
             !app.world().resource::<Hints>().offered(),
-            "Beach Day's fourth level is not the one they were stuck on"
+            "Beach Day's sixth level is not the one they were stuck on"
         );
     }
 
@@ -423,6 +450,7 @@ mod tests {
         Hints {
             level: Some(level_of(campaign)),
             losses: STUCK_AFTER,
+            answerable: true,
             shown: Some((1, 1, crate::sim::Direction::Up)),
         }
     }

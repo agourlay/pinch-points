@@ -27,6 +27,10 @@ pub(crate) struct Tide {
     pub(crate) claw_call: u32,
     /// The most recent tide event and the tick it fired (HUD banner).
     pub(crate) last: Option<(TideEvent, u64)>,
+    /// Whose sparkling crab spun the wheel for `last`, or `None` when it
+    /// was called rather than spun (a spectators' vote, a dev hook). For
+    /// the trophies and nothing in the rules, so never hashed or saved.
+    pub(crate) spun_by: Option<PlayerId>,
     /// Sparkling banks noticed during crab movement; the roulette spins
     /// after the movement pass so events may safely mutate the crab list.
     /// Always drained within the same tick (never hashed).
@@ -44,6 +48,7 @@ impl Tide {
             tempo,
             claw_call,
             last,
+            spun_by,
             queue,
         } = other;
         self.enabled = *enabled;
@@ -52,6 +57,7 @@ impl Tide {
         self.tempo = *tempo;
         self.claw_call = *claw_call;
         self.last = *last;
+        self.spun_by = *spun_by;
         self.queue.clear();
         self.queue.extend_from_slice(queue);
     }
@@ -145,6 +151,7 @@ impl Board {
         // the same one the string tables and the snapshot use.
         let event = TideEvent::ALL[(self.rng.next_u32() % TideEvent::ALL.len() as u32) as usize];
         self.apply_tide_event(self.surge_safe(event), banker);
+        self.tide.spun_by = Some(banker);
     }
 
     /// The surge already doubles the flock, so the roulette keeps off the
@@ -191,6 +198,7 @@ impl Board {
     /// is unit-testable in isolation).
     pub(super) fn apply_tide_event(&mut self, event: TideEvent, banker: PlayerId) {
         self.tide.last = Some((event, self.tick));
+        self.tide.spun_by = None;
         // Set here rather than in the roulette so a forced event starts
         // the clock too: the point is "an event is running", not "the
         // wheel was spun".

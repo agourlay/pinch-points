@@ -120,21 +120,17 @@ pub fn collect_log(
             )),
             SimEvent::CrabBanked {
                 owner,
-                value,
+                points,
                 kind: CrabKind::Golden,
                 ..
             } => Some((
                 fill(
                     tr.log_golden,
-                    &[("p", &seat_label(*owner)), ("n", &value.to_string())],
+                    &[("p", &seat_label(*owner)), ("n", &format!("{points:+}"))],
                 ),
                 palette::GOLD,
             )),
-            SimEvent::CrabBanked {
-                owner,
-                kind: CrabKind::Molting,
-                ..
-            } => Some((
+            SimEvent::LureStarted { owner } => Some((
                 fill(tr.log_lure, &[("p", &seat_label(*owner))]),
                 palette::INK_LURE,
             )),
@@ -142,7 +138,7 @@ pub fn collect_log(
                 fill(tr.log_tier, &[("p", &seat_label(*owner))]),
                 palette::player_color(*owner).lighter(0.15),
             )),
-            SimEvent::TideEventFired { event } => Some((
+            SimEvent::TideEventFired { event, .. } => Some((
                 crate::app::hud::event_name(tr, *event).to_string(),
                 palette::INK_TIDE,
             )),

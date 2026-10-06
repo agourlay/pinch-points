@@ -56,13 +56,15 @@ impl Board {
                     last: _,
                     // Outside, with the others below.
                     queue: _,
+                    spun_by: _,
                 },
             wrap: _,
             // Outside the fingerprint, each for a reason of its own: the
             // construction seed is dead once the PRNG state (which *is*
             // hashed) has been derived from it; the event queue is filled
             // and drained inside a single tick, so it is always empty by
-            // the time anyone hashes; and the swept-home record is written
+            // the time anyone hashes; who spun the wheel is for the
+            // trophies and never read by the sim; and the swept-home record is written
             // for the render layer and never read back by the sim, so
             // hashing it would only make this build disagree with builds
             // playing the same round.

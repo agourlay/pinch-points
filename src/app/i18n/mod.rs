@@ -305,6 +305,9 @@ struct Tr {
     pub prompt_setup_no_posts: &'static str,
     pub prompt_running: &'static str,
     pub prompt_won: &'static str,
+    /// The won prompt for a stage whose goal lets crabs go (bank a number,
+    /// bank the golden one), where "all crabs safe" is not what happened.
+    pub prompt_won_goal: &'static str,
     pub prompt_lost: &'static str,
     pub prompt_versus_short: &'static str,
     pub prompt_versus_local: &'static str,
@@ -420,6 +423,8 @@ struct Tr {
     /// Where the round's highlight reel was written.
     pub highlight_saved: &'static str,
     pub all_safe: &'static str,
+    /// The won card's headline for the same stages as `prompt_won_goal`.
+    pub goal_met: &'static str,
     /// The heading over the puzzle loss card: the run is over, and the
     /// board held under it says where.
     pub crabs_lost: &'static str,

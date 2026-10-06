@@ -1073,6 +1073,7 @@ pub fn moment_effects(
             | SimEvent::GullTookOff
             | SimEvent::TierUp { .. }
             | SimEvent::TideEventFired { .. }
+            | SimEvent::LureStarted { .. }
             | SimEvent::RoundEnded => {}
         }
     }

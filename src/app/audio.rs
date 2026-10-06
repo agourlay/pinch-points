@@ -512,6 +512,7 @@ pub fn play_events(
             }
             SimEvent::TierUp { .. } => play(&mut commands, &sounds.tier, gain),
             SimEvent::TideEventFired { .. } => play(&mut commands, &sounds.event, gain),
+            SimEvent::LureStarted { .. } => {}
             SimEvent::SurgeStarted => {
                 play(&mut commands, &sounds.surge, gain);
                 buzz(300, 0.4);
@@ -848,7 +849,7 @@ mod tests {
             owner,
             pos: Vec2::ZERO,
             keep: Vec2::ZERO,
-            value: 1,
+            points: 1,
             kind,
             handed: crate::sim::Handedness::Right,
         }

@@ -584,9 +584,11 @@ pub fn spawn_puzzle_won(
         let mut frame = wrap.spawn(menu_ui::screen_card());
         frame.insert(BackgroundColor(palette::CARD_BG));
         frame.with_children(|card| {
-            let title = match last_shipped {
-                true => tr.campaign_done,
-                false => tr.all_safe,
+            let saved_all = campaign.current().goal.saves_every_crab();
+            let title = match (last_shipped, saved_all) {
+                (true, _) => tr.campaign_done,
+                (false, true) => tr.all_safe,
+                (false, false) => tr.goal_met,
             };
             card.spawn((
                 Text::new(title),
@@ -610,7 +612,11 @@ pub fn spawn_puzzle_won(
             ));
             let foot = card_text(17.0, CARD_TEXT.darker(0.15));
             card.spawn((
-                Text::new(if last { tr.last_level } else { tr.prompt_won }),
+                Text::new(match (last, saved_all) {
+                    (true, _) => tr.last_level,
+                    (false, true) => tr.prompt_won,
+                    (false, false) => tr.prompt_won_goal,
+                }),
                 foot.0,
                 foot.1,
             ));

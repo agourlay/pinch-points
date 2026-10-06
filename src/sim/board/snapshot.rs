@@ -403,6 +403,9 @@ impl Fields {
                 tempo: self.tempo,
                 claw_call: self.claw_call,
                 last: self.last_event,
+                // The trophies' business, not the beach's: a snapshot
+                // carries the rules and nothing else.
+                spun_by: None,
                 queue: Vec::new(),
             },
             // Drained within the tick that fills it, so a snapshot taken

@@ -428,6 +428,10 @@ fn add_phase_transitions(app: &mut App) {
         ),
     );
     app.add_systems(
+        OnEnter(Phase::Running),
+        achievements::note_posts_spent.run_if(in_state(Screen::Puzzle)),
+    );
+    app.add_systems(
         OnExit(Phase::Won),
         menu_ui::despawn_marked::<results::ResultsPanel>,
     );

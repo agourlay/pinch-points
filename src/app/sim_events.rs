@@ -14,7 +14,9 @@ use bevy::prelude::*;
 /// Something observable happened in the sim since the last frame.
 #[derive(Message, Clone, Debug)]
 pub enum SimEvent {
-    /// A crab walked into a castle. `value` is its score worth.
+    /// A crab walked into a castle. `points` is what that did to its
+    /// owner's score: the kind's worth, or under a Right Claws call twice
+    /// that for a right claw and that much taken away for a left one.
     ///
     /// `pos` is where the crab was last drawn and `keep` the middle of the
     /// wall it stepped through. Both, because the render layer walks it
@@ -31,7 +33,7 @@ pub enum SimEvent {
         owner: PlayerId,
         pos: Vec2,
         keep: Vec2,
-        value: u32,
+        points: i32,
         kind: CrabKind,
         /// Which side its big claw is on, so the crab that hops into the
         /// keep is the crab that walked there.
@@ -96,8 +98,17 @@ pub enum SimEvent {
     },
     /// `owner`'s castle rose a tier.
     TierUp { owner: PlayerId },
-    /// The tide roulette fired this event.
-    TideEventFired { event: TideEvent },
+    /// The tide roulette fired this event. `by` is the seat whose
+    /// sparkling crab spun it, `None` for one the spectators called.
+    TideEventFired {
+        event: TideEvent,
+        by: Option<PlayerId>,
+    },
+    /// `owner` banked a molting crab and a lure began: every loose crab
+    /// runs for their castle. Not every molt banked starts one (never
+    /// during a lure or the quiet spell after), so it is its own event
+    /// rather than read off `CrabBanked`, which named a lure for each.
+    LureStarted { owner: PlayerId },
     /// The final-scramble surge began.
     SurgeStarted,
     /// The round timer expired.
@@ -164,6 +175,11 @@ pub struct Watch {
     flying: usize,
     event_at: Option<u64>,
     last_event: Option<TideEvent>,
+    spun_by: Option<PlayerId>,
+    lure: Option<PlayerId>,
+    /// Whether a Right Claws call was on, which decides what a crab banked
+    /// before the next look was worth.
+    claw: bool,
     surging: bool,
     over: bool,
     crabs: HashMap<u32, Crab>,
@@ -204,6 +220,9 @@ impl Watch {
                 .count(),
             event_at: board.last_event().map(|(_, at)| at),
             last_event: board.last_event().map(|(event, _)| event),
+            spun_by: board.event_spun_by(),
+            lure: board.lure().map(|(owner, _)| owner),
+            claw: board.in_claw_call(),
             surging: board.in_surge(),
             over: board.round_over(),
             crabs: board.crabs().iter().map(|c| (c.id, *c)).collect(),
@@ -244,7 +263,7 @@ impl Watch {
 /// coordinates: `prev` was recorded on last frame's board, and should that
 /// board have been larger than this one (a swap the differ failed to
 /// notice) an asserting `tile_at` would take the game down at level start.
-fn crab_departure(board: &crate::sim::Board, prev: &Crab) -> SimEvent {
+fn crab_departure(board: &crate::sim::Board, prev: &Crab, claw: bool) -> SimEvent {
     let pos = layout::creature_pos(board, prev.tile, prev.dir, prev.progress);
     let (x, y) = board.coords_u8(prev.tile);
     let (dx, dy) = prev.dir.offset();
@@ -266,7 +285,7 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab) -> SimEvent {
             owner,
             pos,
             keep: layout::tile_center(board, kx, ky),
-            value: prev.kind.value(),
+            points: prev.bank_points(claw),
             kind: prev.kind,
             handed: prev.handed,
         };
@@ -284,7 +303,7 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab) -> SimEvent {
             owner,
             pos,
             keep: keep_at((i32::from(x), i32::from(y))),
-            value: prev.kind.value(),
+            points: prev.bank_points(claw),
             kind: prev.kind,
             handed: prev.handed,
         },
@@ -293,7 +312,7 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab) -> SimEvent {
             owner,
             pos,
             keep: keep_at(ahead),
-            value: prev.kind.value(),
+            points: prev.bank_points(claw),
             kind: prev.kind,
             handed: prev.handed,
         },
@@ -308,7 +327,7 @@ fn crab_events(board: &crate::sim::Board, watch: &Watch, events: &mut Vec<SimEve
         if board.crabs().iter().any(|crab| crab.id == *id) {
             continue;
         }
-        events.push(crab_departure(board, prev));
+        events.push(crab_departure(board, prev, watch.claw));
     }
     for crab in board.crabs() {
         if watch.crabs.contains_key(&crab.id) {
@@ -481,7 +500,15 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
         && next.event_at != prev.event_at
         && let Some(event) = next.last_event
     {
-        events.push(SimEvent::TideEventFired { event });
+        events.push(SimEvent::TideEventFired {
+            event,
+            by: next.spun_by,
+        });
+    }
+    if let Some(owner) = next.lure
+        && prev.lure.is_none()
+    {
+        events.push(SimEvent::LureStarted { owner });
     }
     if next.surging && !prev.surging {
         events.push(SimEvent::SurgeStarted);
@@ -503,6 +530,62 @@ mod tests {
         watch
     }
 
+    /// What a bank is worth is what it did to the score: under a Right
+    /// Claws call a left claw costs, and the castle's float and the feed
+    /// read this rather than the crab's face value.
+    #[test]
+    fn a_bank_under_a_claw_call_carries_what_it_did() {
+        let mut board = Board::new(6, 4, 7);
+        board.set_tile(3, 1, TileKind::Castle(2));
+        board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Giant);
+        board.force_tide_event(TideEvent::RightClaws, 0);
+        let mut watch = synced(&board);
+        let mut banked = None;
+        for _ in 0..600 {
+            board.tick_idle();
+            if let Some(SimEvent::CrabBanked { points, .. }) = diff(&board, &mut watch)
+                .into_iter()
+                .find(|e| matches!(e, SimEvent::CrabBanked { .. }))
+            {
+                banked = Some(points);
+                break;
+            }
+        }
+        assert_eq!(banked, Some(-10), "a left claw costs its worth");
+    }
+
+    /// A lure is news once, when it begins, and says whose it is; a tide
+    /// event called rather than spun names nobody as its spinner.
+    #[test]
+    fn a_lure_is_told_once_and_a_called_event_names_no_spinner() {
+        let mut board = Board::new(6, 4, 7);
+        let mut watch = synced(&board);
+        board.force_lure(1);
+        board.force_tide_event(TideEvent::SpeedUp, 0);
+        let events = diff(&board, &mut watch);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::LureStarted { owner: 1 })),
+            "{events:?}"
+        );
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SimEvent::TideEventFired {
+                event: TideEvent::SpeedUp,
+                by: None,
+            }
+        )));
+        board.tick_idle();
+        let again = diff(&board, &mut watch);
+        assert!(
+            !again
+                .iter()
+                .any(|e| matches!(e, SimEvent::LureStarted { .. })),
+            "a running lure is not a new one"
+        );
+    }
+
     /// A crab that disappears while entering a castle banked; one that
     /// disappears anywhere else was eaten.
     #[test]
@@ -515,11 +598,11 @@ mod tests {
         for _ in 0..600 {
             board.tick_idle();
             let events = diff(&board, &mut watch);
-            if let Some(SimEvent::CrabBanked { owner, value, .. }) = events
+            if let Some(SimEvent::CrabBanked { owner, points, .. }) = events
                 .iter()
                 .find(|e| matches!(e, SimEvent::CrabBanked { .. }))
             {
-                banked = Some((*owner, *value));
+                banked = Some((*owner, *points));
                 break;
             }
             assert!(
@@ -715,6 +798,7 @@ mod tests {
                 | SimEvent::SignpostRemoved { .. }
                 | SimEvent::TierUp { .. }
                 | SimEvent::TideEventFired { .. }
+                | SimEvent::LureStarted { .. }
                 | SimEvent::SurgeStarted
                 | SimEvent::RoundEnded => None,
             })
@@ -857,14 +941,17 @@ mod tests {
         board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Common);
         let prev = board.crabs()[0];
         assert!(
-            matches!(crab_departure(&board, &prev), SimEvent::CrabEaten { .. }),
+            matches!(
+                crab_departure(&board, &prev, false),
+                SimEvent::CrabEaten { .. }
+            ),
             "off open sand, and nothing yet says otherwise"
         );
 
         board.force_tide_event(TideEvent::Monopoly, 1);
         let SimEvent::CrabBanked {
             id, owner, keep, ..
-        } = crab_departure(&board, &prev)
+        } = crab_departure(&board, &prev, false)
         else {
             panic!("the tide put it in seat 1's keep");
         };
@@ -912,7 +999,7 @@ mod tests {
         let prev = large.crabs()[0];
         let small = Board::new(6, 4, 3);
         assert!(matches!(
-            crab_departure(&small, &prev),
+            crab_departure(&small, &prev, false),
             SimEvent::CrabEaten { .. }
         ));
     }

@@ -117,6 +117,13 @@ pub struct PuzzleAttempt {
     /// made ten goes at stage one into ten stages, so they ask for a stage
     /// that had not been beaten yet when the attempt started.
     pub unbeaten: bool,
+    /// The signposts standing when the run began: what the player spent.
+    ///
+    /// Arrows go down only in setup, and on a Beach Day stage they wear
+    /// out while the run plays, so the count left standing at the win is
+    /// not what was used. Read there, every Beach Day stage won after its
+    /// arrows had expired was a clear "with one to spare".
+    pub spent: usize,
 }
 
 /// Ids of unlocked achievements.
@@ -427,8 +434,9 @@ pub use save::load;
 #[cfg(test)]
 use save::{parse, to_text};
 pub use track::{
-    record_codes, record_level_built, record_puzzle, record_round, reset_puzzle_attempt,
-    reset_round_scratch, save_now, save_on_exit, track_events, track_puzzle_attempt,
+    note_posts_spent, record_codes, record_level_built, record_puzzle, record_round,
+    reset_puzzle_attempt, reset_round_scratch, save_now, save_on_exit, track_events,
+    track_puzzle_attempt,
 };
 pub use ui::{
     AchievementsUi, achievements_input, enter_achievements, update_shelf_scrollbar, update_toasts,
