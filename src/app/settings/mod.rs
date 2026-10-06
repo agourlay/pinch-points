@@ -185,7 +185,8 @@ pub struct GameSettings {
     /// default, so a first launch fills the screen the way a game is
     /// expected to; F11 flips it from anywhere (`toggle_fullscreen`).
     pub fullscreen: bool,
-    /// UI scale percent (80-150): every HUD, panel, and menu element.
+    /// UI scale percent, `UI_SCALE_MIN..=UI_SCALE_MAX`: every HUD, panel,
+    /// and menu element.
     pub ui_scale: u8,
     /// Drop the decorative motion: particle bursts, confetti, footprints,
     /// raid flashes, bouncing numbers, the blinking clock.

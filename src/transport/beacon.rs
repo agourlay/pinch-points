@@ -24,8 +24,9 @@ pub(super) const ANNOUNCE_MAGIC: &[u8; 5] = b"PNCH1";
 /// What a beacon says about the beach it names.
 ///
 /// The name and the occupancy hang off [`Beacon::Here`] because that is the
-/// only place they mean anything: a farewell is matched by address, and
-/// names a beach that is about to stop existing.
+/// only place they mean anything: a farewell is matched by the announcer's
+/// id (see [`Beacon::id`]), and names a beach that is about to stop
+/// existing.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Beacon {
     /// A beach on the air: who runs it, how full the table is, and whether
@@ -405,16 +406,18 @@ impl Announcer {
         self.beacon(game_port, BEACON_RUNNING, on_air, 1);
     }
 
-    /// "That game is over." Sent when the host leaves the lobby or starts
-    /// the match, so every list drops the beach at once instead of offering
-    /// it until the silence adds up: a beach nobody can join any more.
+    /// "That game is over." Sent when the host stops hosting: leaves the
+    /// lobby, or the session that carried the beach ends without going back
+    /// to it. Every list drops the beach at once instead of offering it
+    /// until the silence adds up. Starting the match is not leaving: the
+    /// beach stays on the air as [`Announcer::running`], to be queued for.
     ///
     /// Best-effort by nature: a farewell cannot be sent by a process that
     /// was killed or a machine that lost power, which is why the timeout
     /// stays as the backstop rather than being replaced by this.
     pub fn closing(&self, game_port: u16) {
-        // Nameless and tableless: a farewell is matched by address, and the
-        // beach it names is about to stop existing anyway.
+        // Nameless and tableless: a farewell is matched by the announcer's
+        // id, and the beach it names is about to stop existing anyway.
         self.beacon(
             game_port,
             BEACON_CLOSING,

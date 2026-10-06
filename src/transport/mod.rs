@@ -1,10 +1,12 @@
 //! UDP transport for online lockstep (spec §7.6). Engine-free but IO-bound,
 //! so it lives beside `sim` rather than inside it; the Bevy shell drives it.
 //!
-//! Datagrams are tiny and typed by their first byte: hello (handshake),
-//! input (packed [`InputMsg`]), or a state hash for desync detection. The
-//! second byte is always [`PROTOCOL_VERSION`], and a datagram written by any
-//! other version is refused rather than guessed at.
+//! Datagrams are small and typed by their first byte, one tag per
+//! [`NetMsg`] variant: the handshake, batched inputs (packed [`InputMsg`]s),
+//! state hashes for desync detection, and the lobby, chat, spectator and
+//! catch-up traffic beside them. The second byte is always
+//! [`PROTOCOL_VERSION`], and a datagram written by any other version is
+//! refused rather than guessed at.
 
 mod beacon;
 pub use beacon::*;

@@ -4,8 +4,8 @@
 //! the §9 risk-6 ecosystem lag is real), so this ships the spec's designated
 //! fallback: **deterministic lockstep with a small input delay**. The
 //! protocol lives here, transport-agnostic and engine-free, so it is
-//! unit-testable and reusable; the shell owns sockets. The 2-byte packed
-//! input and the `Board`'s clone + `state_hash` snapshots are exactly the
+//! unit-testable and reusable; the shell owns sockets. The packed input
+//! (3 bytes an action, 8 an [`InputMsg`]) and the `Board`'s clone + `state_hash` snapshots are exactly the
 //! groundwork GGRS-style rollback needs, so upgrading later is contained.
 //!
 //! Wire model: every tick, each peer sends its local action scheduled

@@ -39,12 +39,15 @@ fn test_home() -> PathBuf {
     std::env::temp_dir().join(format!("pinch-points-test-{}", std::process::id()))
 }
 
-/// A player's own words made safe to use as a file name: the level they
-/// named, the winner a replay is filed under.
+/// A player's own words made safe to use as a file name: the name of a
+/// level they built.
 ///
-/// One rule in one place because it is a safety rule, not a formatting one:
-/// a name like `Crab/../etc` must not become a path, and both a level name
-/// and a player name are typed by whoever is at the keyboard.
+/// A safety rule, not a formatting one: a name like `Crab/../etc` must not
+/// become a path, and a name is typed by whoever is at the keyboard. The
+/// replay shelf is the one exception, with a rule of its own in
+/// `replays::file_name`: the winner is read back out of that file name for
+/// the shelf's label, so it keeps its case and only trades what is not a
+/// letter or digit for `_`, which is just as safe.
 ///
 /// `keep` bounds the result so a long name cannot make an absurd path, and
 /// `fallback` covers a name with nothing usable left in it, which is a

@@ -84,6 +84,14 @@ pub struct MenuShore;
 #[derive(Component)]
 pub struct Scrim;
 
+/// How big the scrim is for a postcard of `size`: the whole window and a
+/// margin past it, so no edge of daylight shows round the dusk. One rule
+/// for the spawn and for [`refit_shore`], which resizes it beside the
+/// shore.
+fn scrim_size(size: Vec2) -> Vec2 {
+    size + Vec2::splat(80.0)
+}
+
 /// Keep the postcard on the screens that want it, and only there.
 ///
 /// The shore itself is spawned and resized by [`refit_shore`]; this system
@@ -115,10 +123,7 @@ pub fn tend_backdrop(
         };
         commands.spawn((
             Scrim,
-            Sprite::from_color(
-                Color::srgba(0.07, 0.09, 0.12, 0.55),
-                size + Vec2::splat(80.0),
-            ),
+            Sprite::from_color(Color::srgba(0.07, 0.09, 0.12, 0.55), scrim_size(size)),
             Transform::from_translation(Vec3::new(0.0, 0.0, 5.0)),
         ));
     } else if !wants_scrim {
@@ -508,6 +513,10 @@ fn spawn_beach_props(
     }
 }
 
+/// Everything a rebuild of the postcard sweeps away: the shore and the
+/// travellers crossing it.
+type PostcardPieces = Or<(With<MenuShore>, With<MenuCritter>)>;
+
 /// (Re)build the shore whenever the window size changes or the menu is
 /// freshly entered: the backdrop is world-space and sized to the window,
 /// so maximizing must stretch it.
@@ -517,24 +526,31 @@ pub fn refit_shore(
     mut rng: ResMut<VisualRng>,
     viewport: crate::app::menu_ui::Viewport,
     mut last: Local<Vec2>,
-    shore: Query<Entity, With<MenuShore>>,
-    critters: Query<Entity, With<MenuCritter>>,
+    scene: Query<(Entity, Has<MenuShore>), PostcardPieces>,
+    mut scrim: Query<&mut Sprite, With<Scrim>>,
 ) {
     // In interface units, so turning the UI scale rebuilds it as surely as
     // resizing the window does.
     let Some(size) = viewport.size() else {
         return;
     };
-    if *last == size && !shore.is_empty() {
+    if *last == size && scene.iter().any(|(_, shore)| shore) {
         return;
     }
     *last = size;
     // Travellers carry lane positions from the old window size; sweep
     // them with the backdrop and let the pre-seeding repopulate.
-    for entity in shore.iter().chain(critters.iter()) {
+    for (entity, _) in &scene {
         commands.entity(entity).despawn();
     }
     spawn_shore(&mut commands, &art, &mut rng, size);
+    // The dusk over it is sized to the window too. It is not part of the
+    // shore, and outlives a rebuild, so it is stretched here rather than
+    // left at the size of the window it was spawned in: a window grown
+    // past it showed a frame of full daylight round the edges.
+    for mut sprite in &mut scrim {
+        sprite.custom_size = Some(scrim_size(size));
+    }
 }
 
 /// Spawn one ambient traveller. `at_x` places it mid-scene (used to

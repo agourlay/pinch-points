@@ -18,7 +18,7 @@
 //! The map is a half-resolution lattice: tile `(x, y)` sits at lattice
 //! `(2x+1, 2y+1)`; the character between two tiles is their shared wall
 //! (`-`/`|` wall, anything else open). Tile characters: `.` sand, `#` rock,
-//! `0`–`3` castle of that player. Crabs and spawners are header lines, not
+//! `0`-`5` castle of that player (any seat below `MAX_PLAYERS`). Crabs and spawners are header lines, not
 //! map characters, because they carry more data than one character holds:
 //! `crab: x,y DIR HAND KIND` and `spawner: x,y DIR period`.
 //!
