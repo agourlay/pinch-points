@@ -540,6 +540,7 @@ pub static EN: Tr = Tr {
     lobby_kick_ask: "Ask who to leave? press their number | Esc: never mind",
     lobby_kicked_feed: "{p} was asked to leave",
     lobby_kicked_you: "the host asked you to leave that beach",
+    lobby_host_closed: "the host closed that beach",
     replay_drop_hint: "drop a replay file on the window to watch it",
     replay_drop_bad: "that file is not a replay this build can play: {e}",
 };

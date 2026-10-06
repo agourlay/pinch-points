@@ -536,6 +536,7 @@ pub static JA: Tr = Tr {
     lobby_kick_ask: "だれに出てもらう? 番号を押して | Esc: やめる",
     lobby_kicked_feed: "{p}に出てもらった",
     lobby_kicked_you: "ホストに浜辺から出るよう言われた",
+    lobby_host_closed: "ホストが浜辺を抜けた",
     replay_drop_hint: "リプレイのファイルをウィンドウに落とすと見られるよ",
     replay_drop_bad: "このファイルはこのバージョンで見られるリプレイじゃない: {e}",
 };

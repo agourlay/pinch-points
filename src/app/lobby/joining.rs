@@ -65,7 +65,10 @@ pub(super) fn which_beach(ask: JoinAsk, hosts: &[HostEntry]) -> Pick {
     let asked = match (intent, auto_join) {
         // A name was just given on the way here; the beach it was given for
         // is the one to take, if it is still on the air.
-        (Some(Intent::Join(at)), _) => Some(at),
+        (Some(Intent::Join(addr)), _) => match hosts.iter().position(|host| host.addr == addr) {
+            Some(at) => Some(at),
+            None => return Pick::Nothing,
+        },
         // Neither of these is a row of this list: hosting is not joining,
         // and a dialled address was typed because it is on no row.
         // Both are dealt with by the caller.
@@ -131,11 +134,11 @@ pub(super) fn take_a_beach(
     }
     match pick {
         Pick::Nothing => {}
-        // The table shows everyone by name, so who is sitting here is
-        // asked before they are seated, every time. See `player_name`.
+        // The table shows everyone by name, so a player with none is asked
+        // for one before they are seated. See `player_name`.
         Pick::AskName(at) => {
             state.typing = Some(
-                Typing::player_name(Intent::Join(at), &settings.names[0])
+                Typing::player_name(Intent::Join(state.hosts[at].addr), &settings.names[0])
                     .or_suggest(|| suggested_name(tr)),
             );
         }
@@ -217,7 +220,6 @@ fn answer_the_silence(
         .map(|addr| addr.to_string())
         .unwrap_or_default();
     state.let_go();
-    state.table.clear();
     state.feedback = fill(tr.lobby_no_answer, &[("a", &called)]);
     true
 }
@@ -493,7 +495,6 @@ pub fn join_tick(
     }
     if kicked {
         state.let_go();
-        state.table.clear();
         state.feedback = settings.tr().lobby_kicked_you.to_string();
         return;
     }
@@ -693,19 +694,33 @@ mod tests {
         assert_eq!(
             which_beach(
                 JoinAsk {
-                    intent: Some(Intent::Join(2)),
+                    intent: Some(Intent::Join(hosts[2].addr)),
                     ..asking()
                 },
                 &hosts
             ),
             Pick::Take(2)
         );
+        // A beach that came on the air above it while the name was typed
+        // moves it down the list, and the one meant is still the one taken.
+        let mut resorted = open();
+        resorted.reverse();
+        assert_eq!(
+            which_beach(
+                JoinAsk {
+                    intent: Some(Intent::Join(hosts[2].addr)),
+                    ..asking()
+                },
+                &resorted
+            ),
+            Pick::Take(0)
+        );
         // A beach that went away while the name was being typed is not
         // dialled, and nothing else is dialled in its place.
         assert_eq!(
             which_beach(
                 JoinAsk {
-                    intent: Some(Intent::Join(2)),
+                    intent: Some(Intent::Join(hosts[2].addr)),
                     ..asking()
                 },
                 &hosts[..1]
@@ -774,7 +789,7 @@ mod tests {
         assert_eq!(
             which_beach(
                 JoinAsk {
-                    intent: Some(Intent::Join(0)),
+                    intent: Some(Intent::Join(hosts[0].addr)),
                     busy: true,
                     ..asking()
                 },

@@ -263,13 +263,17 @@ impl Joined {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Intent {
     Host,
-    /// Take the beach on this row of the list.
-    Join(usize),
+    /// Take the beach that was on the cursor's row when the name was
+    /// asked, by its address: the list re-sorts by name every frame, so a
+    /// row number held while a name is typed can name another beach by
+    /// the time Enter is pressed.
+    Join(SocketAddr),
     /// Take the beach at this address, which is on no row: it was typed
     /// out because no beacon from it ever arrived.
     Dial(SocketAddr),
-    /// Take the beach on this row as a bot (route 1): a doorway first.
-    JoinBot(usize),
+    /// Take that beach as a bot (route 1): a doorway first. By address,
+    /// as `Join` is.
+    JoinBot(SocketAddr),
 }
 
 /// One line in the feed, kept as who said it and what, rather than as the
@@ -437,9 +441,18 @@ impl LobbyState {
     }
 
     /// Back to choosing, keeping W armed as it was.
+    ///
+    /// The beach's conversation and its table go with it. Left behind,
+    /// a player put out of one beach (kicked, unanswered, on another
+    /// build) carried its chat into the next one they joined, and a host
+    /// sends its chat to every arrival, so hosting next handed the old
+    /// beach's talk, kick notice and all, to strangers.
     fn let_go(&mut self) {
         let watching = self.watching();
         self.standing = Standing::Choosing { watching };
+        self.chat.clear();
+        self.table.clear();
+        self.table_kinds.clear();
     }
 
     /// The table as the lobby knows it: the host first, then every peer
@@ -450,9 +463,12 @@ impl LobbyState {
         table_of(peers, tr, me)
     }
 
-    /// The beach under the cursor, as its beacon described it.
-    pub fn selected_entry(&self) -> Option<&HostEntry> {
-        self.hosts.get(self.selected_index()?)
+    /// The beach this joiner is at, as its beacon described it: by the
+    /// address it dialled, not the cursor, which a digit or a typed address
+    /// never moved.
+    pub fn joined_entry(&self) -> Option<&HostEntry> {
+        let there = self.joined()?.transport.peer_addr()?;
+        self.hosts.iter().find(|host| host.addr == there)
     }
 
     /// What the beach under the cursor is called, for a card that is about
@@ -803,7 +819,9 @@ pub fn lobby_input(
         return;
     }
     let join_bot = match intent {
-        Some(Intent::JoinBot(at)) => Some(at),
+        // Gone off the air while the name was typed: nothing is taken in
+        // its place.
+        Some(Intent::JoinBot(addr)) => state.hosts.iter().position(|host| host.addr == addr),
         _ if intent.is_none()
             && caps.just_pressed(&keys, 'B')
             && !state.standing().at_a_beach()
@@ -816,7 +834,7 @@ pub fn lobby_input(
     if let Some(at) = join_bot {
         if settings.names[0].trim().is_empty() && intent.is_none() {
             state.typing = Some(
-                Typing::player_name(Intent::JoinBot(at), &settings.names[0])
+                Typing::player_name(Intent::JoinBot(state.hosts[at].addr), &settings.names[0])
                     .or_suggest(|| suggested_name(tr)),
             );
         } else {

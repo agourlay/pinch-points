@@ -540,6 +540,7 @@ pub static NL: Tr = Tr {
     lobby_kick_ask: "Wie moet er weg? druk op het nummer | Esc: laat maar",
     lobby_kicked_feed: "{p} is gevraagd te vertrekken",
     lobby_kicked_you: "de gastheer vroeg je dat strand te verlaten",
+    lobby_host_closed: "de host heeft dat strand gesloten",
     replay_drop_hint: "sleep een replaybestand op het venster om het te bekijken",
     replay_drop_bad: "dat bestand is geen replay die deze versie kan afspelen: {e}",
 };

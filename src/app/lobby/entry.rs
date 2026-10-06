@@ -122,11 +122,13 @@ impl Typing {
 
     /// Asked before `then` can happen, pre-filled with the name on file.
     ///
-    /// Asked *every* time, not only when there is no name yet: two
+    /// Hosting asks *every* time, not only when there is no name yet: two
     /// instances on one machine share one settings file, so the second
     /// player inherits the first one's name, and a machine on a busy LAN is
     /// one somebody else was sitting at ten minutes ago. Enter accepts what
-    /// is already there, so the cost of asking is one keystroke.
+    /// is already there, so the cost of asking is one keystroke. Joining
+    /// asks only a player with no name on file (`which_beach`): the table
+    /// shows the name, and the player can change it in Settings.
     pub fn player_name(then: Intent, was: &str) -> Typing {
         Typing {
             what: Entry::PlayerName,
@@ -457,14 +459,18 @@ mod door_tests {
         );
     }
 
+    fn beach() -> std::net::SocketAddr {
+        "192.168.1.7:47710".parse().expect("an address")
+    }
+
     /// Joining takes the shorter road: a name, and then the beach that was
     /// under the cursor when they were stopped.
     #[test]
     fn joining_asks_the_name_and_then_joins() {
-        let asked = Typing::player_name(Intent::Join(3), "");
+        let asked = Typing::player_name(Intent::Join(beach()), "");
         assert_eq!(
             answer(&asked, "Cy".into()),
-            Answered::PlayerThen("Cy".into(), Some(Intent::Join(3))),
+            Answered::PlayerThen("Cy".into(), Some(Intent::Join(beach()))),
             "and remembers which beach, not merely that there was one"
         );
     }
@@ -526,7 +532,7 @@ mod door_tests {
     fn an_empty_name_is_refused_at_both_doors() {
         for open in [
             Typing::player_name(Intent::Host, ""),
-            Typing::player_name(Intent::Join(0), ""),
+            Typing::player_name(Intent::Join(beach()), ""),
             Typing::game_name(""),
         ] {
             assert_eq!(answer(&open, String::new()), Answered::AskAgain, "{open:?}");

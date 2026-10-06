@@ -540,6 +540,7 @@ pub static FR: Tr = Tr {
     lobby_kick_ask: "Qui doit partir ? appuie sur son numéro | Échap : laisse tomber",
     lobby_kicked_feed: "{p} a été prié de partir",
     lobby_kicked_you: "l'hôte t'a demandé de quitter cette plage",
+    lobby_host_closed: "l'hôte a fermé cette plage",
     replay_drop_hint: "dépose un fichier de replay sur la fenêtre pour le regarder",
     replay_drop_bad: "ce fichier n'est pas un replay que cette version sait lire : {e}",
 };

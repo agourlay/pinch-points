@@ -782,6 +782,8 @@ struct Tr {
     pub lobby_kicked_feed: &'static str,
     /// The status line of the one who was.
     pub lobby_kicked_you: &'static str,
+    /// A joiner's host went off the air while it waited in the lobby.
+    pub lobby_host_closed: &'static str,
     /// The replay shelf: any replay file can be watched by dropping it.
     pub replay_drop_hint: &'static str,
     /// A dropped file that is not a replay this build plays.

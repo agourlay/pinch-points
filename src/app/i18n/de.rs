@@ -547,6 +547,7 @@ pub static DE: Tr = Tr {
     lobby_kick_ask: "Wer soll gehen? drück die Nummer | Esc: doch nicht",
     lobby_kicked_feed: "{p} wurde gebeten zu gehen",
     lobby_kicked_you: "der Gastgeber hat dich gebeten, den Strand zu verlassen",
+    lobby_host_closed: "der Gastgeber hat den Strand geschlossen",
     replay_drop_hint: "zieh eine Replay-Datei aufs Fenster, um sie anzusehen",
     replay_drop_bad: "diese Datei ist kein Replay, das diese Version abspielen kann: {e}",
 };

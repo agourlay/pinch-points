@@ -199,15 +199,71 @@ fn fold_case(name: &str) -> impl Iterator<Item = char> + '_ {
 
 /// Refresh the discovered-host list. Does nothing while hosting, which is
 /// when the listening socket is handed back.
-pub fn discover(time: Res<Time>, mut state: ResMut<LobbyState>) {
+pub fn discover(time: Res<Time>, settings: Res<GameSettings>, mut state: ResMut<LobbyState>) {
     let delta = time.delta_secs();
     let heard = state
         .discovery
         .as_mut()
         .map(Discovery::poll)
         .unwrap_or_default();
+    let closed = host_closed(&state, &heard);
     refresh_hosts(&mut state.hosts, &heard, delta);
+    if closed {
+        state.let_go();
+        state.feedback = settings.tr().lobby_host_closed.to_string();
+    }
+    out_of_the_queue(&mut state, settings.tr());
     state.settle_cursor();
+}
+
+/// A joiner queued for the next round of a beach whose round is over and
+/// whose host is back in the lobby, gathering: it is at the table now, not
+/// in line, and says so. The queue is told on the way in and nothing ever
+/// takes it back, so "you are next up" stayed on the status line and "in
+/// line for the next round" on the prompt until the launch.
+fn out_of_the_queue(state: &mut LobbyState, tr: &'static crate::app::i18n::Tr) {
+    let Some(joined) = state.joined() else {
+        return;
+    };
+    if joined.queued.is_none() {
+        return;
+    }
+    let gathering = joined.transport.peer_addr().is_some_and(|there| {
+        state
+            .hosts
+            .iter()
+            .any(|host| host.addr == there && !host.running)
+    });
+    if !gathering {
+        return;
+    }
+    let watching = joined.watching;
+    if let Some(joined) = state.joined_mut() {
+        joined.queued = None;
+    }
+    state.feedback = match watching {
+        true => tr.lobby_watching.to_string(),
+        false => tr.lobby_aboard.to_string(),
+    };
+}
+
+/// Whether the beach this joiner is waiting at just said goodbye on the
+/// air. The beacon is the one word a host leaving the lobby sends; without
+/// reading it here the joiner sat out the six seconds of silence and was
+/// then told to check an address that had answered all along.
+fn host_closed(state: &LobbyState, heard: &[(SocketAddr, Beacon)]) -> bool {
+    let Some(joined) = state.joined() else {
+        return false;
+    };
+    let Some(there) = joined.transport.peer_addr() else {
+        return false;
+    };
+    let Some(beach) = state.hosts.iter().find(|host| host.addr == there) else {
+        return false;
+    };
+    heard.iter().any(
+        |(addr, beacon)| matches!(beacon, Beacon::Closing { id } if same_beach(beach, *id, *addr)),
+    )
 }
 
 /// A browser's arrows walk the beach list. Enter takes the one under the
@@ -537,5 +593,49 @@ mod list_tests {
         let first = hosts[0].addr;
         refresh_hosts(&mut hosts, &heard, 0.1);
         assert_eq!(hosts[0].addr, first, "and the same one each, every time");
+    }
+
+    /// A joiner waiting at a beach whose host says goodbye on the air
+    /// hears it at once, and one queued at a beach that is gathering again
+    /// is in line no longer.
+    #[test]
+    fn a_joiner_hears_its_beach_close_and_its_queue_end() {
+        use crate::transport::UdpTransport;
+        let there: SocketAddr = "127.0.0.1:47999".parse().expect("addr");
+        let mut state = LobbyState::default();
+        let mut joined = Joined::dialled(UdpTransport::join(there).expect("join"), false);
+        joined.queued = Some(0);
+        state.standing = Standing::Joining(joined);
+        state.hosts.push(HostEntry {
+            addr: there,
+            id: 7,
+            name: "Bay".into(),
+            host: "Sam".into(),
+            taken: 2,
+            seats: 4,
+            running: true,
+            bots: false,
+            age: 0.0,
+        });
+
+        out_of_the_queue(&mut state, &EN);
+        assert!(
+            state.joined().expect("joined").queued.is_some(),
+            "still running"
+        );
+        state.hosts[0].running = false;
+        out_of_the_queue(&mut state, &EN);
+        assert_eq!(state.joined().expect("joined").queued, None);
+        assert_eq!(state.feedback, EN.lobby_aboard);
+
+        let elsewhere: SocketAddr = "10.0.0.9:47778".parse().expect("addr");
+        assert!(!host_closed(
+            &state,
+            &[(elsewhere, Beacon::Closing { id: 8 })]
+        ));
+        assert!(host_closed(
+            &state,
+            &[(elsewhere, Beacon::Closing { id: 7 })]
+        ));
     }
 }

@@ -138,7 +138,14 @@ pub fn host_tick(
     // LAN while the host says they are welcome, one single-use key at a
     // time, and are let go the moment it says they are not.
     let arrived = host_the_bots(&mut arena.bots, &config, tr, hosted.players_aboard());
-    let taken = 1 + hosted.players_aboard() as u8 + arrived.len() as u8;
+    let mut taken = 1 + hosted.players_aboard() as u8 + arrived.len() as u8;
+    // The socket has room for `MAX_PEERS` and drops every sender past
+    // that without a word, watchers counted. A beach whose socket is full
+    // says it is full, or the next arrival is listed a chair, dials, and
+    // hears nothing until "no answer - check the address".
+    if hosted.transport.peer_count() >= crate::transport::MAX_PEERS {
+        taken = MAX_PLAYERS as u8;
+    }
     let on_air = crate::transport::OnAir {
         name: &game_name,
         host: &settings.names[0],
@@ -210,7 +217,10 @@ pub fn host_tick(
     let quota = crate::app::dev::auto_host_quota();
     let launch = should_launch(
         rivals,
-        state.typing.is_some(),
+        // Picking whom to ask to leave holds the keyboard as typing does:
+        // the host runs before the lobby's keys, so an Enter pressed at the
+        // "pick a number" prompt used to start the match.
+        state.typing.is_some() || state.kicking,
         crate::app::menu_ui::enter(&keys),
         quota,
     );

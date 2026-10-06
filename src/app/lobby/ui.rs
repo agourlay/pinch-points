@@ -483,7 +483,7 @@ pub fn update_lobby_terms(
     // Whether the beach takes bots is not one of the terms; a joiner
     // reads it off the beacon that listed the beach.
     let joined = joined.map(|(mut cfg, mode)| {
-        cfg.bots_welcome = state.selected_entry().is_some_and(|entry| entry.bots);
+        cfg.bots_welcome = state.joined_entry().is_some_and(|entry| entry.bots);
         (cfg, mode)
     });
     let (config, team_mode): (&MatchConfig, _) = match &joined {
