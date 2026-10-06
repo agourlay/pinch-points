@@ -339,6 +339,7 @@ fn walk_into_the_arena(
     // Formed here, so a finished match knows it has a lobby to walk this
     // table back to.
     session.home.from_lobby = true;
+    session.home.wants_to_watch = joined.watching;
     session.bot = joined.bot.is_some();
     online.0 = Some(session);
     next_vphase.set(VersusPhase::Countdown);

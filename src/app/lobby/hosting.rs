@@ -781,8 +781,10 @@ pub(super) fn seat_plan(peers: &PeerBook) -> Vec<Option<u8>> {
 }
 
 /// Tell the network a hosted beach is going away, if this lobby is hosting
-/// one. Both ways out of hosting come through here: leaving the screen, and
-/// starting the match.
+/// one: the host leaving the screen. Starting the match does not come
+/// through here: the launch takes the beacon into the round, which keeps
+/// the beach listed as in progress and says goodbye when it ends. A joiner
+/// still in the lobby reads this goodbye as its host closing the beach.
 pub(super) fn say_goodbye(state: &LobbyState) {
     if let Some(hosted) = state.hosted()
         && let Ok(addr) = hosted.transport.local_addr()

@@ -137,7 +137,7 @@ impl OnlineSession {
                 .map_or("", |seat| &self.names[usize::from(seat)]);
             let hello = match self.bot {
                 true => NetMsg::hello_bot(me),
-                false => crate::app::lobby::greeting(self.watching(), me),
+                false => crate::app::lobby::greeting(self.watch_wish(), me),
             };
             self.transport.send(hello);
         }
@@ -229,9 +229,9 @@ impl OnlineSession {
         let mut next = 1u8; // the host keeps seat 0
         (0..peers)
             .map(|peer| {
-                // A watcher, whether it sat out the launch (watching in
-                // the plan) or queued mid-round with W armed (a remembered
-                // wish), keeps no chair.
+                // A watcher keeps no chair: one that asked, at the launch
+                // or since. One that sat the last round out for want of a
+                // chair is dealt one when there is one.
                 let watches = self.peers.get(peer).is_some_and(Peer::watches);
                 if watches || usize::from(next) >= MAX_PLAYERS {
                     return None;
@@ -1166,6 +1166,20 @@ mod next_round_tests {
         );
     }
 
+    /// A player who sat a round out because the table was full asked for
+    /// a chair, not a seat in the stands: the next round deals it one.
+    #[test]
+    fn a_player_left_without_a_chair_is_seated_when_one_frees() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(1),
+        );
+        host.peers.deal(&[Some(1), None]);
+        assert_eq!(host.next_plan(2), vec![Some(1), Some(2)]);
+    }
+
     /// Whoever queued while the round played gets a chair in the next one,
     /// and the AI gives way to them rather than the other way about.
     #[test]
@@ -1178,6 +1192,7 @@ mod next_round_tests {
         );
         // One peer played, one watched, two turned up while they played.
         host.peers.deal(&[Some(1), None]);
+        host.peers.row(1).watch = true;
         let plan = host.next_plan(4);
         assert_eq!(
             plan,

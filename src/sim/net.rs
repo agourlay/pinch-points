@@ -131,6 +131,14 @@ pub struct Lockstep {
     /// peers repeat `Pause` every tick, so the last echoes cross the
     /// `Resume` and re-pause whoever had just resumed.
     lifted: Option<u32>,
+    /// The other players' inputs accepted here, kept for the same span as
+    /// `history`: what the host passes on again for a player it gives up
+    /// on (see [`Lockstep::abandon`]).
+    heard: Vec<InputMsg>,
+    /// Players given up on, and the frame from which their seat is empty.
+    /// Their inputs for the frames before it are still the real ones, and
+    /// still awaited and accepted.
+    leaving: Vec<(PlayerId, u32)>,
 }
 
 /// How far behind the local simulated frame a peer that is still talking
@@ -196,6 +204,8 @@ impl Lockstep {
             also: Vec::new(),
             pause_at: None,
             lifted: None,
+            heard: Vec::new(),
+            leaving: Vec::new(),
         };
         // The first `delay` frames have no committed inputs by construction;
         // both sides agree they are all None.
@@ -210,15 +220,29 @@ impl Lockstep {
 
     fn slot(&mut self, frame: u32) -> &mut [Option<PlayerAction>; MAX_PLAYERS] {
         let players = &self.players;
+        let leaving = &self.leaving;
         self.pending.entry(frame).or_insert_with(|| {
             let mut slot = [None; MAX_PLAYERS];
             for p in 0..MAX_PLAYERS as u8 {
-                if !players.contains(&p) {
+                let still_owed = leaving
+                    .iter()
+                    .any(|&(gone, from)| gone == p && frame < from);
+                if !players.contains(&p) && !still_owed {
                     slot[p as usize] = Some(PlayerAction::None); // absent seats
                 }
             }
             slot
         })
+    }
+
+    /// Whether `player`'s input for `frame` is one this session takes: a
+    /// seated player's, or one given up on from a later frame.
+    fn takes(&self, player: PlayerId, frame: u32) -> bool {
+        self.players.contains(&player)
+            || self
+                .leaving
+                .iter()
+                .any(|&(gone, from)| gone == player && frame < from)
     }
 
     // --- pause protocol ---------------------------------------------------
@@ -476,17 +500,40 @@ impl Lockstep {
     /// played it empty. Every slot from `frame` on is emptied instead,
     /// whatever it held. No peer can have simulated past `frame`, since
     /// none hears from a player except through the decider.
+    ///
+    /// The frames *before* `frame` are the other way round: the decider
+    /// played every one of them with the player's real input, and a peer
+    /// behind it may still be missing some (the relay was lost, and the
+    /// player has stopped resending). Those slots are left waiting and
+    /// still accept the player's input, which the decider sends again
+    /// ([`Lockstep::owed_by`]). Filled empty, as they used to be, that peer
+    /// played a frame the host never did, and lockstep cannot recover a
+    /// desync.
     pub fn abandon(&mut self, player: PlayerId, frame: u32) {
         debug_assert!(
             usize::from(player) < MAX_PLAYERS,
             "no such seat to abandon: {player}"
         );
         self.players.retain(|seated| *seated != player);
+        if !self.leaving.iter().any(|&(gone, _)| gone == player) {
+            self.leaving.push((player, frame));
+        }
         for (&at, slot) in self.pending.iter_mut() {
-            if at >= frame || slot[player as usize].is_none() {
+            if at >= frame {
                 slot[player as usize] = Some(PlayerAction::None);
             }
         }
+    }
+
+    /// The inputs a player given up on at `frame` sent for the frames
+    /// before it, as far back as a peer still in step could be missing
+    /// them: what the decider repeats alongside the notice.
+    pub fn owed_by(&self, player: PlayerId, frame: u32) -> Vec<InputMsg> {
+        self.heard
+            .iter()
+            .copied()
+            .filter(|msg| msg.player == player && msg.frame < frame)
+            .collect()
     }
 
     /// The furthest frame a peer may name: as far ahead of the frame being
@@ -505,15 +552,19 @@ impl Lockstep {
     /// `u32::MAX` would grow the table without bound.
     pub fn receive(&mut self, msg: InputMsg) {
         let horizon = self.horizon();
-        if msg.frame < self.frame || msg.frame > horizon || !self.players.contains(&msg.player) {
+        if msg.frame < self.frame || msg.frame > horizon || !self.takes(msg.player, msg.frame) {
             return;
         }
-        // Past the guard, the sender is a seated player, so the index below
-        // is in range, which is the only reason it is written as one.
+        // Past the guard, the sender is a seated player (or one leaving),
+        // so the index below is in range, which is the only reason it is
+        // written as one.
         debug_assert!(usize::from(msg.player) < MAX_PLAYERS);
         let slot = self.slot(msg.frame);
         if slot[msg.player as usize].is_none() {
             slot[msg.player as usize] = Some(msg.action);
+            self.heard.push(msg);
+            let oldest_wanted = self.frame.saturating_sub(resend_span(self.delay));
+            self.heard.retain(|kept| kept.frame >= oldest_wanted);
         }
     }
 
@@ -537,6 +588,8 @@ impl Lockstep {
         let actions = std::array::from_fn(|i| slot[i].unwrap_or(PlayerAction::None));
         self.pending.remove(&self.frame);
         self.frame += 1;
+        let frame = self.frame;
+        self.leaving.retain(|&(_, from)| from > frame);
         Some(actions)
     }
 
@@ -1390,6 +1443,57 @@ mod abandon_frame_tests {
             assert_eq!(from_host[1], PlayerAction::None, "frame {frame}");
             assert_eq!(from_host, from_peer, "frame {frame}");
         }
+    }
+
+    /// A peer behind the host when the host gives up on a seat waits for
+    /// that seat's real inputs on the frames the host already played with
+    /// them, and takes them from the host's repeat: filled empty instead,
+    /// the peer played a frame the host never did.
+    #[test]
+    fn a_peer_behind_plays_the_departed_seats_last_inputs_as_the_host_did() {
+        let mut host = Lockstep::new(0, vec![0, 1, 2], 0);
+        let mut peer = Lockstep::new(2, vec![0, 1, 2], 0);
+        let place = PlayerAction::Place {
+            x: 1,
+            y: 1,
+            dir: Direction::Up,
+        };
+        // Frame 0 is played by both. Seat 1's input for frame 1 reaches
+        // the host, which plays frame 1 with it; its relay to the peer is
+        // lost. Then seat 1 goes quiet.
+        let none = |player, frame| InputMsg {
+            player,
+            frame,
+            action: PlayerAction::None,
+        };
+        for session in [&mut host, &mut peer] {
+            session.commit_local(PlayerAction::None);
+            session.commit_local(PlayerAction::None);
+        }
+        for frame in 0..2 {
+            host.receive(none(2, frame));
+            peer.receive(none(0, frame));
+        }
+        host.receive(none(1, 0));
+        peer.receive(none(1, 0));
+        host.receive(InputMsg {
+            player: 1,
+            frame: 1,
+            action: place,
+        });
+        let host_frames = [host.advance().expect("0"), host.advance().expect("1")];
+        assert_eq!(host_frames[1][1], place);
+        assert!(peer.advance().is_some(), "the peer plays frame 0");
+        // The host is held up on frame 2 and gives up there.
+        let at = host.frame();
+        host.abandon(1, at);
+        peer.abandon(1, at);
+        assert!(peer.advance().is_none(), "frame 1 still waits on seat 1");
+        for owed in host.owed_by(1, at) {
+            peer.receive(owed);
+        }
+        let played = peer.advance().expect("the repeat fills it");
+        assert_eq!(played, host_frames[1], "as the host played it");
     }
 
     /// Inputs from the departed player that arrive after the abandonment

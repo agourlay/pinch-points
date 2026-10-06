@@ -120,6 +120,13 @@ pub struct Home {
     /// only place a finished match has to walk its table back to: the
     /// direct `PINCH_HOST` pair was never anywhere else to begin with.
     pub from_lobby: bool,
+    /// Joiner side: whether it asked to watch, in the lobby it came from.
+    ///
+    /// Not whether it holds a chair: a player dealt none because the table
+    /// was full is watching this round without having asked to, and
+    /// greeting the host as a watcher (between rounds, and back in the
+    /// lobby) told the host it had, so it was never dealt a chair again.
+    pub wants_to_watch: bool,
     /// Joiner side: seconds until the next greeting while the results card
     /// is up.
     ///
@@ -142,6 +149,7 @@ impl Home {
             bots_welcome: false,
             announce_in: 0.0,
             from_lobby: false,
+            wants_to_watch: false,
             greet_in: 0.0,
         }
     }
@@ -430,12 +438,22 @@ impl OnlineSession {
         };
     }
 
+    /// Whether to greet as a watcher: what this player asked for, where it
+    /// came from a lobby that asked; otherwise, with nothing asked, what
+    /// it is.
+    pub(crate) fn watch_wish(&self) -> bool {
+        match self.home.from_lobby {
+            true => self.home.wants_to_watch,
+            false => self.watching(),
+        }
+    }
+
     /// Dismantle a finished match into what the lobby needs to stand the
     /// beach back up, goodbye disarmed: this table is going back to the
     /// lobby together, not away.
     pub fn back_to_the_lobby(mut self) -> LobbyReturn {
         let host = self.is_host();
-        let watching = self.watching();
+        let watching = self.watch_wish();
         let seat = self.session.seat();
         // Each peer under the name its chair carried, which is the one
         // every screen showed, and the plan's chairs given up: back in the
@@ -476,6 +494,7 @@ impl OnlineSession {
             bots_welcome: _,
             announce_in: _,
             from_lobby: _,
+            wants_to_watch: _,
             greet_in: _,
         } = home;
         LobbyReturn {
@@ -605,9 +624,19 @@ impl OnlineSession {
         // joiner that misses the one notice waits on that seat forever,
         // and the host never notices, because a joiner that is waiting is
         // still talking. Five bytes a seat a tick.
+        //
+        // With the notice, the seat's last inputs before that frame: the
+        // host played them, and a peer whose relay of one was lost has
+        // nobody else to hear it from now the player has gone quiet.
         if host {
+            let peers = &self.peers;
             for &(seat, frame) in &self.abandoned {
                 self.transport.send(NetMsg::Abandoned { seat, frame });
+                let owed = self.session.owed_by(seat, frame);
+                if !owed.is_empty() {
+                    self.transport
+                        .send_inputs(&owed, |peer| peers.follows_the_round(peer));
+                }
             }
         }
         for (msg, from) in self.transport.recv_all() {
@@ -668,6 +697,17 @@ impl OnlineSession {
                             0 => Some(input.player) != own,
                             _ => theirs == Some(input.player),
                         });
+                        // A tide event is the spectators' call, carried on
+                        // the host's own seat. From any other seat it is a
+                        // player calling Monopoly on their own behalf, which
+                        // no key here makes and the host does not pass on.
+                        // Emptied rather than dropped: the frame still needs
+                        // the seat's input to run.
+                        for input in &mut inputs {
+                            if matches!(input.action, crate::sim::PlayerAction::CallEvent(_)) {
+                                input.action = crate::sim::PlayerAction::None;
+                            }
+                        }
                     }
                     for &input in &inputs {
                         self.session.receive(input);

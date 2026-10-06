@@ -61,10 +61,17 @@ impl Peer {
         }
     }
 
-    /// Whether it watches rather than plays: dealt no chair at the
-    /// launch, or asked for it since.
+    /// Whether it asked to watch rather than play, which is what the next
+    /// deal reads.
+    ///
+    /// Not whether it holds no chair: a player dealt none because the
+    /// table was full did not ask to watch, and is seated when one frees.
+    /// Read off the place, that player was a watcher for good, every round
+    /// of a series and every launch after, while the AI took the chairs.
+    /// (A late watcher holds its place because it asked, so the wish says
+    /// that too.)
     pub fn watches(&self) -> bool {
-        matches!(self.place, Place::Watching | Place::LateWatching) || self.watch
+        self.watch
     }
 }
 
@@ -196,12 +203,10 @@ impl PeerBook {
         self.0.get(peer).and_then(Peer::seat)
     }
 
-    /// Back in the lobby nobody holds a chair, and a peer that was at the
-    /// watcher is one that asked to watch: the next launch deals from the
-    /// wish alone.
+    /// Back in the lobby nobody holds a chair: the next launch deals from
+    /// the wish alone.
     pub fn unseat(&mut self) {
         for peer in &mut self.0 {
-            peer.watch = peer.watches();
             peer.place = Place::Queued;
         }
     }
@@ -259,11 +264,15 @@ mod tests {
     #[test]
     fn unseating_keeps_the_watchers_and_frees_the_chairs() {
         let mut peers = PeerBook::default();
-        peers.deal(&[Some(1), None, Some(2)]);
+        peers.deal(&[Some(1), None, Some(2), None]);
+        // Peer one asked to watch at the launch, peer two since; peer
+        // three was dealt no chair because there was none, and asked for
+        // nothing.
+        peers.row(1).watch = true;
         peers.row(2).watch = true;
         peers.unseat();
         let watching: Vec<bool> = peers.iter().map(Peer::watches).collect();
-        assert_eq!(watching, [false, true, true]);
+        assert_eq!(watching, [false, true, true, false]);
         assert!(peers.iter().all(|p| p.seat().is_none()));
         assert_eq!(peers.planned(), 0);
     }
@@ -291,6 +300,8 @@ mod tests {
         let mut peers = PeerBook::default();
         peers.deal(&[Some(1), None]);
         peers.reach(4);
+        // As the host takes one in: its greeting asked to watch.
+        peers.row(2).watch = true;
         peers.row(2).place = Place::LateWatching;
         assert_eq!(peers.planned(), 2, "the plan is still the launch's");
         assert!(
