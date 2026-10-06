@@ -357,6 +357,20 @@ impl OnlineSession {
         for (i, bot) in bots_here.iter_mut().enumerate() {
             bot.0 = people + i as u8;
         }
+        let humans = people + bots_here.len() as u8;
+        // A beach needs two castles, and a host whose table has emptied is
+        // still entitled to another round, against the AI, since playing
+        // itself is not a round. The same floor `seat_count` keeps.
+        terms.bots = terms
+            .bots
+            .min(MAX_PLAYERS as u8 - humans)
+            .max(2u8.saturating_sub(humans));
+        let seats = humans + terms.bots;
+        // The map was stepped on for the table as it sat, and admitting the
+        // queue can have grown it past what that beach holds: stepped on
+        // again for the table as it now is, or two players at a table of
+        // six would have no castle.
+        terms = crate::app::match_setup::fit_terms(terms, seats);
         let standing = standing.map(|SeriesStanding { round, wins }| {
             // The wins follow the chairs: seat 0 is always the host's, and
             // each peer's new seat inherits what its old seat had won, and
@@ -373,6 +387,15 @@ impl OnlineSession {
             for ((new_seat, ..), old_seat) in bots_here.iter().zip(&bots_were) {
                 new_wins[usize::from(*new_seat)] = wins[usize::from(*old_seat)];
             }
+            // And the game's AI, which sits in the top chairs: the first AI
+            // seat of this round's table is the first of the next one's.
+            // Left out, an AI that won a round was back at nothing the
+            // next, and could never take an online series.
+            for (old_seat, new_seat) in
+                (self.terms.humans(self.seats)..self.seats).zip(humans..seats)
+            {
+                new_wins[usize::from(new_seat)] = wins[usize::from(old_seat)];
+            }
             // The number of the round about to begin: the caller passes
             // the one just played, and every peer shows the same next
             // number without each counting for itself.
@@ -381,15 +404,6 @@ impl OnlineSession {
                 wins: new_wins,
             }
         });
-        let humans = people + bots_here.len() as u8;
-        // A beach needs two castles, and a host whose table has emptied is
-        // still entitled to another round, against the AI, since playing
-        // itself is not a round. The same floor `seat_count` keeps.
-        terms.bots = terms
-            .bots
-            .min(MAX_PLAYERS as u8 - humans)
-            .max(2u8.saturating_sub(humans));
-        let seats = humans + terms.bots;
         // Names travel with the invitation, as they did at the launch: a
         // player admitted from the queue is a stranger to every other
         // screen until this says otherwise.
@@ -607,6 +621,32 @@ mod next_round_tests {
             series: 1,
             ..MatchTerms::default()
         }
+    }
+
+    /// The AI's wins are carried to the next round like everyone else's.
+    /// They were dropped once, so in an online series against the AI the
+    /// AI was back at nothing every round and could never take it.
+    #[test]
+    fn the_ai_keeps_its_series_wins() {
+        let ai = MatchTerms {
+            bots: 2,
+            ..terms(1)
+        };
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0], DEFAULT_DELAY),
+            3,
+            ai,
+        );
+        let mut wins = [0; MAX_PLAYERS];
+        wins[1] = 1;
+        wins[2] = 2;
+        let next = host
+            .call_next_round(ai, Some(SeriesStanding { round: 3, wins }))
+            .expect("a series goes on");
+        assert_eq!(host.seats, 3);
+        assert_eq!(next.wins[..3], [0, 1, 2], "{:?}", next.wins);
+        assert_eq!(next.round, 4);
     }
 
     /// A host and a real joiner over loopback, played to the point where

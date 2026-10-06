@@ -691,10 +691,14 @@ impl OnlineSession {
                     }
                 }
                 NetMsg::Resume { frame } => {
-                    let frame = self.session.receive_resume(frame);
-                    self.resume_echo = RESUME_ECHOES;
-                    if host {
-                        relay(&self.transport, from, NetMsg::Resume { frame });
+                    // Only news is echoed and relayed. Re-arming on an echo
+                    // would have every peer answer every other peer's
+                    // echoes, for the rest of the match.
+                    if let Some(frame) = self.session.receive_resume(frame) {
+                        self.resume_echo = RESUME_ECHOES;
+                        if host {
+                            relay(&self.transport, from, NetMsg::Resume { frame });
+                        }
                     }
                 }
                 NetMsg::Start {

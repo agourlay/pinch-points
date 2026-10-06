@@ -282,20 +282,35 @@ impl Lockstep {
     /// Returns the frame the lifted pause was to freeze on (the highest
     /// ever lifted here, if there was no pause to lift), for the peers.
     pub fn resume(&mut self) -> u32 {
-        self.receive_resume(self.pause_at.unwrap_or(0))
+        self.lift(self.pause_at.unwrap_or(0))
     }
 
     /// A peer lifted the pause that was to freeze on `frame`. Whatever
     /// pause is in flight here is lifted with it: the peers agree on one
     /// frame, and a peer that had not yet heard the earliest proposal is
     /// resuming from the same pause under a later number.
-    pub fn receive_resume(&mut self, frame: u32) -> u32 {
+    ///
+    /// `None` for a resume of a pause already lifted here: the per-tick
+    /// echo of an old resume, which says nothing new. It must not lift the
+    /// pause in flight, which is a later one (every proposal is past
+    /// `lifted`), or the first resume of a match would cancel every pause
+    /// after it for as long as its echoes kept arriving.
+    pub fn receive_resume(&mut self, frame: u32) -> Option<u32> {
         // Off the wire, so bounded like every other frame number that
         // arrives that way: `lifted` is added to when the next pause is
         // proposed, and a peer naming the last frame there is would have
         // had that addition overflow. One short of the horizon, so that
         // next pause, one past this, is still a frame this peer accepts.
         let frame = frame.min(self.horizon().saturating_sub(1));
+        if self.lifted.is_some_and(|lifted| frame <= lifted) {
+            return None;
+        }
+        Some(self.lift(frame))
+    }
+
+    /// Lift the pause in flight, if any, and remember the highest frame
+    /// lifted so far.
+    fn lift(&mut self, frame: u32) -> u32 {
         let lifted = [self.lifted, self.pause_at, Some(frame)]
             .into_iter()
             .flatten()
@@ -1271,6 +1286,25 @@ mod pause_echo_tests {
         assert_eq!(a.resume(), 41);
     }
 
+    /// The first resume of a match keeps echoing for a while, and an echo
+    /// still on the wire when the next pause is called must not lift it:
+    /// that echo names the old pause, and the new one is past it. Every
+    /// pause after the first used to be cancelled within a tick this way.
+    #[test]
+    fn an_old_resume_does_not_lift_a_new_pause() {
+        let mut a = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
+        let first = a.request_pause().expect("a player may pause");
+        let echo = a.resume();
+        assert_eq!(echo, first);
+        let second = a.request_pause().expect("a player may pause");
+        assert!(second > first, "{second} > {first}");
+        assert_eq!(a.receive_resume(echo), None, "an echo is not news");
+        assert_eq!(a.pause_frame(), Some(second), "the new pause holds");
+        // The peer's own resume of the new pause still lifts it.
+        assert_eq!(a.receive_resume(second), Some(second));
+        assert!(!a.paused());
+    }
+
     /// A pause proposal that would be read as an echo of a lifted one is
     /// pushed past it, so a second Escape shortly after a resume still
     /// pauses, everywhere.
@@ -1291,7 +1325,9 @@ mod pause_echo_tests {
     #[test]
     fn a_resume_from_the_end_of_time_cannot_break_the_next_pause() {
         let mut a = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
-        let lifted = a.receive_resume(u32::MAX);
+        let lifted = a
+            .receive_resume(u32::MAX)
+            .expect("nothing was lifted before");
         assert!(lifted <= 2 * resend_span(DEFAULT_DELAY), "{lifted}");
         let at = a.request_pause().expect("a player may pause");
         assert!(at > lifted, "{at}");

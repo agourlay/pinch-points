@@ -391,6 +391,17 @@ pub fn next_round_terms(terms: MatchTerms, seats: u8, seed: u64) -> MatchTerms {
     }
 }
 
+/// The same terms, on a beach that holds `seats`: unchanged when the map
+/// already does, else stepped on as [`next_map`] steps a series. For a
+/// table that grew after its map was picked, as admitting the queue
+/// between two online rounds grows it.
+pub fn fit_terms(terms: MatchTerms, seats: u8) -> MatchTerms {
+    if holds(MapChoice::from_index(usize::from(terms.map)), seats) {
+        return terms;
+    }
+    next_round_terms(terms, seats, terms.seed)
+}
+
 /// Whether `map` has room for a table of `seats`. Five and six castles
 /// need a wide beach: the two extra sit mid-edge, and the handcrafted
 /// classic arena and the small generated one hold four, clamping a bigger
@@ -994,6 +1005,21 @@ mod tests {
             MapChoice::from_index(usize::from(next.map)),
             MapChoice::Classic
         );
+    }
+
+    /// A table that grew after its map was picked is moved off a beach too
+    /// small for it, and one that still fits stays put.
+    #[test]
+    fn a_grown_table_is_fitted_to_a_beach_that_holds_it() {
+        let classic = MatchTerms {
+            map: MapChoice::Classic.index() as u8,
+            seed: 7,
+            ..MatchTerms::default()
+        };
+        assert_eq!(fit_terms(classic, 4), classic, "four fit the classic arena");
+        let six = fit_terms(classic, 6);
+        assert!(holds(MapChoice::from_index(usize::from(six.map)), 6));
+        assert_eq!(six.seed, 7, "only the map moves");
     }
 
     /// The seat count moving under the map: `Custom` with no beach seating
