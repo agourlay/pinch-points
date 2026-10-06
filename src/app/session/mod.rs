@@ -156,17 +156,17 @@ mod tests {
         };
 
         let plain = settings::GameSettings::default();
-        assert_eq!(named([0, 7, 0, 0, 0, 0], &plain), "P2");
+        assert_eq!(named([0, 7, 0, 0, 0, 0], &plain).as_deref(), Some("P2"));
         // Level scores are nobody's round, and the file has to say so
         // rather than crediting the lowest seat.
-        assert_eq!(named([7, 7, 0, 0, 0, 0], &plain), "draw");
-        assert_eq!(named([0, 0, 0, 0, 0, 0], &plain), "draw");
+        assert_eq!(named([7, 7, 0, 0, 0, 0], &plain), None);
+        assert_eq!(named([0, 0, 0, 0, 0, 0], &plain), None);
 
         // A renamed seat is filed under its name, since that is what the
         // player will look for on the shelf.
         let mut settings = settings::GameSettings::default();
         settings.names[1] = "Bo".to_string();
-        assert_eq!(named([0, 7, 0, 0, 0, 0], &settings), "Bo");
+        assert_eq!(named([0, 7, 0, 0, 0, 0], &settings).as_deref(), Some("Bo"));
     }
 
     fn armed(seats: u8, bots: u8) -> match_setup::MatchConfig {
@@ -349,6 +349,21 @@ mod tests {
         assert_eq!(RoundOrigin::Unconfigured.table(&config, &bare, 3).1, 3);
     }
 
+    /// The daily's beach is the one for the day handed in, which is the day
+    /// `load_versus` keeps for the trophies, and not whatever the clock says
+    /// by the time anyone asks again.
+    #[test]
+    fn the_daily_is_built_from_the_day_it_is_handed() {
+        let daily = match_setup::MatchConfig::daily();
+        let built = |day| {
+            RoundOrigin::Configured(&daily)
+                .board(Some(day), &Default::default(), false, 0)
+                .state_hash()
+        };
+        assert_eq!(built(20_000), built(20_000), "one beach for everybody");
+        assert_ne!(built(20_000), built(20_001), "and a fresh one tomorrow");
+    }
+
     /// The arrows dial on the setup card is the rule the round is played
     /// under, on every kind of beach it builds, and an online round keeps
     /// the versus three whatever this machine's card says.
@@ -363,7 +378,7 @@ mod tests {
                     ..armed(2, 1)
                 };
                 let board =
-                    RoundOrigin::Configured(&config).board(false, &Default::default(), false, 0);
+                    RoundOrigin::Configured(&config).board(None, &Default::default(), false, 0);
                 assert_eq!(
                     board.signpost_rule(),
                     (posts, crate::sim::CapPolicy::Evict),
@@ -371,7 +386,7 @@ mod tests {
                 );
             }
         }
-        let board = RoundOrigin::Online(&online_at(2)).board(false, &Default::default(), false, 0);
+        let board = RoundOrigin::Online(&online_at(2)).board(None, &Default::default(), false, 0);
         assert_eq!(
             board.signpost_rule().0,
             crate::sim::MAX_SIGNPOSTS_PER_PLAYER as u8

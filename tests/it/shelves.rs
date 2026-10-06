@@ -58,7 +58,7 @@ fn a_kept_round_comes_off_the_shelf_and_replays() {
     let text = replay.to_text();
     let stamps = [1_000u64, 2_000, 3_000, 4_000];
     for (stamp, winner) in stamps.iter().zip(["Anna", "Bo", "Cy", "Di"]) {
-        std::fs::write(dir.join(file_name(*stamp, winner)), &text).unwrap();
+        std::fs::write(dir.join(file_name(*stamp, Some(winner))), &text).unwrap();
     }
     std::fs::write(dir.join("last.txt"), &text).unwrap();
     std::fs::write(dir.join("notes.txt"), "not a round").unwrap();

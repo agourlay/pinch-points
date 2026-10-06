@@ -40,7 +40,7 @@ impl RoundOrigin<'_> {
     /// The beach the round is played on.
     pub(super) fn board(
         &self,
-        daily: bool,
+        daily: Option<u32>,
         beaches: &match_setup::CustomBeaches,
         sandbox: bool,
         pads: u8,
@@ -64,11 +64,7 @@ impl RoundOrigin<'_> {
             // overrides. Fresh seed per round (recorded via the board's
             // seed, so replays are exact).
             RoundOrigin::Configured(config) => {
-                let seed = if daily {
-                    Daily::seed()
-                } else {
-                    clock::fresh_seed()
-                };
+                let seed = daily.map_or_else(clock::fresh_seed, Daily::seed_for);
                 let (w, h) = config.map.size();
                 let mut board = if config.map == match_setup::MapChoice::Custom {
                     // A beach somebody built. Locally there is nobody to
@@ -205,7 +201,7 @@ pub(in crate::app) struct RoundSource<'w, 's> {
     pub(in crate::app) playback: Res<'w, Playback>,
     pub(in crate::app) config: Res<'w, match_setup::MatchConfig>,
     pub(in crate::app) beaches: Res<'w, match_setup::CustomBeaches>,
-    pub(in crate::app) daily: Res<'w, Daily>,
+    pub(in crate::app) daily: ResMut<'w, Daily>,
     pub(in crate::app) resuming: ResMut<'w, Resuming>,
 }
 
@@ -251,7 +247,14 @@ pub(in crate::app) fn load_versus(
     } else {
         RoundOrigin::Unconfigured
     };
-    sim.0 = origin.board(daily.active, beaches, sandbox.0, pad_count);
+    // The daily's day is read once, here, and kept: the seed is built
+    // from it and the trophies count the round under it when it ends.
+    let daily_day =
+        (daily.active && matches!(origin, RoundOrigin::Configured(_))).then(Daily::today);
+    if let Some(day) = daily_day {
+        daily.day = day;
+    }
+    sim.0 = origin.board(daily_day, beaches, sandbox.0, pad_count);
     (*controllers, seats.0) = origin.table(config, &sim.0, pad_count);
     // Every per-seat array is indexed by this, and every table needs two.
     debug_assert!(
@@ -371,20 +374,19 @@ pub(in crate::app) fn poll_reel(
     }
 }
 
-/// Who to file a finished round under: the leading seat's name, or nobody.
+/// Who to file a finished round under: the leading seat's name, or `None`
+/// for a draw (see `replays::file_name`).
 pub(super) fn winner_name(
     sim: &Sim,
     seats: &Seats,
     settings: &settings::GameSettings,
     online: &net::Online,
     names: &SeatNames,
-) -> String {
+) -> Option<String> {
     let mode = teams::in_play(settings, online, seats.0);
     let leaders = side_panels::leading_seats(sim.0.scores(), seats.0, mode);
-    match leaders.iter().position(|&led| led) {
-        Some(seat) => names.label(settings.tr(), seat as u8),
-        None => "draw".to_string(),
-    }
+    let seat = leaders.iter().position(|&led| led)?;
+    Some(names.label(settings.tr(), seat as u8))
 }
 
 pub(in crate::app) fn check_versus_over(
@@ -422,7 +424,7 @@ pub(in crate::app) fn check_versus_over(
             }
             let stamp = clock::now_secs();
             let winner = winner_name(&sim, &seats, &settings, &online, &seat_names);
-            let kept = library.join(replays::file_name(stamp, &winner));
+            let kept = replays::free_path(&library, stamp, winner.as_deref());
             if let Err(e) = paths::write_atomic(&kept, &text) {
                 warn!("could not file the replay: {e}");
             }

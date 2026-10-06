@@ -163,6 +163,26 @@ pub(super) struct RoundOutcome {
     pub seat: u8,
 }
 
+/// Count a daily round played on `day`'s beach, scoring `score`.
+///
+/// The day is the one the round was seeded for, handed in rather than read
+/// off the clock here: the round ends minutes after it began, and those
+/// minutes can cross midnight.
+fn credit_daily(stats: &mut Stats, day: u32, score: u32) {
+    if stats.daily_day != day {
+        // A day's daily played for the first time: that day's best starts
+        // over, and the habit counter ticks.
+        stats.daily_day = day;
+        stats.daily_best = 0;
+        stats.daily_days += 1;
+    }
+    stats.daily_best = stats.daily_best.max(score);
+    // And the all-time mark, which is what a trophy can hang on:
+    // `daily_best` starts over at midnight and would take the trophy's
+    // progress bar back down with it.
+    stats.daily_record = stats.daily_record.max(stats.daily_best);
+}
+
 /// Tally a finished round for the local seat and clear the round scratch.
 ///
 /// A win with no raid taken is the Dry Castle trophy: the raid counter has
@@ -221,19 +241,13 @@ pub fn record_round(
         trophies.stats.hosted += 1;
     }
     if daily.active {
-        let today = crate::app::Daily::today();
-        if trophies.stats.daily_day != today {
-            // A day's daily played for the first time: today's best starts
-            // over, and the habit counter ticks.
-            trophies.stats.daily_day = today;
-            trophies.stats.daily_best = 0;
-            trophies.stats.daily_days += 1;
-        }
-        trophies.stats.daily_best = trophies.stats.daily_best.max(sim.0.scores()[seat as usize]);
-        // And the all-time mark, which is what a trophy can hang on:
-        // `daily_best` starts over at midnight and would take the trophy's
-        // progress bar back down with it.
-        trophies.stats.daily_record = trophies.stats.daily_record.max(trophies.stats.daily_best);
+        // The day the round was seeded for, not the day it ended on: a
+        // round that crosses midnight is yesterday's beach.
+        credit_daily(
+            &mut trophies.stats,
+            daily.day,
+            sim.0.scores()[seat as usize],
+        );
     }
     let mode = crate::app::teams::in_play(&trophies.settings, &online, seats.0);
     let winners = crate::app::side_panels::leading_seats(sim.0.scores(), seats.0, mode);
@@ -719,5 +733,34 @@ mod tests {
         credit_round(&mut stats, &mut RoundScratch::default(), win());
         assert_eq!((stats.online_wins, stats.series_wins), (1, 1));
         assert_eq!(stats.wins, 2);
+    }
+
+    /// A daily is counted under the day it was seeded for. A round begun
+    /// before midnight and finished after it is yesterday's beach, and
+    /// counting it under the new day started today's best on a score made
+    /// somewhere else.
+    #[test]
+    fn a_daily_counts_on_the_day_it_was_seeded_for() {
+        let mut stats = Stats::default();
+        credit_daily(&mut stats, 100, 12);
+        assert_eq!(
+            (stats.daily_day, stats.daily_best, stats.daily_days),
+            (100, 12, 1)
+        );
+        // Another round on day 100's beach, ending after midnight: still
+        // day 100, the same day's best, no second day on the habit counter.
+        credit_daily(&mut stats, 100, 30);
+        assert_eq!(
+            (stats.daily_day, stats.daily_best, stats.daily_days),
+            (100, 30, 1)
+        );
+        // Day 101's own beach starts its best over and counts a new day,
+        // and the all-time record keeps the higher mark.
+        credit_daily(&mut stats, 101, 5);
+        assert_eq!(
+            (stats.daily_day, stats.daily_best, stats.daily_days),
+            (101, 5, 2)
+        );
+        assert_eq!(stats.daily_record, 30);
     }
 }

@@ -120,10 +120,16 @@ pub(crate) fn tide_pool_levels() -> (Vec<Level>, usize) {
 /// player's levels are renamed on the way in, in list order, with a count
 /// after the name, and the file on disk keeps the name it was saved
 /// under.
+///
+/// Every shipped name is reserved, not only the ones on this list. The
+/// translations and the hints are one table for both campaigns, so a
+/// puzzle of the player's called "First Flood" would be shown under Beach
+/// Day's French name and offered its hint, on a list Beach Day is not on.
 pub(crate) fn disambiguate(levels: &mut [Level], builtins: usize) {
     let mut taken: std::collections::HashSet<String> = levels[..builtins.min(levels.len())]
         .iter()
         .map(|level| level.name.clone())
+        .chain(shipped_names())
         .collect();
     for level in levels.iter_mut().skip(builtins) {
         if taken.insert(level.name.clone()) {
@@ -138,6 +144,16 @@ pub(crate) fn disambiguate(levels: &mut [Level], builtins: usize) {
             .unwrap_or_else(|| level.name.clone());
         level.name = renamed;
     }
+}
+
+/// Every name a shipped level answers to, on either list: the Tide Pool
+/// campaign and Beach Day ([`crate::sim::challenge_levels`], which is the
+/// whole of Beach Day's list, since the player's levels never join it).
+fn shipped_names() -> impl Iterator<Item = String> {
+    crate::sim::campaign_levels()
+        .into_iter()
+        .chain(crate::sim::challenge_levels())
+        .map(|level| level.name)
 }
 
 /// The player's levels that are stages: the ones they built as puzzles, and
@@ -293,6 +309,28 @@ mod tests {
                 "Mine (3)",
                 "Mine (2) (2)",
             ]
+        );
+    }
+
+    /// A Tide Pool level of the player's named like a Beach Day stage is
+    /// told apart too, though Beach Day is not on its list: the name is
+    /// what the translations and the hints are looked up by, and both
+    /// campaigns share that table.
+    #[test]
+    fn a_player_level_named_like_a_beach_day_stage_is_told_apart() {
+        let beach_day = crate::sim::challenge_levels()[0].name.clone();
+        let tide_pool = crate::sim::campaign_levels()[0].name.clone();
+        let mut levels = vec![
+            level(&tide_pool, "puzzle", true),
+            level(&beach_day, "puzzle", true),
+        ];
+        disambiguate(&mut levels, 1);
+        assert_eq!(levels[0].name, tide_pool, "the shipped one is left alone");
+        assert_eq!(levels[1].name, format!("{beach_day} (2)"));
+        assert_eq!(
+            crate::app::i18n::Lang::Fr.level_name(&levels[1].name),
+            levels[1].name,
+            "and is shown under its own name, untranslated"
         );
     }
 

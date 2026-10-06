@@ -11,16 +11,18 @@ use bevy::prelude::*;
 #[derive(Resource, Default)]
 pub struct Daily {
     pub active: bool,
+    /// The day the round on the sand was seeded for, set when its board is
+    /// built. The trophies count the round under this day rather than
+    /// asking the clock again when it ends: a round begun at a minute to
+    /// midnight was played on yesterday's beach, and counting it under
+    /// today's put yesterday's score on a beach nobody had played yet.
+    pub day: u32,
 }
 
 impl Daily {
     /// Days since the epoch, UTC: the worldwide shared seed basis.
     pub fn today() -> u32 {
         (crate::app::clock::now_secs() / 86_400) as u32
-    }
-
-    pub fn seed() -> u64 {
-        Self::seed_for(Self::today())
     }
 
     /// The arena seed for a given day number; pure so it can be tested.
@@ -37,7 +39,5 @@ mod tests {
     fn daily_seed_is_stable_within_a_day_and_fresh_across_days() {
         assert_eq!(Daily::seed_for(20_662), Daily::seed_for(20_662));
         assert_ne!(Daily::seed_for(20_662), Daily::seed_for(20_663));
-        // The live seed is derived from today's number, nothing else.
-        assert_eq!(Daily::seed(), Daily::seed_for(Daily::today()));
     }
 }

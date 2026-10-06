@@ -39,8 +39,33 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 /// A release version. Semver underneath, so a pre-release sorts below
 /// the release it precedes: a `0.2.0-rc.1` build is told when `0.2.0` is
 /// out, and an `rc` tagged latest is offered as the `rc` it is.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+///
+/// Compared by semver *precedence*, which ignores build metadata, and not
+/// by `semver::Version`'s own order, which sorts it: under that, a release
+/// tagged `v1.2.3+linux` was newer than the `1.2.3` this build is, and the
+/// page offered the player the version they already had.
+#[derive(Clone, Debug)]
 pub struct Version(semver::Version);
+
+impl PartialEq for Version {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Version {}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Version {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp_precedence(&other.0)
+    }
+}
 
 impl Version {
     /// `1.2.3`, `v1.2.3`, `v1.2.3-rc.1`. Anything else is not a version.
@@ -229,6 +254,9 @@ mod tests {
         assert!(v("v1.2.3-rc.1") < v("v1.2.3"));
         assert!(v("v1.2.3-rc.1") > v("v1.2.2"));
         assert!(v("v1.2.3+build.7").is_some());
+        // Build metadata has no precedence: the same version either way.
+        assert_eq!(v("v1.2.3+build.7"), v("v1.2.3"));
+        assert!(v("v1.2.3+linux") <= v("1.2.3"), "not newer than itself");
         assert_eq!(v("v1.2"), None);
         assert_eq!(v("v1.2.3.4"), None);
         assert_eq!(v("latest"), None);

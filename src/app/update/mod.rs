@@ -372,6 +372,17 @@ mod tests {
         // And a candidate build hears when its release lands.
         let candidate = Version::parse("v0.5.0-rc.2").unwrap();
         assert!(UpdateCheck::worth_offering(&candidate, &release("v0.5.0")));
+        // Build metadata says how a release was built, not that it is a
+        // newer one: the same version tagged for one platform is the
+        // version this build already is.
+        let plain = Version::parse("1.2.3").unwrap();
+        assert!(!UpdateCheck::worth_offering(
+            &plain,
+            &release("v1.2.3+linux")
+        ));
+        let tagged = Version::parse("v1.2.3+linux").unwrap();
+        assert!(!UpdateCheck::worth_offering(&tagged, &release("1.2.3")));
+        assert!(UpdateCheck::worth_offering(&tagged, &release("v1.2.4")));
     }
 
     /// The keys, read the way the page reads them: W/S walk the two rows,

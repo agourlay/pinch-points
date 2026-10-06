@@ -19,7 +19,13 @@ pub fn library_dir() -> std::path::PathBuf {
 /// One kept round: the file, and what to call it on screen.
 pub struct Kept {
     pub path: std::path::PathBuf,
+    /// When it was played and who took it; for a draw, only when, since
+    /// the word for a draw is the player's language's and is added as the
+    /// row is drawn.
     pub label: String,
+    /// Nobody took it. A flag rather than a word in the label, so a player
+    /// who calls themselves "draw" is still a winner.
+    pub draw: bool,
 }
 
 /// The library screen's state: what is on the shelf, and where the cursor is.
@@ -57,19 +63,44 @@ impl Library {
     }
 }
 
-/// The file name for a round finished now, by who won it.
+/// The file name for a round finished now, by who won it, or `None` for
+/// a draw.
 ///
 /// Named from the wall clock rather than a counter: a counter needs the
 /// directory read to know what is next, and two copies of the game would
 /// disagree about it. Seconds since the epoch sort correctly as text for the
 /// next few hundred years.
-pub fn file_name(stamp: u64, winner: &str) -> String {
-    let tidy: String = winner
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .take(12)
-        .collect();
-    format!("round_{stamp:010}_{tidy}.txt")
+///
+/// A draw is the name with no winner part at all, which no winner's name
+/// can produce: even an empty name leaves its `_`. It used to be filed under
+/// the word "draw", and a player who had called themselves that was read
+/// back as nobody.
+pub fn file_name(stamp: u64, winner: Option<&str>) -> String {
+    match winner {
+        Some(winner) => {
+            let tidy: String = winner
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                .take(12)
+                .collect();
+            format!("round_{stamp:010}_{tidy}.txt")
+        }
+        None => format!("round_{stamp:010}.txt"),
+    }
+}
+
+/// Where in `dir` to file a round finished at `stamp`: [`file_name`], or,
+/// when that is taken, the same at the next free second.
+///
+/// Two rounds with one winner in one second are one file name, and the
+/// second write replaced the first: two codes pasted in quick succession,
+/// say. A second later on the label costs nothing, since the shelf shows
+/// minutes, and the order stays the order they were filed in.
+pub fn free_path(dir: &std::path::Path, stamp: u64, winner: Option<&str>) -> std::path::PathBuf {
+    (stamp..)
+        .map(|at| dir.join(file_name(at, winner)))
+        .find(|path| !path.exists())
+        .unwrap_or_else(|| dir.join(file_name(stamp, winner)))
 }
 
 /// Drop the oldest rounds until at most `cap` are kept.
@@ -119,8 +150,8 @@ pub fn shelf_in(dir: &std::path::Path) -> Vec<Kept> {
                     .is_some_and(|n| n.starts_with("round_"))
         })
         .map(|path| {
-            let label = label_of(&path);
-            Kept { path, label }
+            let (label, draw) = label_of(&path);
+            Kept { path, label, draw }
         })
         .collect();
     // Newest first: the names sort by timestamp, so this is just a reverse.
@@ -128,10 +159,12 @@ pub fn shelf_in(dir: &std::path::Path) -> Vec<Kept> {
     kept
 }
 
-/// `round_0000012345_Anna.txt` reads as "Anna, 12345". The timestamp is
-/// shown as a date only if the clock agrees it is one; a file copied from
-/// another machine is still listed, just plainly.
-fn label_of(path: &std::path::Path) -> String {
+/// `round_0000012345_Anna.txt` reads as "Anna, 12345", and
+/// `round_0000012345.txt`, with no winner part, as a draw at 12345 (see
+/// [`file_name`]); the second half of the answer says which. The timestamp
+/// is shown as a date only if the clock agrees it is one; a file copied
+/// from another machine is still listed, just plainly.
+fn label_of(path: &std::path::Path) -> (String, bool) {
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -139,12 +172,15 @@ fn label_of(path: &std::path::Path) -> String {
         .to_string();
     let mut parts = stem.splitn(3, '_');
     let (_, stamp, winner) = (parts.next(), parts.next(), parts.next());
-    let winner = winner.unwrap_or("").replace('_', " ");
-    match stamp.and_then(|s| s.parse::<u64>().ok()) {
+    match (stamp.and_then(|s| s.parse::<u64>().ok()), winner) {
         // The separator is not decoration: "15/08 09:49  Mon" reads as a
         // weekday, and Mon is a player.
-        Some(stamp) => format!("{}  -  {winner}", clock(stamp)),
-        None => stem,
+        (Some(stamp), Some(winner)) => (
+            format!("{}  -  {}", clock(stamp), winner.replace('_', " ")),
+            false,
+        ),
+        (Some(stamp), None) => (clock(stamp), true),
+        (None, _) => (stem, false),
     }
 }
 
@@ -257,11 +293,10 @@ pub fn update_library(
     let at = |row: usize| library.scroll + row;
     for (row, mut text, mut color) in &mut cells {
         let line = match library.kept.get(at(row.0)) {
-            // "draw" is filed in the file name, where it has to stay the
-            // same word on every machine; it is read out translated.
-            Some(kept) => kept
-                .label
-                .replace("  -  draw", &format!("  -  {}", tr.replay_draw)),
+            // A draw is filed as no winner at all, and said here in the
+            // player's language.
+            Some(kept) if kept.draw => format!("{}  -  {}", kept.label, tr.replay_draw),
+            Some(kept) => kept.label.clone(),
             None => String::new(),
         };
         let picked = at(row.0) == library.selected && !library.kept.is_empty();
@@ -314,7 +349,7 @@ pub fn library_input(
         library.feedback = copy_selected(&mut clipboard, tr, &library);
     }
     if caps.just_pressed(&keys, 'V') {
-        library.feedback = keep_pasted(&mut clipboard, tr);
+        library.feedback = keep_pasted(&mut clipboard, tr, &library_dir(), settings.replay_cap);
         // Whatever happened, the shelf may have grown; re-read it so the new
         // round is there to pick rather than waiting for the screen to be
         // left and come back to.
@@ -375,7 +410,7 @@ fn copy_selected(
 fn round_from(
     pasted: Option<(crate::share::Kind, Vec<u8>)>,
     tr: &crate::app::i18n::Tr,
-) -> Result<(String, String), String> {
+) -> Result<(Option<String>, String), String> {
     let text =
         crate::app::codes::payload_text(pasted, tr, crate::share::Kind::Round, tr.code_round_bad)?;
     let replay = Replay::parse(&text).map_err(|e| fill(tr.code_round_bad, &[("e", &e)]))?;
@@ -383,34 +418,55 @@ fn round_from(
 }
 
 /// Who took a pasted round, for the shelf to file it under like every
-/// other round. The file carries the inputs and not the result, so the
-/// round is played through to its last tick; it carries no team mode
-/// either, so it is read as a free-for-all. Named as the recording named
-/// the seat, or by its number.
-fn winner_of(replay: &Replay, tr: &crate::app::i18n::Tr) -> String {
+/// other round, or `None` for a draw. The file carries the inputs and not
+/// the result, so the round is played through to its last tick; it carries
+/// no team mode either, so it is read as a free-for-all. Named as the
+/// recording named the seat, or by its number.
+fn winner_of(replay: &Replay, tr: &crate::app::i18n::Tr) -> Option<String> {
     let board = replay.playback();
     let leaders = crate::app::side_panels::leading_seats(
         board.scores(),
         board.castle_seats(),
         crate::app::teams::TeamMode::Solo,
     );
-    match leaders.iter().position(|&led| led) {
-        Some(seat) if !replay.names[seat].is_empty() => replay.names[seat].clone(),
-        Some(seat) => crate::app::seat_label(tr, seat as u8),
-        None => "draw".to_string(),
-    }
+    let seat = leaders.iter().position(|&led| led)?;
+    Some(if replay.names[seat].is_empty() {
+        crate::app::seat_label(tr, seat as u8)
+    } else {
+        replay.names[seat].clone()
+    })
 }
 
-/// A round off the clipboard, onto the shelf.
-fn keep_pasted(clipboard: &mut Clipboard, tr: &crate::app::i18n::Tr) -> String {
-    let (winner, text) = match round_from(crate::app::codes::paste(clipboard), tr) {
+/// A round off the clipboard, onto the shelf in `dir`.
+fn keep_pasted(
+    clipboard: &mut Clipboard,
+    tr: &crate::app::i18n::Tr,
+    dir: &std::path::Path,
+    cap: u8,
+) -> String {
+    keep(crate::app::codes::paste(clipboard), tr, dir, cap)
+}
+
+/// A pasted code onto the shelf in `dir`, which then keeps at most `cap`
+/// rounds as it does after a round is played: a shelf filled by pasting is
+/// still the shelf the setting promises. Takes the code rather than the
+/// clipboard, as [`round_from`] does, so a test can file one.
+fn keep(
+    pasted: Option<(crate::share::Kind, Vec<u8>)>,
+    tr: &crate::app::i18n::Tr,
+    dir: &std::path::Path,
+    cap: u8,
+) -> String {
+    let (winner, text) = match round_from(pasted, tr) {
         Ok(round) => round,
         Err(complaint) => return complaint,
     };
-    let stamp = crate::app::clock::now_secs();
-    let path = library_dir().join(file_name(stamp, &winner));
+    let path = free_path(dir, crate::app::clock::now_secs(), winner.as_deref());
     match crate::app::paths::write_atomic(&path, &text) {
-        Ok(()) => tr.code_round_saved.to_string(),
+        Ok(()) => {
+            prune_in(dir, cap);
+            tr.code_round_saved.to_string()
+        }
         Err(e) => fill(tr.code_round_bad, &[("e", &e.to_string())]),
     }
 }
@@ -462,6 +518,7 @@ mod tests {
                 .map(|n| Kept {
                     path: format!("{n}.txt").into(),
                     label: n.to_string(),
+                    draw: false,
                 })
                 .collect(),
             ..Library::default()
@@ -497,24 +554,93 @@ mod tests {
 
     #[test]
     fn round_names_sort_newest_last_and_survive_odd_winners() {
-        assert_eq!(file_name(12_345, "Anna"), "round_0000012345_Anna.txt");
+        let name = |stamp, winner| file_name(stamp, Some(winner));
+        assert_eq!(name(12_345, "Anna"), "round_0000012345_Anna.txt");
         // A name with punctuation, or none at all, still makes a file name.
-        assert_eq!(file_name(7, "Bo/../etc"), "round_0000000007_Bo____etc.txt");
-        assert_eq!(file_name(7, ""), "round_0000000007_.txt");
+        assert_eq!(name(7, "Bo/../etc"), "round_0000000007_Bo____etc.txt");
+        assert_eq!(name(7, ""), "round_0000000007_.txt");
+        // A draw has no winner part, which no name can spell.
+        assert_eq!(file_name(7, None), "round_0000000007.txt");
         // Zero-padded so plain text sorting is chronological.
-        assert!(file_name(2, "a") < file_name(10, "a"));
+        assert!(name(2, "a") < name(10, "a"));
         // And over-long winners are cut rather than making a silly path.
-        assert!(file_name(1, &"x".repeat(40)).len() < 40);
+        assert!(name(1, &"x".repeat(40)).len() < 40);
     }
 
     #[test]
     fn labels_read_as_a_time_and_a_winner() {
-        let label = label_of(std::path::Path::new("replays/round_1751328000_Anna.txt"));
+        let (label, draw) = label_of(std::path::Path::new("replays/round_1751328000_Anna.txt"));
         assert!(label.contains("Anna"), "{label}");
         assert!(label.contains('/') && label.contains(':'), "{label}");
+        assert!(!draw);
         // A file from somewhere else is listed under its own name.
         let odd = label_of(std::path::Path::new("replays/round_handmade.txt"));
-        assert_eq!(odd, "round_handmade");
+        assert_eq!(odd, ("round_handmade".to_string(), false));
+    }
+
+    /// A draw is a flag, not a word in the label. The word used to be
+    /// swapped for its translation wherever it appeared, so a winner called
+    /// "drawbridge" came out half translated, and one called "draw" was
+    /// shown as a tie.
+    #[test]
+    fn a_draw_is_told_from_a_winner_called_draw() {
+        let read = |winner| label_of(std::path::Path::new(&file_name(1_751_328_000, winner)));
+        let (tie, draw) = read(None);
+        assert!(draw, "{tie}");
+        assert!(
+            !tie.contains("draw"),
+            "the word is the shelf's to add: {tie}"
+        );
+        for name in ["draw", "drawbridge"] {
+            let (label, draw) = read(Some(name));
+            assert!(!draw, "{name} won");
+            assert!(label.ends_with(&format!("  -  {name}")), "{label}");
+        }
+    }
+
+    /// A scratch folder of its own, gone before and after.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pinch-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch folder");
+        dir
+    }
+
+    /// Two codes for rounds the same seat won, pasted within one second,
+    /// are two rounds on the shelf: they used to share a file name and the
+    /// second replaced the first. And pasting keeps the shelf to its cap,
+    /// as finishing a round does.
+    #[test]
+    fn pasted_rounds_keep_their_own_files_and_the_cap() {
+        let tr = &crate::app::i18n::EN;
+        let dir = scratch("pasted-rounds");
+        let code = || {
+            let text = banked_round().to_text();
+            crate::share::decode(&crate::share::encode(
+                crate::share::Kind::Round,
+                text.as_bytes(),
+            ))
+        };
+        assert_eq!(keep(code(), tr, &dir, 10), tr.code_round_saved);
+        assert_eq!(keep(code(), tr, &dir, 10), tr.code_round_saved);
+        assert_eq!(shelf_in(&dir).len(), 2, "two pastes, two rounds");
+        // The second-later rule itself, on a clock held still.
+        std::fs::write(dir.join(file_name(5, Some("P1"))), "x").expect("written");
+        assert_eq!(
+            free_path(&dir, 5, Some("P1")),
+            dir.join(file_name(6, Some("P1"))),
+            "a taken name is passed over for the next second"
+        );
+        assert_eq!(
+            free_path(&dir, 5, None),
+            dir.join(file_name(5, None)),
+            "and a free one is kept"
+        );
+        for _ in 0..4 {
+            keep(code(), tr, &dir, 3);
+        }
+        assert_eq!(shelf_in(&dir).len(), 3, "and the cap holds");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A stamp reads on the clock that was on the wall, which is not the
@@ -563,7 +689,10 @@ mod tests {
         let code = crate::share::encode(crate::share::Kind::Round, text.as_bytes());
         let (winner, back) = round_from(crate::share::decode(&code), tr).expect("a round");
         assert_eq!(back, text, "what went in is what comes out");
-        assert_eq!(winner, "draw", "filed under the result, not the beach");
+        assert_eq!(
+            winner, None,
+            "filed under the result (a draw), not the beach"
+        );
     }
 
     /// A pasted round is filed under whoever took it, worked out by
@@ -588,13 +717,13 @@ mod tests {
         let tr = &crate::app::i18n::EN;
         let mut replay = banked_round();
         replay.names[0] = "Anna".into();
-        assert_eq!(winner_of(&replay, tr), "Anna");
+        assert_eq!(winner_of(&replay, tr).as_deref(), Some("Anna"));
     }
 
     #[test]
     fn a_pasted_round_with_no_names_is_filed_under_the_seat() {
         let tr = &crate::app::i18n::EN;
-        assert_eq!(winner_of(&banked_round(), tr), "P1");
+        assert_eq!(winner_of(&banked_round(), tr).as_deref(), Some("P1"));
     }
 
     /// The three ways a paste is not a round, each with its own answer. One
