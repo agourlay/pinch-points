@@ -249,13 +249,18 @@ impl Doorway {
         for event in heard {
             match event {
                 Event::Registered(id) => {
-                    if let Some(info) = self.listener.bot(id)
-                        && let Some(chair) = self
-                            .chairs
-                            .iter_mut()
-                            .find(|c| Some(c.id) == info.slot && c.bot.is_none())
+                    let slot = self.listener.bot(id).and_then(|info| info.slot);
+                    match self
+                        .chairs
+                        .iter_mut()
+                        .find(|c| Some(c.id) == slot && c.bot.is_none())
                     {
-                        chair.bot = Some(id);
+                        Some(chair) => chair.bot = Some(id),
+                        // Its chair was withdrawn after it registered and
+                        // before this heard so (the table filled, a round
+                        // was dealt): told so and let go, rather than left
+                        // registered to hear nothing but pings.
+                        None => self.listener.dismiss(id, NO_SEAT),
                     }
                 }
                 // Read late: a bot that has come back since keeps its chair.
@@ -426,6 +431,11 @@ impl BotRound {
         game: u32,
     ) -> BotRound {
         let deadline = Duration::from_millis(u64::from(LIVE_DEADLINE_MS));
+        // The route first, then who is connected: a bot that comes back in
+        // between is seen connected or heard coming back, never neither.
+        let link = door
+            .listener
+            .open_game(game, seats.iter().map(|&(seat, id)| (id, seat)).collect());
         let drivers: Vec<BotDriver> = seats
             .iter()
             .map(|&(seat, id)| {
@@ -433,9 +443,6 @@ impl BotRound {
                 BotDriver::new(id, seat, name, door.listener.connected(id), deadline)
             })
             .collect();
-        let link = door
-            .listener
-            .open_game(game, seats.iter().map(|&(seat, id)| (id, seat)).collect());
         let mut cursors = [None; MAX_PLAYERS];
         for &(seat, _) in seats {
             cursors[usize::from(seat)] = Some(SeatCursor::home(board, seat));
@@ -1328,6 +1335,34 @@ mod tests {
         door.keep_a_chair_open(true);
         let fresh = door.open_string().expect("a chair is open again");
         assert_ne!(fresh, string, "the old key is not reissued");
+    }
+
+    /// A bot that registered just before its chair was withdrawn, and
+    /// before the doorway heard of it, is told it has no seat and let go,
+    /// rather than left registered to a chair that is not there.
+    #[test]
+    fn a_bot_whose_chair_went_as_it_came_in_is_told() {
+        let mut door = Doorway::open().expect("a port on this machine");
+        door.keep_a_chair_open(true);
+        let bot = register(&door.open_string().expect("open"), "Just Late", "Ana");
+        // The table fills before the registration is heard.
+        door.keep_a_chair_open(false);
+        // Its registration is heard a moment after it was answered.
+        for _ in 0..60 {
+            door.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(door.chairs.is_empty(), "no chair came back for it");
+        bot.set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        let mut said = String::new();
+        let mut reader = BufReader::new(bot);
+        while reader.read_line(&mut said).is_ok_and(|n| n > 0) {
+            if said.contains(NO_SEAT) {
+                break;
+            }
+        }
+        assert!(said.contains(NO_SEAT), "told why: {said}");
     }
 
     /// A bot that came in but was dealt no seat is told why and let go,

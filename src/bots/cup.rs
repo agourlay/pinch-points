@@ -201,6 +201,10 @@ struct Entrant {
     seat: Seat,
     owner: Option<String>,
     owner_declared: bool,
+    /// Who it counts as when one owner's bots are kept apart: a bot's
+    /// owner key, so two from one address that declared no owner are kept
+    /// apart too; `None` for the house AI.
+    apart_as: Option<String>,
 }
 
 /// What the console reads: the listener's news and the organiser's lines.
@@ -266,6 +270,7 @@ fn serve(plan: Plan) -> Result<(), String> {
             seat: Seat::Ai(level),
             owner: None,
             owner_declared: false,
+            apart_as: None,
         });
     }
     let _ = std::io::stdout().flush();
@@ -298,6 +303,7 @@ fn serve(plan: Plan) -> Result<(), String> {
         .iter()
         .filter_map(|&id| listener.bot(id))
         .map(|info| Entrant {
+            apart_as: Some(info.owner_key()),
             name: info.name,
             seat: Seat::Bot(info.id),
             owner: info.owner,
@@ -382,7 +388,7 @@ fn try_start(plan: &Plan, listener: &Listener) -> Result<Vec<BotId>, String> {
     let bots = listener.bots();
     let owners: Vec<Option<String>> = bots
         .iter()
-        .map(|b| b.owner.clone())
+        .map(|b| Some(b.owner_key()))
         .chain(plan.house.iter().map(|_| None))
         .collect();
     match drawable(plan, &owners) {
@@ -515,7 +521,7 @@ fn play_cup(plan: &Plan, listener: &Listener, entrants: &[Entrant]) -> Result<()
     let tables = plan
         .tables
         .unwrap_or_else(|| draw::tables_for(entrants.len(), seats, beaches));
-    let owners: Vec<Option<String>> = entrants.iter().map(|e| e.owner.clone()).collect();
+    let owners: Vec<Option<String>> = entrants.iter().map(|e| e.apart_as.clone()).collect();
     let fixtures = draw::draw(&owners, seats, beaches, tables, plan.seed)?;
     std::fs::create_dir_all(&plan.out).map_err(|e| format!("{}: {e}", plan.out.display()))?;
     let schedule = schedule_text(plan, entrants, &fixtures, tables);
@@ -864,12 +870,14 @@ mod tests {
                 seat: Seat::Ai(BotLevel::Easy),
                 owner: None,
                 owner_declared: false,
+                apart_as: None,
             },
             Entrant {
                 name: "hard".into(),
                 seat: Seat::Ai(BotLevel::Hard),
                 owner: None,
                 owner_declared: false,
+                apart_as: None,
             },
         ];
         play_cup(&p, &listener, &entrants).expect("plays");

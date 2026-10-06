@@ -378,7 +378,10 @@ bot with a grudge, and the route-2 listener is on the machine drawing a
 party's game.
 
 - **Bounded input.** A line longer than 64 KiB closes the connection. A
-  bot that floods is rate-limited, then dropped. A message is parsed into
+  bot that floods is rate-limited, then dropped: the messages turned away
+  are counted over a sliding window, so a steady flood adds up as surely
+  as a burst does. A connection has ten seconds for its whole
+  registration line, however slowly it arrives. A message is parsed into
   a fixed shape and nothing else, and no field ever becomes a path, a
   command or a format string.
 - **Bounded work.** `simulate` is capped per decision, and `parallel` per
@@ -543,8 +546,12 @@ rules:
  "cursor": {"fair": true, "ticks_per_tile": 3}}
 ```
 
-The bot answers `{"type": "ready", "game": 17}` before the first tick. A bot
-that does not answer within ten seconds forfeits the game.
+The bot answers `{"type": "ready", "game": 17}` before the first tick. In
+the arena and a cup, a bot that does not answer within ten seconds
+forfeits the game. At a table with people nobody forfeits: the seat idles
+until the bot is ready, the game's AI stands in once the grace period
+(five seconds) is up, and the bot takes its seat back the moment its
+`ready` arrives.
 
 ### Each tick
 
@@ -608,9 +615,12 @@ cursor, where it is the one removal that needs no walk, as it is for a
 person.
 
 The `tick` is what lets a listener tell a fresh reply from a stale one:
-the newest reply for a seat wins, and one answering an older tick than a
-reply already in hand is dropped. Without it, a late reply, two replies in
-one window, and a reply after a `wait` would all be guesses.
+the newest reply for a seat wins, and a second reply to the same tick
+replaces the first while it is still in hand. One answering an older tick
+than a reply already in hand is dropped, and so is one answering a tick
+no newer than the reply last acted on, so a reply sent twice never acts
+twice. Without it, a late reply, two replies in one window, and a reply
+after a `wait` would all be guesses.
 
 Two optional fields on any reply:
 
@@ -648,7 +658,10 @@ tick, and the bot plays on. Games that had not started yet wait for it
 until the organiser's forfeit timeout (default 60 s), then are played with
 the seat idle and scored as a forfeit: last place, whatever the idle seat
 happened to bank from crabs wandering into its castle, with the other
-seats placed among themselves.
+seats placed among themselves. A bot that has forfeited a game that way
+and not connected since is not waited for again: the games after it
+forfeit its seat at once, so a cup with an absent entrant does not stand
+still for the timeout game after game.
 
 ### Looking ahead
 
@@ -958,7 +971,10 @@ What a cup adds is the question of who gets in, and how many times.
   play as a team: feeding one castle, raiding the rest. Scoring by place
   rewards exactly that. So a cup knows every entrant's **owner**, and:
   - **One entrant per owner** by default (`--per-owner 1`). An organiser
-    can allow more, for an author entering two different bots.
+    can allow more, for an author entering two different bots. A bot that
+    declares no owner counts as its address's, so leaving the owner out is
+    no way round the cap, and the draw keeps two such bots from one
+    address apart as it would one owner's.
   - **The draw never seats two bots of one owner at the same table.** If
     the field is too small to keep them apart, the cup refuses to start
     and says why, rather than quietly scheduling a table that can collude.

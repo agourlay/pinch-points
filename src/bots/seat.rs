@@ -5,8 +5,10 @@
 //! arena's and a cup's own loop (`game`), and the real game at a party,
 //! where the lockstep session decides when a tick happens instead.
 //!
-//! - The newest reply in hand wins; one answering an older tick than a
-//!   reply already held is stale and dropped.
+//! - The newest reply in hand wins, and a second one to the same tick
+//!   replaces the first; one answering an older tick than a reply already
+//!   held, or no newer a tick than the reply last acted on, is stale and
+//!   dropped.
 //! - A late reply still counts at the next commit, and is counted as late.
 //! - A bot that asked to `wait` is not sent the ticks it skipped.
 //! - A bot still busy with a tick is not sent the next one, so a bot slower
@@ -87,6 +89,9 @@ pub struct BotDriver {
     deadline: Duration,
     /// The newest reply in hand.
     in_hand: Option<(Reply, Instant)>,
+    /// The tick the last reply acted on answered: nothing older or as old
+    /// is taken after it.
+    acted: Option<u64>,
     /// The first tick it wants to be sent after a `wait`.
     awake_at: u64,
     /// Recent ticks sent and when, for timing replies.
@@ -118,6 +123,7 @@ impl BotDriver {
             rehello: false,
             deadline,
             in_hand: None,
+            acted: None,
             awake_at: 0,
             sent: VecDeque::new(),
             answered: VecDeque::new(),
@@ -244,13 +250,17 @@ impl BotDriver {
                 self.result.late += 1;
             }
         }
-        // The newest reply in hand wins; one answering an older tick than
-        // the one already held is stale.
-        if self
+        // The newest reply wins. One answering the same tick as the reply
+        // in hand replaces it (the bot thought again); one answering an
+        // older tick than that is stale, and so is one answering a tick no
+        // newer than the reply last acted on, which would otherwise act a
+        // second time.
+        let newer_than_held = self
             .in_hand
             .as_ref()
-            .is_none_or(|(held, _)| held.tick < reply.tick)
-        {
+            .is_none_or(|(held, _)| held.tick <= reply.tick);
+        let newer_than_acted = self.acted.is_none_or(|acted| acted < reply.tick);
+        if newer_than_held && newer_than_acted {
             // Its `wait` holds from the moment it is read: a reply taken
             // between ticks asks not to be sent the very next one, which is
             // decided before anything commits.
@@ -266,6 +276,7 @@ impl BotDriver {
         let Some((reply, at)) = self.in_hand.take() else {
             return Act::None;
         };
+        self.acted = Some(reply.tick);
         self.log(&reply, at, journal);
         reply.act
     }
@@ -456,11 +467,22 @@ mod tests {
         assert!(seat.take(reply(0, place), 1, &mut journal));
         assert_eq!(seat.turn(1, now), Turn::Send);
         seat.sent(1, now);
-        // A stale answer to tick 0 after one to tick 1 is dropped.
-        assert!(seat.take(reply(1, Act::Clear), 1, &mut journal));
+        // A stale answer to tick 0 after one to tick 1 is dropped, and a
+        // second answer to tick 1 replaces the first.
+        assert!(seat.take(reply(1, Act::None), 1, &mut journal));
+        assert!(!seat.take(reply(1, Act::Clear), 1, &mut journal));
         assert!(!seat.take(reply(0, Act::None), 1, &mut journal));
-        assert_eq!(seat.order(&mut journal), Act::Clear);
+        assert_eq!(
+            seat.order(&mut journal),
+            Act::Clear,
+            "the bot thought again"
+        );
         assert_eq!(seat.order(&mut journal), Act::None, "taken once");
+        // Once tick 1's answer has been acted on, the same answer again, or
+        // an older one, does not act a second time.
+        assert!(!seat.take(reply(1, Act::Clear), 2, &mut journal));
+        assert!(!seat.take(reply(0, place), 2, &mut journal));
+        assert_eq!(seat.order(&mut journal), Act::None, "nothing acts twice");
         // An answer for a tick never sent is not believed.
         assert!(!seat.take(reply(9, place), 2, &mut journal));
         assert_eq!(seat.order(&mut journal), Act::None);

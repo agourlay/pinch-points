@@ -58,8 +58,13 @@ const PER_SECOND: f64 = 50.0;
 const PER_LINE: f64 = 6.0;
 /// The most a bot can have saved up, earned and refilled together.
 const CEILING: f64 = 2000.0;
-/// Messages dropped for flooding before the connection goes.
-const FLOOD_STRIKES: u32 = 400;
+/// Messages dropped for flooding before the connection goes, counted over
+/// a sliding window: each drop is a strike, and strikes are forgiven at
+/// `FORGIVE_PER_SECOND`. A bot that overruns once in a while is never
+/// let go, and one that keeps on overrunning is, however slowly it does:
+/// one dropping more than 40 messages a second goes within seconds.
+const FLOOD_STRIKES: f64 = 400.0;
+const FORGIVE_PER_SECOND: f64 = 40.0;
 
 /// One way in: a join key, and what it admits.
 #[derive(Clone, Debug)]
@@ -121,6 +126,25 @@ pub struct BotInfo {
     /// The seat its key was printed for, if it was printed for one.
     pub slot: Option<u32>,
     pub addr: IpAddr,
+}
+
+impl BotInfo {
+    /// Who the bot counts as for `--per-owner` and the cup's draw: see
+    /// [`owner_key`].
+    pub fn owner_key(&self) -> String {
+        owner_key(self.owner.as_deref(), self.addr)
+    }
+}
+
+/// Who a bot counts as, for one owner's cap and for keeping one owner's
+/// bots apart: its owner, whatever the case, or, when it declared none,
+/// the address it came from. An owner is display text with its control
+/// characters removed, so it never reads as an address's key.
+pub fn owner_key(owner: Option<&str>, addr: IpAddr) -> String {
+    match owner {
+        Some(owner) => owner.to_lowercase(),
+        None => format!("\u{1}{addr}"),
+    }
 }
 
 /// What the console hears about.
@@ -231,6 +255,9 @@ struct Bot {
     /// Gone, and its chair given away ([`Listener::retire`]): its token no
     /// longer brings it back, and its name is free for a bot started anew.
     retired: bool,
+    /// A game was played without it, forfeited for never coming, and it has
+    /// not connected since ([`Listener::absent`]).
+    absent: bool,
 }
 
 #[derive(Default)]
@@ -347,29 +374,54 @@ impl Listener {
         registry.routes.clear();
     }
 
-    /// Close one bot's connection: a host asked it to leave. It can come
-    /// back with its token, but a host that has given its chair away will
-    /// not route it anywhere.
+    /// Close one bot's connection: a host asked it to leave. It is let go
+    /// for good ([`Self::let_go`]): the host has given its chair away, so
+    /// its token no longer brings it back, and its name is free.
     pub fn disconnect(&self, id: BotId) {
-        let mut registry = lock(&self.shared.registry);
-        if let Some(conn) = registry.bots.get_mut(id).and_then(|bot| bot.conn.take()) {
-            let _ = conn.stream.shutdown(Shutdown::Both);
-        }
+        self.let_go(id, None);
     }
 
     /// Tell one bot why it is being let go, and close its connection once
     /// that has been written: the table filled up before it had a seat.
+    /// Let go for good, as [`Self::disconnect`] is.
     pub fn dismiss(&self, id: BotId, why: &str) {
+        self.let_go(id, Some(why));
+    }
+
+    /// Let a bot go on the host's word, telling it `why` first if there is
+    /// something to tell. It is retired, so its name is free and its token
+    /// lands nowhere, and its going is reported like any other: the games
+    /// it sits in hear it dropped, and so does whoever reads the events.
+    /// Its own reader, finding the connection no longer its, says nothing
+    /// more.
+    fn let_go(&self, id: BotId, why: Option<&str>) {
         let mut registry = lock(&self.shared.registry);
-        send(
-            &mut registry,
-            id,
-            &json!({"type": "error", "fatal": true, "message": why}),
-        );
-        // The writer drains the queue and then shuts the socket.
-        if let Some(bot) = registry.bots.get_mut(id) {
-            bot.conn = None;
+        if let Some(why) = why {
+            send(
+                &mut registry,
+                id,
+                &json!({"type": "error", "fatal": true, "message": why}),
+            );
         }
+        let Some(bot) = registry.bots.get_mut(id) else {
+            return;
+        };
+        bot.retired = true;
+        let Some(conn) = bot.conn.take() else {
+            return;
+        };
+        // With something said, the writer drains the queue and then shuts
+        // the socket; with nothing, it is shut now.
+        if why.is_none() {
+            let _ = conn.stream.shutdown(Shutdown::Both);
+        }
+        drop(conn);
+        let routes = routes_of(&registry, id);
+        drop(registry);
+        for (tx, seat) in routes {
+            let _ = tx.send(GameMsg::Dropped { seat });
+        }
+        emit(&self.shared, Event::Dropped(id));
     }
 
     /// Finish with a bot that went and whose chair was given away: its
@@ -449,6 +501,26 @@ impl Listener {
             .bots
             .get(id)
             .is_some_and(|b| b.conn.is_some())
+    }
+
+    /// Note that a game was forfeited because bot `id` never came to it.
+    pub fn mark_absent(&self, id: BotId) {
+        let mut registry = lock(&self.shared.registry);
+        if let Some(bot) = registry.bots.get_mut(id)
+            && bot.conn.is_none()
+        {
+            bot.absent = true;
+        }
+    }
+
+    /// Bot `id` has already forfeited a game for never coming, and has not
+    /// connected since: the next game need not wait out the whole forfeit
+    /// timeout for it again. Connecting clears it.
+    pub fn absent(&self, id: BotId) -> bool {
+        lock(&self.shared.registry)
+            .bots
+            .get(id)
+            .is_some_and(|b| b.absent && b.conn.is_none())
     }
 
     /// The median round trip measured by ping, if any came back.
@@ -548,13 +620,32 @@ fn refuse(mut stream: TcpStream, shared: &Shared, peer: SocketAddr, why: &str) {
 /// Read one line of at most `cap` bytes into `buf`. `Ok(false)` at the end
 /// of the stream; an error for a line over the cap, which is never read to
 /// its end.
+///
+/// With a `deadline` the whole line has to be in by then, an error
+/// (`TimedOut`) if not. A read timeout alone restarts with every byte, so
+/// a connection dribbling one byte every few seconds would hold its place
+/// among those waiting to register for as long as it liked; here each read
+/// is given only what is left of the time.
 fn read_line(
     reader: &mut BufReader<TcpStream>,
     buf: &mut Vec<u8>,
     cap: usize,
+    deadline: Option<Instant>,
 ) -> std::io::Result<bool> {
     buf.clear();
     loop {
+        if let Some(deadline) = deadline
+            && reader.buffer().is_empty()
+        {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "no whole line in time",
+                ));
+            }
+            reader.get_ref().set_read_timeout(Some(left))?;
+        }
         let available = reader.fill_buf()?;
         if available.is_empty() {
             return Ok(!buf.is_empty());
@@ -595,13 +686,14 @@ fn serve(stream: TcpStream, shared: &Arc<Shared>) {
         );
         return;
     };
-    let _ = stream.set_read_timeout(Some(REGISTER_WITHIN));
+    // Ten seconds for the whole registration line, however it trickles in.
+    let deadline = Instant::now() + REGISTER_WITHIN;
     let Ok(read_half) = stream.try_clone() else {
         return;
     };
     let mut reader = BufReader::new(read_half);
     let mut buf = Vec::new();
-    let register = match read_line(&mut reader, &mut buf, protocol::MAX_LINE) {
+    let register = match read_line(&mut reader, &mut buf, protocol::MAX_LINE, Some(deadline)) {
         Ok(true) => {
             let Incoming::Register(register) =
                 protocol::parse_incoming(&String::from_utf8_lossy(&buf))
@@ -724,13 +816,16 @@ fn register_bot(
     if let Some(token) = &register.token {
         let token = Token::from_wire(token);
         let mut registry = lock(&shared.registry);
-        let Some(id) = registry
-            .bots
-            .iter()
-            .position(|b| b.token == token && !b.retired)
-        else {
+        let Some(id) = registry.bots.iter().position(|b| b.token == token) else {
             return Err("that token is not one this listener issued".to_string());
         };
+        // Only the bot itself holds its token, so it may hear what became
+        // of it.
+        if registry.bots[id].retired {
+            return Err(
+                "this bot was let go here and its seat given away; register afresh".to_string(),
+            );
+        }
         let serial = attach(&mut registry, id, writer);
         let msg = json!({
             "type": "registered", "name": registry.bots[id].info.name,
@@ -791,21 +886,26 @@ fn register_bot(
     };
     let owner_declared = bound_owner.is_none();
     let owner = bound_owner.or(register.owner);
-    if let (Some(cap), Some(owner)) = (config.per_owner, &owner) {
+    // A bot that declares no owner is counted under its address, so leaving
+    // the owner out is no way round the cap.
+    if let Some(cap) = config.per_owner {
+        let key = owner_key(owner.as_deref(), peer.ip());
         let theirs = registry
             .bots
             .iter()
-            .filter(|b| {
-                b.info
-                    .owner
-                    .as_deref()
-                    .is_some_and(|o| o.eq_ignore_ascii_case(owner))
-            })
+            .filter(|b| !b.retired && b.info.owner_key() == key)
             .count();
         if theirs >= cap {
-            return Err(format!(
-                "{owner} already has {theirs} bot(s) entered, the most allowed"
-            ));
+            return Err(match &owner {
+                Some(owner) => {
+                    format!("{owner} already has {theirs} bot(s) entered, the most allowed")
+                }
+                None => format!(
+                    "{} already has {theirs} bot(s) entered with no owner, the most allowed; \
+                     declare an `owner`",
+                    peer.ip()
+                ),
+            });
         }
     }
     if let (Admission::Keys(invites), Some(i)) = (&mut config.admission, invite)
@@ -832,6 +932,7 @@ fn register_bot(
         pings: HashMap::new(),
         allowance: Allowance::new(),
         retired: false,
+        absent: false,
     });
     drop(config);
     let serial = attach(&mut registry, id, writer);
@@ -868,6 +969,8 @@ fn attach(registry: &mut Registry, id: BotId, stream: TcpStream) -> u64 {
         stream,
         queued,
     };
+    // Here, whatever games went by without it.
+    registry.bots[id].absent = false;
     if let Some(old) = registry.bots[id].conn.replace(conn) {
         let _ = old.stream.shutdown(Shutdown::Both);
     }
@@ -978,7 +1081,11 @@ fn seat_in(registry: &Registry, id: BotId, game: u32) -> Option<SeatRoute> {
 struct Allowance {
     level: f64,
     at: Instant,
-    strikes: u32,
+    /// Messages dropped lately, less what time has forgiven: see
+    /// [`FLOOD_STRIKES`]. Not cleared by a message that gets through, or a
+    /// steady flood, let through a message every refill, would never add
+    /// up to anything.
+    strikes: f64,
 }
 
 impl Allowance {
@@ -986,26 +1093,32 @@ impl Allowance {
         Allowance {
             level: BURST,
             at: Instant::now(),
-            strikes: 0,
+            strikes: 0.0,
         }
     }
 
     /// Spend one message's worth, if there is one.
     fn take(&mut self) -> bool {
         let now = Instant::now();
+        let elapsed = now.duration_since(self.at).as_secs_f64();
         // The clock refills up to the burst; what was earned by being sent
         // lines may stand above it, up to the ceiling.
-        let refilled = self.level + now.duration_since(self.at).as_secs_f64() * PER_SECOND;
+        let refilled = self.level + elapsed * PER_SECOND;
         self.level = refilled.min(self.level.max(BURST));
+        self.strikes = (self.strikes - elapsed * FORGIVE_PER_SECOND).max(0.0);
         self.at = now;
         if self.level >= 1.0 {
             self.level -= 1.0;
-            self.strikes = 0;
             true
         } else {
-            self.strikes += 1;
+            self.strikes += 1.0;
             false
         }
+    }
+
+    /// Dropped so much lately that it is flooding.
+    fn flooding(&self) -> bool {
+        self.strikes > FLOOD_STRIKES
     }
 
     /// A line went out to the bot: it may answer it.
@@ -1041,7 +1154,7 @@ fn hang_up(reader: &mut BufReader<TcpStream>) {
 fn read_loop(reader: &mut BufReader<TcpStream>, shared: &Arc<Shared>, id: BotId, serial: u64) {
     let mut buf = Vec::new();
     loop {
-        match read_line(reader, &mut buf, protocol::MAX_LINE) {
+        match read_line(reader, &mut buf, protocol::MAX_LINE, None) {
             Ok(true) => {}
             Ok(false) => return,
             Err(e) => {
@@ -1068,7 +1181,7 @@ fn read_loop(reader: &mut BufReader<TcpStream>, shared: &Arc<Shared>, id: BotId,
             }
             let allowance = &mut registry.bots[id].allowance;
             if !allowance.take() {
-                if allowance.strikes > FLOOD_STRIKES {
+                if allowance.flooding() {
                     send(
                         &mut registry,
                         id,
@@ -1209,4 +1322,53 @@ fn disconnect(shared: &Arc<Shared>, id: BotId, serial: u64) {
         let _ = tx.send(GameMsg::Dropped { seat });
     }
     emit(shared, Event::Dropped(id));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A registration line dribbled in a byte at a time is held to one
+    /// deadline for the whole line: each byte does not buy it more time.
+    #[test]
+    fn a_line_dribbled_in_is_held_to_one_deadline() {
+        let socket = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).expect("bind");
+        let mut dribbler = TcpStream::connect(socket.local_addr().expect("addr")).expect("connect");
+        let (served, _) = socket.accept().expect("accept");
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    if dribbler.write_all(b"x").is_err() {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            })
+        };
+        let mut reader = BufReader::new(served);
+        let mut buf = Vec::new();
+        let started = Instant::now();
+        let read = read_line(
+            &mut reader,
+            &mut buf,
+            protocol::MAX_LINE,
+            Some(started + Duration::from_millis(300)),
+        );
+        let took = started.elapsed();
+        stop.store(true, Ordering::SeqCst);
+        let _ = writer.join();
+        // Out of time between reads, or in the middle of the last one,
+        // which a socket reports as it would a non-blocking read.
+        assert!(
+            read.is_err_and(|e| matches!(
+                e.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            )),
+            "no line, and no error"
+        );
+        assert!(!buf.is_empty(), "the bytes did arrive");
+        assert!(took < Duration::from_secs(2), "held for {took:?}");
+    }
 }

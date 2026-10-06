@@ -91,7 +91,7 @@ The first line a bot sends, on every connection:
 | `protocol` | required | `1`. A listener refuses a version it does not speak, and says which it does. |
 | `name` | required | How the bot appears on screen and in standings. At most 32 characters. Unique on the listener: a taken name is refused. |
 | `version` | optional | Shown beside the name, so you can tell this build from last week's. |
-| `owner` | optional | The person behind the bot. A listener that already knows the owner (a per-author cup invite, the author's own game) ignores this. |
+| `owner` | optional | The person behind the bot. A listener that already knows the owner (a per-author cup invite, the author's own game) ignores this. A listener that caps bots per owner (a cup) counts a bot that declares none as its address's: two such bots from one machine count as one owner's. |
 | `parallel` | optional | How many games the bot will play at once over this connection. Default 1, capped by the listener (8 by default). |
 | `key` | when asked | The key from the connection string. A listener that needs one refuses a registration without it, or with the wrong one. |
 
@@ -191,7 +191,11 @@ Answer `hello` before the first tick:
 {"type": "ready", "game": 17}
 ```
 
-A bot that has not answered within ten seconds forfeits the game.
+In the arena and a cup, a bot that has not answered within ten seconds
+forfeits the game. At a table with people (see *Playing with people*)
+nobody forfeits: your seat idles until you are ready, the game's AI
+stands in for it after five seconds, and your `ready` takes the seat
+back whenever it comes.
 
 ### `tick`
 
@@ -269,8 +273,11 @@ Two optional fields on any reply:
   reasoning goes here. Notes are cut at 4 KiB, never refused.
 
 A reply that is not valid JSON, or names an action that does not exist,
-counts as `none` and is logged. The newest reply for a seat wins: one
-answering an older tick than a reply already in hand is dropped.
+counts as `none` and is logged. The newest reply for a seat wins: a
+second reply to the same tick replaces the first if the first has not
+been acted on yet. A reply answering an older tick than one already in
+hand is dropped, and so is one answering a tick no newer than the reply
+last acted on: the same reply sent twice never acts twice.
 
 **Refusal reasons** (`you.last.reason`): `off_board`, `rock`, `castle`,
 `spawner`, `turnstile`, `kelp`, `pool` (only sand takes a post),
@@ -393,7 +400,12 @@ takeoffs are a guess too.
 A lookahead counts against your own deadline like any other thinking, and
 is capped per decision: 600 simulated ticks per tick sent in a
 fast-forward game, 60 in a live one, across all your requests for that
-tick. Past the cap the answer is an `error`.
+tick. A request for more than is left runs as far as what is left and no
+further, and its answer's `ticks` says how far that was (a round ending
+sooner stops it too): read `ticks`, never assume you got what you asked
+for. Once nothing is left, the answer is an `error`. A request is cut
+rather than refused because you cannot see what is left, and a short
+lookahead is worth more to you than none.
 
 ## Replays
 
@@ -413,7 +425,9 @@ while a game is still running, and you get that game's `hello` again,
 marked `"resumed": true`, then the next tick, and play on. A game that
 started while you were away waits for you up to the organiser's forfeit
 timeout (60 s by default); after that it is played with your seat idle and
-scored as a forfeit: last place.
+scored as a forfeit: last place. Once one game has been forfeited that
+way, the games that start after it while you are still away forfeit your
+seat at once rather than waiting again; reconnecting puts an end to it.
 
 ## Limits
 
@@ -421,13 +435,17 @@ Every listener treats every byte it receives as hostile.
 
 - A line longer than 64 KiB closes the connection.
 - A bot that floods (more than about 200 messages a second, after a
-  burst) has messages dropped, and is then disconnected. Ticks you are sent
-  earn you room to answer; errors, replays and lookahead answers do not.
+  burst) has messages dropped, and is then disconnected: the dropped
+  messages are counted over a sliding window, so a steady overrun adds up
+  as surely as a burst does, and one now and then is forgiven. Ticks you
+  are sent earn you room to answer; errors, replays and lookahead answers
+  do not.
 - Three wrong keys from one address and that address's keys are refused
   for a minute. A token is never refused for it, and a wrong token is no
   strike: a bot coming back with its own token always gets in.
-- A connection has ten seconds to register, and only a few may be
-  waiting to register at once, from one address or in all.
+- A connection has ten seconds to register, for its whole first line
+  however slowly it arrives, and only a few may be waiting to register at
+  once, from one address or in all.
 - A `simulate` the listener cannot read is answered with an `error` naming
   the game; it is not a reply, so your move for the tick still counts.
 - Names are display text: control characters are removed, and they are cut
@@ -517,7 +535,13 @@ bots on the rest.
 | `--watch` | off | draw the match in a window as it plays, in real time, with notes in the terminal |
 
 `--open 2` with the same bot started twice, once with each string, plays
-your bot against itself, or against last week's version.
+your bot against itself, or against last week's version. Names are unique
+on a listener, so give each copy its own:
+
+```
+$ python3 bots/python/greedy.py pinch://127.0.0.1:47710/H4TN-C2LV --name Greedy
+$ python3 bots/python/greedy.py pinch://127.0.0.1:47710/X9PQ-4MRT --name Greedy-old
+```
 
 **Read the log.** Every decision each bot made: the tick, the action, its
 note, and whether it was refused (with the reason) or late. Its path is
@@ -563,7 +587,9 @@ game's AI alike. A bot whose connection drops idles for five seconds and
 then the game's AI stands in for it, until it comes back with its token.
 A bot always wears a robot beside its name on every screen at the table;
 the game sets it, never the bot. The host can ask anyone to leave (`K`
-in the lobby, then their number).
+in the lobby, then their number). A bot asked to leave, or told it has
+no seat, is let go for good: its token no longer brings it back, and its
+name is free, so started again with a fresh string it registers anew.
 
 ## Cups
 
@@ -596,7 +622,7 @@ average score. A bot that can play several games at once (`parallel` in
 | `--start-when N` | | start on its own once N bots have registered |
 | `--invite NAME` | | a string bound to that owner; also `invite NAME` at the console |
 | `--open-registration` | off | no key at all: anyone who can reach the port may enter |
-| `--per-owner N` | 1 | bots one owner may enter |
+| `--per-owner N` | 1 | bots one owner may enter; a bot that declares no owner counts as its address's |
 | `--deadline MS`, `--round`, `--map`, `--fair-cursor` | | as for the arena, printed in the header |
 | `--forfeit-after S` | 60 | how long a game waits for a bot that is not there |
 | `--seed S` | random | the first beach's seed, and the draw's |
@@ -612,7 +638,9 @@ before it is back; the forfeits are counted in the standings.
 **Owners.** A bot registered with a per-author string has the owner the
 organiser gave it, whatever it claims. With the shared string the owner
 is what the bot declares, which is trust among friends, and the
-standings mark it so.
+standings mark it so. A bot that declares none counts as its address's
+owner, for the cap and for keeping one owner's bots apart: to enter two
+bots from one machine, give each an owner (`--owner` for `greedy.py`).
 
 When the cup is over the server keeps listening, so every bot can fetch
 the replays of its games (`{"type": "replay", "id": ...}`), until the

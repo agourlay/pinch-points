@@ -610,9 +610,9 @@ fn a_flood_of_requests_answered_with_errors_is_let_go() {
     let id = registered(&events);
     let again = json!({"type": "register", "protocol": 1, "name": "Drum"}).to_string();
     // Far more than the burst, written while the answers are read. A flood
-    // is that many refusals in a row, and a reader slowed down by a busy
-    // machine earns a line back every 20 ms, which starts the count again:
-    // a long flood still trips it.
+    // is that many refusals within a sliding window, so a reader slowed
+    // down by a busy machine, let a line through every 20 ms, trips it all
+    // the same.
     let mut flood = bot.stream.try_clone().expect("a second handle");
     let writer = std::thread::spawn(move || {
         for _ in 0..20_000 {
@@ -819,4 +819,170 @@ fn a_garbled_lookahead_is_an_error_and_not_the_move() {
         ),
         "{placed:?}"
     );
+}
+
+/// Wait for the listener to say bot `id` went.
+fn dropped(events: &Receiver<Event>, id: usize) {
+    loop {
+        match events.recv_timeout(Duration::from_secs(5)) {
+            Ok(Event::Dropped(gone)) if gone == id => return,
+            Ok(_) => {}
+            Err(_) => panic!("bot {id} was never reported gone"),
+        }
+    }
+}
+
+/// A bot the host lets go, asked to leave or told it has no seat, is gone
+/// for good and said to be: its going is reported, its token lands
+/// nowhere, and its name is free for the same bot started anew.
+#[test]
+fn a_bot_let_go_by_the_host_frees_its_name() {
+    let (listener, events) = listen(Admission::Open);
+    let addr = listener.local_addr();
+    for dismissed in [false, true] {
+        let (mut bot, answer) = Client::register(addr, "Shown Out", None);
+        assert_eq!(answer["type"], "registered", "{answer}");
+        let token = answer["token"].as_str().expect("token").to_string();
+        let id = registered(&events);
+        if dismissed {
+            listener.dismiss(id, "no seat for you");
+        } else {
+            listener.disconnect(id);
+        }
+        dropped(&events, id);
+        let mut told = None;
+        while let Some(msg) = bot.next() {
+            if msg["type"] == "error" {
+                told = Some(msg);
+            }
+        }
+        if dismissed {
+            let told = told.expect("told why");
+            assert_eq!(told["message"], "no seat for you", "{told}");
+            assert_eq!(told["fatal"], true, "{told}");
+        }
+        let mut back = Client::connect(addr);
+        back.send(&json!({"type": "register", "protocol": 1, "token": token}));
+        let answer = back.next().expect("an answer");
+        assert_eq!(answer["type"], "error", "the token lands nowhere: {answer}");
+        assert_eq!(answer["fatal"], true, "{answer}");
+        // The name is free again, for the next round of the loop too.
+        let (anew, answer) = Client::register(addr, "Shown Out", None);
+        assert_eq!(answer["type"], "registered", "the name is free: {answer}");
+        let again = registered(&events);
+        drop(anew);
+        listener.disconnect(again);
+        dropped(&events, again);
+    }
+}
+
+/// A flood that lets a message through now and then, steady rather than
+/// all at once, is let go as surely as a burst: what is dropped adds up,
+/// whatever gets through between.
+#[test]
+fn a_steady_flood_is_let_go_too() {
+    let (listener, events) = listen(Admission::Open);
+    let (mut bot, _) = Client::register(listener.local_addr(), "Drip", None);
+    let id = registered(&events);
+    let again = json!({"type": "register", "protocol": 1, "name": "Drip"}).to_string();
+    let mut flood = bot.stream.try_clone().expect("a second handle");
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // About a thousand a second: far under what a burst of refusals in a
+    // row would need, and far over what the clock refills.
+    let writer = {
+        let stop = std::sync::Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let until = std::time::Instant::now() + Duration::from_secs(15);
+            while !stop.load(std::sync::atomic::Ordering::SeqCst)
+                && std::time::Instant::now() < until
+            {
+                if writeln!(flood, "{again}").is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        })
+    };
+    let mut flooding = false;
+    while let Some(msg) = bot.next() {
+        if msg["type"] == "error" && msg["fatal"] == true {
+            assert_eq!(msg["message"], "flooding", "{msg}");
+            flooding = true;
+            break;
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    drop(bot);
+    let _ = writer.join();
+    assert!(flooding, "a steady flood and never told");
+    let gone = (0..250).any(|_| {
+        std::thread::sleep(Duration::from_millis(20));
+        !listener.connected(id)
+    });
+    assert!(gone, "a steady flood and still welcome");
+}
+
+/// With bots counted per owner, one that declares no owner is counted
+/// under its address: leaving the owner out is no way round the cap.
+#[test]
+fn an_undeclared_owner_counts_as_its_address() {
+    let mut config = Config::new(Admission::Open);
+    config.per_owner = Some(1);
+    let (listener, _events) =
+        Listener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), config).expect("bind");
+    let addr = listener.local_addr();
+    let (_first, answer) = Client::register(addr, "Anon", None);
+    assert_eq!(answer["type"], "registered", "{answer}");
+    let (_second, answer) = Client::register(addr, "Anon Again", None);
+    assert_eq!(answer["type"], "error", "{answer}");
+    assert!(
+        answer["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("owner")),
+        "it says what to do: {answer}"
+    );
+    // One that says whose it is counts as that owner's.
+    let mut declared = Client::connect(addr);
+    declared.send(&json!({"type": "register", "protocol": 1, "name": "Bea's", "owner": "Bea"}));
+    let answer = declared.next().expect("an answer");
+    assert_eq!(answer["type"], "registered", "{answer}");
+}
+
+/// A bot that forfeited one game for never coming is not waited for
+/// again: the next game forfeits its seat at once, rather than a cup
+/// standing still for the whole timeout game after game. Coming back
+/// puts an end to it.
+#[test]
+fn a_bot_that_never_came_is_not_waited_for_twice() {
+    let (listener, events) = listen(Admission::Open);
+    let addr = listener.local_addr();
+    let (bot, answer) = Client::register(addr, "Truant", None);
+    let token = answer["token"].as_str().expect("token").to_string();
+    let id = registered(&events);
+    drop(bot);
+    while listener.connected(id) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let wait = Duration::from_secs(1);
+    let game = |listener: &Listener| {
+        let mut spec = spec(
+            little_beach(30),
+            vec![Seat::Bot(id), Seat::Ai(BotLevel::Easy)],
+            50,
+        );
+        spec.forfeit_after = wait;
+        let started = std::time::Instant::now();
+        let (result, _) = play(listener, spec);
+        assert!(result.seats[0].forfeit);
+        started.elapsed()
+    };
+    let first = game(&listener);
+    assert!(first >= wait, "the first game waits for it ({first:?})");
+    assert!(listener.absent(id));
+    let second = game(&listener);
+    assert!(second < wait / 2, "the second does not ({second:?})");
+    let mut back = Client::connect(addr);
+    back.send(&json!({"type": "register", "protocol": 1, "token": token}));
+    assert_eq!(back.next().expect("an answer")["type"], "registered");
+    assert!(!listener.absent(id), "back, and waited for again");
 }

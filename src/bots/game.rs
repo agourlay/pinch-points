@@ -171,8 +171,14 @@ impl Match<'_, '_> {
                 if bot.ready || bot.forfeit {
                     continue;
                 }
+                // A bot that has already forfeited a game for never coming,
+                // and has not connected since, is not waited for again: a
+                // cup with it in every game would otherwise stand still for
+                // the whole timeout, game after game.
                 let limit = if bot.connected {
                     self.spec.ready_within
+                } else if self.listener.absent(bot.id) {
+                    Duration::ZERO
                 } else {
                     self.spec.forfeit_after
                 };
@@ -184,6 +190,7 @@ impl Match<'_, '_> {
                 let why = if bot.connected {
                     "never said ready"
                 } else {
+                    self.listener.mark_absent(bot.id);
                     "never came"
                 };
                 let game = self.spec.game;
@@ -209,7 +216,11 @@ impl Match<'_, '_> {
                 && let Some(Some(bot)) = self.bots.get_mut(usize::from(seat))
                 && !bot.forfeit
             {
-                bot.connected = true;
+                // Already seen connected: it came back as the route opened,
+                // and the greeting above went to it.
+                if std::mem::replace(&mut bot.connected, true) {
+                    continue;
+                }
                 bot.waiting_since = Instant::now();
                 let id = bot.id;
                 self.listener.send(id, &self.hello(seat, false));
@@ -514,6 +525,19 @@ pub fn play(listener: &Listener, spec: GameSpec, sinks: &mut Sinks) -> GameResul
         let _ = feed.send(Feed::Start(Box::new(replay.clone())));
     }
     let deadline = Duration::from_millis(u64::from(spec.clock.deadline_ms));
+    // The route is opened before anybody is asked whether it is connected:
+    // a bot that comes back in between is then either seen connected or
+    // heard coming back over the route, never missed by both.
+    let routes = spec
+        .seats
+        .iter()
+        .enumerate()
+        .filter_map(|(seat, s)| match s {
+            Seat::Bot(id) => Some((*id, seat as PlayerId)),
+            Seat::Ai(_) => None,
+        })
+        .collect();
+    let link = listener.open_game(spec.game, routes);
     let bots: Vec<Option<BotDriver>> = spec
         .seats
         .iter()
@@ -529,8 +553,6 @@ pub fn play(listener: &Listener, spec: GameSpec, sinks: &mut Sinks) -> GameResul
             Seat::Ai(_) => None,
         })
         .collect();
-    let routes = bots.iter().flatten().map(|b| (b.id, b.seat)).collect();
-    let link = listener.open_game(spec.game, routes);
     let cursors = (0..n)
         .map(|s| SeatCursor::home(&spec.board, s as PlayerId))
         .collect();

@@ -8,8 +8,9 @@ it tries a handful of signposts: for the crabs worth the most that are not
 already walking home, the first few tiles on their way where a post could
 turn them. It walks every crab's path with and without each candidate, and
 plants the one that sends the most value home (and the least to a rival, or
-a gull to its own castle). Then it rests a few ticks, so its three posts
-live long enough to do their work.
+a gull to its own castle). Then it rests a few ticks, so its few posts
+live long enough to do their work. How many it may have standing, and what
+happens to a placement past that, come from the rules in `hello`.
 
 It is meant to be read and changed. The protocol is docs/bot-protocol.md.
 """
@@ -55,6 +56,11 @@ class Beach:
         self.tiles = board["tiles"]
         self.hw, self.vw = board["walls"]["h"], board["walls"]["v"]
         self.seat = hello["seat"]
+        rules = hello["rules"]
+        # Posts standing at once, and whether one more evicts the oldest
+        # ("evict") or is refused ("reject").
+        self.cap = rules["signpost_cap"]
+        self.evicts = rules["cap_policy"] == "evict"
         self.home = None
         self.dist = {}
 
@@ -226,7 +232,9 @@ def decide(beach, tick):
         trial = dict(posts)
         trial[(x, y)] = d
         evicted = None
-        if (x, y) not in posts and len(ours) >= 3:
+        if (x, y) not in posts and len(ours) >= beach.cap:
+            if not beach.evicts:
+                continue  # a new post past the cap would be refused
             evicted = (ours[0]["x"], ours[0]["y"])
             trial.pop(evicted, None)
         gain = 0.0
