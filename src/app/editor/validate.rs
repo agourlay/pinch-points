@@ -14,6 +14,18 @@ use std::sync::{Arc, Mutex};
 /// it came back with.
 pub(super) type SolverSlot = Arc<Mutex<Option<SolveOutcome>>>;
 
+/// A check in flight: where its answer will land, and how many signposts
+/// the level it is checking grants.
+///
+/// The count is kept with the request because the answer quotes it ("NOT
+/// solvable - arrows granted: 3"), and the dial can be turned while the
+/// search runs: read off the bench when the answer came back, it named a
+/// count the search never tried.
+pub(super) struct Validation {
+    pub(super) slot: SolverSlot,
+    pub(super) posts: u8,
+}
+
 /// What the check says about a beach, which is not a thing the solver can
 /// answer: a match is not won or lost, it is only playable or not. Two
 /// castles is the floor, and crabs have to come from somewhere.
@@ -68,18 +80,20 @@ pub(super) fn orphan_warning(
 pub(super) fn start_validation(state: &mut EditorState, level: Level) {
     let slot: SolverSlot = Arc::new(Mutex::new(None));
     let thread_slot = Arc::clone(&slot);
+    let posts = level.posts;
     std::thread::spawn(move || {
         *thread_slot.lock().unwrap() = Some(solve(&level));
     });
-    state.solver = Some(slot);
+    state.solver = Some(Validation { slot, posts });
 }
 
 /// Collect a finished background validation.
 pub fn poll_solver(settings: Res<GameSettings>, mut state: ResMut<EditorState>) {
     let tr = settings.tr();
-    let Some(slot) = &state.solver else {
+    let Some(Validation { slot, posts }) = &state.solver else {
         return;
     };
+    let posts = *posts;
     let result = slot.lock().unwrap().take();
     match result {
         None => return, // still searching
@@ -95,7 +109,7 @@ pub fn poll_solver(settings: Res<GameSettings>, mut state: ResMut<EditorState>) 
             };
         }
         Some(SolveOutcome::Unsolvable) => {
-            state.feedback = fill(tr.ed_not_solvable, &[("n", &state.posts.to_string())]);
+            state.feedback = fill(tr.ed_not_solvable, &[("n", &posts.to_string())]);
         }
         // The one answer the old editor could not give. It used to search
         // without a ceiling, so a board it could not crack simply never came
@@ -123,8 +137,13 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(GameSettings::default());
         app.insert_resource(EditorState {
-            posts: 2,
-            solver: Some(Arc::new(Mutex::new(outcome))),
+            // The dial turned while the search ran: the answer is about
+            // the two the search was handed, not the five on the dial now.
+            posts: 5,
+            solver: Some(Validation {
+                slot: Arc::new(Mutex::new(outcome)),
+                posts: 2,
+            }),
             ..EditorState::default()
         });
         app.add_systems(Update, poll_solver);
@@ -238,7 +257,7 @@ mod tests {
         fn verdict(level: Level) -> SolveOutcome {
             let mut state = EditorState::default();
             start_validation(&mut state, level);
-            let slot = state.solver.expect("a validation is running");
+            let slot = state.solver.expect("a validation is running").slot;
             // The solver is on its own thread; wait for it rather than
             // sleeping a fixed guess.
             loop {

@@ -489,6 +489,7 @@ pub static FR: Tr = Tr {
     ed_save_failed: "échec de la sauvegarde : {e}",
     ed_saved_over: "a remplacé le niveau qui portait déjà ce nom",
     ed_resize_confirm: "F5 encore pour une plage {w}x{h} vierge - celle-ci part",
+    ed_paste_confirm: "F4 encore pour charger le niveau collé - celui-ci part",
     code_kind_beach: "une partie en cours",
     code_kind_level: "un niveau",
     code_kind_round: "une manche",

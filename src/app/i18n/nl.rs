@@ -489,6 +489,7 @@ pub static NL: Tr = Tr {
     ed_save_failed: "bewaren mislukt: {e}",
     ed_saved_over: "verving het level dat al zo heette",
     ed_resize_confirm: "F5 nogmaals voor een leeg {w}x{h} strand - dit gaat weg",
+    ed_paste_confirm: "F4 nogmaals om het geplakte level te laden - dit gaat weg",
     code_kind_beach: "een lopende ronde",
     code_kind_level: "een level",
     code_kind_round: "een ronde",

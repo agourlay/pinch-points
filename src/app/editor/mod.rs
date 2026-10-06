@@ -12,7 +12,7 @@ pub use palette::{EditorUi, spawn_editor_ui, update_editor_palette};
 pub use validate::poll_solver;
 
 use brush::paint;
-use validate::{SolverSlot, arena_report, orphan_warning, start_validation};
+use validate::{Validation, arena_report, orphan_warning, start_validation};
 
 use crate::app::cursor::Cursor;
 use crate::app::i18n::fill;
@@ -37,7 +37,39 @@ const EDITOR_BOARD: (u8, u8) = (12, 9);
 /// on, so a level built here fits any of the arenas the game already
 /// draws.
 const EDITOR_SIZES: [(u8, u8); 4] = [(9, 7), (12, 9), (16, 11), (20, 13)];
+/// The flock dial's stops, K stepping through them in order.
 const GULL_PERIODS: [u32; 4] = [0, 480, 240, 120];
+
+/// Where the flock dial goes from `period`. Read off the board each press
+/// rather than kept beside it: a board swapped in by F5 or a paste brings
+/// its own period, and a remembered stop stepped from wherever the last
+/// board was. A period off the dial, as a pasted level may carry, steps
+/// to the first stop after off.
+fn next_gull_period(period: u32) -> u32 {
+    let at = GULL_PERIODS.iter().position(|&p| p == period).unwrap_or(0);
+    GULL_PERIODS[(at + 1) % GULL_PERIODS.len()]
+}
+
+/// A key that throws the level on the board away, pressed once and waiting
+/// to be pressed again. One at a time: pressing anything else, the other
+/// one included, takes the offer back.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Offer {
+    /// F5: a fresh beach of the next size.
+    Resize,
+    /// F4: the level on the clipboard in place of this one.
+    Paste,
+}
+
+impl Offer {
+    fn key(self) -> KeyCode {
+        match self {
+            Offer::Resize => KeyCode::F5,
+            Offer::Paste => KeyCode::F4,
+        }
+    }
+}
+
 /// Where the editor used to put its one and only level. Still read, so a
 /// level saved by an older build is still there; nothing writes it now.
 pub fn legacy_save_path() -> std::path::PathBuf {
@@ -49,12 +81,6 @@ pub fn custom_dir() -> std::path::PathBuf {
     crate::app::paths::data_dir().join("levels/custom")
 }
 
-/// Where a level called `name` is filed. One file per name, so saving is
-/// keeping rather than replacing.
-///
-/// The name also has to survive being a file name, and every level is
-/// identified by its name (that is what progress is keyed on), so two
-/// levels sharing one would share their gold star.
 /// Whether anything has been built on this board yet.
 ///
 /// Asked by comparing the level here against the one a fresh board of the
@@ -88,6 +114,12 @@ fn write_level(path: &std::path::Path, text: &str) -> std::io::Result<bool> {
     Ok(is_new)
 }
 
+/// Where a level called `name` is filed. One file per name, so saving is
+/// keeping rather than replacing.
+///
+/// The name also has to survive being a file name, and every level is
+/// identified by its name (that is what progress is keyed on), so two
+/// levels sharing one would share their gold star.
 pub fn save_path(name: &str) -> std::path::PathBuf {
     custom_dir().join(format!(
         "{}.txt",
@@ -111,9 +143,8 @@ pub struct EditorState {
     /// What the brush is loaded with. Painting is now a thing you choose
     /// and then do, rather than nine separate verbs.
     pub brush: Brush,
-    pub gull_period_idx: usize,
     pub feedback: String,
-    pub(super) solver: Option<SolverSlot>,
+    solver: Option<Validation>,
     /// Names this session has already saved under.
     ///
     /// The save path is the name, so F2 writes over whatever is there, and
@@ -122,8 +153,8 @@ pub struct EditorState {
     /// work is an overwrite too, and the common one, so the notice is kept
     /// for a name this session did not put there.
     mine: std::collections::HashSet<String>,
-    /// Whether F5 has been offered once and is waiting to be taken up.
-    resize_armed: bool,
+    /// A board-replacing key pressed once and waiting to be taken up.
+    offer: Option<Offer>,
     /// Statics need a rebuild after a tile/wall edit.
     dirty: bool,
 }
@@ -304,10 +335,12 @@ pub fn editor_input(
     // keys, the prompt named keys a non-US keyboard does not have; F5 is F5
     // everywhere, and one key that wraps is enough for four sizes.
     //
-    // Anything else said this frame takes the resize offer back with it,
-    // the way stepping off the settings row takes back the reset.
-    if state.resize_armed && keys.get_just_pressed().any(|&k| k != KeyCode::F5) {
-        state.resize_armed = false;
+    // Anything else said this frame takes an offer back with it, F5's or
+    // F4's, the way stepping off the settings row takes back the reset.
+    if let Some(offer) = state.offer
+        && keys.get_just_pressed().any(|&k| k != offer.key())
+    {
+        state.offer = None;
     }
     // Resizing starts a fresh beach: there is no honest way to keep a
     // 20-wide layout when it becomes 9 wide.
@@ -322,15 +355,15 @@ pub fn editor_input(
         let at = EDITOR_SIZES.iter().position(|&s| s == now).unwrap_or(1);
         let (w, h) = EDITOR_SIZES[(at + 1) % EDITOR_SIZES.len()];
         let tr = settings.tr();
-        if !state.resize_armed && has_work(&state, board) {
-            state.resize_armed = true;
+        if state.offer != Some(Offer::Resize) && has_work(&state, board) {
+            state.offer = Some(Offer::Resize);
             state.feedback = fill(
                 tr.ed_resize_confirm,
                 &[("w", &w.to_string()), ("h", &h.to_string())],
             );
             return;
         }
-        state.resize_armed = false;
+        state.offer = None;
         replace_board(
             Board::new(w, h, 0xED17),
             &mut sim,
@@ -356,9 +389,15 @@ pub fn editor_input(
     let (x, y) = (cursor.x, cursor.y);
     let board = &mut sim.0;
 
-    // Walls on the cursor tile's edges.
+    // Walls on the cursor tile's edges. The rim of an open-ocean beach is
+    // the seam creatures cross and takes no wall (see `Board::set_wall`),
+    // which is said rather than the key quietly doing nothing.
     for (key, dir) in ARROWS {
         if keys.just_pressed(key) {
+            if board.on_open_rim(x, y, dir) {
+                state.feedback = settings.tr().ed_wrap_on.to_string();
+                continue;
+            }
             let present = board.wall_at(x, y, dir);
             board.set_wall(x, y, dir, !present);
             state.dirty = true;
@@ -406,6 +445,35 @@ fn level_from(
     let text =
         crate::app::codes::payload_text(pasted, tr, crate::share::Kind::Level, tr.code_level_bad)?;
     Level::parse(&text).map_err(|e| fill(tr.code_level_bad, &[("e", &e)]))
+}
+
+/// Whether a pasted level came from somebody else, which is what the
+/// trophy for taking a code is about: "open a level from someone else's
+/// code". Not when it is the level already on the bench, which is F3 and
+/// then F4, and not when it is one of the player's own saved levels coming
+/// back to them. Compared as the text a file would hold, name and all, so
+/// a friend's edit of your level, or your level under their name, is
+/// theirs.
+fn is_from_elsewhere(pasted: &Level, bench: &Level, shelf: &[Level]) -> bool {
+    let text = pasted.to_text();
+    text != bench.to_text() && shelf.iter().all(|own| own.to_text() != text)
+}
+
+/// Take on what a pasted level says about itself: its signpost grant, its
+/// kind and its name.
+///
+/// The kind, because opening somebody's beach and saving it back as a
+/// stage is not what either of you meant. The name, because the one on the
+/// bench belongs to the level the paste replaced, and F2 filed the pasted
+/// board over the author's own file under it, without a word when this
+/// session had saved it. And that name is taken back out of the ones this
+/// session has saved under, so saving over a file already called that
+/// says so.
+fn take_level(state: &mut EditorState, level: &Level) {
+    state.posts = level.posts;
+    state.kind = level.kind;
+    state.name.clone_from(&level.name);
+    state.mine.remove(&level.name);
 }
 
 /// The level as it stands on the sand, under the name and the kind the
@@ -487,15 +555,22 @@ pub fn editor_commands(
             shared.write(crate::app::CodeShared);
         }
     }
+    // A paste throws the board away as surely as F5 does, so once there is
+    // a level here it asks twice the same way.
     if keys.just_pressed(KeyCode::F4) {
         match level_from(crate::app::codes::paste(&mut clipboard), tr) {
+            Ok(_) if state.offer != Some(Offer::Paste) && has_work(&state, &sim.0) => {
+                state.offer = Some(Offer::Paste);
+                state.feedback = tr.ed_paste_confirm.into();
+            }
             Ok(level) => {
-                taken.write(crate::app::CodeTaken);
-                state.posts = level.posts;
-                // A pasted level brings its own kind: opening somebody's
-                // beach and saving it back as a stage is not what either of
-                // you meant.
-                state.kind = level.kind;
+                state.offer = None;
+                let bench = level_here(&state, &sim.0, &state.name);
+                let shelf = crate::app::campaign::load_custom_levels();
+                if is_from_elsewhere(&level, &bench, &shelf) {
+                    taken.write(crate::app::CodeTaken);
+                }
+                take_level(&mut state, &level);
                 // A pasted level is any size, so it is a board swap in
                 // full, sprites and cursor included.
                 replace_board(
@@ -511,13 +586,19 @@ pub fn editor_commands(
                 // dropped straight onto the sand. Checked on the way in,
                 // which for a beach is a count of its castles.
                 if level.kind == LevelKind::Arena {
+                    // And a check still running on the board that went
+                    // would answer for it over this one.
+                    state.solver = None;
                     state.feedback = arena_report(&sim.0, tr);
                 } else {
                     start_validation(&mut state, level);
                     state.feedback = tr.code_level_checking.into();
                 }
             }
-            Err(complaint) => state.feedback = complaint,
+            Err(complaint) => {
+                state.offer = None;
+                state.feedback = complaint;
+            }
         }
     }
     let board = &mut sim.0;
@@ -544,8 +625,7 @@ pub fn editor_commands(
         };
     }
     if keys.just_pressed(KeyCode::KeyK) {
-        state.gull_period_idx = (state.gull_period_idx + 1) % GULL_PERIODS.len();
-        let period = GULL_PERIODS[state.gull_period_idx];
+        let period = next_gull_period(board.gull_period());
         board.set_gull_period(period);
         state.feedback = if period == 0 {
             tr.ed_gulls_off.into()
@@ -601,14 +681,17 @@ pub fn editor_commands(
         };
     }
     if crate::app::menu_ui::enter(&keys) {
-        let snapshot = board.clone();
-        // Test it under the rule it will be played under: the granted
-        // inventory for a stage, the versus rule the board already holds
-        // for a beach.
-        if state.kind == LevelKind::Puzzle {
-            board.set_signpost_rule(state.posts, crate::sim::CapPolicy::Reject);
-        }
+        // The board being edited is put aside whole, to come back on Esc,
+        // and the playtest runs on the level the file will hold: the same
+        // board saving, sharing and the solver are handed. That is the
+        // rule it will be played under (a stage's granted inventory and no
+        // raids, a beach's own versus rule) and the gulls as the file's
+        // seed rolls them, which is not how they stand on a board that
+        // placed and erased a few.
+        let played = level_here(&state, board, &state.name).board();
+        let snapshot = std::mem::replace(board, played);
         state.mode = Mode::Testing(Box::new(snapshot));
+        state.dirty = true;
         state.feedback = tr.ed_playtest_prompt.into();
     }
     if keys.just_pressed(KeyCode::Escape) {
@@ -859,19 +942,25 @@ mod tests {
         let built = size(&mut app);
         tap(&mut app, KeyCode::F5);
         assert_eq!(size(&mut app), built, "the level is still there");
-        assert!(app.world().resource::<EditorState>().resize_armed);
+        assert_eq!(
+            app.world().resource::<EditorState>().offer,
+            Some(Offer::Resize)
+        );
         tap(&mut app, KeyCode::F5);
         assert_ne!(size(&mut app), built, "and the second press takes it");
-        assert!(!app.world().resource::<EditorState>().resize_armed);
+        assert_eq!(app.world().resource::<EditorState>().offer, None);
 
         // An offer not taken up goes away when anything else is pressed.
         app.world_mut().resource_mut::<Sim>().0.set_wrap(true);
         let built = size(&mut app);
         tap(&mut app, KeyCode::F5);
-        assert!(app.world().resource::<EditorState>().resize_armed);
+        assert_eq!(
+            app.world().resource::<EditorState>().offer,
+            Some(Offer::Resize)
+        );
         tap(&mut app, KeyCode::KeyO);
         assert!(
-            !app.world().resource::<EditorState>().resize_armed,
+            app.world().resource::<EditorState>().offer.is_none(),
             "another key takes the offer back"
         );
         tap(&mut app, KeyCode::F5);
@@ -911,6 +1000,123 @@ mod tests {
         tap(&mut app, KeyCode::F6); // and back
         tap(&mut app, KeyCode::Equal);
         assert_eq!(app.world().resource::<EditorState>().posts, 5, "waiting");
+    }
+
+    /// The playtest runs the level the file will hold, not the board as it
+    /// stands: a stage plays without raids, and gulls placed and erased
+    /// are rolled from the seed the file carries. Escape puts the board
+    /// being edited back exactly as it was, stray PRNG draws and all.
+    #[test]
+    fn the_playtest_plays_the_level_the_file_will_hold() {
+        let mut board = sand();
+        board.set_tile(0, 0, TileKind::Castle(0));
+        board.spawn_crab(2, 2, Direction::Right, Handedness::Left, CrabKind::Common);
+        board.spawn_gull(3, 3, Direction::Right);
+        board.remove_gulls_at(3, 3);
+        board.spawn_gull(1, 3, Direction::Right);
+        let editing = board.state_hash();
+
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.add_message::<crate::app::LevelSaved>();
+        app.add_message::<crate::app::CodeShared>();
+        app.add_message::<crate::app::CodeTaken>();
+        app.insert_resource(Sim(board.clone()));
+        app.insert_resource(EditorState {
+            posts: 3,
+            name: "Stage".into(),
+            ..EditorState::default()
+        });
+        app.init_resource::<GameSettings>();
+        app.init_resource::<Clipboard>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        // The test's own keys need a cursor to stand on, as in the editor.
+        app.world_mut()
+            .spawn((Cursor::seated(0), Transform::default()));
+        app.add_systems(
+            Update,
+            (
+                editor_commands.run_if(|state: Res<EditorState>| !state.is_testing()),
+                editor_test_input.run_if(editor_testing),
+            )
+                .chain(),
+        );
+        let tap = |app: &mut App, key: KeyCode| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(key);
+            app.update();
+        };
+
+        tap(&mut app, KeyCode::Enter);
+        let state = app.world().resource::<EditorState>();
+        assert!(state.is_testing());
+        let played = &app.world().resource::<Sim>().0;
+        let filed = level_here(state, &board, "Stage").board();
+        assert_eq!(played.state_hash(), filed.state_hash(), "the file's level");
+        assert!(!played.castle_raids(), "a stage plays without raids");
+        assert_ne!(played.state_hash(), editing, "not the board as it stood");
+
+        tap(&mut app, KeyCode::Escape);
+        assert!(!app.world().resource::<EditorState>().is_testing());
+        assert_eq!(
+            app.world().resource::<Sim>().0.state_hash(),
+            editing,
+            "the board being edited comes back as it was"
+        );
+    }
+
+    /// The flock dial steps from whatever board is on the sand, so a board
+    /// a paste or a resize swapped in starts the dial from its own period
+    /// rather than from where the last board's left it.
+    #[test]
+    fn the_flock_dial_steps_from_the_board_it_is_on() {
+        assert_eq!(next_gull_period(0), GULL_PERIODS[1]);
+        assert_eq!(next_gull_period(GULL_PERIODS[1]), GULL_PERIODS[2]);
+        assert_eq!(next_gull_period(GULL_PERIODS[3]), 0, "and round to off");
+        assert_eq!(next_gull_period(333), GULL_PERIODS[1], "off the dial");
+    }
+
+    /// The trophy for taking a code is about somebody else's level, so the
+    /// one already on the bench (F3 then F4) and the player's own saved
+    /// levels coming back to them do not count. An edit of theirs does.
+    #[test]
+    fn only_a_level_from_elsewhere_counts_as_taken() {
+        let mut board = sand();
+        board.set_tile(0, 0, TileKind::Castle(0));
+        let mine = Level::from_board("Mine", 3, board.clone());
+        board.set_tile(2, 2, TileKind::Rock);
+        let bench = Level::from_board("Bench", 3, board.clone());
+        let shelf = [mine.clone()];
+        assert!(!is_from_elsewhere(&bench, &bench, &shelf), "F3 then F4");
+        assert!(!is_from_elsewhere(&mine, &bench, &shelf), "my own, back");
+        board.set_tile(3, 3, TileKind::Rock);
+        let theirs = Level::from_board("Mine", 3, board);
+        assert!(
+            is_from_elsewhere(&theirs, &bench, &shelf),
+            "their edit of mine"
+        );
+    }
+
+    /// A pasted level brings its name, so the next F2 files it under that
+    /// and not over the level it replaced, and saving over a file already
+    /// called that says so even when this session saved one under it.
+    #[test]
+    fn a_pasted_level_brings_its_name() {
+        let mut state = EditorState {
+            posts: 3,
+            name: "My Beach".into(),
+            ..EditorState::default()
+        };
+        state.mine.insert("My Beach".into());
+        state.mine.insert("Gull Alley".into());
+        let pasted = Level::from_board("Gull Alley", 5, sand()).with_kind(LevelKind::Arena);
+        take_level(&mut state, &pasted);
+        assert_eq!(state.name, "Gull Alley");
+        assert_eq!((state.posts, state.kind), (5, LevelKind::Arena));
+        assert!(!state.mine.contains("Gull Alley"), "a save over it is said");
+        assert!(state.mine.contains("My Beach"), "the rest are left alone");
     }
 
     /// The Enter that commits a name must not also start a playtest: the

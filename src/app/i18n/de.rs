@@ -496,6 +496,7 @@ pub static DE: Tr = Tr {
     ed_save_failed: "Speichern fehlgeschlagen: {e}",
     ed_saved_over: "hat das Level ersetzt, das schon so hieß",
     ed_resize_confirm: "F5 nochmal für einen leeren {w}x{h} Strand - dieser geht",
+    ed_paste_confirm: "F4 nochmal, um das eingefügte Level zu laden - dieses geht",
     code_kind_beach: "eine laufende Runde",
     code_kind_level: "ein Level",
     code_kind_round: "eine Runde",

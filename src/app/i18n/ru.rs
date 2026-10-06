@@ -496,6 +496,7 @@ pub static RU: Tr = Tr {
     ed_save_failed: "сохранить не вышло: {e}",
     ed_saved_over: "заменило уровень с таким же именем",
     ed_resize_confirm: "F5 ещё раз для чистого пляжа {w}x{h} - этот уйдёт",
+    ed_paste_confirm: "F4 ещё раз, чтобы загрузить вставленный уровень - этот уйдёт",
     code_kind_beach: "начатый раунд",
     code_kind_level: "уровень",
     code_kind_round: "раунд",

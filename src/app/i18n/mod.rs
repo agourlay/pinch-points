@@ -695,6 +695,8 @@ struct Tr {
     /// The first of the two presses that start a fresh beach, said when
     /// there is a level on the board to lose.
     pub ed_resize_confirm: &'static str,
+    /// The same for F4, a level pasted from a code in place of this one.
+    pub ed_paste_confirm: &'static str,
     pub code_kind_beach: &'static str,
     pub code_kind_level: &'static str,
     pub code_kind_round: &'static str,

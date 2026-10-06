@@ -489,6 +489,7 @@ pub static EN: Tr = Tr {
     ed_save_failed: "save failed: {e}",
     ed_saved_over: "replaced the level already called that",
     ed_resize_confirm: "F5 again for a fresh {w}x{h} beach - this one goes",
+    ed_paste_confirm: "F4 again to load the pasted level - this one goes",
     code_kind_beach: "a round in progress",
     code_kind_level: "a level",
     code_kind_round: "a round",
