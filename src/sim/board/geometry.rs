@@ -78,6 +78,39 @@ impl Grid {
         }
     }
 
+    /// The edges round the outside of the beach, in the order they sit in
+    /// the wall bitmaps: `(true, i)` is `h_walls[i]`, `(false, i)` is
+    /// `v_walls[i]`.
+    pub(super) fn rim(&self) -> impl Iterator<Item = (bool, usize)> {
+        let (w, h) = (self.width as usize, self.height as usize);
+        let top_and_bottom = (0..w).flat_map(move |x| [(true, x), (true, h * w + x)]);
+        let sides = (0..h).flat_map(move |y| [(false, y * (w + 1)), (false, y * (w + 1) + w)]);
+        top_and_bottom.chain(sides)
+    }
+
+    /// Wall the whole rim, or open it.
+    pub(super) fn set_rim(&mut self, present: bool) {
+        let rim: Vec<(bool, usize)> = self.rim().collect();
+        for (horizontal, i) in rim {
+            if horizontal {
+                self.h_walls[i] = present;
+            } else {
+                self.v_walls[i] = present;
+            }
+        }
+    }
+
+    /// Whether any edge of the rim carries a wall.
+    pub(super) fn rim_walled(&self) -> bool {
+        self.rim().any(|(horizontal, i)| {
+            if horizontal {
+                self.h_walls[i]
+            } else {
+                self.v_walls[i]
+            }
+        })
+    }
+
     /// Coordinates folded back onto the beach, for a wrapping arena.
     pub(super) fn wrap_coords(&self, x: i32, y: i32) -> (i32, i32) {
         let w = i32::from(self.width);

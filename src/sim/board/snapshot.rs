@@ -346,34 +346,85 @@ impl Fields {
             h * (w + 1),
             "vwalls",
         )?;
+        let grid = Grid {
+            width,
+            height,
+            h_walls,
+            v_walls,
+            tiles,
+        };
+        // From here on, what every tick leaves true (`check_invariants`)
+        // is checked rather than trusted. A snapshot is text, carried in a
+        // save file or a share code anybody can edit, and a board that
+        // breaks one of these trips an assertion or overflows a counter a
+        // tick after it loads: the parser refuses it instead.
+        if self.wrap && grid.rim_walled() {
+            return Err("a wall on the rim of an open beach".to_string());
+        }
+        if golden_banked > crabs_banked {
+            return Err(format!(
+                "{golden_banked} golden crabs banked of {crabs_banked} crabs"
+            ));
+        }
+        // Each is added to on the next spawn or placement, and the sum
+        // has to fit.
+        if signpost_seq == u64::MAX || next_crab_id == u32::MAX || next_gull_id == u32::MAX {
+            return Err("counters: no room left to count on".to_string());
+        }
         let mut signposts = vec![None; w * h];
+        let mut held = [0usize; MAX_PLAYERS];
         for (tile, post) in self.posts {
             let slot = signposts
                 .get_mut(tile)
                 .ok_or_else(|| format!("post: tile {tile} is off a {w}x{h} board"))?;
+            if grid.tiles[tile] != TileKind::Empty {
+                return Err(format!(
+                    "post: tile {tile} is a {:?}, not sand",
+                    grid.tiles[tile]
+                ));
+            }
+            if post.seq >= signpost_seq {
+                return Err(format!(
+                    "post: seq {} is not behind the counter at {signpost_seq}",
+                    post.seq
+                ));
+            }
+            held[usize::from(post.owner)] += 1;
+            if held[usize::from(post.owner)] > usize::from(signpost_cap) {
+                return Err(format!(
+                    "post: seat {} holds more than the cap of {signpost_cap}",
+                    post.owner
+                ));
+            }
             *slot = Some(post);
         }
-        for crab in &self.crabs {
-            if usize::from(crab.tile) >= w * h {
-                return Err(format!("crab on tile {}, off the board", crab.tile));
+        let poses = |who: &str, tile: u16, progress: u16, prev: &Pose| {
+            for (what, tile, progress) in [
+                ("tile", tile, progress),
+                ("prev_tile", prev.tile, prev.progress),
+            ] {
+                if usize::from(tile) >= w * h {
+                    return Err(format!("{who} {what} {tile}, off the board"));
+                }
+                // A step is never as long as a tile, and the sim takes a
+                // whole tile off before the tick ends.
+                if progress >= SUBUNITS_PER_TILE {
+                    return Err(format!("{who} progress {progress}, past a whole tile"));
+                }
             }
+            Ok(())
+        };
+        for crab in &self.crabs {
+            poses("crab", crab.tile, crab.progress, &crab.prev)?;
         }
         for gull in &self.gulls {
-            if usize::from(gull.tile) >= w * h {
-                return Err(format!("gull on tile {}, off the board", gull.tile));
-            }
+            poses("gull", gull.tile, gull.progress, &gull.prev)?;
         }
 
         // Named in full on purpose: a new `Board` field stops compiling here
         // until it is decided how, or whether, it survives a save.
         Ok(Board {
-            grid: Grid {
-                width,
-                height,
-                h_walls,
-                v_walls,
-                tiles,
-            },
+            grid,
             seed,
             signposts,
             rules: Rules {
@@ -879,6 +930,113 @@ mod tests {
                 "{what}: complained about something else: {refused}"
             );
         }
+    }
+
+    /// What every tick leaves true is checked on the way in, so a hand-made
+    /// or damaged snapshot is refused by the parser rather than tripping an
+    /// assertion, or overflowing a counter, a tick after it loads. Each
+    /// bend below breaks exactly one of them, on a board that otherwise
+    /// parses.
+    #[test]
+    fn a_snapshot_no_tick_could_leave_is_refused() {
+        let good = awkward_board().to_snapshot();
+        assert!(Board::parse_snapshot(&good).is_ok(), "the fixture parses");
+        let post = "post: 6 L 1 worn 5 300";
+        assert!(good.contains(post), "the fixture's post moved:\n{good}");
+        let crab = "crab: 4 8 D 133 3 200";
+        assert!(good.contains(crab), "the fixture's crab moved:\n{good}");
+        let cases = [
+            (
+                "a post on a rock",
+                good.replace(post, "post: 7 L 1 worn 5 300"),
+            ),
+            (
+                "a post from the future",
+                good.replace(post, "post: 6 L 1 worn 99 300"),
+            ),
+            (
+                "posts over the cap",
+                good.replace(
+                    post,
+                    &format!("{post}\npost: 1 U 1 full 6 300\npost: 2 U 1 full 7 300"),
+                ),
+            ),
+            (
+                "more gold than crabs",
+                bend(&good, "counters", "99 7 3 1 2"),
+            ),
+            (
+                "a crab id with no room",
+                bend(&good, "counters", "99 4294967295 3 12 2"),
+            ),
+            (
+                "a gull id with no room",
+                bend(&good, "counters", "99 7 4294967295 12 2"),
+            ),
+            (
+                "a post count with no room",
+                bend(&good, "counters", "18446744073709551615 7 3 12 2"),
+            ),
+            (
+                "a crab past its tile",
+                good.replace(crab, "crab: 4 8 D 256 3 200"),
+            ),
+            (
+                "a crab past its last tile",
+                good.replace(crab, "crab: 4 8 D 133 3 65535"),
+            ),
+            (
+                "a crab from off the board",
+                good.replace(crab, "crab: 4 8 D 133 20 200"),
+            ),
+        ];
+        for (what, bent) in cases {
+            assert_ne!(bent, good, "{what}: nothing was bent");
+            assert!(
+                Board::parse_snapshot(&bent).is_err(),
+                "{what}: parsed anyway"
+            );
+        }
+    }
+
+    /// The rim of an open beach takes no wall: the level format opens it
+    /// when it reads `wrap: on`, and a wall on one side of the seam was a
+    /// door that only shut one way. A snapshot is held to the same rule as
+    /// every other way a board is built.
+    #[test]
+    fn an_open_beach_has_an_open_rim_whichever_way_it_is_built() {
+        let mut board = Board::new(5, 4, 1);
+        board.set_wrap(true);
+        // The editor's way: a wall asked for on the rim is not stored.
+        board.set_wall(0, 0, Direction::Up, true);
+        board.set_wall(4, 2, Direction::Right, true);
+        assert!(!board.wall_at(0, 0, Direction::Up));
+        assert!(!board.wall_at(4, 2, Direction::Right));
+        assert!(board.on_open_rim(0, 0, Direction::Up));
+        assert!(!board.on_open_rim(1, 1, Direction::Up), "inside is a wall");
+        // Inside the rim walls go up as ever, and come back from a save.
+        board.set_wall(1, 1, Direction::Up, true);
+        let back = Board::parse_snapshot(&board.to_snapshot()).expect("parses");
+        assert!(back.wall_at(1, 1, Direction::Up));
+        let level = crate::sim::Level::from_board("Open", 3, board.clone());
+        let read = crate::sim::Level::parse(&level.to_text())
+            .expect("parses")
+            .board();
+        assert!(
+            read.wrap() && read.wall_at(1, 1, Direction::Up),
+            "the level agrees"
+        );
+        assert!(!read.wall_at(0, 0, Direction::Up));
+
+        // And a snapshot with one on the rim anyway is refused.
+        let mut walled = board.clone();
+        walled.grid.h_walls[0] = true;
+        assert!(Board::parse_snapshot(&walled.to_snapshot()).is_err());
+
+        // Closing the beach again walls the whole rim, as it always did.
+        board.set_wrap(false);
+        assert!(board.wall_at(0, 0, Direction::Up));
+        assert!(!board.on_open_rim(0, 0, Direction::Up));
     }
 
     /// A number that is not one is not a zero. Read as a default, a code

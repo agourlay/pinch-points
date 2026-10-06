@@ -166,7 +166,8 @@ pub struct Signpost {
 }
 
 /// One player's input for one tick. Coordinates are the cursor's tile. The
-/// wire packs this into 2 bytes (spec §7.6); see [`crate::transport`].
+/// wire packs this into 3 bytes, 8 with the seat and frame of the
+/// [`crate::sim::InputMsg`] around it; see [`crate::sim::encode_action`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum PlayerAction {
     #[default]
@@ -433,12 +434,33 @@ impl Board {
     /// Add or remove the wall on the `dir` side of tile `(x, y)`. Walls are
     /// stored per-edge, so the neighbouring tile sees the same wall and the
     /// two tiles cannot disagree (spec §7.3).
+    ///
+    /// Except at the rim of an open-ocean board, where nothing is stored:
+    /// see [`Board::on_open_rim`].
     pub fn set_wall(&mut self, x: u8, y: u8, dir: Direction, present: bool) {
         assert!(
             self.in_bounds(i32::from(x), i32::from(y)),
             "wall off the board"
         );
+        if self.on_open_rim(x, y, dir) {
+            return;
+        }
         self.set_edge(x as usize, y as usize, dir, present);
+    }
+
+    /// Whether the edge leaving `(x, y)` toward `dir` is the rim of a
+    /// wrapping board, which takes no wall.
+    ///
+    /// The rim is the seam a creature crosses to the far side, and it is
+    /// stored as two edges, one on each side of the beach. A wall on one of
+    /// them was a one-way door: walked into from this side, open from the
+    /// other. It also did not survive a save, since the level format opens
+    /// the whole rim when it reads `wrap: on`. So the rim of an open beach
+    /// is open, full stop: [`Board::set_wrap`] clears it, `set_wall` leaves
+    /// it alone, and a snapshot holding a wall there is refused.
+    pub fn on_open_rim(&self, x: u8, y: u8, dir: Direction) -> bool {
+        let (dx, dy) = dir.offset();
+        self.wrap && !self.in_bounds(i32::from(x) + dx, i32::from(y) + dy)
     }
 
     pub fn set_tile(&mut self, x: u8, y: u8, kind: TileKind) {
@@ -488,15 +510,7 @@ impl Board {
     /// creatures walk and fly off one side and re-enter on the opposite one.
     pub fn set_wrap(&mut self, wrap: bool) {
         self.wrap = wrap;
-        let (w, h) = (self.grid.width as usize, self.grid.height as usize);
-        for x in 0..w {
-            self.grid.h_walls[x] = !wrap;
-            self.grid.h_walls[h * w + x] = !wrap;
-        }
-        for y in 0..h {
-            self.grid.v_walls[y * (w + 1)] = !wrap;
-            self.grid.v_walls[y * (w + 1) + w] = !wrap;
-        }
+        self.grid.set_rim(!wrap);
     }
 
     pub fn wrap(&self) -> bool {
@@ -610,7 +624,13 @@ impl Board {
     ///   cap would evict the wrong post first;
     /// - no seat holds more posts than the cap;
     /// - every creature is on the board, which the tile indexing assumes;
-    /// - the golden crabs banked are some of the crabs banked.
+    /// - the golden crabs banked are some of the crabs banked;
+    /// - an open-ocean board has no wall on its rim (see
+    ///   [`Board::on_open_rim`]).
+    ///
+    /// The snapshot parser refuses a board breaking any of these, since a
+    /// share code or a save file is text anybody can edit, and a board
+    /// read from one must not trip an assertion a tick later.
     #[cfg(debug_assertions)]
     fn check_invariants(&self) {
         for (what, left) in [
@@ -652,6 +672,10 @@ impl Board {
             "a gull off the board"
         );
         debug_assert!(self.golden_banked <= self.crabs_banked);
+        debug_assert!(
+            !(self.wrap && self.grid.rim_walled()),
+            "a wall on the rim of an open beach"
+        );
     }
 
     /// The seat order this tick's actions are applied in: one seat leads,
