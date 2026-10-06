@@ -384,6 +384,7 @@ pub static FR: Tr = Tr {
     mode_names: ["manche unique", "au meilleur des 3", "au meilleur des 5"],
     tour_round: "Manche {n} sur {b}",
     tour_champion: "{p} remporte la série !",
+    tour_drawn: "La série se termine à égalité !",
     tour_next: "Entrée : manche suivante",
     log_raid: "{p} pillé ! -{n}",
     log_golden: "{p} rentre l'or ! {n}",

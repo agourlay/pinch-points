@@ -357,9 +357,14 @@ pub fn enter_interlude(
     }
     // The dial's own step, with the dial's own guards: past the shelf when
     // nothing on it seats the table, past the four-castle beaches when
-    // five or six are sitting.
-    crate::app::match_setup::next_map(&mut config, &beaches);
-    config.armed = true;
+    // five or six are sitting. A local series only: online the host's
+    // invitation names the map, and this config is the player's own dials,
+    // which the next beach they host reads its terms from. Stepped here,
+    // a best of five left that dial four maps on from where they set it.
+    if online.0.is_none() {
+        crate::app::match_setup::next_map(&mut config, &beaches);
+        config.armed = true;
+    }
     let tr = settings.tr();
     // A breather on the beach, not a blackout: the postcard stands behind
     // and the tally rides the same tide-dressed card as every other screen.

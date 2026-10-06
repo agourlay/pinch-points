@@ -380,6 +380,7 @@ pub static JA: Tr = Tr {
     mode_names: ["1試合だけ", "3本勝負", "5本勝負"],
     tour_round: "第{n}試合 / 全{b}試合",
     tour_champion: "{p} が優勝!",
+    tour_drawn: "シリーズは引き分け!",
     tour_next: "Enter: 次の試合",
     log_raid: "{p} が奪われた! -{n}",
     log_golden: "{p} が金を運んだ! {n}",

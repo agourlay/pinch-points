@@ -504,6 +504,12 @@ pub fn spawn_versus_results(
                             line.0,
                             line.1,
                         ));
+                    } else {
+                        // Over with nobody ahead. The card used to say
+                        // nothing at all, neither a champion nor a next
+                        // round, as though the series had simply stopped.
+                        let line = card_text(26.0, CARD_TEXT);
+                        card.spawn((Text::new(tr.tour_drawn), line.0, line.1));
                     }
                 } else {
                     let hint = card_text(17.0, CARD_TEXT.darker(0.15));

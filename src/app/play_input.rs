@@ -86,16 +86,25 @@ pub fn browse_levels(
     let Some(mut cursor) = cursors.iter_mut().find(|c| c.player == 0) else {
         return;
     };
-    let len = ladder.campaign.levels.len();
     let at = ladder.campaign.index;
+    // Within the section the stage is in, the shipped campaign or the
+    // player's own levels, as Enter's run is (`Campaign::is_last`): N on
+    // the last shipped stage used to walk on into the player's levels,
+    // and P on the first wrapped onto the last of those.
+    let builtins = ladder.campaign.builtins;
+    let (start, end) = match at < builtins {
+        true => (0, builtins),
+        false => (builtins, ladder.campaign.levels.len()),
+    };
+    let len = end - start;
     // Browsing forward stops at the ladder: the stage list is the only
-    // way past a stage you have not cleared. Backward wraps onto the end
-    // of the list, which is as locked as anything ahead: the same ladder,
-    // the same refusal.
+    // way past a stage you have not cleared. Backward from the first
+    // shipped stage wraps onto the last, which is as locked as anything
+    // ahead: the same ladder, the same refusal.
     let asked = if keyboard.caps.just_pressed(&keyboard.keys, 'N') {
-        (at + 1) % len
+        start + (at - start + 1) % len
     } else if keyboard.caps.just_pressed(&keyboard.keys, 'P') {
-        (at + len - 1) % len
+        start + (at - start + len - 1) % len
     } else {
         return;
     };
@@ -482,9 +491,9 @@ mod tests {
     /// Browsing from setup honours the ladder both ways: P from the first
     /// stage wraps onto the end of the shipped list, which is as locked as
     /// any stage ahead, and is refused with the same flash; once the first
-    /// stage is cleared N opens the second, and P walks back. (With a
-    /// level of the player's own on the shelf the wrap lands on that, and
-    /// those are never locked, so the list here is the shipped one.)
+    /// stage is cleared N opens the second, and P walks back. A level of
+    /// the player's own is on the shelf behind them, and the wrap does not
+    /// land on it: browsing stays within the shipped campaign.
     #[test]
     fn browsing_from_setup_honours_the_ladder_both_ways() {
         let mut app = App::new();
@@ -495,8 +504,8 @@ mod tests {
         app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.insert_resource(GameSettings::default());
         app.init_resource::<Progress>();
-        app.insert_resource(Sim(campaign_with(0, false).levels[0].board()));
-        app.insert_resource(campaign_with(0, false));
+        app.insert_resource(Sim(campaign_with(0, true).levels[0].board()));
+        app.insert_resource(campaign_with(0, true));
         app.add_message::<LoadLevel>();
         app.add_message::<PlacementDenied>();
         app.add_systems(Update, browse_levels);

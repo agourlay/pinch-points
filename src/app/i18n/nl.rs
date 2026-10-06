@@ -384,6 +384,7 @@ pub static NL: Tr = Tr {
     mode_names: ["losse ronde", "best of 3", "best of 5"],
     tour_round: "Ronde {n} van {b}",
     tour_champion: "{p} pakt de serie!",
+    tour_drawn: "De reeks eindigt gelijk!",
     tour_next: "Enter: volgende ronde",
     log_raid: "{p} beroofd! -{n}",
     log_golden: "{p} haalt goud binnen! {n}",

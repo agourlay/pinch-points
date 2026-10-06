@@ -391,6 +391,7 @@ pub static RU: Tr = Tr {
     mode_names: ["один раунд", "серия из 3", "серия из 5"],
     tour_round: "Раунд {n} из {b}",
     tour_champion: "{p} берёт серию!",
+    tour_drawn: "Серия закончилась вничью!",
     tour_next: "Enter: следующий раунд",
     log_raid: "{p} обокрали! -{n}",
     log_golden: "{p} сдаёт золото! {n}",

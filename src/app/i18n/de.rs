@@ -391,6 +391,7 @@ pub static DE: Tr = Tr {
     mode_names: ["Einzelrunde", "Best of 3", "Best of 5"],
     tour_round: "Runde {n} von {b}",
     tour_champion: "{p} gewinnt die Serie!",
+    tour_drawn: "Die Serie endet unentschieden!",
     tour_next: "Enter: nächste Runde",
     log_raid: "{p} geplündert! -{n}",
     log_golden: "{p} bringt Gold heim! {n}",

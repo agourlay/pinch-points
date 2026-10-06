@@ -536,6 +536,9 @@ struct Tr {
     pub mode_names: [&'static str; 3],
     pub tour_round: &'static str,
     pub tour_champion: &'static str,
+    /// A decided series with no one ahead: rounds lost to dead heats, or
+    /// a tally tied after the last round.
+    pub tour_drawn: &'static str,
     pub tour_next: &'static str,
     // Versus sidebar event log
     pub log_raid: &'static str,
