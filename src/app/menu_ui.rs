@@ -743,7 +743,16 @@ fn clear_the_wood(node: &mut Node) {
 fn px_of(v: Val) -> Option<f32> {
     match v {
         Val::Px(px) => Some(px),
-        Val::Auto | Val::Percent(_) | Val::Vw(_) | Val::Vh(_) | Val::VMin(_) | Val::VMax(_) => None,
+        // Font-relative lengths (new in Bevy 0.20) are resolved by the
+        // layout pass, not known here; no card pads in them.
+        Val::Auto
+        | Val::Percent(_)
+        | Val::Vw(_)
+        | Val::Vh(_)
+        | Val::VMin(_)
+        | Val::VMax(_)
+        | Val::Em(_)
+        | Val::Rem(_) => None,
     }
 }
 
