@@ -8,7 +8,7 @@ A fast, kid-friendly crab-routing game for 1-6 players, built in Rust with
 to route streams of crabs into your castle before the sea (and the gulls)
 take everything back.
 
-![Four-player Turf War: the ranked leaderboard, growing castles, and the tide clock over a live event feed](docs/screenshots/turf_war.png)
+![Four-player Versus: the ranked leaderboard, growing castles, and the tide clock over a live event feed](docs/screenshots/turf_war.png)
 
 ## Install
 
@@ -61,16 +61,16 @@ one still in progress.
 
 ## Modes
 
-- **Tide Pool**: a 100-level solo puzzle campaign, every level proved
+- **Campaign**: a 100-level solo puzzle campaign, every level proved
   solvable with the arrows it grants and unsolvable without them.
-- **Turf War**: local versus for 2-6 on one keyboard plus gamepads, with
+- **Versus**: local versus for 2-6 on one keyboard plus gamepads, with
   team play, series, and AI at three levels.
-- **Beach Lobby**: up to 6 over LAN, on deterministic lockstep with
+- **Multiplayer**: up to 6 over LAN, on deterministic lockstep with
   desync detection. Anyone past the sixth chair watches instead,
   and can talk to the table and vote on a tide event to call down on it.
-- **Driftwood**: a level editor whose solver proves a level beatable
+- **Level Editor**: a level editor whose solver proves a level beatable
   before it ships.
-- **Beach Day**, **Replay**, **Daily Challenge**, **Achievements**.
+- **Challenges**, **Replay**, **Daily Challenge**, **Achievements**.
 
 ## Bots
 

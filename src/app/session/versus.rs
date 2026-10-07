@@ -264,7 +264,7 @@ pub(in crate::app) fn load_versus(
     );
     recorder.0 = origin
         .recorded()
-        .then(|| Replay::new(Level::from_board("Turf War", 3, sim.0.clone())));
+        .then(|| Replay::new(Level::from_board("Versus", 3, sim.0.clone())));
     stage.lay_out(&sim.0);
     pending.0 = [PlayerAction::None; MAX_PLAYERS];
     for (mut cur, mut transform) in &mut stage.cursors {

@@ -27,7 +27,7 @@ Rocket!** (1999):
 | Arrow panels | Arrows |
 | "?" roulette specials | Tide events |
 | Cat Mania / Mouse Mania | Gull Mania / Crab Mania |
-| Stage Challenge | Beach Day |
+| Stage Challenge | Challenges |
 | Wrap-around edges | Open-ocean levels |
 
 Inherited: creatures walk forward and turn at walls by a fixed rule, arrows
@@ -113,7 +113,7 @@ score lost, so the rest of the table has something to point at too.
 
 ![The landing menu: a still postcard with ambient beach critters](screenshots/menu.png)
 
-- **Tide Pool**: a 100-level solo puzzle campaign with a fixed arrow
+- **Campaign**: a 100-level solo puzzle campaign with a fixed arrow
   inventory. The test suite proves every level solvable with the arrows it
   grants and unsolvable without them; the opening tutorial is the exception,
   handing you one to practise with on a board that cannot be lost.
@@ -121,7 +121,7 @@ score lost, so the rest of the table has something to point at too.
   second seat's keys or a pad, and the two of you share the stage's arrows,
   either of you free to put one down, turn it or pick it up. Every stage
   plays the same with two as with one, so all hundred are open to it.
-- **Turf War**: local versus for **2-6 players** on one keyboard plus
+- **Versus**: local versus for **2-6 players** on one keyboard plus
   gamepads. Six built-in maps, from the handcrafted classic beach to
   generated arenas up to 20×13 and an edgeless **open ocean** (five and
   six seats need one of the wide beaches, 16 tiles across or more), plus
@@ -133,20 +133,20 @@ score lost, so the rest of the table has something to point at too.
   board for free (`cargo run --example ladder` plays them off). Every
   round, local or online, opens on a **three-second count** with the beach
   holding still, so the table can read the map and find its castles first.
-- **Beach Day**: eight score-attack challenge stages (timed goals, versus
+- **Challenges**: eight score-attack challenge stages (timed goals, versus
   rules).
-- **Driftwood**: a level editor with a built-in solver, playtesting, and
+- **Level Editor**: a level editor with a built-in solver, playtesting, and
   save-to-campaign. `F1` names the level, `F5` cycles the beach size
   (up to 20×13), `F6` toggles between a puzzle stage and a versus beach,
   and `F2` files it under its name, so saving is keeping
-  rather than replacing. Saved levels appear at the end of the Tide Pool
+  rather than replacing. Saved levels appear at the end of the Campaign
   stage list, unlocked, and can be picked as a versus beach.
 
   "Validate" searches under the same budget the campaign ships to, and a
   level's cost is the tiles its crabs cross rather than the size of its
   beach: a big beach with a compact puzzle in it validates, where one filled
   edge to edge may be beatable and still outlast the budget.
-- **Beach Lobby**: online play for up to 6 over LAN: deterministic UDP
+- **Multiplayer**: online play for up to 6 over LAN: deterministic UDP
   lockstep, host-relay star, state-hash desync detection. You name yourself
   before hosting or joining and the host names the beach, so a hall running
   many games at once can tell who from which. Hosts announce once a second
@@ -198,7 +198,7 @@ score lost, so the rest of the table has something to point at too.
   identically on both sides.
 - **Replay**: every finished round is kept in a library and watchable at
   1x/2x/4x. `C` copies a round as a checksummed **share code**, `V` pastes
-  one back, including a Turf War round *in progress*, which `V` on the
+  one back, including a versus round *in progress*, which `V` on the
   menu drops you into mid-play. The editor shares levels the same way
   (`F3`/`F4`).
 - **Daily Challenge**: one date-seeded arena per day, identical worldwide,

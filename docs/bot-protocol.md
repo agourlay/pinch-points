@@ -558,12 +558,12 @@ itself. The game opens a doorway, a card showing the connection string,
 and the bot that registers with it takes the seat. Nothing in the
 protocol differs; what differs is in `hello`:
 
-- **On a couch.** In Turf War's match setup, turn a seat's AI dial past
+- **On a couch.** In the Versus match setup, turn a seat's AI dial past
   "fierce" to "bot". Starting the match shows a string per bot seat
   (`C` copies one, `L` opens the doorway to the LAN for a friend's
   laptop), and the match begins the moment the last bot is in. The clock
   is `live` with `input_delay` 0.
-- **At a LAN party (Join as bot).** In the Beach Lobby, put the cursor on
+- **At a LAN party (Join as bot).** In the Multiplayer lobby, put the cursor on
   a beach that shows a robot ("Bots welcome") and press `B`. Your game
   shows the string; start your bot with it, and your game joins the
   party as an ordinary player whose seat your bot drives, named for your
