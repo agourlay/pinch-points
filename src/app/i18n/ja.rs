@@ -444,6 +444,7 @@ pub static JA: Tr = Tr {
     lobby_card_terms: "しあい",
     online_seat_abandoned: "{p} が抜けた - 城はAIが継ぐ",
     online_host_gone: "ホストが抜けた - あの試合は続けられない",
+    round_failed: "問題が起きたので試合を止めた",
     online_dropped: "ホストに切られた - 五秒間なにも届かなかった",
     lobby_queued_next: "試合中 - きみが次の番",
     lobby_queued_behind: "試合中 - きみの前に{n}人",

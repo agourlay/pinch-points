@@ -47,6 +47,7 @@ mod dev;
 mod editor;
 mod effects;
 mod embedded;
+mod failsafe;
 mod gamepad;
 mod hint;
 mod hud;

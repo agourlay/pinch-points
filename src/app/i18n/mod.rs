@@ -641,6 +641,9 @@ struct Tr {
     /// every input and calls every round. Read on the menu the joiners
     /// are walked back to.
     pub online_host_gone: &'static str,
+    /// On the menu after a shipped build caught a panic mid-round and
+    /// stopped the round rather than the game (`app::failsafe`).
+    pub round_failed: &'static str,
     /// The host gave up on this seat: nothing it sent got through for
     /// as long as the host waits before handing a seat to an AI. Read on
     /// the menu, like `online_host_gone`.

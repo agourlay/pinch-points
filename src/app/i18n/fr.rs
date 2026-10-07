@@ -448,6 +448,7 @@ pub static FR: Tr = Tr {
     lobby_card_terms: "LA MANCHE",
     online_seat_abandoned: "{p} a quitté - une IA prend le château",
     online_host_gone: "l'hôte est parti - cette manche n'a pas pu continuer",
+    round_failed: "un problème est survenu, la manche a été arrêtée",
     online_dropped: "l'hôte t'a lâché - rien de ce que tu envoyais n'est arrivé pendant cinq secondes",
     lobby_queued_next: "Manche en cours - tu es le prochain",
     lobby_queued_behind: "Manche en cours - {n} devant toi",

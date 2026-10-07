@@ -108,6 +108,7 @@ pub(super) fn run_with(watching: watch::Watch) {
             }),
     );
     insert_resources(&mut app, saved);
+    failsafe::install(&mut app);
     add_startup(&mut app);
     add_screen_transitions(&mut app);
     add_phase_transitions(&mut app);
@@ -962,6 +963,8 @@ fn add_finish_systems(app: &mut App) {
             .in_set(Frame::Finish),
     );
     app.add_systems(Update, dev::frame_times);
+    // Last in the frame, so a panic caught anywhere in it is seen in it.
+    app.add_systems(Last, failsafe::leave_a_broken_round);
     // Last, so an exit asked for anywhere in the frame is seen in it: the
     // app stops once the frame is over.
     app.add_systems(Last, achievements::save_on_exit);
