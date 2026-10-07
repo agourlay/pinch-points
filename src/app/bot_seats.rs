@@ -27,6 +27,10 @@ use std::time::{Duration, Instant};
 /// What a bot that came in but was dealt no seat is told as it goes.
 const NO_SEAT: &str = "the table filled up before this bot had a seat";
 
+/// What a bot is told as it goes when the seat it sat in, or was started
+/// for, stops being a bot's seat.
+const SEAT_GONE: &str = "the seat this bot was started for is no longer a bot's seat";
+
 /// How long a dropped bot's seat idles before the game's AI stands in.
 pub const GRACE: Duration = Duration::from_secs(5);
 
@@ -216,10 +220,22 @@ impl Doorway {
 
     /// Chairs for exactly these seats: a chair already holding a bot for a
     /// seat still wanting one keeps it, and a seat new to the list gets a
-    /// fresh, single-use key.
+    /// fresh, single-use key. A chair whose seat is off the list goes with
+    /// its key, so a bot started with that string is refused, and the bot
+    /// in it, if one sat there, is told why and let go rather than left
+    /// registered to hear nothing but pings.
     pub fn seat_bots(&mut self, seats: &[u8]) {
         self.seats_fixed = true;
-        self.chairs.retain(|chair| seats.contains(&chair.seat));
+        let (kept, gone): (Vec<Chair>, Vec<Chair>) = std::mem::take(&mut self.chairs)
+            .into_iter()
+            .partition(|chair| seats.contains(&chair.seat));
+        self.chairs = kept;
+        for chair in gone {
+            self.listener.withdraw(chair.id);
+            if let Some(id) = chair.bot {
+                self.listener.dismiss(id, SEAT_GONE);
+            }
+        }
         for &seat in seats {
             if self.chairs.iter().any(|chair| chair.seat == seat) {
                 continue;
@@ -257,10 +273,18 @@ impl Doorway {
                     {
                         Some(chair) => chair.bot = Some(id),
                         // Its chair was withdrawn after it registered and
-                        // before this heard so (the table filled, a round
-                        // was dealt): told so and let go, rather than left
-                        // registered to hear nothing but pings.
-                        None => self.listener.dismiss(id, NO_SEAT),
+                        // before this heard so: told so and let go, rather
+                        // than left registered to hear nothing but pings.
+                        // A seat's chair goes when the seat stops being a
+                        // bot's; any other when the table fills or a round
+                        // is dealt.
+                        None => self.listener.dismiss(
+                            id,
+                            match self.seats_fixed {
+                                true => SEAT_GONE,
+                                false => NO_SEAT,
+                            },
+                        ),
                     }
                 }
                 // Read late: a bot that has come back since keeps its chair.
@@ -515,7 +539,7 @@ impl BotRound {
                 | crate::bots::listener::GameMsg::Ready { seat }
                 | crate::bots::listener::GameMsg::Garbled { seat, .. }
                 | crate::bots::listener::GameMsg::Dropped { seat }
-                | crate::bots::listener::GameMsg::Back { seat } => *seat,
+                | crate::bots::listener::GameMsg::Back { seat, .. } => *seat,
             };
             if let Some(driver) = self.drivers.iter_mut().find(|d| d.seat == seat) {
                 // Anything at all from it: it is not hung.
@@ -1460,6 +1484,36 @@ mod tests {
         door.seat_bots(&[3]);
         assert_eq!(door.chairs.len(), 1);
         assert!(door.ready());
+    }
+
+    /// A seat that stops being a bot's takes its chair's key back, and lets
+    /// the bot sitting there go with the reason, rather than leaving it
+    /// registered to hear nothing but pings.
+    #[test]
+    fn a_seat_that_stops_wanting_a_bot_lets_its_bot_and_its_key_go() {
+        let mut door = Doorway::open().expect("a port on this machine");
+        door.seat_bots(&[2, 3]);
+        let for_two = door.string(&door.chairs[0]);
+        let bot = register(&door.string(&door.chairs[1]), "Greedy", "Ana");
+        seated(&mut door, 1);
+        door.seat_bots(&[1]);
+        assert_eq!(door.chairs.len(), 1);
+        assert_eq!(door.chairs[0].seat, 1);
+        bot.set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("timeout");
+        let mut said = String::new();
+        let mut reader = BufReader::new(bot);
+        while reader.read_line(&mut said).is_ok_and(|n| n > 0) {
+            if said.contains("error") {
+                break;
+            }
+        }
+        assert!(said.contains(SEAT_GONE), "told why: {said}");
+        let answer = try_register(&for_two, "Late");
+        assert!(
+            answer.contains("error") && !answer.contains(NO_SEAT),
+            "the key for seat 2 was taken back: {answer}"
+        );
     }
 
     /// A bot on the other end of a socket, reading what the game says.

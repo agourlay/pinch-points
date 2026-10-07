@@ -615,6 +615,7 @@ average score. A bot that can play several games at once (`parallel` in
 | Flag | Default | |
 |---|---|---|
 | `--listen ADDR` | `0.0.0.0:47710` | where bots connect |
+| `--port P` | 47710 | the port to listen on, in place of the one in `--listen` |
 | `--seeds N` | 10 | beaches the cup is played on |
 | `--seats N` | 4 | chairs a table |
 | `--add ai:<level>` | | the game's AI as a house bot, a yardstick for the field; repeatable |
@@ -623,10 +624,12 @@ average score. A bot that can play several games at once (`parallel` in
 | `--invite NAME` | | a string bound to that owner; also `invite NAME` at the console |
 | `--open-registration` | off | no key at all: anyone who can reach the port may enter |
 | `--per-owner N` | 1 | bots one owner may enter; a bot that declares no owner counts as its address's |
+| `--parallel-cap N` | 8 | the most games one bot plays at once, whatever `parallel` it asks for |
 | `--deadline MS`, `--round`, `--map`, `--fair-cursor` | | as for the arena, printed in the header |
 | `--forfeit-after S` | 60 | how long a game waits for a bot that is not there |
 | `--seed S` | random | the first beach's seed, and the draw's |
-| `--out DIR` | `./cup-t1` | replays, logs, `schedule.txt` and `standings.txt` |
+| `--id NAME` | `t1` | the cup's name in its replay ids (`t1-g17`) and its folder: letters, digits, `-` and `_`, at most 24 |
+| `--out DIR` | `./cup-<id>` | replays, logs, `schedule.txt` and `standings.txt` |
 
 With more entrants than chairs, tables are drawn so that every entrant
 plays as often as every other and every pair meets as evenly as the
