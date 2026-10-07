@@ -434,12 +434,13 @@ seat at once rather than waiting again; reconnecting puts an end to it.
 Every listener treats every byte it receives as hostile.
 
 - A line longer than 64 KiB closes the connection.
-- A bot that floods (more than about 200 messages a second, after a
-  burst) has messages dropped, and is then disconnected: the dropped
-  messages are counted over a sliding window, so a steady overrun adds up
-  as surely as a burst does, and one now and then is forgiven. Ticks you
-  are sent earn you room to answer; errors, replays and lookahead answers
-  do not.
+- A bot that floods has messages dropped, and is then disconnected. It
+  may send 50 messages a second of its own accord, plus 6 for every line
+  the game sends it (a tick, a hello), and save up to 400; past that,
+  messages are dropped. The dropped messages are counted over a sliding
+  window, so a steady overrun adds up as surely as a burst does, and one
+  now and then is forgiven. Ticks you are sent earn you room to answer;
+  errors, replays and lookahead answers do not.
 - Three wrong keys from one address and that address's keys are refused
   for a minute. A token is never refused for it, and a wrong token is no
   strike: a bot coming back with its own token always gets in.
