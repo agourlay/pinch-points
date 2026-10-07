@@ -99,7 +99,7 @@ mod tests {
         assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
         assert_eq!(
             app.world().resource::<RoundNotice>().0,
-            crate::app::i18n::EN.round_failed
+            i18n::EN.round_failed
         );
     }
 }

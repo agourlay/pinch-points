@@ -711,7 +711,7 @@ impl OnlineSession {
                         // the seat's input to run.
                         for input in &mut inputs {
                             if matches!(input.action, crate::sim::PlayerAction::CallEvent(_)) {
-                                input.action = crate::sim::PlayerAction::None;
+                                input.action = PlayerAction::None;
                             }
                         }
                     }

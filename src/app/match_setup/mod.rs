@@ -657,7 +657,7 @@ mod tests {
         // and the column's gap between the four.
         let footer = 20.0
             + 2.0 * (type_scale::BODY * crate::app::menu_ui::LINE_HEIGHT + 6.0)
-            + 3.0 * super::screen::FOOTER_GAP;
+            + 3.0 * FOOTER_GAP;
         let room = crate::app::settings::DESIGN_H - 2.0 * BAR_H;
         assert!(
             squeezed + footer <= room,

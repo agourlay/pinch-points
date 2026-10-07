@@ -459,7 +459,7 @@ mod door_tests {
         );
     }
 
-    fn beach() -> std::net::SocketAddr {
+    fn beach() -> SocketAddr {
         "192.168.1.7:47710".parse().expect("an address")
     }
 

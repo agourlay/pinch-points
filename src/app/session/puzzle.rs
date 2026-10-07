@@ -24,7 +24,7 @@ pub(in crate::app) fn handle_load_level(
     play: Play,
     mut next_phase: ResMut<NextState<Phase>>,
     sprites: BoardSprites,
-    attempt: Res<crate::app::achievements::PuzzleAttempt>,
+    attempt: Res<achievements::PuzzleAttempt>,
 ) {
     let Play {
         mut sim,
