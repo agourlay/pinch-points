@@ -896,6 +896,7 @@ mod list_row_tests {
             seats: 6,
             running,
             bots: false,
+            full: false,
             age: 0.0,
         }
     }

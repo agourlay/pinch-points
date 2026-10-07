@@ -52,6 +52,10 @@ pub enum Beacon {
         /// The host takes bots: a peer may join as one ("Bots welcome").
         /// False from a build that never said, which predates bots.
         bots: bool,
+        /// The host's socket has taken every peer it can, watchers
+        /// included, and drops the next without a word: no room to play
+        /// *or* to watch. False from a build that never said.
+        full: bool,
     },
     /// Going away for good: the host is leaving the lobby. Lobbies drop the
     /// beach on hearing it instead of waiting out the silence.
@@ -85,6 +89,7 @@ impl Beacon {
             // table, and an unknown table is treated as having room: such a
             // build meant "join me" by announcing at all, and reading it as
             // full would hide it from the list entirely.
+            Beacon::Here { full: true, .. } => false,
             Beacon::Here { seats: 0, .. } => true,
             Beacon::Here { taken, seats, .. } => taken < seats,
             Beacon::Closing { .. } => false,
@@ -112,7 +117,9 @@ pub(super) const BEACON_ID_AT: usize = BEACON_SEATS_AT + 1;
 /// a beacon from the older build loses all but its beach name.
 pub(super) const BEACON_TABLE_BYTES: usize = BEACON_ID_AT + 8;
 pub(super) const BEACON_HOST_AT: usize = BEACON_TABLE_BYTES;
-/// Whether the beach takes bots, one byte, last.
+/// Flags, one byte, last: bit 0 the beach takes bots, bit 1 its socket is
+/// full. Bits rather than another byte, so a build that read the byte as
+/// "bots: 1" still reads a welcoming beach with room as one.
 pub(super) const BEACON_BOTS_AT: usize = BEACON_HOST_AT + WIRE_NAME;
 pub(super) const BEACON_BYTES: usize = BEACON_BOTS_AT + 1;
 
@@ -208,6 +215,8 @@ pub struct OnAir<'a> {
     pub seats: u8,
     /// "Bots welcome": a peer may join this beach as a bot.
     pub bots: bool,
+    /// The game socket has no room for another peer, watcher or player.
+    pub full: bool,
 }
 
 /// Listens for host announcements on one of the [`LOBBY_PORTS`].
@@ -282,7 +291,8 @@ impl Discovery {
                                     taken,
                                     seats,
                                     running: kind == Some(BEACON_RUNNING),
-                                    bots: len > BEACON_BOTS_AT && buf[BEACON_BOTS_AT] == 1,
+                                    bots: len > BEACON_BOTS_AT && buf[BEACON_BOTS_AT] & 1 != 0,
+                                    full: len > BEACON_BOTS_AT && buf[BEACON_BOTS_AT] & 2 != 0,
                                 }
                             }
                         };
@@ -436,6 +446,7 @@ impl Announcer {
             taken,
             seats,
             bots,
+            full,
         } = on_air;
         let mut packet = ANNOUNCE_MAGIC.to_vec();
         packet.extend_from_slice(&game_port.to_le_bytes());
@@ -445,7 +456,7 @@ impl Announcer {
         packet.push(seats);
         packet.extend_from_slice(&self.id.to_le_bytes());
         packet.extend_from_slice(&wire_name(host));
-        packet.push(u8::from(bots));
+        packet.push(u8::from(bots) | (u8::from(full) << 1));
         debug_assert_eq!(packet.len(), BEACON_BYTES);
         let round = self.sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let wide = wide_ports(round, times > 1);
@@ -590,6 +601,7 @@ mod tests {
             taken,
             seats: 6,
             bots: true,
+            full: false,
         };
         let open = heard(&mut discovery, &|| announcer.announce(48123, told(3)));
         let (host, beacon) = open.first().expect("host discovered");
@@ -604,11 +616,13 @@ mod tests {
             seats,
             running,
             bots,
+            full,
         } = beacon.clone()
         else {
             panic!("an open beach, not {beacon:?}")
         };
         assert!(bots, "the beach said it takes bots");
+        assert!(!full, "and that it has room");
         assert_eq!(
             (name.as_str(), whose.as_str(), taken, seats, running),
             ("Room 3", "Anna", 3, 6, false),
@@ -713,6 +727,7 @@ mod tests {
                 seats: 6,
                 running: false,
                 bots: false,
+                full: false,
             },
             "everything it said, and nothing invented for what it did not"
         );
@@ -759,6 +774,7 @@ mod tests {
                 seats: 0,
                 running: false,
                 bots: false,
+                full: false,
             },
             "nameless and tableless, listed by address as it always was"
         );
@@ -821,6 +837,7 @@ mod tests {
                 seats: 0,
                 running: false,
                 bots: false,
+                full: false,
             },
             "an open beach, not the kind of the packet before it"
         );

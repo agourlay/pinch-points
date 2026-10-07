@@ -839,6 +839,7 @@ mod tests {
                 seats: 6,
                 running: false,
                 bots: false,
+                full: false,
                 age: 0.0,
             });
         }

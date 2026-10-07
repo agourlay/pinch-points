@@ -138,20 +138,18 @@ pub fn host_tick(
     // LAN while the host says they are welcome, one single-use key at a
     // time, and are let go the moment it says they are not.
     let arrived = host_the_bots(&mut arena.bots, &config, tr, hosted.players_aboard());
-    let mut taken = 1 + hosted.players_aboard() as u8 + arrived.len() as u8;
-    // The socket has room for `MAX_PEERS` and drops every sender past
-    // that without a word, watchers counted. A beach whose socket is full
-    // says it is full, or the next arrival is listed a chair, dials, and
-    // hears nothing until "no answer - check the address".
-    if hosted.transport.peer_count() >= crate::transport::MAX_PEERS {
-        taken = MAX_PLAYERS as u8;
-    }
+    let taken = 1 + hosted.players_aboard() as u8 + arrived.len() as u8;
     let on_air = crate::transport::OnAir {
         name: &game_name,
         host: &settings.names[0],
         taken,
         seats: MAX_PLAYERS as u8,
         bots: config.bots_welcome,
+        // The socket has room for `MAX_PEERS` and drops every sender past
+        // that without a word, watchers counted. A beach whose socket is
+        // full says so, or the next arrival is listed a place, dials, and
+        // hears nothing until "no answer - check the address".
+        full: hosted.transport.peer_count() >= crate::transport::MAX_PEERS,
     };
     let picked = work_the_socket(hosted, time.delta_secs(), on_air);
     let do_announce = picked.announced;
@@ -966,6 +964,7 @@ mod tests {
             let hosted = state.hosted_mut().expect("hosting");
             let welcome = crate::transport::OnAir {
                 bots: true,
+                full: false,
                 ..crate::transport::OnAir::default()
             };
             let picked = work_the_socket(hosted, 0.0, welcome);
@@ -1046,6 +1045,7 @@ mod tests {
         person.send(NetMsg::hello("Bo"));
         let unwelcome = crate::transport::OnAir {
             bots: false,
+            full: false,
             ..crate::transport::OnAir::default()
         };
         for _ in 0..40 {

@@ -476,17 +476,26 @@ impl Lockstep {
     /// ready to simulate; anything else is who everybody is held up by.
     ///
     /// Read-only, because the HUD asks it every frame to put a name on
-    /// screen. Only seated players can hold a frame up; an absent seat is
-    /// filled at the moment its frame is made.
+    /// screen. Only seated players can hold a frame up, and one given up on
+    /// that still owes the frame (see `abandon`); an absent seat is filled
+    /// at the moment its frame is made.
     pub fn awaiting(&self) -> Vec<PlayerId> {
+        // A seat given up on from a later frame still owes this one (see
+        // `abandon`), and is waited on like a seated player until it pays.
+        let frame = self.frame;
+        let owing = self
+            .leaving
+            .iter()
+            .filter(|&&(_, from)| frame < from)
+            .map(|&(gone, _)| gone);
+        let waited: Vec<PlayerId> = self.players.iter().copied().chain(owing).collect();
         let Some(slot) = self.pending.get(&self.frame) else {
             // No frame made yet means nothing has arrived for it, so
             // everybody still seated is being waited on.
-            return self.players.clone();
+            return waited;
         };
-        self.players
-            .iter()
-            .copied()
+        waited
+            .into_iter()
             .filter(|player| slot[*player as usize].is_none())
             .collect()
     }
@@ -534,11 +543,17 @@ impl Lockstep {
     /// The inputs a player given up on at `frame` sent for the frames
     /// before it, as far back as a peer still in step could be missing
     /// them: what the decider repeats alongside the notice.
+    ///
+    /// Bounded by the same span as `heard`, read against the frame now
+    /// rather than the last time anything arrived: at a table with nobody
+    /// else left to hear from, `heard` is never trimmed, and the repeat
+    /// went out every tick until the round ended.
     pub fn owed_by(&self, player: PlayerId, frame: u32) -> Vec<InputMsg> {
+        let oldest_wanted = self.frame.saturating_sub(resend_span(self.delay));
         self.heard
             .iter()
             .copied()
-            .filter(|msg| msg.player == player && msg.frame < frame)
+            .filter(|msg| msg.player == player && msg.frame < frame && msg.frame >= oldest_wanted)
             .collect()
     }
 
@@ -1495,6 +1510,10 @@ mod abandon_frame_tests {
         host.abandon(1, at);
         peer.abandon(1, at);
         assert!(peer.advance().is_none(), "frame 1 still waits on seat 1");
+        assert!(
+            peer.awaiting().contains(&1),
+            "and says so, for the line that names who a round waits on"
+        );
         for owed in host.owed_by(1, at) {
             peer.receive(owed);
         }

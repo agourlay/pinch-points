@@ -73,6 +73,13 @@ impl Peer {
     pub fn watches(&self) -> bool {
         self.watch
     }
+
+    /// Whether it is owed a chair at the next deal without holding one:
+    /// in line for the next round, or sitting this one out because the
+    /// table was full when it was dealt. Either way, not by wish.
+    pub fn wants_a_chair(&self) -> bool {
+        !self.watch && self.seat().is_none()
+    }
 }
 
 /// The peers, indexed as the transport indexes them.

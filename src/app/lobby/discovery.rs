@@ -45,13 +45,15 @@ pub struct HostEntry {
     pub running: bool,
     /// It takes bots ("Bots welcome").
     pub bots: bool,
+    /// Its socket has no room for anyone, watchers included.
+    pub full: bool,
     pub age: f32,
 }
 
 impl HostEntry {
     /// Whether joining (or queueing for) this beach could come to anything.
     pub fn has_room(&self) -> bool {
-        self.seats == 0 || self.taken < self.seats
+        !self.full && (self.seats == 0 || self.taken < self.seats)
     }
 
     /// What the beach is called. One that announced no name falls back to
@@ -134,6 +136,7 @@ pub(super) fn refresh_hosts(
                 seats,
                 running,
                 bots,
+                full,
             } => {
                 let mut fresh = HostEntry {
                     addr,
@@ -144,6 +147,7 @@ pub(super) fn refresh_hosts(
                     seats: *seats,
                     running: *running,
                     bots: *bots,
+                    full: *full,
                     age: 0.0,
                 };
                 match hosts.iter_mut().find(|host| same_beach(host, *id, addr)) {
@@ -208,12 +212,35 @@ pub fn discover(time: Res<Time>, settings: Res<GameSettings>, mut state: ResMut<
         .unwrap_or_default();
     let closed = host_closed(&state, &heard);
     refresh_hosts(&mut state.hosts, &heard, delta);
+    learn_the_beach(&mut state);
     if closed {
         state.let_go();
         state.feedback = settings.tr().lobby_host_closed.to_string();
     }
     out_of_the_queue(&mut state, settings.tr());
     state.settle_cursor();
+}
+
+/// A joiner that dialled by address learns its beach's beacon id from the
+/// row at that address, the first time there is one, and finds the row by
+/// the id from then on (see `Joined::beach`).
+fn learn_the_beach(state: &mut LobbyState) {
+    let Some(joined) = state.joined() else {
+        return;
+    };
+    if joined.beach.is_some() {
+        return;
+    }
+    let Some(id) = state
+        .joined_entry()
+        .map(|host| host.id)
+        .filter(|&id| id != 0)
+    else {
+        return;
+    };
+    if let Some(joined) = state.joined_mut() {
+        joined.beach = Some(id);
+    }
 }
 
 /// A joiner queued for the next round of a beach whose round is over and
@@ -228,12 +255,7 @@ fn out_of_the_queue(state: &mut LobbyState, tr: &'static crate::app::i18n::Tr) {
     if joined.queued.is_none() {
         return;
     }
-    let gathering = joined.transport.peer_addr().is_some_and(|there| {
-        state
-            .hosts
-            .iter()
-            .any(|host| host.addr == there && !host.running)
-    });
+    let gathering = state.joined_entry().is_some_and(|host| !host.running);
     if !gathering {
         return;
     }
@@ -252,13 +274,7 @@ fn out_of_the_queue(state: &mut LobbyState, tr: &'static crate::app::i18n::Tr) {
 /// reading it here the joiner sat out the six seconds of silence and was
 /// then told to check an address that had answered all along.
 fn host_closed(state: &LobbyState, heard: &[(SocketAddr, Beacon)]) -> bool {
-    let Some(joined) = state.joined() else {
-        return false;
-    };
-    let Some(there) = joined.transport.peer_addr() else {
-        return false;
-    };
-    let Some(beach) = state.hosts.iter().find(|host| host.addr == there) else {
+    let Some(beach) = state.joined_entry() else {
         return false;
     };
     heard.iter().any(
@@ -302,6 +318,7 @@ mod list_tests {
                 seats,
                 running,
                 bots: false,
+                full: false,
             },
         )
     }
@@ -327,6 +344,7 @@ mod list_tests {
             seats,
             running,
             bots: false,
+            full: false,
             age: 0.0,
         }
     }
@@ -520,6 +538,7 @@ mod list_tests {
                     seats: 6,
                     running: false,
                     bots: false,
+                    full: false,
                 },
             )
         };
@@ -563,6 +582,7 @@ mod list_tests {
                     seats: 6,
                     running: false,
                     bots: false,
+                    full: false,
                 },
             ),
             (
@@ -575,6 +595,7 @@ mod list_tests {
                     seats: 6,
                     running: false,
                     bots: false,
+                    full: false,
                 },
             ),
         ];
@@ -615,6 +636,7 @@ mod list_tests {
             seats: 4,
             running: true,
             bots: false,
+            full: false,
             age: 0.0,
         });
 
@@ -633,6 +655,16 @@ mod list_tests {
             &state,
             &[(elsewhere, Beacon::Closing { id: 8 })]
         ));
+        assert!(host_closed(
+            &state,
+            &[(elsewhere, Beacon::Closing { id: 7 })]
+        ));
+
+        // The list kept the loopback copy of the beach while the joiner
+        // dialled the broadcast one: found by its id all the same.
+        learn_the_beach(&mut state);
+        assert_eq!(state.joined().expect("joined").beach, Some(7));
+        state.hosts[0].addr = "127.0.0.1:48000".parse().expect("addr");
         assert!(host_closed(
             &state,
             &[(elsewhere, Beacon::Closing { id: 7 })]

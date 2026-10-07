@@ -418,6 +418,9 @@ impl OnlineSession {
                 taken,
                 seats: MAX_PLAYERS as u8,
                 bots: self.home.bots_welcome,
+                // As the lobby says it (`host_tick`): a round in progress
+                // fills its socket with watchers as readily as a lobby does.
+                full: self.transport.peer_count() >= crate::transport::MAX_PEERS,
             },
         );
     }
@@ -555,13 +558,14 @@ impl OnlineSession {
     }
 
     /// The humans at the table and in line for it: the players in the
-    /// lockstep plus every queued peer that did not ask to watch. What the
-    /// running beacon reports as taken.
+    /// lockstep plus every peer owed a chair at the next deal, queued or
+    /// left without one at the launch. What the running beacon reports as
+    /// taken.
     pub(crate) fn players_spoken_for(&self) -> u8 {
         let queued = self
             .peers
             .iter()
-            .filter(|peer| peer.place == Place::Queued && !peer.watch)
+            .filter(|peer| peer.wants_a_chair())
             .count();
         (self.session.player_count() + queued).min(MAX_PLAYERS) as u8
     }

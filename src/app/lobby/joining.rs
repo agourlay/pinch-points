@@ -19,6 +19,9 @@ pub enum Pick {
     Take(usize),
     /// It is full, this round and the next; say so rather than dialling.
     Full(usize),
+    /// The beach a name was just given for went off the air while it was
+    /// typed: say so, rather than an Enter that does nothing.
+    Gone,
 }
 
 /// What a frame knows about joining.
@@ -67,7 +70,7 @@ pub(super) fn which_beach(ask: JoinAsk, hosts: &[HostEntry]) -> Pick {
         // is the one to take, if it is still on the air.
         (Some(Intent::Join(addr)), _) => match hosts.iter().position(|host| host.addr == addr) {
             Some(at) => Some(at),
-            None => return Pick::Nothing,
+            None => return Pick::Gone,
         },
         // Neither of these is a row of this list: hosting is not joining,
         // and a dialled address was typed because it is on no row.
@@ -84,7 +87,9 @@ pub(super) fn which_beach(ask: JoinAsk, hosts: &[HostEntry]) -> Pick {
     }
     // A watcher takes no seat, so a full beach is no obstacle: the host
     // answers a `Watch` with a spectator's place however many are aboard.
-    if !to_watch && !hosts[at].has_room() {
+    // A full socket is full for a watcher too: it has no room for one
+    // more peer of any kind.
+    if hosts[at].full || (!to_watch && !hosts[at].has_room()) {
         return Pick::Full(at);
     }
     // The dev hooks join unattended; a prompt nobody is there to answer
@@ -145,6 +150,7 @@ pub(super) fn take_a_beach(
         // A full beach is worth neither joining nor queueing for: there is
         // no chair for this player at the end of it either way.
         Pick::Full(_) => state.feedback = tr.lobby_beach_full.to_string(),
+        Pick::Gone => state.feedback = tr.lobby_host_closed.to_string(),
         Pick::Take(at) => dial(state, settings, tr, at),
     }
 }
@@ -163,7 +169,11 @@ fn dial(
     let Some(host) = state.hosts.get(at) else {
         return;
     };
-    dial_at(state, settings, tr, host.addr);
+    let (addr, id) = (host.addr, host.id);
+    dial_at(state, settings, tr, addr);
+    if let Some(joined) = state.joined_mut() {
+        joined.beach = (id != 0).then_some(id);
+    }
 }
 /// How long a joiner keeps calling a beach that never answers.
 ///
@@ -579,6 +589,7 @@ mod tests {
                 seats: *seats,
                 running: false,
                 bots: false,
+                full: false,
                 age: 0.0,
             })
             .collect()
@@ -726,7 +737,7 @@ mod tests {
                 },
                 &hosts[..1]
             ),
-            Pick::Nothing
+            Pick::Gone
         );
     }
 
@@ -767,6 +778,26 @@ mod tests {
             Pick::Take(2),
             "a beach that described no table is not a full one"
         );
+    }
+
+    /// A beach whose socket is full has no room for a watcher either: the
+    /// next peer of any kind is dropped there without a word.
+    #[test]
+    fn a_full_socket_is_full_for_a_watcher_too() {
+        let mut hosts = open();
+        hosts[0].full = true;
+        let ask = |to_watch| {
+            which_beach(
+                JoinAsk {
+                    digit: Some(0),
+                    to_watch,
+                    ..asking()
+                },
+                &hosts,
+            )
+        };
+        assert_eq!(ask(true), Pick::Full(0));
+        assert_eq!(ask(false), Pick::Full(0));
     }
 
     /// Already somewhere, hosting or joining, and the keys mean nothing.

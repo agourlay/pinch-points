@@ -200,6 +200,12 @@ pub struct Joined {
     /// Joining as a bot (route 1): the seat's name, "Greedy (Ana)",
     /// greeted with the flag that says a bot will drive it.
     pub bot: Option<String>,
+    /// The beacon id of the beach this is, once known: taken from its row
+    /// when it was picked off the list, or learnt from the row that
+    /// matches its address. Rows are found by it rather than by address,
+    /// because one beach arrives from two addresses (the broadcast and the
+    /// loopback copy) and the list keeps whichever it heard first.
+    pub beach: Option<u64>,
 }
 
 impl Joined {
@@ -218,6 +224,7 @@ impl Joined {
             terms: None,
             catching_up: Default::default(),
             bot: None,
+            beach: None,
         }
     }
 
@@ -241,6 +248,7 @@ impl Joined {
             terms: None,
             catching_up: Default::default(),
             bot,
+            beach: None,
         }
     }
 
@@ -467,8 +475,14 @@ impl LobbyState {
     /// address it dialled, not the cursor, which a digit or a typed address
     /// never moved.
     pub fn joined_entry(&self) -> Option<&HostEntry> {
-        let there = self.joined()?.transport.peer_addr()?;
-        self.hosts.iter().find(|host| host.addr == there)
+        let joined = self.joined()?;
+        match joined.beach {
+            Some(id) => self.hosts.iter().find(|host| host.id == id),
+            None => {
+                let there = joined.transport.peer_addr()?;
+                self.hosts.iter().find(|host| host.addr == there)
+            }
+        }
     }
 
     /// What the beach under the cursor is called, for a card that is about
@@ -820,8 +834,14 @@ pub fn lobby_input(
     }
     let join_bot = match intent {
         // Gone off the air while the name was typed: nothing is taken in
-        // its place.
-        Some(Intent::JoinBot(addr)) => state.hosts.iter().position(|host| host.addr == addr),
+        // its place, and the player is told why.
+        Some(Intent::JoinBot(addr)) => {
+            let at = state.hosts.iter().position(|host| host.addr == addr);
+            if at.is_none() {
+                state.feedback = tr.lobby_host_closed.to_string();
+            }
+            at
+        }
         _ if intent.is_none()
             && caps.just_pressed(&keys, 'B')
             && !state.standing().at_a_beach()
@@ -979,6 +999,7 @@ mod tests {
                 seats,
                 running,
                 bots: false,
+                full: false,
             },
         )
     }
