@@ -2,7 +2,7 @@
 name = "pinch-points"
 version = "0.7.0"
 edition = "2024"
-description = "A fast, kid-friendly crab-routing game: route streams of crabs into your sandcastle before the tide comes in"
+description = "A fast, kid-friendly crab-routing game: route streams of crabs into your sandcastle before time runs out"
 repository = "https://github.com/agourlay/pinch-points"
 license = "Apache-2.0"
 keywords = ["game", "bevy", "puzzle", "multiplayer", "chuchu-rocket"]
