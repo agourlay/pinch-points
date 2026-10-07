@@ -49,6 +49,12 @@ x11rb = { version = "0.13.2", default-features = false }
 [dev-dependencies]
 indicatif = "0.18.6"
 
+[features]
+# Dev only, never shipped: Bevy's `debug` feature, for the one thing here
+# that needs it, `PINCH_SHUFFLE` (see `app::dev::shuffle_seed`). Off by
+# default because `debug` keeps type names and extra checks in every build.
+shuffle = ["bevy/debug"]
+
 
 [workspace]
 

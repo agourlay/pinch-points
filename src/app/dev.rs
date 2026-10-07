@@ -123,6 +123,31 @@ pub(super) fn single_threaded_executor() -> bool {
     std::env::var("PINCH_ST_EXEC").is_ok()
 }
 
+/// `PINCH_SHUFFLE=<seed>`: put every main-world schedule's unordered systems
+/// in a shuffled order, seeded, so an ordering bug shows itself instead of
+/// hiding behind whichever order the graph happens to settle on. Only in a
+/// build with the `shuffle` feature (`cargo run --features shuffle`); add
+/// `PINCH_ST_EXEC=1` for one fixed order per seed, since the parallel
+/// executor still starts whatever system is ready first.
+///
+/// The bug class it is for is the one that kept recurring here: two
+/// systems reading the same key in the same frame with no order between
+/// them (a chat line's Enter also leaving the results card, the pause
+/// card's Enter also calling the next round). Each such bug was invisible
+/// until the arbitrary order happened to go the wrong way.
+#[cfg(feature = "shuffle")]
+pub(super) fn shuffle_seed() -> Option<u64> {
+    let seed = std::env::var("PINCH_SHUFFLE").ok()?;
+    // Any word will do as a seed; a number is used as itself so a run can
+    // be repeated from what its log line said.
+    Some(seed.parse().unwrap_or_else(|_| {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        seed.hash(&mut hasher);
+        hasher.finish()
+    }))
+}
+
 /// `PINCH_NO_UPDATE`: never ask GitHub for a newer release this run, for
 /// scripted launches and screenshots, and for the machine with no network
 /// that should not spend eight seconds finding that out.

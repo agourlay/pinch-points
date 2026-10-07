@@ -128,6 +128,23 @@ pub(super) fn run_with(watching: watch::Watch) {
             .count();
         info!("single-threaded executor on {swapped} main-world schedules");
     }
+    // Dev hook: `PINCH_SHUFFLE=<seed>` (with `--features shuffle`) shuffles
+    // the unordered systems of every main-world schedule. See
+    // `dev::shuffle_seed`.
+    #[cfg(feature = "shuffle")]
+    if let Some(seed) = dev::shuffle_seed() {
+        use bevy::ecs::schedule::Schedules;
+        let mut schedules = app.world_mut().resource_mut::<Schedules>();
+        let shuffled = schedules
+            .iter_mut()
+            .map(|(_, schedule)| {
+                let mut settings = schedule.get_build_settings();
+                settings.shuffle_seed = Some(seed);
+                schedule.set_build_settings(settings);
+            })
+            .count();
+        info!("PINCH_SHUFFLE: {shuffled} main-world schedules shuffled with seed {seed}");
+    }
     app.run();
 }
 
