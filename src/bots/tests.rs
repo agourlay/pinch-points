@@ -986,3 +986,117 @@ fn a_bot_that_never_came_is_not_waited_for_twice() {
     assert_eq!(back.next().expect("an answer")["type"], "registered");
     assert!(!listener.absent(id), "back, and waited for again");
 }
+
+/// A bot that reconnects with its token before the first tick, while its
+/// old connection is still open, is heard only coming back (the old
+/// connection's going is never reported), and is greeted on the new one.
+#[test]
+fn a_bot_back_on_a_new_connection_before_the_first_tick_is_greeted_there() {
+    let (listener, events) = listen(Admission::Open);
+    let addr = listener.local_addr();
+    let (mut first, answer) = Client::register(addr, "Twice", None);
+    let token = answer["token"].as_str().expect("token").to_string();
+    let id = registered(&events);
+    let player = std::thread::spawn(move || {
+        let hello = first.next().expect("hello");
+        assert_eq!(hello["type"], "hello");
+        // Not answered here: the bot comes in again with the first still open.
+        let mut second = Client::connect(addr);
+        second.send(&json!({"type": "register", "protocol": 1, "token": token}));
+        assert_eq!(second.next().expect("an answer")["type"], "registered");
+        let hello = second.next().expect("hello on the new connection");
+        assert_eq!(hello["type"], "hello", "{hello}");
+        second.send(&json!({"type": "ready", "game": hello["game"]}));
+        let mut ticks = 0;
+        while let Some(msg) = second.next() {
+            if msg["type"] == "tick" {
+                ticks += 1;
+                second.send(&json!({"game": 7, "tick": msg["tick"], "act": "none"}));
+            }
+            if msg["type"] == "end" {
+                break;
+            }
+        }
+        drop(first);
+        ticks
+    });
+    let mut spec = spec(
+        little_beach(30),
+        vec![Seat::Bot(id), Seat::Ai(BotLevel::Easy)],
+        50,
+    );
+    spec.ready_within = Duration::from_secs(3);
+    let (result, log) = play(&listener, spec);
+    let ticks = player.join().expect("player");
+    assert!(!result.seats[0].forfeit, "{log}");
+    assert!(ticks > 0, "it played on the new connection");
+}
+
+/// A game already waiting for a bot that is away keeps waiting the whole
+/// timeout when another game, played beside it, forfeits that bot for
+/// never coming: only the games that start after that forfeit skip it.
+#[test]
+fn a_forfeit_elsewhere_does_not_cut_short_a_wait_already_begun() {
+    let (listener, events) = listen(Admission::Open);
+    let (bot, _) = Client::register(listener.local_addr(), "Away", None);
+    let id = registered(&events);
+    drop(bot);
+    while listener.connected(id) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let wait = Duration::from_secs(1);
+    let mut spec = spec(
+        little_beach(30),
+        vec![Seat::Bot(id), Seat::Ai(BotLevel::Easy)],
+        50,
+    );
+    spec.forfeit_after = wait;
+    let took = std::thread::scope(|scope| {
+        let game = scope.spawn(|| {
+            let started = std::time::Instant::now();
+            let (result, _) = play(&listener, spec);
+            assert!(result.seats[0].forfeit);
+            started.elapsed()
+        });
+        std::thread::sleep(Duration::from_millis(150));
+        // Another game gives up on it meanwhile.
+        listener.mark_absent(id);
+        game.join().expect("game")
+    });
+    assert!(took >= wait, "the wait was cut short ({took:?})");
+}
+
+/// A bot that comes during the wait for the first tick and goes again
+/// came: it forfeits for leaving, and later games still wait for it.
+#[test]
+fn a_bot_that_came_and_went_before_the_first_tick_is_not_marked_absent() {
+    let (listener, events) = listen(Admission::Open);
+    let addr = listener.local_addr();
+    let (bot, answer) = Client::register(addr, "Flicker", None);
+    let token = answer["token"].as_str().expect("token").to_string();
+    let id = registered(&events);
+    drop(bot);
+    while listener.connected(id) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let player = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        let mut back = Client::connect(addr);
+        back.send(&json!({"type": "register", "protocol": 1, "token": token}));
+        assert_eq!(back.next().expect("an answer")["type"], "registered");
+        assert_eq!(back.next().expect("hello")["type"], "hello");
+        // And gone, without a word.
+    });
+    let mut spec = spec(
+        little_beach(30),
+        vec![Seat::Bot(id), Seat::Ai(BotLevel::Easy)],
+        50,
+    );
+    spec.forfeit_after = Duration::from_millis(500);
+    let (result, log) = play(&listener, spec);
+    player.join().expect("player");
+    assert!(result.seats[0].forfeit);
+    assert!(!log.contains("forfeit, never came"), "{log}");
+    assert!(log.contains("left before the first tick"), "{log}");
+    assert!(!listener.absent(id), "it came, so it is waited for again");
+}

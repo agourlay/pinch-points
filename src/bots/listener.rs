@@ -61,8 +61,9 @@ const CEILING: f64 = 2000.0;
 /// Messages dropped for flooding before the connection goes, counted over
 /// a sliding window: each drop is a strike, and strikes are forgiven at
 /// `FORGIVE_PER_SECOND`. A bot that overruns once in a while is never
-/// let go, and one that keeps on overrunning is, however slowly it does:
-/// one dropping more than 40 messages a second goes within seconds.
+/// let go, and one that keeps on overrunning faster than it is forgiven
+/// is, however slowly it does: one having `d` messages a second dropped
+/// goes after 400 / (d - 40) seconds, ten at 80 a second, four at 140.
 const FLOOD_STRIKES: f64 = 400.0;
 const FORGIVE_PER_SECOND: f64 = 40.0;
 
@@ -179,9 +180,12 @@ pub enum GameMsg {
     Dropped {
         seat: PlayerId,
     },
-    /// It came back with its token.
+    /// It came back with its token, on the connection with this serial.
+    /// The old one may not have been seen to go: a reconnect while it is
+    /// still open replaces it with nothing said of its going.
     Back {
         seat: PlayerId,
+        serial: u64,
     },
 }
 
@@ -381,9 +385,9 @@ impl Listener {
         self.let_go(id, None);
     }
 
-    /// Tell one bot why it is being let go, and close its connection once
-    /// that has been written: the table filled up before it had a seat.
-    /// Let go for good, as [`Self::disconnect`] is.
+    /// Tell one bot why it is being let go (the table filled up before it
+    /// had a seat, say), and close its connection once that has been
+    /// written. Let go for good, as [`Self::disconnect`] is.
     pub fn dismiss(&self, id: BotId, why: &str) {
         self.let_go(id, Some(why));
     }
@@ -545,6 +549,16 @@ impl Listener {
     pub fn send(&self, id: BotId, msg: &Value) -> bool {
         let line = line_of(msg);
         send_line(&mut lock(&self.shared.registry), id, line, true)
+    }
+
+    /// Write a game's `hello` to a bot, as [`Self::send`] does, and say
+    /// which connection it went to: a game that hears the bot came back
+    /// on that same connection knows it has been greeted there already.
+    pub fn greet(&self, id: BotId, msg: &Value) -> Option<u64> {
+        let line = line_of(msg);
+        let mut registry = lock(&self.shared.registry);
+        let serial = registry.bots.get(id)?.conn.as_ref()?.serial;
+        send_line(&mut registry, id, line, true).then_some(serial)
     }
 
     /// Open a game's route: its seats' messages come to the returned link.
@@ -835,7 +849,7 @@ fn register_bot(
         let routes: Vec<(Sender<GameMsg>, PlayerId)> = routes_of(&registry, id);
         drop(registry);
         for (tx, seat) in routes {
-            let _ = tx.send(GameMsg::Back { seat });
+            let _ = tx.send(GameMsg::Back { seat, serial });
         }
         emit(shared, Event::Reconnected(id));
         return Ok((id, serial));

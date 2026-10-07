@@ -140,7 +140,7 @@ impl Match<'_, '_> {
             | GameMsg::Ready { seat }
             | GameMsg::Garbled { seat, .. }
             | GameMsg::Dropped { seat }
-            | GameMsg::Back { seat } => usize::from(*seat),
+            | GameMsg::Back { seat, .. } => usize::from(*seat),
         };
         let Some(Some(bot)) = self.bots.get_mut(seat) else {
             return false;
@@ -156,12 +156,31 @@ impl Match<'_, '_> {
 
     /// `hello` to every bot, then wait until each is ready or forfeits.
     fn greet(&mut self) {
-        for seat in 0..self.n() {
-            if let Some(bot) = &self.bots[seat]
-                && bot.connected
-            {
-                self.listener
-                    .send(bot.id, &self.hello(seat as PlayerId, false));
+        let n = self.n();
+        // The connection each seat's bot was greeted on. A bot heard coming
+        // back on that same connection (it came back as the route opened)
+        // has its `hello` already; one back on another is greeted afresh.
+        // A reconnect while the old connection is still open is heard only
+        // as `Back`, so `connected` alone cannot tell the two apart.
+        let mut greeted: Vec<Option<u64>> = vec![None; n];
+        // Each bot that has been connected at some point of the wait: one
+        // that came and went again did not stay away, and is not marked as
+        // never coming.
+        let mut came: Vec<bool> = vec![false; n];
+        // Read once, as the game starts: a forfeit for absence in another
+        // game while this one waits (a cup plays fixtures side by side)
+        // does not cut short a wait that began before it.
+        let mut absent: Vec<bool> = vec![false; n];
+        for seat in 0..n {
+            let Some(bot) = &self.bots[seat] else {
+                continue;
+            };
+            absent[seat] = self.listener.absent(bot.id);
+            came[seat] = bot.connected;
+            if bot.connected {
+                greeted[seat] = self
+                    .listener
+                    .greet(bot.id, &self.hello(seat as PlayerId, false));
             }
         }
         loop {
@@ -171,13 +190,14 @@ impl Match<'_, '_> {
                 if bot.ready || bot.forfeit {
                     continue;
                 }
+                let seat = usize::from(bot.seat);
                 // A bot that has already forfeited a game for never coming,
                 // and has not connected since, is not waited for again: a
                 // cup with it in every game would otherwise stand still for
                 // the whole timeout, game after game.
                 let limit = if bot.connected {
                     self.spec.ready_within
-                } else if self.listener.absent(bot.id) {
+                } else if absent[seat] && !came[seat] {
                     Duration::ZERO
                 } else {
                     self.spec.forfeit_after
@@ -189,6 +209,8 @@ impl Match<'_, '_> {
                 bot.forfeit = true;
                 let why = if bot.connected {
                     "never said ready"
+                } else if came[seat] {
+                    "left before the first tick and was not back in time"
                 } else {
                     self.listener.mark_absent(bot.id);
                     "never came"
@@ -212,18 +234,22 @@ impl Match<'_, '_> {
             };
             // Before the first tick a bot that comes back is greeted afresh
             // and given its ten seconds from now.
-            if let GameMsg::Back { seat } = msg
+            if let GameMsg::Back { seat, serial } = msg
                 && let Some(Some(bot)) = self.bots.get_mut(usize::from(seat))
                 && !bot.forfeit
             {
-                // Already seen connected: it came back as the route opened,
-                // and the greeting above went to it.
-                if std::mem::replace(&mut bot.connected, true) {
+                let at = usize::from(seat);
+                came[at] = true;
+                if greeted[at] == Some(serial) {
                     continue;
                 }
+                bot.connected = true;
+                // Whatever it said on the old connection, the new one is
+                // asked again.
+                bot.ready = false;
                 bot.waiting_since = Instant::now();
                 let id = bot.id;
-                self.listener.send(id, &self.hello(seat, false));
+                greeted[at] = self.listener.greet(id, &self.hello(seat, false));
                 continue;
             }
             if let GameMsg::Dropped { seat } = msg
