@@ -269,7 +269,13 @@ impl Fields {
             "raids" => self.no_castle_raids = value == "off",
             "events" => self.events_enabled = value == "on",
             "lure" => {
+                // A seat, like every other owner the snapshot names: the
+                // sim shrugs off a lure for nobody, but the round's tally
+                // keeps one per seat and indexed it when the lure closed.
                 let owner = next_num::<PlayerId>(&mut words, "lure owner")?;
+                if seat(owner).is_none() {
+                    return Err(format!("lure owner: no seat {owner}"));
+                }
                 self.lure = Some((owner, ticks_left(&mut words, "lure")?));
             }
             "cooldown" => self.lure_cooldown = next_num(&mut words, "cooldown")?,
@@ -366,9 +372,14 @@ impl Fields {
                 "{golden_banked} golden crabs banked of {crabs_banked} crabs"
             ));
         }
-        // Each is added to on the next spawn or placement, and the sum
-        // has to fit.
-        if signpost_seq == u64::MAX || next_crab_id == u32::MAX || next_gull_id == u32::MAX {
+        // Each is added to on the next spawn, placement, bank or tick, and
+        // the sum has to fit.
+        if signpost_seq == u64::MAX
+            || next_crab_id == u32::MAX
+            || next_gull_id == u32::MAX
+            || crabs_banked == u32::MAX
+            || tick == u64::MAX
+        {
             return Err("counters: no room left to count on".to_string());
         }
         let mut signposts = vec![None; w * h];
@@ -977,6 +988,15 @@ mod tests {
                 "a post count with no room",
                 bend(&good, "counters", "18446744073709551615 7 3 12 2"),
             ),
+            (
+                "a bank count with no room",
+                bend(&good, "counters", "99 7 3 4294967295 2"),
+            ),
+            (
+                "a clock with no room",
+                bend(&good, "tick", "18446744073709551615"),
+            ),
+            ("a lure for nobody", format!("{good}\nlure: 200 5")),
             (
                 "a crab past its tile",
                 good.replace(crab, "crab: 4 8 D 256 3 200"),
