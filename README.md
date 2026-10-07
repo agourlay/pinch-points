@@ -49,7 +49,7 @@ and everyone places at once. What it does differently:
   can route two crabs to two destinations. Herding puzzles become sorting
   ones.
 - **The score is on the board**: castles grow through four tiers as they
-  bank.
+  score.
 - **A gull raid costs half a castle** and spills live crabs back onto the
   sand for everyone to scramble over.
 - **The tide is the clock.** The last 30 seconds double the gull spawn
@@ -67,7 +67,7 @@ one still in progress.
   team play, series, and AI at three levels.
 - **Multiplayer**: up to 6 over LAN, on deterministic lockstep with
   desync detection. Anyone past the sixth chair watches instead,
-  and can talk to the table and vote on a tide event to call down on it.
+  and can talk to the table and vote on a random event to call down on it.
 - **Level Editor**: a level editor whose solver proves a level beatable
   before it ships.
 - **Challenges**, **Replay**, **Daily Challenge**, **Achievements**.

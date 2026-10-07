@@ -25,7 +25,7 @@ Rocket!** (1999):
 | Cats (KapuKapus) | Gulls |
 | Rockets | Sandcastles |
 | Arrow panels | Arrows |
-| "?" roulette specials | Tide events |
+| "?" roulette specials | Random events |
 | Cat Mania / Mouse Mania | Gull Mania / Crab Mania |
 | Stage Challenge | Challenges |
 | Wrap-around edges | Open-ocean levels |
@@ -46,10 +46,10 @@ claw as the tell. One bit of state that turns herding puzzles into *sorting*
 ones: the same corridor routes two crabs to two destinations.
 
 **The score is on the board.** Castles grow through four tiers as they
-bank; the HUD is the redundancy, not the readout.
+score; the HUD is the redundancy, not the readout.
 
 **A raid costs half, and hands some back.** A gull carries off half the
-castle's bank, spills live crabs onto the sand for everyone to scramble
+castle's score, spills live crabs onto the sand for everyone to scramble
 over, and leaves with its loot: a raid drains the flock instead of
 compounding it.
 
@@ -74,27 +74,27 @@ In versus you may have **3** standing by default (the match setup and the
 lobby both set it, from 1 to 6; one past it replaces your oldest), each
 washes away after ~10 seconds, and two gull crossings destroy one.
 
-**Crabs** stream out of spawner holes and are banked by walking into any
+**Crabs** stream out of spawner holes and score by walking into any
 castle. By value/speed: common (1), juvenile (2, fast), giant (10, slow),
-molting (5; banking one **lures every loose crab toward your castle for
+molting (5; scoring one **lures every loose crab toward your castle for
 10 s, overriding all arrows**), golden (50, rare), and sparkling
-(banking one spins the **tide event** roulette: crab/gull manias, speed
+(scoring one spins the **random event** roulette: crab/gull manias, speed
 shifts, castle swaps, fresh sand…).
 
 **Gulls** eat crabs on contact and are steerable: aiming them at a rival's
 castle is the entire offensive game. A gull reaching a castle **carries off
-half its bank** and departs. Gulls occasionally take flight for a few
+half its score** and departs. Gulls occasionally take flight for a few
 tiles, ignoring walls and arrows, so no corner is ever fully safe.
 
 **Castles are the scoreboard**, flanked by a ranked leaderboard on the left
 (the leader's card is biggest and wears the crown) and the tide clock over a
-live event feed on the right. A lure, a tide event or the gull surge is
+live event feed on the right. A lure, a random event or the final gull rush is
 announced across the centre of the screen as well.
 
-![The lure: banking a molting crab turns every loose crab the luring player's colour and pulls it home - here, to P2](screenshots/lure.png)
+![The lure: scoring a molting crab turns every loose crab the luring player's colour and pulls it home - here, to P2](screenshots/lure.png)
 
-**The tide.** The clock turns red for the last 30 seconds and the gull
-surge doubles; when the tide comes in, the highest bank wins. The results
+**The clock.** It turns red for the last 30 seconds and the gulls
+double; when time is up, the highest score wins. The results
 card also hands out the round's awards, for the comeback from furthest
 behind, the lure that paid most, the most arrows planted and the most
 score lost, so the rest of the table has something to point at too.
@@ -122,41 +122,41 @@ score lost, so the rest of the table has something to point at too.
   either of you free to put one down, turn it or pick it up. Every stage
   plays the same with two as with one, so all hundred are open to it.
 - **Versus**: local versus for **2-6 players** on one keyboard plus
-  gamepads. Six built-in maps, from the handcrafted classic beach to
+  gamepads. Six built-in maps, from the handcrafted classic map to
   generated arenas up to 20×13 and an edgeless **open ocean** (five and
-  six seats need one of the wide beaches, 16 tiles across or more), plus
-  any beach you built yourself that has a castle for every seat. Dials for
-  gull pressure and round length, **team play**, a **best of 3 or 5**
+  six players need one of the wide maps, 16 tiles across or more), plus
+  any map you built yourself that has a castle for every player. Dials for
+  how many gulls and round length, **team play**, a **best of 3 or 5**
   series with rotating maps and nameable seats. AI comes at three levels:
   easy fumbles, fierce reads the terrain and shoves gulls at the leader, and
   all three walk a cursor at a capped speed rather than reaching across the
   board for free (`cargo run --example ladder` plays them off). Every
-  round, local or online, opens on a **three-second count** with the beach
+  round, local or online, opens on a **three-second count** with the board
   holding still, so the table can read the map and find its castles first.
 - **Challenges**: eight score-attack challenge stages (timed goals, versus
   rules).
 - **Level Editor**: a level editor with a built-in solver, playtesting, and
-  save-to-campaign. `F1` names the level, `F5` cycles the beach size
-  (up to 20×13), `F6` toggles between a puzzle stage and a versus beach,
+  save-to-campaign. `F1` names the level, `F5` cycles the map size
+  (up to 20×13), `F6` toggles between a puzzle stage and a versus map,
   and `F2` files it under its name, so saving is keeping
   rather than replacing. Saved levels appear at the end of the Campaign
-  stage list, unlocked, and can be picked as a versus beach.
+  stage list, unlocked, and can be picked as a versus map.
 
   "Validate" searches under the same budget the campaign ships to, and a
   level's cost is the tiles its crabs cross rather than the size of its
-  beach: a big beach with a compact puzzle in it validates, where one filled
+  map: a big map with a compact puzzle in it validates, where one filled
   edge to edge may be beatable and still outlast the budget.
 - **Multiplayer**: online play for up to 6 over LAN: deterministic UDP
   lockstep, host-relay star, state-hash desync detection. You name yourself
-  before hosting or joining and the host names the beach, so a hall running
+  before hosting or joining and the host names the game, so a hall running
   many games at once can tell who from which. Hosts announce once a second
-  and the lobby lists every beach it can hear with how full it is: arrows
+  and the lobby lists every game it can hear with how full it is: arrows
   pick, Enter joins, `1`-`9` are shortcuts. The list sorts stably, scrolls,
-  and the cursor holds the beach it named rather than the row, so a game
+  and the cursor holds the game it named rather than the row, so a game
   vanishing never moves your finger onto someone else's. The host's match
   setup travels with the invitation, **AI seats** included, and every player
   joins under their P1 name, so the leaderboard reads the same on every
-  machine. A beach the host built travels whole; every other map is a seed
+  machine. A map the host built travels whole; every other map is a seed
   both machines build from.
 
   `T` sends a short line to the lobby, relayed by the host.
@@ -164,13 +164,13 @@ score lost, so the rest of the table has something to point at too.
   A match that has begun stays listed as **in progress**. A player cannot
   take a chair in a round already running, but can **queue** for the
   host's next one. A spectator can walk straight in: press **W** and pick
-  the beach, and the host sends the round as it stands, so you watch from
+  the game, and the host sends the round as it stands, so you watch from
   that moment on, with the rest of the crowd.
 
   The crowd has free hands and uses them. For the first half minute of a
   round, **P** calls who will win; the table hears what the crowd picked,
   and the results card says who called it, with a tally for the session.
-  **E** votes on a tide event to throw at the beach, and **T** says
+  **E** votes on a random event to throw at the match, and **T** says
   something to the table.
 
   When the match ends, Enter takes the **whole table back to the lobby**

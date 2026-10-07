@@ -661,7 +661,10 @@ pub fn editor_commands(
         state.feedback = if period == 0 {
             tr.ed_gulls_off.into()
         } else {
-            fill(tr.ed_gulls_every, &[("period", &period.to_string())])
+            // In seconds, as a player reads time: the period is kept in
+            // ticks, which mean nothing off the board.
+            let secs = period as f32 / crate::sim::TICKS_PER_SECOND as f32;
+            fill(tr.ed_gulls_every, &[("s", &format!("{secs}"))])
         };
     }
 

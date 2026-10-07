@@ -750,7 +750,7 @@ mod door_tests {
         assert_eq!(app.world().resource::<GameSettings>().names[0], "Crab 42");
         let next = typing(&app).expect("the beach's name is asked next");
         assert_eq!(next.what, Entry::GameName);
-        assert_eq!(next.text, "Crab 42's beach");
+        assert_eq!(next.text, "Crab 42's game");
         assert!(next.suggested);
     }
 
