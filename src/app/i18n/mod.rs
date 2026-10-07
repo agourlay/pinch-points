@@ -118,8 +118,11 @@ impl Lang {
         }
     }
 
-    /// Teaching hint for a level, if it has one. Column 0 is the English
-    /// name the row is keyed by, so the hints sit one place further along.
+    /// Teaching hint for a shipped level, if it has one. Column 0 is the
+    /// English name the row is keyed by, so the hints sit one place further
+    /// along. Keyed by name alone, so a level on a list is asked about
+    /// through [`crate::app::Campaign::hint`], which knows which levels
+    /// are shipped ones.
     pub fn level_hint(self, en_name: &str) -> Option<&'static str> {
         LEVEL_HINTS
             .iter()
@@ -127,9 +130,12 @@ impl Lang {
             .map(|row| row[1 + self.column()])
     }
 
-    /// Localized name for a built-in level; custom level names pass through.
+    /// Localized name for a built-in level; other names pass through.
     /// English is both the key and its own translation, so it needs no
-    /// lookup at all.
+    /// lookup at all. A player's level can share a shipped one's name, so
+    /// a level on a list is named through
+    /// [`crate::app::Campaign::shown_name`], which only asks this for the
+    /// shipped ones.
     pub fn level_name(self, en: &str) -> &str {
         if self == Lang::En {
             return en;

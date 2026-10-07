@@ -2,6 +2,7 @@
 //! the built-in ones.
 
 use crate::app::editor;
+use crate::app::i18n::Lang;
 use crate::sim::{Level, LevelKind};
 use bevy::prelude::*;
 
@@ -81,6 +82,36 @@ impl Campaign {
         }
     }
 
+    /// The name level `at` is shown under in `lang`.
+    ///
+    /// The translations are written for the shipped levels and keyed by
+    /// their English names, on both lists at once, so only a shipped level
+    /// is looked up. A player's level keeps the name they gave it, even
+    /// one that happens to match a stage on the other list.
+    pub fn shown_name(&self, at: usize, lang: Lang) -> &str {
+        let name = &self.levels[at].name;
+        match self.is_shipped(at) {
+            true => lang.level_name(name),
+            false => name,
+        }
+    }
+
+    /// The teaching hint for level `at`, if it is a shipped level that has
+    /// one. A player's level teaches what its author meant it to, which no
+    /// hint was written for, so it borrows none on account of its name.
+    pub fn hint(&self, at: usize, lang: Lang) -> Option<&'static str> {
+        match self.is_shipped(at) {
+            true => lang.level_hint(&self.levels[at].name),
+            false => None,
+        }
+    }
+
+    /// Whether level `at` ships with the game, rather than being one of
+    /// the player's own behind it.
+    fn is_shipped(&self, at: usize) -> bool {
+        at < self.builtins
+    }
+
     /// Whether the current level ends the run Enter is walking. Both
     /// sections end one: the shipped campaign stops at its last shipped
     /// stage rather than walking on into the player's own levels, and
@@ -114,22 +145,23 @@ pub(crate) fn tide_pool_levels() -> (Vec<Level>, usize) {
 }
 
 /// Give every level on the list a name of its own. Progress is filed by
-/// name, and so are the translated names and the hints, so a player's
-/// puzzle called "Welcome Ashore" would share the shipped one's tick, its
-/// French name and its hint. The shipped list is unique already; the
-/// player's levels are renamed on the way in, in list order, with a count
-/// after the name, and the file on disk keeps the name it was saved
-/// under.
+/// the list and the name, so a player's puzzle called "Welcome Ashore"
+/// would share the shipped one's tick. The shipped list is unique
+/// already; the player's levels are renamed on the way in, in list order,
+/// with a count after the name, and the file on disk keeps the name it was
+/// saved under.
 ///
-/// Every shipped name is reserved, not only the ones on this list. The
-/// translations and the hints are one table for both campaigns, so a
-/// puzzle of the player's called "First Flood" would be shown under Beach
-/// Day's French name and offered its hint, on a list Beach Day is not on.
+/// Only this list's names are reserved. A puzzle of the player's called
+/// "First Flood", like a Beach Day stage, shares no tick with it, since
+/// the two are filed under different lists; and it is not shown under
+/// that stage's translated name or offered its hint, because those are
+/// only looked up for shipped levels (see [`Campaign::shown_name`]).
+/// Renaming it would cost the player the tick it has earned under its own
+/// name.
 pub(crate) fn disambiguate(levels: &mut [Level], builtins: usize) {
     let mut taken: std::collections::HashSet<String> = levels[..builtins.min(levels.len())]
         .iter()
         .map(|level| level.name.clone())
-        .chain(shipped_names())
         .collect();
     for level in levels.iter_mut().skip(builtins) {
         if taken.insert(level.name.clone()) {
@@ -144,16 +176,6 @@ pub(crate) fn disambiguate(levels: &mut [Level], builtins: usize) {
             .unwrap_or_else(|| level.name.clone());
         level.name = renamed;
     }
-}
-
-/// Every name a shipped level answers to, on either list: the Tide Pool
-/// campaign and Beach Day ([`crate::sim::challenge_levels`], which is the
-/// whole of Beach Day's list, since the player's levels never join it).
-fn shipped_names() -> impl Iterator<Item = String> {
-    crate::sim::campaign_levels()
-        .into_iter()
-        .chain(crate::sim::challenge_levels())
-        .map(|level| level.name)
 }
 
 /// The player's levels that are stages: the ones they built as puzzles, and
@@ -312,12 +334,14 @@ mod tests {
         );
     }
 
-    /// A Tide Pool level of the player's named like a Beach Day stage is
-    /// told apart too, though Beach Day is not on its list: the name is
-    /// what the translations and the hints are looked up by, and both
-    /// campaigns share that table.
+    /// A Tide Pool level of the player's named like a Beach Day stage keeps
+    /// its name, and with it the tick progress filed under that name: the
+    /// two lists file progress apart. It is shown under its own name all
+    /// the same, untranslated and with no hint, since those are only for
+    /// the shipped levels, and so is a Tide Pool level of theirs whose
+    /// name a shipped one's translation happens to be keyed by.
     #[test]
-    fn a_player_level_named_like_a_beach_day_stage_is_told_apart() {
+    fn a_player_level_named_like_a_beach_day_stage_keeps_its_name() {
         let beach_day = crate::sim::challenge_levels()[0].name.clone();
         let tide_pool = crate::sim::campaign_levels()[0].name.clone();
         let mut levels = vec![
@@ -326,11 +350,35 @@ mod tests {
         ];
         disambiguate(&mut levels, 1);
         assert_eq!(levels[0].name, tide_pool, "the shipped one is left alone");
-        assert_eq!(levels[1].name, format!("{beach_day} (2)"));
+        assert_eq!(levels[1].name, beach_day, "and so is the player's");
+
+        let lang = Lang::Fr;
+        assert_ne!(
+            lang.level_name(&beach_day),
+            beach_day,
+            "the Beach Day stage has a French name for this to be about"
+        );
+        let campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins: 1,
+        };
+        assert_eq!(campaign.shown_name(1, lang), beach_day, "untranslated");
+        assert_eq!(campaign.hint(1, lang), None, "and with no hint");
         assert_eq!(
-            crate::app::i18n::Lang::Fr.level_name(&levels[1].name),
-            levels[1].name,
-            "and is shown under its own name, untranslated"
+            campaign.shown_name(0, lang),
+            lang.level_name(&tide_pool),
+            "the shipped stage is still translated"
+        );
+        assert_eq!(campaign.hint(0, lang), lang.level_hint(&tide_pool));
+
+        let mut progress = crate::app::progress::Progress::default();
+        progress.mark(CampaignKind::TidePool, &beach_day);
+        assert!(progress.is_cleared(CampaignKind::TidePool, &beach_day));
+        assert!(
+            !progress.is_cleared(CampaignKind::BeachDay, &beach_day),
+            "the stage it is named like is not ticked by it"
         );
     }
 

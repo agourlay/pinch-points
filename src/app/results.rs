@@ -569,9 +569,8 @@ pub fn spawn_puzzle_won(
     art: Res<crate::app::art::Art>,
 ) {
     let tr = settings.tr();
-    let name = settings
-        .language
-        .level_name(&campaign.current().name)
+    let name = campaign
+        .shown_name(campaign.index, settings.language)
         .to_string();
     // The shipped campaign ends with its last shipped stage; the player's
     // own levels behind it are a shelf, not stage eighty-three, and the
@@ -722,9 +721,8 @@ pub fn spawn_puzzle_lost(
     art: Option<Res<crate::app::art::Art>>,
 ) {
     let tr = settings.tr();
-    let name = settings
-        .language
-        .level_name(&campaign.current().name)
+    let name = campaign
+        .shown_name(campaign.index, settings.language)
         .to_string();
     let card = results_card(&mut commands);
     commands.entity(card).with_children(|wrap| {

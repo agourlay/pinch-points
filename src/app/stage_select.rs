@@ -249,7 +249,7 @@ pub fn caption(
     format!(
         "{shelf}{}. {} - {tail}",
         tile_number(campaign, index),
-        lang.level_name(&level.name)
+        campaign.shown_name(index, lang)
     )
 }
 
@@ -667,9 +667,8 @@ pub fn update_stage_tiles(
         let hint = match state {
             TileState::Locked => String::new(),
             TileState::Cleared | TileState::Open => caps.legend(
-                settings
-                    .language
-                    .level_hint(&campaign.levels[list.selected].name)
+                campaign
+                    .hint(list.selected, settings.language)
                     .unwrap_or(""),
             ),
         };

@@ -217,7 +217,10 @@ pub(super) fn puzzle_text(
         true => tr.stage_custom,
         false => campaign_title,
     };
-    let title = format!("{section} {place}/{of} - {}", lang.level_name(&level.name));
+    let title = format!(
+        "{section} {place}/{of} - {}",
+        campaign.shown_name(campaign.index, lang)
+    );
     let used = sim.0.signpost_count(0);
     let saved = fill(
         tr.saved_count,

@@ -5,8 +5,8 @@
 //! Progress is keyed by campaign kind and level *name*, not by index, so
 //! inserting a level into the middle of the campaign does not silently
 //! re-lock everything after it. Names are therefore unique on the list:
-//! a player's level that shares a shipped one's name is renamed as it is
-//! loaded (see [`crate::app::campaign::disambiguate`]), or the two would
+//! a player's level that shares a shipped one's name on its list is
+//! renamed as it is loaded (see [`crate::app::campaign::disambiguate`]), or the two would
 //! share one tick.
 
 use crate::app::{Campaign, CampaignKind};

@@ -345,7 +345,11 @@ pub fn update_hint(
                 // ones, and the prompt line already points at Settings.
                 let honest = name != KEY_LESSON_LEVEL || settings.stock_legend();
                 if *phase.get() == Phase::Setup && honest {
-                    caps.legend(settings.language.level_hint(name).unwrap_or(""))
+                    caps.legend(
+                        campaign
+                            .hint(campaign.index, settings.language)
+                            .unwrap_or(""),
+                    )
                 } else {
                     String::new()
                 }
