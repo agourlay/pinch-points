@@ -215,12 +215,7 @@ fn type_a_name(
         }
     }
     if crate::app::menu_ui::enter(keys) || keys.just_pressed(KeyCode::Escape) {
-        let tidy = state.name.trim().to_string();
-        state.name = if tidy.is_empty() {
-            tr.ed_default_name.to_string()
-        } else {
-            tidy
-        };
+        state.name = tidy_name(&state.name, tr);
         state.mode = Mode::JustNamed;
         state.feedback.clear();
     }
@@ -228,6 +223,22 @@ fn type_a_name(
 
 /// How long a level's name may be.
 const NAME_MAX: usize = 28;
+
+/// A name as the editor keeps one, however it arrived: trimmed, no longer
+/// than [`NAME_MAX`], and the default name when nothing is left.
+///
+/// Typing bounds a name key by key, but a pasted level brings whatever its
+/// text says, and the level format takes an empty name as readily as a
+/// long one. An empty one is a level called nothing, and a long one went
+/// past the cap to where saving cuts a file name short, so two long names
+/// alike up to there shared one file.
+fn tidy_name(raw: &str, tr: &crate::app::i18n::Tr) -> String {
+    let capped: String = raw.trim().chars().take(NAME_MAX).collect();
+    match capped.trim_end() {
+        "" => tr.ed_default_name.to_string(),
+        name => name.to_string(),
+    }
+}
 
 /// True while the editor is spelling out a name, which is when the board
 /// keys mean letters. A run condition rather than an early return, because
@@ -289,25 +300,48 @@ pub struct EditorNews<'w> {
 
 /// Put a different board on the sand: a resize or a pasted level.
 ///
-/// The load path's rule applies here too (see `BoardSprites` in
-/// `session.rs`): every sprite drawn from the old board goes, because the
-/// sync systems probe the new board at each sprite's remembered tile, and a
-/// crab, castle or log left over from a bigger beach probes a tile the
-/// smaller one does not have. The cursor comes back to the middle for the
-/// same reason: movement only clamps on a step, so it would stand off the
-/// board until it was moved.
+/// The cursor comes back to the middle, for the reason the sprites go (see
+/// [`swap_board`]): movement only clamps on a step, so on a smaller beach
+/// it would stand off the board until it was moved. And a check still
+/// running is dropped, because it was handed the board that went and would
+/// answer "solvable" or not over this one.
 fn replace_board(
     board: Board,
     sim: &mut Sim,
     state: &mut EditorState,
     commands: &mut Commands,
-    sprites: BoardSprites,
+    sprites: &BoardSprites,
     cursors: &mut Query<(&mut Cursor, &mut Transform)>,
 ) {
-    sim.0 = board;
-    state.dirty = true;
-    crate::app::session::despawn_board_sprites(commands.reborrow(), sprites);
+    swap_board(board, sim, state, commands, sprites);
+    state.solver = None;
     crate::app::cursor::center_on(&sim.0, cursors);
+}
+
+/// Put `board` on the sand in place of the one there, which comes back.
+/// Every way a board changes other than an edit goes through here: a
+/// resize, a paste, and a playtest starting or ending.
+///
+/// The load path's rule applies (see `BoardSprites` in `session.rs`):
+/// every sprite drawn from the old board goes. The sync systems probe the
+/// new board at each sprite's remembered tile, and a crab, castle or log
+/// left over from a bigger beach probes a tile the smaller one does not
+/// have. And they match creatures to sprites by id, with a crab's size,
+/// claws and shine set once at its spawn: the playtest's board is read
+/// back from text, which numbers crabs afresh from nought, so once a crab
+/// had been erased every crab after it was drawn as its neighbour, and a
+/// crab a spawner made during the test lent its look to the edited crab
+/// that came back on Escape under the same number.
+fn swap_board(
+    board: Board,
+    sim: &mut Sim,
+    state: &mut EditorState,
+    commands: &mut Commands,
+    sprites: &BoardSprites,
+) -> Board {
+    state.dirty = true;
+    sprites.despawn_all(commands);
+    std::mem::replace(&mut sim.0, board)
 }
 
 /// Tile and creature painting under the cursor: walls, terrain, crabs,
@@ -369,7 +403,7 @@ pub fn editor_input(
             &mut sim,
             &mut state,
             &mut commands,
-            sprites,
+            &sprites,
             &mut cursors,
         );
         state.feedback = fill(
@@ -469,11 +503,11 @@ fn is_from_elsewhere(pasted: &Level, bench: &Level, shelf: &[Level]) -> bool {
 /// session had saved it. And that name is taken back out of the ones this
 /// session has saved under, so saving over a file already called that
 /// says so.
-fn take_level(state: &mut EditorState, level: &Level) {
+fn take_level(state: &mut EditorState, level: &Level, tr: &crate::app::i18n::Tr) {
     state.posts = level.posts;
     state.kind = level.kind;
-    state.name.clone_from(&level.name);
-    state.mine.remove(&level.name);
+    state.name = tidy_name(&level.name, tr);
+    state.mine.remove(&state.name);
 }
 
 /// The level as it stands on the sand, under the name and the kind the
@@ -570,7 +604,7 @@ pub fn editor_commands(
                 if is_from_elsewhere(&level, &bench, &shelf) {
                     taken.write(crate::app::CodeTaken);
                 }
-                take_level(&mut state, &level);
+                take_level(&mut state, &level, tr);
                 // A pasted level is any size, so it is a board swap in
                 // full, sprites and cursor included.
                 replace_board(
@@ -578,7 +612,7 @@ pub fn editor_commands(
                     &mut sim,
                     &mut state,
                     &mut commands,
-                    sprites,
+                    &sprites,
                     &mut cursors,
                 );
                 // A pasted level is the one board here that nobody vetted:
@@ -586,9 +620,6 @@ pub fn editor_commands(
                 // dropped straight onto the sand. Checked on the way in,
                 // which for a beach is a count of its castles.
                 if level.kind == LevelKind::Arena {
-                    // And a check still running on the board that went
-                    // would answer for it over this one.
-                    state.solver = None;
                     state.feedback = arena_report(&sim.0, tr);
                 } else {
                     start_validation(&mut state, level);
@@ -689,9 +720,8 @@ pub fn editor_commands(
         // seed rolls them, which is not how they stand on a board that
         // placed and erased a few.
         let played = level_here(&state, board, &state.name).board();
-        let snapshot = std::mem::replace(board, played);
+        let snapshot = swap_board(played, &mut sim, &mut state, &mut commands, &sprites);
         state.mode = Mode::Testing(Box::new(snapshot));
-        state.dirty = true;
         state.feedback = tr.ed_playtest_prompt.into();
     }
     if keys.just_pressed(KeyCode::Escape) {
@@ -706,9 +736,14 @@ pub fn editor_test_input(
     mut sim: ResMut<Sim>,
     settings: Res<GameSettings>,
     mut state: ResMut<EditorState>,
-    cursors: Query<&Cursor>,
+    swap: BoardSwap,
 ) {
-    let Some(cursor) = cursors.iter().next() else {
+    let BoardSwap {
+        mut commands,
+        sprites,
+        cursors,
+    } = swap;
+    let Some((cursor, _)) = cursors.iter().next() else {
         return;
     };
     for (key, dir) in ARROWS {
@@ -724,8 +759,7 @@ pub fn editor_test_input(
     if keys.just_pressed(KeyCode::Escape)
         && let Mode::Testing(snapshot) = std::mem::take(&mut state.mode)
     {
-        sim.0 = *snapshot;
-        state.dirty = true;
+        swap_board(*snapshot, &mut sim, &mut state, &mut commands, &sprites);
         state.feedback = settings.tr().ed_back.into();
     }
 }
@@ -1067,6 +1101,131 @@ mod tests {
         );
     }
 
+    /// Starting and ending a playtest swaps boards, so both take the old
+    /// board's creature sprites with them. The playtest's crabs are
+    /// numbered afresh, and a sprite kept by number wore another crab's
+    /// size and claws.
+    #[test]
+    fn a_playtest_redraws_its_creatures_both_ways() {
+        let mut board = sand();
+        board.set_tile(0, 0, TileKind::Castle(0));
+        board.spawn_crab(2, 2, Direction::Right, Handedness::Left, CrabKind::Giant);
+        board.spawn_crab(3, 2, Direction::Right, Handedness::Right, CrabKind::Common);
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.add_message::<crate::app::LevelSaved>();
+        app.add_message::<crate::app::CodeShared>();
+        app.add_message::<crate::app::CodeTaken>();
+        app.insert_resource(Sim(board));
+        app.insert_resource(EditorState {
+            posts: 3,
+            name: "Stage".into(),
+            ..EditorState::default()
+        });
+        app.init_resource::<GameSettings>();
+        app.init_resource::<Clipboard>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.world_mut()
+            .spawn((Cursor::seated(0), Transform::default()));
+        app.add_systems(
+            Update,
+            (
+                editor_commands.run_if(|state: Res<EditorState>| !state.is_testing()),
+                editor_test_input.run_if(editor_testing),
+            )
+                .chain(),
+        );
+        let tap = |app: &mut App, key: KeyCode| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(key);
+            app.update();
+        };
+        let draw = |app: &mut App| {
+            let world = app.world_mut();
+            let crab = crate::app::creatures::CrabSprite {
+                id: 1,
+                kind: CrabKind::Common,
+                shade: 0.0,
+            };
+            world.spawn(crab);
+            world.spawn(crate::app::creatures::GullSprite(0));
+        };
+        let drawn = |app: &mut App| {
+            let world = app.world_mut();
+            let crabs = world
+                .query::<&crate::app::creatures::CrabSprite>()
+                .iter(world)
+                .count();
+            let gulls = world
+                .query::<&crate::app::creatures::GullSprite>()
+                .iter(world)
+                .count();
+            crabs + gulls
+        };
+
+        draw(&mut app);
+        tap(&mut app, KeyCode::Enter);
+        assert!(app.world().resource::<EditorState>().is_testing());
+        assert_eq!(drawn(&mut app), 0, "the edited board's sprites went");
+
+        draw(&mut app);
+        tap(&mut app, KeyCode::Escape);
+        assert!(!app.world().resource::<EditorState>().is_testing());
+        assert_eq!(drawn(&mut app), 0, "and so did the playtest's");
+    }
+
+    /// A check still running was handed the board a resize threw away, so
+    /// the resize drops it rather than let it answer for the fresh beach.
+    #[test]
+    fn a_resize_drops_the_check_on_the_old_beach() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(Sim(sand()));
+        app.insert_resource(EditorState {
+            solver: Some(Validation {
+                slot: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                posts: 3,
+            }),
+            ..EditorState::default()
+        });
+        app.init_resource::<GameSettings>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        app.add_systems(Update, editor_input);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::F5);
+        app.update();
+        let width = app.world().resource::<Sim>().0.width();
+        assert_ne!(width, sand().width(), "the blank beach was resized");
+        assert!(app.world().resource::<EditorState>().solver.is_none());
+    }
+
+    /// A pasted name is kept the way a typed one is: trimmed, capped, and
+    /// the default when there is nothing to it.
+    #[test]
+    fn a_pasted_name_is_tidied_like_a_typed_one() {
+        let tr = &crate::app::i18n::EN;
+        let named = |name: &str| {
+            let mut state = EditorState::default();
+            let mut level = Level::from_board("x", 3, sand());
+            level.name = name.into();
+            take_level(&mut state, &level, tr);
+            state.name
+        };
+        assert_eq!(named("  Gull Alley "), "Gull Alley");
+        assert_eq!(named(""), tr.ed_default_name);
+        assert_eq!(named("   "), tr.ed_default_name);
+        let long = named(&"\u{e9}".repeat(NAME_MAX + 12));
+        assert_eq!(long.chars().count(), NAME_MAX, "cut on characters");
+        // A cut landing on a space leaves no trailing space behind it.
+        let spaced = format!("{} tail", "a".repeat(NAME_MAX - 1));
+        assert_eq!(named(&spaced), "a".repeat(NAME_MAX - 1));
+    }
+
     /// The flock dial steps from whatever board is on the sand, so a board
     /// a paste or a resize swapped in starts the dial from its own period
     /// rather than from where the last board's left it.
@@ -1112,7 +1271,7 @@ mod tests {
         state.mine.insert("My Beach".into());
         state.mine.insert("Gull Alley".into());
         let pasted = Level::from_board("Gull Alley", 5, sand()).with_kind(LevelKind::Arena);
-        take_level(&mut state, &pasted);
+        take_level(&mut state, &pasted, &crate::app::i18n::EN);
         assert_eq!(state.name, "Gull Alley");
         assert_eq!((state.posts, state.kind), (5, LevelKind::Arena));
         assert!(!state.mine.contains("Gull Alley"), "a save over it is said");

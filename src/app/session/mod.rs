@@ -85,7 +85,7 @@ pub(super) struct BoardSprites<'w, 's> {
 }
 
 impl BoardSprites<'_, '_> {
-    fn despawn_all(&self, commands: &mut Commands) {
+    pub(super) fn despawn_all(&self, commands: &mut Commands) {
         for entity in self
             .statics
             .iter()
