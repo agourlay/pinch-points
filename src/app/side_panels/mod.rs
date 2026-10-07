@@ -230,9 +230,6 @@ fn spawn_score_chip(
                 ..default()
             })
             .with_children(|line| {
-                if bot {
-                    line.spawn(robot_icon(art, seat, 18.0));
-                }
                 let font = TextFont {
                     font_size: FontSize::Px(menu_ui::type_scale::BODY),
                     ..default()
@@ -243,12 +240,25 @@ fn spawn_score_chip(
                     ..default()
                 })
                 .with_children(|clip| {
+                    // The robot rides in the line with the name, so a name
+                    // too long for the chip clips at its end and the robot
+                    // at its start stays where it is read first.
                     clip.spawn((
-                        Text::new(name),
+                        Text::new(""),
                         font.clone(),
                         TextLayout::no_wrap(),
                         TextColor(palette::CHIP_NAME),
-                    ));
+                    ))
+                    .with_children(|text| {
+                        if bot {
+                            text.spawn(robot_inline(art, seat, 18.0));
+                        }
+                        text.spawn((
+                            TextSpan::new(beside_the_robot(bot, &name)),
+                            font.clone(),
+                            TextColor(palette::CHIP_NAME),
+                        ));
+                    });
                 });
                 if !tag.is_empty() {
                     line.spawn((
@@ -322,19 +332,31 @@ fn spawn_score_chip(
     });
 }
 
-/// The bot tag beside a name: the robot's head in the seat's colour, `px`
-/// square. The game sets it from what holds the seat, never from the name,
-/// so a bot that calls itself after a friend still wears it.
-pub fn robot_icon(art: &crate::app::art::Art, seat: u8, px: f32) -> impl Bundle {
-    (
-        ImageNode::new(art.robot.clone()).with_color(palette::player_color(seat).lighter(0.3)),
-        Node {
-            width: Val::Px(px),
-            height: Val::Px(px),
-            flex_shrink: 0.0,
-            ..default()
-        },
-    )
+/// The bot tag before a name: the robot's head in the seat's colour, `px`
+/// square, drawn in the line of text as one of its spans. The game sets it
+/// from what holds the seat, never from the name, so a bot that calls
+/// itself after a friend still wears it.
+///
+/// In the line rather than a node beside it (Bevy 0.20's `InlineImage`):
+/// it sits on the text's own line, clips with it, and needs no row of
+/// nodes around the text to hold it.
+pub fn robot_inline(art: &crate::app::art::Art, seat: u8, px: f32) -> InlineImage {
+    InlineImage {
+        image: art.robot.clone(),
+        color: palette::player_color(seat).lighter(0.3),
+        width: Some(px),
+        height: Some(px),
+        ..default()
+    }
+}
+
+/// The text that follows the robot, or stands alone without one: a space
+/// apart from it when there is one.
+pub fn beside_the_robot(bot: bool, text: &str) -> String {
+    match bot {
+        true => format!(" {text}"),
+        false => text.to_string(),
+    }
 }
 
 /// The right sidebar: the big tide clock over the event feed.

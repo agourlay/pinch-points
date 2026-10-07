@@ -188,16 +188,24 @@ fn standings_rows(
             })
             .collect();
     }
+    // Every row as wide as the widest, name and tag together, so the
+    // scores stand in one column: each row is centred on its own, and a
+    // long name ("Longnamebot99") pushed its row half a name off the rest.
+    let who = |seat: u8| format!("{}{}", names.label(settings.tr(), seat), tag(seat));
+    let width = (0..seats)
+        .map(|seat| who(seat).chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(MIN_WHO);
     standing_order(scores, seats)
         .iter()
         .enumerate()
         .map(|(place, &seat)| {
-            let label = names.label(settings.tr(), seat);
             (
                 format!(
-                    "{}  {label}{:<7} {:>4}",
+                    "{}  {:<width$} {:>4}",
                     place + 1,
-                    tag(seat),
+                    who(seat),
                     scores[seat as usize]
                 ),
                 palette::player_color(seat),
@@ -205,6 +213,11 @@ fn standings_rows(
         })
         .collect()
 }
+
+/// The narrowest the name column of the standings is drawn: a seat label
+/// and its tag, "P2 (AI)", which every row was padded to before rows took
+/// the widest name's width.
+const MIN_WHO: usize = 9;
 
 /// The seats best first, the order a free-for-all's standings are written
 /// in: by score, and by seat between equals.
@@ -392,25 +405,31 @@ pub fn spawn_versus_results(
                     card.spawn((Text::new(line), row.0, row.1));
                     continue;
                 }
-                card.spawn(Node {
-                    column_gap: Val::Px(6.0),
-                    align_items: AlignItems::Center,
-                    ..default()
-                })
-                .with_children(|line_row| {
-                    match seat.filter(|&seat| kinds.bot(seat)) {
-                        Some(seat) => {
-                            line_row.spawn(crate::app::side_panels::robot_icon(&art, seat, 22.0));
-                        }
-                        None => {
-                            line_row.spawn(Node {
-                                width: Val::Px(22.0),
-                                ..default()
-                            });
-                        }
-                    }
-                    line_row.spawn((Text::new(line), row.0, row.1));
-                });
+                // At a table with a bot every row leads with a robot's
+                // room, and only the bots' draw one: the columns of the
+                // table stay lined up whoever holds which seat.
+                let bot = seat.filter(|&seat| kinds.bot(seat));
+                let room = match bot {
+                    Some(seat) => crate::app::side_panels::robot_inline(&art, seat, 22.0),
+                    // The robot itself, unseen: a box only takes its room
+                    // once its image has loaded, and Bevy's own blank one
+                    // never does, so it took none and these rows sat a
+                    // robot's width off the bots'.
+                    None => InlineImage {
+                        color: Color::NONE,
+                        ..crate::app::side_panels::robot_inline(&art, 0, 22.0)
+                    },
+                };
+                let (font, ink) = (row.0.clone(), row.1);
+                card.spawn((Text::new(""), row.0, row.1))
+                    .with_children(|text| {
+                        text.spawn(room);
+                        text.spawn((
+                            TextSpan::new(crate::app::side_panels::beside_the_robot(true, &line)),
+                            font,
+                            ink,
+                        ));
+                    });
             }
             if !awards.is_empty() {
                 card.spawn(Node {

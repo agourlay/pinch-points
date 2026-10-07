@@ -78,9 +78,13 @@ pub struct TableView;
 #[derive(Component)]
 pub struct PlayerRowName(pub usize);
 
-/// The robot beside a name at the table, shown when a bot holds the place.
+/// The robot before a name at the table, drawn when a bot holds the place:
+/// an `InlineImage` in the row's line of text, sized to nothing otherwise.
 #[derive(Component)]
 pub struct PlayerRowRobot(pub usize);
+
+/// How big the robot is at the table.
+const TABLE_ROBOT_PX: f32 = 18.0;
 
 /// The robot on a row of the beach list, shown when that beach takes bots.
 #[derive(Component)]
@@ -221,19 +225,30 @@ fn line_at(chat: &[Said], row: usize) -> Option<&Said> {
     chat.len().checked_sub(back + 1).map(|at| &chat[at])
 }
 
-/// The robots: beside a bot at the table, and on a beach that takes bots.
+/// Whether a bot holds the table's place `row`.
+fn bot_at(state: &LobbyState, row: usize) -> bool {
+    state.table.get(row).is_some() && state.table_kinds.get(row) == Some(&crate::sim::SeatKind::Bot)
+}
+
+/// The robots: before a bot at the table, and on a beach that takes bots.
 pub fn update_lobby_robots(
     state: Res<LobbyState>,
-    mut at_table: Query<(&PlayerRowRobot, &mut Node, &mut ImageNode), Without<ListRowRobot>>,
-    mut on_list: Query<(&ListRowRobot, &mut Visibility, &mut ImageNode), Without<PlayerRowRobot>>,
+    mut at_table: Query<(&PlayerRowRobot, &mut InlineImage)>,
+    mut on_list: Query<(&ListRowRobot, &mut Visibility, &mut ImageNode)>,
 ) {
-    for (row, mut node, mut image) in &mut at_table {
-        let bot = state.table.get(row.0).is_some()
-            && state.table_kinds.get(row.0) == Some(&crate::sim::SeatKind::Bot);
-        crate::app::menu_ui::set_shown(&mut node, bot);
-        let tint = seat_tone(row.0);
-        if image.color != tint {
-            image.color = tint;
+    for (row, mut image) in &mut at_table {
+        let px = match bot_at(&state, row.0) {
+            true => TABLE_ROBOT_PX,
+            false => 0.0,
+        };
+        let want = InlineImage {
+            color: seat_tone(row.0),
+            width: Some(px),
+            height: Some(px),
+            ..image.clone()
+        };
+        if *image != want {
+            *image = want;
         }
     }
     let listing = !state.standing().at_a_beach();
@@ -258,14 +273,22 @@ pub fn update_lobby_robots(
 /// Paint the table: everyone at this beach, the local player first.
 pub fn update_lobby_players(
     state: Res<LobbyState>,
-    mut rows: Query<(&PlayerRowName, &mut Text, &mut TextColor)>,
+    mut rows: Query<(&PlayerRowName, &mut TextSpan, &mut TextColor)>,
 ) {
     for (row, mut text, mut color) in &mut rows {
         let (line, tone) = match state.table.get(row.0) {
-            Some(who) => (format!("{}. {who}", row.0 + 1), seat_tone(row.0)),
+            Some(who) => (
+                crate::app::side_panels::beside_the_robot(
+                    bot_at(&state, row.0),
+                    &format!("{}. {who}", row.0 + 1),
+                ),
+                seat_tone(row.0),
+            ),
             None => (String::new(), Color::NONE),
         };
-        crate::app::menu_ui::set_text(&mut text, &line);
+        if text.0 != line {
+            text.0 = line;
+        }
         crate::app::menu_ui::set_color(&mut color, tone);
     }
 }
@@ -712,23 +735,35 @@ fn spawn_table_face(
                                         ..default()
                                     })
                                     .with_children(|line| {
+                                        let (text, font, ink) = row_text(21.0);
                                         line.spawn((
-                                            PlayerRowRobot(row),
-                                            ImageNode::new(art.robot.clone()),
-                                            Node {
-                                                width: Val::Px(18.0),
-                                                height: Val::Px(18.0),
-                                                margin: UiRect::right(Val::Px(4.0)),
-                                                flex_shrink: 0.0,
-                                                display: Display::None,
-                                                ..default()
-                                            },
-                                        ));
-                                        line.spawn((
-                                            PlayerRowName(row),
-                                            row_text(21.0),
+                                            text,
+                                            font.clone(),
+                                            ink,
                                             TextLayout::no_wrap(),
-                                        ));
+                                        ))
+                                        .with_children(
+                                            |text| {
+                                                // Sized to nothing until a bot
+                                                // sits here: a box of no size
+                                                // takes no room in the line.
+                                                text.spawn((
+                                                    PlayerRowRobot(row),
+                                                    InlineImage {
+                                                        image: art.robot.clone(),
+                                                        width: Some(0.0),
+                                                        height: Some(0.0),
+                                                        ..default()
+                                                    },
+                                                ));
+                                                text.spawn((
+                                                    PlayerRowName(row),
+                                                    TextSpan::default(),
+                                                    font,
+                                                    ink,
+                                                ));
+                                            },
+                                        );
                                     });
                                 }
                             });
