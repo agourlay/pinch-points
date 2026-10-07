@@ -222,6 +222,7 @@ pub static RU: Tr = Tr {
     prompt_mute: "M: тишина",
     replay_draw: "ничья",
     pause_title: "ПАУЗА",
+    pause_menu_title: "МЕНЮ",
     pause_continue: "Продолжить",
     pause_to_menu: "Назад в меню",
     pause_quit: "Выйти из игры",

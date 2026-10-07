@@ -222,6 +222,7 @@ pub static DE: Tr = Tr {
     prompt_mute: "M: stumm",
     replay_draw: "unentschieden",
     pause_title: "PAUSE",
+    pause_menu_title: "MENÜ",
     pause_continue: "Weiter",
     pause_to_menu: "Zurück zum Menü",
     pause_quit: "Spiel beenden",

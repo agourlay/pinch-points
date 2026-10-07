@@ -215,6 +215,7 @@ pub static ES: Tr = Tr {
     prompt_mute: "M: silencio",
     replay_draw: "empate",
     pause_title: "PAUSA",
+    pause_menu_title: "MENÚ",
     pause_continue: "Seguir",
     pause_to_menu: "Volver al menú",
     pause_quit: "Salir del juego",

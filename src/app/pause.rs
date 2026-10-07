@@ -50,14 +50,31 @@ pub struct PauseMenu {
     selected: usize,
 }
 
+impl PauseMenu {
+    /// Whether the card is up and the round is stopped under it, which is
+    /// what the count, the music and the prompt line wait on. A
+    /// spectator's own card stops nothing: the table plays on behind it,
+    /// and a countdown held under it left the spectator behind the match
+    /// until the host forgot them as gone.
+    pub fn stops_the_round(&self) -> bool {
+        self.open && !self.own
+    }
+}
+
 #[derive(Component)]
 pub struct PauseUi;
 
 #[derive(Component)]
 pub struct PauseRow(usize);
 
-fn spawn_card(commands: &mut Commands, settings: &GameSettings) {
+/// The card, titled for what it is: "paused" when the round stopped, and
+/// a plain menu for a spectator, whose match plays on behind it.
+fn spawn_card(commands: &mut Commands, settings: &GameSettings, own: bool) {
     let tr = settings.tr();
+    let title = match own {
+        true => tr.pause_menu_title,
+        false => tr.pause_title,
+    };
     commands
         .spawn((
             PauseUi,
@@ -67,7 +84,7 @@ fn spawn_card(commands: &mut Commands, settings: &GameSettings) {
         .with_children(|wrap| {
             wrap.spawn(menu_ui::screen_card()).with_children(|card| {
                 card.spawn((
-                    Text::new(tr.pause_title),
+                    Text::new(title),
                     menu_ui::display_font(30.0),
                     TextColor(palette::GOLD),
                 ));
@@ -166,7 +183,7 @@ pub fn pause_input(
                 Some(_) => {}
                 None => paused.0 = true,
             }
-            spawn_card(&mut commands, &settings);
+            spawn_card(&mut commands, &settings, menu.own);
         }
         return;
     }
@@ -185,9 +202,15 @@ pub fn pause_input(
         close(&mut commands, &mut menu, &mut paused, &ui);
         return;
     }
+    let before = menu.selected;
     menu.selected = menu_ui::nav(keys, menu.selected, OPTIONS);
-    // Up wins over a same-frame down, as it always has.
-    let pad_nav = if pad_up {
+    // Up wins over a same-frame down, as it always has. Read only when the
+    // keys did not move the cursor already: over a results card the pad's
+    // d-pad also arrives as W/S through the menu bridge, and reading both
+    // moved two rows a press, so Down from Continue landed on Quit.
+    let pad_nav = if menu.selected != before {
+        menu_ui::Nav::Stay
+    } else if pad_up {
         menu_ui::Nav::Up
     } else if pad_down {
         menu_ui::Nav::Down

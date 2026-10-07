@@ -215,6 +215,7 @@ pub static JA: Tr = Tr {
     prompt_mute: "M: 消音",
     replay_draw: "引き分け",
     pause_title: "中断中",
+    pause_menu_title: "メニュー",
     pause_continue: "つづける",
     pause_to_menu: "メニューへ戻る",
     pause_quit: "ゲームをやめる",

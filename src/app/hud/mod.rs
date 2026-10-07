@@ -484,7 +484,7 @@ impl HudSources<'_> {
             library,
             notice,
             match_menu: &modes.match_menu,
-            paused: modes.pause_menu.open,
+            paused: modes.pause_menu.stops_the_round(),
             spectator_typing: spectators.0.as_deref(),
             crowd: seating
                 .online

@@ -215,6 +215,7 @@ pub static NL: Tr = Tr {
     prompt_mute: "M: stil",
     replay_draw: "gelijkspel",
     pause_title: "PAUZE",
+    pause_menu_title: "MENU",
     pause_continue: "Doorgaan",
     pause_to_menu: "Terug naar het menu",
     pause_quit: "Spel afsluiten",

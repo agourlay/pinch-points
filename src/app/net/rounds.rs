@@ -623,6 +623,51 @@ mod next_round_tests {
         }
     }
 
+    /// A peer that missed every repeat of a resume is still announcing the
+    /// pause, and is told again: it used to sit frozen for good, holding
+    /// the table up while still talking, so it was never dropped either.
+    #[test]
+    fn a_peer_that_missed_the_resume_is_told_again() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(111),
+        );
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(111),
+        );
+        joiner.transport.send(NetMsg::hello("Bo"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() == 1 {
+                break;
+            }
+        }
+        host.peers.deal(&[Some(1)]);
+        // The joiner paused; the host heard it and resumed, and every
+        // repeat of that resume was lost.
+        let at = joiner.session.request_pause().expect("a player may pause");
+        host.session.receive_pause(at);
+        host.session.resume();
+        assert!(joiner.session.paused());
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            joiner.pump(PlayerAction::None, |_| {});
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.pump(PlayerAction::None, |_| {});
+            if !joiner.session.paused() {
+                break;
+            }
+        }
+        assert!(!joiner.session.paused(), "told again, and playing on");
+    }
+
     /// The AI's wins are carried to the next round like everyone else's.
     /// They were dropped once, so in an online series against the AI the
     /// AI was back at nothing every round and could never take it.

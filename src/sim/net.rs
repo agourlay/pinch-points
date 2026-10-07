@@ -345,6 +345,12 @@ impl Lockstep {
         lifted
     }
 
+    /// Whether a `Pause` naming `frame` is of a pause already lifted here:
+    /// a peer still announcing it never heard the resume.
+    pub fn is_lifted(&self, frame: u32) -> bool {
+        self.lifted.is_some_and(|lifted| frame <= lifted)
+    }
+
     /// The frame this session is frozen on, if paused.
     pub fn pause_frame(&self) -> Option<u32> {
         self.pause_at

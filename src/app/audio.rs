@@ -634,7 +634,7 @@ pub fn rotate_music(
         playlist.rest = Rest::Playing(mood);
         return;
     }
-    if !music_audible(&settings, &muted, menu.open) {
+    if !music_audible(&settings, &muted, menu.stops_the_round()) {
         return;
     }
     match playlist.rest {
@@ -716,7 +716,7 @@ pub fn drive_music(
     menu: Res<crate::app::pause::PauseMenu>,
     sinks: Query<&AudioSink, With<Music>>,
 ) {
-    let audible = music_audible(&settings, &muted, menu.open);
+    let audible = music_audible(&settings, &muted, menu.stops_the_round());
     for sink in &sinks {
         // Only when the sink disagrees with the answer: this runs every
         // frame, and the theme is the one sound that is always there.

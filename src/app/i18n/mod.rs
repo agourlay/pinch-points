@@ -332,6 +332,8 @@ struct Tr {
     /// says "draw" in English on every machine; this is the reading of it.
     pub replay_draw: &'static str,
     pub pause_title: &'static str,
+    /// The same card's title for a spectator, whose match does not stop.
+    pub pause_menu_title: &'static str,
     pub pause_continue: &'static str,
     pub pause_to_menu: &'static str,
     pub pause_quit: &'static str,

@@ -601,8 +601,10 @@ impl OnlineSession {
         // Pause state is repeated every tick rather than sent once: UDP
         // drops, and the peer that misses a Pause would otherwise sit
         // watching a frozen beach with no card, while a missed Resume would
-        // leave the session stopped for good. Both self-heal here: the
-        // resume repeats until frames actually start moving again.
+        // leave the session stopped for good. Both self-heal: the resume
+        // repeats for `RESUME_ECHOES` ticks, and a peer that missed every
+        // repeat is still sending its `Pause`, which is answered with the
+        // resume again where it arrives.
         match self.session.pause_frame() {
             Some(frame) => self.transport.send(NetMsg::Pause { frame }),
             None if self.resume_echo > 0 => {
@@ -723,6 +725,14 @@ impl OnlineSession {
                     // The peer may be ahead of us; buffer until we simulate
                     // that frame ourselves.
                     self.hashes.record_peer(frame, hash);
+                }
+                // A peer still announcing a pause this one has lifted
+                // missed every repeat of the resume, and would sit frozen
+                // on it for good, holding the table up while still
+                // talking: told again, to it alone. Nothing loops, since a
+                // resume the peer already had is not news to it.
+                NetMsg::Pause { frame } if self.session.is_lifted(frame) => {
+                    self.transport.send_to(from, self.resume_msg());
                 }
                 NetMsg::Pause { frame } => {
                     self.session.receive_pause(frame);

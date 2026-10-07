@@ -114,7 +114,7 @@ pub fn run_countdown(
     mut countdown: ResMut<Countdown>,
     mut next_vphase: ResMut<NextState<VersusPhase>>,
 ) {
-    if menu.open {
+    if menu.stops_the_round() {
         return;
     }
     countdown.left -= time.delta_secs();
