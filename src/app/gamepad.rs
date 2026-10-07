@@ -52,6 +52,17 @@ pub fn keep_pad_order(
         if order.contains(&pad) {
             continue;
         }
+        // A claimed pad gone and a new one plugged in: the new one takes
+        // over the claim, and the seat the claim held. Placed after every
+        // claim instead, it left that seat empty for the rest of a series
+        // and steered a keyboard player's seat besides.
+        if let Some(at) = claims.iter().position(|&claimed| !pads.contains(claimed)) {
+            let gone = std::mem::replace(&mut claims[at], pad);
+            if let Some(place) = order.iter().position(|&seen| seen == gone) {
+                order[place] = pad;
+                continue;
+            }
+        }
         match order.iter().position(|&seen| !pads.contains(seen)) {
             Some(empty) => order[empty] = pad,
             None => order.push(pad),
@@ -428,7 +439,8 @@ const BRIDGE: [(GamepadButton, KeyCode, KeyCode); 6] = [
 #[derive(Resource, Default)]
 pub struct Bridged(Vec<KeyCode>);
 
-/// Let go of a bridged key when its button comes up, on every screen.
+/// Let go of a bridged key once no pad is holding its button, on every
+/// screen.
 ///
 /// The press is what the bridge's screens decide, never the release. A
 /// press that changes the screen is let go of on the screen it opened,
@@ -436,8 +448,11 @@ pub struct Bridged(Vec<KeyCode>);
 /// puzzle in setup), and a release left to the bridge stranded the
 /// synthesized key in `pressed` for good: `ButtonInput::press` reports
 /// `just_pressed` only for a key it was not already holding, so the next
-/// Enter on the won card did nothing. Only keys the bridge pressed are
-/// let go, so a keyboard player's own held W is not.
+/// Enter on the won card did nothing. Asked as "is any pad still holding
+/// it" rather than "did a button just come up", because a pad unplugged
+/// mid-press never reports the release: its held d-pad left W down, and
+/// the next round's cursor slid up on its own. Only keys the bridge
+/// pressed are let go, so a keyboard player's own held W is not.
 pub fn pad_bridge_release(
     pads: Query<&Gamepad>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
@@ -446,28 +461,31 @@ pub fn pad_bridge_release(
     if bridged.0.is_empty() {
         return;
     }
-    for pad in &pads {
-        for (button, key, lobby_key) in BRIDGE {
-            if !pad.just_released(button) {
-                continue;
-            }
-            // Both keys the button can mean: one pressed on the menu and
-            // released in the lobby is still holding the menu's key.
-            for key in [key, lobby_key] {
-                if let Some(at) = bridged.0.iter().position(|&held| held == key) {
-                    bridged.0.swap_remove(at);
-                    keys.release(key);
-                }
-            }
+    // Both keys a button can mean count as held by it: one pressed on the
+    // menu and released in the lobby is still holding the menu's key.
+    let held = |key: KeyCode| {
+        pads.iter().any(|pad| {
+            BRIDGE
+                .iter()
+                .any(|&(button, menu, lobby)| (menu == key || lobby == key) && pad.pressed(button))
+        })
+    };
+    let mut kept = Vec::with_capacity(bridged.0.len());
+    for &key in &bridged.0 {
+        match held(key) {
+            true => kept.push(key),
+            false => keys.release(key),
         }
     }
+    bridged.0 = kept;
 }
 
 /// The press-Start-to-join ceremony on the match-setup screen: an
-/// unclaimed pad pressing Start takes the next pad seat (seat 3, then 4,
-/// up to the sixth), growing the seat count to fit. The keyboard keeps
-/// seats 1-2, so the pads can claim every seat above them. Disconnected
-/// pads lose their claim.
+/// unclaimed pad pressing Start puts one more person at the table, in a
+/// seat the AI had if it had any, else in a new one. Claims drive the
+/// human seats from the top down (see [`PadSeats`]), the first claim the
+/// highest. Up to four: the keyboard's two seats and the pads' four make
+/// the six there are. Disconnected pads lose their claim.
 pub fn pad_claim_seats(
     pads: Query<(Entity, &Gamepad)>,
     mut seats: ResMut<PadSeats>,
@@ -480,13 +498,15 @@ pub fn pad_claim_seats(
             && seats.0.len() < PAD_SEATS
         {
             seats.0.push(entity);
-            // A seat for every claim above the keyboard's two, taken from
-            // the AI when the table is already that big: a friend who
-            // pressed Start to join seat three was otherwise left steering
-            // P2 while the AI kept seat three.
-            let needed = (KEYBOARD_SEATS + seats.0.len()) as u8;
-            config.seats = config.seats.max(needed).min(MAX_PLAYERS as u8);
-            config.bots = config.bots.min(config.seats.saturating_sub(needed));
+            // One person more, and only one: the AI gives up a chair if it
+            // holds one, or the table grows. Counting a seat for every
+            // claim above the keyboard's two instead took the AI away from
+            // a player alone against it and left P2 a human nobody played.
+            if config.bots > 0 {
+                config.bots -= 1;
+            } else {
+                config.seats = (config.seats + 1).min(MAX_PLAYERS as u8);
+            }
         }
     }
 }
@@ -630,9 +650,8 @@ mod tests {
         assert_eq!(pad_index_of(&both, &[0, 1, 2], 2), Some(0));
     }
 
-    /// A pad's Start takes a seat from the AI when the table has no free
-    /// one, and only the four seats above the keyboard's two are there to
-    /// be claimed.
+    /// A pad's Start puts one person more at the table, in the AI's chair
+    /// while it has one, and four pads can claim.
     #[test]
     fn a_claim_takes_a_seat_from_the_ai() {
         use crate::app::match_setup::MatchConfig;
@@ -673,6 +692,18 @@ mod tests {
         assert_eq!(app.world().resource::<PadSeats>().0.len(), PAD_SEATS);
         let config = app.world().resource::<MatchConfig>();
         assert_eq!((config.seats, config.bots), (6, 0));
+
+        // One player against the AI: a friend's Start takes the AI's chair,
+        // rather than a third seat beside an empty second.
+        app.insert_resource(MatchConfig {
+            seats: 2,
+            bots: 1,
+            ..MatchConfig::default()
+        });
+        app.world_mut().resource_mut::<PadSeats>().0.clear();
+        start(&mut app, pads[0]);
+        let config = app.world().resource::<MatchConfig>();
+        assert_eq!((config.seats, config.bots), (2, 0), "two people, no AI");
     }
 
     /// A world with `seats` cursors and `pads` controllers plugged in.
@@ -759,6 +790,35 @@ mod tests {
             .insert(Gamepad::default());
         assert_eq!(raid(&mut app, 1), top, "and P2's pad comes back to it");
         assert_eq!(raid(&mut app, 0), bottom);
+    }
+
+    /// A claimed pad that dies mid-series is replaced by the next pad
+    /// plugged in, on the seat the claim held.
+    #[test]
+    fn a_new_pad_takes_over_a_dead_claim() {
+        let mut app = table(2, 2);
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.add_systems(Update, keep_pad_order.before(rumble_on_raid));
+        let plugged: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<Gamepad>>()
+            .iter(app.world())
+            .collect();
+        app.world_mut().resource_mut::<PadSeats>().0 = plugged.clone();
+        app.update();
+        assert_eq!(
+            raid(&mut app, 1),
+            vec![plugged[0]],
+            "the first claim, on top"
+        );
+
+        app.world_mut().entity_mut(plugged[0]).remove::<Gamepad>();
+        let spare = app.world_mut().spawn(Gamepad::default()).id();
+        app.update();
+        assert_eq!(raid(&mut app, 1), vec![spare], "the spare takes P2");
+        assert_eq!(raid(&mut app, 0), vec![plugged[1]], "and P1 keeps its own");
     }
 
     /// Two pads, two seats: each seat's own controller and only that one.
@@ -973,6 +1033,26 @@ mod tests {
                 .resource::<ButtonInput<KeyCode>>()
                 .pressed(KeyCode::Enter),
             "let go of on a screen the bridge does not run on"
+        );
+    }
+
+    /// A pad unplugged with a button down never reports the release, and
+    /// the key the bridge held for it is let go all the same.
+    #[test]
+    fn an_unplugged_pad_lets_go_of_its_key() {
+        let mut app = bridged(Screen::StageSelect);
+        press(&mut app, GamepadButton::South);
+        let pad = app
+            .world_mut()
+            .query_filtered::<Entity, With<Gamepad>>()
+            .single(app.world())
+            .expect("one pad");
+        app.world_mut().entity_mut(pad).remove::<Gamepad>();
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(KeyCode::Enter)
         );
     }
 
