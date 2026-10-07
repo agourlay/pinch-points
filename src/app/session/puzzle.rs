@@ -24,6 +24,7 @@ pub(in crate::app) fn handle_load_level(
     play: Play,
     mut next_phase: ResMut<NextState<Phase>>,
     sprites: BoardSprites,
+    attempt: Res<crate::app::achievements::PuzzleAttempt>,
 ) {
     let Play {
         mut sim,
@@ -34,7 +35,17 @@ pub(in crate::app) fn handle_load_level(
         return;
     };
     let mut board = campaign.current().board();
-    if message.keep_posts {
+    // Kept as the run began rather than as they stand: a Beach Day arrow
+    // wears out mid-run and a gull can finish one off, and a retry built
+    // from what was left handed back an empty beach.
+    let began = attempt.layout_of(&campaign.current().name);
+    if message.keep_posts
+        && let Some(began) = began
+    {
+        for &(x, y, dir) in began {
+            board.place_signpost(0, x, y, dir);
+        }
+    } else if message.keep_posts {
         let old = &sim.0;
         for y in 0..old.height().min(board.height()) {
             for x in 0..old.width().min(board.width()) {

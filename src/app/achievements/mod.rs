@@ -117,13 +117,22 @@ pub struct PuzzleAttempt {
     /// made ten goes at stage one into ten stages, so they ask for a stage
     /// that had not been beaten yet when the attempt started.
     pub unbeaten: bool,
-    /// The signposts standing when the run began: what the player spent.
+    /// The signposts standing when the run began: what the player spent,
+    /// and what a retry puts back.
     ///
     /// Arrows go down only in setup, and on a Beach Day stage they wear
-    /// out while the run plays, so the count left standing at the win is
-    /// not what was used. Read there, every Beach Day stage won after its
-    /// arrows had expired was a clear "with one to spare".
-    pub spent: usize,
+    /// out while the run plays, so what is left standing at the end is not
+    /// what was used. Read there, every Beach Day stage won after its
+    /// arrows had expired was a clear "with one to spare", and "R: watch
+    /// again" or a retry handed back an empty beach.
+    pub layout: Vec<crate::sim::Placement>,
+}
+
+impl PuzzleAttempt {
+    /// The arrows the last run of `stage` began with, if it ran.
+    pub fn layout_of(&self, stage: &str) -> Option<&[crate::sim::Placement]> {
+        (self.stage == stage && !self.layout.is_empty()).then_some(self.layout.as_slice())
+    }
 }
 
 /// Ids of unlocked achievements.
@@ -212,7 +221,7 @@ pub const ACHIEVEMENTS: [Achievement; 50] = [
         threshold: 25,
     },
     Achievement {
-        // Variety, not volume: one bit per event, all eight lit.
+        // Variety, not volume: one bit per event, every one lit.
         id: "events_all",
         stat: |s| s.events_seen.count_ones(),
         threshold: TideEvent::ALL.len() as u32,

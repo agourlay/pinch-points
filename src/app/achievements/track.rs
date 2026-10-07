@@ -108,7 +108,8 @@ pub fn track_events(
             }
             // The roulette trophy wants variety, so remember *which* events
             // have come up rather than how many. Any seat's sparkling crab
-            // spins a wheel everyone plays under.
+            // spins a wheel everyone plays under, so it says "see", where
+            // the count of wheels this seat spun says "spin".
             SimEvent::TideEventFired { event, by } => {
                 trophies.stats.events_seen |= 1 << event.index();
                 if *by == Some(seat) {
@@ -336,7 +337,7 @@ pub fn record_puzzle(
     // stage.
     let level = campaign.current();
     if attempt.unbeaten {
-        if attempt.spent < usize::from(level.posts) {
+        if attempt.layout.len() < usize::from(level.posts) {
             trophies.stats.under_par += 1;
         }
         if level.posts >= DEEP_POSTS {
@@ -388,15 +389,23 @@ pub fn track_puzzle_attempt(
         attempt.unbeaten = !progress.is_cleared(campaign.kind, name);
         attempt.stage = name.clone();
         attempt.retries = 0;
+        attempt.layout.clear();
         loads -= 1;
     }
     attempt.retries += loads;
 }
 
 /// A run begins: note what it was given to work with (see
-/// `PuzzleAttempt::spent`).
+/// `PuzzleAttempt::layout`).
 pub fn note_posts_spent(sim: Res<crate::app::Sim>, mut attempt: ResMut<PuzzleAttempt>) {
-    attempt.spent = sim.0.signpost_count(0);
+    attempt.layout = sim
+        .0
+        .tiles()
+        .filter_map(|(x, y, _)| {
+            let post = sim.0.signpost_at(x, y)?;
+            (post.owner == 0).then_some((x, y, post.dir))
+        })
+        .collect();
 }
 
 /// Entering the puzzle screen starts a fresh attempt: coming back to a

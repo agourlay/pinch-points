@@ -445,8 +445,11 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
             }
         }
         // Rebound keys first: the short legend against the AI or online
-        // names the stock keys too, and input reads the player's own.
-        VersusPhase::Countdown | VersusPhase::Running if !settings.stock_legend() => {
+        // names the stock keys too, and input reads the player's own. The
+        // bindings and not `stock_legend`: versus plays the arrows whatever
+        // the one-hand preset says (`versus_input`), so the stock legend
+        // is the true one under the preset.
+        VersusPhase::Countdown | VersusPhase::Running if settings.custom_binds() => {
             tr.prompt_versus_custom.to_string()
         }
         VersusPhase::Countdown | VersusPhase::Running

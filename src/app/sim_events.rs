@@ -244,6 +244,35 @@ impl Watch {
     }
 }
 
+/// What each seat's banks in this look did to its score, with every
+/// cost cut to what the score had to give: the sim keeps a score at zero
+/// rather than below (`Board::credit_bank`), so a left claw banked on three
+/// points takes three, and its float and feed line say so rather than the
+/// crab's full price. Gains are counted first, the order within a look
+/// being unknown and a cost never the larger for it.
+fn settle_banks(before: &[u32; MAX_PLAYERS], events: &mut [SimEvent]) -> [i64; MAX_PLAYERS] {
+    let mut banked = [0i64; MAX_PLAYERS];
+    for event in events.iter() {
+        if let SimEvent::CrabBanked { owner, points, .. } = event
+            && *points > 0
+        {
+            banked[usize::from(*owner)] += i64::from(*points);
+        }
+    }
+    for event in events.iter_mut() {
+        if let SimEvent::CrabBanked { owner, points, .. } = event
+            && *points < 0
+        {
+            let seat = usize::from(*owner);
+            let left = i64::from(before[seat]) + banked[seat];
+            let taken = i64::from(*points).max(-left);
+            *points = taken as i32;
+            banked[seat] += taken;
+        }
+    }
+    banked
+}
+
 /// A crab left the board: it either reached a castle or a gull got it.
 ///
 /// The sim does not say which, since a crab simply stops existing, so this
@@ -423,17 +452,22 @@ pub fn diff(board: &crate::sim::Board, watch: &mut Watch) -> Vec<SimEvent> {
 fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEvent> {
     let mut events = Vec::new();
     crab_events(board, prev, &mut events);
+    let banked = settle_banks(&prev.scores, &mut events);
 
-    // Raids: any score drop, located at that player's castle.
+    // Raids: a score below what this look's banks leave it at, located at
+    // that player's castle. Not any drop: a left claw banked under a Right
+    // Claws call takes points too, and read as a raid it played the raid's
+    // sound, rumble and feed line, and counted toward both raid trophies.
     for (seat, (&now, &before)) in next.scores.iter().zip(prev.scores.iter()).enumerate() {
-        if now >= before {
+        let expected = (i64::from(before) + banked[seat]).max(0);
+        if i64::from(now) >= expected {
             continue;
         }
         if let Some((x, y)) = board.castle_of(seat as PlayerId) {
             events.push(SimEvent::CastleRaided {
                 owner: seat as PlayerId,
                 pos: layout::tile_center(board, x, y),
-                lost: before - now,
+                lost: (expected - i64::from(now)) as u32,
             });
         }
     }
@@ -535,23 +569,33 @@ mod tests {
     /// read this rather than the crab's face value.
     #[test]
     fn a_bank_under_a_claw_call_carries_what_it_did() {
-        let mut board = Board::new(6, 4, 7);
-        board.set_tile(3, 1, TileKind::Castle(2));
-        board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Giant);
-        board.force_tide_event(TideEvent::RightClaws, 0);
-        let mut watch = synced(&board);
-        let mut banked = None;
-        for _ in 0..600 {
-            board.tick_idle();
-            if let Some(SimEvent::CrabBanked { points, .. }) = diff(&board, &mut watch)
-                .into_iter()
-                .find(|e| matches!(e, SimEvent::CrabBanked { .. }))
-            {
-                banked = Some(points);
-                break;
+        // What the bank did, from a score of `start`, and whether anything
+        // also read it as a raid.
+        let bank_on = |start: u32| {
+            let mut board = Board::new(6, 4, 7);
+            board.set_tile(3, 1, TileKind::Castle(2));
+            board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Giant);
+            board.force_tide_event(TideEvent::RightClaws, 0);
+            board.set_score(2, start);
+            let mut watch = synced(&board);
+            for _ in 0..600 {
+                board.tick_idle();
+                let events = diff(&board, &mut watch);
+                let raided = events
+                    .iter()
+                    .any(|e| matches!(e, SimEvent::CastleRaided { .. }));
+                if let Some(SimEvent::CrabBanked { points, .. }) = events
+                    .iter()
+                    .find(|e| matches!(e, SimEvent::CrabBanked { .. }))
+                {
+                    return (*points, raided, board.scores()[2]);
+                }
             }
-        }
-        assert_eq!(banked, Some(-10), "a left claw costs its worth");
+            panic!("the crab never banked");
+        };
+        assert_eq!(bank_on(30), (-10, false, 20), "a left claw costs its worth");
+        // The score stops at zero, and the bank says what it took.
+        assert_eq!(bank_on(3), (-3, false, 0), "no more than there was");
     }
 
     /// A lure is news once, when it begins, and says whose it is; a tide

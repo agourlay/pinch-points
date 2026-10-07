@@ -212,7 +212,7 @@ score lost, so the rest of the table has something to point at too.
 
 | | Move | Place | Remove | Clear all |
 |---|---|---|---|---|
-| P1 | WASD | arrow keys | Space | Shift |
+| P1 | WASD | arrow keys | Space | Left Shift |
 | P2 | IJKL | numpad 8/5/4/6 | numpad 0 | numpad Enter |
 | any seat | gamepad d-pad/stick | face buttons | L1 | R1 |
 

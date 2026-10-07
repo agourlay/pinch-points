@@ -527,8 +527,8 @@ fn gains<'a>(
     gained
 }
 
-/// Bounce the owner's castle on every bank and float the points gained
-/// over the keep, in the owner's colour.
+/// Bounce the owner's castle on every gain and float the points the banks
+/// made (or cost) over the keep, in the owner's colour.
 pub fn kick_castles(
     mut commands: Commands,
     mut events: MessageReader<crate::app::sim_events::SimEvent>,
@@ -556,7 +556,11 @@ pub fn kick_castles(
         if points == 0 {
             continue;
         }
-        kick.0 = if calm { 0.0 } else { 1.0 };
+        // A bounce is a celebration; a castle that just lost points to a
+        // left claw shows the loss and stays put.
+        if points > 0 {
+            kick.0 = if calm { 0.0 } else { 1.0 };
+        }
         crate::app::effects::score_pip(
             &mut commands,
             // Signed: a left claw banked under a Right Claws call costs.
