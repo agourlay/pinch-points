@@ -55,6 +55,17 @@ impl MapChoice {
         MapChoice::Custom,
     ];
 
+    /// A generated beach picked for its size alone, which the seat dial
+    /// may trade for the size that suits the table. The handcrafted arena,
+    /// the open ocean and a handmade beach were picked for what they are,
+    /// and stay put.
+    pub fn is_a_plain_size(self) -> bool {
+        matches!(
+            self,
+            MapChoice::GenSmall | MapChoice::GenClassic | MapChoice::GenLarge | MapChoice::GenXl
+        )
+    }
+
     pub fn size(self) -> (u8, u8) {
         match self {
             MapChoice::Classic | MapChoice::GenClassic => (12, 9),
@@ -93,6 +104,9 @@ impl GullPressure {
         GullPressure::Frenzy,
     ];
 
+    /// The gull period on the classic 12x9 beach. A bigger beach scales it
+    /// with its area through [`crate::sim::scale_gulls_to_size`], which is
+    /// how every board is handed it.
     pub fn period(self) -> u32 {
         match self {
             GullPressure::Calm => 340,
@@ -411,6 +425,18 @@ pub fn holds(map: MapChoice, seats: u8) -> bool {
     seats <= CLASSIC_SEATS || map.size().0 >= WIDE_ENOUGH
 }
 
+/// The generated beach sized for a table of `seats`: about thirty tiles a
+/// player, from the 9x7 for two to the 16x11 for five or six. The 20x13
+/// is never dealt, only chosen: at two players it is 130 tiles a seat,
+/// and a table that did not ask for that much sand found it empty.
+pub fn sized_for(seats: u8) -> MapChoice {
+    match seats {
+        0..=2 => MapChoice::GenSmall,
+        3..=CLASSIC_SEATS => MapChoice::GenClassic,
+        _ => MapChoice::GenLarge,
+    }
+}
+
 /// Step the map on for the next round of a series: the dial's own step
 /// ([`cycle_map`], which walks the shelf and skips it when empty), and
 /// then on again past any beach the table does not fit on.
@@ -436,8 +462,8 @@ pub fn next_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
 /// Keep the map somewhere the table can play after something other than
 /// the dial moved: the seat count, or the shelf between two visits to the
 /// screen. Off `Custom` when no beach seats everyone (onto the stop after
-/// it, as the dial itself steps), onto the widest beach when five or six
-/// are seated and the map holds four. Without it the row reads a beach the
+/// it, as the dial itself steps), onto the beach [`sized_for`] the table
+/// when five or six are seated and the map holds four. Without it the row reads a beach the
 /// match will not be played on: `Custom` with nothing fitting launched a
 /// generated 20x13 arena under the classic arena's name.
 pub fn settle_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
@@ -448,7 +474,7 @@ pub fn settle_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
         }
     }
     if !holds(config.map, config.seats) {
-        config.map = MapChoice::GenXl;
+        config.map = sized_for(config.seats);
     }
 }
 
@@ -1055,10 +1081,28 @@ mod tests {
         config.map = MapChoice::Custom;
         config.seats = 5;
         settle_map(&mut config, &shelf);
-        assert_eq!(config.map, MapChoice::GenXl, "and wide enough for five");
+        assert_eq!(config.map, MapChoice::GenLarge, "and wide enough for five");
     }
 
     use crate::app::settings::GameSettings;
+
+    /// The beach dealt to a table seats it, and grows with it: two players
+    /// get the smallest, and nobody is dealt the 20x13 without asking.
+    #[test]
+    fn the_beach_sized_for_a_table_seats_it() {
+        let mut last = 0;
+        for seats in 2..=MAX_PLAYERS as u8 {
+            let map = sized_for(seats);
+            assert!(holds(map, seats), "{seats} seats on {map:?}");
+            assert!(map.is_a_plain_size());
+            assert_ne!(map, MapChoice::GenXl, "{seats} seats");
+            let (w, h) = map.size();
+            let area = u32::from(w) * u32::from(h);
+            assert!(area >= last, "{seats} seats got a smaller beach");
+            last = area;
+        }
+        assert_eq!(sized_for(2), MapChoice::GenSmall);
+    }
 
     /// Open ocean is the one beach with no edges. Every other map choice
     /// stays walled, or a beach changes shape under everyone.

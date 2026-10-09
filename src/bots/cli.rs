@@ -194,8 +194,8 @@ impl Beach {
             Beach::Map(MapChoice::Classic) => crate::sim::classic_arena_seeded(seed, false, seats),
             Beach::Generated | Beach::Map(_) => {
                 // Past the seats a classic-sized beach holds, the game
-                // gives way to the extra-large one (`match_setup::settle_map`),
-                // and so does the arena.
+                // gives way to the one sized for the table
+                // (`match_setup::settle_map`), and so does the arena.
                 let map = match self {
                     Beach::Map(map) => *map,
                     Beach::Generated | Beach::File(..)
@@ -203,7 +203,7 @@ impl Beach {
                     {
                         MapChoice::GenClassic
                     }
-                    Beach::Generated | Beach::File(..) => MapChoice::GenXl,
+                    Beach::Generated | Beach::File(..) => crate::app::match_setup::sized_for(seats),
                 };
                 let (w, h) = map.size();
                 let mut board = crate::sim::generate_arena(seed, seats, w, h);
@@ -211,7 +211,7 @@ impl Beach {
                 board
             }
         };
-        board.set_gull_period(GullPressure::Normal.period());
+        crate::sim::scale_gulls_to_size(&mut board, GullPressure::Normal.period());
         board.set_round_length(Some(round.ticks()));
         board.set_signpost_rule(MAX_SIGNPOSTS_PER_PLAYER as u8, CapPolicy::Evict);
         board

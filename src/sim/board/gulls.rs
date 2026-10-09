@@ -63,7 +63,7 @@ impl Board {
         // Balance: the ambient flock is capped so the late round stays
         // playable (raiders leaving keeps the population cycling). Tide
         // events (GullMania, GullAttack) deliberately bypass the cap.
-        if self.gulls.len() >= GULL_CAP {
+        if self.gulls.len() >= usize::from(self.rules.gull_cap) {
             return;
         }
         let (w, h) = (u32::from(self.grid.width), u32::from(self.grid.height));

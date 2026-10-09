@@ -54,7 +54,7 @@ impl Board {
                 // Balance: the mania flood is dramatic but bounded. Beyond
                 // three flocks' worth the beach becomes unplayable for the
                 // rest of the round (mania gulls only leave by raiding).
-                if self.gulls.len() < GULL_CAP * 3 {
+                if self.gulls.len() < usize::from(self.rules.gull_cap) * 3 {
                     let (x, y) = self.coords(t as u16);
                     self.spawn_gull(x as u8, y as u8, s.dir);
                 }

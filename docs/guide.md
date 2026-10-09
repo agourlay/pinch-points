@@ -125,7 +125,11 @@ score lost, so the rest of the table has something to point at too.
   gamepads. Six built-in maps, from the handcrafted classic map to
   generated arenas up to 20×13 and an edgeless **open ocean** (five and
   six players need one of the wide maps, 16 tiles across or more), plus
-  any map you built yourself that has a castle for every player. Dials for
+  any map you built yourself that has a castle for every player. A
+  generated map follows the table as players sit down: the 9×7 for two,
+  12×9 for three or four, 16×11 for five or six, and 20×13 only when you
+  pick it. The bigger maps get more walls and more gulls for their size,
+  so a big beach plays as busy as a small one. Dials for
   how many gulls and round length, **team play**, a **best of 3 or 5**
   series with rotating maps and nameable seats. AI comes at three levels:
   easy fumbles, fierce reads the terrain and shoves gulls at the leader, and

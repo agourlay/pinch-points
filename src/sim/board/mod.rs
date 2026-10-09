@@ -106,7 +106,8 @@ pub const MAX_PLAYERS: usize = 6;
 /// Spec §3.3: placing a fourth signpost removes that player's oldest.
 pub const MAX_SIGNPOSTS_PER_PLAYER: usize = 3;
 /// Balance: the ambient gull spawner pauses while this many gulls are on
-/// the beach. Tide events ignore the cap on purpose.
+/// the beach, unless the board's rules say otherwise ([`Rules::gull_cap`]).
+/// Tide events ignore the cap on purpose.
 pub const GULL_CAP: usize = 6;
 /// Balance: the ambient crab spawners pause once live crabs reach this
 /// fraction of the board's tiles. Past it the beach is a carpet rather than
@@ -230,6 +231,10 @@ pub struct Rules {
     pub cap_policy: CapPolicy,
     /// Auto-spawn a gull at a PRNG edge tile every this many ticks; 0 = off.
     pub gull_period: u32,
+    /// How many gulls the ambient spawner allows on the beach at once.
+    /// [`GULL_CAP`] unless a versus beach bigger than the classic one asked
+    /// for more (`scale_gulls_to_size`), which is the one place it moves.
+    pub gull_cap: u8,
     /// Round length in ticks (the tide, spec §3.6). None = untimed. When it
     /// reaches zero the sim freezes: scores are locked at the wave.
     pub round_length: Option<u32>,
@@ -348,6 +353,7 @@ impl Board {
                 signpost_cap: MAX_SIGNPOSTS_PER_PLAYER as u8,
                 cap_policy: CapPolicy::Evict,
                 gull_period: 0,
+                gull_cap: GULL_CAP as u8,
                 round_length: None,
                 castle_raids: true,
             },
@@ -500,6 +506,11 @@ impl Board {
     /// the final-scramble surge of a timed round.
     pub fn set_gull_period(&mut self, period: u32) {
         self.rules.gull_period = period;
+    }
+
+    /// How many ambient gulls may be on the beach at once.
+    pub fn set_gull_cap(&mut self, cap: u8) {
+        self.rules.gull_cap = cap;
     }
 
     pub fn set_round_length(&mut self, ticks: Option<u32>) {
@@ -829,6 +840,10 @@ impl Board {
 
     pub fn gull_period(&self) -> u32 {
         self.rules.gull_period
+    }
+
+    pub fn gull_cap(&self) -> u8 {
+        self.rules.gull_cap
     }
 
     pub fn round_length(&self) -> Option<u32> {

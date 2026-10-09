@@ -178,6 +178,9 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     let scores: Vec<String> = scores.iter().map(u64::to_string).collect();
     let _ = writeln!(out, "scores: {}", scores.join(" "));
     let _ = writeln!(out, "gull_period: {}", num(hello, "rules.gull_period")?);
+    if let Some(cap) = field(hello, "rules.gull_cap")?.as_u64() {
+        let _ = writeln!(out, "gull_cap: {cap}");
+    }
     if let Some(round) = field(hello, "rules.round_ticks")?.as_u64() {
         let _ = writeln!(out, "round: {round}");
     }

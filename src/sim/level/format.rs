@@ -6,7 +6,7 @@
 //! is the half with a round-trip contract to keep (see `tests/it/format.rs`).
 
 use super::{Goal, Level, LevelKind};
-use crate::sim::board::{Board, CapPolicy, TileKind};
+use crate::sim::board::{Board, CapPolicy, GULL_CAP, TileKind};
 use crate::sim::crab::{CrabKind, Handedness};
 use crate::sim::direction::Direction;
 use crate::sim::solve::Placement;
@@ -105,6 +105,9 @@ impl Level {
         }
         if board.gull_period() > 0 {
             let _ = writeln!(out, "gull_period: {}", board.gull_period());
+        }
+        if usize::from(board.gull_cap()) != GULL_CAP {
+            let _ = writeln!(out, "gull_cap: {}", board.gull_cap());
         }
         if let Some(round) = board.round_length() {
             let _ = writeln!(out, "round: {round}");
@@ -213,6 +216,8 @@ struct Header {
     spawners: Vec<(u8, u8, Direction, u32)>,
     gulls: Vec<(u8, u8, Direction)>,
     gull_period: u32,
+    /// `None` when the file says nothing, which keeps the board's default.
+    gull_cap: Option<u8>,
     events: bool,
     round: Option<u32>,
     seed: u64,
@@ -239,6 +244,7 @@ impl Default for Header {
             spawners: Vec::new(),
             gulls: Vec::new(),
             gull_period: 0,
+            gull_cap: None,
             events: false,
             round: None,
             // An arbitrary but fixed default, so a level file without a
@@ -303,6 +309,9 @@ impl Header {
                 self.gull_period = value
                     .parse::<u32>()
                     .map_err(|e| format!("gull_period: {e}"))?;
+            }
+            "gull_cap" => {
+                self.gull_cap = Some(value.parse::<u8>().map_err(|e| format!("gull_cap: {e}"))?);
             }
             "round" => {
                 self.round = Some(value.parse::<u32>().map_err(|e| format!("round: {e}"))?);
@@ -530,6 +539,9 @@ fn place_entities(board: &mut Board, header: &Header) -> Result<(), String> {
         board.spawn_gull(x, y, dir);
     }
     board.set_gull_period(header.gull_period);
+    if let Some(cap) = header.gull_cap {
+        board.set_gull_cap(cap);
+    }
     board.set_round_length(header.round);
     if header.no_castle_raids {
         board.set_castle_raids(false);

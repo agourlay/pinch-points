@@ -51,6 +51,9 @@ impl Board {
         let _ = writeln!(out, "gull_period: {}", self.rules.gull_period);
         // Everything below is omitted at its default, as a board between
         // rounds mostly is.
+        if usize::from(self.rules.gull_cap) != GULL_CAP {
+            let _ = writeln!(out, "gull_cap: {}", self.rules.gull_cap);
+        }
         if let Some(len) = self.rules.round_length {
             let _ = writeln!(out, "round: {len}");
         }
@@ -194,6 +197,7 @@ struct Fields {
     counters: Option<(u64, u32, u32, u32, u32)>,
     scores: Option<[u32; MAX_PLAYERS]>,
     gull_period: Option<u32>,
+    gull_cap: Option<u8>,
     round_length: Option<u32>,
     wrap: bool,
     /// Stored the way the wire stores it, because `Default` here has to
@@ -264,6 +268,7 @@ impl Fields {
                 self.scores = Some(seats);
             }
             "gull_period" => self.gull_period = Some(next_num(&mut words, "gull_period")?),
+            "gull_cap" => self.gull_cap = Some(next_num(&mut words, "gull_cap")?),
             "round" => self.round_length = Some(next_num(&mut words, "round")?),
             "wrap" => self.wrap = value == "on",
             "raids" => self.no_castle_raids = value == "off",
@@ -442,6 +447,7 @@ impl Fields {
                 signpost_cap,
                 cap_policy,
                 gull_period,
+                gull_cap: self.gull_cap.unwrap_or(GULL_CAP as u8),
                 round_length: self.round_length,
                 castle_raids: !self.no_castle_raids,
             },
@@ -716,6 +722,7 @@ mod tests {
         board.set_wrap(true);
         board.set_wall(1, 1, Direction::Up, true);
         board.set_castle_raids(false);
+        board.set_gull_cap(9);
         board.set_events_enabled(true);
         board.set_round_length(Some(1234));
         board.set_gull_period(97);
@@ -795,6 +802,7 @@ mod tests {
             "raids: off",
             "events: on",
             "rule: reject 2",
+            "gull_cap: 9",
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
@@ -881,6 +889,7 @@ mod tests {
             // The optional round-state lines are absent at their defaults,
             // so dropping one is a legal (different) board, not a bad file.
             let optional = [
+                "gull_cap:",
                 "round:",
                 "wrap:",
                 "raids:",

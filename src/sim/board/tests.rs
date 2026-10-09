@@ -1697,6 +1697,18 @@ fn surge_doubles_gull_spawn_rate() {
     assert!(board.gulls().len() <= GULL_CAP);
 }
 
+/// A board that raised its cap fills to the new one, and no further.
+#[test]
+fn a_raised_gull_cap_is_the_one_the_spawner_stops_at() {
+    let mut board = Board::new(7, 5, 3);
+    board.set_gull_period(10);
+    board.set_gull_cap(9);
+    for _ in 0..400 {
+        board.tick_idle();
+    }
+    assert_eq!(board.gulls().len(), 9);
+}
+
 /// Tide events bypass the ambient flock cap on purpose: GullMania floods the
 /// beach through the crab spawners.
 #[test]

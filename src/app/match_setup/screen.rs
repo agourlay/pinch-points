@@ -480,9 +480,13 @@ pub fn match_setup_input(
         Row::Players => {
             config.seats = crate::app::cycle::dial(config.seats, turn, 1, 2..=MAX_PLAYERS as u8);
             config.bots = config.bots.min(config.seats - 1);
-            // Five and six castles need a beach with room for them, and a
-            // handmade beach only seats as many as it has castles: the map
-            // follows the table.
+            // A generated beach follows the table, so two players do not
+            // rattle around a beach sized for six. Five and six castles need
+            // a beach with room for them, and a handmade beach only seats as
+            // many as it has castles.
+            if config.map.is_a_plain_size() {
+                config.map = sized_for(config.seats);
+            }
             settle_map(&mut config, &beaches);
         }
         Row::Bots => {

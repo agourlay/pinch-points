@@ -117,9 +117,9 @@ impl Dial {
 /// given a castle on it. The match-setup screen drops the seat count, which
 /// online is not its to drop, so the map gives way instead.
 pub fn map_for(config: &MatchConfig, seats: u8) -> crate::app::match_setup::MapChoice {
-    use crate::app::match_setup::{CLASSIC_SEATS, MapChoice, WIDE_ENOUGH};
+    use crate::app::match_setup::{CLASSIC_SEATS, WIDE_ENOUGH, sized_for};
     match seats > CLASSIC_SEATS && config.map.size().0 < WIDE_ENOUGH {
-        true => MapChoice::GenXl,
+        true => sized_for(seats),
         false => config.map,
     }
 }

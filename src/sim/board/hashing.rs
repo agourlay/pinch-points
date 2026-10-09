@@ -39,6 +39,7 @@ impl Board {
                     signpost_cap: _,
                     cap_policy: _,
                     gull_period: _,
+                    gull_cap: _,
                     round_length: _,
                     castle_raids: _,
                 },
@@ -173,6 +174,7 @@ impl Board {
     /// counters that outlive a single creature.
     fn hash_round(&self, h: &mut Fnv) {
         h.u32(self.rules.gull_period);
+        h.u8(self.rules.gull_cap);
         match self.rules.round_length {
             None => h.u8(0),
             Some(len) => {
@@ -273,6 +275,7 @@ mod tests {
             ("set_wrap", Box::new(|b| b.set_wrap(true))),
             ("set_score", Box::new(|b| b.set_score(0, 7))),
             ("set_gull_period", Box::new(|b| b.set_gull_period(99))),
+            ("set_gull_cap", Box::new(|b| b.set_gull_cap(9))),
             (
                 "set_round_length",
                 Box::new(|b| b.set_round_length(Some(500))),

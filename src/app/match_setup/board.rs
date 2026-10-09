@@ -32,7 +32,10 @@ pub fn board_from(terms: &MatchTerms, seats: u8, beach: &[u8]) -> crate::sim::Bo
         return board_for(terms, seats);
     }
     let mut board = level.board();
-    board.set_gull_period(GullPressure::from_index(usize::from(terms.gulls)).period());
+    crate::sim::scale_gulls_to_size(
+        &mut board,
+        GullPressure::from_index(usize::from(terms.gulls)).period(),
+    );
     board.set_round_length(Some(
         RoundLength::from_index(usize::from(terms.round)).ticks(),
     ));
@@ -49,7 +52,10 @@ pub fn board_for(terms: &MatchTerms, seats: u8) -> crate::sim::Board {
         crate::sim::generate_arena(terms.seed, seats, w, h)
     };
     board.set_wrap(map.wraps());
-    board.set_gull_period(GullPressure::from_index(usize::from(terms.gulls)).period());
+    crate::sim::scale_gulls_to_size(
+        &mut board,
+        GullPressure::from_index(usize::from(terms.gulls)).period(),
+    );
     board.set_round_length(Some(
         RoundLength::from_index(usize::from(terms.round)).ticks(),
     ));

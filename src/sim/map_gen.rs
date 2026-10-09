@@ -2,10 +2,33 @@
 //! battleground at a configurable size. Deterministic (one `Pcg32` stream),
 //! so a generated arena replays and stays lockstep-safe if shared by seed.
 
-use crate::sim::board::{Board, MAX_PLAYERS, PlayerId, Spawner, TICKS_PER_SECOND, TileKind};
+use crate::sim::board::{
+    Board, GULL_CAP, MAX_PLAYERS, PlayerId, Spawner, TICKS_PER_SECOND, TileKind,
+};
 use crate::sim::crab::{CrabKind, Handedness};
 use crate::sim::direction::Direction;
 use crate::sim::rng::Pcg32;
+
+/// Tiles on the classic 12x9 beach, the size the gull pressures and the
+/// crab flow were tuned on.
+const CLASSIC_AREA: u32 = 12 * 9;
+
+/// Gulls for a beach of this size, from the period a pressure dial names
+/// for the classic 12x9 beach.
+///
+/// The ambient spawner sends one gull a period and stops at a fixed cap,
+/// whatever the size, so the bigger beaches spread the same half-dozen
+/// birds over up to two and a half times the sand, and their raids fell to
+/// well under the classic rate. A beach bigger than the classic one gets a
+/// cap and a rate scaled by its area, keeping gulls per tile level.
+/// Smaller beaches keep the classic numbers: a crowded 9x7 is the point of
+/// choosing one.
+pub fn scale_gulls_to_size(board: &mut Board, period: u32) {
+    let area = u32::from(board.width()) * u32::from(board.height());
+    let area = area.max(CLASSIC_AREA);
+    board.set_gull_period((period * CLASSIC_AREA / area).max(1));
+    board.set_gull_cap((GULL_CAP as u32 * area / CLASSIC_AREA).min(u32::from(u8::MAX)) as u8);
+}
 
 /// A castle spot per seat for a board of the given size.
 ///
@@ -278,6 +301,11 @@ pub fn classic_arena_seeded(seed: u64, preload_scores: bool, seats: u8) -> Board
     board
 }
 
+/// Tiles per extra mirror group of rocks.
+const ROCK_AREA: u32 = 110;
+/// Tiles per extra mirror group of interior walls.
+const WALL_AREA: u32 = 120;
+
 /// Generate a versus arena for `seats` players (2–[`MAX_PLAYERS`]) from a
 /// seed, at any size from 9×7 up.
 pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
@@ -327,7 +355,7 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
     // Interior rocks in mirror groups of four (scaled to area), kept apart
     // from each other and away from castles and spawners so nothing gets
     // walled in.
-    let groups = area / 160 + 1 + rng.next_u32() % 2;
+    let groups = area / ROCK_AREA + 1 + rng.next_u32() % 2;
     let (rock_w, rock_h) = (u32::from(width) - 6, u32::from(height) - 4);
     let mut placed: Vec<(i32, i32)> = Vec::new();
     let mut attempts = 0;
@@ -349,8 +377,11 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
         placed.extend(images.map(|(ix, iy)| (i32::from(ix), i32::from(iy))));
     }
 
-    // Interior walls, again in mirror groups.
-    let wall_groups = 1 + rng.next_u32() % 2;
+    // Interior walls, again in mirror groups, and more of them the bigger
+    // the beach: walls are what make the choke points an arrow decides, and
+    // a big beach with the classic beach's one or two groups is an open
+    // field where the crabs find their own way home.
+    let wall_groups = 1 + area / WALL_AREA + rng.next_u32() % 2;
     for _ in 0..wall_groups {
         let x = 1 + (rng.next_u32() % u32::from(width - 3)) as u8;
         let y = 1 + (rng.next_u32() % u32::from(height - 3)) as u8;
@@ -388,7 +419,7 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
     // entered it leaned on the nearest two castles. The ambient spawner
     // picks uniformly around the perimeter, so waiting for it costs a few
     // seconds and buys an unbiased start.
-    board.set_gull_period(200 + rng.next_u32() % 80);
+    scale_gulls_to_size(&mut board, 200 + rng.next_u32() % 80);
     board.set_round_length(Some(3 * 60 * TICKS_PER_SECOND));
     board.set_events_enabled(true);
     board
@@ -466,6 +497,73 @@ mod tests {
             }
             // The edge castles share the centre column rather than leaning.
             assert_eq!(spots[4].0, spots[5].0, "{w}x{h} edge castles centred");
+        }
+    }
+
+    /// The classic beach and the smaller one keep the gulls the pressure
+    /// dial names; a bigger one takes more of them, and more often, in
+    /// proportion to its area.
+    #[test]
+    fn only_a_beach_bigger_than_the_classic_one_takes_more_gulls() {
+        for (w, h) in [(9u8, 7u8), (12, 9)] {
+            let mut board = Board::new(w, h, 1);
+            scale_gulls_to_size(&mut board, 240);
+            assert_eq!(board.gull_period(), 240, "{w}x{h}");
+            assert_eq!(usize::from(board.gull_cap()), GULL_CAP, "{w}x{h}");
+        }
+        let mut xl = Board::new(20, 13, 1);
+        scale_gulls_to_size(&mut xl, 240);
+        assert_eq!(xl.gull_period(), 240 * 108 / 260);
+        assert_eq!(xl.gull_cap(), 14);
+    }
+
+    /// The bigger beaches carry more walls, and walls can box a tile in:
+    /// every castle on every size must still be reachable on foot from a
+    /// spawner hole, or a seat is out of the round before it starts.
+    #[test]
+    fn every_castle_can_be_walked_to_from_a_spawner() {
+        for &(w, h) in &[(9u8, 7u8), (12, 9), (16, 11), (20, 13)] {
+            for seats in [2u8, 4, 6] {
+                for seed in 0..60u64 {
+                    let board = generate_arena(seed, seats, w, h);
+                    let (bw, bh) = (board.width(), board.height());
+                    let index = |x: u8, y: u8| usize::from(y) * usize::from(bw) + usize::from(x);
+                    let mut seen = vec![false; usize::from(bw) * usize::from(bh)];
+                    let mut queue: Vec<(u8, u8)> = board
+                        .tiles()
+                        .filter(|(_, _, kind)| matches!(kind, TileKind::Spawner(_)))
+                        .map(|(x, y, _)| (x, y))
+                        .collect();
+                    for &(x, y) in &queue {
+                        seen[index(x, y)] = true;
+                    }
+                    while let Some((x, y)) = queue.pop() {
+                        for dir in Direction::ALL {
+                            if board.wall_at(x, y, dir) {
+                                continue;
+                            }
+                            let (dx, dy) = dir.offset();
+                            let (nx, ny) = (i32::from(x) + dx, i32::from(y) + dy);
+                            if nx < 0 || ny < 0 || nx >= i32::from(bw) || ny >= i32::from(bh) {
+                                continue;
+                            }
+                            let (nx, ny) = (nx as u8, ny as u8);
+                            if seen[index(nx, ny)] || board.tile_at(nx, ny) == TileKind::Rock {
+                                continue;
+                            }
+                            seen[index(nx, ny)] = true;
+                            queue.push((nx, ny));
+                        }
+                    }
+                    for player in board.castle_owners() {
+                        let (x, y) = board.castle_of(player).expect("a castle");
+                        assert!(
+                            seen[index(x, y)],
+                            "{w}x{h}, {seats} seats, seed {seed}: castle {player} walled off"
+                        );
+                    }
+                }
+            }
         }
     }
 

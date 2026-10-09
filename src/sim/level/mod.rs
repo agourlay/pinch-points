@@ -352,6 +352,26 @@ mod tests {
         assert!(!back.board().castle_raids());
     }
 
+    /// A big beach's gull cap travels with the level, so a replay of a round
+    /// on one plays back under the cap it was played under. The default is
+    /// not written, which keeps every file from before the cap readable and
+    /// unchanged.
+    #[test]
+    fn the_gull_cap_survives_the_format() {
+        let map = "map:\n+-+-+\n|. 0|\n+ + +\n|. .|\n+-+-+\n";
+        let head = "name: T\nposts: 1\ncrab: 0,0 R R common\n";
+        let plain = Level::parse(&format!("{head}{map}")).expect("level");
+        assert_eq!(usize::from(plain.board().gull_cap()), crate::sim::GULL_CAP);
+        assert!(
+            !plain.to_text().contains("gull_cap"),
+            "the default is not written"
+        );
+        let big = Level::parse(&format!("{head}gull_cap: 14\n{map}")).expect("level");
+        assert_eq!(big.board().gull_cap(), 14);
+        let back = Level::parse(&big.to_text()).expect("round trip");
+        assert_eq!(back.board().gull_cap(), 14);
+    }
+
     /// A stage that states a round longer than the campaign tick limit is
     /// judged on its round, the limit standing in only for a stage with no
     /// timer: a Survive stage with ninety seconds on the clock was declared

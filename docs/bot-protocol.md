@@ -149,7 +149,8 @@ rules, the clock and the table:
            "spawners": [{"x": 0, "y": 4, "dir": "right", "period": 46}]},
  "rules": {"signpost_cap": 3, "cap_policy": "evict",
            "signpost_lifetime": 300, "round_ticks": 5400,
-           "gull_period": 240, "castle_raids": true, "events": true},
+           "gull_period": 240, "gull_cap": 6, "castle_raids": true,
+           "events": true},
  "clock": {"mode": "fast_forward", "deadline_ms": 33, "input_delay": 0},
  "cursor": {"fair": false}}
 ```
@@ -181,7 +182,8 @@ one side comes back on the other.
 `signpost_cap` evicts your oldest post under `cap_policy: "evict"`, and is
 refused under `"reject"`. Posts wash away `signpost_lifetime` ticks after
 they were placed. `gull_period`: a gull arrives at the edge every this many
-ticks (`0`: none). `events`: whether sparkling crabs spin the tide roulette.
+ticks (`0`: none), until `gull_cap` of them are on the beach; a beach
+bigger than the classic 12x9 has both scaled by its area. `events`: whether sparkling crabs spin the tide roulette.
 
 ### `ready`
 

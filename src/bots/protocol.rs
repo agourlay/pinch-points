@@ -175,6 +175,7 @@ pub fn hello(board: &Board, table: &Table, seat: PlayerId, resumed: bool) -> Val
             "signpost_lifetime": SIGNPOST_LIFETIME,
             "round_ticks": board.round_length(),
             "gull_period": board.gull_period(),
+            "gull_cap": board.gull_cap(),
             "castle_raids": board.castle_raids(),
             "events": board.events_enabled(),
         },

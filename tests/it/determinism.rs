@@ -100,6 +100,10 @@ const TICKS: u64 = 10_000;
 ///
 /// Why it has moved, most recent first:
 ///
+/// - 2026-10-09: `gull_cap` joined the fingerprint, when the beaches
+///   bigger than the classic one started taking more gulls. This board is
+///   12x9 at the default cap, so only the hash's reach grew: the round
+///   reproduces the old hash with the cap left out.
 /// - 2026-09-18: a ninth face on the roulette (Right Claws). The draw is
 ///   one modulo over `TideEvent::ALL`, so a face changes every spin from
 ///   the first one onward, and the new event's own countdown joins the
@@ -126,7 +130,7 @@ const TICKS: u64 = 10_000;
 ///   rules moved that day too: the lure stopped stacking, the roulette
 ///   stopped rolling gull events into the surge, and the spawners took a
 ///   crab cap.
-const EXPECTED_HASH: u64 = 0x9d19_3838_8cb8_f8f5;
+const EXPECTED_HASH: u64 = 0xc46a_7ebb_7f5e_f7a1;
 
 #[test]
 fn ten_thousand_ticks_reproduce_exactly() {
