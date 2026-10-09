@@ -10,7 +10,7 @@ categories = ["games"]
 exclude = ["docs/", ".github/", "site/", "tools/"]
 
 [dependencies]
-bevy = { version = "0.20.0-rc.2", features = ["wav", "vorbis", "system_clipboard"] }
+bevy = { version = "0.20.0", features = ["wav", "vorbis", "system_clipboard"] }
 include_dir = "0.7.4"
 semver = "1.0.28"
 serde_json = "1.0.51"
@@ -22,7 +22,7 @@ ureq = "3.4.2"
 # directly is what keeps the version out of the argument. Depending on
 # parley instead would mean tracking whichever version bevy_text pulls,
 # and a second copy of parley and fontique in the build whenever we drift.
-parlance = "0.1.0"
+parlance = "0.1.1"
 # Not called from here: this turns on the one feature that makes the text
 # stack's data layer report through `log` rather than straight to stderr.
 # Japanese line breaking wants a CJK dictionary the baked data does not

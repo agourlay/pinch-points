@@ -46,7 +46,11 @@ pub const DISPLAY_FONT: Handle<Font> = uuid_handle!("6cf5591f-337a-4b2e-bb6a-697
 /// The family name the subset carries in its `name` table, and the three
 /// scripts it is the answer for: kana of both kinds, and the kanji.
 const JP_FAMILY: &str = "Noto Sans Mono CJK JP";
-const JP_SCRIPTS: [&str; 3] = ["Hira", "Kana", "Hani"];
+const JP_SCRIPTS: [Script; 3] = [
+    Script::from_bytes(*b"Hira"),
+    Script::from_bytes(*b"Kana"),
+    Script::from_bytes(*b"Hani"),
+];
 
 /// Replace Bevy's built-in default font (ASCII-only) with an embedded font
 /// that covers the glyphs seven of the eight languages need - the accented
@@ -124,7 +128,7 @@ pub(super) fn teach_the_kanji_fallback(
     for script in JP_SCRIPTS {
         fonts
             .collection
-            .append_fallbacks(Script::from_str_unchecked(script), std::iter::once(family));
+            .append_fallbacks(script, std::iter::once(family));
     }
     // Anything already on screen was shaped before the fallback existed
     // and holds a layout with holes in it - the header and the prompt are
