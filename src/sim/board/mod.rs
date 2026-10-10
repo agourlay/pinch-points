@@ -103,6 +103,13 @@ pub(crate) const CASTLE_RING: [(i32, i32); 8] = [
 /// [`castle_spots`](crate::sim::castle_spots)). The handcrafted classic
 /// arena is a four-castle beach and stays one.
 pub const MAX_PLAYERS: usize = 6;
+/// What a called golden crab banks for (see [`Rules::golden_every`]).
+pub const GOLDEN_CALLED_VALUE: u32 = 25;
+/// Ticks a called golden crab is announced before it comes out.
+pub const GOLDEN_NOTICE: u32 = 5 * TICKS_PER_SECOND;
+/// Ticks between called golden crabs in a versus round: three minutes,
+/// so one a standard round and two in a long one.
+pub const VERSUS_GOLDEN_EVERY: u32 = 3 * 60 * TICKS_PER_SECOND;
 /// Spec §3.3: placing a fourth signpost removes that player's oldest.
 pub const MAX_SIGNPOSTS_PER_PLAYER: usize = 3;
 /// Balance: the ambient gull spawner pauses while this many gulls are on
@@ -233,7 +240,7 @@ pub struct Rules {
     pub gull_period: u32,
     /// How many gulls the ambient spawner allows on the beach at once.
     /// [`GULL_CAP`] unless a versus beach bigger than the classic one asked
-    /// for more (`set_versus_gulls`), which is the one place it moves.
+    /// for more (`set_versus_rules`), which is the one place it moves.
     pub gull_cap: u8,
     /// Whether the flock turns over: at the spawner's turn with the flock
     /// full, the oldest gull clear of the castles flies off and a fresh
@@ -248,6 +255,19 @@ pub struct Rules {
     /// versus only: a puzzle's flock is part of what its solution was
     /// proven against, and a file that does not say so keeps the old rule.
     pub gull_turnover: bool,
+    /// Ticks between called golden crabs; 0 leaves the golden crab in the
+    /// spawn mix at its full worth, as every board before versus took it.
+    ///
+    /// With it set, the mix never rolls a golden crab. Instead, once every
+    /// this many ticks the board calls one ([`Board::golden_call`]): a tick
+    /// a third to two thirds of the way into the stretch and a spawner
+    /// hole, both drawn when the stretch begins, so the call is on the
+    /// board for everyone to see before the crab is, and the golden crab
+    /// is worth [`GOLDEN_CALLED_VALUE`]. Four silent fifty-point crabs a
+    /// round, each worth a third of a good score, decided rounds for
+    /// whoever had an arrow in the right place; one a round, called, is a
+    /// race the whole table can see coming.
+    pub golden_every: u32,
     /// Round length in ticks (the tide, spec §3.6). None = untimed. When it
     /// reaches zero the sim freezes: scores are locked at the wave.
     pub round_length: Option<u32>,
@@ -300,6 +320,9 @@ pub struct Board {
     crabs_banked: u32,
     /// Golden crabs banked (challenge goals).
     golden_banked: u32,
+    /// The golden crab called and not yet out, as the tick and the
+    /// spawner tile (see [`Rules::golden_every`]).
+    golden_call: Option<(u64, u16)>,
     /// Open edges: creatures walking (or flying) off one side re-enter on
     /// the opposite side (spec §3.1 wrap-around, settled by research: the
     /// original wraps).
@@ -368,6 +391,7 @@ impl Board {
                 gull_period: 0,
                 gull_cap: GULL_CAP as u8,
                 gull_turnover: false,
+                golden_every: 0,
                 round_length: None,
                 castle_raids: true,
             },
@@ -383,6 +407,7 @@ impl Board {
             lure_cooldown: 0,
             crabs_banked: 0,
             golden_banked: 0,
+            golden_call: None,
             wrap: false,
             tide: events::Tide::default(),
             swept_home: Vec::new(),
@@ -424,6 +449,7 @@ impl Board {
             lure_cooldown,
             crabs_banked,
             golden_banked,
+            golden_call,
             wrap,
             tide,
             swept_home,
@@ -444,6 +470,7 @@ impl Board {
         self.lure_cooldown = *lure_cooldown;
         self.crabs_banked = *crabs_banked;
         self.golden_banked = *golden_banked;
+        self.golden_call = *golden_call;
         self.wrap = *wrap;
         self.tide.copy_from(tide);
         refill(&mut self.swept_home, swept_home);
@@ -532,6 +559,11 @@ impl Board {
         self.rules.gull_turnover = on;
     }
 
+    /// Call a golden crab once every `ticks` (see [`Rules::golden_every`]).
+    pub fn set_golden_every(&mut self, ticks: u32) {
+        self.rules.golden_every = ticks;
+    }
+
     pub fn set_round_length(&mut self, ticks: Option<u32>) {
         self.rules.round_length = ticks;
     }
@@ -609,6 +641,7 @@ impl Board {
             self.apply_action(player, actions[player as usize]);
         }
         self.expire_signposts();
+        self.run_golden_call();
         self.run_spawners();
         self.run_gull_spawner();
         self.move_crabs();
@@ -805,7 +838,7 @@ impl Board {
     /// negative is a player who has stopped playing, and this game is for
     /// children.
     pub(super) fn credit_bank(&mut self, owner: PlayerId, crab: &Crab) {
-        let points = crab.bank_points(self.in_claw_call());
+        let points = crab.bank_points(self.crab_value(crab.kind), self.in_claw_call());
         let score = &mut self.scores[owner as usize];
         *score = score.saturating_add_signed(points);
     }
@@ -869,6 +902,35 @@ impl Board {
         self.rules.gull_turnover
     }
 
+    pub fn golden_every(&self) -> u32 {
+        self.rules.golden_every
+    }
+
+    /// The golden crab the board has called, once the call is public: the
+    /// tick it comes out on and the spawner hole it comes out of, from
+    /// [`GOLDEN_NOTICE`] ticks before it does.
+    ///
+    /// Drawn a minute or more ahead, but told to nobody until the notice:
+    /// a bot reads the board and a person reads the screen, and a minute's
+    /// warning for one and five seconds for the other is not one race.
+    pub fn golden_call(&self) -> Option<(u64, u8, u8)> {
+        self.golden_call
+            .filter(|&(at, _)| at.saturating_sub(self.tick) <= u64::from(GOLDEN_NOTICE))
+            .map(|(at, tile)| {
+                let (x, y) = self.coords_u8(tile);
+                (at, x, y)
+            })
+    }
+
+    /// What banking a crab of this kind is worth on this board, before any
+    /// Right Claws call: its kind's worth, except a called golden crab's.
+    pub fn crab_value(&self, kind: CrabKind) -> u32 {
+        match (kind, self.rules.golden_every) {
+            (CrabKind::Golden, 1..) => GOLDEN_CALLED_VALUE,
+            _ => kind.value(),
+        }
+    }
+
     pub fn round_length(&self) -> Option<u32> {
         self.rules.round_length
     }
@@ -919,7 +981,7 @@ impl Board {
     /// What a crab is worth to whoever banks it right now, which is not
     /// always what its kind says. `None` for one that would cost.
     pub fn bank_worth(&self, crab: &Crab) -> Option<u32> {
-        u32::try_from(crab.bank_points(self.in_claw_call())).ok()
+        u32::try_from(crab.bank_points(self.crab_value(crab.kind), self.in_claw_call())).ok()
     }
 
     /// Crabs banked since the start, all players combined.

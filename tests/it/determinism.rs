@@ -100,6 +100,9 @@ const TICKS: u64 = 10_000;
 ///
 /// Why it has moved, most recent first:
 ///
+/// - 2026-10-10: `golden_every` and the golden call joined the
+///   fingerprint, when versus started calling its golden crabs. Off on
+///   this board, so only the hash's reach grew, as the line below.
 /// - 2026-10-10: `gull_turnover` joined the fingerprint, when versus
 ///   flocks started turning over. Off on this board, so again only the
 ///   hash's reach grew: the round reproduces the old hash without it.
@@ -133,7 +136,7 @@ const TICKS: u64 = 10_000;
 ///   rules moved that day too: the lure stopped stacking, the roulette
 ///   stopped rolling gull events into the surge, and the spawners took a
 ///   crab cap.
-const EXPECTED_HASH: u64 = 0xf878_d742_2a8d_e10f;
+const EXPECTED_HASH: u64 = 0xc446_96b1_ef9c_f65b;
 
 #[test]
 fn ten_thousand_ticks_reproduce_exactly() {

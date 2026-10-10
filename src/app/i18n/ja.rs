@@ -273,6 +273,8 @@ pub static JA: Tr = Tr {
     ann_lure_sub: "10秒のあいだ、はぐれガニは {p} へ走る",
     ann_surge: "カモメだ!",
     ann_surge_sub: "試合の終わりにカモメが押し寄せる",
+    ann_golden: "金のカニだ!",
+    ann_golden_sub: "{n}点! きらめく巣穴から出てくる",
     tide_is_in: "~ タイムアップ ~",
     wins: "{p} の勝ち!",
     dead_heat: "引き分け!",
@@ -389,6 +391,7 @@ pub static JA: Tr = Tr {
     log_tier: "{p} の城が育つ",
     log_gull: "カモメが舞い降りる",
     log_surge: "残りわずか! カモメが押し寄せる",
+    log_golden_call: "金のカニが出てくる!",
     map_names: [
         "いつものマップ (12x9)",
         "自動生成 - 小 (9x7)",

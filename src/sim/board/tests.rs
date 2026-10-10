@@ -1756,6 +1756,90 @@ fn the_final_rush_raises_a_turning_over_flocks_cap() {
     }
 }
 
+/// A beach of two spawner holes that calls its golden crabs every
+/// `every` ticks, and never runs out of time unless asked to.
+fn calling_board(every: u32) -> Board {
+    let mut board = Board::new(9, 7, 11);
+    board.set_tile(1, 1, TileKind::Castle(0));
+    for (x, y, dir) in [(0, 3, Right), (8, 3, Left)] {
+        board.set_tile(x, y, TileKind::Spawner(Spawner { dir, period: 9 }));
+    }
+    board.set_golden_every(every);
+    board
+}
+
+/// A calling board sends out one golden crab a stretch, from the hole it
+/// called on the tick it called, worth the called value; it is told to
+/// nobody until the notice, and the spawn mix never rolls one of its own.
+#[test]
+fn a_called_golden_crab_comes_out_where_and_when_it_was_called() {
+    let every = 600u32;
+    let mut board = calling_board(every);
+    let mut goldens = Vec::new();
+    let mut calls = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    while board.ticks() < 3 * u64::from(every) {
+        if let Some(call) = board.golden_call() {
+            assert!(
+                call.0 - board.ticks() <= u64::from(GOLDEN_NOTICE),
+                "told {} ticks early",
+                call.0 - board.ticks()
+            );
+            if calls.last() != Some(&call) {
+                calls.push(call);
+            }
+        }
+        board.tick_idle();
+        for crab in board.crabs() {
+            if crab.kind == CrabKind::Golden && seen.insert(crab.id) {
+                let (x, y) = board.coords_u8(crab.tile);
+                goldens.push((board.ticks() - 1, x, y));
+            }
+        }
+    }
+    assert_eq!(goldens.len(), 3, "one a stretch: {goldens:?}");
+    assert_eq!(goldens, calls, "out where and when it was called");
+    for (k, (at, ..)) in goldens.iter().enumerate() {
+        let into = at - k as u64 * u64::from(every);
+        assert!(
+            (200..400).contains(&into),
+            "a third to two thirds in: {into}"
+        );
+    }
+    assert_eq!(board.crab_value(CrabKind::Golden), GOLDEN_CALLED_VALUE);
+    assert_eq!(calling_board(0).crab_value(CrabKind::Golden), 50);
+}
+
+/// No call is made for a tick the round will not reach.
+#[test]
+fn a_golden_crab_is_not_called_past_the_end_of_the_round() {
+    let mut board = calling_board(600);
+    board.set_round_length(Some(150));
+    while !board.round_over() {
+        board.tick_idle();
+        assert_eq!(board.golden_call(), None);
+    }
+    assert!(board.crabs().iter().all(|c| c.kind != CrabKind::Golden));
+}
+
+/// A round saved mid-call, before the call is public, sends its golden
+/// crab out exactly as the round it was saved from does.
+#[test]
+fn a_golden_call_survives_a_snapshot_before_it_is_public() {
+    let mut board = calling_board(600);
+    for _ in 0..50 {
+        board.tick_idle();
+    }
+    assert_eq!(board.golden_call(), None, "not yet public");
+    let mut back = Board::parse_snapshot(&board.to_snapshot()).expect("its own output");
+    for _ in 0..600 {
+        board.tick_idle();
+        back.tick_idle();
+        assert_eq!(back.state_hash(), board.state_hash());
+    }
+    assert!(board.crabs().iter().any(|c| c.kind == CrabKind::Golden) || board.golden_banked() > 0);
+}
+
 /// Tide events bypass the ambient flock cap on purpose: GullMania floods the
 /// beach through the crab spawners.
 #[test]

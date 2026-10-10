@@ -273,6 +273,8 @@ pub static EN: Tr = Tr {
     ann_lure_sub: "for ten seconds every loose crab runs for {p}",
     ann_surge: "THE GULLS!",
     ann_surge_sub: "the gulls come in for the end of the round",
+    ann_golden: "GOLDEN CRAB!",
+    ann_golden_sub: "worth {n}, out of the glowing hole",
     tide_is_in: "~ TIME'S UP ~",
     wins: "{p} wins!",
     dead_heat: "A dead heat!",
@@ -393,6 +395,7 @@ pub static EN: Tr = Tr {
     log_tier: "{p}'s castle grows",
     log_gull: "a gull swoops in",
     log_surge: "final seconds! gulls flood in",
+    log_golden_call: "a golden crab is coming!",
     map_names: [
         "Classic arena (12x9)",
         "Generated - small (9x7)",

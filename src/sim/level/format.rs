@@ -112,6 +112,9 @@ impl Level {
         if board.gull_turnover() {
             let _ = writeln!(out, "gull_turnover: on");
         }
+        if board.golden_every() > 0 {
+            let _ = writeln!(out, "golden_every: {}", board.golden_every());
+        }
         if let Some(round) = board.round_length() {
             let _ = writeln!(out, "round: {round}");
         }
@@ -222,6 +225,7 @@ struct Header {
     /// `None` when the file says nothing, which keeps the board's default.
     gull_cap: Option<u8>,
     gull_turnover: bool,
+    golden_every: u32,
     events: bool,
     round: Option<u32>,
     seed: u64,
@@ -250,6 +254,7 @@ impl Default for Header {
             gull_period: 0,
             gull_cap: None,
             gull_turnover: false,
+            golden_every: 0,
             events: false,
             round: None,
             // An arbitrary but fixed default, so a level file without a
@@ -319,6 +324,11 @@ impl Header {
                 self.gull_cap = Some(value.parse::<u8>().map_err(|e| format!("gull_cap: {e}"))?);
             }
             "gull_turnover" => self.gull_turnover = value == "on",
+            "golden_every" => {
+                self.golden_every = value
+                    .parse::<u32>()
+                    .map_err(|e| format!("golden_every: {e}"))?;
+            }
             "round" => {
                 self.round = Some(value.parse::<u32>().map_err(|e| format!("round: {e}"))?);
             }
@@ -549,6 +559,7 @@ fn place_entities(board: &mut Board, header: &Header) -> Result<(), String> {
         board.set_gull_cap(cap);
     }
     board.set_gull_turnover(header.gull_turnover);
+    board.set_golden_every(header.golden_every);
     board.set_round_length(header.round);
     if header.no_castle_raids {
         board.set_castle_raids(false);

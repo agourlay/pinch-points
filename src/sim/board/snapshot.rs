@@ -57,6 +57,15 @@ impl Board {
         if self.rules.gull_turnover {
             let _ = writeln!(out, "gull_turnover: on");
         }
+        if self.rules.golden_every > 0 {
+            let _ = writeln!(out, "golden_every: {}", self.rules.golden_every);
+        }
+        // The whole call, public or not: a round resumed from a code
+        // sends its golden crab out where and when this one would have.
+        if let Some((at, tile)) = self.golden_call {
+            let (x, y) = self.coords_u8(tile);
+            let _ = writeln!(out, "golden_call: {at} {x} {y}");
+        }
         if let Some(len) = self.rules.round_length {
             let _ = writeln!(out, "round: {len}");
         }
@@ -202,6 +211,8 @@ struct Fields {
     gull_period: Option<u32>,
     gull_cap: Option<u8>,
     gull_turnover: bool,
+    golden_every: u32,
+    golden_call: Option<(u64, u8, u8)>,
     round_length: Option<u32>,
     wrap: bool,
     /// Stored the way the wire stores it, because `Default` here has to
@@ -274,6 +285,14 @@ impl Fields {
             "gull_period" => self.gull_period = Some(next_num(&mut words, "gull_period")?),
             "gull_cap" => self.gull_cap = Some(next_num(&mut words, "gull_cap")?),
             "gull_turnover" => self.gull_turnover = value == "on",
+            "golden_every" => self.golden_every = next_num(&mut words, "golden_every")?,
+            "golden_call" => {
+                self.golden_call = Some((
+                    next_num(&mut words, "golden_call tick")?,
+                    next_num(&mut words, "golden_call x")?,
+                    next_num(&mut words, "golden_call y")?,
+                ));
+            }
             "round" => self.round_length = Some(next_num(&mut words, "round")?),
             "wrap" => self.wrap = value == "on",
             "raids" => self.no_castle_raids = value == "off",
@@ -442,6 +461,22 @@ impl Fields {
             poses("gull", gull.tile, gull.progress, &gull.prev)?;
         }
 
+        // A call names a spawner hole on this beach, or the crab it
+        // promises has nowhere to come out.
+        let golden_call = match self.golden_call {
+            None => None,
+            Some((at, x, y)) => {
+                if x >= width || y >= height {
+                    return Err(format!("golden_call: ({x},{y}) is off the beach"));
+                }
+                let tile = usize::from(y) * w + usize::from(x);
+                if !matches!(grid.tiles[tile], TileKind::Spawner(_)) {
+                    return Err(format!("golden_call: ({x},{y}) is not a spawner"));
+                }
+                Some((at, tile as u16))
+            }
+        };
+
         // Named in full on purpose: a new `Board` field stops compiling here
         // until it is decided how, or whether, it survives a save.
         Ok(Board {
@@ -454,6 +489,7 @@ impl Fields {
                 gull_period,
                 gull_cap: self.gull_cap.unwrap_or(GULL_CAP as u8),
                 gull_turnover: self.gull_turnover,
+                golden_every: self.golden_every,
                 round_length: self.round_length,
                 castle_raids: !self.no_castle_raids,
             },
@@ -469,6 +505,7 @@ impl Fields {
             lure_cooldown: self.lure_cooldown,
             crabs_banked,
             golden_banked,
+            golden_call,
             wrap: self.wrap,
             tide: events::Tide {
                 enabled: self.events_enabled,
@@ -899,6 +936,8 @@ mod tests {
             let optional = [
                 "gull_cap:",
                 "gull_turnover:",
+                "golden_every:",
+                "golden_call:",
                 "round:",
                 "wrap:",
                 "raids:",

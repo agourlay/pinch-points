@@ -136,6 +136,7 @@ pub fn spawn_hud(
     mut commands: Commands,
     settings: Res<GameSettings>,
     art: Res<crate::app::art::Art>,
+    sim: Res<crate::app::Sim>,
 ) {
     let font = menu_ui::display_font(HEADER_PX);
     // Header bar: title | score chips | clock-or-inventory.
@@ -256,7 +257,7 @@ pub fn spawn_hud(
                 TextColor(CLOCK_CALM),
             ));
         });
-    spawn_field_guide(&mut commands, settings.tr(), &art);
+    spawn_field_guide(&mut commands, settings.tr(), &art, &sim.0);
 }
 
 /// The box the title is written in, which is what holds it clear of the
@@ -568,16 +569,21 @@ const KINDS: [crate::sim::CrabKind; 6] = [
     crate::sim::CrabKind::Sparkling,
 ];
 
-/// What the guide says of `KINDS[i]`: its worth, and its trait in the
-/// player's language. The name is the one part left off: on the board a
-/// crab is a colour, and the colour is right there.
-fn field_guide_note(tr: &crate::app::i18n::Tr, i: usize) -> String {
-    let kind = KINDS[i];
+/// What the guide says of `KINDS[i]`: its worth on this board, and its
+/// trait in the player's language. The name is the one part left off: on
+/// the board a crab is a colour, and the colour is right there.
+///
+/// The board's worth and not the kind's, because they differ: a versus
+/// round's called golden crab is worth half what a puzzle's is
+/// (`Board::crab_value`), and a guide quoting the kind would promise fifty
+/// for a crab that banks twenty-five.
+fn field_guide_note(tr: &crate::app::i18n::Tr, i: usize, board: &crate::sim::Board) -> String {
+    let worth = board.crab_value(KINDS[i]);
     let note = tr.crab_notes[i];
     if note.is_empty() {
-        kind.value().to_string()
+        worth.to_string()
     } else {
-        format!("{} {note}", kind.value())
+        format!("{worth} {note}")
     }
 }
 
@@ -585,14 +591,21 @@ fn field_guide_note(tr: &crate::app::i18n::Tr, i: usize) -> String {
 /// later rewords them here.
 pub fn update_field_guide(
     settings: Res<GameSettings>,
+    sim: Res<crate::app::Sim>,
     mut notes: Query<(&FieldGuideNote, &mut Text)>,
+    mut golden_shown: Local<u32>,
 ) {
-    if !settings.is_changed() {
+    // The worths move only with the board's rules, which change when a
+    // round of another kind is loaded; the golden crab's is the one that
+    // differs between them.
+    let golden = sim.0.crab_value(crate::sim::CrabKind::Golden);
+    if !settings.is_changed() && golden == *golden_shown {
         return;
     }
+    *golden_shown = golden;
     let tr = settings.tr();
     for (note, mut text) in &mut notes {
-        menu_ui::set_text(&mut text, &field_guide_note(tr, note.0));
+        menu_ui::set_text(&mut text, &field_guide_note(tr, note.0, &sim.0));
     }
 }
 
@@ -600,6 +613,7 @@ fn spawn_field_guide(
     commands: &mut Commands,
     tr: &crate::app::i18n::Tr,
     art: &crate::app::art::Art,
+    board: &crate::sim::Board,
 ) {
     // Its own row, in the band between the foot of the board and the
     // prompt. It cannot share the prompt's line: with the traits on it the
@@ -667,7 +681,7 @@ fn spawn_field_guide(
                         });
                     strip.spawn((
                         FieldGuideNote(i),
-                        Text::new(field_guide_note(tr, i)),
+                        Text::new(field_guide_note(tr, i, board)),
                         TextFont {
                             font_size: FontSize::Px(menu_ui::type_scale::FINE),
                             ..default()
@@ -733,6 +747,25 @@ pub fn header_backdrop(
 mod tests {
     use super::*;
     use crate::app::i18n::Lang;
+
+    /// The guide quotes what a crab is worth on the board in play: a
+    /// versus round's called golden crab, not the puzzle's fifty.
+    #[test]
+    fn the_field_guide_quotes_the_boards_golden_worth() {
+        let golden = KINDS
+            .iter()
+            .position(|&k| k == crate::sim::CrabKind::Golden)
+            .expect("the golden crab is in the guide");
+        let tr = Lang::En.tr();
+        let mut board = crate::sim::Board::new(9, 7, 1);
+        assert!(field_guide_note(tr, golden, &board).starts_with("50 "));
+        crate::sim::set_versus_rules(&mut board, 240);
+        let note = field_guide_note(tr, golden, &board);
+        assert!(
+            note.starts_with(&format!("{} ", crate::sim::GOLDEN_CALLED_VALUE)),
+            "{note}"
+        );
+    }
 
     /// A prompt that fits keeps its size; one that does not shrinks by
     /// exactly as much as it is too wide, since width scales with size; and

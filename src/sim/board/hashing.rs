@@ -41,6 +41,7 @@ impl Board {
                     gull_period: _,
                     gull_cap: _,
                     gull_turnover: _,
+                    golden_every: _,
                     round_length: _,
                     castle_raids: _,
                 },
@@ -48,6 +49,7 @@ impl Board {
             lure_cooldown: _,
             crabs_banked: _,
             golden_banked: _,
+            golden_call: _,
             tide:
                 events::Tide {
                     enabled: _,
@@ -193,6 +195,15 @@ impl Board {
             }
         }
         h.u32(self.golden_banked);
+        h.u32(self.rules.golden_every);
+        match self.golden_call {
+            None => h.u8(0),
+            Some((at, tile)) => {
+                h.u8(1);
+                h.u64(at);
+                h.u16(tile);
+            }
+        }
         h.bool(self.rules.castle_raids);
         h.bool(self.tide.enabled);
         h.bool(self.wrap);
@@ -279,6 +290,7 @@ mod tests {
             ("set_gull_period", Box::new(|b| b.set_gull_period(99))),
             ("set_gull_cap", Box::new(|b| b.set_gull_cap(9))),
             ("set_gull_turnover", Box::new(|b| b.set_gull_turnover(true))),
+            ("set_golden_every", Box::new(|b| b.set_golden_every(600))),
             (
                 "set_round_length",
                 Box::new(|b| b.set_round_length(Some(500))),

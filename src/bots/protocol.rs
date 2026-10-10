@@ -177,6 +177,8 @@ pub fn hello(board: &Board, table: &Table, seat: PlayerId, resumed: bool) -> Val
             "gull_period": board.gull_period(),
             "gull_cap": board.gull_cap(),
             "gull_turnover": board.gull_turnover(),
+            "golden_every": board.golden_every(),
+            "golden_value": board.crab_value(crate::sim::CrabKind::Golden),
             "castle_raids": board.castle_raids(),
             "events": board.events_enabled(),
         },
@@ -302,6 +304,7 @@ pub fn tick(board: &Board, game: u32, you: &You, cursors: &[Option<(u8, u8)>]) -
         "lure": board.lure().map(|(owner, left)| json!({"owner": owner, "ticks_left": left})),
         "lure_cooldown": board.lure_cooldown(),
         "claw_call": board.in_claw_call(),
+        "golden_call": board.golden_call().map(|(at, x, y)| json!({"tick": at, "x": x, "y": y})),
         "surge": board.in_surge(),
     })
 }

@@ -115,6 +115,9 @@ pub enum SimEvent {
     LureStarted { owner: PlayerId },
     /// The final-scramble surge began.
     SurgeStarted,
+    /// A golden crab was called: it comes out of the spawner hole at `pos`
+    /// in a few seconds (`Board::golden_call`).
+    GoldenCalled { pos: Vec2 },
     /// The round timer expired.
     RoundEnded,
 }
@@ -185,6 +188,8 @@ pub struct Watch {
     /// before the next look was worth.
     claw: bool,
     surging: bool,
+    /// The golden crab called and announced, as its tick and hole.
+    golden_call: Option<(u64, u8, u8)>,
     over: bool,
     crabs: HashMap<u32, Crab>,
     /// Where each gull was in the air, `None` while it was on the sand: a
@@ -228,6 +233,7 @@ impl Watch {
             lure: board.lure().map(|(owner, _)| owner),
             claw: board.in_claw_call(),
             surging: board.in_surge(),
+            golden_call: board.golden_call(),
             over: board.round_over(),
             crabs: board.crabs().iter().map(|c| (c.id, *c)).collect(),
             gulls_aloft: board
@@ -318,7 +324,7 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab, claw: bool) -> SimEven
             owner,
             pos,
             keep: layout::tile_center(board, kx, ky),
-            points: prev.bank_points(claw),
+            points: prev.bank_points(board.crab_value(prev.kind), claw),
             kind: prev.kind,
             handed: prev.handed,
         };
@@ -336,7 +342,7 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab, claw: bool) -> SimEven
             owner,
             pos,
             keep: keep_at((i32::from(x), i32::from(y))),
-            points: prev.bank_points(claw),
+            points: prev.bank_points(board.crab_value(prev.kind), claw),
             kind: prev.kind,
             handed: prev.handed,
         },
@@ -345,7 +351,7 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab, claw: bool) -> SimEven
             owner,
             pos,
             keep: keep_at(ahead),
-            points: prev.bank_points(claw),
+            points: prev.bank_points(board.crab_value(prev.kind), claw),
             kind: prev.kind,
             handed: prev.handed,
         },
@@ -557,6 +563,13 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
     }
     if next.surging && !prev.surging {
         events.push(SimEvent::SurgeStarted);
+    }
+    if let Some((_, x, y)) = next.golden_call
+        && next.golden_call != prev.golden_call
+    {
+        events.push(SimEvent::GoldenCalled {
+            pos: layout::tile_center(board, x, y),
+        });
     }
     if next.over && !prev.over {
         events.push(SimEvent::RoundEnded);
@@ -787,6 +800,39 @@ mod tests {
         );
     }
 
+    /// A golden crab's call is news once, when it goes public, from the
+    /// hole it was called to.
+    #[test]
+    fn a_golden_call_is_announced_once_from_its_hole() {
+        let mut board = Board::new(9, 7, 11);
+        board.set_tile(1, 1, TileKind::Castle(0));
+        board.set_tile(
+            0,
+            3,
+            TileKind::Spawner(crate::sim::Spawner {
+                dir: Direction::Right,
+                period: 9,
+            }),
+        );
+        board.set_golden_every(600);
+        board.tick_idle();
+        let mut watch = synced(&board);
+        let mut called = Vec::new();
+        for _ in 0..600 {
+            board.tick_idle();
+            called.extend(
+                diff(&board, &mut watch)
+                    .into_iter()
+                    .filter(|e| matches!(e, SimEvent::GoldenCalled { .. })),
+            );
+        }
+        let hole = layout::tile_center(&board, 0, 3);
+        match called.as_slice() {
+            [SimEvent::GoldenCalled { pos }] => assert_eq!(*pos, hole),
+            other => panic!("one call, told once: {other:?}"),
+        }
+    }
+
     /// Crab Mania clears the sky in one go, and none of those birds went
     /// near a castle. The board has ticked first: on an unticked one the
     /// gulls going would read as a board swap, which is silent anyway, and
@@ -899,6 +945,7 @@ mod tests {
                 | SimEvent::TideEventFired { .. }
                 | SimEvent::LureStarted { .. }
                 | SimEvent::SurgeStarted
+                | SimEvent::GoldenCalled { .. }
                 | SimEvent::RoundEnded => None,
             })
             .collect();

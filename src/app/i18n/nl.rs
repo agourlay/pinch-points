@@ -273,6 +273,8 @@ pub static NL: Tr = Tr {
     ann_lure_sub: "tien seconden lang rent elke losse krab naar {p}",
     ann_surge: "DE MEEUWEN!",
     ann_surge_sub: "de meeuwen komen binnen voor het slot van de ronde",
+    ann_golden: "GOUDEN KRAB!",
+    ann_golden_sub: "{n} waard, uit het gloeiende gat",
     tide_is_in: "~ DE TIJD IS OM ~",
     wins: "{p} wint!",
     dead_heat: "Precies gelijk!",
@@ -393,6 +395,7 @@ pub static NL: Tr = Tr {
     log_tier: "Het kasteel van {p} groeit",
     log_gull: "er komt een meeuw aan",
     log_surge: "laatste seconden! de meeuwen stromen binnen",
+    log_golden_call: "er komt een gouden krab!",
     map_names: [
         "Klassieke arena (12x9)",
         "Gemaakt - klein (9x7)",

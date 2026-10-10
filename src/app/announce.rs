@@ -53,6 +53,8 @@ pub enum Announcement {
     Lure(PlayerId),
     /// The final scramble.
     Surge,
+    /// A golden crab is about to come out of a spawner hole.
+    Golden,
 }
 
 impl Announcement {
@@ -83,6 +85,14 @@ impl Announcement {
                 tr.ann_surge.to_string(),
                 tr.ann_surge_sub.to_string(),
                 palette::INK_SURGE,
+            ),
+            Announcement::Golden => (
+                tr.ann_golden.to_string(),
+                fill(
+                    tr.ann_golden_sub,
+                    &[("n", &crate::sim::GOLDEN_CALLED_VALUE.to_string())],
+                ),
+                palette::GOLD,
             ),
         }
     }
@@ -149,6 +159,7 @@ pub fn collect_announcements(
             }
             SimEvent::LureStarted { owner } => announcer.push(Announcement::Lure(*owner)),
             SimEvent::SurgeStarted => announcer.push(Announcement::Surge),
+            SimEvent::GoldenCalled { .. } => announcer.push(Announcement::Golden),
             SimEvent::CrabBanked { .. }
             | SimEvent::CrabEaten { .. }
             | SimEvent::CrabSpawned { .. }

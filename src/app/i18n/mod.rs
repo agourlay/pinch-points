@@ -409,6 +409,10 @@ struct Tr {
     pub ann_lure_sub: &'static str,
     pub ann_surge: &'static str,
     pub ann_surge_sub: &'static str,
+    /// A called golden crab is about to come out of a spawner hole.
+    pub ann_golden: &'static str,
+    /// Under it; `{n}` is what the crab is worth.
+    pub ann_golden_sub: &'static str,
     // Results
     pub tide_is_in: &'static str,
     pub wins: &'static str,
@@ -555,6 +559,7 @@ struct Tr {
     pub log_tier: &'static str,
     pub log_gull: &'static str,
     pub log_surge: &'static str,
+    pub log_golden_call: &'static str,
     pub map_names: [&'static str; 6],
     /// How a handmade beach reads on the map dial.
     pub map_custom: &'static str,

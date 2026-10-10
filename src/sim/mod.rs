@@ -16,10 +16,11 @@ mod rng;
 mod solve;
 
 pub use board::{
-    Board, CRAB_CAP_TILES_PER_CRAB, CapPolicy, EVENT_COOLDOWN, EVENT_TICKS, GULL_CAP, Grid,
-    LURE_TICKS, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER, Mania, PlayerAction, PlayerId, Refusal,
-    SIGNPOST_LIFETIME, SPILL_CAP, SUBUNITS_PER_TILE, SURGE_TICKS, Signpost, SignpostHealth,
-    Spawner, TICKS_PER_SECOND, TIER_FLOORS, Tempo, TideEvent, TileKind, castle_tier,
+    Board, CRAB_CAP_TILES_PER_CRAB, CapPolicy, EVENT_COOLDOWN, EVENT_TICKS, GOLDEN_CALLED_VALUE,
+    GOLDEN_NOTICE, GULL_CAP, Grid, LURE_TICKS, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER, Mania,
+    PlayerAction, PlayerId, Refusal, SIGNPOST_LIFETIME, SPILL_CAP, SUBUNITS_PER_TILE, SURGE_TICKS,
+    Signpost, SignpostHealth, Spawner, TICKS_PER_SECOND, TIER_FLOORS, Tempo, TideEvent, TileKind,
+    castle_tier,
 };
 pub use bot::{
     BotLevel, FAIR_LIFT, FAIR_TICKS_PER_TILE, Hand, bot_action, bot_action_with, fair_walk,
@@ -31,7 +32,7 @@ pub use direction::Direction;
 pub use gull::{Gull, GullState};
 pub use level::{Goal, Level, LevelKind, PUZZLE_TICK_LIMIT, PuzzleOutcome};
 pub use map_gen::{
-    castle_spots, classic_arena, classic_arena_seeded, generate_arena, set_versus_gulls,
+    castle_spots, classic_arena, classic_arena_seeded, generate_arena, set_versus_rules,
 };
 pub use net::{
     DEFAULT_DELAY, HASH_INTERVAL, INPUT_BYTES, InputMsg, Lockstep, MAX_COMMIT_LEAD, decode_action,

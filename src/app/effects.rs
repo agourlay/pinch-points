@@ -697,6 +697,43 @@ pub fn splash_ponds(
 /// Walking crabs scuff the sand: tiny alternating footprints that linger
 /// and fade, plus the occasional kicked-up grain. Footfalls are paced by
 /// distance walked, tracked per crab id. Pure decoration, sim untouched.
+/// Seconds between the gold rings a called hole sends out.
+const GOLDEN_RING_EVERY: f32 = 0.45;
+
+/// A gold ring out of the hole a golden crab is called to, every so often
+/// for as long as the call is public (`Board::golden_call`): the banner
+/// says a golden crab is coming, and this says from where, on a beach with
+/// up to six holes. Reduced motion keeps the swollen hole and loses the
+/// rings.
+pub fn golden_call_rings(
+    mut commands: Commands,
+    sim: Res<crate::app::Sim>,
+    art: Res<Art>,
+    time: Res<Time>,
+    settings: Res<crate::app::settings::GameSettings>,
+    mut since: Local<f32>,
+) {
+    let Some((_, x, y)) = sim.0.golden_call() else {
+        *since = GOLDEN_RING_EVERY;
+        return;
+    };
+    *since += time.delta_secs();
+    if settings.reduced_motion || *since < GOLDEN_RING_EVERY {
+        return;
+    }
+    *since = 0.0;
+    let pos = layout::tile_center(&sim.0, x, y);
+    ring(
+        &mut commands,
+        &art,
+        pos,
+        palette::GOLD,
+        TILE * 0.5,
+        2.4,
+        0.5,
+    );
+}
+
 pub fn crab_trails(
     mut commands: Commands,
     sim: Res<crate::app::Sim>,
@@ -1082,6 +1119,17 @@ pub fn moment_effects(
             SimEvent::SignpostPlaced { .. } | SimEvent::SignpostRemoved { .. } => {}
             // The final scramble arrives with the sea behind it.
             SimEvent::SurgeStarted => trauma.add(0.7),
+            SimEvent::GoldenCalled { pos } => {
+                ring(
+                    &mut commands,
+                    &art,
+                    *pos,
+                    palette::GOLD,
+                    TILE * 0.6,
+                    3.0,
+                    0.6,
+                );
+            }
             SimEvent::GullArrived
             | SimEvent::GullTookOff
             | SimEvent::TierUp { .. }

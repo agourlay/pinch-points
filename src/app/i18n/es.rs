@@ -273,6 +273,8 @@ pub static ES: Tr = Tr {
     ann_lure_sub: "durante diez segundos los cangrejos sueltos corren hacia {p}",
     ann_surge: "¡LAS GAVIOTAS!",
     ann_surge_sub: "las gaviotas llegan para el final de la ronda",
+    ann_golden: "¡CANGREJO DORADO!",
+    ann_golden_sub: "vale {n} y sale del agujero que brilla",
     tide_is_in: "~ SE ACABÓ EL TIEMPO ~",
     wins: "¡{p} gana!",
     dead_heat: "¡Empate absoluto!",
@@ -393,6 +395,7 @@ pub static ES: Tr = Tr {
     log_tier: "El castillo de {p} crece",
     log_gull: "llega una gaviota",
     log_surge: "¡últimos segundos! llegan las gaviotas",
+    log_golden_call: "¡viene un cangrejo dorado!",
     map_names: [
         "Arena clásica (12x9)",
         "Generada - pequeña (9x7)",

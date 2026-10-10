@@ -184,6 +184,12 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     if field(hello, "rules.gull_turnover")?.as_bool() == Some(true) {
         let _ = writeln!(out, "gull_turnover: on");
     }
+    if let Some(every) = field(hello, "rules.golden_every")?
+        .as_u64()
+        .filter(|&n| n > 0)
+    {
+        let _ = writeln!(out, "golden_every: {every}");
+    }
     if let Some(round) = field(hello, "rules.round_ticks")?.as_u64() {
         let _ = writeln!(out, "round: {round}");
     }
@@ -195,6 +201,15 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     }
     if field(hello, "rules.events")?.as_bool() == Some(true) {
         let _ = writeln!(out, "events: on");
+    }
+    if let Some(call) = tick.get("golden_call").filter(|c| !c.is_null()) {
+        let _ = writeln!(
+            out,
+            "golden_call: {} {} {}",
+            num(call, "tick")?,
+            num(call, "x")?,
+            num(call, "y")?
+        );
     }
     if let Some(lure) = tick.get("lure").filter(|l| !l.is_null()) {
         let _ = writeln!(

@@ -280,6 +280,8 @@ pub static DE: Tr = Tr {
     ann_lure_sub: "zehn Sekunden lang laufen alle freien Krabben zu {p}",
     ann_surge: "DIE MÖWEN!",
     ann_surge_sub: "die Möwen kommen zum Rundenende herein",
+    ann_golden: "GOLDENE KRABBE!",
+    ann_golden_sub: "{n} wert, aus dem leuchtenden Loch",
     tide_is_in: "~ ZEIT ABGELAUFEN ~",
     wins: "{p} gewinnt!",
     dead_heat: "Unentschieden!",
@@ -400,6 +402,7 @@ pub static DE: Tr = Tr {
     log_tier: "{p}s Burg wächst",
     log_gull: "eine Möwe kommt",
     log_surge: "letzte Sekunden! Möwen strömen herein",
+    log_golden_call: "eine goldene Krabbe kommt!",
     map_names: [
         "Klassische Arena (12x9)",
         "Generiert - klein (9x7)",

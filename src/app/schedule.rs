@@ -871,7 +871,11 @@ fn add_render_systems(app: &mut App) {
             effects::moment_effects,
             // Paired for the twenty-element limit: both are the beach
             // answering what walks on it.
-            (effects::crab_trails, effects::splash_ponds),
+            (
+                effects::crab_trails,
+                effects::splash_ponds,
+                effects::golden_call_rings,
+            ),
         )
             .chain()
             .run_if(board_screens)

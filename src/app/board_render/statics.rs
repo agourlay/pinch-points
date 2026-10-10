@@ -149,7 +149,13 @@ fn ground_shadow(commands: &mut Commands, art: &Art, pos: Vec2, size: f32) {
 /// Whatever sits on one tile, if it is a thing that never changes. Castles
 /// and turnstile logs are drawn live elsewhere: a castle's look follows its
 /// score tier, and a log's tilt flips on every crossing.
-fn spawn_tile_feature(commands: &mut Commands, art: &Art, pos: Vec2, kind: TileKind) {
+fn spawn_tile_feature(
+    commands: &mut Commands,
+    art: &Art,
+    (x, y): (u8, u8),
+    pos: Vec2,
+    kind: TileKind,
+) {
     match kind {
         TileKind::Empty => {}
         TileKind::Rock => {
@@ -169,6 +175,7 @@ fn spawn_tile_feature(commands: &mut Commands, art: &Art, pos: Vec2, kind: TileK
                 BoardStatic,
                 SpawnerSprite {
                     period: spawner.period,
+                    at: (x, y),
                 },
                 image_sprite(&art.hole, Color::WHITE, Vec2::splat(TILE * 0.78)),
                 Transform::from_translation(pos.extend(z::TILE_FEATURE)),
@@ -211,7 +218,7 @@ pub fn spawn_static_board(commands: &mut Commands, board: &Board, art: &Art) {
     for (x, y, kind) in board.tiles() {
         let pos = layout::tile_center(board, x, y);
         spawn_sand(commands, art, pos, x, y);
-        spawn_tile_feature(commands, art, pos, kind);
+        spawn_tile_feature(commands, art, (x, y), pos, kind);
     }
     spawn_pools(commands, board, art);
     spawn_walls(commands, board, art);
@@ -1069,12 +1076,22 @@ pub fn sync_turnstiles(
 #[derive(Component)]
 pub struct SpawnerSprite {
     period: u32,
+    /// Its tile, for telling the hole a golden crab is called to.
+    at: (u8, u8),
 }
 
-/// Swell each spawner hole in the last quarter of its cadence.
+/// Swell each spawner hole in the last quarter of its cadence, and the hole
+/// a golden crab is called to for the whole of its notice
+/// (`Board::golden_call`), with `effects::golden_call_rings` calling
+/// attention to it.
 pub fn pulse_spawners(sim: Res<Sim>, mut holes: Query<(&SpawnerSprite, &mut Transform)>) {
     let tick = sim.0.ticks();
+    let called = sim.0.golden_call().map(|(_, x, y)| (x, y));
     for (hole, mut transform) in &mut holes {
+        if called == Some(hole.at) {
+            transform.scale = Vec3::splat(1.3);
+            continue;
+        }
         if hole.period == 0 {
             continue;
         }

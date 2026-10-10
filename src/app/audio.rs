@@ -513,6 +513,11 @@ pub fn play_events(
             SimEvent::TierUp { .. } => play(&mut commands, &sounds.tier, gain),
             SimEvent::TideEventFired { .. } => play(&mut commands, &sounds.event, gain),
             SimEvent::LureStarted { .. } => {}
+            // The chime a golden crab banks with, from the hole it will
+            // come out of: the sound of the prize, before it is anyone's.
+            SimEvent::GoldenCalled { pos } => {
+                play_at(&mut commands, &sounds.golden, gain, pan(pos));
+            }
             SimEvent::SurgeStarted => {
                 play(&mut commands, &sounds.surge, gain);
                 buzz(300, 0.4);

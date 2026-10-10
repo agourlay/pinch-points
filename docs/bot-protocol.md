@@ -150,7 +150,8 @@ rules, the clock and the table:
  "rules": {"signpost_cap": 3, "cap_policy": "evict",
            "signpost_lifetime": 300, "round_ticks": 5400,
            "gull_period": 240, "gull_cap": 6, "gull_turnover": true,
-           "castle_raids": true, "events": true},
+           "golden_every": 5400, "golden_value": 25, "castle_raids": true,
+           "events": true},
  "clock": {"mode": "fast_forward", "deadline_ms": 33, "input_delay": 0},
  "cursor": {"fair": false}}
 ```
@@ -223,7 +224,8 @@ cannot:
  "turnstiles": [{"x": 6, "y": 4, "next": "right"}],
  "event": {"name": "gull_mania", "ticks_left": 120},
  "last_event": {"name": "gull_mania", "tick": 1054},
- "lure": null, "lure_cooldown": 0, "claw_call": false, "surge": false}
+ "lure": null, "lure_cooldown": 0, "claw_call": false, "golden_call": null,
+ "surge": false}
 ```
 
 | Field | |
@@ -244,6 +246,7 @@ cannot:
 | `lure` | A molting crab's lure: whose castle every loose crab is walking to, and for how long. |
 | `lure_cooldown` | Ticks left in the quiet spell after a lure ends, when a molting crab banked starts no new one; 0 outside it. |
 | `claw_call` | Right Claws is on: a right-clawed crab banks double, a left-clawed one costs its value. |
+| `golden_call` | A golden crab coming: the `tick` it comes out on and the spawner hole `x`, `y` it comes out of, from 5 s before; `null` otherwise. |
 | `surge` | The last 30 seconds: gulls come twice as often. |
 
 The full board is sent every tick, never a change from the last: a bot
@@ -505,8 +508,17 @@ ambient gull spawner pauses while 6 gulls are on the beach (`GULL_CAP`).
 Spawned kinds: 70% common, 15% juvenile, 8% giant, 3% molting, 2% golden,
 2% sparkling.
 
-**Values.** Common 1, juvenile 2, molting 5, giant 10, golden 50,
-sparkling 1. Banking a molting crab starts a 10 s lure (300 ticks) toward
+**Called golden crabs.** When `golden_every` is above 0, as in every
+versus round, the spawn mix rolls a common crab where it would have rolled
+a golden one. Instead, at the start of every `golden_every` ticks the
+beach picks a tick a third to two thirds of the way in and a spawner hole,
+and a golden crab comes out of that hole on that tick, past the crab cap.
+The call appears in `golden_call` 150 ticks (5 s) before the crab does,
+which is when the game announces it on screen, and is `null` otherwise.
+A called golden crab is worth `golden_value`.
+
+**Values.** Common 1, juvenile 2, molting 5, giant 10, golden 50 (25 when
+called), sparkling 1. Banking a molting crab starts a 10 s lure (300 ticks) toward
 the banker's castle, with a 20 s quiet spell after it before another; a
 sparkling crab spins the tide roulette.
 

@@ -273,6 +273,8 @@ pub static IT: Tr = Tr {
     ann_lure_sub: "per dieci secondi ogni granchio libero corre da {p}",
     ann_surge: "I GABBIANI!",
     ann_surge_sub: "i gabbiani arrivano per la fine del round",
+    ann_golden: "GRANCHIO DORATO!",
+    ann_golden_sub: "vale {n}, esce dalla buca che brilla",
     tide_is_in: "~ TEMPO SCADUTO ~",
     wins: "{p} vince!",
     dead_heat: "Perfetto pareggio!",
@@ -393,6 +395,7 @@ pub static IT: Tr = Tr {
     log_tier: "Il castello di {p} cresce",
     log_gull: "arriva un gabbiano",
     log_surge: "ultimi secondi! arrivano i gabbiani",
+    log_golden_call: "arriva un granchio dorato!",
     map_names: [
         "Arena classica (12x9)",
         "Generata - piccola (9x7)",

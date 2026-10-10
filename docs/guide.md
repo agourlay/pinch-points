@@ -77,9 +77,14 @@ washes away after ~10 seconds, and two gull crossings destroy one.
 **Crabs** stream out of spawner holes and score by walking into any
 castle. By value/speed: common (1), juvenile (2, fast), giant (10, slow),
 molting (5; scoring one **lures every loose crab toward your castle for
-10 s, overriding all arrows**), golden (50, rare), and sparkling
+10 s, overriding all arrows**), golden (25, fast), and sparkling
 (scoring one spins the **random event** roulette: crab/gull manias, speed
 shifts, castle swaps, fresh sand…).
+
+**The golden crab is called.** It never just wanders out: once a round
+(twice in a long one) a banner announces it, and one spawner hole swells
+and pulses gold for five seconds before the golden crab comes out of it.
+Everyone sees it coming, so it goes to whoever routes it home first.
 
 **Gulls** eat crabs on contact and are steerable: aiming them at a rival's
 castle is the entire offensive game. A gull reaching a castle **carries off

@@ -144,6 +144,7 @@ pub fn collect_log(
             )),
             SimEvent::GullArrived => Some((tr.log_gull.to_string(), palette::GULL_INK)),
             SimEvent::SurgeStarted => Some((tr.log_surge.to_string(), palette::INK_SURGE)),
+            SimEvent::GoldenCalled { .. } => Some((tr.log_golden_call.to_string(), palette::GOLD)),
             SimEvent::CrabBanked { .. }
             | SimEvent::CrabEaten { .. }
             | SimEvent::CrabSpawned { .. }

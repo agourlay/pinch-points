@@ -125,7 +125,7 @@ impl Before {
         let mut expected = self.scores;
         let mut credit = |owner: PlayerId, crab: &Seen| {
             if let Some(score) = expected.get_mut(usize::from(owner)) {
-                *score = credited(*score, crab, self.claw_call);
+                *score = credited(*score, crab, after.crab_value(crab.kind), self.claw_call);
             }
         };
         let mut reports: Vec<(u32, Happened)> = Vec::new();
@@ -217,11 +217,10 @@ fn castle_entered(after: &Board, crab: &Seen) -> Option<(PlayerId, (u8, u8))> {
         })
 }
 
-/// A score after banking `crab` into it, by the sim's own rule: Right
-/// Claws doubles a right-clawed crab and charges for a left-clawed one,
-/// down to nothing.
-fn credited(score: u32, crab: &Seen, claw_call: bool) -> u32 {
-    let value = crab.kind.value();
+/// A score after banking `crab`, worth `value` on this board, into it, by
+/// the sim's own rule: Right Claws doubles a right-clawed crab and charges
+/// for a left-clawed one, down to nothing.
+fn credited(score: u32, crab: &Seen, value: u32, claw_call: bool) -> u32 {
     match (claw_call, crab.handed) {
         (false, _) => score + value,
         (true, Handedness::Right) => score + value * 2,

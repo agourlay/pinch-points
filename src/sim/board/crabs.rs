@@ -37,6 +37,43 @@ impl Board {
         self.crabs.push(crab);
     }
 
+    /// Call the next golden crab at the start of each stretch, and send it
+    /// out of its hole on the tick it was called for, past the crab cap and
+    /// any mania: it was promised to the whole table.
+    pub(super) fn run_golden_call(&mut self) {
+        let every = u64::from(self.rules.golden_every);
+        if every == 0 {
+            return;
+        }
+        if let Some((at, tile)) = self.golden_call
+            && at == self.tick
+        {
+            self.golden_call = None;
+            if let TileKind::Spawner(s) = self.grid.tiles[usize::from(tile)] {
+                let (x, y) = self.coords_u8(tile);
+                let handed = self.roll_handedness();
+                self.spawn_crab(x, y, s.dir, handed, CrabKind::Golden);
+            }
+        }
+        if !self.tick.is_multiple_of(every) {
+            return;
+        }
+        let holes: Vec<u16> = (0..self.grid.tiles.len())
+            .filter(|&t| matches!(self.grid.tiles[t], TileKind::Spawner(_)))
+            .map(|t| t as u16)
+            .collect();
+        if holes.is_empty() {
+            return;
+        }
+        let at = self.tick + every / 3 + u64::from(self.rng.next_u32()) % (every / 3).max(1);
+        let hole = holes[self.rng.next_u32() as usize % holes.len()];
+        let in_round = self
+            .rules
+            .round_length
+            .is_none_or(|len| at < u64::from(len));
+        self.golden_call = in_round.then_some((at, hole));
+    }
+
     pub(super) fn run_spawners(&mut self) {
         for t in 0..self.grid.tiles.len() {
             let TileKind::Spawner(s) = self.grid.tiles[t] else {
@@ -86,6 +123,8 @@ impl Board {
                 70..=84 => CrabKind::Juvenile,
                 85..=92 => CrabKind::Giant,
                 93..=95 => CrabKind::Molting,
+                // A board that calls its golden crabs never rolls one.
+                96..=97 if self.rules.golden_every > 0 => CrabKind::Common,
                 96..=97 => CrabKind::Golden,
                 98.. => CrabKind::Sparkling,
             };

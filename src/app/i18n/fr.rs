@@ -273,6 +273,8 @@ pub static FR: Tr = Tr {
     ann_lure_sub: "pendant dix secondes tous les crabes libres filent chez {p}",
     ann_surge: "LES MOUETTES !",
     ann_surge_sub: "les mouettes arrivent pour la fin de la manche",
+    ann_golden: "UN CRABE DORÉ !",
+    ann_golden_sub: "il vaut {n}, il sort du trou qui brille",
     tide_is_in: "~ TEMPS ÉCOULÉ ~",
     wins: "{p} a gagné !",
     dead_heat: "Égalité parfaite !",
@@ -393,6 +395,7 @@ pub static FR: Tr = Tr {
     log_tier: "Le château de {p} grandit",
     log_gull: "une mouette arrive",
     log_surge: "dernières secondes ! les mouettes affluent",
+    log_golden_call: "un crabe doré arrive !",
     map_names: [
         "Arène classique (12x9)",
         "Générée - petite (9x7)",

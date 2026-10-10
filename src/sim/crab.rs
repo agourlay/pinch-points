@@ -107,12 +107,13 @@ pub struct Crab {
 }
 
 impl Crab {
-    /// What banking this crab does to its banker's score: its kind's
-    /// worth, or under a Right Claws call twice that for a right claw and
-    /// that much taken away for a left one. The one statement of the rule,
-    /// read by the score itself and by everything that shows it.
-    pub fn bank_points(&self, claw_call: bool) -> i32 {
-        let value = self.kind.value() as i32;
+    /// What banking this crab does to its banker's score: `value`, the
+    /// worth the board gives its kind (`Board::crab_value`), or under a
+    /// Right Claws call twice that for a right claw and that much taken
+    /// away for a left one. The one statement of the rule, read by the
+    /// score itself and by everything that shows it.
+    pub fn bank_points(&self, value: u32, claw_call: bool) -> i32 {
+        let value = value as i32;
         match (claw_call, self.handed) {
             (false, _) => value,
             (true, Handedness::Right) => value * 2,
