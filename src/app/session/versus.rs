@@ -85,7 +85,7 @@ impl RoundOrigin<'_> {
                 } else {
                     generate_arena(seed, config.seats, w, h)
                 };
-                crate::sim::scale_gulls_to_size(&mut board, config.gulls.period());
+                crate::sim::set_versus_gulls(&mut board, config.gulls.period());
                 board.set_round_length(Some(config.round.ticks()));
                 board.set_signpost_rule(config.posts, crate::sim::CapPolicy::Evict);
                 board

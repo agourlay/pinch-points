@@ -176,6 +176,7 @@ pub fn hello(board: &Board, table: &Table, seat: PlayerId, resumed: bool) -> Val
             "round_ticks": board.round_length(),
             "gull_period": board.gull_period(),
             "gull_cap": board.gull_cap(),
+            "gull_turnover": board.gull_turnover(),
             "castle_raids": board.castle_raids(),
             "events": board.events_enabled(),
         },

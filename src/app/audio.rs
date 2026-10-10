@@ -479,7 +479,7 @@ pub fn play_events(
             SimEvent::GullTookOff => play(&mut commands, &sounds.takeoff, gain),
             // The wingbeat of a bird leaving, from where it leaves: not the
             // raid's crash, which is the sound of losing something.
-            SimEvent::GullShooed { pos, .. } => {
+            SimEvent::GullShooed { pos, .. } | SimEvent::GullFlewOff { pos } => {
                 play_at(&mut commands, &sounds.takeoff, gain, pan(pos));
             }
             // Only your own posts knock: the bots place far more often

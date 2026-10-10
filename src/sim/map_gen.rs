@@ -13,8 +13,10 @@ use crate::sim::rng::Pcg32;
 /// crab flow were tuned on.
 const CLASSIC_AREA: u32 = 12 * 9;
 
-/// Gulls for a beach of this size, from the period a pressure dial names
-/// for the classic 12x9 beach.
+/// The gull rules of a versus round on a beach of this size, from the
+/// period a pressure dial names for the classic 12x9 beach: the flock
+/// turns over ([`Board::set_gull_turnover`]), and a big
+/// beach gets more gulls.
 ///
 /// The ambient spawner sends one gull a period and stops at a fixed cap,
 /// whatever the size, so the bigger beaches spread the same half-dozen
@@ -23,11 +25,12 @@ const CLASSIC_AREA: u32 = 12 * 9;
 /// cap and a rate scaled by its area, keeping gulls per tile level.
 /// Smaller beaches keep the classic numbers: a crowded 9x7 is the point of
 /// choosing one.
-pub fn scale_gulls_to_size(board: &mut Board, period: u32) {
+pub fn set_versus_gulls(board: &mut Board, period: u32) {
     let area = u32::from(board.width()) * u32::from(board.height());
     let area = area.max(CLASSIC_AREA);
     board.set_gull_period((period * CLASSIC_AREA / area).max(1));
     board.set_gull_cap((GULL_CAP as u32 * area / CLASSIC_AREA).min(u32::from(u8::MAX)) as u8);
+    board.set_gull_turnover(true);
 }
 
 /// A castle spot per seat for a board of the given size.
@@ -419,7 +422,7 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
     // entered it leaned on the nearest two castles. The ambient spawner
     // picks uniformly around the perimeter, so waiting for it costs a few
     // seconds and buys an unbiased start.
-    scale_gulls_to_size(&mut board, 200 + rng.next_u32() % 80);
+    set_versus_gulls(&mut board, 200 + rng.next_u32() % 80);
     board.set_round_length(Some(3 * 60 * TICKS_PER_SECOND));
     board.set_events_enabled(true);
     board
@@ -507,12 +510,12 @@ mod tests {
     fn only_a_beach_bigger_than_the_classic_one_takes_more_gulls() {
         for (w, h) in [(9u8, 7u8), (12, 9)] {
             let mut board = Board::new(w, h, 1);
-            scale_gulls_to_size(&mut board, 240);
+            set_versus_gulls(&mut board, 240);
             assert_eq!(board.gull_period(), 240, "{w}x{h}");
             assert_eq!(usize::from(board.gull_cap()), GULL_CAP, "{w}x{h}");
         }
         let mut xl = Board::new(20, 13, 1);
-        scale_gulls_to_size(&mut xl, 240);
+        set_versus_gulls(&mut xl, 240);
         assert_eq!(xl.gull_period(), 240 * 108 / 260);
         assert_eq!(xl.gull_cap(), 14);
     }

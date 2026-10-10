@@ -328,6 +328,12 @@ fn shooed(commands: &mut Commands, art: &Art, pos: Vec2, castle: Vec2, calm: boo
             0.3,
         );
     }
+    flying_away(commands, art, pos, heading, calm);
+}
+
+/// A gull in the air leaving the beach from `pos` along `heading`, or,
+/// with reduced motion, fading where it stood.
+fn flying_away(commands: &mut Commands, art: &Art, pos: Vec2, heading: Vec2, calm: bool) {
     commands.spawn((
         Particle {
             velocity: if calm { Vec2::ZERO } else { heading * 150.0 },
@@ -851,7 +857,9 @@ pub fn moment_effects(
         if calm
             && !matches!(
                 event,
-                SimEvent::CastleRaided { .. } | SimEvent::GullShooed { .. }
+                SimEvent::CastleRaided { .. }
+                    | SimEvent::GullShooed { .. }
+                    | SimEvent::GullFlewOff { .. }
             )
         {
             continue;
@@ -1010,6 +1018,11 @@ pub fn moment_effects(
             // leaving, or it went *in*, and in versus that is a raid.
             SimEvent::GullShooed { pos, castle } => {
                 shooed(&mut commands, &art, *pos, *castle, calm);
+            }
+            // Made room in a full flock: up and away from where it stood,
+            // with no ring, since nothing here turned it away.
+            SimEvent::GullFlewOff { pos } => {
+                flying_away(&mut commands, &art, *pos, Vec2::Y, calm);
             }
             // A post going in gets a ring under it; the pop of the post
             // itself belongs to the sprite, which `board_render` owns.

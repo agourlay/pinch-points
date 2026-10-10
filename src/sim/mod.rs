@@ -31,7 +31,7 @@ pub use direction::Direction;
 pub use gull::{Gull, GullState};
 pub use level::{Goal, Level, LevelKind, PUZZLE_TICK_LIMIT, PuzzleOutcome};
 pub use map_gen::{
-    castle_spots, classic_arena, classic_arena_seeded, generate_arena, scale_gulls_to_size,
+    castle_spots, classic_arena, classic_arena_seeded, generate_arena, set_versus_gulls,
 };
 pub use net::{
     DEFAULT_DELAY, HASH_INTERVAL, INPUT_BYTES, InputMsg, Lockstep, MAX_COMMIT_LEAD, decode_action,

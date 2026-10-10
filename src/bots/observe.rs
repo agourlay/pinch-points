@@ -181,6 +181,9 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     if let Some(cap) = field(hello, "rules.gull_cap")?.as_u64() {
         let _ = writeln!(out, "gull_cap: {cap}");
     }
+    if field(hello, "rules.gull_turnover")?.as_bool() == Some(true) {
+        let _ = writeln!(out, "gull_turnover: on");
+    }
     if let Some(round) = field(hello, "rules.round_ticks")?.as_u64() {
         let _ = writeln!(out, "round: {round}");
     }

@@ -233,8 +233,21 @@ pub struct Rules {
     pub gull_period: u32,
     /// How many gulls the ambient spawner allows on the beach at once.
     /// [`GULL_CAP`] unless a versus beach bigger than the classic one asked
-    /// for more (`scale_gulls_to_size`), which is the one place it moves.
+    /// for more (`set_versus_gulls`), which is the one place it moves.
     pub gull_cap: u8,
+    /// Whether the flock turns over: at the spawner's turn with the flock
+    /// full, the oldest gull clear of the castles flies off and a fresh
+    /// one comes in, and the final rush raises the cap by half.
+    ///
+    /// Without it a gull leaves only by raiding, and a full flock that has
+    /// settled into loops away from the castles holds the beach for the
+    /// rest of the round: the spawner is shut out, and the final rush's
+    /// doubled rate doubles nothing. In bot rounds on the classic size the
+    /// flock sat at its cap for four fifths of the final minute, and one
+    /// round in five saw no gull leave in its last sixty seconds. On for
+    /// versus only: a puzzle's flock is part of what its solution was
+    /// proven against, and a file that does not say so keeps the old rule.
+    pub gull_turnover: bool,
     /// Round length in ticks (the tide, spec §3.6). None = untimed. When it
     /// reaches zero the sim freezes: scores are locked at the wave.
     pub round_length: Option<u32>,
@@ -354,6 +367,7 @@ impl Board {
                 cap_policy: CapPolicy::Evict,
                 gull_period: 0,
                 gull_cap: GULL_CAP as u8,
+                gull_turnover: false,
                 round_length: None,
                 castle_raids: true,
             },
@@ -511,6 +525,11 @@ impl Board {
     /// How many ambient gulls may be on the beach at once.
     pub fn set_gull_cap(&mut self, cap: u8) {
         self.rules.gull_cap = cap;
+    }
+
+    /// Whether the flock turns over (see [`Rules::gull_turnover`]).
+    pub fn set_gull_turnover(&mut self, on: bool) {
+        self.rules.gull_turnover = on;
     }
 
     pub fn set_round_length(&mut self, ticks: Option<u32>) {
@@ -844,6 +863,10 @@ impl Board {
 
     pub fn gull_cap(&self) -> u8 {
         self.rules.gull_cap
+    }
+
+    pub fn gull_turnover(&self) -> bool {
+        self.rules.gull_turnover
     }
 
     pub fn round_length(&self) -> Option<u32> {

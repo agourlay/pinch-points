@@ -150,6 +150,7 @@ pub fn collect_log(
             | SimEvent::GullTookOff
             | SimEvent::GullLanded { .. }
             | SimEvent::GullShooed { .. }
+            | SimEvent::GullFlewOff { .. }
             | SimEvent::SignpostPlaced { .. }
             | SimEvent::SignpostRemoved { .. }
             | SimEvent::SignpostEvicted { .. }

@@ -54,6 +54,9 @@ impl Board {
         if usize::from(self.rules.gull_cap) != GULL_CAP {
             let _ = writeln!(out, "gull_cap: {}", self.rules.gull_cap);
         }
+        if self.rules.gull_turnover {
+            let _ = writeln!(out, "gull_turnover: on");
+        }
         if let Some(len) = self.rules.round_length {
             let _ = writeln!(out, "round: {len}");
         }
@@ -198,6 +201,7 @@ struct Fields {
     scores: Option<[u32; MAX_PLAYERS]>,
     gull_period: Option<u32>,
     gull_cap: Option<u8>,
+    gull_turnover: bool,
     round_length: Option<u32>,
     wrap: bool,
     /// Stored the way the wire stores it, because `Default` here has to
@@ -269,6 +273,7 @@ impl Fields {
             }
             "gull_period" => self.gull_period = Some(next_num(&mut words, "gull_period")?),
             "gull_cap" => self.gull_cap = Some(next_num(&mut words, "gull_cap")?),
+            "gull_turnover" => self.gull_turnover = value == "on",
             "round" => self.round_length = Some(next_num(&mut words, "round")?),
             "wrap" => self.wrap = value == "on",
             "raids" => self.no_castle_raids = value == "off",
@@ -448,6 +453,7 @@ impl Fields {
                 cap_policy,
                 gull_period,
                 gull_cap: self.gull_cap.unwrap_or(GULL_CAP as u8),
+                gull_turnover: self.gull_turnover,
                 round_length: self.round_length,
                 castle_raids: !self.no_castle_raids,
             },
@@ -723,6 +729,7 @@ mod tests {
         board.set_wall(1, 1, Direction::Up, true);
         board.set_castle_raids(false);
         board.set_gull_cap(9);
+        board.set_gull_turnover(true);
         board.set_events_enabled(true);
         board.set_round_length(Some(1234));
         board.set_gull_period(97);
@@ -803,6 +810,7 @@ mod tests {
             "events: on",
             "rule: reject 2",
             "gull_cap: 9",
+            "gull_turnover: on",
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
@@ -890,6 +898,7 @@ mod tests {
             // so dropping one is a legal (different) board, not a bad file.
             let optional = [
                 "gull_cap:",
+                "gull_turnover:",
                 "round:",
                 "wrap:",
                 "raids:",

@@ -42,7 +42,9 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// another version 10: the beaches bigger than the classic one started
 /// generating more walls and rocks and taking more gulls, from the same
 /// `Start` as before, and a five- or six-seat table outgrowing its map
-/// started landing on the 16x11 rather than the 20x13.
+/// started landing on the 16x11 rather than the 20x13. 18 is where a
+/// versus flock started turning over, the oldest gull clear of the castles
+/// flying off to make room, with the final rush raising the cap.
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in
@@ -52,7 +54,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// frozen for all time**: it is how a build tells "I cannot read this"
 /// apart from "I disagree with this", however the rest of the format
 /// moves.
-pub const PROTOCOL_VERSION: u8 = 17;
+pub const PROTOCOL_VERSION: u8 = 18;
 
 /// Connections a host accepts: five rivals (a six-seat table) and everyone
 /// else who turned up. How many of them get a seat is the lobby's

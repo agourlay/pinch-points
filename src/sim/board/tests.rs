@@ -1709,6 +1709,53 @@ fn a_raised_gull_cap_is_the_one_the_spawner_stops_at() {
     assert_eq!(board.gulls().len(), 9);
 }
 
+/// A full flock that turns over sends off its oldest gull clear of the
+/// castles and lets a fresh one in; the bird beside a castle is somebody's
+/// attack and stays. Without turnover the flock is left as it is.
+#[test]
+fn a_full_flock_turns_over_from_its_oldest_gull_clear_of_the_castles() {
+    for turnover in [true, false] {
+        let mut board = Board::new(9, 7, 3);
+        board.set_tile(4, 3, TileKind::Castle(0));
+        board.set_gull_period(10);
+        board.set_gull_cap(3);
+        board.set_gull_turnover(turnover);
+        board.spawn_gull(4, 2, Left); // the oldest, beside the castle
+        board.spawn_gull(8, 6, Up); // the oldest clear of it
+        board.spawn_gull(0, 6, Up);
+        board.run_gull_spawner();
+        let ids: Vec<u32> = board.gulls().iter().map(|g| g.id).collect();
+        if turnover {
+            assert_eq!(ids.len(), 3, "one off, one on: {ids:?}");
+            assert!(ids.contains(&0), "the attack stays: {ids:?}");
+            assert!(!ids.contains(&1), "the oldest clear one left: {ids:?}");
+            assert!(ids.contains(&2), "{ids:?}");
+        } else {
+            assert_eq!(ids, [0, 1, 2]);
+        }
+    }
+}
+
+/// The final rush raises a turning-over flock's cap by half, so its
+/// doubled rate adds birds rather than only swapping them.
+#[test]
+fn the_final_rush_raises_a_turning_over_flocks_cap() {
+    for turnover in [true, false] {
+        let mut board = Board::new(9, 7, 3);
+        board.set_tile(4, 3, TileKind::Castle(0));
+        board.set_gull_period(10);
+        board.set_gull_cap(2);
+        board.set_gull_turnover(turnover);
+        board.set_round_length(Some(600));
+        assert!(board.in_surge());
+        board.spawn_gull(8, 6, Up);
+        board.spawn_gull(0, 6, Up);
+        board.run_gull_spawner();
+        let expected = if turnover { 3 } else { 2 };
+        assert_eq!(board.gulls().len(), expected, "turnover {turnover}");
+    }
+}
+
 /// Tide events bypass the ambient flock cap on purpose: GullMania floods the
 /// beach through the crab spawners.
 #[test]

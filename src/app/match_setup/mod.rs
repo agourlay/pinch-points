@@ -105,7 +105,7 @@ impl GullPressure {
     ];
 
     /// The gull period on the classic 12x9 beach. A bigger beach scales it
-    /// with its area through [`crate::sim::scale_gulls_to_size`], which is
+    /// with its area through [`crate::sim::set_versus_gulls`], which is
     /// how every board is handed it.
     pub fn period(self) -> u32 {
         match self {

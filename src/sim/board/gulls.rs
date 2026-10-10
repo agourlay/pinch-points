@@ -3,6 +3,10 @@
 
 use super::*;
 
+/// Tiles (in either direction) a gull must be from every castle to be sent
+/// off when the flock turns over.
+const TURNOVER_CLEARANCE: i32 = 2;
+
 impl Board {
     /// Whether a gull can be put down on `(x, y)`: sand, not rock and not
     /// kelp, which a gull's feet cannot reach through. The one rule every
@@ -63,8 +67,12 @@ impl Board {
         // Balance: the ambient flock is capped so the late round stays
         // playable (raiders leaving keeps the population cycling). Tide
         // events (GullMania, GullAttack) deliberately bypass the cap.
-        if self.gulls.len() >= usize::from(self.rules.gull_cap) {
-            return;
+        if self.gulls.len() >= self.flock_cap() {
+            // With turnover on, a full flock makes room rather than shutting
+            // the spawner out: see `Rules::gull_turnover`.
+            if !self.rules.gull_turnover || !self.send_a_gull_off() {
+                return;
+            }
         }
         let (w, h) = (u32::from(self.grid.width), u32::from(self.grid.height));
         let perimeter = if w > 1 && h > 1 {
@@ -90,6 +98,51 @@ impl Board {
             return; // unlucky roll; the flock circles and tries again later
         }
         self.spawn_gull(x as u8, y as u8, dir);
+    }
+
+    /// How many ambient gulls the spawner allows right now: the board's
+    /// cap, raised by half for the final rush where the flock turns over.
+    fn flock_cap(&self) -> usize {
+        let cap = usize::from(self.rules.gull_cap);
+        match self.rules.gull_turnover && self.in_surge() {
+            true => cap + cap / 2,
+            false => cap,
+        }
+    }
+
+    /// The oldest walking gull more than [`TURNOVER_CLEARANCE`] tiles from
+    /// every castle leaves the beach. False when none qualifies, and the
+    /// flock stays as it is.
+    ///
+    /// Oldest by id, which the board hands out in order. Walking, because
+    /// a bird in the air is already going somewhere a player can see. Clear
+    /// of the castles, because a gull somebody walked up to a rival's keep
+    /// is that player's attack, and pulling it away a tile short of the
+    /// raid is the game cheating them.
+    fn send_a_gull_off(&mut self) -> bool {
+        let castles: Vec<(i32, i32)> = self
+            .castle_owners()
+            .filter_map(|owner| self.castle_of(owner))
+            .map(|(x, y)| (i32::from(x), i32::from(y)))
+            .collect();
+        let leaving = self
+            .gulls
+            .iter()
+            .enumerate()
+            .filter(|(_, gull)| matches!(gull.state, GullState::Walking))
+            .filter(|(_, gull)| {
+                let (x, y) = self.coords(gull.tile);
+                castles
+                    .iter()
+                    .all(|&(cx, cy)| (x - cx).abs().max((y - cy).abs()) > TURNOVER_CLEARANCE)
+            })
+            .min_by_key(|(_, gull)| gull.id)
+            .map(|(i, _)| i);
+        let Some(i) = leaving else {
+            return false;
+        };
+        self.gulls.remove(i);
+        true
     }
 
     pub(super) fn roll_takeoff(&mut self) -> u32 {

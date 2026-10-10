@@ -84,7 +84,10 @@ shifts, castle swaps, fresh sand…).
 **Gulls** eat crabs on contact and are steerable: aiming them at a rival's
 castle is the entire offensive game. A gull reaching a castle **carries off
 half its score** and departs. Gulls occasionally take flight for a few
-tiles, ignoring walls and arrows, so no corner is ever fully safe.
+tiles, ignoring walls and arrows, so no corner is ever fully safe. The
+flock keeps moving: when it is full, the oldest gull away from the castles
+flies off and a fresh one arrives from the edge, so birds circling where
+they can hurt nobody do not hold the beach for the rest of the round.
 
 **Castles are the scoreboard**, flanked by a ranked leaderboard on the left
 (the leader's card is biggest and wears the crown) and the tide clock over a
@@ -93,8 +96,8 @@ announced across the centre of the screen as well.
 
 ![The lure: scoring a molting crab turns every loose crab the luring player's colour and pulls it home - here, to P2](screenshots/lure.png)
 
-**The clock.** It turns red for the last 30 seconds and the gulls
-double; when time is up, the highest score wins. The results
+**The clock.** It turns red for the last 30 seconds, the gulls arrive
+twice as fast and the flock can grow by half; when time is up, the highest score wins. The results
 card also hands out the round's awards, for the comeback from furthest
 behind, the lure that paid most, the most arrows planted and the most
 score lost, so the rest of the table has something to point at too.

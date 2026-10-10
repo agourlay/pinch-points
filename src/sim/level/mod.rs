@@ -370,6 +370,14 @@ mod tests {
         assert_eq!(big.board().gull_cap(), 14);
         let back = Level::parse(&big.to_text()).expect("round trip");
         assert_eq!(back.board().gull_cap(), 14);
+        assert!(
+            !plain.board().gull_turnover(),
+            "off unless the file says so"
+        );
+        assert!(!plain.to_text().contains("gull_turnover"));
+        let turning = Level::parse(&format!("{head}gull_turnover: on\n{map}")).expect("level");
+        let back = Level::parse(&turning.to_text()).expect("round trip");
+        assert!(back.board().gull_turnover());
     }
 
     /// A stage that states a round longer than the campaign tick limit is

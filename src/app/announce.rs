@@ -157,6 +157,7 @@ pub fn collect_announcements(
             | SimEvent::GullTookOff
             | SimEvent::GullLanded { .. }
             | SimEvent::GullShooed { .. }
+            | SimEvent::GullFlewOff { .. }
             | SimEvent::SignpostPlaced { .. }
             | SimEvent::SignpostRemoved { .. }
             | SimEvent::SignpostEvicted { .. }

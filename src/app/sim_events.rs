@@ -65,6 +65,10 @@ pub enum SimEvent {
     /// players read their puzzle as lost. `pos` is where it was last
     /// drawn, `castle` the middle of the tile that turned it away.
     GullShooed { pos: Vec2, castle: Vec2 },
+    /// A gull left a full flock to make room for a fresh one, from `pos`,
+    /// where it was last drawn (see `Rules::gull_turnover`). Drawn taking
+    /// off, or it blinked out of existence mid-step.
+    GullFlewOff { pos: Vec2 },
     /// A signpost went up here, and whose it is.
     ///
     /// One per tile, never a headcount: a board-wide count nets one seat's
@@ -371,14 +375,16 @@ fn crab_events(board: &crate::sim::Board, watch: &Watch, events: &mut Vec<SimEve
     }
 }
 
-/// Gulls a raid-free castle turned away since the last frame.
+/// Gulls that left the beach since the last frame, other than all at once
+/// when Crab Mania clears the sky.
 ///
-/// A gull leaves the beach two ways: through a castle, or all at once when
-/// Crab Mania clears the sky. The sim does not record which castle, so the
-/// nearest one to where the bird was last drawn is taken: it walks at most
-/// a tile a frame, and a flight that ends on a castle ends on that tile.
-/// With raids on this stays quiet, since [`SimEvent::CastleRaided`] is the
-/// news there.
+/// A gull leaves through a castle, which on a raid-free beach turns it
+/// away, or, on a versus beach whose flock turns over, by flying off. The
+/// sim records neither, so they are told apart by where the bird was last
+/// drawn. It walks at most a tile a frame, and a flight that ends on a
+/// castle ends on that tile, so one that went through a castle was last
+/// drawn beside it; the sim only sends off a gull more than two tiles from
+/// every castle. A raid is not news here: [`SimEvent::CastleRaided`] is.
 fn gull_departures(
     board: &crate::sim::Board,
     prev: &Watch,
@@ -386,7 +392,7 @@ fn gull_departures(
     events: &mut Vec<SimEvent>,
 ) {
     let mania = next.event_at != prev.event_at && next.last_event == Some(TideEvent::CrabMania);
-    if board.castle_raids() || mania {
+    if mania {
         return;
     }
     let castles: Vec<Vec2> = board
@@ -402,7 +408,12 @@ fn gull_departures(
             .iter()
             .copied()
             .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
-        if let Some(castle) = nearest {
+        let Some(castle) = nearest else {
+            continue;
+        };
+        if castle.distance(pos) > layout::TILE * 1.5 {
+            events.push(SimEvent::GullFlewOff { pos });
+        } else if !board.castle_raids() {
             events.push(SimEvent::GullShooed { pos, castle });
         }
     }
@@ -702,8 +713,15 @@ mod tests {
             let mut shooed = Vec::new();
             for _ in 0..120 {
                 board.tick_idle();
+                let events = diff(&board, &mut watch);
+                assert!(
+                    !events
+                        .iter()
+                        .any(|e| matches!(e, SimEvent::GullFlewOff { .. })),
+                    "raids {raids}: through a castle is not flying off: {events:?}"
+                );
                 shooed.extend(
-                    diff(&board, &mut watch)
+                    events
                         .into_iter()
                         .filter(|e| matches!(e, SimEvent::GullShooed { .. })),
                 );
@@ -731,6 +749,42 @@ mod tests {
                 other => panic!("one departure, told once: {other:?}"),
             }
         }
+    }
+
+    /// A gull a full flock sends off is seen flying off from where it stood,
+    /// and nobody's castle is told it was raided.
+    #[test]
+    fn a_gull_sent_off_by_its_flock_is_seen_flying_off() {
+        let mut board = Board::new(12, 9, 7);
+        board.set_tile(1, 1, TileKind::Castle(0));
+        board.spawn_gull(10, 7, Direction::Up);
+        for _ in 0..3 {
+            board.tick_idle();
+        }
+        let mut watch = synced(&board);
+        board.set_gull_period(1);
+        board.set_gull_cap(1);
+        board.set_gull_turnover(true);
+        board.tick_idle();
+        let events = diff(&board, &mut watch);
+        let flew: Vec<&SimEvent> = events
+            .iter()
+            .filter(|e| matches!(e, SimEvent::GullFlewOff { .. }))
+            .collect();
+        match flew.as_slice() {
+            [SimEvent::GullFlewOff { pos }] => {
+                let stood = layout::tile_center(&board, 10, 7);
+                assert!(pos.distance(stood) <= layout::TILE, "from {pos}");
+            }
+            other => panic!("one gull flew off, told once: {other:?}"),
+        }
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                SimEvent::CastleRaided { .. } | SimEvent::GullShooed { .. }
+            )),
+            "{events:?}"
+        );
     }
 
     /// Crab Mania clears the sky in one go, and none of those birds went
@@ -838,6 +892,7 @@ mod tests {
                 | SimEvent::GullTookOff
                 | SimEvent::GullLanded { .. }
                 | SimEvent::GullShooed { .. }
+                | SimEvent::GullFlewOff { .. }
                 | SimEvent::SignpostPlaced { .. }
                 | SimEvent::SignpostRemoved { .. }
                 | SimEvent::TierUp { .. }
