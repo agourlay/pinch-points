@@ -1527,6 +1527,87 @@ fn event_monopoly_banks_half_the_loose_crabs() {
     assert_eq!(board.crabs_banked(), 3);
 }
 
+/// Carried home, the swept crabs leave the beach at once, bank nothing
+/// until they land, and land one after another, each written down against
+/// the seat that got it on the tick it banks.
+#[test]
+fn a_flying_sweep_banks_each_crab_as_it_lands() {
+    let mut board = party_board();
+    board.set_sweep_flight(true);
+    for x in 0..6 {
+        common(&mut board, x, 4, Right, Handedness::Left);
+    }
+    board.apply_tide_event(TideEvent::Monopoly, 1);
+    assert_eq!(board.crabs().len(), 3, "off the beach at once");
+    assert_eq!(board.scores()[1], 0, "and nothing banked yet");
+    let lands: Vec<u64> = board.sweeping().iter().map(|f| f.lands).collect();
+    let first = SWEEP_HOLD + SWEEP_FLIGHT;
+    assert_eq!(
+        lands,
+        [first, first + SWEEP_STAGGER, first + 2 * SWEEP_STAGGER]
+    );
+    let mut flying: Vec<(u32, u64)> = board
+        .sweeping()
+        .iter()
+        .map(|f| (f.crab.id, f.lands))
+        .collect();
+    while !board.sweeping().is_empty() {
+        let tick = board.ticks();
+        board.tick_idle();
+        flying.retain(|&(crab, lands)| {
+            let landed = board.sweeping().iter().all(|f| f.crab.id != crab);
+            if landed {
+                assert_eq!(lands, tick, "crab {crab} landed on its tick");
+                assert_eq!(board.swept_home(crab), Some(1), "for seat 1");
+            }
+            !landed
+        });
+    }
+    assert!(board.scores()[1] >= 3, "all three banked");
+}
+
+/// The wave freezes the board, so whatever is still in the air lands on
+/// the round's last tick rather than never.
+#[test]
+fn a_flying_sweep_lands_everything_at_the_wave() {
+    let mut board = party_board();
+    board.set_sweep_flight(true);
+    board.set_round_length(Some(10));
+    for x in 0..6 {
+        common(&mut board, x, 4, Right, Handedness::Left);
+    }
+    board.apply_tide_event(TideEvent::Monopoly, 1);
+    while !board.round_over() {
+        board.tick_idle();
+    }
+    assert!(board.sweeping().is_empty(), "nothing left in the air");
+    assert_eq!(board.scores()[1], 3, "and every crab paid");
+}
+
+/// A round saved mid-sweep picks up with the same crabs in the air,
+/// landing on the same ticks.
+#[test]
+fn a_sweep_survives_a_snapshot_mid_flight() {
+    let mut board = party_board();
+    board.set_sweep_flight(true);
+    for x in 0..6 {
+        common(&mut board, x, 4, Right, Handedness::Left);
+    }
+    board.apply_tide_event(TideEvent::Monopoly, 1);
+    for _ in 0..80 {
+        board.tick_idle();
+    }
+    assert!(!board.sweeping().is_empty(), "caught in the air");
+    let mut resumed = Board::parse_snapshot(&board.to_snapshot()).expect("snapshot");
+    assert_eq!(resumed.state_hash(), board.state_hash());
+    for _ in 0..200 {
+        board.tick_idle();
+        resumed.tick_idle();
+    }
+    assert_eq!(resumed.state_hash(), board.state_hash());
+    assert_eq!(resumed.scores(), board.scores());
+}
+
 /// A crab the tide banks goes from a tile that is not a castle, which
 /// from outside the sim is exactly what being eaten looks like. So the sim
 /// writes down what it did, because nothing else can work it out

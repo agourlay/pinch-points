@@ -107,6 +107,16 @@ pub const MAX_PLAYERS: usize = 6;
 pub const GOLDEN_CALLED_VALUE: u32 = 25;
 /// Ticks a called golden crab is announced before it comes out.
 pub const GOLDEN_NOTICE: u32 = 5 * TICKS_PER_SECOND;
+
+/// A Crab Monopoly sweep under [`Rules::sweep_flight`], in ticks: how long
+/// the picked crabs wait where they stand, how far apart they set off, and
+/// how long each is in the air before it lands and banks.
+///
+/// The wait is the event's banner, which covers the middle of the board
+/// for its first two seconds: the crabs leave as it starts to fade.
+pub const SWEEP_HOLD: u64 = 66;
+pub const SWEEP_STAGGER: u64 = 4;
+pub const SWEEP_FLIGHT: u64 = 30;
 /// Ticks between called golden crabs in a versus round: three minutes,
 /// so one a standard round and two in a long one.
 pub const VERSUS_GOLDEN_EVERY: u32 = 3 * 60 * TICKS_PER_SECOND;
@@ -278,6 +288,18 @@ pub struct Rules {
     /// sparkling crab, with nothing on the beach to say why. On for versus
     /// only, and a file that does not say so keeps the old lock.
     pub timed_lock: bool,
+    /// Whether Crab Monopoly carries its crabs home rather than banking
+    /// them on the spot.
+    ///
+    /// Banked on the spot, half the beach vanished in one tick and the
+    /// scores jumped before anything could be seen to happen; whatever the
+    /// screen drew afterwards was decoration on a done deal. With this the
+    /// picked crabs leave the beach (no gull can take them, no arrow turns
+    /// them) and wait [`SWEEP_HOLD`], then fly to the banker's castle one
+    /// after another, and each banks the tick it lands ([`Board::sweeping`]).
+    /// On for versus only, and a file that does not say so keeps the
+    /// instant sweep.
+    pub sweep_flight: bool,
     /// Round length in ticks (the tide, spec §3.6). None = untimed. When it
     /// reaches zero the sim freezes: scores are locked at the wave.
     pub round_length: Option<u32>,
@@ -353,6 +375,22 @@ pub struct Board {
     /// and hashing it would only make this build disagree with builds it
     /// is playing identically to.
     swept_home: Vec<Swept>,
+    /// Crabs Crab Monopoly is carrying home, in the order they land (see
+    /// [`Rules::sweep_flight`]).
+    sweeping: Vec<Sweeping>,
+}
+
+/// A crab on its way home in a Crab Monopoly sweep.
+#[derive(Clone, Copy, Debug)]
+pub struct Sweeping {
+    /// The crab as it stood when it was picked up.
+    pub crab: Crab,
+    /// Whose castle it is flying to, and whose score it banks into.
+    pub owner: PlayerId,
+    /// The tick it leaves the sand.
+    pub launch: u64,
+    /// The tick it lands and banks.
+    pub lands: u64,
 }
 
 /// One crab the tide banked, for the render layer to find.
@@ -403,6 +441,7 @@ impl Board {
                 gull_turnover: false,
                 golden_every: 0,
                 timed_lock: false,
+                sweep_flight: false,
                 round_length: None,
                 castle_raids: true,
             },
@@ -422,6 +461,7 @@ impl Board {
             wrap: false,
             tide: events::Tide::default(),
             swept_home: Vec::new(),
+            sweeping: Vec::new(),
         };
         // The border walls are the wrap rule with wrap off; the border
         // indices are stated once, in set_wrap.
@@ -464,6 +504,7 @@ impl Board {
             wrap,
             tide,
             swept_home,
+            sweeping,
         } = other;
         self.grid.copy_from(grid);
         self.seed = *seed;
@@ -485,6 +526,7 @@ impl Board {
         self.wrap = *wrap;
         self.tide.copy_from(tide);
         refill(&mut self.swept_home, swept_home);
+        refill(&mut self.sweeping, sweeping);
     }
 
     // --- level authoring -------------------------------------------------
@@ -568,6 +610,11 @@ impl Board {
     /// Whether the flock turns over (see [`Rules::gull_turnover`]).
     pub fn set_gull_turnover(&mut self, on: bool) {
         self.rules.gull_turnover = on;
+    }
+
+    /// Carry Crab Monopoly's crabs home (see [`Rules::sweep_flight`]).
+    pub fn set_sweep_flight(&mut self, on: bool) {
+        self.rules.sweep_flight = on;
     }
 
     /// Lock the wheel only for timed events (see [`Rules::timed_lock`]).
@@ -685,6 +732,7 @@ impl Board {
                 self.tide.tempo = None;
             }
         }
+        self.land_sweeps();
         self.tick += 1;
         #[cfg(debug_assertions)]
         self.check_invariants();
@@ -853,6 +901,40 @@ impl Board {
     /// again, down to nothing and no further: a score that has gone
     /// negative is a player who has stopped playing, and this game is for
     /// children.
+    /// Bank the swept crabs due this tick, as they reach their castle.
+    ///
+    /// Everything still in the air lands on the last tick of a round: the
+    /// sim freezes at the wave, and a crab caught mid-flight by it would
+    /// be points the event promised and never paid.
+    fn land_sweeps(&mut self) {
+        if self.sweeping.is_empty() {
+            return;
+        }
+        let tick = self.tick;
+        let last = self
+            .rules
+            .round_length
+            .is_some_and(|len| tick + 1 >= u64::from(len));
+        let mut i = 0;
+        while i < self.sweeping.len() {
+            if !last && self.sweeping[i].lands > tick {
+                i += 1;
+                continue;
+            }
+            let Sweeping { crab, owner, .. } = self.sweeping.remove(i);
+            self.credit_bank(owner, &crab);
+            self.crabs_banked += 1;
+            if crab.kind == CrabKind::Golden {
+                self.golden_banked += 1;
+            }
+            self.swept_home.push(Swept {
+                crab: crab.id,
+                owner,
+                at: tick,
+            });
+        }
+    }
+
     pub(super) fn credit_bank(&mut self, owner: PlayerId, crab: &Crab) {
         let points = crab.bank_points(self.crab_value(crab.kind), self.in_claw_call());
         let score = &mut self.scores[owner as usize];
@@ -924,6 +1006,15 @@ impl Board {
 
     pub fn timed_lock(&self) -> bool {
         self.rules.timed_lock
+    }
+
+    pub fn sweep_flight(&self) -> bool {
+        self.rules.sweep_flight
+    }
+
+    /// Crabs Crab Monopoly is carrying home, soonest to land first.
+    pub fn sweeping(&self) -> &[Sweeping] {
+        &self.sweeping
     }
 
     /// The golden crab the board has called, once the call is public: the

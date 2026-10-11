@@ -19,8 +19,8 @@ pub use board::{
     Board, CRAB_CAP_TILES_PER_CRAB, CapPolicy, EVENT_COOLDOWN, EVENT_TICKS, GOLDEN_CALLED_VALUE,
     GOLDEN_NOTICE, GULL_CAP, Grid, LURE_TICKS, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER, Mania,
     PlayerAction, PlayerId, Refusal, SIGNPOST_LIFETIME, SPILL_CAP, SUBUNITS_PER_TILE, SURGE_TICKS,
-    Signpost, SignpostHealth, Spawner, TICKS_PER_SECOND, TIER_FLOORS, Tempo, TideEvent, TileKind,
-    castle_tier,
+    SWEEP_FLIGHT, SWEEP_HOLD, SWEEP_STAGGER, Signpost, SignpostHealth, Spawner, Sweeping,
+    TICKS_PER_SECOND, TIER_FLOORS, Tempo, TideEvent, TileKind, castle_tier,
 };
 pub use bot::{
     BotLevel, FAIR_LIFT, FAIR_TICKS_PER_TILE, Hand, bot_action, bot_action_with, fair_walk,

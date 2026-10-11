@@ -614,7 +614,7 @@ pub fn bank_hop(
 /// The two ends are the whole of it: a crab that starts anywhere but where
 /// it was last drawn jumps on its first frame, and one that finishes
 /// anywhere but at the gate is last seen standing on the wall.
-fn arc(from: Vec2, to: Vec2, lift: f32, progress: f32) -> (Vec2, f32) {
+pub(crate) fn arc(from: Vec2, to: Vec2, lift: f32, progress: f32) -> (Vec2, f32) {
     // Eased both ends, so it sets off and arrives rather than being
     // dragged across.
     let eased = progress * progress * (3.0 - 2.0 * progress);

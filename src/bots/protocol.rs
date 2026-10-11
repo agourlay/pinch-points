@@ -180,6 +180,7 @@ pub fn hello(board: &Board, table: &Table, seat: PlayerId, resumed: bool) -> Val
             "golden_every": board.golden_every(),
             "golden_value": board.crab_value(crate::sim::CrabKind::Golden),
             "timed_lock": board.timed_lock(),
+            "sweep_flight": board.sweep_flight(),
             "castle_raids": board.castle_raids(),
             "events": board.events_enabled(),
         },
@@ -229,6 +230,22 @@ pub fn tick(board: &Board, game: u32, you: &You, cursors: &[Option<(u8, u8)>]) -
                 "id": crab.id, "x": x, "y": y, "dir": dir_token(crab.dir),
                 "progress": crab.progress, "kind": kind_token(crab.kind),
                 "claw": claw_token(crab.handed),
+            })
+        })
+        .collect();
+    // Crab Monopoly's crabs on their way home: off the beach, out of reach
+    // of gulls and arrows, and banked for `owner` on the tick `lands`.
+    let sweeping: Vec<Value> = board
+        .sweeping()
+        .iter()
+        .map(|flight| {
+            let crab = &flight.crab;
+            let (x, y) = board.coords_u8(crab.tile);
+            json!({
+                "id": crab.id, "x": x, "y": y, "dir": dir_token(crab.dir),
+                "progress": crab.progress, "kind": kind_token(crab.kind),
+                "claw": claw_token(crab.handed), "owner": flight.owner,
+                "launch": flight.launch, "lands": flight.lands,
             })
         })
         .collect();
@@ -292,6 +309,7 @@ pub fn tick(board: &Board, game: u32, you: &You, cursors: &[Option<(u8, u8)>]) -
         },
         "cursors": cursors.iter().map(|c| c.map(|(x, y)| [x, y])).collect::<Vec<_>>(),
         "crabs": crabs,
+        "sweeping": sweeping,
         "gulls": gulls,
         "signposts": signposts,
         "castles": castles,

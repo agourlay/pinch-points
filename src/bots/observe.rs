@@ -150,6 +150,14 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
         .into_iter()
         .flatten()
         .collect();
+    // Absent from a server older than the sweep's flight, which never has
+    // any in the air.
+    let sweeping: Vec<&Value> = tick
+        .get("sweeping")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .collect();
     let gulls: Vec<&Value> = field(tick, "gulls")?
         .as_array()
         .into_iter()
@@ -165,7 +173,7 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
         out,
         "counters: {} {} {} 0 0",
         posts.len(),
-        next_id(&crabs),
+        next_id(&crabs).max(next_id(&sweeping)),
         next_id(&gulls)
     );
     let mut scores = [0u64; MAX_PLAYERS];
@@ -192,6 +200,9 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     }
     if field(hello, "rules.timed_lock")?.as_bool() == Some(true) {
         let _ = writeln!(out, "timed_lock: on");
+    }
+    if field(hello, "rules.sweep_flight")?.as_bool() == Some(true) {
+        let _ = writeln!(out, "sweep_flight: on");
     }
     if let Some(round) = field(hello, "rules.round_ticks")?.as_u64() {
         let _ = writeln!(out, "round: {round}");
@@ -297,6 +308,24 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
         let _ = writeln!(
             out,
             "crab: {} {tile} {dir} {progress} {tile} {progress} {dir} {} {kind}",
+            num(c, "id")?,
+            claw(text(c, "claw")?)?,
+        );
+    }
+    for c in &sweeping {
+        let tile = at(num(c, "x")?, num(c, "y")?);
+        let dir = letter(text(c, "dir")?)?;
+        let progress = num(c, "progress")?;
+        let kind = text(c, "kind")?;
+        if CrabKind::from_token(kind).is_none() {
+            return Err(format!("no crab kind {kind:?}"));
+        }
+        let _ = writeln!(
+            out,
+            "sweeping: {} {} {} {} {tile} {dir} {progress} {tile} {progress} {dir} {} {kind}",
+            num(c, "owner")?,
+            num(c, "launch")?,
+            num(c, "lands")?,
             num(c, "id")?,
             claw(text(c, "claw")?)?,
         );

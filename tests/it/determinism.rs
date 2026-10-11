@@ -100,6 +100,9 @@ const TICKS: u64 = 10_000;
 ///
 /// Why it has moved, most recent first:
 ///
+/// - 2026-10-11: `sweep_flight` and the crabs in the air joined the
+///   fingerprint, when the versus Crab Monopoly started flying its crabs
+///   home. Off on this board, so only the hash's reach grew.
 /// - 2026-10-11: `timed_lock` joined the fingerprint, when the versus
 ///   event wheel stopped locking after events that are over in a tick.
 ///   Off on this board, so only the hash's reach grew.
@@ -139,7 +142,7 @@ const TICKS: u64 = 10_000;
 ///   rules moved that day too: the lure stopped stacking, the roulette
 ///   stopped rolling gull events into the surge, and the spawners took a
 ///   crab cap.
-const EXPECTED_HASH: u64 = 0xa022_3c0f_cba3_61df;
+const EXPECTED_HASH: u64 = 0x9b93_2e38_7d86_2f3d;
 
 #[test]
 fn ten_thousand_ticks_reproduce_exactly() {

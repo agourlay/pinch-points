@@ -43,6 +43,7 @@ impl Board {
                     gull_turnover: _,
                     golden_every: _,
                     timed_lock: _,
+                    sweep_flight: _,
                     round_length: _,
                     castle_raids: _,
                 },
@@ -75,6 +76,8 @@ impl Board {
             // playing the same round.
             seed: _,
             swept_home: _,
+            // hash_round, at its tail
+            sweeping: _,
         } = self;
         let mut h = Fnv::new();
         self.hash_terrain(&mut h);
@@ -255,6 +258,25 @@ impl Board {
         // order is the format and only the tail is safe to grow.
         h.u32(self.lure_cooldown);
         h.u32(self.tide.cooldown);
+        // Crab Monopoly's crabs in the air: live state that decides whose
+        // score moves on which tick.
+        h.u8(u8::from(self.rules.sweep_flight));
+        h.u32(self.sweeping.len() as u32);
+        for flight in &self.sweeping {
+            let crab = &flight.crab;
+            h.u32(crab.id);
+            h.u16(crab.tile);
+            h.u8(crab.dir.id());
+            h.u16(crab.progress);
+            h.u16(crab.prev.tile);
+            h.u16(crab.prev.progress);
+            h.u8(crab.prev.dir.id());
+            h.u8(crab.handed.id());
+            h.u8(crab.kind.id());
+            h.u8(flight.owner);
+            h.u64(flight.launch);
+            h.u64(flight.lands);
+        }
     }
 }
 
@@ -294,6 +316,7 @@ mod tests {
             ("set_gull_turnover", Box::new(|b| b.set_gull_turnover(true))),
             ("set_golden_every", Box::new(|b| b.set_golden_every(600))),
             ("set_timed_lock", Box::new(|b| b.set_timed_lock(true))),
+            ("set_sweep_flight", Box::new(|b| b.set_sweep_flight(true))),
             (
                 "set_round_length",
                 Box::new(|b| b.set_round_length(Some(500))),

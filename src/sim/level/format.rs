@@ -118,6 +118,9 @@ impl Level {
         if board.timed_lock() {
             let _ = writeln!(out, "timed_lock: on");
         }
+        if board.sweep_flight() {
+            let _ = writeln!(out, "sweep_flight: on");
+        }
         if let Some(round) = board.round_length() {
             let _ = writeln!(out, "round: {round}");
         }
@@ -230,6 +233,7 @@ struct Header {
     gull_turnover: bool,
     golden_every: u32,
     timed_lock: bool,
+    sweep_flight: bool,
     events: bool,
     round: Option<u32>,
     seed: u64,
@@ -260,6 +264,7 @@ impl Default for Header {
             gull_turnover: false,
             golden_every: 0,
             timed_lock: false,
+            sweep_flight: false,
             events: false,
             round: None,
             // An arbitrary but fixed default, so a level file without a
@@ -330,6 +335,7 @@ impl Header {
             }
             "gull_turnover" => self.gull_turnover = value == "on",
             "timed_lock" => self.timed_lock = value == "on",
+            "sweep_flight" => self.sweep_flight = value == "on",
             "golden_every" => {
                 self.golden_every = value
                     .parse::<u32>()
@@ -567,6 +573,7 @@ fn place_entities(board: &mut Board, header: &Header) -> Result<(), String> {
     board.set_gull_turnover(header.gull_turnover);
     board.set_golden_every(header.golden_every);
     board.set_timed_lock(header.timed_lock);
+    board.set_sweep_flight(header.sweep_flight);
     board.set_round_length(header.round);
     if header.no_castle_raids {
         board.set_castle_raids(false);

@@ -63,6 +63,9 @@ impl Board {
         if self.rules.timed_lock {
             let _ = writeln!(out, "timed_lock: on");
         }
+        if self.rules.sweep_flight {
+            let _ = writeln!(out, "sweep_flight: on");
+        }
         // The whole call, public or not: a round resumed from a code
         // sends its golden crab out where and when this one would have.
         if let Some((at, tile)) = self.golden_call {
@@ -150,6 +153,27 @@ impl Board {
                 crab.kind.token()
             );
         }
+        // A crab in a Crab Monopoly sweep: who it flies to, when it leaves
+        // and lands, then the crab exactly as a `crab:` line writes it.
+        for flight in &self.sweeping {
+            let crab = &flight.crab;
+            let _ = writeln!(
+                out,
+                "sweeping: {} {} {} {} {} {} {} {} {} {} {} {}",
+                flight.owner,
+                flight.launch,
+                flight.lands,
+                crab.id,
+                crab.tile,
+                crab.dir.letter(),
+                crab.progress,
+                crab.prev.tile,
+                crab.prev.progress,
+                crab.prev.dir.letter(),
+                crab.handed.token(),
+                crab.kind.token()
+            );
+        }
         for gull in &self.gulls {
             // `remaining` is only meaningful mid-flight; a walking gull
             // writes a placeholder zero so every line has the same shape.
@@ -216,6 +240,8 @@ struct Fields {
     gull_turnover: bool,
     golden_every: u32,
     timed_lock: bool,
+    sweep_flight: bool,
+    sweeping: Vec<Sweeping>,
     golden_call: Option<(u64, u8, u8)>,
     round_length: Option<u32>,
     wrap: bool,
@@ -291,6 +317,7 @@ impl Fields {
             "gull_turnover" => self.gull_turnover = value == "on",
             "golden_every" => self.golden_every = next_num(&mut words, "golden_every")?,
             "timed_lock" => self.timed_lock = value == "on",
+            "sweep_flight" => self.sweep_flight = value == "on",
             "golden_call" => {
                 self.golden_call = Some((
                     next_num(&mut words, "golden_call tick")?,
@@ -354,6 +381,26 @@ impl Fields {
             }
             "post" => self.posts.push(parse_post(&mut words)?),
             "crab" => self.crabs.push(parse_crab(&mut words)?),
+            "sweeping" => {
+                let owner: PlayerId = next_num(&mut words, "sweeping owner")?;
+                if usize::from(owner) >= MAX_PLAYERS {
+                    return Err(format!("sweeping: no seat {owner}"));
+                }
+                let launch = next_num(&mut words, "sweeping launch")?;
+                let lands = next_num(&mut words, "sweeping lands")?;
+                if lands < launch {
+                    return Err(format!(
+                        "sweeping: lands at {lands}, before it leaves at {launch}"
+                    ));
+                }
+                let crab = parse_crab(&mut words)?;
+                self.sweeping.push(Sweeping {
+                    crab,
+                    owner,
+                    launch,
+                    lands,
+                });
+            }
             "gull" => self.gulls.push(parse_gull(&mut words)?),
             other => return Err(format!("unknown key {other:?}")),
         }
@@ -459,7 +506,11 @@ impl Fields {
             }
             Ok(())
         };
-        for crab in &self.crabs {
+        for crab in self
+            .crabs
+            .iter()
+            .chain(self.sweeping.iter().map(|f| &f.crab))
+        {
             poses("crab", crab.tile, crab.progress, &crab.prev)?;
         }
         for gull in &self.gulls {
@@ -496,6 +547,7 @@ impl Fields {
                 gull_turnover: self.gull_turnover,
                 golden_every: self.golden_every,
                 timed_lock: self.timed_lock,
+                sweep_flight: self.sweep_flight,
                 round_length: self.round_length,
                 castle_raids: !self.no_castle_raids,
             },
@@ -530,6 +582,7 @@ impl Fields {
             // News for the frame it happened on, and this is not that
             // frame: a round picked back up has no sweep to report.
             swept_home: Vec::new(),
+            sweeping: self.sweeping,
         })
     }
 }
@@ -774,6 +827,7 @@ mod tests {
         board.set_gull_cap(9);
         board.set_gull_turnover(true);
         board.set_timed_lock(true);
+        board.set_sweep_flight(true);
         board.set_events_enabled(true);
         board.set_round_length(Some(1234));
         board.set_gull_period(97);
@@ -856,6 +910,7 @@ mod tests {
             "gull_cap: 9",
             "gull_turnover: on",
             "timed_lock: on",
+            "sweep_flight: on",
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
@@ -946,6 +1001,8 @@ mod tests {
                 "gull_turnover:",
                 "golden_every:",
                 "timed_lock:",
+                "sweep_flight:",
+                "sweeping:",
                 "golden_call:",
                 "round:",
                 "wrap:",

@@ -18,7 +18,8 @@ const CLASSIC_AREA: u32 = 12 * 9;
 /// period a pressure dial names for the classic 12x9 beach: the flock
 /// turns over ([`Board::set_gull_turnover`]), the golden crab is called
 /// rather than rolled ([`Board::set_golden_every`]), the event wheel locks
-/// only while a timed event runs ([`Board::set_timed_lock`]), and a big
+/// only while a timed event runs ([`Board::set_timed_lock`]), Crab
+/// Monopoly carries its crabs home ([`Board::set_sweep_flight`]), and a big
 /// beach gets more gulls.
 ///
 /// The ambient spawner sends one gull a period and stops at a fixed cap,
@@ -36,6 +37,7 @@ pub fn set_versus_rules(board: &mut Board, period: u32) {
     board.set_gull_turnover(true);
     board.set_golden_every(VERSUS_GOLDEN_EVERY);
     board.set_timed_lock(true);
+    board.set_sweep_flight(true);
 }
 
 /// A castle spot per seat for a board of the given size.

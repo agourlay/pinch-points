@@ -272,6 +272,108 @@ pub fn sync_crab_sprites(
     }
 }
 
+/// A crab Crab Monopoly is carrying home, by id: drawn from the sim's own
+/// flight ([`crate::sim::Sweeping`]), since it banks on the tick it lands.
+#[derive(Component)]
+pub struct SweepSprite(u32);
+
+/// Draw the crabs a Crab Monopoly sweep is carrying home: glowing gold
+/// where they were picked up until they set off, then thrown over the
+/// beach into the banker's castle, each landing on the tick it banks.
+pub fn draw_sweeps(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    art: Res<Art>,
+    settings: Res<crate::app::settings::GameSettings>,
+    mut tween: Tween,
+    mut sprites: Query<(Entity, &SweepSprite, &mut Transform, &mut Sprite)>,
+) {
+    let board = &sim.0;
+    let flights = board.sweeping();
+    if flights.is_empty() && sprites.is_empty() {
+        return;
+    }
+    let time = &tween.time;
+    let alpha = smoothing_alpha(
+        board.ticks(),
+        &mut tween.watch,
+        time.delta_secs(),
+        &tween.fixed_time,
+    );
+    // The last tick run, and how far into the next one this frame is.
+    let now = board.ticks() as f32 - 1.0 + alpha;
+    // A steady glow for reduced motion: the sweep is the rule, so the
+    // crabs are still drawn, only not pulsing.
+    let glow = if settings.reduced_motion {
+        0.6
+    } else {
+        0.5 + 0.3 * (time.elapsed_secs() * 9.0).sin()
+    };
+    let mut drawn: Vec<u32> = Vec::with_capacity(flights.len());
+    for (entity, sweep, mut transform, mut sprite) in &mut sprites {
+        let Some(flight) = flights.iter().find(|f| f.crab.id == sweep.0) else {
+            commands.entity(entity).despawn();
+            continue;
+        };
+        drawn.push(sweep.0);
+        let crab = &flight.crab;
+        let from = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
+        let keep = board
+            .castle_of(flight.owner)
+            .map_or(from, |(x, y)| layout::tile_center(board, x, y));
+        let shell = shell_color(crab.kind, shade_of(crab.id));
+        let launch = flight.launch as f32;
+        if now < launch {
+            transform.translation = from.extend(layout::z::CREATURE + 0.3);
+            transform.scale = Vec3::ONE;
+            sprite.color = shell.mix(&palette::GOLD, glow);
+            continue;
+        }
+        let span = (flight.lands - flight.launch).max(1) as f32;
+        let progress = ((now - launch) / span).clamp(0.0, 1.0);
+        // Higher the further it goes, but never off the top of the beach:
+        // a crab thrown corner to corner left the board at a third of it.
+        let lift = (from.distance(keep) * 0.35).min(TILE * 1.2);
+        let (at, scale) = effects::arc(from, keep, lift, progress);
+        // Over the fences while it is in the air.
+        transform.translation = at.extend(layout::z::WALL + 0.3);
+        transform.scale = Vec3::splat(scale);
+        sprite.color = shell;
+    }
+    for flight in flights {
+        let crab = &flight.crab;
+        if drawn.contains(&crab.id) {
+            continue;
+        }
+        let pos = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
+        let side = Vec2::splat(sprite_side(crab.kind));
+        let flip_y = mirrored(crab.handed);
+        commands
+            .spawn((
+                SweepSprite(crab.id),
+                Sprite {
+                    image: art.crab.clone(),
+                    color: shell_color(crab.kind, shade_of(crab.id)).mix(&palette::GOLD, glow),
+                    custom_size: Some(side),
+                    flip_y,
+                    ..default()
+                },
+                Transform::from_translation(pos.extend(layout::z::CREATURE + 0.3))
+                    .with_rotation(layout::dir_rotation(crab.dir)),
+            ))
+            .with_child((
+                Sprite {
+                    image: art.claw.clone(),
+                    color: claw_color(crab.handed),
+                    custom_size: Some(side),
+                    flip_y,
+                    ..default()
+                },
+                Transform::from_translation(Vec3::new(0.0, 0.0, 0.1)),
+            ));
+    }
+}
+
 /// Smoothing factor for creature sprites. Normally the fixed-clock overstep
 /// fraction; when the sim has been frozen for clearly longer than one fixed
 /// period (pause, results, round over), hold at the final position instead of

@@ -48,7 +48,9 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// where versus stopped rolling golden crabs and started calling one every
 /// three minutes, worth 25, with the call on the board. 20 is where the
 /// versus event wheel stopped locking after an event that is over in the
-/// tick it fires (`timed_lock` in the rules).
+/// tick it fires (`timed_lock` in the rules). 21 is where versus Crab
+/// Monopoly started flying its crabs home, each banking as it lands
+/// (`sweep_flight`, and the crabs in the air in every snapshot).
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in
@@ -58,7 +60,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// frozen for all time**: it is how a build tells "I cannot read this"
 /// apart from "I disagree with this", however the rest of the format
 /// moves.
-pub const PROTOCOL_VERSION: u8 = 20;
+pub const PROTOCOL_VERSION: u8 = 21;
 
 /// Connections a host accepts: five rivals (a six-seat table) and everyone
 /// else who turned up. How many of them get a seat is the lobby's

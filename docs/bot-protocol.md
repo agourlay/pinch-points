@@ -151,7 +151,7 @@ rules, the clock and the table:
            "signpost_lifetime": 300, "round_ticks": 5400,
            "gull_period": 240, "gull_cap": 6, "gull_turnover": true,
            "golden_every": 5400, "golden_value": 25, "timed_lock": true,
-           "castle_raids": true, "events": true},
+           "sweep_flight": true, "castle_raids": true, "events": true},
  "clock": {"mode": "fast_forward", "deadline_ms": 33, "input_delay": 0},
  "cursor": {"fair": false}}
 ```
@@ -193,7 +193,13 @@ After an event the roulette locks for 300 ticks (10 s), and a sparkling
 crab banked meanwhile spins nothing. With `timed_lock` only the events
 that last lock it (Crab Mania, Gull Mania, Speed Up, Slow Down, Right
 Claws); after Crab Monopoly, Gull Attack, Fresh Sand or Castle Swap the
-next sparkling crab spins at once.
+next sparkling crab spins at once. Crab Monopoly takes the front half of
+the loose crabs (the oldest) off the beach for the banker. Without
+`sweep_flight` they bank on the spot. With it they are carried home: each
+waits 66 ticks, the next setting off 4 ticks after the one before, then
+flies for 30 and banks the tick it lands. In the air (`sweeping` in the
+tick message) no gull can eat it and no arrow turns it, and anything
+still in the air when the tide comes in banks on the last tick.
 
 ### `ready`
 
@@ -222,6 +228,7 @@ cannot:
  "cursors": [[3, 4], [0, 8], [5, 5], [10, 7]],
  "crabs": [{"id": 88, "x": 5, "y": 3, "dir": "left", "progress": 96,
             "kind": "giant", "claw": "right"}],
+ "sweeping": [],
  "gulls": [{"id": 4, "x": 9, "y": 2, "dir": "down", "progress": 0,
             "state": "walking", "hops_left": 0, "claw": "left"}],
  "signposts": [{"x": 5, "y": 2, "dir": "up", "owner": 2, "worn": false, "age": 41}],
@@ -242,6 +249,7 @@ cannot:
 | `you.last` | What became of your last placement, removal or clear: `accepted`, or not and the `reason` (below). `null` before you have tried one. |
 | `cursors` | Each seat's cursor, `[x, y]`, or `null` where the listener cannot see it (a remote player's, at a party). |
 | `crabs` | `x`, `y` is the tile the crab is walking *out of*; `progress` is how far, in 256ths of a tile. `kind` is `common`, `juvenile`, `giant`, `molting`, `golden` or `sparkling`; `claw` is its big claw, the side it tries first at a wall. |
+| `sweeping` | Crabs a Crab Monopoly is carrying home: the same fields as `crabs` (where it was picked up), plus the `owner` it banks for, the tick it sets off (`launch`) and the tick it lands and banks (`lands`). |
 | `gulls` | The same, plus `state` (`walking` or `flying`) and `hops_left` while flying. How long until a gull next takes off is not shown: the screen does not show it either. |
 | `signposts` | Every post on the beach: its `owner`, whether a gull has `worn` it, and its `age` in ticks. |
 | `castles` | Every castle and the seat holding it now (Castle Swap trades them). |

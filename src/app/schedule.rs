@@ -846,7 +846,8 @@ fn add_render_systems(app: &mut App) {
             // the same frame as a swap must not fight the flight.
             board_render::fly_castles,
             board_render::wave_pennants,
-            creatures::sync_crab_sprites,
+            // Paired: the list is at Bevy's twenty-element limit.
+            (creatures::sync_crab_sprites, creatures::draw_sweeps),
             creatures::sync_gull_sprites,
             creatures::interpolate_crabs,
             creatures::interpolate_gulls,

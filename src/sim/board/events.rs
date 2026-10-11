@@ -241,6 +241,19 @@ impl Board {
                 // sweep is a fixed-order loop over a list that is being
                 // emptied anyway.
                 let swept: Vec<Crab> = self.crabs.drain(..take).collect();
+                if self.rules.sweep_flight {
+                    // Carried home instead, front of the line first.
+                    for (n, crab) in swept.into_iter().enumerate() {
+                        let launch = at + SWEEP_HOLD + SWEEP_STAGGER * n as u64;
+                        self.sweeping.push(Sweeping {
+                            crab,
+                            owner: banker,
+                            launch,
+                            lands: launch + SWEEP_FLIGHT,
+                        });
+                    }
+                    return;
+                }
                 for crab in swept {
                     self.credit_bank(banker, &crab);
                     self.crabs_banked += 1;

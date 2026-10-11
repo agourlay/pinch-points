@@ -383,6 +383,11 @@ mod tests {
         let timed = Level::parse(&format!("{head}timed_lock: on\n{map}")).expect("level");
         let back = Level::parse(&timed.to_text()).expect("round trip");
         assert!(back.board().timed_lock());
+        assert!(!plain.board().sweep_flight(), "off unless the file says so");
+        assert!(!plain.to_text().contains("sweep_flight"));
+        let flying = Level::parse(&format!("{head}sweep_flight: on\n{map}")).expect("level");
+        let back = Level::parse(&flying.to_text()).expect("round trip");
+        assert!(back.board().sweep_flight());
     }
 
     /// A stage that states a round longer than the campaign tick limit is

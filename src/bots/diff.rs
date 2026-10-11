@@ -63,9 +63,12 @@ pub struct Before {
 impl Before {
     pub fn of(board: &Board) -> Before {
         Before {
+            // A crab Crab Monopoly is carrying home is still in play: it
+            // is gone, banked, on the tick it lands.
             crabs: board
                 .crabs()
                 .iter()
+                .chain(board.sweeping().iter().map(|flight| &flight.crab))
                 .map(|c| Seen {
                     id: c.id,
                     tile: c.tile,
@@ -96,7 +99,12 @@ impl Before {
     /// the ones furthest along made it and the rest were eaten short of
     /// the door.
     pub fn diff(&self, after: &Board, out: &mut Vec<Happened>) {
-        let alive: std::collections::HashSet<u32> = after.crabs().iter().map(|c| c.id).collect();
+        let alive: std::collections::HashSet<u32> = after
+            .crabs()
+            .iter()
+            .chain(after.sweeping().iter().map(|flight| &flight.crab))
+            .map(|c| c.id)
+            .collect();
         let gone: Vec<&Seen> = self
             .crabs
             .iter()

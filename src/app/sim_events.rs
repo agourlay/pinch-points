@@ -201,7 +201,12 @@ pub struct Watch {
     /// The golden crab called and announced, as its tick and hole.
     golden_call: Option<(u64, u8, u8)>,
     over: bool,
+    /// Every crab in play, the ones Crab Monopoly is carrying home too.
     crabs: HashMap<u32, Crab>,
+    /// Which of `crabs` were in the air, flown home by the drawing: one
+    /// that is gone next has landed in its keep, and is told as banking
+    /// there rather than where it was picked up.
+    in_flight: std::collections::HashSet<u32>,
     /// Where each gull was in the air, `None` while it was on the sand: a
     /// gull that had a flight position and now has none has just landed.
     gulls_aloft: HashMap<u32, Option<Vec2>>,
@@ -245,7 +250,13 @@ impl Watch {
             surging: board.in_surge(),
             golden_call: board.golden_call(),
             over: board.round_over(),
-            crabs: board.crabs().iter().map(|c| (c.id, *c)).collect(),
+            crabs: board
+                .crabs()
+                .iter()
+                .chain(board.sweeping().iter().map(|flight| &flight.crab))
+                .map(|c| (c.id, *c))
+                .collect(),
+            in_flight: board.sweeping().iter().map(|f| f.crab.id).collect(),
             gulls_aloft: board
                 .gulls()
                 .iter()
@@ -373,10 +384,20 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab, claw: bool) -> SimEven
 /// out of a spawner hole.
 fn crab_events(board: &crate::sim::Board, watch: &Watch, events: &mut Vec<SimEvent>) {
     for (id, prev) in watch.crabs.iter() {
-        if board.crabs().iter().any(|crab| crab.id == *id) {
+        let in_play = board.crabs().iter().any(|crab| crab.id == *id)
+            || board.sweeping().iter().any(|flight| flight.crab.id == *id);
+        if in_play {
             continue;
         }
-        events.push(crab_departure(board, prev, watch.claw));
+        let mut departure = crab_departure(board, prev, watch.claw);
+        // Flown home already: it banks at the gate, not where it was
+        // picked up, or the bank would fly it across the beach again.
+        if watch.in_flight.contains(id)
+            && let SimEvent::CrabBanked { pos, keep, .. } = &mut departure
+        {
+            *pos = *keep;
+        }
+        events.push(departure);
     }
     for crab in board.crabs() {
         if watch.crabs.contains_key(&crab.id) {
@@ -1212,6 +1233,42 @@ mod tests {
             layout::tile_center(&board, 7, 5),
             "flown to the keep it was banked into, not to the sand it left"
         );
+    }
+
+    /// A sweep that flies its crabs home: picked up, they are neither
+    /// eaten nor banked; each lands as a bank at its keep, where the
+    /// drawing has already flown it.
+    #[test]
+    fn a_flying_sweep_banks_at_the_keep_when_each_crab_lands() {
+        let mut board = Board::new(9, 7, 5);
+        board.set_sweep_flight(true);
+        board.set_tile(7, 5, TileKind::Castle(1));
+        for x in 1..5 {
+            board.spawn_crab(x, 1, Direction::Down, Handedness::Left, CrabKind::Common);
+        }
+        board.tick_idle();
+        let mut watch = synced(&board);
+        board.force_tide_event(TideEvent::Monopoly, 1);
+        let lifted = diff(&board, &mut watch);
+        assert!(
+            !lifted
+                .iter()
+                .any(|e| matches!(e, SimEvent::CrabEaten { .. } | SimEvent::CrabBanked { .. })),
+            "picked up is neither: {lifted:?}"
+        );
+        let keep = layout::tile_center(&board, 7, 5);
+        let mut landed = 0;
+        while !board.sweeping().is_empty() {
+            board.tick_idle();
+            for event in diff(&board, &mut watch) {
+                if let SimEvent::CrabBanked { owner: 1, pos, .. } = event
+                    && pos == keep
+                {
+                    landed += 1;
+                }
+            }
+        }
+        assert_eq!(landed, 2, "both swept crabs banked at the keep");
     }
 
     /// Through the whole differ, which is what the game actually runs: the
