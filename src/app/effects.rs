@@ -497,15 +497,56 @@ pub fn confetti(commands: &mut Commands, rng: &mut VisualRng, art: &Art, color: 
 pub struct Hop {
     from: Vec2,
     to: Vec2,
+    /// Seconds since it set off; below zero while it waits its turn.
     age: f32,
+    /// Seconds in the air.
+    span: f32,
+    /// How high the arc rises at its middle, in world units.
+    lift: f32,
+    /// Its shell colour, which a crab waiting to be swept glows away from.
+    shell: Color,
+    /// Whether it has left the sand yet: a swept crab waits its turn
+    /// first, and kicks up the sand it stood on when it goes.
+    launched: bool,
+    /// Seconds a swept crab has waited for the board to be clear.
+    held: f32,
 }
 
 /// How long a crab is in the air on its way into the keep. Short: the
 /// score has already moved, and a slow hop would read as lag.
 const HOP: f32 = 0.19;
 
+/// How long a crab the tide swept home is in the air, and how far behind
+/// the one before it each sets off.
+///
+/// Crab Monopoly banks half the beach from wherever the crabs stand. At
+/// [`HOP`] a crab five tiles out crossed the board in a fifth of a second,
+/// shrinking as it went, and the whole sweep read as crabs blinking out:
+/// the event a player had just been told about was nowhere to be seen. In
+/// the air long enough to follow, one after another, it is a sweep.
+const SWEEP_HOP: f32 = 0.75;
+const SWEEP_STAGGER: f32 = 0.08;
+
+/// The swept crabs wait, glowing, while a banner holds the middle of the
+/// board ([`Announcer::holds_the_board`]): the event's own, and any queued
+/// ahead of it. Flown at once, every crab in the middle rows went home
+/// under it. They wait at least long enough for the event's banner to be
+/// queued, which can be a frame after the sweep is seen, and never longer
+/// than the most banners a queue can show.
+///
+/// [`Announcer::holds_the_board`]: crate::app::announce::Announcer::holds_the_board
+const SWEEP_MIN_HOLD: f32 = 0.2;
+const SWEEP_MAX_HOLD: f32 = 8.0;
+
+/// Farther than any crab walking in is from the keep it walks into: a
+/// bank from here was the tide's doing.
+const SWEPT_FROM: f32 = TILE * 1.5;
+
 /// Send a banked crab home over the wall: the crab that walked there, big
-/// claw and all, on the side it was on.
+/// claw and all, on the side it was on. One the tide swept home from
+/// across the beach is flung there instead, setting off `swept` slots
+/// after the first of its sweep.
+#[allow(clippy::too_many_arguments)]
 pub fn bank_hop(
     commands: &mut Commands,
     art: &Art,
@@ -514,16 +555,41 @@ pub fn bank_hop(
     to: Vec2,
     kind: crate::sim::CrabKind,
     handed: crate::sim::Handedness,
+    swept: Option<usize>,
 ) {
     use crate::app::creatures::{claw_color, mirrored, shade_of, shell_color, sprite_side};
     let side = Vec2::splat(sprite_side(kind));
     let flip_y = mirrored(handed);
+    let shell = shell_color(kind, shade_of(id));
+    let hop = match swept {
+        None => Hop {
+            from,
+            to,
+            age: 0.0,
+            span: HOP,
+            lift: 12.0,
+            shell,
+            launched: true,
+            held: 0.0,
+        },
+        // High enough over the board to read as thrown, not slid.
+        Some(slot) => Hop {
+            from,
+            to,
+            age: -SWEEP_STAGGER * slot as f32,
+            span: SWEEP_HOP,
+            lift: from.distance(to) * 0.35,
+            shell,
+            launched: false,
+            held: 0.0,
+        },
+    };
     commands
         .spawn((
-            Hop { from, to, age: 0.0 },
+            hop,
             Sprite {
                 image: art.crab.clone(),
-                color: shell_color(kind, shade_of(id)),
+                color: shell,
                 custom_size: Some(side),
                 flip_y,
                 ..default()
@@ -548,13 +614,13 @@ pub fn bank_hop(
 /// The two ends are the whole of it: a crab that starts anywhere but where
 /// it was last drawn jumps on its first frame, and one that finishes
 /// anywhere but at the gate is last seen standing on the wall.
-fn arc(from: Vec2, to: Vec2, progress: f32) -> (Vec2, f32) {
+fn arc(from: Vec2, to: Vec2, lift: f32, progress: f32) -> (Vec2, f32) {
     // Eased both ends, so it sets off and arrives rather than being
     // dragged across.
     let eased = progress * progress * (3.0 - 2.0 * progress);
     // Over the wall: zero lift at both ends, so the path meets the sand at
     // one end and the gate at the other.
-    let lift = (progress * std::f32::consts::PI).sin() * 12.0;
+    let lift = (progress * std::f32::consts::PI).sin() * lift;
     // Shrinking into the gate: the keep is a hole in the picture as far as
     // the crab is concerned.
     (
@@ -569,12 +635,44 @@ pub fn advance_hops(
     mut commands: Commands,
     art: Res<Art>,
     mut rng: ResMut<VisualRng>,
-    mut hops: Query<(Entity, &mut Hop, &mut Transform)>,
+    announcer: Res<crate::app::announce::Announcer>,
+    mut hops: Query<(Entity, &mut Hop, &mut Transform, &mut Sprite)>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut hop, mut transform) in &mut hops {
-        hop.age += dt;
-        let progress = (hop.age / HOP).clamp(0.0, 1.0);
+    for (entity, mut hop, mut transform, mut sprite) in &mut hops {
+        if !hop.launched {
+            // Picked out while the banner says what is about to happen.
+            let glow = 0.45 + 0.35 * (hop.held * 9.0).sin();
+            sprite.color = hop.shell.mix(&palette::GOLD, glow);
+            let held = hop.held < SWEEP_MIN_HOLD || announcer.holds_the_board();
+            if held && hop.held < SWEEP_MAX_HOLD {
+                hop.held += dt;
+                continue;
+            }
+            // Then one after another, each its turn behind the last.
+            hop.age += dt;
+            if hop.age < 0.0 {
+                continue;
+            }
+            hop.launched = true;
+            sprite.color = hop.shell;
+            burst(
+                &mut commands,
+                &mut rng,
+                &Burst {
+                    image: art.puff.clone(),
+                    pos: hop.from,
+                    color: SAND_KICK,
+                    count: 4,
+                    size: 12.0,
+                    speed: 36.0,
+                    gravity: 30.0,
+                },
+            );
+        } else {
+            hop.age += dt;
+        }
+        let progress = (hop.age / hop.span).clamp(0.0, 1.0);
         if progress >= 1.0 {
             commands.entity(entity).despawn();
             // The sand it kicks up going over the wall, landing where it
@@ -594,7 +692,7 @@ pub fn advance_hops(
             );
             continue;
         }
-        let (at, scale) = arc(hop.from, hop.to, progress);
+        let (at, scale) = arc(hop.from, hop.to, hop.lift, progress);
         transform.translation.x = at.x;
         transform.translation.y = at.y;
         transform.scale = Vec3::splat(scale);
@@ -890,6 +988,8 @@ pub fn moment_effects(
     // do not. A gull turned away at a puzzle's castle still fades where it
     // stood, or it vanished into the keep, which is what a raid looks like.
     let calm = settings.reduced_motion;
+    // Crabs swept home so far this frame, so each sets off after the last.
+    let mut sweeps = 0usize;
     for event in events.read() {
         if calm
             && !matches!(
@@ -912,7 +1012,13 @@ pub fn moment_effects(
                 kind,
                 handed,
                 ..
-            } => bank_hop(&mut commands, &art, *id, *pos, *keep, *kind, *handed),
+            } => {
+                let swept = (pos.distance(*keep) > SWEPT_FROM).then(|| {
+                    sweeps += 1;
+                    sweeps - 1
+                });
+                bank_hop(&mut commands, &art, *id, *pos, *keep, *kind, *handed, swept);
+            }
             // A gull got one: sand, and the feathers that say what kind of
             // ending this was.
             SimEvent::CrabEaten { pos } => {
@@ -1365,13 +1471,13 @@ mod tests {
     #[test]
     fn a_bank_starts_on_the_sand_and_finishes_in_the_gate() {
         let (from, to) = (Vec2::new(-120.0, 30.0), Vec2::new(64.0, 64.0));
-        let (start, start_scale) = arc(from, to, 0.0);
+        let (start, start_scale) = arc(from, to, 12.0, 0.0);
         assert_eq!(start, from);
         assert!((start_scale - 1.0).abs() < 1e-6, "full size on the sand");
-        let (end, end_scale) = arc(from, to, 1.0);
+        let (end, end_scale) = arc(from, to, 12.0, 1.0);
         assert!(end.distance(to) < 1e-3, "{end:?} vs {to:?}");
         assert!(end_scale < 0.35, "and all but gone: {end_scale}");
-        let (middle, _) = arc(from, to, 0.5);
+        let (middle, _) = arc(from, to, 12.0, 0.5);
         assert!(
             middle.y > from.lerp(to, 0.5).y,
             "off the ground in between: {middle:?}"
@@ -1385,7 +1491,7 @@ mod tests {
     fn a_bank_travels_in_a_straight_line() {
         let (from, to) = (Vec2::new(0.0, 0.0), Vec2::new(400.0, 200.0));
         for step in 0..=10 {
-            let (at, _) = arc(from, to, step as f32 / 10.0);
+            let (at, _) = arc(from, to, 12.0, step as f32 / 10.0);
             // Every point is on the segment once the lift is taken back
             // off: y is exactly half of x, which is what the two ends say.
             let lift = (step as f32 / 10.0 * std::f32::consts::PI).sin() * 12.0;

@@ -30,6 +30,8 @@ use std::collections::VecDeque;
 /// and events no longer arrive in waves.
 const HOLD: f32 = 2.0;
 const FADE_IN: f32 = 0.15;
+/// When a banner starts to fade, and the board under it can be seen again.
+const HOLD_ENDS: f32 = FADE_IN + HOLD;
 const FADE_OUT: f32 = 0.45;
 /// The whole span, ramps included. Derived rather than written down, so a
 /// change to either fade moves the total and leaves the *hold* - the part
@@ -104,9 +106,18 @@ pub struct Announcer {
     queue: VecDeque<Announcement>,
     /// Seconds the current banner has been up, once one is spawned.
     age: f32,
+    /// Whether a banner is on screen.
+    showing: bool,
 }
 
 impl Announcer {
+    /// Whether a banner covers the middle of the board, or one is waiting
+    /// to: what is happening there would be missed. Clear once the last
+    /// one starts to fade.
+    pub fn holds_the_board(&self) -> bool {
+        !self.queue.is_empty() || (self.showing && self.age < HOLD_ENDS)
+    }
+
     /// Queue an announcement, unless the same one is already waiting (a
     /// second gull surge cannot happen, but a repeated tide event can).
     pub fn push(&mut self, announcement: Announcement) {
@@ -204,6 +215,7 @@ pub fn drive_announcements(
         if announcer.age >= LIFE {
             commands.entity(banner).despawn();
             announcer.age = 0.0;
+            announcer.showing = false;
             return;
         }
         let alpha = envelope(announcer.age);
@@ -227,6 +239,7 @@ pub fn drive_announcements(
         return;
     };
     announcer.age = 0.0;
+    announcer.showing = true;
     spawn_banner(&mut commands, next, &settings, &names);
 }
 
@@ -298,6 +311,7 @@ pub fn clear_announcements(
         commands.entity(banner).despawn();
     }
     announcer.queue.clear();
+    announcer.showing = false;
     announcer.age = 0.0;
 }
 
@@ -399,6 +413,50 @@ mod tests {
             "the surge got its turn: {shown:?}"
         );
         assert_eq!(app.world().resource::<Announcer>().pending(), 0);
+    }
+
+    /// The board is held while any banner covers it or waits to, through a
+    /// queue of two, and let go as the last one starts to fade: what a
+    /// Crab Monopoly's sweep waits for before its crabs fly.
+    #[test]
+    fn the_board_is_held_until_the_last_banner_fades() {
+        use crate::app::sim_events::SimEvent;
+        use std::time::Duration;
+
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.add_message::<SimEvent>();
+        app.init_resource::<Announcer>();
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::SeatNames>();
+        app.add_systems(Update, (collect_announcements, drive_announcements).chain());
+        let held = |app: &App| app.world().resource::<Announcer>().holds_the_board();
+        assert!(!held(&app), "nothing to hold for");
+
+        app.world_mut()
+            .write_message(SimEvent::LureStarted { owner: 1 });
+        app.world_mut().write_message(SimEvent::TideEventFired {
+            event: TideEvent::Monopoly,
+            by: Some(0),
+        });
+        let step = Duration::from_millis(50);
+        let mut seconds = 0.0;
+        let mut released = None;
+        while seconds < 3.0 * LIFE {
+            app.update();
+            if !held(&app) && released.is_none() {
+                released = Some(seconds);
+            }
+            app.world_mut().resource_mut::<Time>().advance_by(step);
+            seconds += step.as_secs_f32();
+        }
+        let released = released.expect("the board was never let go");
+        // The lure's whole life, a frame for its despawn to land, and the
+        // Monopoly banner's hold.
+        assert!(
+            (LIFE + HOLD_ENDS..=LIFE + HOLD_ENDS + 0.2).contains(&released),
+            "let go at {released} s"
+        );
     }
 
     /// Every announcement has a headline and a line explaining it, in every
