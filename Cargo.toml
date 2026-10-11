@@ -1,6 +1,6 @@
 [package]
 name = "pinch-points"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 description = "A fast, kid-friendly crab-routing game: route streams of crabs into your sandcastle before time runs out"
 repository = "https://github.com/agourlay/pinch-points"
