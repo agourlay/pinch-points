@@ -150,7 +150,7 @@ rules, the clock and the table:
  "rules": {"signpost_cap": 3, "cap_policy": "evict",
            "signpost_lifetime": 300, "round_ticks": 5400,
            "gull_period": 240, "gull_cap": 6, "gull_turnover": true,
-           "golden_every": 5400, "golden_value": 25, "timed_lock": true,
+           "golden_every": 5400, "golden_value": 30, "timed_lock": true,
            "sweep_flight": true, "castle_raids": true, "events": true},
  "clock": {"mode": "fast_forward", "deadline_ms": 33, "input_delay": 0},
  "cursor": {"fair": false}}
@@ -530,7 +530,7 @@ The call appears in `golden_call` 150 ticks (5 s) before the crab does,
 which is when the game announces it on screen, and is `null` otherwise.
 A called golden crab is worth `golden_value`.
 
-**Values.** Common 1, juvenile 2, molting 5, giant 10, golden 50 (25 when
+**Values.** Common 1, juvenile 2, molting 5, giant 10, golden 50 (30 when
 called), sparkling 1. Banking a molting crab starts a 10 s lure (300 ticks) toward
 the banker's castle, with a 20 s quiet spell after it before another; a
 sparkling crab spins the tide roulette.

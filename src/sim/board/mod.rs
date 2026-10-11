@@ -104,7 +104,7 @@ pub(crate) const CASTLE_RING: [(i32, i32); 8] = [
 /// arena is a four-castle beach and stays one.
 pub const MAX_PLAYERS: usize = 6;
 /// What a called golden crab banks for (see [`Rules::golden_every`]).
-pub const GOLDEN_CALLED_VALUE: u32 = 25;
+pub const GOLDEN_CALLED_VALUE: u32 = 30;
 /// Ticks a called golden crab is announced before it comes out.
 pub const GOLDEN_NOTICE: u32 = 5 * TICKS_PER_SECOND;
 

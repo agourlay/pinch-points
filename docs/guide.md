@@ -77,7 +77,7 @@ washes away after ~10 seconds, and two gull crossings destroy one.
 **Crabs** stream out of spawner holes and score by walking into any
 castle. By value/speed: common (1), juvenile (2, fast), giant (10, slow),
 molting (5; scoring one **lures every loose crab toward your castle for
-10 s, overriding all arrows**), golden (25, fast), and sparkling
+10 s, overriding all arrows**), golden (30, fast), and sparkling
 (scoring one spins the **random event** roulette: crab/gull manias, speed
 shifts, castle swaps, fresh sand…). While a timed event is still running
 the roulette is on cooldown, and the event feed says so when a sparkling

@@ -50,7 +50,8 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// versus event wheel stopped locking after an event that is over in the
 /// tick it fires (`timed_lock` in the rules). 21 is where versus Crab
 /// Monopoly started flying its crabs home, each banking as it lands
-/// (`sweep_flight`, and the crabs in the air in every snapshot).
+/// (`sweep_flight`, and the crabs in the air in every snapshot), and the
+/// called golden crab went from 25 to 30.
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in
