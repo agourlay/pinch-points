@@ -171,7 +171,7 @@ pub const ACHIEVEMENTS: [Achievement; 50] = [
     Achievement {
         id: "golden_10",
         stat: |s| s.golden,
-        threshold: 10,
+        threshold: 5,
     },
     Achievement {
         id: "lure_5",
@@ -267,7 +267,7 @@ pub const ACHIEVEMENTS: [Achievement; 50] = [
     Achievement {
         id: "golden_50",
         stat: |s| s.golden,
-        threshold: 50,
+        threshold: 25,
     },
     Achievement {
         id: "giant_100",

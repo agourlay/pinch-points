@@ -82,6 +82,10 @@ Distinct values mean what is walking toward a castle reads as a score
 forecast. Spawner mix: 70% common, 15% juvenile, 8% giant, 3% molting,
 2% golden, 2% sparkling, deterministic per seed.
 
+Versus has since moved on from this table in one place: its golden crab
+is never rolled. One is announced and comes out of a chosen hole once
+every three minutes, worth 30 (see `docs/guide.md`).
+
 ### 3.3 Signposts (the player's only verb)
 
 A plank pointing in one of four directions; any creature entering the tile
