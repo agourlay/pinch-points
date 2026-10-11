@@ -150,8 +150,8 @@ rules, the clock and the table:
  "rules": {"signpost_cap": 3, "cap_policy": "evict",
            "signpost_lifetime": 300, "round_ticks": 5400,
            "gull_period": 240, "gull_cap": 6, "gull_turnover": true,
-           "golden_every": 5400, "golden_value": 25, "castle_raids": true,
-           "events": true},
+           "golden_every": 5400, "golden_value": 25, "timed_lock": true,
+           "castle_raids": true, "events": true},
  "clock": {"mode": "fast_forward", "deadline_ms": 33, "input_delay": 0},
  "cursor": {"fair": false}}
 ```
@@ -189,6 +189,11 @@ bigger than the classic 12x9 has both scaled by its area. With
 the oldest walking gull more than two tiles from every castle leaves the
 beach and a new one arrives, and in the last 30 seconds the cap is half as
 big again. `events`: whether sparkling crabs spin the tide roulette.
+After an event the roulette locks for 300 ticks (10 s), and a sparkling
+crab banked meanwhile spins nothing. With `timed_lock` only the events
+that last lock it (Crab Mania, Gull Mania, Speed Up, Slow Down, Right
+Claws); after Crab Monopoly, Gull Attack, Fresh Sand or Castle Swap the
+next sparkling crab spins at once.
 
 ### `ready`
 

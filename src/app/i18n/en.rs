@@ -396,6 +396,7 @@ pub static EN: Tr = Tr {
     log_gull: "a gull swoops in",
     log_surge: "final seconds! gulls flood in",
     log_golden_call: "a golden crab is coming!",
+    log_wheel_locked: "{p}: random events on cooldown",
     map_names: [
         "Classic arena (12x9)",
         "Generated - small (9x7)",

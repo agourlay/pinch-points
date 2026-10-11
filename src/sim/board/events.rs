@@ -121,6 +121,23 @@ impl TideEvent {
         TideEvent::RightClaws,
     ];
 
+    /// Whether the event runs on for [`EVENT_TICKS`] rather than being over
+    /// in the tick it fires: the ones a [`Rules::timed_lock`] wheel waits
+    /// out.
+    pub fn lasts(self) -> bool {
+        match self {
+            TideEvent::CrabMania
+            | TideEvent::GullMania
+            | TideEvent::SpeedUp
+            | TideEvent::SlowDown
+            | TideEvent::RightClaws => true,
+            TideEvent::Monopoly
+            | TideEvent::GullAttack
+            | TideEvent::FreshSand
+            | TideEvent::CastleSwap => false,
+        }
+    }
+
     /// Position in [`TideEvent::ALL`]: the index of this event's name in the
     /// string tables, and the bit that records having seen it.
     pub fn index(self) -> usize {
@@ -201,8 +218,12 @@ impl Board {
         self.tide.spun_by = None;
         // Set here rather than in the roulette so a forced event starts
         // the clock too: the point is "an event is running", not "the
-        // wheel was spun".
-        self.tide.cooldown = EVENT_COOLDOWN;
+        // wheel was spun". Under a timed lock an event that is already
+        // over leaves the wheel as it found it, which may be still locked
+        // by a timed one a vote or a dev hook landed on top of.
+        if !self.rules.timed_lock || event.lasts() {
+            self.tide.cooldown = EVENT_COOLDOWN;
+        }
         match event {
             TideEvent::CrabMania => {
                 self.gulls.clear();

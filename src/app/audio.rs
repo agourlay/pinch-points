@@ -530,7 +530,9 @@ pub fn play_events(
                     buzz(500, 0.5);
                 }
             }
-            SimEvent::CrabSpawned { .. } | SimEvent::GullLanded { .. } => {}
+            SimEvent::CrabSpawned { .. }
+            | SimEvent::GullLanded { .. }
+            | SimEvent::WheelLocked { .. } => {}
         }
     }
 }

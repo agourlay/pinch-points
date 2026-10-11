@@ -190,6 +190,9 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     {
         let _ = writeln!(out, "golden_every: {every}");
     }
+    if field(hello, "rules.timed_lock")?.as_bool() == Some(true) {
+        let _ = writeln!(out, "timed_lock: on");
+    }
     if let Some(round) = field(hello, "rules.round_ticks")?.as_u64() {
         let _ = writeln!(out, "round: {round}");
     }

@@ -17,8 +17,9 @@ const CLASSIC_AREA: u32 = 12 * 9;
 /// The rules of a versus round on a beach of this size, from the gull
 /// period a pressure dial names for the classic 12x9 beach: the flock
 /// turns over ([`Board::set_gull_turnover`]), the golden crab is called
-/// rather than rolled ([`Board::set_golden_every`]), and a big beach gets
-/// more gulls.
+/// rather than rolled ([`Board::set_golden_every`]), the event wheel locks
+/// only while a timed event runs ([`Board::set_timed_lock`]), and a big
+/// beach gets more gulls.
 ///
 /// The ambient spawner sends one gull a period and stops at a fixed cap,
 /// whatever the size, so the bigger beaches spread the same half-dozen
@@ -34,6 +35,7 @@ pub fn set_versus_rules(board: &mut Board, period: u32) {
     board.set_gull_cap((GULL_CAP as u32 * area / CLASSIC_AREA).min(u32::from(u8::MAX)) as u8);
     board.set_gull_turnover(true);
     board.set_golden_every(VERSUS_GOLDEN_EVERY);
+    board.set_timed_lock(true);
 }
 
 /// A castle spot per seat for a board of the given size.

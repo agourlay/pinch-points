@@ -42,6 +42,7 @@ impl Board {
                     gull_cap: _,
                     gull_turnover: _,
                     golden_every: _,
+                    timed_lock: _,
                     round_length: _,
                     castle_raids: _,
                 },
@@ -196,6 +197,7 @@ impl Board {
         }
         h.u32(self.golden_banked);
         h.u32(self.rules.golden_every);
+        h.u8(u8::from(self.rules.timed_lock));
         match self.golden_call {
             None => h.u8(0),
             Some((at, tile)) => {
@@ -291,6 +293,7 @@ mod tests {
             ("set_gull_cap", Box::new(|b| b.set_gull_cap(9))),
             ("set_gull_turnover", Box::new(|b| b.set_gull_turnover(true))),
             ("set_golden_every", Box::new(|b| b.set_golden_every(600))),
+            ("set_timed_lock", Box::new(|b| b.set_timed_lock(true))),
             (
                 "set_round_length",
                 Box::new(|b| b.set_round_length(Some(500))),

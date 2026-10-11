@@ -100,6 +100,9 @@ const TICKS: u64 = 10_000;
 ///
 /// Why it has moved, most recent first:
 ///
+/// - 2026-10-11: `timed_lock` joined the fingerprint, when the versus
+///   event wheel stopped locking after events that are over in a tick.
+///   Off on this board, so only the hash's reach grew.
 /// - 2026-10-10: `golden_every` and the golden call joined the
 ///   fingerprint, when versus started calling its golden crabs. Off on
 ///   this board, so only the hash's reach grew, as the line below.
@@ -136,7 +139,7 @@ const TICKS: u64 = 10_000;
 ///   rules moved that day too: the lure stopped stacking, the roulette
 ///   stopped rolling gull events into the surge, and the spawners took a
 ///   crab cap.
-const EXPECTED_HASH: u64 = 0xc446_96b1_ef9c_f65b;
+const EXPECTED_HASH: u64 = 0xa022_3c0f_cba3_61df;
 
 #[test]
 fn ten_thousand_ticks_reproduce_exactly() {

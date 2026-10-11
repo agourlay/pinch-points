@@ -396,6 +396,7 @@ pub static NL: Tr = Tr {
     log_gull: "er komt een meeuw aan",
     log_surge: "laatste seconden! de meeuwen stromen binnen",
     log_golden_call: "er komt een gouden krab!",
+    log_wheel_locked: "{p}: events laden nog op",
     map_names: [
         "Klassieke arena (12x9)",
         "Gemaakt - klein (9x7)",

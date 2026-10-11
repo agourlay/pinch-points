@@ -142,6 +142,10 @@ pub fn collect_log(
                 crate::app::hud::event_name(tr, *event).to_string(),
                 palette::INK_TIDE,
             )),
+            SimEvent::WheelLocked { owner } => Some((
+                fill(tr.log_wheel_locked, &[("p", &seat_label(*owner))]),
+                palette::INK_TIDE,
+            )),
             SimEvent::GullArrived => Some((tr.log_gull.to_string(), palette::GULL_INK)),
             SimEvent::SurgeStarted => Some((tr.log_surge.to_string(), palette::INK_SURGE)),
             SimEvent::GoldenCalled { .. } => Some((tr.log_golden_call.to_string(), palette::GOLD)),

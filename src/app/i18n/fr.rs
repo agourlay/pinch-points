@@ -396,6 +396,7 @@ pub static FR: Tr = Tr {
     log_gull: "une mouette arrive",
     log_surge: "dernières secondes ! les mouettes affluent",
     log_golden_call: "un crabe doré arrive !",
+    log_wheel_locked: "{p} : événements en recharge",
     map_names: [
         "Arène classique (12x9)",
         "Générée - petite (9x7)",

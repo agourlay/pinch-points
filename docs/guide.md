@@ -79,7 +79,9 @@ castle. By value/speed: common (1), juvenile (2, fast), giant (10, slow),
 molting (5; scoring one **lures every loose crab toward your castle for
 10 s, overriding all arrows**), golden (25, fast), and sparkling
 (scoring one spins the **random event** roulette: crab/gull manias, speed
-shifts, castle swaps, fresh sand…).
+shifts, castle swaps, fresh sand…). While a timed event is still running
+the roulette is on cooldown, and the event feed says so when a sparkling
+crab is scored for nothing.
 
 **The golden crab is called.** It never just wanders out: once a round
 (twice in a long one) a banner announces it, and one spawner hole swells

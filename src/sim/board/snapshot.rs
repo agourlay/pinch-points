@@ -60,6 +60,9 @@ impl Board {
         if self.rules.golden_every > 0 {
             let _ = writeln!(out, "golden_every: {}", self.rules.golden_every);
         }
+        if self.rules.timed_lock {
+            let _ = writeln!(out, "timed_lock: on");
+        }
         // The whole call, public or not: a round resumed from a code
         // sends its golden crab out where and when this one would have.
         if let Some((at, tile)) = self.golden_call {
@@ -212,6 +215,7 @@ struct Fields {
     gull_cap: Option<u8>,
     gull_turnover: bool,
     golden_every: u32,
+    timed_lock: bool,
     golden_call: Option<(u64, u8, u8)>,
     round_length: Option<u32>,
     wrap: bool,
@@ -286,6 +290,7 @@ impl Fields {
             "gull_cap" => self.gull_cap = Some(next_num(&mut words, "gull_cap")?),
             "gull_turnover" => self.gull_turnover = value == "on",
             "golden_every" => self.golden_every = next_num(&mut words, "golden_every")?,
+            "timed_lock" => self.timed_lock = value == "on",
             "golden_call" => {
                 self.golden_call = Some((
                     next_num(&mut words, "golden_call tick")?,
@@ -490,6 +495,7 @@ impl Fields {
                 gull_cap: self.gull_cap.unwrap_or(GULL_CAP as u8),
                 gull_turnover: self.gull_turnover,
                 golden_every: self.golden_every,
+                timed_lock: self.timed_lock,
                 round_length: self.round_length,
                 castle_raids: !self.no_castle_raids,
             },
@@ -767,6 +773,7 @@ mod tests {
         board.set_castle_raids(false);
         board.set_gull_cap(9);
         board.set_gull_turnover(true);
+        board.set_timed_lock(true);
         board.set_events_enabled(true);
         board.set_round_length(Some(1234));
         board.set_gull_period(97);
@@ -848,6 +855,7 @@ mod tests {
             "rule: reject 2",
             "gull_cap: 9",
             "gull_turnover: on",
+            "timed_lock: on",
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
@@ -937,6 +945,7 @@ mod tests {
                 "gull_cap:",
                 "gull_turnover:",
                 "golden_every:",
+                "timed_lock:",
                 "golden_call:",
                 "round:",
                 "wrap:",

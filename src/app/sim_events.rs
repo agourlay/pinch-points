@@ -108,6 +108,12 @@ pub enum SimEvent {
         event: TideEvent,
         by: Option<PlayerId>,
     },
+    /// `owner` banked a sparkling crab and the event wheel did not spin: a
+    /// timed event was still running (`Rules::timed_lock`), or on an older
+    /// board any event at all was. Its own event because nothing on the
+    /// beach shows it, and a spin that silently did not happen reads as a
+    /// bug.
+    WheelLocked { owner: PlayerId },
     /// `owner` banked a molting crab and a lure began: every loose crab
     /// runs for their castle. Not every molt banked starts one (never
     /// during a lure or the quiet spell after), so it is its own event
@@ -556,6 +562,32 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
             by: next.spun_by,
         });
     }
+    // Read off the banks rather than the wheel, which keeps no record of a
+    // spin it refused. A look that also fired an event is taken to have
+    // spun for its sparkling crab: two banked in the same few ticks, one
+    // of them refused, is not worth a line of its own.
+    let spun = events
+        .iter()
+        .any(|event| matches!(event, SimEvent::TideEventFired { .. }));
+    if board.events_enabled() && !spun {
+        let refused: Vec<PlayerId> = events
+            .iter()
+            .filter_map(|event| {
+                let SimEvent::CrabBanked {
+                    owner,
+                    kind: CrabKind::Sparkling,
+                    ..
+                } = event
+                else {
+                    return None;
+                };
+                Some(*owner)
+            })
+            .collect();
+        for owner in refused {
+            events.push(SimEvent::WheelLocked { owner });
+        }
+    }
     if let Some(owner) = next.lure
         && prev.lure.is_none()
     {
@@ -620,6 +652,59 @@ mod tests {
         assert_eq!(bank_on(30), (-10, false, 20), "a left claw costs its worth");
         // The score stops at zero, and the bank says what it took.
         assert_eq!(bank_on(3), (-3, false, 0), "no more than there was");
+    }
+
+    /// A sparkling crab banked while the wheel is locked says so, naming
+    /// whose it was; one that spins it says what it spun, and a board with
+    /// no random events says nothing about the wheel at all.
+    #[test]
+    fn a_sparkling_crab_the_wheel_ignored_is_told() {
+        // The wheel's events on the look the crab banked in.
+        let bank_on = |events_on: bool, locked: bool| {
+            let mut board = Board::new(6, 4, 7);
+            board.set_events_enabled(events_on);
+            board.set_timed_lock(true);
+            board.set_tile(3, 1, TileKind::Castle(2));
+            board.spawn_crab(
+                2,
+                1,
+                Direction::Right,
+                Handedness::Left,
+                CrabKind::Sparkling,
+            );
+            if locked {
+                board.force_tide_event(TideEvent::SlowDown, 0);
+            }
+            let mut watch = synced(&board);
+            for _ in 0..600 {
+                board.tick_idle();
+                let events = diff(&board, &mut watch);
+                if events
+                    .iter()
+                    .any(|e| matches!(e, SimEvent::CrabBanked { .. }))
+                {
+                    return events
+                        .into_iter()
+                        .filter(|e| {
+                            matches!(
+                                e,
+                                SimEvent::WheelLocked { .. } | SimEvent::TideEventFired { .. }
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                }
+            }
+            panic!("the crab never banked");
+        };
+        assert!(matches!(
+            bank_on(true, true)[..],
+            [SimEvent::WheelLocked { owner: 2 }]
+        ));
+        assert!(matches!(
+            bank_on(true, false)[..],
+            [SimEvent::TideEventFired { by: Some(2), .. }]
+        ));
+        assert!(bank_on(false, false).is_empty());
     }
 
     /// A lure is news once, when it begins, and says whose it is; a tide
@@ -946,6 +1031,7 @@ mod tests {
                 | SimEvent::LureStarted { .. }
                 | SimEvent::SurgeStarted
                 | SimEvent::GoldenCalled { .. }
+                | SimEvent::WheelLocked { .. }
                 | SimEvent::RoundEnded => None,
             })
             .collect();

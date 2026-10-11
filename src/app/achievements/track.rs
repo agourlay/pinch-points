@@ -145,6 +145,7 @@ pub fn track_events(
             | SimEvent::SignpostEvicted { .. }
             | SimEvent::TierUp { .. }
             | SimEvent::SurgeStarted
+            | SimEvent::WheelLocked { .. }
             | SimEvent::RoundEnded => {}
         }
     }

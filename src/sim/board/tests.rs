@@ -559,7 +559,58 @@ fn the_roulette_will_not_spin_on_top_of_a_running_event() {
     );
 }
 
-/// both cap policies, including the at-cap and rival-post cases.
+/// Under a timed lock only an event that lasts holds the wheel: one over
+/// in the tick it fired leaves the next sparkling crab free to spin.
+#[test]
+fn a_timed_lock_holds_the_wheel_only_for_an_event_that_lasts() {
+    for event in TideEvent::ALL {
+        let mut board = Board::new(9, 7, 2);
+        board.set_events_enabled(true);
+        board.set_timed_lock(true);
+        board.force_tide_event(event, 0);
+        let first = board.last_event().expect("the forced event landed");
+        // A tick on, so a spin landing on the same face reads as new.
+        board.tick_idle();
+        board.spin_tide_event(0);
+        assert_eq!(
+            board.last_event() == Some(first),
+            event.lasts(),
+            "{event:?} held the wheel wrongly"
+        );
+    }
+}
+
+/// An instant event called on top of a timed one leaves the timed one's
+/// lock where it was.
+#[test]
+fn a_timed_lock_outlasts_an_instant_event_called_on_top() {
+    let mut board = Board::new(9, 7, 2);
+    board.set_events_enabled(true);
+    board.set_timed_lock(true);
+    board.force_tide_event(TideEvent::CrabMania, 0);
+    board.tick_idle();
+    board.force_tide_event(TideEvent::FreshSand, 0);
+    let fresh = board.last_event();
+    board.tick_idle();
+    board.spin_tide_event(0);
+    assert_eq!(board.last_event(), fresh, "the mania's lock was lifted");
+}
+
+/// Without the rule every event holds the wheel, the instant ones too: the
+/// lock a file that does not say `timed_lock: on` keeps.
+#[test]
+fn without_a_timed_lock_an_instant_event_holds_the_wheel() {
+    for event in TideEvent::ALL.into_iter().filter(|e| !e.lasts()) {
+        let mut board = Board::new(9, 7, 2);
+        board.set_events_enabled(true);
+        board.force_tide_event(event, 0);
+        let first = board.last_event();
+        board.tick_idle();
+        board.spin_tide_event(0);
+        assert_eq!(board.last_event(), first, "{event:?} left the wheel free");
+    }
+}
+
 /// `can_place_signpost` must agree with `place_signpost` on every tile, in
 /// both cap policies, including the at-cap and rival-post cases.
 #[test]

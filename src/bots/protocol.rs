@@ -179,6 +179,7 @@ pub fn hello(board: &Board, table: &Table, seat: PlayerId, resumed: bool) -> Val
             "gull_turnover": board.gull_turnover(),
             "golden_every": board.golden_every(),
             "golden_value": board.crab_value(crate::sim::CrabKind::Golden),
+            "timed_lock": board.timed_lock(),
             "castle_raids": board.castle_raids(),
             "events": board.events_enabled(),
         },

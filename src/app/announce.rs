@@ -173,6 +173,7 @@ pub fn collect_announcements(
             | SimEvent::SignpostRemoved { .. }
             | SimEvent::SignpostEvicted { .. }
             | SimEvent::TierUp { .. }
+            | SimEvent::WheelLocked { .. }
             | SimEvent::RoundEnded => {}
         }
     }

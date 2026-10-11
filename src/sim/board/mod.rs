@@ -268,6 +268,16 @@ pub struct Rules {
     /// whoever had an arrow in the right place; one a round, called, is a
     /// race the whole table can see coming.
     pub golden_every: u32,
+    /// Whether the event wheel locks only while a timed event runs.
+    ///
+    /// Every event used to lock the wheel for [`EVENT_COOLDOWN`], the ones
+    /// over in a tick (Crab Monopoly, Fresh Sand, Castle Swap, Gull Attack)
+    /// as much as the ones that last. The lock is there so a Crab Mania's
+    /// flood of crabs cannot spin the wheel again while it runs; after an
+    /// event that is already over it only swallowed the next player's
+    /// sparkling crab, with nothing on the beach to say why. On for versus
+    /// only, and a file that does not say so keeps the old lock.
+    pub timed_lock: bool,
     /// Round length in ticks (the tide, spec §3.6). None = untimed. When it
     /// reaches zero the sim freezes: scores are locked at the wave.
     pub round_length: Option<u32>,
@@ -392,6 +402,7 @@ impl Board {
                 gull_cap: GULL_CAP as u8,
                 gull_turnover: false,
                 golden_every: 0,
+                timed_lock: false,
                 round_length: None,
                 castle_raids: true,
             },
@@ -557,6 +568,11 @@ impl Board {
     /// Whether the flock turns over (see [`Rules::gull_turnover`]).
     pub fn set_gull_turnover(&mut self, on: bool) {
         self.rules.gull_turnover = on;
+    }
+
+    /// Lock the wheel only for timed events (see [`Rules::timed_lock`]).
+    pub fn set_timed_lock(&mut self, on: bool) {
+        self.rules.timed_lock = on;
     }
 
     /// Call a golden crab once every `ticks` (see [`Rules::golden_every`]).
@@ -904,6 +920,10 @@ impl Board {
 
     pub fn golden_every(&self) -> u32 {
         self.rules.golden_every
+    }
+
+    pub fn timed_lock(&self) -> bool {
+        self.rules.timed_lock
     }
 
     /// The golden crab the board has called, once the call is public: the

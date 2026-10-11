@@ -1135,6 +1135,7 @@ pub fn moment_effects(
             | SimEvent::TierUp { .. }
             | SimEvent::TideEventFired { .. }
             | SimEvent::LureStarted { .. }
+            | SimEvent::WheelLocked { .. }
             | SimEvent::RoundEnded => {}
         }
     }
