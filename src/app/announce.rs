@@ -185,6 +185,7 @@ pub fn collect_announcements(
             | SimEvent::SignpostEvicted { .. }
             | SimEvent::TierUp { .. }
             | SimEvent::WheelLocked { .. }
+            | SimEvent::GoldenOut { .. }
             | SimEvent::RoundEnded => {}
         }
     }

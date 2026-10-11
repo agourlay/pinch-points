@@ -518,6 +518,12 @@ pub fn play_events(
             SimEvent::GoldenCalled { pos } => {
                 play_at(&mut commands, &sounds.golden, gain, pan(pos));
             }
+            // And again as it comes out, with the event sting under it so
+            // the arrival is not mistaken for another call.
+            SimEvent::GoldenOut { pos } => {
+                play_at(&mut commands, &sounds.golden, gain, pan(pos));
+                play_at(&mut commands, &sounds.event, gain * 0.6, pan(pos));
+            }
             SimEvent::SurgeStarted => {
                 play(&mut commands, &sounds.surge, gain);
                 buzz(300, 0.4);

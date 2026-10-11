@@ -124,6 +124,10 @@ pub enum SimEvent {
     /// A golden crab was called: it comes out of the spawner hole at `pos`
     /// in a few seconds (`Board::golden_call`).
     GoldenCalled { pos: Vec2 },
+    /// A golden crab came out of the spawner hole at `pos`: the called
+    /// one's arrival, or one the spawn mix rolled on a board that does
+    /// not call them.
+    GoldenOut { pos: Vec2 },
     /// The round timer expired.
     RoundEnded,
 }
@@ -380,9 +384,11 @@ fn crab_events(board: &crate::sim::Board, watch: &Watch, events: &mut Vec<SimEve
         }
         let (x, y) = board.coords_u8(crab.tile);
         if matches!(board.tile_at(x, y), TileKind::Spawner(_)) {
-            events.push(SimEvent::CrabSpawned {
-                pos: layout::creature_pos(board, crab.tile, crab.dir, crab.progress),
-            });
+            let pos = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
+            events.push(SimEvent::CrabSpawned { pos });
+            if crab.kind == CrabKind::Golden {
+                events.push(SimEvent::GoldenOut { pos });
+            }
         }
     }
 }
@@ -888,7 +894,7 @@ mod tests {
     /// A golden crab's call is news once, when it goes public, from the
     /// hole it was called to.
     #[test]
-    fn a_golden_call_is_announced_once_from_its_hole() {
+    fn a_golden_crab_is_announced_once_and_seen_coming_out() {
         let mut board = Board::new(9, 7, 11);
         board.set_tile(1, 1, TileKind::Castle(0));
         board.set_tile(
@@ -905,16 +911,27 @@ mod tests {
         let mut called = Vec::new();
         for _ in 0..600 {
             board.tick_idle();
-            called.extend(
-                diff(&board, &mut watch)
-                    .into_iter()
-                    .filter(|e| matches!(e, SimEvent::GoldenCalled { .. })),
-            );
+            called.extend(diff(&board, &mut watch).into_iter().filter(|e| {
+                matches!(
+                    e,
+                    SimEvent::GoldenCalled { .. } | SimEvent::GoldenOut { .. }
+                )
+            }));
         }
+        // Called, then out of the same hole, each told once.
         let hole = layout::tile_center(&board, 0, 3);
         match called.as_slice() {
-            [SimEvent::GoldenCalled { pos }] => assert_eq!(*pos, hole),
-            other => panic!("one call, told once: {other:?}"),
+            [
+                SimEvent::GoldenCalled { pos },
+                SimEvent::GoldenOut { pos: out },
+            ] => {
+                assert_eq!(*pos, hole);
+                assert!(
+                    out.distance(hole) < layout::TILE / 2.0,
+                    "out at {out}, hole at {hole}"
+                );
+            }
+            other => panic!("one call and one arrival, told once each: {other:?}"),
         }
     }
 
@@ -1031,6 +1048,7 @@ mod tests {
                 | SimEvent::LureStarted { .. }
                 | SimEvent::SurgeStarted
                 | SimEvent::GoldenCalled { .. }
+                | SimEvent::GoldenOut { .. }
                 | SimEvent::WheelLocked { .. }
                 | SimEvent::RoundEnded => None,
             })

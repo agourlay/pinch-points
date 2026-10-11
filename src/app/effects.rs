@@ -1225,6 +1225,43 @@ pub fn moment_effects(
             SimEvent::SignpostPlaced { .. } | SimEvent::SignpostRemoved { .. } => {}
             // The final scramble arrives with the sea behind it.
             SimEvent::SurgeStarted => trauma.add(0.7),
+            // Out at last: what the rings have been pointing at. Gold
+            // thrown up out of the hole, and a ring wide enough to catch an
+            // eye watching another corner of the board.
+            SimEvent::GoldenOut { pos } => {
+                burst(
+                    &mut commands,
+                    &mut rng,
+                    &Burst {
+                        image: art.star.clone(),
+                        pos: *pos,
+                        color: palette::GOLD,
+                        count: 14,
+                        size: 14.0,
+                        speed: 120.0,
+                        gravity: 90.0,
+                    },
+                );
+                ring(
+                    &mut commands,
+                    &art,
+                    *pos,
+                    palette::GOLD,
+                    TILE * 0.7,
+                    4.5,
+                    0.8,
+                );
+                ring(
+                    &mut commands,
+                    &art,
+                    *pos,
+                    Color::srgba(1.0, 1.0, 0.85, 0.9),
+                    TILE * 0.4,
+                    3.0,
+                    0.5,
+                );
+                trauma.add(0.25);
+            }
             SimEvent::GoldenCalled { pos } => {
                 ring(
                     &mut commands,

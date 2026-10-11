@@ -397,6 +397,7 @@ pub static ES: Tr = Tr {
     log_surge: "¡últimos segundos! llegan las gaviotas",
     log_golden_call: "¡viene un cangrejo dorado!",
     log_wheel_locked: "{p}: eventos en recarga",
+    log_golden_out: "¡salió el cangrejo dorado!",
     map_names: [
         "Arena clásica (12x9)",
         "Generada - pequeña (9x7)",

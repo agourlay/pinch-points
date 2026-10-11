@@ -146,6 +146,7 @@ pub fn track_events(
             | SimEvent::TierUp { .. }
             | SimEvent::SurgeStarted
             | SimEvent::WheelLocked { .. }
+            | SimEvent::GoldenOut { .. }
             | SimEvent::RoundEnded => {}
         }
     }

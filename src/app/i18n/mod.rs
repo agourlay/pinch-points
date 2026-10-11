@@ -562,6 +562,8 @@ struct Tr {
     pub log_golden_call: &'static str,
     /// A sparkling crab banked while the event wheel was locked. `{p}`.
     pub log_wheel_locked: &'static str,
+    /// A golden crab came out of its hole.
+    pub log_golden_out: &'static str,
     pub map_names: [&'static str; 6],
     /// How a handmade beach reads on the map dial.
     pub map_custom: &'static str,

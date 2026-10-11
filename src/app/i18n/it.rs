@@ -397,6 +397,7 @@ pub static IT: Tr = Tr {
     log_surge: "ultimi secondi! arrivano i gabbiani",
     log_golden_call: "arriva un granchio dorato!",
     log_wheel_locked: "{p}: eventi in ricarica",
+    log_golden_out: "il granchio dorato è uscito!",
     map_names: [
         "Arena classica (12x9)",
         "Generata - piccola (9x7)",

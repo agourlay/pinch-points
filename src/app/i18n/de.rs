@@ -404,6 +404,7 @@ pub static DE: Tr = Tr {
     log_surge: "letzte Sekunden! Möwen strömen herein",
     log_golden_call: "eine goldene Krabbe kommt!",
     log_wheel_locked: "{p}: Ereignisse laden noch",
+    log_golden_out: "die goldene Krabbe ist da!",
     map_names: [
         "Klassische Arena (12x9)",
         "Generiert - klein (9x7)",

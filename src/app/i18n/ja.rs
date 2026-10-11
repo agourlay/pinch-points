@@ -393,6 +393,7 @@ pub static JA: Tr = Tr {
     log_surge: "残りわずか! カモメが押し寄せる",
     log_golden_call: "金のカニが出てくる!",
     log_wheel_locked: "{p}: イベントはまだ使えない",
+    log_golden_out: "金のカニが出てきた!",
     map_names: [
         "いつものマップ (12x9)",
         "自動生成 - 小 (9x7)",
