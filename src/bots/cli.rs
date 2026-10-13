@@ -1,9 +1,15 @@
 //! What the bot commands share: reading flags, building the beach a game
 //! is played on, naming files by the clock, and printing a table.
 
+use super::connstr::DEFAULT_PORT;
+use super::listener::{BotId, Listener};
 use crate::app::match_setup::{GullPressure, MapChoice, RoundLength};
-use crate::sim::{Board, BotLevel, CapPolicy, Level, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER};
+use crate::sim::{
+    Board, BotLevel, CapPolicy, Level, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER, TICKS_PER_SECOND,
+};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// A command line, read flag by flag. Every flag is `--name value` or
 /// `--name=value`, a switch is `--name`, and anything else is positional.
@@ -82,6 +88,87 @@ impl Args {
             return Err(format!("unknown flag {flag}"));
         }
         Ok(self.rest)
+    }
+}
+
+/// What every table the bot commands set up is read from: where bots
+/// connect, the beach, the round, the reply deadline and the cursor rule.
+pub struct TableOpts {
+    pub listen: SocketAddr,
+    pub beach: Beach,
+    pub round: RoundLength,
+    /// The reply deadline in milliseconds: one tick unless asked, and
+    /// never zero.
+    pub deadline: u32,
+    pub fair: bool,
+}
+
+impl TableOpts {
+    /// `--listen`/`--port`, `--map`, `--round`, `--deadline` and
+    /// `--fair-cursor`, taken off the line. Bots connect to `default_ip`
+    /// on the bots' own port unless told otherwise.
+    pub fn read(args: &mut Args, default_ip: [u8; 4]) -> Result<TableOpts, String> {
+        let mut listen: SocketAddr = args
+            .parsed("listen")?
+            .unwrap_or_else(|| SocketAddr::from((default_ip, DEFAULT_PORT)));
+        if let Some(port) = args.parsed::<u16>("port")? {
+            listen.set_port(port);
+        }
+        let beach = match args.value("map")? {
+            Some(m) => Beach::parse(&m)?,
+            None => Beach::Map(MapChoice::Classic),
+        };
+        let round = match args.value("round")? {
+            Some(r) => round_length(&r)?,
+            None => RoundLength::Standard,
+        };
+        let deadline = args
+            .parsed::<u32>("deadline")?
+            .unwrap_or(ONE_TICK_MS)
+            .max(1);
+        let fair = args.on_off("fair-cursor", false)?;
+        Ok(TableOpts {
+            listen,
+            beach,
+            round,
+            deadline,
+            fair,
+        })
+    }
+}
+
+/// A tick in milliseconds: the deadline a live match has.
+pub const ONE_TICK_MS: u32 = 1000 / TICKS_PER_SECOND;
+
+/// What the header says of a deadline longer than a tick.
+pub fn slow_note(deadline: u32) -> &'static str {
+    if deadline > ONE_TICK_MS {
+        " (a slow match)"
+    } else {
+        ""
+    }
+}
+
+/// Give a fresh registration's pings a moment to come back, so there is a
+/// round trip to print.
+pub fn wait_for_rtt(listener: &Listener, id: BotId) {
+    let asked = Instant::now();
+    while listener.rtt(id).is_none() && asked.elapsed() < Duration::from_millis(300) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A round trip the way the console and the standings print one.
+pub fn rtt_text(rtt: Duration) -> String {
+    format!("{} ms", ms(rtt.as_secs_f64() * 1000.0))
+}
+
+/// Reply times as the standings print them: the median and the 99th
+/// percentile, or a dash with none.
+pub fn reply_text(times: &[f64]) -> String {
+    match (percentile(times, 50.0), percentile(times, 99.0)) {
+        (Some(p50), Some(p99)) => format!("{} / {} ms", ms(p50), ms(p99)),
+        _ => "-".into(),
     }
 }
 

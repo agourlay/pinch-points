@@ -7,16 +7,14 @@
 //! capacities allow, and the standings rank every entrant by its average
 //! points per game.
 
-use super::cli::{self, Args, Beach};
-use super::connstr::{ConnString, DEFAULT_PORT, Key, reachable_host};
+use super::cli::{self, Args, TableOpts};
+use super::connstr::{ConnString, Key, reachable_host};
 use super::draw::{self, Fixture};
 use super::game::{self, GameResult, GameSpec, Seat, SeatResult, Sinks};
 use super::listener::{Admission, BotId, Config, Event, Invite, Listener};
 use super::protocol::Clock;
-use crate::app::match_setup::RoundLength;
-use crate::sim::{BotLevel, TICKS_PER_SECOND};
+use crate::sim::BotLevel;
 use std::io::{BufRead, Write};
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -69,7 +67,7 @@ fn ready_out(out: &std::path::Path) -> Result<(), String> {
 
 /// What the organiser asked for.
 struct Plan {
-    listen: SocketAddr,
+    table: TableOpts,
     seeds: u32,
     seats: u8,
     house: Vec<BotLevel>,
@@ -79,10 +77,6 @@ struct Plan {
     open: bool,
     per_owner: usize,
     parallel_cap: u32,
-    beach: Beach,
-    round: RoundLength,
-    deadline: u32,
-    fair: bool,
     forfeit_after: Duration,
     seed: u64,
     id: String,
@@ -91,12 +85,7 @@ struct Plan {
 
 fn plan(args: Vec<String>) -> Result<Plan, String> {
     let mut args = Args::new(args);
-    let mut listen: SocketAddr = args
-        .parsed("listen")?
-        .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)));
-    if let Some(port) = args.parsed::<u16>("port")? {
-        listen.set_port(port);
-    }
+    let table = TableOpts::read(&mut args, [0, 0, 0, 0])?;
     let seeds = args.parsed::<u32>("seeds")?.unwrap_or(10).max(1);
     let seats = args.parsed::<u8>("seats")?.unwrap_or(4);
     let house = args
@@ -110,19 +99,6 @@ fn plan(args: Vec<String>) -> Result<Plan, String> {
     let open = args.switch("open-registration");
     let per_owner = args.parsed::<usize>("per-owner")?.unwrap_or(1).max(1);
     let parallel_cap = args.parsed::<u32>("parallel-cap")?.unwrap_or(8).max(1);
-    let beach = match args.value("map")? {
-        Some(m) => Beach::parse(&m)?,
-        None => Beach::Map(crate::app::match_setup::MapChoice::Classic),
-    };
-    let round = match args.value("round")? {
-        Some(r) => cli::round_length(&r)?,
-        None => RoundLength::Standard,
-    };
-    let deadline = args
-        .parsed::<u32>("deadline")?
-        .unwrap_or(1000 / TICKS_PER_SECOND)
-        .max(1);
-    let fair = args.on_off("fair-cursor", false)?;
     let forfeit_after = Duration::from_secs(args.parsed::<u64>("forfeit-after")?.unwrap_or(60));
     let seed = args.parsed::<u64>("seed")?.unwrap_or_else(cli::fresh_seed);
     let id = args.value("id")?.unwrap_or_else(|| "t1".to_string());
@@ -143,12 +119,12 @@ fn plan(args: Vec<String>) -> Result<Plan, String> {
     if !rest.is_empty() {
         return Err(format!("unexpected {:?}", rest[0]));
     }
-    beach.check(seats)?;
+    table.beach.check(seats)?;
     if open && !invites.is_empty() {
         return Err("--invite binds an owner to a key; --open-registration has no keys".into());
     }
     Ok(Plan {
-        listen,
+        table,
         seeds,
         seats,
         house,
@@ -158,10 +134,6 @@ fn plan(args: Vec<String>) -> Result<Plan, String> {
         open,
         per_owner,
         parallel_cap,
-        beach,
-        round,
-        deadline,
-        fair,
         forfeit_after,
         seed,
         id,
@@ -230,19 +202,18 @@ fn serve(plan: Plan) -> Result<(), String> {
     let mut config = Config::new(admission);
     config.per_owner = Some(plan.per_owner);
     config.parallel_cap = plan.parallel_cap;
-    let (listener, events) = Listener::bind(plan.listen, config)
-        .map_err(|e| format!("cannot listen on {}: {e}", plan.listen))?;
+    let (listener, events) = Listener::bind(plan.table.listen, config)
+        .map_err(|e| format!("cannot listen on {}: {e}", plan.table.listen))?;
     let host = reachable_host(listener.local_addr());
     let port = listener.local_addr().port();
-    let slow = plan.deadline > 1000 / TICKS_PER_SECOND;
     println!(
         "Cup {}: {} beaches, {} seats, deadline {} ms{}, fair cursor {}",
         plan.id,
         plan.seeds,
         plan.seats,
-        plan.deadline,
-        if slow { " (a slow match)" } else { "" },
-        if plan.fair { "on" } else { "off" },
+        plan.table.deadline,
+        cli::slow_note(plan.table.deadline),
+        if plan.table.fair { "on" } else { "off" },
     );
     let start_hint = match plan.start_when {
         Some(n) => format!("starts once {n} bots have registered"),
@@ -426,14 +397,9 @@ fn register(
         match input {
             Input::Event(Event::Registered(id)) => {
                 bots.push(id);
-                let asked = Instant::now();
-                while listener.rtt(id).is_none() && asked.elapsed() < Duration::from_millis(300) {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
+                cli::wait_for_rtt(listener, id);
                 if let Some(info) = listener.bot(id) {
-                    let rtt = listener.rtt(id).map_or("-".to_string(), |d| {
-                        format!("{} ms", cli::ms(d.as_secs_f64() * 1000.0))
-                    });
+                    let rtt = listener.rtt(id).map_or("-".to_string(), cli::rtt_text);
                     let owner = match (&info.owner, info.owner_declared) {
                         (Some(o), true) => format!("  owner {o} (declared)"),
                         (Some(o), false) => format!("  owner {o}"),
@@ -621,15 +587,15 @@ fn play_fixture(
     let spec = GameSpec {
         game: number,
         replay_id: format!("{}-g{number}", plan.id),
-        board: plan.beach.board(seed, plan.seats, plan.round),
+        board: plan.table.beach.board(seed, plan.seats, plan.table.round),
         seats: fixture.chairs.iter().map(|&e| entrants[e].seat).collect(),
         names,
         clock: Clock {
             live: false,
-            deadline_ms: plan.deadline,
+            deadline_ms: plan.table.deadline,
             input_delay: 0,
         },
-        fair_cursor: plan.fair,
+        fair_cursor: plan.table.fair,
         forfeit_after: plan.forfeit_after,
         ready_within: Duration::from_secs(10),
     };
@@ -758,16 +724,8 @@ fn standings(plan: &Plan, listener: &Listener, entrants: &[Entrant], played: &[P
                     "{:.1}%",
                     100.0 * f64::from(t.late) / f64::from(t.sent.max(1))
                 ),
-                match (
-                    cli::percentile(&t.reply_ms, 50.0),
-                    cli::percentile(&t.reply_ms, 99.0),
-                ) {
-                    (Some(a), Some(b)) => format!("{} / {} ms", cli::ms(a), cli::ms(b)),
-                    _ => "-".into(),
-                },
-                listener.rtt(id).map_or("-".into(), |d| {
-                    format!("{} ms", cli::ms(d.as_secs_f64() * 1000.0))
-                }),
+                cli::reply_text(&t.reply_ms),
+                listener.rtt(id).map_or("-".into(), cli::rtt_text),
             ),
             Seat::Ai(_) => ("-".into(), "-".into(), "-".into()),
         };
@@ -789,14 +747,10 @@ fn standings(plan: &Plan, listener: &Listener, entrants: &[Entrant], played: &[P
         "Cup {}: {} games, deadline {} ms{}, fair cursor {}, {}\n\n",
         plan.id,
         played.len(),
-        plan.deadline,
-        if plan.deadline > 1000 / TICKS_PER_SECOND {
-            " (a slow match)"
-        } else {
-            ""
-        },
-        if plan.fair { "on" } else { "off" },
-        cli::round_name(plan.round),
+        plan.table.deadline,
+        cli::slow_note(plan.table.deadline),
+        if plan.table.fair { "on" } else { "off" },
+        cli::round_name(plan.table.round),
     );
     out.push_str(&cli::table(&rows));
     if declared {
@@ -808,6 +762,9 @@ fn standings(plan: &Plan, listener: &Listener, entrants: &[Entrant], played: &[P
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::match_setup::RoundLength;
+    use crate::bots::cli::Beach;
+    use std::net::SocketAddr;
 
     fn args(line: &str) -> Vec<String> {
         line.split_whitespace().map(String::from).collect()
@@ -825,7 +782,7 @@ mod tests {
         );
         assert_eq!(p.house, vec![BotLevel::Hard]);
         assert_eq!(p.per_owner, 1);
-        assert_eq!(p.listen.to_string(), "0.0.0.0:47710");
+        assert_eq!(p.table.listen.to_string(), "0.0.0.0:47710");
         assert_eq!(p.out, PathBuf::from("cup-t1"));
         assert!(plan(args("--seats 9")).is_err());
         assert!(plan(args("--open-registration --invite ana")).is_err());
@@ -836,7 +793,13 @@ mod tests {
     fn a_cup_of_house_bots_plays_and_ranks_by_points() {
         let dir = std::env::temp_dir().join(format!("pinch-cup-test-{}", std::process::id()));
         let p = Plan {
-            listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+            table: TableOpts {
+                listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+                beach: Beach::Map(crate::app::match_setup::MapChoice::Classic),
+                round: RoundLength::Short,
+                deadline: 33,
+                fair: false,
+            },
             seeds: 1,
             seats: 2,
             house: vec![BotLevel::Easy, BotLevel::Hard],
@@ -846,16 +809,13 @@ mod tests {
             open: true,
             per_owner: 1,
             parallel_cap: 8,
-            beach: Beach::Map(crate::app::match_setup::MapChoice::Classic),
-            round: RoundLength::Short,
-            deadline: 33,
-            fair: false,
             forfeit_after: Duration::from_secs(1),
             seed: 1,
             id: "x".into(),
             out: dir.clone(),
         };
-        let (listener, _) = Listener::bind(p.listen, Config::new(Admission::Open)).expect("bind");
+        let (listener, _) =
+            Listener::bind(p.table.listen, Config::new(Admission::Open)).expect("bind");
         let entrants = vec![
             Entrant {
                 name: "easy".into(),
@@ -900,7 +860,13 @@ mod tests {
 
     fn quiet_plan(seats: u8, per_owner: usize, start_when: Option<usize>) -> Plan {
         Plan {
-            listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+            table: TableOpts {
+                listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+                beach: Beach::Map(crate::app::match_setup::MapChoice::Classic),
+                round: RoundLength::Short,
+                deadline: 33,
+                fair: false,
+            },
             seeds: 1,
             seats,
             house: vec![],
@@ -910,10 +876,6 @@ mod tests {
             open: true,
             per_owner,
             parallel_cap: 8,
-            beach: Beach::Map(crate::app::match_setup::MapChoice::Classic),
-            round: RoundLength::Short,
-            deadline: 33,
-            fair: false,
             forfeit_after: Duration::from_secs(1),
             seed: 1,
             id: "x".into(),
@@ -938,7 +900,7 @@ mod tests {
     fn listener_for(plan: &Plan) -> Listener {
         let mut config = Config::new(Admission::Open);
         config.per_owner = Some(plan.per_owner);
-        Listener::bind(plan.listen, config).expect("bind").0
+        Listener::bind(plan.table.listen, config).expect("bind").0
     }
 
     /// Bots that registered while the field was being counted play: the

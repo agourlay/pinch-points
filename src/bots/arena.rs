@@ -6,17 +6,16 @@
 //! decision log went. Without `--watch` no window opens and nothing of
 //! Bevy starts: it runs as fast as the bots answer.
 
-use super::cli::{self, Args, Beach};
-use super::connstr::{ConnString, DEFAULT_PORT, Key, reachable_host};
+use super::cli::{self, Args, TableOpts};
+use super::connstr::{ConnString, Key, reachable_host};
 use super::game::{self, Feed, GameResult, GameSpec, Seat, Sinks};
 use super::listener::{Admission, BotId, Config, Event, Invite, Listener};
 use super::protocol::Clock;
-use crate::app::match_setup::RoundLength;
-use crate::sim::{BotLevel, TICKS_PER_SECOND};
+use crate::sim::BotLevel;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::mpsc::Sender;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub const USAGE: &str = "\
 pinch-points arena [flags]
@@ -44,16 +43,12 @@ to connect; the arena prints the connection string to start it with.
 struct Plan {
     ai: Vec<BotLevel>,
     open: u32,
-    listen: SocketAddr,
+    table: TableOpts,
     key: Option<Key>,
-    beach: Beach,
     seats: u8,
     seed: u64,
-    round: RoundLength,
     games: u32,
-    deadline: u32,
     trace: Option<std::path::PathBuf>,
-    fair: bool,
     watch: bool,
 }
 
@@ -65,12 +60,7 @@ fn plan(args: Vec<String>) -> Result<Plan, String> {
         .map(|s| cli::ai_seat(s))
         .collect::<Result<Vec<_>, _>>()?;
     let open = args.parsed::<u32>("open")?.unwrap_or(0);
-    let mut listen: SocketAddr = args
-        .parsed("listen")?
-        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT)));
-    if let Some(port) = args.parsed::<u16>("port")? {
-        listen.set_port(port);
-    }
+    let table = TableOpts::read(&mut args, [127, 0, 0, 1])?;
     let key =
         match args.value("key")? {
             Some(k) => Some(Key::parse(&k).ok_or_else(|| {
@@ -78,10 +68,6 @@ fn plan(args: Vec<String>) -> Result<Plan, String> {
             })?),
             None => None,
         };
-    let beach = match args.value("map")? {
-        Some(m) => Beach::parse(&m)?,
-        None => Beach::Map(crate::app::match_setup::MapChoice::Classic),
-    };
     let given = ai.len() as u32 + open;
     let seats = args.parsed::<u8>("seats")?.map_or(given, u32::from);
     if seats < given {
@@ -90,17 +76,8 @@ fn plan(args: Vec<String>) -> Result<Plan, String> {
         ));
     }
     let seed = args.parsed::<u64>("seed")?.unwrap_or_else(cli::fresh_seed);
-    let round = match args.value("round")? {
-        Some(r) => cli::round_length(&r)?,
-        None => RoundLength::Standard,
-    };
     let games = args.parsed::<u32>("games")?.unwrap_or(1).max(1);
-    let deadline = args
-        .parsed::<u32>("deadline")?
-        .unwrap_or(1000 / TICKS_PER_SECOND);
-    let deadline = if deadline == 0 { 1 } else { deadline };
     let trace = args.value("trace")?.map(std::path::PathBuf::from);
-    let fair = args.on_off("fair-cursor", false)?;
     let watch = args.switch("watch");
     let rest = args.finish()?;
     if !rest.is_empty() {
@@ -111,27 +88,23 @@ fn plan(args: Vec<String>) -> Result<Plan, String> {
             "nothing to play: give --open N for bots and --seat ai:<level> for the AI".into(),
         );
     }
-    if watch && deadline != 1000 / TICKS_PER_SECOND {
+    if watch && table.deadline != cli::ONE_TICK_MS {
         return Err(
             "--watch plays on the live clock, and a live match has one tick: drop --deadline"
                 .into(),
         );
     }
     let seats = u8::try_from(seats).map_err(|_| format!("{seats} seats is too many"))?;
-    beach.check(seats)?;
+    table.beach.check(seats)?;
     Ok(Plan {
         ai,
         open,
-        listen,
+        table,
         key,
-        beach,
         seats,
         seed,
-        round,
         games,
-        deadline,
         trace,
-        fair,
         watch,
     })
 }
@@ -166,16 +139,19 @@ fn play(plan: Plan, feed: Option<Sender<Feed>>) -> Result<(), String> {
     let Plan {
         ai,
         open,
-        listen,
+        table:
+            TableOpts {
+                listen,
+                beach,
+                round,
+                deadline,
+                fair,
+            },
         key,
-        beach,
         seats,
         seed,
-        round,
         games,
-        deadline,
         trace,
-        fair,
         watch,
     } = plan;
     // Open seats come first, then the AI, then any seats --seats added.
@@ -234,12 +210,7 @@ fn play(plan: Plan, feed: Option<Sender<Feed>>) -> Result<(), String> {
                         *chair = Some(id);
                     }
                     joined += 1;
-                    // Give the registration's pings a moment to come back.
-                    let asked = Instant::now();
-                    while listener.rtt(id).is_none() && asked.elapsed() < Duration::from_millis(300)
-                    {
-                        std::thread::sleep(Duration::from_millis(5));
-                    }
+                    cli::wait_for_rtt(&listener, id);
                     let version = if info.version.is_empty() {
                         String::new()
                     } else {
@@ -248,10 +219,9 @@ fn play(plan: Plan, feed: Option<Sender<Feed>>) -> Result<(), String> {
                     println!(
                         "  {}{version} connected (round trip {})",
                         info.name,
-                        listener.rtt(id).map_or("unknown".to_string(), |d| format!(
-                            "{} ms",
-                            cli::ms(d.as_secs_f64() * 1000.0)
-                        ))
+                        listener
+                            .rtt(id)
+                            .map_or("unknown".to_string(), cli::rtt_text)
                     );
                 }
                 Ok(Event::Refused(peer, why)) => println!("  refused {peer}: {why}"),
@@ -288,7 +258,6 @@ fn play(plan: Plan, feed: Option<Sender<Feed>>) -> Result<(), String> {
         deadline_ms: deadline,
         input_delay: 0,
     };
-    let slow = deadline > 1000 / TICKS_PER_SECOND;
     println!(
         "Beach: {}, seed {seed}{}, {}, fair cursor {}, deadline {deadline} ms{}",
         beach.name(),
@@ -299,7 +268,7 @@ fn play(plan: Plan, feed: Option<Sender<Feed>>) -> Result<(), String> {
         },
         cli::round_name(round),
         if fair { "on" } else { "off" },
-        if slow { " (a slow match)" } else { "" },
+        cli::slow_note(deadline),
     );
     let dir = crate::app::paths::data_dir().join("arena");
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
@@ -447,14 +416,9 @@ fn standings(
             .iter()
             .flat_map(|r| r.seats[seat].reply_ms.iter().copied())
             .collect();
-        let replies = match (cli::percentile(&times, 50.0), cli::percentile(&times, 99.0)) {
-            (Some(p50), Some(p99)) => format!("{} / {} ms", cli::ms(p50), cli::ms(p99)),
-            _ => "-".into(),
-        };
+        let replies = cli::reply_text(&times);
         let rtt = match table[seat] {
-            Seat::Bot(id) => listener.rtt(id).map_or("-".into(), |d| {
-                format!("{} ms", cli::ms(d.as_secs_f64() * 1000.0))
-            }),
+            Seat::Bot(id) => listener.rtt(id).map_or("-".into(), cli::rtt_text),
             Seat::Ai(_) => "-".into(),
         };
         let late = sum(&|s| f64::from(s.late), seat);
@@ -500,9 +464,9 @@ mod tests {
         let p = plan(args("--seat ai:easy --open 1 --seed 7 --games 3")).expect("plan");
         assert_eq!(p.ai, vec![BotLevel::Easy]);
         assert_eq!((p.open, p.seats, p.seed, p.games), (1, 2, 7, 3));
-        assert_eq!(p.listen.to_string(), "127.0.0.1:47710");
-        assert_eq!(p.deadline, 33);
-        assert!(!p.fair && !p.watch);
+        assert_eq!(p.table.listen.to_string(), "127.0.0.1:47710");
+        assert_eq!(p.table.deadline, 33);
+        assert!(!p.table.fair && !p.watch);
     }
 
     #[test]
