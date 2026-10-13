@@ -1,7 +1,7 @@
 //! Castles: their tier-scaled keep, the pennant on top, and the shudder
 //! and floating points a bank sets off.
 
-use super::{WALL_COLOR, image_sprite, on_board, z};
+use super::{OnTile, WALL_COLOR, clear_stale, image_sprite, on_board, z};
 use crate::app::Sim;
 use crate::app::art::Art;
 use crate::app::layout::{self, TILE};
@@ -25,6 +25,12 @@ pub struct CastleSprite {
     owner: u8,
 }
 
+impl OnTile for CastleSprite {
+    fn tile(&self) -> (u8, u8) {
+        (self.x, self.y)
+    }
+}
+
 pub fn sync_castles(
     mut commands: Commands,
     sim: Res<Sim>,
@@ -33,32 +39,23 @@ pub fn sync_castles(
     existing: Query<(Entity, &CastleSprite)>,
 ) {
     let board = &sim.0;
-    covered.clear();
-    covered.resize(board.width() as usize * board.height() as usize, false);
-    for (entity, sprite) in &existing {
-        if !on_board(board, sprite.x, sprite.y) {
-            commands.entity(entity).despawn();
-            continue;
-        }
-        let idx = usize::from(board.index_of(sprite.x, sprite.y));
-        match board.tile_at(sprite.x, sprite.y) {
-            TileKind::Castle(owner)
-                if owner == sprite.owner
-                    && castle_tier(board.scores()[owner as usize]) == sprite.tier =>
-            {
-                covered[idx] = true;
+    clear_stale(
+        &mut commands,
+        board,
+        &mut covered,
+        existing,
+        |sprite| match board.tile_at(sprite.x, sprite.y) {
+            TileKind::Castle(owner) => {
+                owner == sprite.owner && castle_tier(board.scores()[owner as usize]) == sprite.tier
             }
-            TileKind::Castle(_)
-            | TileKind::Empty
+            TileKind::Empty
             | TileKind::Rock
             | TileKind::Spawner(_)
             | TileKind::Turnstile { .. }
             | TileKind::Kelp
-            | TileKind::Pool => {
-                commands.entity(entity).despawn();
-            }
-        }
-    }
+            | TileKind::Pool => false,
+        },
+    );
     for (x, y, kind) in board.tiles() {
         let idx = usize::from(board.index_of(x, y));
         if covered[idx] {

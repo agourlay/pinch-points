@@ -2,7 +2,7 @@
 //! posts and dressed every frame with how settled, worn and spent they
 //! are, and which one the next placement will take.
 
-use super::{image_sprite, on_board, z};
+use super::{OnTile, clear_stale, image_sprite, on_board, z};
 use crate::app::Sim;
 use crate::app::art::Art;
 use crate::app::layout::{self, SIGN_SIZE};
@@ -34,6 +34,12 @@ pub struct SignpostSprite {
     /// raises no `SignpostPlaced`, and there is no ring and no knock.
     /// Without this the post snaps from worn to fresh between two frames.
     planted: u64,
+}
+
+impl OnTile for SignpostSprite {
+    fn tile(&self) -> (u8, u8) {
+        (self.x, self.y)
+    }
 }
 
 /// The soft dark copy of the arrow lying under it.
@@ -112,21 +118,13 @@ pub fn sync_signposts(
     existing: Query<(Entity, &SignpostSprite)>,
 ) {
     let board = &sim.0;
-    covered.clear();
-    covered.resize(board.width() as usize * board.height() as usize, false);
-    for (entity, sprite) in &existing {
-        if !on_board(board, sprite.x, sprite.y) {
-            commands.entity(entity).despawn();
-            continue;
-        }
-        let idx = usize::from(board.index_of(sprite.x, sprite.y));
-        match board.signpost_at(sprite.x, sprite.y) {
-            Some(sp) if sp.dir == sprite.dir && sp.owner == sprite.owner => covered[idx] = true,
-            // A different heading or a different owner on the same tile is
-            // a different post, and gets its own plant.
-            Some(_) | None => commands.entity(entity).despawn(),
-        }
-    }
+    clear_stale(&mut commands, board, &mut covered, existing, |sprite| {
+        // A different heading or a different owner on the same tile is a
+        // different post, and gets its own plant.
+        board
+            .signpost_at(sprite.x, sprite.y)
+            .is_some_and(|sp| sp.dir == sprite.dir && sp.owner == sprite.owner)
+    });
     for (x, y, _) in board.tiles() {
         let idx = usize::from(board.index_of(x, y));
         if covered[idx] {

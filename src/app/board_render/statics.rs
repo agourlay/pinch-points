@@ -4,7 +4,7 @@
 
 use super::pools::spawn_pools;
 use super::surround::{spawn_dusk_shore, spawn_weather};
-use super::{Side, image_sprite, on_board, z};
+use super::{OnTile, Side, clear_stale, image_sprite, z};
 use crate::app::Sim;
 use crate::app::art::Art;
 use crate::app::layout::{self, TILE};
@@ -225,42 +225,50 @@ pub struct TurnstileSprite {
     right: bool,
 }
 
+impl OnTile for TurnstileSprite {
+    fn tile(&self) -> (u8, u8) {
+        (self.x, self.y)
+    }
+}
+
 /// Diff turnstile logs against the board: the log leans toward the side it
 /// will deflect to next; `animate_turnstiles` swings it there smoothly.
 pub fn sync_turnstiles(
     mut commands: Commands,
     sim: Res<Sim>,
     art: Res<Art>,
+    mut covered: Local<Vec<bool>>,
     mut existing: Query<(Entity, &mut TurnstileSprite)>,
 ) {
     let board = &sim.0;
-    let mut covered: Vec<(u8, u8)> = Vec::new();
-    for (entity, mut sprite) in &mut existing {
-        if !on_board(board, sprite.x, sprite.y) {
-            commands.entity(entity).despawn();
-            continue;
-        }
-        match board.tile_at(sprite.x, sprite.y) {
-            TileKind::Turnstile { next_right } => {
-                // Retarget in place; the animation system swings the log.
-                if next_right != sprite.right {
-                    sprite.right = next_right;
+    clear_stale(
+        &mut commands,
+        board,
+        &mut covered,
+        &mut existing,
+        |sprite| {
+            match board.tile_at(sprite.x, sprite.y) {
+                TileKind::Turnstile { next_right } => {
+                    // Retarget in place; the animation system swings the log.
+                    if next_right != sprite.right {
+                        sprite.right = next_right;
+                    }
+                    true
                 }
-                covered.push((sprite.x, sprite.y));
+                TileKind::Empty
+                | TileKind::Rock
+                | TileKind::Castle(_)
+                | TileKind::Spawner(_)
+                | TileKind::Kelp
+                | TileKind::Pool => false,
             }
-            TileKind::Empty
-            | TileKind::Rock
-            | TileKind::Castle(_)
-            | TileKind::Spawner(_)
-            | TileKind::Kelp
-            | TileKind::Pool => commands.entity(entity).despawn(),
-        }
-    }
+        },
+    );
     for (x, y, kind) in board.tiles() {
         let TileKind::Turnstile { next_right } = kind else {
             continue;
         };
-        if covered.contains(&(x, y)) {
+        if covered[usize::from(board.index_of(x, y))] {
             continue;
         }
         let tilt = if next_right { -0.6 } else { 0.6 };

@@ -111,6 +111,43 @@ fn on_board(board: &crate::sim::Board, x: u8, y: u8) -> bool {
     x < board.width() && y < board.height()
 }
 
+/// A sprite drawn for one tile, which remembers the tile it was built at.
+trait OnTile {
+    fn tile(&self) -> (u8, u8);
+}
+
+/// The clearing half of a sync system: what the tile-tracking sprites
+/// (castles, signposts, turnstiles) all do before spawning what is missing.
+///
+/// Every sprite whose tile is off this board is despawned first, before
+/// anything asks the board about it: that is the crash guard (see
+/// [`on_board`]). Then every one that `current` says no longer matches its
+/// tile goes too. The tiles whose sprite stands are marked in `covered`,
+/// indexed as [`crate::sim::Board::index_of`], for the spawning half to
+/// skip. `current` may retarget a sprite in place as it answers.
+fn clear_stale<S: OnTile, T: std::ops::Deref<Target = S>>(
+    commands: &mut Commands,
+    board: &crate::sim::Board,
+    covered: &mut Vec<bool>,
+    sprites: impl IntoIterator<Item = (Entity, T)>,
+    mut current: impl FnMut(&mut T) -> bool,
+) {
+    covered.clear();
+    covered.resize(board.width() as usize * board.height() as usize, false);
+    for (entity, mut sprite) in sprites {
+        let (x, y) = sprite.tile();
+        if !on_board(board, x, y) {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        if current(&mut sprite) {
+            covered[usize::from(board.index_of(x, y))] = true;
+        } else {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 const WALL_COLOR: Color = Color::srgb(0.35, 0.28, 0.22);
 const WATER: Color = Color::srgba(0.30, 0.58, 0.82, 0.65);
 /// How wide the water grows over the whole round, in pixels, out from the
