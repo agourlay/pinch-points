@@ -31,7 +31,7 @@ to connect; the arena prints the connection string to start it with.
   --map NAME|FILE          classic, generated, small, large, xl, ocean, or a level file
   --seats N                table size; seats beyond those given play ai:normal
   --seed S                 the first beach's seed (default: random, printed)
-  --round short|standard|long
+  --round quick|short|standard|long
   --games N                play N seeds and print averages (default 1)
   --deadline MS            the reply deadline (default 33, one tick)
   --trace FILE             write every tick message and the actions after it

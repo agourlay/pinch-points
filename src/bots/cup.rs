@@ -37,7 +37,7 @@ Console commands while registration is open: start, invite NAME, list.
   --per-owner N            bots one owner may enter (default 1)
   --parallel-cap N         games one bot may play at once, at most (default 8)
   --map NAME|FILE          classic, generated, small, large, xl, ocean, or a level file
-  --round short|standard|long
+  --round quick|short|standard|long
   --deadline MS            the reply deadline (default 33, one tick)
   --fair-cursor on|off     walk every seat's cursor at a person's pace
   --forfeit-after S        how long a game waits for a missing bot (default 60)

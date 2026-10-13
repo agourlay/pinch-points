@@ -411,7 +411,7 @@ pub static ES: Tr = Tr {
     map_custom_local: "{n} (tuya, solo local)",
     map_none_seats: "ningún mapa tuyo tiene {n} plazas",
     gull_names: ["tranquilas", "normales", "furiosas"],
-    round_names: ["2 minutos", "3 minutos", "5 minutos"],
+    round_names: ["1 minuto", "2 minutos", "3 minutos", "5 minutos"],
     lobby_hosting: "abierta en el puerto {p} - esperando a un rival",
     lobby_hosting_noport: "abierta - esperando a un rival",
     lobby_rivals_one: "1 jugador dentro - Intro para empezar (hasta 5)",

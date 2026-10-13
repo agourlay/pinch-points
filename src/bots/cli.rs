@@ -201,11 +201,12 @@ pub fn ai_seat(text: &str) -> Result<BotLevel, String> {
 
 pub fn round_length(text: &str) -> Result<RoundLength, String> {
     match text {
+        "quick" => Ok(RoundLength::Quick),
         "short" => Ok(RoundLength::Short),
         "standard" => Ok(RoundLength::Standard),
         "long" => Ok(RoundLength::Long),
         other => Err(format!(
-            "{other:?} is not a round length (short, standard, long)"
+            "{other:?} is not a round length (quick, short, standard, long)"
         )),
     }
 }
@@ -213,6 +214,7 @@ pub fn round_length(text: &str) -> Result<RoundLength, String> {
 pub fn round_name(round: RoundLength) -> String {
     let secs = round.ticks() / crate::sim::TICKS_PER_SECOND;
     let name = match round {
+        RoundLength::Quick => "quick",
         RoundLength::Short => "short",
         RoundLength::Standard => "standard",
         RoundLength::Long => "long",

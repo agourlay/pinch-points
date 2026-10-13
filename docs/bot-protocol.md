@@ -577,7 +577,7 @@ bots on the rest.
 | `--map NAME\|FILE` | `classic` | `classic`, `generated`, `small`, `large`, `xl`, `ocean`, or a level file |
 | `--seats N` | seats given | a bigger table; the extra seats play `ai:normal` |
 | `--seed S` | random, printed | the same beach again, for a fair before and after |
-| `--round short\|standard\|long` | `standard` | 2, 3 or 5 minutes |
+| `--round quick\|short\|standard\|long` | `standard` | 1, 2, 3 or 5 minutes |
 | `--games N` | 1 | play N seeds (`S`, `S+1`, ...) and print averages; bots stay connected between games |
 | `--deadline MS` | 33 | raise it only to match a cup that raised it, or for a slow match |
 | `--trace FILE` | off | every tick message and the actions after it |

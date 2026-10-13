@@ -407,7 +407,7 @@ pub static JA: Tr = Tr {
     map_custom_local: "{n} (きみの、ここだけ)",
     map_none_seats: "{n}人ぶんの城があるマップがないよ",
     gull_names: ["おだやか", "ふつう", "大あばれ"],
-    round_names: ["2分", "3分", "5分"],
+    round_names: ["1分", "2分", "3分", "5分"],
     lobby_hosting: "ポート{p}で待ち受け中 - 相手を待っています",
     lobby_hosting_noport: "待ち受け中 - 相手を待っています",
     lobby_rivals_one: "相手が1人 - Enterで開始 (5人まで)",

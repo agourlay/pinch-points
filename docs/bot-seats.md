@@ -847,7 +847,7 @@ the string in advance.
 | `--map classic\|generated\|FILE` | `classic` | the beach |
 | `--seats N` | seats given | table size on a generated beach |
 | `--seed S` | random, printed | the same beach again after a change, for a fair before and after |
-| `--round short\|standard\|long` | `standard` | round length |
+| `--round quick\|short\|standard\|long` | `standard` | round length |
 | `--games N` | 1 | play N seeds and print averages, so a bot is not judged on one lucky round; the bots stay connected between games |
 | `--deadline MS` | 33 (one tick) | raise it only to match a cup that raised it, or for a slow match |
 | `--trace FILE` | off | write every tick message and the tick after it, to check a ported sim against |

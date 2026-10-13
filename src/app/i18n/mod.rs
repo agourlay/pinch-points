@@ -564,7 +564,7 @@ struct Tr {
     /// of them has a castle for every seat at this table.
     pub map_none_seats: &'static str,
     pub gull_names: [&'static str; 3],
-    pub round_names: [&'static str; 3],
+    pub round_names: [&'static str; 4],
     // Lobby
     pub lobby_hosting: &'static str,
     pub lobby_hosting_noport: &'static str,

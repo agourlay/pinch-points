@@ -119,6 +119,7 @@ impl GullPressure {
 /// Round length.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum RoundLength {
+    Quick,
     Short,
     #[default]
     Standard,
@@ -126,11 +127,16 @@ pub enum RoundLength {
 }
 
 impl RoundLength {
-    pub const ALL: [RoundLength; 3] =
-        [RoundLength::Short, RoundLength::Standard, RoundLength::Long];
+    pub const ALL: [RoundLength; 4] = [
+        RoundLength::Quick,
+        RoundLength::Short,
+        RoundLength::Standard,
+        RoundLength::Long,
+    ];
 
     pub fn ticks(self) -> u32 {
         match self {
+            RoundLength::Quick => 60 * crate::sim::TICKS_PER_SECOND,
             RoundLength::Short => 2 * 60 * crate::sim::TICKS_PER_SECOND,
             RoundLength::Standard => 3 * 60 * crate::sim::TICKS_PER_SECOND,
             RoundLength::Long => 5 * 60 * crate::sim::TICKS_PER_SECOND,

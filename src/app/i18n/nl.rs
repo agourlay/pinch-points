@@ -411,7 +411,7 @@ pub static NL: Tr = Tr {
     map_custom_local: "{n} (van jou, alleen hier)",
     map_none_seats: "geen van je kaarten heeft {n} plekken",
     gull_names: ["rustig", "normaal", "razend"],
-    round_names: ["2 minuten", "3 minuten", "5 minuten"],
+    round_names: ["1 minuut", "2 minuten", "3 minuten", "5 minuten"],
     lobby_hosting: "open op poort {p} - wachten op een rivaal",
     lobby_hosting_noport: "open - wachten op een rivaal",
     lobby_rivals_one: "1 speler binnen - Enter om te starten (tot 5)",
