@@ -210,16 +210,28 @@ fn draw(board: &Board, origin: (u8, u8)) -> Frame {
         }
     }
     for crab in board.crabs() {
-        let color = match crab.kind {
-            CrabKind::Golden => ink::GOLDEN,
-            CrabKind::Giant => ink::GIANT,
-            CrabKind::Common | CrabKind::Juvenile | CrabKind::Molting | CrabKind::Sparkling => {
-                ink::CRAB
-            }
-        };
         let (x, y) = creature_tile_pos(board, crab.tile, crab.dir, crab.progress);
         let (px, py) = frame.at(x, y);
-        frame.rect(px + 4, py + 4, 8, 8, color);
+        frame.rect(px + 4, py + 4, 8, 8, crab_ink(crab.kind));
+    }
+    // Crab Monopoly's crabs, off the beach and not yet banked: drawn where
+    // they were picked up until they set off, then slid to the keep they
+    // land in. Left out, half the beach vanished from the reel at the
+    // event and the banker's score rose with nothing arriving.
+    for flight in board.sweeping() {
+        let crab = &flight.crab;
+        let from = creature_tile_pos(board, crab.tile, crab.dir, crab.progress);
+        let keep = board
+            .castle_of(flight.owner)
+            .map_or(from, |(x, y)| (f32::from(x), f32::from(y)));
+        let span = flight.lands.saturating_sub(flight.launch).max(1) as f32;
+        let t = (board.ticks().saturating_sub(flight.launch) as f32 / span).min(1.0);
+        let (x, y) = (
+            from.0 + (keep.0 - from.0) * t,
+            from.1 + (keep.1 - from.1) * t,
+        );
+        let (px, py) = frame.at(x, y);
+        frame.rect(px + 4, py + 4, 8, 8, crab_ink(crab.kind));
     }
     for gull in board.gulls() {
         let (x, y) = creature_tile_pos(board, gull.tile, gull.dir, gull.progress);
@@ -232,6 +244,17 @@ fn draw(board: &Board, origin: (u8, u8)) -> Frame {
         frame.rect(px + 3, py + 3, size, size, ink::GULL);
     }
     frame
+}
+
+/// The colour a crab of this kind is drawn in.
+fn crab_ink(kind: CrabKind) -> u8 {
+    match kind {
+        CrabKind::Golden => ink::GOLDEN,
+        CrabKind::Giant => ink::GIANT,
+        CrabKind::Common | CrabKind::Juvenile | CrabKind::Molting | CrabKind::Sparkling => {
+            ink::CRAB
+        }
+    }
 }
 
 /// A creature's position in tile units, its part-way progress included.
@@ -295,6 +318,47 @@ pub fn reel(replay: &Replay) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::sim::{Level, PlayerAction, classic_arena_seeded};
+
+    /// A crab Crab Monopoly is carrying home is still on the reel: where it
+    /// was picked up while it waits, at its keep as it lands.
+    #[test]
+    fn a_swept_crab_stays_on_the_reel_until_it_lands() {
+        let mut board = Board::new(9, 7, 5);
+        board.set_sweep_flight(true);
+        board.set_tile(7, 5, TileKind::Castle(1));
+        board.spawn_crab(
+            1,
+            1,
+            Direction::Down,
+            crate::sim::Handedness::Left,
+            CrabKind::Golden,
+        );
+        board.spawn_crab(
+            2,
+            1,
+            Direction::Down,
+            crate::sim::Handedness::Left,
+            CrabKind::Common,
+        );
+        board.force_tide_event(crate::sim::TideEvent::Monopoly, 1);
+        assert_eq!(board.sweeping().len(), 1, "the golden crab is in the air");
+        let pixel = |frame: &Frame, x: u8, y: u8| {
+            let (px, py) = (
+                u32::from(x) * TILE + TILE / 2,
+                u32::from(y) * TILE + TILE / 2,
+            );
+            frame.pixels[(py * frame.width + px) as usize]
+        };
+        let waiting = draw(&board, (0, 0));
+        assert_eq!(pixel(&waiting, 1, 1), ink::GOLDEN, "where it was picked up");
+        let lands = board.sweeping()[0].lands;
+        while board.ticks() < lands {
+            board.tick_idle();
+        }
+        assert_eq!(board.sweeping().len(), 1, "on its last tick in the air");
+        let landing = draw(&board, (0, 0));
+        assert_eq!(pixel(&landing, 7, 5), ink::GOLDEN, "at the keep");
+    }
 
     /// The reel wears the same flags the match did. It cannot share the
     /// palette outright, that one being `bevy::Color` where this module is
