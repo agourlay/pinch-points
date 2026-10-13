@@ -12,7 +12,9 @@ mod gulls;
 mod sweeps;
 
 pub use crabs::{CrabSprite, interpolate_crabs, sync_crab_sprites};
-pub(crate) use crabs::{body_color, claw_color, mirrored, shade_of, shell_color, sprite_side};
+pub(crate) use crabs::{
+    body_color, claw_color, crab_body, crab_claw, mirrored, shade_of, shell_color, sprite_side,
+};
 pub use gulls::{GullSprite, interpolate_gulls, sync_gull_sprites};
 pub use sweeps::{SweepSprite, draw_sweeps};
 

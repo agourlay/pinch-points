@@ -1,7 +1,7 @@
 //! The crabs a Crab Monopoly sweep carries home, glowing where they were
 //! picked up and then thrown over the beach into the banker's castle.
 
-use super::{Tween, claw_color, mirrored, shade_of, shell_color, smoothing_alpha, sprite_side};
+use super::{Tween, crab_body, crab_claw, shade_of, shell_color, smoothing_alpha, sprite_side};
 use crate::app::art::Art;
 use crate::app::layout;
 use crate::app::palette;
@@ -127,30 +127,15 @@ pub fn draw_sweeps(
         }
         let pos = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
         let side = Vec2::splat(sprite_side(crab.kind));
-        let flip_y = mirrored(crab.handed);
+        let glowing = shell_color(crab.kind, shade_of(crab.id)).mix(&palette::GOLD, glow);
         commands
             .spawn((
                 SweepSprite::new(crab.id, keep_of(board, flight, pos)),
-                Sprite {
-                    image: art.crab.clone(),
-                    color: shell_color(crab.kind, shade_of(crab.id)).mix(&palette::GOLD, glow),
-                    custom_size: Some(side),
-                    flip_y,
-                    ..default()
-                },
+                crab_body(&art, crab.kind, crab.handed, glowing),
                 Transform::from_translation(pos.extend(effects::SWEEP_WAIT_Z))
                     .with_rotation(layout::dir_rotation(crab.dir)),
             ))
-            .with_child((
-                Sprite {
-                    image: art.claw.clone(),
-                    color: claw_color(crab.handed),
-                    custom_size: Some(side),
-                    flip_y,
-                    ..default()
-                },
-                Transform::from_translation(Vec3::new(0.0, 0.0, 0.1)),
-            ));
+            .with_child(crab_claw(&art, crab.handed, side));
     }
 }
 

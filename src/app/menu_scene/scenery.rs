@@ -656,16 +656,7 @@ fn spawn_critter(
         Transform::from_translation(Vec3::new(x, y, z)).with_rotation(rotation),
     ));
     if kind == CritterKind::Crab {
-        critter.with_child((
-            Sprite {
-                image: art.claw.clone(),
-                color: crate::app::creatures::claw_color(handed),
-                custom_size: Some(size),
-                flip_y,
-                ..default()
-            },
-            Transform::from_translation(Vec3::new(0.0, 0.0, 0.01)),
-        ));
+        critter.with_child(crate::app::creatures::crab_claw(art, handed, size));
     }
 }
 

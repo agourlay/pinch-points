@@ -582,9 +582,7 @@ pub fn bank_hop(
     handed: crate::sim::Handedness,
     swept: Option<usize>,
 ) {
-    use crate::app::creatures::{claw_color, mirrored, shade_of, shell_color, sprite_side};
-    let side = Vec2::splat(sprite_side(kind));
-    let flip_y = mirrored(handed);
+    use crate::app::creatures::{crab_body, crab_claw, shade_of, shell_color, sprite_side};
     let shell = shell_color(kind, shade_of(id));
     let hop = match swept {
         None => Hop {
@@ -616,25 +614,10 @@ pub fn bank_hop(
     commands
         .spawn((
             hop,
-            Sprite {
-                image: art.crab.clone(),
-                color: shell,
-                custom_size: Some(side),
-                flip_y,
-                ..default()
-            },
+            crab_body(art, kind, handed, shell),
             Transform::from_translation(from.extend(z)),
         ))
-        .with_child((
-            Sprite {
-                image: art.claw.clone(),
-                color: claw_color(handed),
-                custom_size: Some(side),
-                flip_y,
-                ..default()
-            },
-            Transform::from_translation(Vec3::new(0.0, 0.0, 0.01)),
-        ));
+        .with_child(crab_claw(art, handed, Vec2::splat(sprite_side(kind))));
 }
 
 /// Where a banking crab is, and how big it looks, `progress` of the way
