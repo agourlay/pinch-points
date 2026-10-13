@@ -704,6 +704,10 @@ public, it is kept:
   public, but land on an edge tile the PRNG picks, and a gull on a guessed
   tile is worse than none.
 - **Gull takeoffs** come from the reseeded draw.
+- **A golden crab call** is kept only once it is public (the tick
+  message's `golden_call`, five seconds ahead). The board draws the call
+  long before that, and a lookahead that kept it would show the crab
+  coming out of its hole a minute before any player could know.
 
 The prediction is exact about everything already on the sand, honest
 about when the next crabs come, and silent about the rest, which is what a

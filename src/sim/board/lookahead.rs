@@ -54,13 +54,19 @@ impl Board {
     /// draw rather than the real one. The ambient gull spawner is switched
     /// off, because it lands on a tile the PRNG picks and a gull on a
     /// guessed tile is worse than none. Each gull's takeoff countdown is
-    /// redrawn, since the screen never shows it. Everything already on the
-    /// sand, and every schedule a player can count (spawners fire on
+    /// redrawn, since the screen never shows it. A golden crab called but
+    /// not yet announced is dropped, because the call is drawn a minute
+    /// ahead and told to nobody until [`GOLDEN_NOTICE`]: the copy keeps
+    /// exactly what [`Board::golden_call`] makes public. Everything already
+    /// on the sand, and every schedule a player can count (spawners fire on
     /// `tick % period`), is kept exactly.
     pub fn lookahead(&self, seed: u64) -> Board {
         let mut copy = self.clone();
         copy.rng = Pcg32::new(seed, 0x0005_eaba_55ed);
         copy.rules.gull_period = 0;
+        if self.golden_call().is_none() {
+            copy.golden_call = None;
+        }
         for i in 0..copy.gulls.len() {
             copy.gulls[i].takeoff_in = copy.roll_takeoff();
         }
@@ -104,6 +110,46 @@ mod tests {
         assert_eq!(copy.scores(), board.scores());
         assert_eq!(copy.gull_period(), 0);
         assert!(board.gull_period() > 0);
+    }
+
+    /// A golden crab called a minute ahead is not in the lookahead until
+    /// the board announces it: a bot thinking ahead must not see it come
+    /// out of its hole before a person reading the screen could.
+    #[test]
+    fn a_lookahead_learns_of_a_golden_crab_with_everybody_else() {
+        let mut board = Board::new(9, 7, 11);
+        board.set_tile(1, 1, TileKind::Castle(0));
+        board.set_tile(
+            0,
+            3,
+            TileKind::Spawner(Spawner {
+                dir: Direction::Right,
+                period: 9,
+            }),
+        );
+        board.set_golden_every(600);
+        board.tick_idle();
+        let (at, _) = board.golden_call.expect("called at the stretch's start");
+        assert_eq!(board.golden_call(), None, "not public yet");
+        let goldens = |b: &Board| b.crabs().iter().any(|c| c.kind == CrabKind::Golden);
+        // Far off: the copy has no call and sends out no golden crab, even
+        // run past the tick it was called for.
+        let mut far = board.lookahead(3);
+        assert_eq!(far.golden_call, None);
+        while far.ticks() <= at {
+            far.tick_idle();
+            assert!(!goldens(&far), "seen at {} of {at}", far.ticks());
+        }
+        // Inside the notice the call is public, and the copy keeps it.
+        while board.golden_call().is_none() {
+            board.tick_idle();
+        }
+        let mut near = board.lookahead(3);
+        assert_eq!(near.golden_call(), board.golden_call());
+        while near.ticks() <= at {
+            near.tick_idle();
+        }
+        assert!(goldens(&near), "out where it was called");
     }
 
     #[test]
