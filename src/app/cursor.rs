@@ -19,8 +19,9 @@ pub struct Cursor {
     pub player: u8,
     pub x: u8,
     pub y: u8,
-    /// Hold-to-repeat state (spec §8.4 wants the rates adjustable later).
-    repeat: Timer,
+    /// Hold-to-repeat state for the keyboard (spec §8.4 wants the rates
+    /// adjustable later). A pad keeps its own, see `gamepad::PadRepeat`.
+    repeat: HoldRepeat,
     /// Seconds left of the red denied-placement flash.
     pub flash: f32,
 }
@@ -36,9 +37,57 @@ impl Cursor {
             player,
             x: 0,
             y: 0,
-            repeat: Timer::from_seconds(0.0, TimerMode::Once),
+            repeat: HoldRepeat::default(),
             flash: 0.0,
         }
+    }
+
+    /// Step `dx, dy` tiles, stopping at the board's edge.
+    pub(crate) fn step(&mut self, board: &crate::sim::Board, dx: i16, dy: i16) {
+        self.x = (i16::from(self.x) + dx).clamp(0, i16::from(board.width()) - 1) as u8;
+        self.y = (i16::from(self.y) + dy).clamp(0, i16::from(board.height()) - 1) as u8;
+    }
+}
+
+/// Hold-to-repeat, for a key or a pad direction: one step on the press,
+/// one more once the hold has lasted the delay, then one every interval.
+///
+/// One rule for both inputs, each keeping its own state (the cursor keeps
+/// the keyboard's, a pad's component keeps the pad's), so a key and a
+/// stick held at once do not share a timer.
+#[derive(Default)]
+pub(crate) struct HoldRepeat(Timer);
+
+impl HoldRepeat {
+    /// Whether to step this frame. `just` is a fresh press, `held` any
+    /// press still down; `delay` and `interval` are seconds.
+    ///
+    /// The press itself sets the delay running, and each step after it the
+    /// interval. Kept apart rather than read back off the timer: asking a
+    /// finished Bevy timer whether its elapsed equals its duration says
+    /// yes for every one, since Bevy clamps it, and the pad's hold once
+    /// never got past the first-step delay that way.
+    pub(crate) fn advance(
+        &mut self,
+        just: bool,
+        held: bool,
+        dt: std::time::Duration,
+        delay: f32,
+        interval: f32,
+    ) -> bool {
+        if just {
+            self.0 = Timer::from_seconds(delay, TimerMode::Once);
+            return true;
+        }
+        if !held {
+            return false;
+        }
+        self.0.tick(dt);
+        if !self.0.is_finished() {
+            return false;
+        }
+        self.0 = Timer::from_seconds(interval, TimerMode::Once);
+        true
     }
 }
 
@@ -447,17 +496,13 @@ pub fn move_cursor(
         };
         let any_just = map.moves.iter().any(|(k, ..)| keys.just_pressed(*k));
         let any_held = map.moves.iter().any(|(k, ..)| keys.pressed(*k));
-        let mut step = false;
-        if any_just {
-            step = true;
-            cursor.repeat = Timer::from_seconds(settings.repeat_delay, TimerMode::Once);
-        } else if any_held {
-            cursor.repeat.tick(time.delta());
-            if cursor.repeat.is_finished() {
-                step = true;
-                cursor.repeat = Timer::from_seconds(settings.repeat_interval, TimerMode::Once);
-            }
-        }
+        let step = cursor.repeat.advance(
+            any_just,
+            any_held,
+            time.delta(),
+            settings.repeat_delay,
+            settings.repeat_interval,
+        );
         if step {
             let (mut dx, mut dy) = (0i16, 0i16);
             for (key, kx, ky) in map.moves {
@@ -466,10 +511,7 @@ pub fn move_cursor(
                     dy += ky;
                 }
             }
-            let nx = (i16::from(cursor.x) + dx).clamp(0, i16::from(board.width()) - 1) as u8;
-            let ny = (i16::from(cursor.y) + dy).clamp(0, i16::from(board.height()) - 1) as u8;
-            cursor.x = nx;
-            cursor.y = ny;
+            cursor.step(board, dx, dy);
         }
     }
 }
@@ -505,7 +547,7 @@ mod tests {
                     player,
                     x: 5,
                     y: 4,
-                    repeat: Timer::from_seconds(0.0, TimerMode::Once),
+                    repeat: HoldRepeat::default(),
                     flash: 0.0,
                 },
                 Transform::default(),
@@ -765,7 +807,7 @@ mod tests {
                 player: 3,
                 x: 5,
                 y: 4,
-                repeat: Timer::from_seconds(0.0, TimerMode::Once),
+                repeat: HoldRepeat::default(),
                 flash: 0.0,
             },
             Transform::default(),

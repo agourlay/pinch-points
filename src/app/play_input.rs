@@ -9,8 +9,95 @@
 use crate::app::cursor::{Cursor, FLASH_SECS, keymap};
 use crate::app::settings::{CommitScheme, GameSettings};
 use crate::app::{Campaign, LoadLevel, PendingActions, Phase, PlacementDenied, Screen, Sim};
-use crate::sim::PlayerAction;
+use crate::sim::{Board, Direction, PlayerAction};
 use bevy::prelude::*;
+
+/// What a press asks of the seat a cursor plays for, whichever hands it
+/// came from. The keyboard and the pad each translate their own presses
+/// into these, and one place says what each means, in a puzzle's setup
+/// ([`apply_setup`]) and in a versus round ([`queue_versus`]). Which press
+/// counts (a fresh one, or one held down) is the translator's call.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SeatCommand {
+    /// A signpost pointing this way, on the cursor's tile.
+    Place(Direction),
+    /// The signpost on the cursor's tile taken up.
+    Remove,
+    /// Every signpost of the seat's taken up.
+    ClearAll,
+    /// The run begun. A puzzle's setup only: a versus round is already
+    /// running.
+    Start,
+}
+
+/// A command in a puzzle's setup, straight onto the still board: the one
+/// seat's arrows, whichever hands are placing them (see `Coop`).
+pub fn apply_setup(
+    command: SeatCommand,
+    hand: &mut Cursor,
+    sim: &mut Sim,
+    next_phase: &mut NextState<Phase>,
+    denied: &mut MessageWriter<PlacementDenied>,
+) {
+    match command {
+        SeatCommand::Place(dir) => {
+            // CapPolicy::Reject enforces the inventory; surface the
+            // no-op, and say which no it was.
+            let spent = sim.0.out_of_signposts(0, hand.x, hand.y);
+            if !sim.0.place_signpost(0, hand.x, hand.y, dir) {
+                hand.flash = FLASH_SECS;
+                denied.write(PlacementDenied {
+                    player: 0,
+                    out_of_signposts: spent,
+                });
+            }
+        }
+        SeatCommand::Remove => {
+            let _ = sim.0.remove_signpost(0, hand.x, hand.y);
+        }
+        SeatCommand::ClearAll => clear_setup(sim),
+        SeatCommand::Start => next_phase.set(Phase::Running),
+    }
+}
+
+/// A command in a versus round, queued for the next tick as the cursor's
+/// seat's one action (spec §7.6): a later command in the same window
+/// overwrites the earlier one. A placement the board would refuse is not
+/// queued; the cursor flashes and the refusal is said instead.
+pub fn queue_versus(
+    command: SeatCommand,
+    cursor: &mut Cursor,
+    board: &Board,
+    pending: &mut PendingActions,
+    denied: &mut MessageWriter<PlacementDenied>,
+) {
+    // Online or not, a cursor carries the seat it places for: online
+    // spawns one cursor and gives it the local seat.
+    let seat = cursor.player;
+    let (x, y) = (cursor.x, cursor.y);
+    let action = match command {
+        SeatCommand::Place(dir) => {
+            if !board.can_place_signpost(seat, x, y) {
+                cursor.flash = FLASH_SECS;
+                denied.write(PlacementDenied {
+                    player: seat,
+                    out_of_signposts: board.out_of_signposts(seat, x, y),
+                });
+                return;
+            }
+            PlayerAction::Place { x, y, dir }
+        }
+        SeatCommand::Remove => PlayerAction::Remove { x, y },
+        // Clear-all: one removal per tick until none remain, staying
+        // inside the one-action-per-tick input model.
+        SeatCommand::ClearAll => match board.first_signpost_of(seat) {
+            Some((x, y)) => PlayerAction::Remove { x, y },
+            None => return,
+        },
+        SeatCommand::Start => return,
+    };
+    pending.0[usize::from(seat)] = action;
+}
 
 /// Puzzle setup phase: spend the inventory directly on the board, and
 /// Enter to run. N/P, which jump between levels, are [`browse_levels`].
@@ -35,29 +122,26 @@ pub fn setup_input(
     };
     for mut hand in cursors.iter_mut().filter(|c| c.player < 2) {
         let map = keymap(&settings, hand.player, commit);
-        for (key, dir) in map.places {
-            if keys.just_pressed(key) {
-                // CapPolicy::Reject enforces the inventory; surface the
-                // no-op, and say which no it was.
-                let spent = sim.0.out_of_signposts(0, hand.x, hand.y);
-                if !sim.0.place_signpost(0, hand.x, hand.y, dir) {
-                    hand.flash = FLASH_SECS;
-                    denied.write(PlacementDenied {
-                        player: 0,
-                        out_of_signposts: spent,
-                    });
-                }
-            }
-        }
-        if keys.just_pressed(map.remove) {
-            let _ = sim.0.remove_signpost(0, hand.x, hand.y);
-        }
-        if keys.just_pressed(map.clear_all) {
-            clear_setup(&mut sim);
+        let places = map
+            .places
+            .into_iter()
+            .filter(|(key, _)| keys.just_pressed(*key));
+        let commands = places
+            .map(|(_, dir)| SeatCommand::Place(dir))
+            .chain(keys.just_pressed(map.remove).then_some(SeatCommand::Remove))
+            .chain(
+                keys.just_pressed(map.clear_all)
+                    .then_some(SeatCommand::ClearAll),
+            );
+        for command in commands {
+            apply_setup(command, &mut hand, &mut sim, &mut next_phase, &mut denied);
         }
     }
-    if keys.just_pressed(KeyCode::Enter) && cursors.iter().any(|c| c.player == 0) {
-        next_phase.set(Phase::Running);
+    if keys.just_pressed(KeyCode::Enter)
+        && let Some(mut hand) = cursors.iter_mut().find(|c| c.player == 0)
+    {
+        let start = SeatCommand::Start;
+        apply_setup(start, &mut hand, &mut sim, &mut next_phase, &mut denied);
     }
 }
 
@@ -191,7 +275,6 @@ pub fn versus_input(
     // online session or truncated replay).
     let board = &sim.0;
     for mut cursor in &mut cursors {
-        let p = cursor.player as usize;
         // Online: whatever your seat, your hands are on the primary layout.
         // Local: the keyboard seats two; pads drive seats 3 and up.
         let map = if online.0.is_some() {
@@ -201,38 +284,18 @@ pub fn versus_input(
         } else {
             continue;
         };
-        // Online or not, a cursor carries the seat it places for: online
-        // spawns one cursor and gives it the local seat.
-        let seat = cursor.player;
-        for (key, dir) in map.places {
-            if keys.just_pressed(key) {
-                if !board.can_place_signpost(seat, cursor.x, cursor.y) {
-                    cursor.flash = FLASH_SECS;
-                    denied.write(PlacementDenied {
-                        player: seat,
-                        out_of_signposts: board.out_of_signposts(seat, cursor.x, cursor.y),
-                    });
-                    continue;
-                }
-                pending.0[p] = PlayerAction::Place {
-                    x: cursor.x,
-                    y: cursor.y,
-                    dir,
-                };
-            }
-        }
-        if keys.just_pressed(map.remove) {
-            pending.0[p] = PlayerAction::Remove {
-                x: cursor.x,
-                y: cursor.y,
-            };
-        }
-        // Clear-all: queue one removal per tick until none remain, staying
-        // inside the one-action-per-tick input model.
-        if keys.pressed(map.clear_all)
-            && let Some((x, y)) = board.first_signpost_of(cursor.player)
-        {
-            pending.0[p] = PlayerAction::Remove { x, y };
+        // Clear-all is read held, not pressed: it queues one removal a
+        // tick for as long as the key is down.
+        let places = map
+            .places
+            .into_iter()
+            .filter(|(key, _)| keys.just_pressed(*key));
+        let commands = places
+            .map(|(_, dir)| SeatCommand::Place(dir))
+            .chain(keys.just_pressed(map.remove).then_some(SeatCommand::Remove))
+            .chain(keys.pressed(map.clear_all).then_some(SeatCommand::ClearAll));
+        for command in commands {
+            queue_versus(command, &mut cursor, board, &mut pending, &mut denied);
         }
     }
 }

@@ -18,15 +18,21 @@ pub use bridge::{Bridged, pad_bridge_release, pad_menu_bridge};
 pub use rumble::rumble_on_raid;
 pub use seats::{PadSeats, keep_pad_order, pad_claim_seats};
 
-use crate::app::cursor::Cursor;
+use crate::app::cursor::{Cursor, HoldRepeat};
+use crate::app::play_input::{SeatCommand, apply_setup, queue_versus};
 use crate::app::settings::GameSettings;
 use crate::app::{PendingActions, Phase, PlacementDenied, Sim};
-use crate::sim::{Direction, PlayerAction};
+use crate::sim::Direction;
 use bevy::prelude::*;
 
-/// Per-cursor repeat timer for held pad directions.
-#[derive(Component)]
-pub struct PadRepeat(Timer);
+/// Per-cursor hold-to-repeat for held pad directions, and whether a
+/// direction was held last frame, which makes this frame's a fresh press
+/// or not: the stick has no `just_pressed` of its own.
+#[derive(Component, Default)]
+pub struct PadRepeat {
+    repeat: HoldRepeat,
+    held: bool,
+}
 
 /// The four commit directions in face-button diamond order.
 const PLACES: [(GamepadButton, Direction); 4] = [
@@ -35,6 +41,18 @@ const PLACES: [(GamepadButton, Direction); 4] = [
     (GamepadButton::West, Direction::Left),
     (GamepadButton::East, Direction::Right),
 ];
+
+/// The pad's fresh presses that mean the same in setup and in versus: a
+/// face button places, L1 removes. R1 and Start are read by each mode.
+fn pad_commands(pad: &Gamepad) -> impl Iterator<Item = SeatCommand> + '_ {
+    let places = PLACES
+        .into_iter()
+        .filter(|(button, _)| pad.just_pressed(*button));
+    places.map(|(_, dir)| SeatCommand::Place(dir)).chain(
+        pad.just_pressed(GamepadButton::LeftTrigger)
+            .then_some(SeatCommand::Remove),
+    )
+}
 
 fn held_direction(pad: &Gamepad, deadzone: f32) -> (i16, i16) {
     let mut dx = 0i16;
@@ -88,37 +106,21 @@ pub fn pad_move_cursor(
         };
         let (dx, dy) = held_direction(pad, deadzone);
         let Some(mut repeat) = repeat else {
-            commands
-                .entity(entity)
-                .insert(PadRepeat(Timer::from_seconds(0.0, TimerMode::Once)));
+            commands.entity(entity).insert(PadRepeat::default());
             continue;
         };
-        if dx == 0 && dy == 0 {
-            // Released: next press steps immediately.
-            repeat.0 = Timer::from_seconds(0.0, TimerMode::Once);
-            continue;
+        let held = dx != 0 || dy != 0;
+        let just = held && !repeat.held;
+        repeat.held = held;
+        if repeat.repeat.advance(
+            just,
+            held,
+            time.delta(),
+            settings.repeat_delay,
+            settings.repeat_interval,
+        ) {
+            cursor.step(board, dx, dy);
         }
-        repeat.0.tick(time.delta());
-        if !repeat.0.is_finished() {
-            continue;
-        }
-        // The zero-length timer is the one a fresh press starts on. Asking
-        // whether elapsed equals duration says yes for every finished timer,
-        // since Bevy clamps a finished one, so the hold never gets past the
-        // first-step delay.
-        let first_step = repeat.0.duration().is_zero();
-        repeat.0 = Timer::from_seconds(
-            if first_step {
-                settings.repeat_delay
-            } else {
-                settings.repeat_interval
-            },
-            TimerMode::Once,
-        );
-        let nx = (i16::from(cursor.x) + dx).clamp(0, i16::from(board.width()) - 1) as u8;
-        let ny = (i16::from(cursor.y) + dy).clamp(0, i16::from(board.height()) - 1) as u8;
-        cursor.x = nx;
-        cursor.y = ny;
     }
 }
 
@@ -139,34 +141,14 @@ pub fn pad_versus_input(
         let Some(pad) = seats.pad_for(&pads, &settings, &players, cursor.player) else {
             continue;
         };
-        let p = cursor.player as usize;
-        for (button, dir) in PLACES {
-            if pad.just_pressed(button) {
-                if !board.can_place_signpost(cursor.player, cursor.x, cursor.y) {
-                    cursor.flash = 0.25;
-                    denied.write(PlacementDenied {
-                        player: cursor.player,
-                        out_of_signposts: board.out_of_signposts(cursor.player, cursor.x, cursor.y),
-                    });
-                    continue;
-                }
-                pending.0[p] = PlayerAction::Place {
-                    x: cursor.x,
-                    y: cursor.y,
-                    dir,
-                };
-            }
-        }
-        if pad.just_pressed(GamepadButton::LeftTrigger) {
-            pending.0[p] = PlayerAction::Remove {
-                x: cursor.x,
-                y: cursor.y,
-            };
-        }
-        if pad.pressed(GamepadButton::RightTrigger)
-            && let Some((x, y)) = board.first_signpost_of(cursor.player)
-        {
-            pending.0[p] = PlayerAction::Remove { x, y };
+        // R1 clears held, as the keyboard's clear-all does: one removal
+        // a tick for as long as it is down.
+        let commands = pad_commands(pad).chain(
+            pad.pressed(GamepadButton::RightTrigger)
+                .then_some(SeatCommand::ClearAll),
+        );
+        for command in commands {
+            queue_versus(command, &mut cursor, board, &mut pending, &mut denied);
         }
     }
 }
@@ -192,26 +174,74 @@ pub fn pad_setup_input(
         let Some(pad) = seats.pad_for(&pads, &settings, &players, cursor.player) else {
             continue;
         };
-        for (button, dir) in PLACES {
-            if pad.just_pressed(button) {
-                let spent = sim.0.out_of_signposts(0, cursor.x, cursor.y);
-                if !sim.0.place_signpost(0, cursor.x, cursor.y, dir) {
-                    cursor.flash = 0.25;
-                    denied.write(PlacementDenied {
-                        player: 0,
-                        out_of_signposts: spent,
-                    });
-                }
+        // The board is still, so R1 clears on the press, all at once.
+        let commands = pad_commands(pad)
+            .chain(
+                pad.just_pressed(GamepadButton::RightTrigger)
+                    .then_some(SeatCommand::ClearAll),
+            )
+            .chain(
+                pad.just_pressed(GamepadButton::Start)
+                    .then_some(SeatCommand::Start),
+            );
+        for command in commands {
+            apply_setup(command, &mut cursor, &mut sim, &mut next_phase, &mut denied);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// A held d-pad steps on the press, again once the delay is out, and
+    /// then at the faster interval. The pad's hold once stalled at the
+    /// first-step delay for good, every step waiting as long as the first.
+    #[test]
+    fn a_held_pad_direction_gets_past_the_first_delay() {
+        let mut app = App::new();
+        app.insert_resource(Sim(crate::sim::Board::new(12, 9, 1)));
+        app.insert_resource(GameSettings {
+            repeat_delay: 0.28,
+            repeat_interval: 0.09,
+            ..GameSettings::default()
+        });
+        app.init_resource::<PadSeats>();
+        app.init_resource::<Time>();
+        app.world_mut().spawn(Cursor::seated(0));
+        let pad = app.world_mut().spawn(Gamepad::default()).id();
+        app.add_systems(Update, pad_move_cursor);
+        let frame = |app: &mut App, secs: f32| {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_secs_f32(secs));
+            app.update();
+            let world = app.world_mut();
+            world
+                .query::<&Cursor>()
+                .single(world)
+                .expect("one cursor")
+                .x
+        };
+        let dpad = |app: &mut App, down: bool| {
+            let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("the pad");
+            match down {
+                true => gamepad.digital_mut().press(GamepadButton::DPadRight),
+                false => gamepad.digital_mut().release(GamepadButton::DPadRight),
             }
-        }
-        if pad.just_pressed(GamepadButton::LeftTrigger) {
-            let _ = sim.0.remove_signpost(0, cursor.x, cursor.y);
-        }
-        if pad.just_pressed(GamepadButton::RightTrigger) {
-            crate::app::play_input::clear_setup(&mut sim);
-        }
-        if pad.just_pressed(GamepadButton::Start) {
-            next_phase.set(Phase::Running);
-        }
+        };
+        // The first frame only fits the cursor with its repeat state.
+        assert_eq!(frame(&mut app, 0.0), 0);
+        dpad(&mut app, true);
+        assert_eq!(frame(&mut app, 0.01), 1, "the press steps at once");
+        assert_eq!(frame(&mut app, 0.1), 1, "then waits out the delay");
+        assert_eq!(frame(&mut app, 0.2), 2, "and steps when it is out");
+        assert_eq!(frame(&mut app, 0.1), 3, "then at the interval");
+        assert_eq!(frame(&mut app, 0.1), 4);
+        dpad(&mut app, false);
+        assert_eq!(frame(&mut app, 0.1), 4, "let go, it stops");
+        dpad(&mut app, true);
+        assert_eq!(frame(&mut app, 0.01), 5, "and a new press steps at once");
     }
 }
