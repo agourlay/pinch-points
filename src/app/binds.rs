@@ -48,6 +48,29 @@ impl Action {
             .position(|&a| a == self)
             .expect("every action is in ALL")
     }
+
+    /// What the action is for, which is the group the controls screen
+    /// lists it under.
+    pub fn group(self) -> ActionGroup {
+        match self {
+            Action::MoveUp | Action::MoveDown | Action::MoveLeft | Action::MoveRight => {
+                ActionGroup::Move
+            }
+            Action::PlaceUp | Action::PlaceDown | Action::PlaceLeft | Action::PlaceRight => {
+                ActionGroup::Place
+            }
+            Action::Remove | Action::ClearAll => ActionGroup::Posts,
+        }
+    }
+}
+
+/// The kinds of thing an action does: walk the cursor, put an arrow down,
+/// or clear up after them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ActionGroup {
+    Move,
+    Place,
+    Posts,
 }
 
 pub const ACTIONS: usize = Action::ALL.len();

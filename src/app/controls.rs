@@ -10,7 +10,7 @@
 //! move.
 
 use crate::app::Screen;
-use crate::app::binds::{self, Action, BOUND_SEATS, SeatBinds};
+use crate::app::binds::{self, Action, ActionGroup, BOUND_SEATS, SeatBinds};
 use crate::app::cycle::Turn;
 use crate::app::i18n::fill;
 use crate::app::menu_ui::{self, Half};
@@ -20,12 +20,27 @@ use bevy::prelude::*;
 
 /// Rows: the seat picker, then one per action, then reset-to-defaults.
 const ROWS: usize = 2 + binds::ACTIONS;
-const SEAT_ROW: usize = 0;
-const RESET_ROW: usize = ROWS - 1;
 
-/// Which row a list index is.
-fn action_at(row: usize) -> Option<Action> {
-    (row > SEAT_ROW && row < RESET_ROW).then(|| Action::ALL[row - 1])
+/// What a row of the list is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ControlsLine {
+    /// The seat picker, first.
+    Seat,
+    /// One action's key, in [`Action::ALL`] order.
+    Bind(Action),
+    /// Reset-to-defaults, last.
+    Reset,
+}
+
+impl ControlsLine {
+    /// The line at list index `row`.
+    fn at(row: usize) -> ControlsLine {
+        match row {
+            0 => ControlsLine::Seat,
+            row if row <= binds::ACTIONS => ControlsLine::Bind(Action::ALL[row - 1]),
+            _ => ControlsLine::Reset,
+        }
+    }
 }
 
 #[derive(Resource, Default)]
@@ -62,17 +77,28 @@ const VALUE_W: f32 = 280.0;
 /// The row font, which the measurement has to be taken at.
 const ROW_FONT: f32 = 19.0;
 
-/// Where a heading falls, and which one: before the seat picker, before
-/// the movement keys, before the placement keys, and before the two that
-/// clear up after them.
+/// Where a heading falls, and which one: before the seat picker, and
+/// before the first action of each group (the movement keys, the placement
+/// keys, and the two that clear up after them). Read off the actions'
+/// groups, so a key added to a group lands under its heading.
 fn heading_before(row: usize, tr: &crate::app::i18n::Tr) -> Option<&'static str> {
-    match row {
-        SEAT_ROW => Some(tr.ctl_group_seat),
-        1 => Some(tr.ctl_group_move),
-        5 => Some(tr.ctl_group_place),
-        9 => Some(tr.ctl_group_posts),
-        _ => None,
+    let group = match ControlsLine::at(row) {
+        ControlsLine::Seat => return Some(tr.ctl_group_seat),
+        ControlsLine::Reset => return None,
+        ControlsLine::Bind(action) => action.group(),
+    };
+    let continues = matches!(
+        ControlsLine::at(row - 1),
+        ControlsLine::Bind(above) if above.group() == group
+    );
+    if continues {
+        return None;
     }
+    Some(match group {
+        ActionGroup::Move => tr.ctl_group_move,
+        ActionGroup::Place => tr.ctl_group_place,
+        ActionGroup::Posts => tr.ctl_group_posts,
+    })
 }
 
 pub fn enter_controls(
@@ -80,7 +106,7 @@ pub fn enter_controls(
     settings: Res<GameSettings>,
     mut menu: ResMut<ControlsMenu>,
 ) {
-    menu.selected = SEAT_ROW;
+    menu.selected = 0;
     menu.capturing = None;
     menu.feedback.clear();
     let tr = settings.tr();
@@ -90,7 +116,7 @@ pub fn enter_controls(
             wrap.spawn(menu_ui::screen_card()).with_children(|card| {
                 for row in 0..ROWS {
                     if let Some(heading) = heading_before(row, tr) {
-                        card.spawn(menu_ui::heading(heading, row == SEAT_ROW));
+                        card.spawn(menu_ui::heading(heading, row == 0));
                     }
                     card.spawn((ControlsRow(row), menu_ui::card_row()))
                         .with_children(|line| {
@@ -182,14 +208,14 @@ pub fn controls_input(
         return;
     }
     if menu_ui::enter(&keys) {
-        match menu.selected {
-            RESET_ROW => {
+        match ControlsLine::at(menu.selected) {
+            ControlsLine::Reset => {
                 settings.binds = binds::default_binds();
                 menu.feedback.clear();
             }
-            SEAT_ROW => menu.seat = (menu.seat + 1) % BOUND_SEATS,
-            row => {
-                menu.capturing = action_at(row);
+            ControlsLine::Seat => menu.seat = (menu.seat + 1) % BOUND_SEATS,
+            ControlsLine::Bind(action) => {
+                menu.capturing = Some(action);
                 menu.feedback = tr.ctl_press_key.to_string();
             }
         }
@@ -197,7 +223,7 @@ pub fn controls_input(
     }
     menu.selected = menu_ui::nav(&keys, menu.selected, ROWS);
     if let Some(turn) = menu_ui::left_right(&keys)
-        && menu.selected == SEAT_ROW
+        && ControlsLine::at(menu.selected) == ControlsLine::Seat
     {
         let step = match turn {
             Turn::Right => 1,
@@ -219,8 +245,8 @@ pub fn update_controls_ui(
     let seat_label = crate::app::seat_label(tr, menu.seat as u8);
     for (cell, mut text, mut color) in &mut cells {
         let picked = cell.0 == menu.selected;
-        let (label, value) = match cell.0 {
-            SEAT_ROW => (
+        let (label, value) = match ControlsLine::at(cell.0) {
+            ControlsLine::Seat => (
                 tr.ctl_seat.to_string(),
                 if picked {
                     format!("< {seat_label} >")
@@ -228,9 +254,8 @@ pub fn update_controls_ui(
                     seat_label.clone()
                 },
             ),
-            RESET_ROW => (tr.ctl_reset.to_string(), tr.ctl_reset_key.to_string()),
-            index => {
-                let action = Action::ALL[index - 1];
+            ControlsLine::Reset => (tr.ctl_reset.to_string(), tr.ctl_reset_key.to_string()),
+            ControlsLine::Bind(action) => {
                 let key = settings.binds[menu.seat].key(action);
                 // The row being captured shows the prompt in place of its
                 // key, so it is obvious which one is listening.
@@ -265,10 +290,32 @@ mod tests {
 
     #[test]
     fn rows_line_up_with_the_actions() {
-        assert_eq!(action_at(SEAT_ROW), None);
-        assert_eq!(action_at(RESET_ROW), None);
-        assert_eq!(action_at(1), Some(Action::MoveUp));
-        assert_eq!(action_at(ROWS - 2), Some(Action::ClearAll));
+        assert_eq!(ControlsLine::at(0), ControlsLine::Seat);
+        assert_eq!(ControlsLine::at(ROWS - 1), ControlsLine::Reset);
+        assert_eq!(ControlsLine::at(1), ControlsLine::Bind(Action::MoveUp));
+        assert_eq!(
+            ControlsLine::at(ROWS - 2),
+            ControlsLine::Bind(Action::ClearAll)
+        );
+    }
+
+    /// A heading over the seat picker and over the first key of each
+    /// group, and nowhere else.
+    #[test]
+    fn each_group_is_headed_once() {
+        let tr = &crate::app::i18n::EN;
+        let headed: Vec<(usize, &str)> = (0..ROWS)
+            .filter_map(|row| heading_before(row, tr).map(|heading| (row, heading)))
+            .collect();
+        assert_eq!(
+            headed,
+            vec![
+                (0, tr.ctl_group_seat),
+                (1, tr.ctl_group_move),
+                (5, tr.ctl_group_place),
+                (9, tr.ctl_group_posts),
+            ]
+        );
     }
 
     /// Every string a cell can hold, at the row font, in every language,
