@@ -104,9 +104,30 @@ impl Beacon {
 /// still reads the first seven bytes as the announcement they are: an old
 /// listener ignores the tail, and a new one reads a short beacon as an
 /// unnamed open beach, as such a build meant by it.
-pub(super) const BEACON_OPEN: u8 = 0;
-pub(super) const BEACON_CLOSING: u8 = 1;
-pub(super) const BEACON_RUNNING: u8 = 2;
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub(super) enum Kind {
+    /// A beach gathering a table: [`Announcer::announce`].
+    Open = 0,
+    /// A beach going away: [`Announcer::closing`].
+    Closing = 1,
+    /// A beach whose round has begun: [`Announcer::running`].
+    Running = 2,
+}
+
+impl Kind {
+    /// The kind a byte names, or `None` for one no build has sent, which
+    /// a listener reads as open, as it reads a beacon with no kind at all.
+    fn from_byte(byte: u8) -> Option<Kind> {
+        match byte {
+            0 => Some(Kind::Open),
+            1 => Some(Kind::Closing),
+            2 => Some(Kind::Running),
+            _ => None,
+        }
+    }
+}
+
 pub(super) const BEACON_NAME_AT: usize = 8;
 pub(super) const BEACON_TAKEN_AT: usize = BEACON_NAME_AT + WIRE_NAME;
 pub(super) const BEACON_SEATS_AT: usize = BEACON_TAKEN_AT + 1;
@@ -195,17 +216,86 @@ pub(super) fn wide_ports(round: u32, farewell: bool) -> &'static [u16] {
 /// `read` is the reader the field takes: [`beach_name_from_wire`] for the
 /// beach, whose cap is its whole slot, and [`name_from_wire`] for its host,
 /// a player's name like any other.
-pub(super) fn beacon_name(
-    buf: &[u8],
-    len: usize,
-    at: usize,
-    read: fn(&WireName) -> String,
-) -> String {
-    buf.get(at..at + WIRE_NAME)
-        .filter(|_| len >= at + WIRE_NAME)
+fn beacon_name(packet: &[u8], at: usize, read: fn(&WireName) -> String) -> String {
+    packet
+        .get(at..at + WIRE_NAME)
         .and_then(|bytes| WireName::try_from(bytes).ok())
         .map(|wire| read(&wire))
         .unwrap_or_default()
+}
+
+/// One beacon's bytes: the game port the announcer stands behind, and
+/// what it says about the beach there.
+fn encode(game_port: u16, kind: Kind, id: u64, on_air: OnAir<'_>) -> Vec<u8> {
+    let OnAir {
+        name,
+        host,
+        taken,
+        seats,
+        bots,
+        full,
+    } = on_air;
+    let mut packet = ANNOUNCE_MAGIC.to_vec();
+    packet.extend_from_slice(&game_port.to_le_bytes());
+    packet.push(kind as u8);
+    packet.extend_from_slice(&wire_name(name));
+    packet.push(taken);
+    packet.push(seats);
+    packet.extend_from_slice(&id.to_le_bytes());
+    packet.extend_from_slice(&wire_name(host));
+    packet.push(u8::from(bots) | (u8::from(full) << 1));
+    debug_assert_eq!(packet.len(), BEACON_BYTES);
+    packet
+}
+
+/// A beacon read back: the game port it carries, and what it says, or
+/// `None` for a datagram that is not one of ours.
+///
+/// Read from exactly the bytes that arrived, never from a whole receive
+/// buffer: the buffer is reused for every datagram of a drain, so a field
+/// read past the end of a short beacon is a field of whatever came before
+/// it. A pre-farewell beacon behind a running one was once listed as in
+/// progress and unjoinable that way. Every field a packet is too short to
+/// carry reads as absent here instead.
+pub(super) fn decode(packet: &[u8]) -> Option<(u16, Beacon)> {
+    let port = packet
+        .get(5..7)
+        .filter(|_| packet.starts_with(ANNOUNCE_MAGIC))?;
+    let game_port = u16::from_le_bytes([port[0], port[1]]);
+    // Zero from a build that sent no id, which keys by address as it
+    // always did.
+    let id = packet
+        .get(BEACON_ID_AT..BEACON_TABLE_BYTES)
+        .map_or(0, |id| {
+            u64::from_le_bytes(id.try_into().expect("eight bytes"))
+        });
+    // No kind byte means a build from before farewells, whose exits are
+    // still caught by the timeout.
+    let kind = packet.get(7).and_then(|&byte| Kind::from_byte(byte));
+    let beacon = match kind {
+        Some(Kind::Closing) => Beacon::Closing { id },
+        kind => {
+            // Occupancy is the last thing appended, so a beacon too short
+            // to carry it reads as a table of unknown size, shown as open
+            // and never as full.
+            let (taken, seats) = match packet.len() >= BEACON_TABLE_BYTES {
+                true => (packet[BEACON_TAKEN_AT], packet[BEACON_SEATS_AT]),
+                false => (0, 0),
+            };
+            let flags = packet.get(BEACON_BOTS_AT).copied().unwrap_or(0);
+            Beacon::Here {
+                id,
+                name: beacon_name(packet, BEACON_NAME_AT, beach_name_from_wire),
+                host: beacon_name(packet, BEACON_HOST_AT, name_from_wire),
+                taken,
+                seats,
+                running: kind == Some(Kind::Running),
+                bots: flags & 1 != 0,
+                full: flags & 2 != 0,
+            }
+        }
+    };
+    Some((game_port, beacon))
 }
 
 /// What a beacon has to say about the beach it names: what it is called,
@@ -261,55 +351,7 @@ impl Discovery {
         loop {
             match self.socket.recv_from(&mut buf) {
                 Ok((len, from)) => {
-                    if len >= 7 && &buf[..5] == ANNOUNCE_MAGIC {
-                        let game_port = u16::from_le_bytes([buf[5], buf[6]]);
-                        // No kind byte means a build from before farewells,
-                        // whose exits are still caught by the timeout.
-                        // Zero from a build that sent no id, which keys by
-                        // address as it always did.
-                        let id = match len >= BEACON_TABLE_BYTES {
-                            true => u64::from_le_bytes(
-                                buf[BEACON_ID_AT..BEACON_TABLE_BYTES]
-                                    .try_into()
-                                    .expect("eight bytes"),
-                            ),
-                            false => 0,
-                        };
-                        // The kind, and only from a packet that reached the
-                        // byte it lives in. `buf` is reused for every
-                        // datagram of the drain, so byte 7 of a beacon too
-                        // short to have one is byte 7 of whatever came
-                        // before it: a pre-farewell beacon behind a running
-                        // one was listed as in progress and unjoinable.
-                        let kind = (len >= 8).then(|| buf[7]);
-                        let beacon = match kind {
-                            Some(BEACON_CLOSING) => Beacon::Closing { id },
-                            kind => {
-                                // Occupancy is the last thing appended, so a
-                                // beacon too short to carry it reads as a
-                                // table of unknown size, shown as open and
-                                // never as full.
-                                let (taken, seats) = match len >= BEACON_TABLE_BYTES {
-                                    true => (buf[BEACON_TAKEN_AT], buf[BEACON_SEATS_AT]),
-                                    false => (0, 0),
-                                };
-                                Beacon::Here {
-                                    id,
-                                    name: beacon_name(
-                                        &buf,
-                                        len,
-                                        BEACON_NAME_AT,
-                                        beach_name_from_wire,
-                                    ),
-                                    host: beacon_name(&buf, len, BEACON_HOST_AT, name_from_wire),
-                                    taken,
-                                    seats,
-                                    running: kind == Some(BEACON_RUNNING),
-                                    bots: len > BEACON_BOTS_AT && buf[BEACON_BOTS_AT] & 1 != 0,
-                                    full: len > BEACON_BOTS_AT && buf[BEACON_BOTS_AT] & 2 != 0,
-                                }
-                            }
-                        };
+                    if let Some((game_port, beacon)) = decode(&buf[..len]) {
                         let mut host = from;
                         host.set_port(game_port);
                         out.push((host, beacon));
@@ -421,14 +463,14 @@ impl Announcer {
     /// several beaches readable: an address says which machine, never whose
     /// game.
     pub fn announce(&self, game_port: u16, on_air: OnAir<'_>) {
-        self.beacon(game_port, BEACON_OPEN, on_air, 1);
+        self.beacon(game_port, Kind::Open, on_air, 1);
     }
 
     /// "That game has begun, and this is how full it is." A running beach
     /// stays on the air so a player can see it and queue for the next round
     /// rather than finding nothing and assuming the network is broken.
     pub fn running(&self, game_port: u16, on_air: OnAir<'_>) {
-        self.beacon(game_port, BEACON_RUNNING, on_air, 1);
+        self.beacon(game_port, Kind::Running, on_air, 1);
     }
 
     /// "That game is over." Sent when the host stops hosting: leaves the
@@ -443,36 +485,14 @@ impl Announcer {
     pub fn closing(&self, game_port: u16) {
         // Nameless and tableless: a farewell is matched by the announcer's
         // id, and the beach it names is about to stop existing anyway.
-        self.beacon(
-            game_port,
-            BEACON_CLOSING,
-            OnAir::default(),
-            FAREWELL_REPEATS,
-        );
+        self.beacon(game_port, Kind::Closing, OnAir::default(), FAREWELL_REPEATS);
     }
 
     /// To the whole LAN, to this machine's own network by name, and to
     /// localhost (loopback testing; real broadcast does not always loop
     /// back), on every lobby port.
-    fn beacon(&self, game_port: u16, kind: u8, on_air: OnAir<'_>, times: usize) {
-        let OnAir {
-            name,
-            host,
-            taken,
-            seats,
-            bots,
-            full,
-        } = on_air;
-        let mut packet = ANNOUNCE_MAGIC.to_vec();
-        packet.extend_from_slice(&game_port.to_le_bytes());
-        packet.push(kind);
-        packet.extend_from_slice(&wire_name(name));
-        packet.push(taken);
-        packet.push(seats);
-        packet.extend_from_slice(&self.id.to_le_bytes());
-        packet.extend_from_slice(&wire_name(host));
-        packet.push(u8::from(bots) | (u8::from(full) << 1));
-        debug_assert_eq!(packet.len(), BEACON_BYTES);
+    fn beacon(&self, game_port: u16, kind: Kind, on_air: OnAir<'_>, times: usize) {
+        let packet = encode(game_port, kind, self.id, on_air);
         let round = self.sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let wide = wide_ports(round, times > 1);
         let subnet = self.subnet(round);
@@ -678,6 +698,42 @@ mod tests {
         assert_ne!(a.id, b.id, "same reading, different beaches");
     }
 
+    /// What the announcer writes is what a listener reads: every field,
+    /// both flags, and a farewell as a farewell.
+    #[test]
+    fn a_beacon_reads_back_as_it_was_written() {
+        let on_air = OnAir {
+            name: "Room 3",
+            host: "Anna",
+            taken: 2,
+            seats: 6,
+            bots: true,
+            full: true,
+        };
+        assert_eq!(
+            decode(&encode(48125, Kind::Running, 0x5EA5, on_air)),
+            Some((
+                48125,
+                Beacon::Here {
+                    id: 0x5EA5,
+                    name: "Room 3".to_string(),
+                    host: "Anna".to_string(),
+                    taken: 2,
+                    seats: 6,
+                    running: true,
+                    bots: true,
+                    full: true,
+                }
+            ))
+        );
+        assert_eq!(
+            decode(&encode(48125, Kind::Closing, 9, OnAir::default())),
+            Some((48125, Beacon::Closing { id: 9 }))
+        );
+        assert_eq!(decode(b"PNCH"), None, "short of the port");
+        assert_eq!(decode(b"PNCX\x01\x02\x03"), None, "not our magic");
+    }
+
     /// A beacon must fit its receive buffer whole, or the kernel truncates
     /// it and the name goes missing without a trace. The widest name is the
     /// check that matters, since that is the part that grew.
@@ -685,7 +741,7 @@ mod tests {
     fn every_beacon_fits_the_receive_buffer() {
         let mut packet = ANNOUNCE_MAGIC.to_vec();
         packet.extend_from_slice(&u16::MAX.to_le_bytes());
-        packet.push(BEACON_OPEN);
+        packet.push(Kind::Open as u8);
         packet.extend_from_slice(&wire_name("WWWWWWWWWWWWWWWWWWWWWWWW"));
         packet.push(6);
         packet.push(6);
@@ -712,7 +768,7 @@ mod tests {
         // Byte for byte what the previous build put on the wire.
         let mut old = ANNOUNCE_MAGIC.to_vec();
         old.extend_from_slice(&48125u16.to_le_bytes());
-        old.push(BEACON_OPEN);
+        old.push(Kind::Open as u8);
         old.extend_from_slice(&wire_name("Room 3"));
         old.push(2);
         old.push(6);
@@ -815,7 +871,7 @@ mod tests {
         // wire before either is read.
         let mut running = ANNOUNCE_MAGIC.to_vec();
         running.extend_from_slice(&48126u16.to_le_bytes());
-        running.push(BEACON_RUNNING);
+        running.push(Kind::Running as u8);
         running.extend_from_slice(&wire_name("Room 3"));
         running.push(2);
         running.push(6);

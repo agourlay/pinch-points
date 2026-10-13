@@ -1374,7 +1374,7 @@ mod wire_fuzz_probe {
         // And a beacon, built the way the announcer builds one.
         let mut beacon = ANNOUNCE_MAGIC.to_vec();
         beacon.extend_from_slice(&49213u16.to_le_bytes());
-        beacon.push(BEACON_RUNNING);
+        beacon.push(Kind::Running as u8);
         beacon.extend_from_slice(&wire_name("Room 3"));
         beacon.push(4);
         beacon.push(6);
@@ -1416,10 +1416,9 @@ mod wire_fuzz_probe {
                 }
             }
             let _ = NetMsg::peek_version(&bytes);
-            // Both names the beacon carries: the beach's, and the host's
-            // behind it, which is the one that runs off a short packet.
-            let _ = beacon_name(&bytes, bytes.len(), BEACON_NAME_AT, beach_name_from_wire);
-            let _ = beacon_name(&bytes, bytes.len(), BEACON_HOST_AT, name_from_wire);
+            // And the beacon decoder, names and all: the host's name is
+            // the field that runs off a short packet.
+            let _ = super::beacon::decode(&bytes);
         }
     }
 }
