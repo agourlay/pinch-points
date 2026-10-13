@@ -499,18 +499,33 @@ pub struct Hop {
     to: Vec2,
     /// Seconds since it set off; below zero while it waits its turn.
     age: f32,
-    /// Seconds in the air.
-    span: f32,
-    /// Whether the tide threw it home from across the beach, which flies
-    /// it on [`sweep_arc`] rather than a hop over the wall.
-    swept: bool,
     /// Its shell colour, which a crab waiting to be swept glows away from.
     shell: Color,
-    /// Whether it has left the sand yet: a swept crab waits its turn
-    /// first, and kicks up the sand it stood on when it goes.
-    launched: bool,
-    /// Seconds a swept crab has waited for the board to be clear.
-    held: f32,
+    /// Which way it goes home, which sets how long it is in the air and
+    /// the arc it flies.
+    path: HopPath,
+}
+
+/// How a banked crab gets into its keep.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum HopPath {
+    /// Walked there: a short hop over the wall, off at once.
+    OverWall,
+    /// The tide threw it home from across the beach, on [`sweep_arc`].
+    /// `waiting` is how long it has waited for the board to be clear,
+    /// while it is still on the sand; it kicks up the sand it stood on
+    /// when it goes, and then it is `None`.
+    Swept { waiting: Option<f32> },
+}
+
+impl HopPath {
+    /// Seconds in the air.
+    fn span(self) -> f32 {
+        match self {
+            HopPath::OverWall => HOP,
+            HopPath::Swept { .. } => SWEEP_HOP,
+        }
+    }
 }
 
 /// How long a crab is in the air on its way into the keep. Short: the
@@ -567,49 +582,44 @@ const SWEEP_MAX_HOLD: f32 = 8.0;
 /// bank from here was the tide's doing.
 const SWEPT_FROM: f32 = TILE * 1.5;
 
+/// A crab the sim has just banked, as its hop home needs it: which crab,
+/// from the tile it vanished on to the keep it vanished into.
+pub struct BankedCrab {
+    pub id: u32,
+    pub from: Vec2,
+    pub to: Vec2,
+    pub kind: crate::sim::CrabKind,
+    pub handed: crate::sim::Handedness,
+}
+
 /// Send a banked crab home over the wall: the crab that walked there, big
 /// claw and all, on the side it was on. One the tide swept home from
 /// across the beach is flung there instead, setting off `swept` slots
 /// after the first of its sweep.
-#[allow(clippy::too_many_arguments)]
-pub fn bank_hop(
-    commands: &mut Commands,
-    art: &Art,
-    id: u32,
-    from: Vec2,
-    to: Vec2,
-    kind: crate::sim::CrabKind,
-    handed: crate::sim::Handedness,
-    swept: Option<usize>,
-) {
+pub fn bank_hop(commands: &mut Commands, art: &Art, crab: &BankedCrab, swept: Option<usize>) {
     use crate::app::creatures::{crab_body, crab_claw, shade_of, shell_color, sprite_side};
+    let BankedCrab {
+        id,
+        from,
+        to,
+        kind,
+        handed,
+    } = *crab;
     let shell = shell_color(kind, shade_of(id));
-    let hop = match swept {
-        None => Hop {
-            from,
-            to,
-            age: 0.0,
-            span: HOP,
-            swept: false,
-            shell,
-            launched: true,
-            held: 0.0,
-        },
-        Some(slot) => Hop {
-            from,
-            to,
-            age: -SWEEP_STAGGER * slot as f32,
-            span: SWEEP_HOP,
-            swept: true,
-            shell,
-            launched: false,
-            held: 0.0,
-        },
+    let (age, path, z) = match swept {
+        None => (0.0, HopPath::OverWall, layout::z::CREATURE + 0.1),
+        Some(slot) => (
+            -SWEEP_STAGGER * slot as f32,
+            HopPath::Swept { waiting: Some(0.0) },
+            SWEEP_WAIT_Z,
+        ),
     };
-    let z = if hop.swept {
-        SWEEP_WAIT_Z
-    } else {
-        layout::z::CREATURE + 0.1
+    let hop = Hop {
+        from,
+        to,
+        age,
+        shell,
+        path,
     };
     commands
         .spawn((
@@ -652,13 +662,17 @@ pub fn advance_hops(
 ) {
     let dt = time.delta_secs();
     for (entity, mut hop, mut transform, mut sprite) in &mut hops {
-        if !hop.launched {
+        let hop = &mut *hop;
+        if let HopPath::Swept {
+            waiting: Some(waited),
+        } = &mut hop.path
+        {
             // Picked out while the banner says what is about to happen.
-            let glow = 0.45 + 0.35 * (hop.held * 9.0).sin();
+            let glow = 0.45 + 0.35 * (*waited * 9.0).sin();
             sprite.color = hop.shell.mix(&palette::GOLD, glow);
-            let held = hop.held < SWEEP_MIN_HOLD || announcer.holds_the_board();
-            if held && hop.held < SWEEP_MAX_HOLD {
-                hop.held += dt;
+            let held = *waited < SWEEP_MIN_HOLD || announcer.holds_the_board();
+            if held && *waited < SWEEP_MAX_HOLD {
+                *waited += dt;
                 continue;
             }
             // Then one after another, each its turn behind the last.
@@ -666,7 +680,7 @@ pub fn advance_hops(
             if hop.age < 0.0 {
                 continue;
             }
-            hop.launched = true;
+            hop.path = HopPath::Swept { waiting: None };
             sprite.color = hop.shell;
             burst(
                 &mut commands,
@@ -684,7 +698,7 @@ pub fn advance_hops(
         } else {
             hop.age += dt;
         }
-        let progress = (hop.age / hop.span).clamp(0.0, 1.0);
+        let progress = (hop.age / hop.path.span()).clamp(0.0, 1.0);
         if progress >= 1.0 {
             commands.entity(entity).despawn();
             // The sand it kicks up going over the wall, landing where it
@@ -704,15 +718,18 @@ pub fn advance_hops(
             );
             continue;
         }
-        if hop.swept {
-            let (at, scale) = sweep_arc(hop.from, hop.to, progress);
-            transform.translation = at;
-            transform.scale = Vec3::splat(scale);
-        } else {
-            let (at, scale) = arc(hop.from, hop.to, HOP_LIFT, progress);
-            transform.translation.x = at.x;
-            transform.translation.y = at.y;
-            transform.scale = Vec3::splat(scale);
+        match hop.path {
+            HopPath::Swept { .. } => {
+                let (at, scale) = sweep_arc(hop.from, hop.to, progress);
+                transform.translation = at;
+                transform.scale = Vec3::splat(scale);
+            }
+            HopPath::OverWall => {
+                let (at, scale) = arc(hop.from, hop.to, HOP_LIFT, progress);
+                transform.translation.x = at.x;
+                transform.translation.y = at.y;
+                transform.scale = Vec3::splat(scale);
+            }
         }
     }
 }
@@ -1035,7 +1052,14 @@ pub fn moment_effects(
                     sweeps += 1;
                     sweeps - 1
                 });
-                bank_hop(&mut commands, &art, *id, *pos, *keep, *kind, *handed, swept);
+                let crab = BankedCrab {
+                    id: *id,
+                    from: *pos,
+                    to: *keep,
+                    kind: *kind,
+                    handed: *handed,
+                };
+                bank_hop(&mut commands, &art, &crab, swept);
             }
             // A gull got one: sand, and the feathers that say what kind of
             // ending this was.
