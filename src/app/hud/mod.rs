@@ -5,15 +5,21 @@
 use crate::app::editor::EditorState;
 use crate::app::lobby::LobbyState;
 use crate::app::settings::GameSettings;
-use crate::app::{Campaign, Phase, Playback, Screen, Sim, VersusPhase};
+use crate::app::{Campaign, Phase, Screen, Sim, VersusPhase};
 use crate::app::{menu_ui, palette};
 
 use bevy::prelude::*;
 
+mod clock;
+mod field_guide;
 mod text;
 
 use crate::app::palette::CLOCK_CALM;
-pub(crate) use text::{clock_color, clock_into, event_name, urgency_band};
+pub use clock::{TideClock, update_tide_clock};
+pub(crate) use clock::{clock_color, clock_into, urgency_band};
+use field_guide::spawn_field_guide;
+pub use field_guide::{FieldGuide, field_guide_visibility, update_field_guide};
+pub(crate) use text::event_name;
 
 #[derive(Component)]
 pub struct LevelLabel;
@@ -306,10 +312,6 @@ fn title_width(screen: Screen) -> Val {
 #[derive(Component)]
 pub struct HintLabel;
 
-/// The big versus tide clock (top-centre).
-#[derive(Component)]
-pub struct TideClock;
-
 /// The one shipped level whose lesson is the keys themselves (see
 /// `LEVEL_HINTS`); a test checks the table still says so.
 pub(crate) const KEY_LESSON_LEVEL: &str = "Welcome Ashore";
@@ -359,66 +361,6 @@ pub fn update_hint(
     };
     for mut text in &mut hints {
         menu_ui::set_text(&mut text, &line);
-    }
-}
-
-/// Drive the big clock: mm:ss during a versus round, red inside the last
-/// 30 seconds, pulsing for the final 10. Colour-only pulsing: it never
-/// re-shapes the text.
-pub fn update_tide_clock(
-    sim: Res<Sim>,
-    screen: Res<State<Screen>>,
-    phase: Res<State<Phase>>,
-    time: Res<Time>,
-    settings: Res<GameSettings>,
-    mut clocks: Query<(&mut Text, &mut TextColor), With<TideClock>>,
-    mut line: Local<String>,
-) {
-    let remaining = match screen.get() {
-        // Versus shows its clock in the right sidebar instead.
-        Screen::Versus => None,
-        // Every running puzzle counts down: its own round if it has one,
-        // otherwise the campaign-wide tick limit that would otherwise fail
-        // the level invisibly.
-        Screen::Puzzle if *phase.get() == Phase::Running => sim.0.remaining_ticks().or(Some(
-            crate::sim::PUZZLE_TICK_LIMIT.saturating_sub(sim.0.ticks()),
-        )),
-        // A timed level shows its deadline while the signposts are still
-        // going down: Dry Feet is decided in eight seconds, with the player
-        // choosing where to spend their one post. Only levels that carry a
-        // round, since the campaign tick limit is a backstop rather than a
-        // deadline.
-        Screen::Puzzle if *phase.get() == Phase::Setup => sim.0.remaining_ticks(),
-        Screen::Puzzle
-        | Screen::Menu
-        | Screen::Editor
-        | Screen::Lobby
-        | Screen::Settings
-        | Screen::Controls
-        | Screen::MatchSetup
-        | Screen::Achievements
-        | Screen::StageSelect
-        | Screen::Replays
-        | Screen::Interlude
-        | Screen::Language
-        | Screen::NewVersion => None,
-    };
-    for (mut text, mut color) in &mut clocks {
-        let Some(ticks) = remaining else {
-            if !text.0.is_empty() {
-                text.0.clear();
-            }
-            continue;
-        };
-        clock_into(&mut line, ticks);
-        menu_ui::set_text(&mut text, &line);
-        let target = clock_color(
-            ticks,
-            sim.0.round_length(),
-            time.elapsed_secs(),
-            !settings.reduced_motion,
-        );
-        menu_ui::set_color(&mut color, target);
     }
 }
 
@@ -538,195 +480,6 @@ pub fn update_hud(sources: HudSources, mut labels: HudLabels) {
     }
 }
 
-/// The crab field guide: each kind in its colour with what it banks.
-///
-/// At the foot of the play screens, opposite the prompt, where the thing it
-/// explains is on the board in front of you, rather than on the landing
-/// menu, which is the one screen with no crab on it.
-#[derive(Component)]
-pub struct FieldGuide;
-
-/// One crab's note in the guide: `KINDS[i]`, so a language change can
-/// find and reword it.
-#[derive(Component)]
-pub struct FieldGuideNote(usize);
-
-/// A crab's size in the guide. It was 20, and a crab drawn with its legs
-/// out to the corners of its square was a speck at that size.
-const LEGEND_CRAB_PX: f32 = 26.0;
-
-/// The sand a legend crab stands on: the board's own, a touch dimmed so the
-/// coins do not outshine the notes beside them.
-const LEGEND_SAND: Color = Color::srgb(0.84, 0.77, 0.62);
-
-/// The kinds the guide lists, in the order shown.
-const KINDS: [crate::sim::CrabKind; 6] = [
-    crate::sim::CrabKind::Common,
-    crate::sim::CrabKind::Juvenile,
-    crate::sim::CrabKind::Giant,
-    crate::sim::CrabKind::Molting,
-    crate::sim::CrabKind::Golden,
-    crate::sim::CrabKind::Sparkling,
-];
-
-/// What the guide says of `KINDS[i]`: its worth on this board, and its
-/// trait in the player's language. The name is the one part left off: on
-/// the board a crab is a colour, and the colour is right there.
-///
-/// The board's worth and not the kind's, because they differ: a versus
-/// round's called golden crab is worth less than a puzzle's
-/// (`Board::crab_value`, `GOLDEN_CALLED_VALUE`), and a guide quoting the
-/// kind would promise the puzzle's price for a crab that banks the other.
-fn field_guide_note(tr: &crate::app::i18n::Tr, i: usize, board: &crate::sim::Board) -> String {
-    let worth = board.crab_value(KINDS[i]);
-    let note = tr.crab_notes[i];
-    if note.is_empty() {
-        worth.to_string()
-    } else {
-        format!("{worth} {note}")
-    }
-}
-
-/// The notes are baked from the language at start-up; a language picked
-/// later rewords them here.
-pub fn update_field_guide(
-    settings: Res<GameSettings>,
-    sim: Res<crate::app::Sim>,
-    mut notes: Query<(&FieldGuideNote, &mut Text)>,
-    mut golden_shown: Local<u32>,
-) {
-    // The worths move only with the board's rules, which change when a
-    // round of another kind is loaded; the golden crab's is the one that
-    // differs between them.
-    let golden = sim.0.crab_value(crate::sim::CrabKind::Golden);
-    if !settings.is_changed() && golden == *golden_shown {
-        return;
-    }
-    *golden_shown = golden;
-    let tr = settings.tr();
-    for (note, mut text) in &mut notes {
-        menu_ui::set_text(&mut text, &field_guide_note(tr, note.0, &sim.0));
-    }
-}
-
-fn spawn_field_guide(
-    commands: &mut Commands,
-    tr: &crate::app::i18n::Tr,
-    art: &crate::app::art::Art,
-    board: &crate::sim::Board,
-) {
-    // Its own row, in the band between the foot of the board and the
-    // prompt. It cannot share the prompt's line: with the traits on it the
-    // two come to more than the window is wide in every language.
-    commands
-        .spawn((
-            FieldGuide,
-            Node {
-                position_type: PositionType::Absolute,
-                // Clear of both its neighbours: the board stops above it
-                // because the chrome reserves this band, and the prompt
-                // starts below it with the same air in between.
-                bottom: Val::Px(60.0),
-                left: Val::Px(0.0),
-                width: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
-                ..default()
-            },
-        ))
-        .with_children(|row| {
-            row.spawn((
-                Node {
-                    column_gap: Val::Px(10.0),
-                    align_items: AlignItems::Center,
-                    padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
-                    border_radius: BorderRadius::all(Val::Px(11.0)),
-                    ..default()
-                },
-                BackgroundColor(palette::PILL_FILL),
-            ))
-            .with_children(|strip| {
-                for (i, kind) in KINDS.iter().enumerate() {
-                    // The crab as it walks the board, big claw and all,
-                    // rather than a coloured dot: its body and claw in one
-                    // square, the claw in the body's colour, since the
-                    // guide is about kinds and not about hands.
-                    let color = crate::app::creatures::body_color(*kind);
-                    let layer = |image: &Handle<Image>| {
-                        (
-                            ImageNode::new(image.clone()).with_color(color),
-                            Node {
-                                position_type: PositionType::Absolute,
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
-                                ..default()
-                            },
-                        )
-                    };
-                    // Each on a coin of sand, the ground it is drawn for:
-                    // its legs and outline are dark, and straight on the
-                    // dark pill they vanished and left a blob with a claw.
-                    strip
-                        .spawn((
-                            Node {
-                                width: Val::Px(LEGEND_CRAB_PX),
-                                height: Val::Px(LEGEND_CRAB_PX),
-                                border_radius: BorderRadius::MAX,
-                                ..default()
-                            },
-                            BackgroundColor(LEGEND_SAND),
-                        ))
-                        .with_children(|icon| {
-                            icon.spawn(layer(&art.crab));
-                            icon.spawn(layer(&art.claw));
-                        });
-                    strip.spawn((
-                        FieldGuideNote(i),
-                        Text::new(field_guide_note(tr, i, board)),
-                        TextFont {
-                            font_size: FontSize::Px(menu_ui::type_scale::FINE),
-                            ..default()
-                        },
-                        TextLayout::no_wrap(),
-                        TextColor(palette::PARCHMENT.with_alpha(0.85)),
-                    ));
-                }
-            });
-        });
-}
-
-/// The guide belongs on the screens with crabs on them.
-pub fn field_guide_visibility(
-    screen: Res<State<Screen>>,
-    playback: Res<Playback>,
-    mut guides: Query<&mut Node, With<FieldGuide>>,
-) {
-    // An exhaustive match rather than a `matches!`, so a new screen has to
-    // say whether crabs are on it.
-    let wanted = match screen.get() {
-        Screen::Versus | Screen::Puzzle => true,
-        Screen::Menu
-        | Screen::Editor
-        | Screen::Lobby
-        | Screen::Settings
-        | Screen::Controls
-        | Screen::MatchSetup
-        | Screen::Achievements
-        | Screen::StageSelect
-        | Screen::Replays
-        | Screen::Interlude
-        | Screen::Language
-        | Screen::NewVersion => false,
-    };
-    // The band at the foot of the board holds one row, and while a
-    // recording is playing the transport belongs in it: what a crab is
-    // worth is a thing to know while routing them, and nobody watching a
-    // replay is routing anything.
-    let wanted = wanted && playback.0.is_none();
-    for mut node in &mut guides {
-        menu_ui::set_shown(&mut node, wanted);
-    }
-}
-
 /// The menu is a full-bleed postcard: the header backdrop gets out of the
 /// way there and returns on every other screen.
 pub fn header_backdrop(
@@ -747,25 +500,6 @@ pub fn header_backdrop(
 mod tests {
     use super::*;
     use crate::app::i18n::Lang;
-
-    /// The guide quotes what a crab is worth on the board in play: a
-    /// versus round's called golden crab, not the puzzle's fifty.
-    #[test]
-    fn the_field_guide_quotes_the_boards_golden_worth() {
-        let golden = KINDS
-            .iter()
-            .position(|&k| k == crate::sim::CrabKind::Golden)
-            .expect("the golden crab is in the guide");
-        let tr = Lang::En.tr();
-        let mut board = crate::sim::Board::new(9, 7, 1);
-        assert!(field_guide_note(tr, golden, &board).starts_with("50 "));
-        crate::sim::set_versus_rules(&mut board, 240);
-        let note = field_guide_note(tr, golden, &board);
-        assert!(
-            note.starts_with(&format!("{} ", crate::sim::GOLDEN_CALLED_VALUE)),
-            "{note}"
-        );
-    }
 
     /// A prompt that fits keeps its size; one that does not shrinks by
     /// exactly as much as it is too wide, since width scales with size; and
