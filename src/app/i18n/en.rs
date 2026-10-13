@@ -553,4 +553,5 @@ pub static EN: Tr = Tr {
     replay_drop_hint: "drop a replay file on the window to watch it",
     replay_drop_bad: "that file is not a replay this build can play: {e}",
     ed_save_taken: "another level already has that file - F2 again to replace it, or rename this one",
+    ed_failed: "something went wrong - your level is still here",
 };

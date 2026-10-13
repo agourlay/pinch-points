@@ -549,4 +549,5 @@ pub static JA: Tr = Tr {
     replay_drop_hint: "リプレイのファイルをウィンドウに落とすと見られるよ",
     replay_drop_bad: "このファイルはこのバージョンで見られるリプレイじゃない: {e}",
     ed_save_taken: "同じファイルにほかの面がある もう一度F2で置きかえる",
+    ed_failed: "問題が起きた 面はそのまま",
 };

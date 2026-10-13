@@ -817,6 +817,9 @@ struct Tr {
     /// F2 on a name whose file holds a different level: the first press
     /// only says so, and a second replaces it.
     pub ed_save_taken: &'static str,
+    /// Something failed in the editor and was caught: any playtest is
+    /// stopped, and the level being built is kept.
+    pub ed_failed: &'static str,
 }
 }
 

@@ -553,4 +553,5 @@ pub static NL: Tr = Tr {
     replay_drop_hint: "sleep een replaybestand op het venster om het te bekijken",
     replay_drop_bad: "dat bestand is geen replay die deze versie kan afspelen: {e}",
     ed_save_taken: "een ander level heeft dat bestand al - F2 nogmaals vervangt het, of geef dit een andere naam",
+    ed_failed: "er ging iets mis - je level is er nog",
 };

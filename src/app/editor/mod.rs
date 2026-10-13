@@ -780,6 +780,31 @@ pub fn editor_test_input(
     }
 }
 
+/// The editor after something in it failed and was caught (see
+/// `failsafe`): a playtest stops, with the board it was started from back
+/// on the sand, and the author stays at the bench with the level they were
+/// building. Sent to the menu instead, they lost every unsaved tile of it
+/// for a fault that was the game's.
+pub(super) fn recover(
+    sim: &mut Sim,
+    state: &mut EditorState,
+    commands: &mut Commands,
+    sprites: &BoardSprites,
+    tr: &crate::app::i18n::Tr,
+) {
+    if state.is_testing()
+        && let Mode::Testing(snapshot) = std::mem::take(&mut state.mode)
+    {
+        swap_board(*snapshot, sim, state, commands, sprites);
+    }
+    // Whatever was mid-way (an offer, a check on another thread) was asked
+    // of the moment that failed, and is let go with it.
+    state.offer = None;
+    state.solver = None;
+    state.dirty = true;
+    state.feedback = tr.ed_failed.into();
+}
+
 /// Rebuild the static board sprites after an edit.
 pub fn rebuild_statics(
     mut commands: Commands,
