@@ -388,6 +388,15 @@ mod tests {
         let flying = Level::parse(&format!("{head}sweep_flight: on\n{map}")).expect("level");
         let back = Level::parse(&flying.to_text()).expect("round trip");
         assert!(back.board().sweep_flight());
+        // A golden crab cadence too short to call a tick still to come is
+        // refused, rather than calling one that never comes out.
+        for every in [1, 2] {
+            let err = Level::parse(&format!("{head}golden_every: {every}\n{map}"))
+                .expect_err("too short");
+            assert!(err.contains("golden_every"), "{err}");
+        }
+        let calling = Level::parse(&format!("{head}golden_every: 3\n{map}")).expect("level");
+        assert_eq!(calling.board().golden_every(), 3);
     }
 
     /// A stage that states a round longer than the campaign tick limit is

@@ -1219,3 +1219,4 @@ pub use signposts::Refusal;
 
 pub use geometry::Grid;
 pub(crate) use geometry::Walker;
+pub(crate) use snapshot::golden_every;

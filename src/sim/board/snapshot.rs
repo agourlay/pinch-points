@@ -315,9 +315,13 @@ impl Fields {
             "gull_period" => self.gull_period = Some(next_num(&mut words, "gull_period")?),
             "gull_cap" => self.gull_cap = Some(next_num(&mut words, "gull_cap")?),
             "gull_turnover" => self.gull_turnover = value == "on",
-            "golden_every" => self.golden_every = next_num(&mut words, "golden_every")?,
+            "golden_every" => {
+                self.golden_every = golden_every(next_num(&mut words, "golden_every")?)?;
+            }
             "timed_lock" => self.timed_lock = value == "on",
             "sweep_flight" => self.sweep_flight = value == "on",
+            "whole_flock" => self.whole_flock = value == "on",
+            "sweep_keeps_worth" => self.sweep_keeps_worth = value == "on",
             "golden_call" => {
                 self.golden_call = Some((
                     next_num(&mut words, "golden_call tick")?,
@@ -529,6 +533,16 @@ impl Fields {
                 if !matches!(grid.tiles[tile], TileKind::Spawner(_)) {
                     return Err(format!("golden_call: ({x},{y}) is not a spawner"));
                 }
+                // A call is only ever made on a board that calls them, and
+                // goes out on the tick it names: one for a tick already
+                // played would stay on the board, public, for the rest of
+                // the round.
+                if self.golden_every == 0 {
+                    return Err("golden_call: this board calls no golden crabs".to_string());
+                }
+                if at < tick {
+                    return Err(format!("golden_call: tick {at} is already past ({tick})"));
+                }
                 Some((at, tile as u16))
             }
         };
@@ -584,6 +598,23 @@ impl Fields {
             swept_home: Vec::new(),
             sweeping: self.sweeping,
         })
+    }
+}
+
+/// A golden crab cadence the sim can keep: none, or long enough that the
+/// call it draws lands on a tick still to come. Shared with the level
+/// format, which reads the same key.
+///
+/// The call goes out a third of the stretch or more after the tick it is
+/// drawn on, and is drawn after that tick's own check; a stretch of one or
+/// two ticks has no third, so it called the tick it was drawn on, which
+/// never comes round again, and the call hung on the board for good.
+pub(crate) fn golden_every(ticks: u32) -> Result<u32, String> {
+    match ticks {
+        1..=2 => Err(format!(
+            "golden_every: {ticks} is too short, 0 (off) or at least 3"
+        )),
+        _ => Ok(ticks),
     }
 }
 
@@ -1293,6 +1324,51 @@ mod tests {
         let back = Board::parse_snapshot(&text).expect("reads back");
         assert_eq!(back.state_hash(), board.state_hash());
         assert_eq!(back.to_snapshot(), text);
+    }
+
+    /// A golden crab call no tick will ever send out is refused: one for a
+    /// tick already played, one on a board that calls none, and a cadence
+    /// too short to call a tick still to come. Each would sit on the
+    /// board, public, for the rest of the round.
+    #[test]
+    fn a_golden_call_that_can_never_come_out_is_refused() {
+        let mut board = Board::new(9, 7, 11);
+        board.set_tile(1, 1, TileKind::Castle(0));
+        board.set_tile(
+            0,
+            3,
+            TileKind::Spawner(Spawner {
+                dir: Direction::Right,
+                period: 9,
+            }),
+        );
+        board.set_golden_every(600);
+        for _ in 0..10 {
+            board.tick_idle();
+        }
+        let good = board.to_snapshot();
+        assert!(Board::parse_snapshot(&good).is_ok(), "the fixture parses");
+        assert!(good.contains("golden_call: "), "a call to bend:\n{good}");
+        let cases = [
+            (bend(&good, "golden_call", "9 0 3"), "already past"),
+            (
+                good.lines()
+                    .filter(|line| !line.starts_with("golden_every:"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                "calls no golden crabs",
+            ),
+            (bend(&good, "golden_every", "2"), "too short"),
+            (bend(&good, "golden_every", "1"), "too short"),
+        ];
+        for (broken, why) in cases {
+            let err = Board::parse_snapshot(&broken).expect_err(why);
+            assert!(err.contains(why), "{why}: {err}");
+        }
+        // The call for the very next tick is still to come, and kept.
+        let next = bend(&good, "golden_call", "10 0 3");
+        assert!(Board::parse_snapshot(&next).is_ok(), "{next}");
+        assert!(Board::parse_snapshot(&bend(&good, "golden_every", "3")).is_ok());
     }
 
     /// Each field the parser checks refuses a value it cannot mean, with

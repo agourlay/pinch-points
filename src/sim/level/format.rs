@@ -347,9 +347,11 @@ impl Header {
             "timed_lock" => self.timed_lock = value == "on",
             "sweep_flight" => self.sweep_flight = value == "on",
             "golden_every" => {
-                self.golden_every = value
-                    .parse::<u32>()
-                    .map_err(|e| format!("golden_every: {e}"))?;
+                self.golden_every = crate::sim::board::golden_every(
+                    value
+                        .parse::<u32>()
+                        .map_err(|e| format!("golden_every: {e}"))?,
+                )?;
             }
             "round" => {
                 self.round = Some(value.parse::<u32>().map_err(|e| format!("round: {e}"))?);
