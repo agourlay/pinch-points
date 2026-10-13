@@ -97,6 +97,10 @@ pub fn tables_for(entrants: usize, seats: usize, beaches: usize) -> usize {
 /// Points for a place: `seats - place` for a four-seat table is 3, 2, 1
 /// and 0, and a tie splits the places it spans. `places` are 1-based
 /// placings as `seat::placings` gives them.
+///
+/// Forfeits all share the last place, so a tie there spans places past
+/// the end of the table: each is worth nothing rather than less, and the
+/// forfeits get the nothing a lone one does.
 pub fn points(places: &[u32]) -> Vec<f64> {
     let seats = places.len() as f64;
     places
@@ -106,7 +110,7 @@ pub fn points(places: &[u32]) -> Vec<f64> {
             // The places a tie at `place` spans are place .. place + tied - 1.
             let first = f64::from(place);
             let span: f64 = (0..tied as u32)
-                .map(|k| seats - (first + f64::from(k)))
+                .map(|k| (seats - (first + f64::from(k))).max(0.0))
                 .sum();
             span / tied
         })

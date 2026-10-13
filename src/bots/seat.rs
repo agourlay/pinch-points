@@ -397,6 +397,12 @@ pub fn act_of(action: PlayerAction) -> Option<Act> {
 /// Placings, 1 for first, by score. Seats that tie share the place; a
 /// forfeit is last, whatever it banked, with the others placed among
 /// themselves.
+///
+/// Last means the table's last place, however many forfeited. Placed just
+/// behind the seats still playing, a table where everybody forfeited
+/// placed every seat first, and two forfeits shared the last two places
+/// and the half point the second-last is worth: a forfeit scoring better
+/// for having company.
 pub fn placings(scores: &[u32], forfeits: &[bool]) -> Vec<u32> {
     let playing: Vec<u32> = scores
         .iter()
@@ -409,7 +415,7 @@ pub fn placings(scores: &[u32], forfeits: &[bool]) -> Vec<u32> {
         .zip(forfeits)
         .map(|(&score, &forfeit)| {
             if forfeit {
-                playing.len() as u32 + 1
+                scores.len() as u32
             } else {
                 1 + playing.iter().filter(|&&other| other > score).count() as u32
             }
@@ -426,6 +432,19 @@ mod tests {
         assert_eq!(placings(&[12, 3, 20, 7], &[false; 4]), vec![2, 4, 1, 3]);
         assert_eq!(placings(&[5, 5, 1], &[false; 3]), vec![1, 1, 3]);
         assert_eq!(placings(&[50, 3, 20], &[true, false, false]), vec![3, 2, 1]);
+    }
+
+    /// Forfeits are last however many there are: never first, and never
+    /// worth a point a lone forfeit would not have.
+    #[test]
+    fn forfeits_together_are_still_last() {
+        assert_eq!(placings(&[9, 4, 2, 7], &[true; 4]), vec![4; 4]);
+        let places = placings(&[9, 4, 2, 7], &[true, false, true, false]);
+        assert_eq!(places, vec![4, 2, 4, 1]);
+        let points = crate::bots::draw::points(&places);
+        assert_eq!(points, vec![0.0, 2.0, 0.0, 3.0]);
+        let everyone = crate::bots::draw::points(&placings(&[9, 4, 2, 7], &[true; 4]));
+        assert_eq!(everyone, vec![0.0; 4]);
     }
 
     fn reply(tick: u64, act: Act) -> GameMsg {

@@ -658,7 +658,8 @@ tick, and the bot plays on. Games that had not started yet wait for it
 until the organiser's forfeit timeout (default 60 s), then are played with
 the seat idle and scored as a forfeit: last place, whatever the idle seat
 happened to bank from crabs wandering into its castle, with the other
-seats placed among themselves. A bot that has forfeited a game that way
+seats placed among themselves. Every forfeit takes the table's last
+place and the nothing it is worth, however many seats forfeited. A bot that has forfeited a game that way
 and not connected since is not waited for again: the games that start
 after it forfeit its seat at once, so a cup with an absent entrant does not stand
 still for the timeout game after game.
