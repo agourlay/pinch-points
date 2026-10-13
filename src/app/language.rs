@@ -93,19 +93,7 @@ pub fn enter_language(mut commands: Commands, settings: Res<GameSettings>, art: 
             });
             wrap.spawn((
                 LanguageNote,
-                Text::new(settings.tr().pick_language_later),
-                TextFont {
-                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
-                    ..default()
-                },
-                TextLayout::no_wrap(),
-                TextColor(palette::PARCHMENT.with_alpha(0.75)),
-                Node {
-                    padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
-                    border_radius: BorderRadius::all(Val::Px(9.0)),
-                    ..default()
-                },
-                BackgroundColor(palette::PILL_FILL.with_alpha(0.6)),
+                menu_ui::footnote(settings.tr().pick_language_later),
             ));
         });
 }

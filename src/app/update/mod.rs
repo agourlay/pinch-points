@@ -236,24 +236,9 @@ pub fn enter_new_version(
                 menu_ui::spawn_rows(card, Choice::ALL.len(), 22.0, NewVersionRow);
             });
             // Outside the card, so over the open beach: it rides a pill for
-            // the reason the prompt line's own does, which is that pale
-            // text on bright sand is the one place this interface goes
-            // illegible. At 40% parchment it was the worst of them.
-            wrap.spawn((
-                Text::new(tr.update_note),
-                TextFont {
-                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
-                    ..default()
-                },
-                TextLayout::no_wrap(),
-                TextColor(palette::PARCHMENT.with_alpha(0.70)),
-                Node {
-                    padding: UiRect::axes(Val::Px(12.0), Val::Px(3.0)),
-                    border_radius: BorderRadius::all(Val::Px(11.0)),
-                    ..default()
-                },
-                BackgroundColor(palette::PILL_FILL),
-            ));
+            // the reason the prompt line's own does. At 40% parchment it was
+            // the worst of them.
+            wrap.spawn(menu_ui::footnote(tr.update_note));
         });
 }
 

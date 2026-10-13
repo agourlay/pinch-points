@@ -439,6 +439,36 @@ impl Viewport<'_, '_> {
     }
 }
 
+/// Empty room `px` tall between two lines of a card.
+pub fn spacer(px: f32) -> Node {
+    Node {
+        height: Val::Px(px),
+        ..default()
+    }
+}
+
+/// A footnote under a card, on a pill of its own: below a card these lines
+/// sit on open sand, where pale text on bright sand is the one place this
+/// interface goes illegible, and on a small window partly under the card,
+/// where bare dim text disappears.
+pub fn footnote(text: impl Into<String>) -> impl Bundle {
+    (
+        Text::new(text),
+        TextFont {
+            font_size: FontSize::Px(type_scale::BODY),
+            ..default()
+        },
+        TextLayout::no_wrap(),
+        TextColor(palette::PARCHMENT.with_alpha(0.75)),
+        Node {
+            padding: UiRect::axes(Val::Px(12.0), Val::Px(3.0)),
+            border_radius: BorderRadius::all(Val::Px(11.0)),
+            ..default()
+        },
+        BackgroundColor(palette::PILL_FILL),
+    )
+}
+
 /// The heading of a card: an optional sprite, its name, and a rule
 /// running off to the card's edge in the same gold hairline the card is
 /// drawn in, so a panel of empty rows still reads as a made thing.

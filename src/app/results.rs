@@ -147,6 +147,12 @@ fn card_text(size: f32, color: Color) -> (TextFont, TextColor) {
     )
 }
 
+/// One line of a card: `text` at `size`, in `color`.
+fn card_line(text: impl Into<String>, size: f32, color: Color) -> (Text, TextFont, TextColor) {
+    let (font, ink) = card_text(size, color);
+    (Text::new(text), font, ink)
+}
+
 /// The standings, best first: place, who, and what they banked, each in its
 /// seat's colour. In 2v2 the two teams' totals stand in for the four seats.
 ///
@@ -384,10 +390,7 @@ pub fn spawn_versus_results(
                 menu_ui::display_font(34.0),
                 TextColor(headline_color),
             ));
-            card.spawn(Node {
-                height: Val::Px(6.0),
-                ..default()
-            });
+            card.spawn(menu_ui::spacer(6.0));
             // A bot wears the robot beside its line. The rows keep one
             // left edge between them, so a slot is held on every row of a
             // table with any bot at it.
@@ -432,116 +435,106 @@ pub fn spawn_versus_results(
                     });
             }
             if !awards.is_empty() {
-                card.spawn(Node {
-                    height: Val::Px(6.0),
-                    ..default()
-                });
+                card.spawn(menu_ui::spacer(6.0));
             }
             for (line, color) in awards {
-                let row = card_text(17.0, color);
-                card.spawn((Text::new(line), row.0, row.1));
+                card.spawn(card_line(line, 17.0, color));
             }
             for (line, color) in crowd_rows(&settings, &names, &online) {
-                let row = card_text(17.0, color);
-                card.spawn((Text::new(line), row.0, row.1));
+                card.spawn(card_line(line, 17.0, color));
             }
-            card.spawn(Node {
-                height: Val::Px(6.0),
-                ..default()
-            });
-            let foot = card_text(17.0, CARD_TEXT.darker(0.15));
-            card.spawn((
-                Text::new(match haul {
+            card.spawn(menu_ui::spacer(6.0));
+            card.spawn(card_line(
+                match haul {
                     1 => tr.haul_one.to_string(),
                     _ => fill(tr.haul, &[("n", &haul.to_string())]),
-                }),
-                foot.0,
-                foot.1,
+                },
+                17.0,
+                CARD_TEXT.darker(0.15),
             ));
             // The reel is written off-thread and is usually not there yet
             // when the card goes up: the line is spawned hidden and shown
             // by `update_highlight_line` once the save has happened.
-            let line = card_text(15.0, CARD_TEXT.darker(0.3));
             card.spawn((
                 highlight_line_node(highlight.0.is_some()),
-                Text::new(highlight_line_text(tr, &highlight)),
-                line.0,
-                line.1,
+                card_line(
+                    highlight_line_text(tr, &highlight),
+                    15.0,
+                    CARD_TEXT.darker(0.3),
+                ),
                 HighlightLine,
             ));
             if daily.active {
-                let best = card_text(17.0, palette::GOLD);
-                card.spawn((
-                    Text::new(fill(tr.daily_best, &[("n", &stats.daily_best.to_string())])),
-                    best.0,
-                    best.1,
+                card.spawn(card_line(
+                    fill(tr.daily_best, &[("n", &stats.daily_best.to_string())]),
+                    17.0,
+                    palette::GOLD,
                 ));
             }
             if tournament.in_series() {
-                card.spawn(Node {
-                    height: Val::Px(6.0),
-                    ..default()
-                });
-                let round = card_text(17.0, CARD_TEXT.darker(0.15));
-                card.spawn((
-                    Text::new(crate::app::tournament::round_line(tr, &tournament)),
-                    round.0,
-                    round.1,
-                ));
-                // Each seat's wins in its own colour, as many to a line as
-                // fit. One gold line joined with dots ran a table of six
-                // past the card's frame, and six full names past the window.
-                card.spawn(Node {
-                    flex_wrap: FlexWrap::Wrap,
-                    justify_content: JustifyContent::Center,
-                    column_gap: Val::Px(SERIES_GAP),
-                    max_width: Val::Px(SERIES_W),
-                    ..default()
-                })
-                .with_children(|series| {
-                    for standing in crate::app::tournament::standings(
-                        &settings,
-                        &names,
-                        &tournament,
-                        mode,
-                        count,
-                    ) {
-                        let entry = card_text(SERIES_FONT, standing.color);
-                        series.spawn((
-                            Text::new(standing.line()),
-                            entry.0,
-                            entry.1,
-                            TextLayout::no_wrap(),
-                        ));
-                    }
-                });
-                if tournament.is_decided() {
-                    if let Some(champ) = tournament.winner(mode, count) {
-                        let (who, seat) = crate::app::tournament::champion_name(
-                            &settings, &names, mode, champ, count,
-                        );
-                        let line = card_text(26.0, palette::player_color(seat).lighter(0.1));
-                        card.spawn((
-                            Text::new(fill(tr.tour_champion, &[("p", &who)])),
-                            line.0,
-                            line.1,
-                        ));
-                    } else {
-                        // Over with nobody ahead. The card used to say
-                        // nothing at all, neither a champion nor a next
-                        // round, as though the series had simply stopped.
-                        let line = card_text(26.0, CARD_TEXT);
-                        card.spawn((Text::new(tr.tour_drawn), line.0, line.1));
-                    }
-                } else {
-                    let hint = card_text(17.0, CARD_TEXT.darker(0.15));
-                    let door =
-                        crate::app::play_input::enter_door(tr, &online, tournament.is_running());
-                    card.spawn((Text::new(door), hint.0, hint.1));
-                }
+                series_rows(card, &settings, &names, &tournament, &online, mode, count);
             }
         });
     });
+}
+
+/// A series' part of the round's card: which round this was, each seat's
+/// wins, and then the champion, a drawn series, or the door to the next
+/// round.
+fn series_rows(
+    card: &mut ChildSpawnerCommands,
+    settings: &GameSettings,
+    names: &crate::app::SeatNames,
+    tournament: &crate::app::tournament::Tournament,
+    online: &Online,
+    mode: TeamMode,
+    count: u8,
+) {
+    let tr = settings.tr();
+    card.spawn(menu_ui::spacer(6.0));
+    card.spawn(card_line(
+        crate::app::tournament::round_line(tr, tournament),
+        17.0,
+        CARD_TEXT.darker(0.15),
+    ));
+    // Each seat's wins in its own colour, as many to a line as fit. One
+    // gold line joined with dots ran a table of six past the card's frame,
+    // and six full names past the window.
+    card.spawn(Node {
+        flex_wrap: FlexWrap::Wrap,
+        justify_content: JustifyContent::Center,
+        column_gap: Val::Px(SERIES_GAP),
+        max_width: Val::Px(SERIES_W),
+        ..default()
+    })
+    .with_children(|series| {
+        for standing in crate::app::tournament::standings(settings, names, tournament, mode, count)
+        {
+            series.spawn((
+                card_line(standing.line(), SERIES_FONT, standing.color),
+                TextLayout::no_wrap(),
+            ));
+        }
+    });
+    if tournament.is_decided() {
+        if let Some(champ) = tournament.winner(mode, count) {
+            let (who, seat) =
+                crate::app::tournament::champion_name(settings, names, mode, champ, count);
+            card.spawn(card_line(
+                fill(tr.tour_champion, &[("p", &who)]),
+                26.0,
+                palette::player_color(seat).lighter(0.1),
+            ));
+        } else {
+            // Over with nobody ahead. The card used to say nothing at all,
+            // neither a champion nor a next round, as though the series had
+            // simply stopped.
+            card.spawn(card_line(tr.tour_drawn, 26.0, CARD_TEXT));
+        }
+    } else {
+        let door = crate::app::play_input::enter_door(tr, online, tournament.is_running());
+        card.spawn(card_line(door, 17.0, CARD_TEXT.darker(0.15)));
+    }
 }
 
 /// The results card's "highlight reel: …" line, shown once the reel is
@@ -627,25 +620,23 @@ pub fn spawn_puzzle_won(
                 winner_castle(card, &art, tier, palette::player_color(owner));
             }
             saved_row(card, &art, &campaign, board);
-            let sub = card_text(21.0, CARD_TEXT);
             let shelf = match custom {
                 true => format!("{}  ", tr.stage_custom),
                 false => String::new(),
             };
-            card.spawn((
-                Text::new(format!("{shelf}{place} / {of}  -  {name}")),
-                sub.0,
-                sub.1,
+            card.spawn(card_line(
+                format!("{shelf}{place} / {of}  -  {name}"),
+                21.0,
+                CARD_TEXT,
             ));
-            let foot = card_text(17.0, CARD_TEXT.darker(0.15));
-            card.spawn((
-                Text::new(match (last, saved_all) {
+            card.spawn(card_line(
+                match (last, saved_all) {
                     (true, _) => tr.last_level,
                     (false, true) => tr.prompt_won,
                     (false, false) => tr.prompt_won_goal,
-                }),
-                foot.0,
-                foot.1,
+                },
+                17.0,
+                CARD_TEXT.darker(0.15),
             ));
         });
     });
@@ -762,18 +753,16 @@ pub fn spawn_puzzle_lost(
             if let (Some(sim), Some(art)) = (&sim, &art) {
                 saved_row(card, art, &campaign, &sim.0);
             }
-            let sub = card_text(21.0, CARD_TEXT);
-            card.spawn((
-                Text::new(format!(
+            card.spawn(card_line(
+                format!(
                     "{} / {}  -  {name}",
                     campaign.index + 1,
                     campaign.levels.len()
-                )),
-                sub.0,
-                sub.1,
+                ),
+                21.0,
+                CARD_TEXT,
             ));
-            let foot = card_text(17.0, CARD_TEXT.darker(0.15));
-            card.spawn((Text::new(tr.prompt_lost), foot.0, foot.1));
+            card.spawn(card_line(tr.prompt_lost, 17.0, CARD_TEXT.darker(0.15)));
         });
     });
 }
