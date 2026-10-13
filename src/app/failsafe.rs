@@ -62,6 +62,10 @@ pub(super) fn install(app: &mut App) {
     }
 }
 
+/// Frames after the bench was put back within which another failure means
+/// the bench itself is what fails: about a second.
+const BENCH_AGAIN: u32 = 60;
+
 /// What a broken round puts back: the editor's bench, or the online table.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct Wreckage<'w, 's> {
@@ -75,15 +79,22 @@ pub(super) struct Wreckage<'w, 's> {
 /// After a caught panic, leave the round being played and say why. Back
 /// to the lobby when the table came from there, as a round whose host
 /// went is (`net::leave_a_hostless_round`), else to the menu; the editor
-/// stays the editor (see [`editor::recover`]). Outside a round there is
+/// stays the editor (see [`editor::recover`]), unless it fails again
+/// straight after: a system that fails on every frame at the bench would
+/// fail on every frame after it was put back, so the second time inside
+/// [`BENCH_AGAIN`] frames goes to the menu. Outside a round there is
 /// nothing to leave.
 pub(super) fn leave_a_broken_round(
     screen: Res<State<Screen>>,
     settings: Res<settings::GameSettings>,
     mut notice: ResMut<RoundNotice>,
     mut next_screen: ResMut<NextState<Screen>>,
+    mut since_bench: Local<Option<u32>>,
     wreckage: Wreckage,
 ) {
+    if let Some(frames) = since_bench.as_mut() {
+        *frames = frames.saturating_add(1);
+    }
     if !TRIPPED.swap(false, Ordering::Relaxed) {
         return;
     }
@@ -96,10 +107,16 @@ pub(super) fn leave_a_broken_round(
     } = wreckage;
     let tr = settings.tr();
     match screen.get() {
+        Screen::Editor if since_bench.is_some_and(|frames| frames <= BENCH_AGAIN) => {
+            *since_bench = None;
+            notice.0 = tr.round_failed.to_string();
+            next_screen.set(Screen::Menu);
+        }
         Screen::Editor => {
             if let (Some(mut sim), Some(mut editor)) = (sim, editor) {
                 editor::recover(&mut sim, &mut editor, &mut commands, &sprites, tr);
             }
+            *since_bench = Some(0);
         }
         Screen::Puzzle | Screen::Versus | Screen::Interlude => {
             notice.0 = tr.round_failed.to_string();
@@ -145,17 +162,31 @@ mod tests {
         panic!("a system with a bug (expected by this test)");
     }
 
+    /// The same, once only.
+    fn a_bug_that_happens_once(mut done: Local<bool>) {
+        if !std::mem::replace(&mut *done, true) {
+            panic!("a system with a bug once (expected by this test)");
+        }
+    }
+
     /// A world on `screen` whose next update panics in a system and then
     /// runs the failsafe. Every case below runs in one test, one after the
     /// other, because the flag a panic raises is one for the process.
     fn broken(screen: Screen) -> App {
+        broken_by(screen, a_system_with_a_bug)
+    }
+
+    fn broken_by<M>(
+        screen: Screen,
+        bug: impl IntoScheduleConfigs<bevy::ecs::system::ScheduleSystem, M>,
+    ) -> App {
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.insert_state(screen);
         app.insert_resource(settings::GameSettings::default());
         app.init_resource::<RoundNotice>();
         app.insert_resource(bevy::ecs::error::FallbackErrorHandler(keep_going));
-        app.add_systems(Update, (a_system_with_a_bug, leave_a_broken_round).chain());
+        app.add_systems(Update, (bug, leave_a_broken_round).chain());
         app
     }
 
@@ -202,7 +233,7 @@ mod tests {
 
         // The editor stays the editor: the playtest stops, and the level
         // being built is back on the sand rather than thrown away.
-        let mut app = broken(Screen::Editor);
+        let mut app = broken_by(Screen::Editor, a_bug_that_happens_once);
         let built = crate::sim::Board::new(9, 7, 5);
         let mut playing = crate::sim::Board::new(12, 9, 5);
         playing.set_wrap(true);
@@ -224,5 +255,16 @@ mod tests {
             built.state_hash(),
             "the level being built is back"
         );
+
+        // A bug that fails on every frame at the bench fails again on the
+        // bench put back: the second time goes to the menu rather than
+        // round and round.
+        let mut app = broken(Screen::Editor);
+        app.insert_resource(Sim(crate::sim::Board::new(9, 7, 5)));
+        app.insert_resource(editor::EditorState::default());
+        for _ in 0..4 {
+            app.update();
+        }
+        assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
     }
 }
