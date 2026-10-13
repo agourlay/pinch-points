@@ -188,7 +188,6 @@ pub struct Watch {
     /// re-pointing one in place keeps the seat and changes the direction;
     /// the direction is kept to draw the ghost of a post already gone.
     posts_at: HashMap<(u8, u8), (PlayerId, Direction)>,
-    gulls: usize,
     flying: usize,
     event_at: Option<u64>,
     last_event: Option<TideEvent>,
@@ -210,7 +209,8 @@ pub struct Watch {
     /// Where each gull was in the air, `None` while it was on the sand: a
     /// gull that had a flight position and now has none has just landed.
     gulls_aloft: HashMap<u32, Option<Vec2>>,
-    /// Where each gull was last drawn, for the one that is gone next frame.
+    /// Where each gull was last drawn, for the one that is gone next frame,
+    /// and by its keys which gulls were already here, for the one that is new.
     gulls_at: HashMap<u32, Vec2>,
 }
 
@@ -236,7 +236,6 @@ impl Watch {
                     Some(((x, y), (sp.owner, sp.dir)))
                 })
                 .collect(),
-            gulls: board.gulls().len(),
             flying: board
                 .gulls()
                 .iter()
@@ -522,8 +521,15 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
         }
     }
 
-    // Gull population and flight transitions.
-    if next.gulls > prev.gulls {
+    // Arrivals by id, never by headcount: a full flock turning over sends
+    // one gull off and brings one on in the same tick, and a raider can
+    // leave on the tick another lands, so the count holds and the new
+    // bird came in without a screech or a feed line.
+    if next
+        .gulls_at
+        .keys()
+        .any(|id| !prev.gulls_at.contains_key(id))
+    {
         events.push(SimEvent::GullArrived);
     }
     if next.flying > prev.flying {
@@ -593,6 +599,12 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
     // spin it refused. A look that also fired an event is taken to have
     // spun for its sparkling crab: two banked in the same few ticks, one
     // of them refused, is not worth a line of its own.
+    //
+    // A crab the tide swept home is not asked about at all: the sim never
+    // spins the wheel for one, on any rule. Flown home, it lands two
+    // seconds or more after the Monopoly that took it, in a look with no
+    // event, and read as a refusal it told the banker the wheel was on
+    // cooldown when nothing had tried to spin it.
     let spun = events
         .iter()
         .any(|event| matches!(event, SimEvent::TideEventFired { .. }));
@@ -601,6 +613,7 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
             .iter()
             .filter_map(|event| {
                 let SimEvent::CrabBanked {
+                    id,
                     owner,
                     kind: CrabKind::Sparkling,
                     ..
@@ -608,7 +621,7 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
                 else {
                     return None;
                 };
-                Some(*owner)
+                board.swept_home(*id).is_none().then_some(*owner)
             })
             .collect();
         for owner in refused {
@@ -909,6 +922,35 @@ mod tests {
                 SimEvent::CastleRaided { .. } | SimEvent::GullShooed { .. }
             )),
             "{events:?}"
+        );
+    }
+
+    /// A full flock turning over sends one gull off and brings one on in
+    /// the same tick. The headcount holds, and the newcomer still arrives.
+    #[test]
+    fn a_gull_that_takes_a_turned_over_place_still_arrives() {
+        let mut board = Board::new(12, 9, 7);
+        board.set_tile(1, 1, TileKind::Castle(0));
+        board.spawn_gull(10, 7, Direction::Up);
+        for _ in 0..3 {
+            board.tick_idle();
+        }
+        let mut watch = synced(&board);
+        board.set_gull_period(1);
+        board.set_gull_cap(1);
+        board.set_gull_turnover(true);
+        board.tick_idle();
+        let events = diff(&board, &mut watch);
+        assert_eq!(board.gulls().len(), 1, "one off and one on");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::GullFlewOff { .. })),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, SimEvent::GullArrived)),
+            "the new gull came in unannounced: {events:?}"
         );
     }
 
@@ -1269,6 +1311,50 @@ mod tests {
             }
         }
         assert_eq!(landed, 2, "both swept crabs banked at the keep");
+    }
+
+    /// A sparkling crab Crab Monopoly flies home lands seconds after the
+    /// event, in a look that fired nothing. The sim never spins the wheel
+    /// for a swept crab, so its landing is a bank and not a refusal.
+    #[test]
+    fn a_swept_sparkling_crab_does_not_say_the_wheel_is_locked() {
+        let mut board = Board::new(9, 7, 5);
+        board.set_events_enabled(true);
+        board.set_sweep_flight(true);
+        board.set_tile(7, 5, TileKind::Castle(1));
+        // Front of the line first: the sparkling one is the half taken.
+        board.spawn_crab(1, 1, Direction::Down, Handedness::Left, CrabKind::Sparkling);
+        board.spawn_crab(2, 1, Direction::Down, Handedness::Left, CrabKind::Common);
+        board.tick_idle();
+        let mut watch = synced(&board);
+        board.force_tide_event(TideEvent::Monopoly, 1);
+        let _ = diff(&board, &mut watch);
+        assert_eq!(
+            board.sweeping().len(),
+            1,
+            "the sparkling crab is in the air"
+        );
+        let mut landed = false;
+        while !board.sweeping().is_empty() {
+            board.tick_idle();
+            let events = diff(&board, &mut watch);
+            landed |= events.iter().any(|e| {
+                matches!(
+                    e,
+                    SimEvent::CrabBanked {
+                        kind: CrabKind::Sparkling,
+                        ..
+                    }
+                )
+            });
+            assert!(
+                !events
+                    .iter()
+                    .any(|e| matches!(e, SimEvent::WheelLocked { .. })),
+                "{events:?}"
+            );
+        }
+        assert!(landed, "the sparkling crab banked");
     }
 
     /// Through the whole differ, which is what the game actually runs: the
