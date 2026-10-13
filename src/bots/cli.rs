@@ -95,6 +95,15 @@ pub fn bot_level(text: &str) -> Result<BotLevel, String> {
     }
 }
 
+/// The word [`bot_level`] reads as `level`.
+pub fn level_token(level: BotLevel) -> &'static str {
+    match level {
+        BotLevel::Easy => "easy",
+        BotLevel::Normal => "normal",
+        BotLevel::Hard => "hard",
+    }
+}
+
 /// `ai:<level>`.
 pub fn ai_seat(text: &str) -> Result<BotLevel, String> {
     let level = text
@@ -314,6 +323,14 @@ pub fn ms(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every level's word reads back as that level.
+    #[test]
+    fn a_level_token_reads_back_as_its_level() {
+        for level in [BotLevel::Easy, BotLevel::Normal, BotLevel::Hard] {
+            assert_eq!(bot_level(level_token(level)), Ok(level));
+        }
+    }
 
     #[test]
     fn flags_are_read_in_both_spellings_and_typos_are_said() {

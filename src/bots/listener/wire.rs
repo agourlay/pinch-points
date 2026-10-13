@@ -45,10 +45,7 @@ pub(super) fn accept_loop(socket: &TcpListener, shared: &Arc<Shared>) {
 /// Write a refusal and close. The message says why, never with a secret
 /// in it.
 fn refuse(mut stream: TcpStream, shared: &Shared, peer: SocketAddr, why: &str) {
-    let line = format!(
-        "{}\n",
-        json!({"type": "error", "fatal": true, "message": why})
-    );
+    let line = format!("{}\n", protocol::fatal(why));
     let _ = stream.write_all(line.as_bytes());
     let _ = stream.shutdown(Shutdown::Both);
     emit(shared, Event::Refused(peer, why.to_string()));
@@ -335,7 +332,7 @@ fn read_loop(reader: &mut BufReader<TcpStream>, shared: &Arc<Shared>, id: BotId,
                     send(
                         &mut registry,
                         id,
-                        &json!({"type": "error", "fatal": true, "message": "a line longer than 64 KiB"}),
+                        &protocol::fatal("a line longer than 64 KiB"),
                     );
                     drop(registry);
                     hang_up(reader);
@@ -354,11 +351,7 @@ fn read_loop(reader: &mut BufReader<TcpStream>, shared: &Arc<Shared>, id: BotId,
             let allowance = &mut registry.bots[id].allowance;
             if !allowance.take() {
                 if allowance.flooding() {
-                    send(
-                        &mut registry,
-                        id,
-                        &json!({"type": "error", "fatal": true, "message": "flooding"}),
-                    );
+                    send(&mut registry, id, &protocol::fatal("flooding"));
                     drop(registry);
                     hang_up(reader);
                     return;
@@ -383,7 +376,7 @@ fn handle(shared: &Arc<Shared>, id: BotId, msg: Incoming, at: Instant) {
                 send(
                     &mut registry,
                     id,
-                    &json!({"type": "error", "message": format!("you have no seat in game {game}")}),
+                    &protocol::error(&format!("you have no seat in game {game}"), None),
                 );
             }
         },
@@ -401,7 +394,7 @@ fn handle(shared: &Arc<Shared>, id: BotId, msg: Incoming, at: Instant) {
                 None => routes_of(&registry, id),
             };
             if routes.is_empty() {
-                send(&mut registry, id, &json!({"type": "error", "message": why}));
+                send(&mut registry, id, &protocol::error(&why, None));
             }
             for (tx, seat) in routes {
                 let _ = tx.send(GameMsg::Garbled {
@@ -421,11 +414,7 @@ fn handle(shared: &Arc<Shared>, id: BotId, msg: Incoming, at: Instant) {
             }
         }
         Incoming::BadRequest { game, why } => {
-            let mut error = json!({"type": "error", "message": why});
-            if let Some(game) = game {
-                error["game"] = json!(game);
-            }
-            send(&mut registry, id, &error);
+            send(&mut registry, id, &protocol::error(&why, game));
         }
         Incoming::Replay { id: replay } => {
             let text = match registry.replays.get(&replay) {
@@ -438,7 +427,7 @@ fn handle(shared: &Arc<Shared>, id: BotId, msg: Incoming, at: Instant) {
             let answer = line_of(&match text {
                 Some(text) => json!({"type": "replay", "id": replay, "text": &*text}),
                 None => {
-                    json!({"type": "error", "message": format!("no replay {replay:?} of a game you played")})
+                    protocol::error(&format!("no replay {replay:?} of a game you played"), None)
                 }
             });
             send_line(&mut lock(&shared.registry), id, answer, false);
@@ -447,7 +436,7 @@ fn handle(shared: &Arc<Shared>, id: BotId, msg: Incoming, at: Instant) {
             send(
                 &mut registry,
                 id,
-                &json!({"type": "error", "message": "already registered"}),
+                &protocol::error("already registered", None),
             );
         }
         Incoming::Simulate { game, ticks, plan } => {
@@ -455,7 +444,7 @@ fn handle(shared: &Arc<Shared>, id: BotId, msg: Incoming, at: Instant) {
                 send(
                     &mut registry,
                     id,
-                    &json!({"type": "error", "message": format!("you have no seat in game {game}")}),
+                    &protocol::error(&format!("you have no seat in game {game}"), None),
                 );
                 return;
             };
@@ -467,7 +456,7 @@ fn handle(shared: &Arc<Shared>, id: BotId, msg: Incoming, at: Instant) {
             drop(registry);
             let charged = match lock(&view).as_mut() {
                 Some(view) => lookahead::charge(view, game, seat, ticks),
-                None => Err(json!({"type": "error", "message": "the game has not started"})),
+                None => Err(protocol::error("the game has not started", None)),
             };
             let answer = line_of(&match charged {
                 Ok(charged) => charged.answer(game, seat, &plan),

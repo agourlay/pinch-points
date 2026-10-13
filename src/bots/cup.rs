@@ -264,7 +264,7 @@ fn serve(plan: Plan) -> Result<(), String> {
         } else {
             format!("house-{}", i + 1)
         };
-        println!("  + {name} (ai:{})", level_token(level));
+        println!("  + {name} (ai:{})", super::cli::level_token(level));
         house.push(Entrant {
             name,
             seat: Seat::Ai(level),
@@ -341,14 +341,6 @@ fn serve(plan: Plan) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-fn level_token(level: BotLevel) -> &'static str {
-    match level {
-        BotLevel::Easy => "easy",
-        BotLevel::Normal => "normal",
-        BotLevel::Hard => "hard",
-    }
 }
 
 fn print_invite(listener: &Listener, host: &str, port: u16, owner: &str) {

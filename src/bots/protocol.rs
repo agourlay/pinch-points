@@ -207,6 +207,21 @@ pub fn hello(board: &Board, table: &Table, seat: PlayerId, resumed: bool) -> Val
     msg
 }
 
+/// `error`: what a bot is told when a request of its own is refused,
+/// naming the game it was about if there is one. The connection stays.
+pub fn error(message: &str, game: Option<u32>) -> Value {
+    let mut msg = json!({"type": "error", "message": message});
+    if let Some(game) = game {
+        msg["game"] = json!(game);
+    }
+    msg
+}
+
+/// A fatal `error`: why the connection is about to close.
+pub fn fatal(message: &str) -> Value {
+    json!({"type": "error", "fatal": true, "message": message})
+}
+
 /// What became of a seat's last action, for `you.last`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Outcome {

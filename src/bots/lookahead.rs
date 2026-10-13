@@ -70,13 +70,13 @@ pub struct Charged {
 /// why not.
 pub fn charge(view: &mut View, game: u32, seat: PlayerId, ticks: u32) -> Result<Charged, Value> {
     let Some(budget) = view.budget.get_mut(usize::from(seat)) else {
-        return Err(json!({"type": "error", "message": "no such seat"}));
+        return Err(protocol::error("no such seat", None));
     };
     if *budget == 0 {
-        return Err(json!({
-            "type": "error", "game": game,
-            "message": "lookahead budget for this tick is spent",
-        }));
+        return Err(protocol::error(
+            "lookahead budget for this tick is spent",
+            Some(game),
+        ));
     }
     let ticks = ticks.min(*budget);
     *budget -= ticks;

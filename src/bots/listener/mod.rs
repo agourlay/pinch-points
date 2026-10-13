@@ -19,7 +19,7 @@ use super::connstr::{Key, Token};
 use super::protocol::Reply;
 use crate::sim::{Board, PlayerId};
 use allowance::Allowance;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -384,11 +384,7 @@ impl Listener {
     fn let_go(&self, id: BotId, why: Option<&str>) {
         let mut registry = lock(&self.shared.registry);
         if let Some(why) = why {
-            send(
-                &mut registry,
-                id,
-                &json!({"type": "error", "fatal": true, "message": why}),
-            );
+            send(&mut registry, id, &super::protocol::fatal(why));
         }
         let Some(bot) = registry.bots.get_mut(id) else {
             return;
