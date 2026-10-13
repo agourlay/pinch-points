@@ -251,8 +251,11 @@ struct Conn {
 struct Bot {
     info: BotInfo,
     token: Token,
-    /// The key it was let in with, if one was asked for: with its name,
-    /// what lets it back in without its token (see [`comeback`]).
+    /// The key it was let in with, if that key was printed for it alone
+    /// (an arena's per-seat key, which names its `slot`): with its name, what lets it back in
+    /// without its token (see [`comeback`]). A shared key is held by every
+    /// entrant and proves nothing about which of them this is, so it is
+    /// not kept.
     key: Option<Key>,
     conn: Option<Conn>,
     /// Round trips measured by ping, newest last.
@@ -852,6 +855,9 @@ fn register_bot(
     let mut registry = lock(&shared.registry);
     if let Some(id) = comeback(&registry, &config.admission, &register, peer.ip()) {
         drop(config);
+        // A new token: the old one was lost with the bot that held it,
+        // and it is not this registration's to be handed.
+        registry.bots[id].token = Token::draw();
         return Ok(take_back(shared, registry, id, writer));
     }
     // The key, when one is asked for: found first and spent last, so a
@@ -937,8 +943,8 @@ fn register_bot(
         },
         token,
         key: invite.and_then(|i| match &config.admission {
-            Admission::Keys(invites) => Some(invites[i].key.clone()),
-            Admission::Open => None,
+            Admission::Keys(invites) if invites[i].slot.is_some() => Some(invites[i].key.clone()),
+            Admission::Keys(_) | Admission::Open => None,
         }),
         conn: None,
         rtts: Vec::new(),
@@ -974,6 +980,13 @@ fn register_bot(
 /// counted a strike against its address. The pair of key and name is
 /// what it was let in on, so it is what takes its chair back, and only
 /// while nobody is sitting in it.
+///
+/// Only a key printed for this one seat counts, and only while the host
+/// still lists it: a cup's invite or an arena's `--key` is in several
+/// entrants' hands and
+/// bot names are public, so with it any rival could sit down in a
+/// dropped bot's chair and throw its games. A bot let in on a shared key
+/// comes back by its token or not at all.
 fn comeback(
     registry: &Registry,
     admission: &Admission,
@@ -987,7 +1000,11 @@ fn comeback(
             && b.info.name.eq_ignore_ascii_case(&register.name)
             && match admission {
                 Admission::Open => b.info.addr == ip,
-                Admission::Keys(_) => b.key.is_some() && b.key == key,
+                Admission::Keys(invites) => {
+                    b.key.is_some()
+                        && b.key == key
+                        && invites.iter().any(|i| Some(&i.key) == b.key.as_ref())
+                }
             }
     })
 }

@@ -461,11 +461,13 @@ way, the games that start after it while you are still away forfeit your
 seat at once rather than waiting again; reconnecting puts an end to it.
 
 A bot that restarted has lost its token. Register as before, with the same
-`name` and the same key (or, on a listener that asks for none, from the
-same address), and while your old connection is gone you are taken back
-as the bot you were: the answer is marked `"resumed": true` and carries
-your old token. A spent single-use key and your own name are not held
-against you then.
+`name` and the same single-use key printed for your seat (or, on a listener
+that asks for none, from the same address), and while your old connection
+is gone you are taken back as the bot you were: the answer is marked
+`"resumed": true` and carries a new token, which replaces the old one. A
+spent single-use key and your own name are not held against you then. A
+key shared by several entrants (a cup's invite, an arena's `--key`) does
+not take a chair back: keep your token, it is the only way back in.
 
 ## Limits
 

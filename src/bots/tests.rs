@@ -836,7 +836,8 @@ fn dropped(events: &Receiver<Event>, id: usize) {
 /// memory, takes its own chair back on the key and the name it came in
 /// on: not refused for a spent key or a taken name, and never a strike
 /// against its address, however often it comes back. Somebody else with
-/// the key, under another name, does not get the chair.
+/// the key, under another name, does not get the chair. It comes back
+/// with a new token, and the old one lets nobody in.
 #[test]
 fn a_dropped_bot_restarted_without_its_token_takes_its_chair_back() {
     let slot_key = Key::draw();
@@ -848,13 +849,18 @@ fn a_dropped_bot_restarted_without_its_token_takes_its_chair_back() {
             owner: None,
             slot: Some(0),
         },
-        invite(&shared_key, Some(1)),
+        Invite {
+            key: shared_key.clone(),
+            uses: Some(1),
+            owner: None,
+            slot: Some(1),
+        },
     ]));
     let addr = listener.local_addr();
-    for (name, key) in [("Greedy", &slot_key), ("Shared", &shared_key)] {
+    for (name, key) in [("Greedy", &slot_key), ("Second", &shared_key)] {
         let (bot, answer) = Client::register(addr, name, Some(key));
         assert_eq!(answer["type"], "registered", "{answer}");
-        let token = answer["token"].clone();
+        let mut token = answer["token"].clone();
         let id = registered(&events);
         let mut bot = Some(bot);
         // More times than the strikes that lock an address out.
@@ -864,7 +870,8 @@ fn a_dropped_bot_restarted_without_its_token_takes_its_chair_back() {
             let (back, answer) = Client::register(addr, name, Some(key));
             assert_eq!(answer["type"], "registered", "{name}: {answer}");
             assert_eq!(answer["resumed"], true, "{answer}");
-            assert_eq!(answer["token"], token, "the same bot: {answer}");
+            assert_ne!(answer["token"], token, "a new token: {answer}");
+            token = answer["token"].clone();
             bot = Some(back);
         }
         // Sat in, the chair is not up for grabs.
@@ -875,6 +882,32 @@ fn a_dropped_bot_restarted_without_its_token_takes_its_chair_back() {
         dropped(&events, id);
         let (_other, answer) = Client::register(addr, "Other", Some(key));
         assert_eq!(answer["type"], "error", "{answer}");
+    }
+}
+
+/// A key every entrant holds, like a cup's invite, takes no chair back by
+/// name: bot names are public, so with it a rival could sit down in a
+/// dropped bot's chair, be handed its token, and throw its games. That
+/// bot comes back by its token.
+#[test]
+fn a_shared_key_does_not_take_another_bots_chair() {
+    let shared = Key::draw();
+    // A cup's invite, and an arena's `--key` for two seats.
+    for uses in [None, Some(2)] {
+        let (listener, events) = listen(Admission::Keys(vec![invite(&shared, uses)]));
+        let addr = listener.local_addr();
+        let (bot, answer) = Client::register(addr, "Victim", Some(&shared));
+        assert_eq!(answer["type"], "registered", "{answer}");
+        let token = answer["token"].as_str().expect("token").to_string();
+        let id = registered(&events);
+        drop(bot);
+        dropped(&events, id);
+        let (_rival, answer) = Client::register(addr, "Victim", Some(&shared));
+        assert_eq!(answer["type"], "error", "not the victim's chair: {answer}");
+        let mut back = Client::connect(addr);
+        back.send(&json!({"type": "register", "protocol": 1, "token": token}));
+        let answer = back.next().expect("an answer");
+        assert_eq!(answer["resumed"], true, "its token still works: {answer}");
     }
 }
 
