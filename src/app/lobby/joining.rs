@@ -567,8 +567,10 @@ pub fn join_tick(
     if let Some((terms, beach)) = host_terms
         && let Some(joined) = state.joined_mut()
     {
-        joined.terms = Some(terms);
-        joined.beach_name = crate::transport::beach_name_from_wire(&beach);
+        joined.host_terms = Some(HostTerms {
+            terms,
+            beach_name: crate::transport::beach_name_from_wire(&beach),
+        });
     }
     for (name, text) in said {
         state.hear(&name, &text);

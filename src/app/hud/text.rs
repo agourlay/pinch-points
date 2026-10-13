@@ -69,7 +69,7 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
         Standing::Joining(joined) if joined.watching => tr.lobby_watching_prompt.to_string(),
         Standing::Joining(_) => tr.lobby_aboard_prompt.to_string(),
         // Picking whom to ask to leave: the prompt says how.
-        Standing::Hosting(_) if lobby.kicking => tr.lobby_kick_ask.to_string(),
+        Standing::Hosting(hosted) if hosted.kicking => tr.lobby_kick_ask.to_string(),
         Standing::Hosting(_) => tr.lobby_broadcasting.to_string(),
         Standing::Choosing { watching: false } if lobby.hosts.is_empty() => {
             tr.lobby_none_yet.to_string()

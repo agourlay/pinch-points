@@ -471,9 +471,8 @@ pub fn update_lobby_beach_note(
     let line = crate::app::match_setup::beaches_note(&config, settings.tr(), &beaches)
         .or_else(|| {
             state
-                .hosting()
-                .then(|| state.bot_string.clone())
-                .flatten()
+                .hosted()
+                .and_then(|hosted| hosted.bot_string.clone())
                 .map(|string| format!("{}: {string}", settings.tr().lobby_bots_dial))
         })
         .unwrap_or_default();
@@ -499,7 +498,8 @@ pub fn update_lobby_terms(
         .then(|| {
             state
                 .joined()
-                .and_then(|joined| joined.terms)
+                .and_then(|joined| joined.host_terms.as_ref())
+                .map(|host| host.terms)
                 .map(|t| crate::app::match_setup::config_from_terms(&t))
         })
         .flatten();
@@ -517,7 +517,12 @@ pub fn update_lobby_terms(
     // this machine's own shelf.
     let hosts_beach = joined
         .is_some()
-        .then(|| state.joined().map(|joined| joined.beach_name.as_str()))
+        .then(|| {
+            state
+                .joined()
+                .and_then(|joined| joined.host_terms.as_ref())
+                .map(|host| host.beach_name.as_str())
+        })
         .flatten();
     let label = |dial: &Dial| {
         let (name, value) = dial.label(tr, config, team_mode, &beaches);
@@ -950,11 +955,13 @@ mod list_row_tests {
                 UdpTransport::join(("127.0.0.1", 47997)).expect("join"),
                 false,
             );
-            joined.terms = Some(MatchTerms {
-                map: crate::app::match_setup::MapChoice::Custom.index() as u8,
-                ..MatchTerms::default()
+            joined.host_terms = Some(HostTerms {
+                terms: MatchTerms {
+                    map: crate::app::match_setup::MapChoice::Custom.index() as u8,
+                    ..MatchTerms::default()
+                },
+                beach_name: "The Pier".into(),
             });
-            joined.beach_name = "The Pier".into();
             state.standing = Standing::Joining(joined);
         }
         app.add_systems(
@@ -978,8 +985,10 @@ mod list_row_tests {
 
         // A handmade beach that does not travel is played as the generated
         // arena at both ends, and is named so.
-        if let Some(joined) = app.world_mut().resource_mut::<LobbyState>().joined_mut() {
-            joined.beach_name.clear();
+        if let Some(joined) = app.world_mut().resource_mut::<LobbyState>().joined_mut()
+            && let Some(host) = &mut joined.host_terms
+        {
+            host.beach_name.clear();
         }
         app.update();
         assert_eq!(

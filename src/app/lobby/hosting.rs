@@ -172,11 +172,13 @@ pub fn host_tick(
             state.table_kinds.push(crate::sim::SeatKind::Bot);
         }
     }
-    state.bot_string = arena
-        .bots
-        .door
-        .as_ref()
-        .and_then(crate::app::bot_seats::Doorway::open_string);
+    if let Some(hosted) = state.hosted_mut() {
+        hosted.bot_string = arena
+            .bots
+            .door
+            .as_ref()
+            .and_then(crate::app::bot_seats::Doorway::open_string);
+    }
     if do_announce && let Some(hosted) = state.hosted() {
         let names = crate::transport::wire_table(&state.table);
         // The dials travel with the roster so a joiner's terms card shows
@@ -222,7 +224,7 @@ pub fn host_tick(
         // Picking whom to ask to leave holds the keyboard as typing does:
         // the host runs before the lobby's keys, so an Enter pressed at the
         // "pick a number" prompt used to start the match.
-        state.typing.is_some() || state.kicking,
+        state.typing.is_some() || state.hosted().is_some_and(|hosted| hosted.kicking),
         crate::app::menu_ui::enter(&keys),
         quota,
     );
@@ -286,6 +288,8 @@ fn launch_the_match(
         transport,
         peers,
         announce_in: _,
+        kicking: _,
+        bot_string: _,
     }) = std::mem::take(&mut state.standing)
     else {
         unreachable!("launching a match from a lobby that is not hosting");
@@ -479,6 +483,8 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
         transport,
         peers,
         announce_in,
+        kicking: _,
+        bot_string: _,
     } = hosted;
     let mut picked = Picked {
         announced: once_a_second(announce_in, delta),

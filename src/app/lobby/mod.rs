@@ -111,6 +111,8 @@ impl Standing {
             transport,
             peers: PeerBook::default(),
             announce_in: 0.0,
+            kicking: false,
+            bot_string: None,
         })
     }
 }
@@ -128,6 +130,12 @@ pub struct Hosted {
     /// at the launch.
     pub peers: PeerBook,
     announce_in: f32,
+    /// The host pressed K and is picking whom to ask to leave: the next
+    /// number is a seat at the table, Esc is never mind.
+    pub kicking: bool,
+    /// The string a bot connects straight to this beach with (route 2),
+    /// while the host says bots are welcome and there is a chair for one.
+    pub bot_string: Option<String>,
 }
 
 impl Hosted {
@@ -189,14 +197,9 @@ pub struct Joined {
     /// `Start`; without this the lobby would read the repeat as an
     /// invitation and walk straight back into the finished round.
     played_seed: Option<u64>,
-    /// The host's dials, from its [`NetMsg::Roster`]. The terms card
-    /// paints these rather than this machine's own [`MatchConfig`], which
-    /// is nothing to do with the match being joined; `None` until the
-    /// first roster lands.
-    pub terms: Option<MatchTerms>,
-    /// What the host's handmade beach is called, from the same roster,
-    /// when its terms are on one: empty otherwise.
-    pub beach_name: String,
+    /// The host's dials and its beach's name, from its [`NetMsg::Roster`];
+    /// `None` until the first roster lands.
+    pub host_terms: Option<HostTerms>,
     /// The round as it stands, arriving in parts, for a watcher who
     /// greeted a beach mid-round (`net::catch_up`).
     catching_up: crate::app::net::catch_up::Assembly,
@@ -209,6 +212,18 @@ pub struct Joined {
     /// because one beach arrives from two addresses (the broadcast and the
     /// loopback copy) and the list keeps whichever it heard first.
     pub beach: Option<u64>,
+}
+
+/// What a joiner knows of the match it is joining, from the host's
+/// roster: the two always arrive together.
+pub struct HostTerms {
+    /// The host's dials. The terms card paints these rather than this
+    /// machine's own [`MatchConfig`], which is nothing to do with the match
+    /// being joined.
+    pub terms: MatchTerms,
+    /// What the host's handmade beach is called, when its terms are on
+    /// one: empty otherwise.
+    pub beach_name: String,
 }
 
 impl Joined {
@@ -224,8 +239,7 @@ impl Joined {
             host_silence: 0.0,
             host_answered: false,
             played_seed: None,
-            terms: None,
-            beach_name: String::new(),
+            host_terms: None,
             catching_up: Default::default(),
             bot: None,
             beach: None,
@@ -249,8 +263,7 @@ impl Joined {
             host_silence: 0.0,
             host_answered: true,
             played_seed: Some(played_seed),
-            terms: None,
-            beach_name: String::new(),
+            host_terms: None,
             catching_up: Default::default(),
             bot,
             beach: None,
@@ -347,12 +360,6 @@ pub struct LobbyState {
     pub game_name: String,
     pub feedback: String,
     auto_done: bool,
-    /// The host pressed K and is picking whom to ask to leave: the next
-    /// number is a seat at the table, Esc is never mind.
-    pub kicking: bool,
-    /// The string a bot connects straight to this beach with (route 2),
-    /// while the host says bots are welcome and there is a chair for one.
-    pub bot_string: Option<String>,
 }
 
 impl LobbyState {
@@ -620,6 +627,8 @@ fn settle_back_in(
                 transport,
                 peers,
                 announce_in: 0.0,
+                kicking: false,
+                bot_string: None,
             });
         }
         LobbyReturn::Joiner {
@@ -922,20 +931,26 @@ pub fn lobby_input(
         }
     }
     // K: ask somebody to leave. The next number names them, Esc does not.
-    if state.hosting() && state.typing.is_none() && caps.just_pressed(&keys, 'K') {
-        state.kicking = true;
+    let typing = state.typing.is_some();
+    if let Some(hosted) = state.hosted_mut()
+        && !typing
+        && caps.just_pressed(&keys, 'K')
+    {
+        hosted.kicking = true;
         return;
     }
-    if state.kicking {
-        if keys.just_pressed(KeyCode::Escape) || !state.hosting() {
-            state.kicking = false;
+    if let Some(hosted) = state.hosted_mut()
+        && hosted.kicking
+    {
+        if keys.just_pressed(KeyCode::Escape) {
+            hosted.kicking = false;
             return;
         }
         if let Some(at) =
             crate::app::menu_ui::number_pressed(&keys, crate::app::menu_ui::NUMBER_KEYS.len())
         {
-            state.kicking = false;
-            ask_to_leave(&mut state, &mut bots, tr, at + 1);
+            hosted.kicking = false;
+            ask_to_leave(&mut state, &mut bots, tr, at + 1)
         }
         return;
     }
