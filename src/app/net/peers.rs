@@ -50,6 +50,19 @@ pub struct Peer {
     /// Its greeting said a bot drives its seat. The game behind the
     /// greeting sets this, never the name, so the seat wears the robot.
     pub bot: bool,
+    /// Seconds since it said it was going (`NetMsg::Leaving`), or `None`
+    /// once it is heard from again, or if it never said.
+    ///
+    /// Its own clock, because the goodbye is a claim nothing checks: any
+    /// machine on the LAN can send one with the peer's address on it. The
+    /// real peer is still sending on every tick it runs, and the first
+    /// word from it after the goodbye takes the goodbye back, well inside
+    /// the grace a seat gets before it is handed to the AI.
+    pub goodbye: Option<f32>,
+    /// Host: the frame of the last pause it announced. It holds the
+    /// table's pause while that one is in flight (see
+    /// `OnlineSession::release_a_departed_pause`).
+    pub pause: Option<u32>,
 }
 
 impl Peer {
@@ -81,9 +94,10 @@ impl Peer {
         !self.watch && self.seat().is_none()
     }
 
-    /// Whether it said it was going (`NetMsg::Leaving`).
+    /// Whether it said it was going (`NetMsg::Leaving`), and has said
+    /// nothing since.
     pub fn left(&self) -> bool {
-        self.silence == f32::INFINITY
+        self.goodbye.is_some()
     }
 }
 
@@ -141,9 +155,12 @@ impl PeerBook {
         }
     }
 
-    /// A peer said something, which is all this needs to know.
+    /// A peer said something, which is all this needs to know: a goodbye
+    /// before it included, since a peer that has gone says nothing more.
     pub fn heard(&mut self, peer: usize) {
-        self.row(peer).silence = 0.0;
+        let row = self.row(peer);
+        row.silence = 0.0;
+        row.goodbye = None;
     }
 
     /// The peer said it is going (`NetMsg::Leaving`): its silence is
@@ -151,14 +168,23 @@ impl PeerBook {
     /// peer (the lobby's, the results card's, a watcher's) forgets this one
     /// at its next look rather than seconds later, and a seat it holds is
     /// given up on the moment the round waits on it.
+    ///
+    /// The goodbye's clock starts at the first copy and is not restarted
+    /// by the repeats ([`crate::transport::UdpTransport`] says it more than
+    /// once), which is why a goodbye is not also a word that is heard.
     pub fn said_goodbye(&mut self, peer: usize) {
-        self.row(peer).silence = f32::INFINITY;
+        let row = self.row(peer);
+        row.silence = f32::INFINITY;
+        row.goodbye.get_or_insert(0.0);
     }
 
-    /// Age every silence by a frame.
+    /// Age every silence by a frame, and every goodbye.
     pub fn age(&mut self, delta: f32) {
         for peer in &mut self.0 {
             peer.silence += delta;
+            if let Some(since) = &mut peer.goodbye {
+                *since += delta;
+            }
         }
     }
 
@@ -166,6 +192,7 @@ impl PeerBook {
     pub fn hush(&mut self) {
         for peer in &mut self.0 {
             peer.silence = 0.0;
+            peer.goodbye = None;
         }
     }
 

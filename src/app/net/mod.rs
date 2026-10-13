@@ -648,7 +648,11 @@ impl OnlineSession {
         for (msg, from) in self.transport.recv_all() {
             // Whatever it was, that peer is still there, which is all
             // `abandon_stalled` and `host_gone` go on.
-            self.mark_heard(from);
+            // Except a goodbye, which says the opposite, and whose grace
+            // runs from the first copy rather than the last.
+            if msg != NetMsg::Leaving {
+                self.mark_heard(from);
+            }
             match msg {
                 // A peer that missed the Start datagram keeps greeting us;
                 // repeat what it is until it stops. A watcher is told it is
@@ -749,6 +753,7 @@ impl OnlineSession {
                 NetMsg::Pause { frame } => {
                     self.session.receive_pause(frame);
                     if host {
+                        self.peers.row(from).pause = Some(frame);
                         relay(&self.transport, from, NetMsg::Pause { frame });
                     }
                 }
@@ -813,7 +818,10 @@ impl OnlineSession {
                 // and anyone else is forgotten at the next sweep. On a
                 // joiner it is the host, and the round is over
                 // (`host_gone`) without twenty seconds of a still beach.
-                NetMsg::Leaving => self.peers.said_goodbye(from),
+                NetMsg::Leaving => {
+                    self.peers.said_goodbye(from);
+                    self.release_a_departed_pause(from);
+                }
                 // Only a host hands these out, and a host never receives
                 // one: a joiner in the queue is still in the lobby, and so
                 // is a watcher being caught up.

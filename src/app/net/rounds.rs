@@ -149,7 +149,11 @@ impl OnlineSession {
             self.transport.send(hello);
         }
         for (msg, from) in self.transport.recv_all() {
-            self.mark_heard(from);
+            // Except a goodbye, which says the opposite, and whose grace
+            // runs from the first copy rather than the last.
+            if msg != NetMsg::Leaving {
+                self.mark_heard(from);
+            }
             match msg {
                 NetMsg::Hello { name, bot } => {
                     if host && !self.refuse_a_bot(from, bot) {

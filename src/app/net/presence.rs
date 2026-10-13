@@ -92,11 +92,12 @@ impl OnlineSession {
         self.peers.age(delta);
     }
 
-    /// How long the peer holding `seat` has said nothing at all. `None`
-    /// for a seat no peer holds: the host's own, and the AI's.
-    fn seat_silence(&self, seat: u8) -> Option<f32> {
+    /// The peer holding `seat`, and with it how long that peer has said
+    /// nothing at all. `None` for a seat no peer holds: the host's own,
+    /// and the AI's.
+    fn seat_holder(&self, seat: u8) -> Option<&Peer> {
         let peer = self.peers.holder_of(seat)?;
-        self.peers.get(peer).map(|peer| peer.silence)
+        self.peers.get(peer)
     }
 
     /// Whether the host has gone: a joiner's own verdict on the one peer it
@@ -202,13 +203,22 @@ impl OnlineSession {
         let served = self.stall.stalled_for >= ABANDON_AFTER;
         let gone: Vec<u8> = waiting
             .into_iter()
-            .filter(|seat| match self.seat_silence(*seat) {
-                // Said it was going: the round being held up on it is all
-                // there is left to wait for, after a moment for any input
-                // that crossed the goodbye on the way.
-                Some(since) if since == f32::INFINITY => self.stall.stalled_for >= GOODBYE_GRACE,
+            .filter(|seat| match self.seat_holder(*seat) {
+                // Said it was going, and has not been heard since: the
+                // round being held up on it is all there is left to wait
+                // for, after a moment for any input that crossed the
+                // goodbye on the way.
+                //
+                // That moment is counted from the goodbye, not from the
+                // stall, and anything heard from the peer in it takes the
+                // goodbye back (`Peer::goodbye`). A goodbye is
+                // unauthenticated, so one forged with a player's address
+                // would otherwise hand a lagging castle to the AI at once.
+                Some(peer) if peer.left() => {
+                    peer.goodbye.is_some_and(|since| since >= GOODBYE_GRACE)
+                }
                 // Held up by them *and* not a word from them.
-                Some(since) => served && since >= ABANDON_AFTER,
+                Some(peer) => served && peer.silence >= ABANDON_AFTER,
                 // A seat this session cannot point at on the socket: the
                 // direct `PINCH_HOST` pair keeps no launch plan, having
                 // never been through a lobby. Nothing better to go on than
@@ -241,6 +251,28 @@ impl OnlineSession {
             self.forget_seat(*seat);
         }
         gone
+    }
+
+    /// Host: lift the pause `peer` called, now that it has said goodbye.
+    ///
+    /// A seat whose player said goodbye goes to the AI the moment the round
+    /// waits on it, but a paused round waits on nobody (`abandon_stalled`),
+    /// so a player who paused and left had the table frozen on its pause
+    /// card until somebody else pressed Continue. Lifted as that player's
+    /// own Continue would have, which any player's lifts for the table.
+    /// Only the pause it called: one called since by somebody else, or a
+    /// pause of its that was lifted already, is not its to lift.
+    pub(super) fn release_a_departed_pause(&mut self, peer: usize) {
+        let holds = self.is_host()
+            && self.session.paused()
+            && self
+                .peers
+                .get(peer)
+                .and_then(|row| row.pause)
+                .is_some_and(|frame| !self.session.is_lifted(frame));
+        if holds {
+            self.request_resume();
+        }
     }
 
     /// Drop the peer holding `seat` from the socket as well as from the
@@ -583,6 +615,90 @@ mod tests {
         assert_eq!(gone, vec![1], "a seat that really is silent still goes");
         assert_eq!(session.abandoned.len(), 1);
         assert_eq!(session.abandoned[0].0, 1);
+    }
+
+    /// A goodbye is a claim nothing checks: anyone on the LAN can send one
+    /// with a player's address on it. The real player goes on talking, and
+    /// the first word from it takes the goodbye back, so the castle stays.
+    /// And the grace is counted from the goodbye, not from a stall that
+    /// was already long when it landed, or a forged goodbye on a lagging
+    /// seat handed the castle over on the very next look.
+    #[test]
+    fn a_goodbye_taken_back_by_talking_keeps_the_castle() {
+        let transport = UdpTransport::host(0).expect("game socket");
+        let mut session = OnlineSession::new(
+            transport,
+            Lockstep::new(0, vec![0, 1], 0),
+            2,
+            MatchTerms::default(),
+        );
+        session.peers.deal(&[Some(1)]);
+        // Held up on seat 1 for a good second, its machine talking all the
+        // while.
+        for _ in 0..12 {
+            session.mark_heard(0);
+            assert!(session.abandon_stalled(0.1, false).is_empty());
+        }
+        session.peers.said_goodbye(0);
+        assert!(
+            session.abandon_stalled(0.1, false).is_empty(),
+            "a moment from the goodbye, whatever the stall"
+        );
+        // And then the player speaks again, every tick, as one still at
+        // the table does.
+        session.mark_heard(0);
+        assert!(!session.peers.get(0).is_some_and(Peer::left));
+        for _ in 0..30 {
+            session.mark_heard(0);
+            assert!(
+                session.abandon_stalled(0.1, false).is_empty(),
+                "a forged goodbye cost a castle"
+            );
+        }
+        assert!(session.abandoned.is_empty());
+    }
+
+    /// A player who paused and then left: the goodbye lifts the pause it
+    /// called, as its own Continue would have, or the table sat frozen on
+    /// its pause card (a paused round waits on nobody, so the castle never
+    /// went either). A pause somebody else called is not the leaver's to
+    /// lift.
+    #[test]
+    fn a_pause_goes_with_the_player_who_called_it() {
+        for leaver_paused in [true, false] {
+            let mut host = OnlineSession::new(
+                UdpTransport::host(0).expect("host socket"),
+                Lockstep::new(0, vec![0, 1], crate::sim::DEFAULT_DELAY),
+                2,
+                MatchTerms::default(),
+            );
+            let port = host.transport.local_addr().expect("addr").port();
+            let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
+            bo.send(NetMsg::hello("Bo"));
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            host.pump(PlayerAction::None, |_| {});
+            assert_eq!(host.transport.peer_count(), 1, "Bo is aboard");
+            host.peers.deal(&[Some(1)]);
+            if leaver_paused {
+                let mut bos = Lockstep::new(1, vec![0, 1], crate::sim::DEFAULT_DELAY);
+                let frame = bos.request_pause().expect("a player may pause");
+                bo.send(NetMsg::Pause { frame });
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                host.pump(PlayerAction::None, |_| {});
+            } else {
+                host.request_pause();
+            }
+            assert!(host.session.paused());
+            drop(bo);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            host.pump(PlayerAction::None, |_| {});
+            assert!(host.peers.get(0).is_some_and(Peer::left), "said goodbye");
+            assert_eq!(
+                host.session.paused(),
+                !leaver_paused,
+                "the leaver paused: {leaver_paused}"
+            );
+        }
     }
 
     /// A joiner whose host has gone quiet calls the round off itself.

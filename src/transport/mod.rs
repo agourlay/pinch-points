@@ -336,6 +336,12 @@ impl UdpTransport {
                     }
                     let index = match self.peers.iter().position(|p| *p == from) {
                         Some(index) => index,
+                        // A goodbye from nobody this socket knows: the
+                        // second or third copy of one whose sender was
+                        // forgotten on the first. Taken as a greeting, it
+                        // sat a nameless row at the table, holding one of
+                        // the peer slots until the next sweep.
+                        None if msg == NetMsg::Leaving => continue,
                         None if self.accept_new && self.peers.len() < self.max_peers => {
                             self.peers.push(from);
                             self.peers.len() - 1
@@ -414,6 +420,33 @@ mod tests {
             .filter(|(msg, _)| *msg == NetMsg::Kicked)
             .count();
         assert!(kicked > 3, "told on the way out and told again: {kicked}");
+    }
+
+    /// A goodbye from an address the socket does not know is dropped: the
+    /// later copies of one whose sender was forgotten on the first used to
+    /// be admitted as a brand new peer, a nameless row holding a slot.
+    #[test]
+    fn a_stray_goodbye_admits_nobody() {
+        let mut host = UdpTransport::host(0).expect("bind");
+        let port = host.local_addr().expect("addr").port();
+        let stranger = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        for _ in 0..3 {
+            stranger.send(NetMsg::Leaving);
+        }
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            assert!(host.recv_all().is_empty(), "nothing to act on");
+        }
+        assert_eq!(host.peer_count(), 0, "and nobody new at the table");
+        // Anything else from it is a greeting as ever.
+        stranger.send(NetMsg::hello("Bo"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            if !host.recv_all().is_empty() {
+                break;
+            }
+        }
+        assert_eq!(host.peer_count(), 1);
     }
 
     /// A host on another build answers the greeting instead of ignoring it,

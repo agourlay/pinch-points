@@ -236,6 +236,14 @@ pub fn pause_input(
                 next_screen.set(Screen::Menu);
             }
             PauseAction::Quit => {
+                // As the way to the menu does: a pause this player called
+                // is lifted on the way out. The goodbye that follows hands
+                // the castle over at once, but not while the round is held
+                // still on purpose, so a player who paused and quit left
+                // the table frozen until somebody pressed Continue.
+                if let Some(session) = online.0.as_mut() {
+                    session.request_resume();
+                }
                 exit.write(AppExit::Success);
             }
         }
