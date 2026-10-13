@@ -259,7 +259,7 @@ impl Board {
                     return;
                 }
                 for crab in swept {
-                    self.credit_bank(banker, &crab);
+                    let points = self.credit_bank(banker, &crab);
                     self.crabs_banked += 1;
                     if crab.kind == CrabKind::Golden {
                         self.golden_banked += 1;
@@ -272,6 +272,7 @@ impl Board {
                         crab: crab.id,
                         owner: banker,
                         at,
+                        points,
                     });
                 }
             }

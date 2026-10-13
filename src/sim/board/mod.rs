@@ -431,6 +431,10 @@ struct Swept {
     /// sweep, which is the busiest one the renderer ever draws - so the
     /// record has to outlive its own tick to be read at all.
     at: u64,
+    /// What it paid, as credited: under the claw call it banked under,
+    /// which for a crab in flight is not the one running when it lands.
+    /// Kept so nobody outside has to work that out again.
+    points: i32,
 }
 
 /// How many ticks a [`Swept`] record is kept before it is pruned: long
@@ -965,7 +969,7 @@ impl Board {
                 true => claw_call,
                 false => self.in_claw_call(),
             };
-            self.credit_bank_under(owner, &crab, claw_call);
+            let points = self.credit_bank_under(owner, &crab, claw_call);
             self.crabs_banked += 1;
             if crab.kind == CrabKind::Golden {
                 self.golden_banked += 1;
@@ -974,6 +978,7 @@ impl Board {
                 crab: crab.id,
                 owner,
                 at: tick,
+                points,
             });
         }
     }
@@ -991,16 +996,18 @@ impl Board {
     /// again, down to nothing and no further: a score that has gone
     /// negative is a player who has stopped playing, and this game is for
     /// children.
-    pub(super) fn credit_bank(&mut self, owner: PlayerId, crab: &Crab) {
-        self.credit_bank_under(owner, crab, self.in_claw_call());
+    pub(super) fn credit_bank(&mut self, owner: PlayerId, crab: &Crab) -> i32 {
+        self.credit_bank_under(owner, crab, self.in_claw_call())
     }
 
     /// [`Self::credit_bank`] under a claw call given rather than read off
     /// the clock: a swept crab's, written down when the sweep fired.
-    fn credit_bank_under(&mut self, owner: PlayerId, crab: &Crab, claw_call: bool) {
+    /// Returns what the crab was worth, before the floor at nothing.
+    fn credit_bank_under(&mut self, owner: PlayerId, crab: &Crab, claw_call: bool) -> i32 {
         let points = crab.bank_points(self.crab_value(crab.kind), claw_call);
         let score = &mut self.scores[owner as usize];
         *score = score.saturating_add_signed(points);
+        points
     }
 
     /// A walker's step this tick: the tempo-adjusted speed, halved (never
@@ -1182,6 +1189,20 @@ impl Board {
             .iter()
             .find(|swept| swept.crab == crab)
             .map(|swept| swept.owner)
+    }
+
+    /// What a crab the tide banked paid its owner, before the floor at
+    /// nothing, alongside [`Self::swept_home`].
+    ///
+    /// The one answer to it: a crab in flight banks under the claw call
+    /// written on it when the sweep fired (see
+    /// [`Rules::sweep_keeps_worth`]), not the one running when it lands,
+    /// and a reader pricing it off the clock gets the wrong sign.
+    pub fn swept_paid(&self, crab: u32) -> Option<i32> {
+        self.swept_home
+            .iter()
+            .find(|swept| swept.crab == crab)
+            .map(|swept| swept.points)
     }
 
     /// Crabs ever spawned (initial, spawner-emitted, and castle-spilled).

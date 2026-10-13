@@ -131,16 +131,17 @@ impl Before {
         // order the tick credits them: the walkers as they arrive, then
         // the tide's sweep.
         let mut expected = self.scores;
-        let mut credit = |owner: PlayerId, crab: &Seen| {
+        let mut credit = |owner: PlayerId, points: i32| {
             if let Some(score) = expected.get_mut(usize::from(owner)) {
-                *score = credited(*score, crab, after.crab_value(crab.kind), self.claw_call);
+                *score = score.saturating_add_signed(points);
             }
         };
+        let walked_points = |crab: &Seen| worth(crab, after.crab_value(crab.kind), self.claw_call);
         let mut reports: Vec<(u32, Happened)> = Vec::new();
         for crab in &gone {
             let (x, y) = after.coords_u8(crab.tile);
             if let Some(&(_, owner, (x, y))) = walking.iter().find(|(c, ..)| c.id == crab.id) {
-                credit(owner, crab);
+                credit(owner, walked_points(crab));
                 reports.push((
                     crab.id,
                     Happened::Banked {
@@ -163,7 +164,12 @@ impl Before {
         }
         for crab in &gone {
             if let Some(owner) = after.swept_home(crab.id) {
-                credit(owner, crab);
+                // Priced by the sim, which paid it under the claw call it
+                // was swept under rather than the one running now.
+                let points = after
+                    .swept_paid(crab.id)
+                    .unwrap_or_else(|| walked_points(crab));
+                credit(owner, points);
                 let (x, y) = after
                     .castle_of(owner)
                     .unwrap_or_else(|| after.coords_u8(crab.tile));
@@ -225,14 +231,16 @@ fn castle_entered(after: &Board, crab: &Seen) -> Option<(PlayerId, (u8, u8))> {
         })
 }
 
-/// A score after banking `crab`, worth `value` on this board, into it, by
-/// the sim's own rule: Right Claws doubles a right-clawed crab and charges
-/// for a left-clawed one, down to nothing.
-fn credited(score: u32, crab: &Seen, value: u32, claw_call: bool) -> u32 {
+/// What banking `crab`, worth `value` on this board, pays, by the sim's
+/// own rule (`Crab::bank_points`): Right Claws doubles a right-clawed crab
+/// and charges for a left-clawed one. The floor at nothing is the
+/// caller's, as it is the sim's.
+fn worth(crab: &Seen, value: u32, claw_call: bool) -> i32 {
+    let value = value as i32;
     match (claw_call, crab.handed) {
-        (false, _) => score + value,
-        (true, Handedness::Right) => score + value * 2,
-        (true, Handedness::Left) => score.saturating_sub(value),
+        (false, _) => value,
+        (true, Handedness::Right) => value * 2,
+        (true, Handedness::Left) => -value,
     }
 }
 
@@ -316,6 +324,40 @@ mod tests {
                 .any(|h| matches!(h, Happened::Raided { owner: 1, .. })),
             "{seen:?}"
         );
+    }
+
+    /// A crab Crab Monopoly flies home banks for what it was worth when
+    /// the sweep fired. A Right Claws spun while it is in the air changes
+    /// nothing it pays, so pricing it off the clock at landing reported
+    /// the difference as a raid nobody made.
+    #[test]
+    fn a_crab_swept_before_right_claws_lands_as_a_bank_not_a_raid() {
+        let mut board = Board::new(9, 7, 5);
+        board.set_sweep_flight(true);
+        board.set_timed_lock(true);
+        board.set_sweep_keeps_worth(true);
+        board.set_tile(7, 5, TileKind::Castle(1));
+        board.set_score(1, 10);
+        for x in 1..5 {
+            board.spawn_crab(x, 1, Direction::Down, Handedness::Right, CrabKind::Common);
+        }
+        board.tick_idle();
+        board.force_tide_event(crate::sim::TideEvent::Monopoly, 1);
+        let mut seen = Vec::new();
+        run(&mut board, 5, &mut seen);
+        board.force_tide_event(crate::sim::TideEvent::RightClaws, 0);
+        while !board.sweeping().is_empty() {
+            run(&mut board, 1, &mut seen);
+        }
+        assert!(
+            !seen.iter().any(|h| matches!(h, Happened::Raided { .. })),
+            "{seen:?}"
+        );
+        let banked = seen
+            .iter()
+            .filter(|h| matches!(h, Happened::Banked { owner: 1, .. }))
+            .count();
+        assert_eq!(banked, 2, "{seen:?}");
     }
 
     /// A left-clawed crab banked at nothing during Right Claws leaves the

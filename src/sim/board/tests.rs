@@ -1625,9 +1625,16 @@ fn a_swept_crab_banks_what_it_was_worth_when_the_sweep_fired() {
             board.apply_tide_event(TideEvent::RightClaws, 0);
         }
         assert_eq!(board.in_claw_call(), !called_at_fire);
+        let mut paid = 0;
         while !board.sweeping().is_empty() {
+            let flying: Vec<u32> = board.sweeping().iter().map(|f| f.crab.id).collect();
             board.tick_idle();
+            paid += flying
+                .iter()
+                .filter_map(|&id| board.swept_paid(id))
+                .sum::<i32>();
         }
+        assert_eq!(10 + paid, expected as i32, "what the record says it paid");
         assert_eq!(
             board.scores()[1],
             expected,
@@ -1723,6 +1730,7 @@ fn a_sweep_leaves_the_fingerprint_alone() {
         crab: 7,
         owner: 1,
         at: 0,
+        points: 1,
     });
     assert_eq!(board.swept_home(7), Some(1), "the record is really there");
     assert_eq!(

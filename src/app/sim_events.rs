@@ -344,7 +344,11 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab, claw: bool) -> SimEven
             owner,
             pos,
             keep: layout::tile_center(board, kx, ky),
-            points: prev.bank_points(board.crab_value(prev.kind), claw),
+            // What the sim paid, not a second pricing off the clock: a
+            // crab in flight banks under the call it was swept under.
+            points: board
+                .swept_paid(prev.id)
+                .unwrap_or_else(|| prev.bank_points(board.crab_value(prev.kind), claw)),
             kind: prev.kind,
             handed: prev.handed,
         };
@@ -1311,6 +1315,48 @@ mod tests {
             }
         }
         assert_eq!(landed, 2, "both swept crabs banked at the keep");
+    }
+
+    /// The points a swept crab's landing shows are the points the sim
+    /// paid: it banks under the claw call it was swept under, so a Right
+    /// Claws spun while it is in the air must not turn a left-clawed
+    /// crab's float into a loss while the score goes up.
+    #[test]
+    fn a_swept_crab_shows_what_it_paid_not_what_the_clock_says() {
+        let mut board = Board::new(9, 7, 5);
+        board.set_sweep_flight(true);
+        board.set_timed_lock(true);
+        board.set_sweep_keeps_worth(true);
+        board.set_tile(7, 5, TileKind::Castle(1));
+        board.set_score(1, 10);
+        for x in 1..5 {
+            board.spawn_crab(x, 1, Direction::Down, Handedness::Left, CrabKind::Common);
+        }
+        board.tick_idle();
+        let mut watch = synced(&board);
+        board.force_tide_event(TideEvent::Monopoly, 1);
+        let _ = diff(&board, &mut watch);
+        board.tick_idle();
+        let _ = diff(&board, &mut watch);
+        board.force_tide_event(TideEvent::RightClaws, 0);
+        let mut shown = 0;
+        while !board.sweeping().is_empty() {
+            board.tick_idle();
+            for event in diff(&board, &mut watch) {
+                if let SimEvent::CrabBanked {
+                    owner: 1, points, ..
+                } = event
+                {
+                    shown += points;
+                }
+            }
+        }
+        assert!(
+            board.in_claw_call(),
+            "Right Claws is running at the landing"
+        );
+        assert!(shown > 0, "the floats show a gain");
+        assert_eq!(10 + shown, board.scores()[1] as i32, "and the gain banked");
     }
 
     /// A sparkling crab Crab Monopoly flies home lands seconds after the
