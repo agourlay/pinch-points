@@ -769,7 +769,7 @@ fn parse_gull(words: &mut std::str::SplitWhitespace) -> Result<Gull, String> {
 }
 
 /// Walls as hex nibbles, least-significant bit first.
-fn bits_to_hex(bits: &[bool]) -> String {
+pub(crate) fn bits_to_hex(bits: &[bool]) -> String {
     bits.chunks(4)
         .map(|chunk| {
             let nibble = chunk
@@ -792,7 +792,8 @@ fn hex_to_bits(text: &str) -> Result<Vec<bool>, String> {
     Ok(bits)
 }
 
-fn tile_token(kind: TileKind) -> String {
+/// A tile as the snapshot writes it.
+pub(crate) fn tile_token(kind: TileKind) -> String {
     match kind {
         TileKind::Empty => ".".to_string(),
         TileKind::Rock => "#".to_string(),

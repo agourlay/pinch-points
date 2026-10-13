@@ -1107,4 +1107,4 @@ use sweep::Sweeps;
 
 pub use geometry::Grid;
 pub(crate) use geometry::Walker;
-pub(crate) use snapshot::golden_every;
+pub(crate) use snapshot::{bits_to_hex, golden_every, tile_token};

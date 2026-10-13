@@ -22,6 +22,7 @@ pub use board::{
     SURGE_TICKS, SWEEP_FLIGHT, SWEEP_HOLD, SWEEP_STAGGER, Signpost, SignpostHealth, Spawner,
     Sweeping, TICKS_PER_SECOND, TIER_FLOORS, Tempo, TideEvent, TileKind, castle_tier,
 };
+pub(crate) use board::{bits_to_hex, tile_token};
 pub use bot::{
     BotLevel, FAIR_LIFT, FAIR_TICKS_PER_TILE, Hand, bot_action, bot_action_with, fair_walk,
     hand_steps,

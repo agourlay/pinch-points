@@ -38,7 +38,8 @@ pub fn dir_token(dir: Direction) -> &'static str {
     }
 }
 
-fn dir_from_token(token: &str) -> Option<Direction> {
+/// The direction `dir_token` writes as `token`.
+pub fn dir_from_token(token: &str) -> Option<Direction> {
     Direction::ALL.into_iter().find(|&d| dir_token(d) == token)
 }
 
@@ -51,6 +52,13 @@ fn claw_token(handed: Handedness) -> &'static str {
         Handedness::Left => "left",
         Handedness::Right => "right",
     }
+}
+
+/// The claw `claw_token` writes as `token`.
+pub fn claw_from_token(token: &str) -> Option<Handedness> {
+    [Handedness::Left, Handedness::Right]
+        .into_iter()
+        .find(|&h| claw_token(h) == token)
 }
 
 /// The protocol's name for a tide event.
@@ -68,6 +76,13 @@ pub fn event_token(event: TideEvent) -> &'static str {
     }
 }
 
+/// The tide event `event_token` writes as `token`.
+pub fn event_from_token(token: &str) -> Option<TideEvent> {
+    TideEvent::ALL
+        .into_iter()
+        .find(|&event| event_token(event) == token)
+}
+
 /// One character per tile for the `hello` board. Castles carry the owner
 /// they start with; who holds them now is in every tick's `castles`.
 fn tile_char(tile: TileKind) -> char {
@@ -80,6 +95,36 @@ fn tile_char(tile: TileKind) -> char {
         TileKind::Kelp => 'K',
         TileKind::Pool => '~',
     }
+}
+
+/// The tile a `hello` character stands for, as far as one character can
+/// say it. A spawner's direction and period, and which way a turnstile
+/// turns next, are in the lists sent with it (`board.spawners`, a tick's
+/// `turnstiles`): until those are read, an `S` is a spawner facing up
+/// every tick and a `T` turns right next.
+pub fn tile_from_char(c: char) -> Option<TileKind> {
+    Some(match c {
+        '.' => TileKind::Empty,
+        '#' => TileKind::Rock,
+        'S' => TileKind::Spawner(crate::sim::Spawner {
+            dir: Direction::Up,
+            period: 1,
+        }),
+        'T' => TileKind::Turnstile { next_right: true },
+        'K' => TileKind::Kelp,
+        '~' => TileKind::Pool,
+        d => TileKind::Castle(u8::try_from(d.to_digit(10)?).ok()?),
+    })
+}
+
+/// One crab as a tick shows it, on the beach or swept off it.
+fn crab_json(board: &Board, crab: &crate::sim::Crab) -> Value {
+    let (x, y) = board.coords_u8(crab.tile);
+    json!({
+        "id": crab.id, "x": x, "y": y, "dir": dir_token(crab.dir),
+        "progress": crab.progress, "kind": kind_token(crab.kind),
+        "claw": claw_token(crab.handed),
+    })
 }
 
 /// How the next tick is sent, and how long a bot has to answer it.
@@ -241,14 +286,7 @@ pub fn tick(board: &Board, game: u32, you: &You, cursors: &[Option<(u8, u8)>]) -
     let crabs: Vec<Value> = board
         .crabs()
         .iter()
-        .map(|crab| {
-            let (x, y) = board.coords_u8(crab.tile);
-            json!({
-                "id": crab.id, "x": x, "y": y, "dir": dir_token(crab.dir),
-                "progress": crab.progress, "kind": kind_token(crab.kind),
-                "claw": claw_token(crab.handed),
-            })
-        })
+        .map(|crab| crab_json(board, crab))
         .collect();
     // Crab Monopoly's crabs on their way home: off the beach, out of reach
     // of gulls and arrows, and banked for `owner` on the tick `lands`.
@@ -256,15 +294,12 @@ pub fn tick(board: &Board, game: u32, you: &You, cursors: &[Option<(u8, u8)>]) -
         .sweeping()
         .iter()
         .map(|flight| {
-            let crab = &flight.crab;
-            let (x, y) = board.coords_u8(crab.tile);
-            json!({
-                "id": crab.id, "x": x, "y": y, "dir": dir_token(crab.dir),
-                "progress": crab.progress, "kind": kind_token(crab.kind),
-                "claw": claw_token(crab.handed), "owner": flight.owner,
-                "launch": flight.launch, "lands": flight.lands,
-                "claw_call": flight.claw_call,
-            })
+            let mut crab = crab_json(board, &flight.crab);
+            crab["owner"] = json!(flight.owner);
+            crab["launch"] = json!(flight.launch);
+            crab["lands"] = json!(flight.lands);
+            crab["claw_call"] = json!(flight.claw_call);
+            crab
         })
         .collect();
     // `takeoff_in` is not here: the screen never shows it.
@@ -663,6 +698,31 @@ mod tests {
                 input_delay: 0,
             },
             cursor: false,
+        }
+    }
+
+    /// Every token the protocol writes reads back as what it was written
+    /// from: the board a bot rebuilds is the one it was shown.
+    #[test]
+    fn every_token_reads_back() {
+        for dir in Direction::ALL {
+            assert_eq!(dir_from_token(dir_token(dir)), Some(dir));
+        }
+        for claw in [Handedness::Left, Handedness::Right] {
+            assert_eq!(claw_from_token(claw_token(claw)), Some(claw));
+        }
+        for event in TideEvent::ALL {
+            assert_eq!(event_from_token(event_token(event)), Some(event));
+        }
+        for tile in [
+            TileKind::Empty,
+            TileKind::Rock,
+            TileKind::Castle(3),
+            TileKind::Turnstile { next_right: true },
+            TileKind::Kelp,
+            TileKind::Pool,
+        ] {
+            assert_eq!(tile_from_char(tile_char(tile)), Some(tile));
         }
     }
 

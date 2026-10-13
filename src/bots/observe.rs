@@ -7,7 +7,11 @@
 //! drawn the way [`Board::lookahead`] draws it.
 
 use super::lookahead::LOOKAHEAD_SEED;
-use crate::sim::{Board, CrabKind, MAX_PLAYERS, Pcg32};
+use super::protocol::{claw_from_token, dir_from_token, event_from_token, tile_from_char};
+use crate::sim::{
+    Board, CrabKind, Direction, Handedness, MAX_PLAYERS, Pcg32, Spawner, TideEvent, TileKind,
+    bits_to_hex, tile_token,
+};
 use serde_json::Value;
 use std::fmt::Write;
 
@@ -40,35 +44,51 @@ fn text<'a>(v: &'a Value, path: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("`{path}` is not a string"))
 }
 
+/// A direction as the snapshot writes it, from the protocol's word.
 fn letter(token: &str) -> Result<char, String> {
-    Ok(match token {
-        "up" => 'U',
-        "down" => 'D',
-        "left" => 'L',
-        "right" => 'R',
-        other => return Err(format!("{other:?} is not a direction")),
-    })
+    dir_from_token(token)
+        .map(Direction::letter)
+        .ok_or_else(|| format!("{token:?} is not a direction"))
 }
 
+/// A claw as the snapshot writes it, from the protocol's word.
 fn claw(token: &str) -> Result<&'static str, String> {
-    match token {
-        "left" => Ok("L"),
-        "right" => Ok("R"),
-        other => Err(format!("{other:?} is not a claw")),
-    }
+    claw_from_token(token)
+        .map(Handedness::token)
+        .ok_or_else(|| format!("{token:?} is not a claw"))
 }
 
-/// Walls as the snapshot writes them: hex nibbles, low bit first.
-fn hex(bits: &[bool]) -> String {
-    bits.chunks(4)
-        .map(|chunk| {
-            let nibble = chunk
-                .iter()
-                .enumerate()
-                .fold(0u32, |acc, (i, &bit)| acc | (u32::from(bit) << i));
-            char::from_digit(nibble, 16).unwrap_or('0')
-        })
-        .collect()
+/// What a crab shows, on the beach or in the air, as the snapshot's
+/// fields: its id, tile, direction, progress, claw and kind.
+struct CrabFields<'a> {
+    id: u64,
+    tile: usize,
+    dir: char,
+    progress: u64,
+    claw: &'static str,
+    kind: &'a str,
+}
+
+/// Read the fields every crab shows, wherever it is.
+fn parse_crab_fields<'a>(
+    c: &'a Value,
+    at: impl Fn(u64, u64) -> usize,
+) -> Result<CrabFields<'a>, String> {
+    let tile = at(num(c, "x")?, num(c, "y")?);
+    let dir = letter(text(c, "dir")?)?;
+    let progress = num(c, "progress")?;
+    let kind = text(c, "kind")?;
+    if CrabKind::from_token(kind).is_none() {
+        return Err(format!("no crab kind {kind:?}"));
+    }
+    Ok(CrabFields {
+        id: num(c, "id")?,
+        tile,
+        dir,
+        progress,
+        claw: claw(text(c, "claw")?)?,
+        kind,
+    })
 }
 
 /// The board `hello` and `tick` describe, ready to run forward.
@@ -85,21 +105,12 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     if rows.len() != h || rows.iter().any(|r| r.chars().count() != w) {
         return Err("`board.tiles` is not width by height".into());
     }
-    let mut tiles: Vec<String> = Vec::with_capacity(w * h);
+    // Turnstiles, castles and spawners are filled in below from the lists
+    // that say more than one character can.
+    let mut tiles: Vec<TileKind> = Vec::with_capacity(w * h);
     for row in &rows {
         for c in row.chars() {
-            tiles.push(match c {
-                '.' => ".".into(),
-                '#' => "#".into(),
-                'K' => "K".into(),
-                '~' => "~".into(),
-                // Turnstiles, castles and spawners are filled in below from
-                // the lists that say more than one character can.
-                'T' => "T".into(),
-                'S' => ".".into(),
-                d if d.is_ascii_digit() => format!("c{d}"),
-                other => return Err(format!("no tile {other:?}")),
-            });
+            tiles.push(tile_from_char(c).ok_or_else(|| format!("no tile {c:?}"))?);
         }
     }
     let at = |x: u64, y: u64| (y as usize) * w + x as usize;
@@ -109,21 +120,26 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
         .flatten()
     {
         let i = at(num(s, "x")?, num(s, "y")?);
+        let dir = dir_from_token(text(s, "dir")?).ok_or("a spawner faces no direction")?;
+        let period = u32::try_from(num(s, "period")?)
+            .ok()
+            .filter(|&p| p > 0)
+            .ok_or("a spawner's period is not a tick count")?;
         *tiles.get_mut(i).ok_or("a spawner off the board")? =
-            format!("s{}{}", letter(text(s, "dir")?)?, num(s, "period")?);
+            TileKind::Spawner(Spawner { dir, period });
     }
     for c in field(tick, "castles")?.as_array().into_iter().flatten() {
         let i = at(num(c, "x")?, num(c, "y")?);
-        *tiles.get_mut(i).ok_or("a castle off the board")? = format!("c{}", num(c, "owner")?);
+        let owner = u8::try_from(num(c, "owner")?)
+            .ok()
+            .filter(|&o| usize::from(o) < MAX_PLAYERS)
+            .ok_or("a castle with no seat for an owner")?;
+        *tiles.get_mut(i).ok_or("a castle off the board")? = TileKind::Castle(owner);
     }
     for t in field(tick, "turnstiles")?.as_array().into_iter().flatten() {
         let i = at(num(t, "x")?, num(t, "y")?);
-        let next = if text(t, "next")? == "right" {
-            "T"
-        } else {
-            "t"
-        };
-        *tiles.get_mut(i).ok_or("a turnstile off the board")? = next.into();
+        let next_right = text(t, "next")? == "right";
+        *tiles.get_mut(i).ok_or("a turnstile off the board")? = TileKind::Turnstile { next_right };
     }
     let walls = |key: &str, wall: char| -> Result<Vec<bool>, String> {
         Ok(field(hello, &format!("board.walls.{key}"))?
@@ -265,34 +281,32 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     }
     if let Some(event) = tick.get("event").filter(|e| !e.is_null()) {
         let left = num(event, "ticks_left")?;
-        match text(event, "name")? {
-            "crab_mania" => {
-                let _ = writeln!(out, "mania: crab {left}");
-            }
-            "gull_mania" => {
-                let _ = writeln!(out, "mania: gull {left}");
-            }
-            "speed_up" => {
-                let _ = writeln!(out, "tempo: fast {left}");
-            }
-            "slow_down" => {
-                let _ = writeln!(out, "tempo: slow {left}");
-            }
-            "right_claws" => {
-                let _ = writeln!(out, "claw_call: {left}");
-            }
-            other => return Err(format!("no timed event {other:?}")),
-        }
+        let name = text(event, "name")?;
+        let line = match event_from_token(name) {
+            Some(TideEvent::CrabMania) => "mania: crab",
+            Some(TideEvent::GullMania) => "mania: gull",
+            Some(TideEvent::SpeedUp) => "tempo: fast",
+            Some(TideEvent::SlowDown) => "tempo: slow",
+            Some(TideEvent::RightClaws) => "claw_call:",
+            Some(
+                TideEvent::Monopoly
+                | TideEvent::GullAttack
+                | TideEvent::FreshSand
+                | TideEvent::CastleSwap,
+            )
+            | None => return Err(format!("no timed event {name:?}")),
+        };
+        let _ = writeln!(out, "{line} {left}");
     }
     // The roulette's quiet spell after an event is a clock anyone can read
     // off the last event's tick.
     if let Some(last) = tick.get("last_event").filter(|e| !e.is_null()) {
         let fired = num(last, "tick")?;
-        let index = crate::sim::TideEvent::ALL
+        let event = event_from_token(text(last, "name").unwrap_or("")).ok_or("no such event")?;
+        let index = TideEvent::ALL
             .iter()
-            .position(|&e| super::protocol::event_token(e) == text(last, "name").unwrap_or(""))
+            .position(|&e| e == event)
             .ok_or("no such event")?;
-        let event = crate::sim::TideEvent::ALL[index];
         // An event fires during tick `fired`, after that tick's count
         // down, so the board one tick on still has the whole spell left.
         let since = now.saturating_sub(fired).saturating_sub(1);
@@ -314,7 +328,13 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
         }
         let _ = writeln!(out, "last_event: {index} {fired}");
     }
-    let _ = writeln!(out, "hwalls: {}\nvwalls: {}", hex(&h_walls), hex(&v_walls));
+    let _ = writeln!(
+        out,
+        "hwalls: {}\nvwalls: {}",
+        bits_to_hex(&h_walls),
+        bits_to_hex(&v_walls)
+    );
+    let tiles: Vec<String> = tiles.into_iter().map(tile_token).collect();
     let _ = writeln!(out, "tiles: {}", tiles.join(" "));
     for (seq, p) in posts.iter().enumerate() {
         let health = if p["worn"].as_bool() == Some(true) {
@@ -332,39 +352,37 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
         );
     }
     for c in &crabs {
-        let tile = at(num(c, "x")?, num(c, "y")?);
-        let dir = letter(text(c, "dir")?)?;
-        let progress = num(c, "progress")?;
-        let kind = text(c, "kind")?;
-        if CrabKind::from_token(kind).is_none() {
-            return Err(format!("no crab kind {kind:?}"));
-        }
+        let CrabFields {
+            id,
+            tile,
+            dir,
+            progress,
+            claw,
+            kind,
+        } = parse_crab_fields(c, at)?;
         let _ = writeln!(
             out,
-            "crab: {} {tile} {dir} {progress} {tile} {progress} {dir} {} {kind}",
-            num(c, "id")?,
-            claw(text(c, "claw")?)?,
+            "crab: {id} {tile} {dir} {progress} {tile} {progress} {dir} {claw} {kind}",
         );
     }
     for c in &sweeping {
         // Absent from a listener older than the field, which is a board
         // that never reads it.
         let called = if switch(c, "claw_call") { " claws" } else { "" };
-        let tile = at(num(c, "x")?, num(c, "y")?);
-        let dir = letter(text(c, "dir")?)?;
-        let progress = num(c, "progress")?;
-        let kind = text(c, "kind")?;
-        if CrabKind::from_token(kind).is_none() {
-            return Err(format!("no crab kind {kind:?}"));
-        }
+        let CrabFields {
+            id,
+            tile,
+            dir,
+            progress,
+            claw,
+            kind,
+        } = parse_crab_fields(c, at)?;
         let _ = writeln!(
             out,
-            "sweeping: {} {} {} {} {tile} {dir} {progress} {tile} {progress} {dir} {} {kind}{called}",
+            "sweeping: {} {} {} {id} {tile} {dir} {progress} {tile} {progress} {dir} {claw} {kind}{called}",
             num(c, "owner")?,
             num(c, "launch")?,
             num(c, "lands")?,
-            num(c, "id")?,
-            claw(text(c, "claw")?)?,
         );
     }
     for g in &gulls {
