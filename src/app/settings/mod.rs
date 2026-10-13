@@ -701,15 +701,34 @@ pub fn apply_window_mode(settings: Res<GameSettings>, mut windows: Query<&mut Wi
 
 /// F11 flips fullscreen on every screen, and keeps the answer: a player who
 /// wanted the window once will want it next launch too.
+///
+/// Except on the first-run language picker, which is shown because there is
+/// no settings file yet: written there, the file made the picker a screen
+/// nobody would see again. The flag still flips, and is kept with the rest
+/// when the language is taken.
 pub fn toggle_fullscreen(
     keys: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<GameSettings>,
     caps: Res<crate::app::keycaps::KeyCaps>,
+    screen: Res<State<Screen>>,
 ) {
-    if keys.just_pressed(KeyCode::F11) {
-        settings.fullscreen = !settings.fullscreen;
+    if flip_fullscreen(&keys, &mut settings, screen.get()) {
         settings.save(&caps);
     }
+}
+
+/// F11's flip, and whether it may be written down now. Apart from the
+/// system so the rule can be checked without writing a settings file.
+fn flip_fullscreen(
+    keys: &ButtonInput<KeyCode>,
+    settings: &mut GameSettings,
+    screen: &Screen,
+) -> bool {
+    if !keys.just_pressed(KeyCode::F11) {
+        return false;
+    }
+    settings.fullscreen = !settings.fullscreen;
+    crate::app::language::may_save(screen)
 }
 
 /// Push the music volume to the sink whenever settings change.
@@ -745,6 +764,23 @@ pub fn apply_sim_speed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// F11 on the first-run language picker flips the window but writes
+    /// nothing: a settings file is what tells the next launch the picker
+    /// has been seen. Anywhere else it is kept at once.
+    #[test]
+    fn fullscreen_on_the_language_picker_is_not_written_yet() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        let mut settings = GameSettings::default();
+        let was = settings.fullscreen;
+        assert!(!flip_fullscreen(&keys, &mut settings, &Screen::Language));
+        assert_eq!(settings.fullscreen, was, "no F11, no flip");
+        keys.press(KeyCode::F11);
+        assert!(!flip_fullscreen(&keys, &mut settings, &Screen::Language));
+        assert_ne!(settings.fullscreen, was, "the window still flips");
+        assert!(flip_fullscreen(&keys, &mut settings, &Screen::Menu));
+        assert_eq!(settings.fullscreen, was);
+    }
 
     /// The world `apply_sim_speed` runs in: a screen, the settings, and the
     /// fixed clock at the canonical rate.
