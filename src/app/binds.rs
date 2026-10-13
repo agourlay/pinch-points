@@ -351,23 +351,74 @@ const RETIRED: [(&str, KeyCode); 1] = [("NumpadEnter", KeyCode::NumpadDecimal)];
 /// Read one `keys_pN` line. A short line, an unknown key name, or a
 /// duplicate leaves that seat on its defaults rather than half-bound.
 pub fn parse_seat(value: &str) -> Option<SeatBinds> {
+    parse_seat_moved(value).map(|(seat, _)| seat)
+}
+
+/// [`parse_seat`], and which slots held a retired key and were moved.
+///
+/// A key moved to stands where the player never put it, so it gives way:
+/// to the first key the seat leaves free here, and across the table in
+/// [`rehome`], which only the reader of both seats can do.
+pub fn parse_seat_moved(value: &str) -> Option<(SeatBinds, Vec<usize>)> {
     let names: Vec<&str> = value.split_whitespace().collect();
     if names.len() != ACTIONS {
         return None;
     }
     let mut keys = [KeyCode::Space; ACTIONS];
-    for (slot, name) in keys.iter_mut().zip(&names) {
-        *slot = key_from_name(name).or_else(|| {
-            RETIRED
-                .iter()
-                .find(|(retired, _)| retired == name)
-                .map(|&(_, key)| key)
-        })?;
+    let mut moved = Vec::new();
+    for (slot, name) in names.iter().enumerate() {
+        keys[slot] = match key_from_name(name) {
+            Some(key) => key,
+            None => {
+                moved.push(slot);
+                RETIRED
+                    .iter()
+                    .find(|(retired, _)| retired == name)
+                    .map(|&(_, key)| key)?
+            }
+        };
+    }
+    for &slot in &moved {
+        let taken = |key: KeyCode, keys: &[KeyCode; ACTIONS]| {
+            keys.iter()
+                .enumerate()
+                .any(|(at, &k)| at != slot && k == key)
+        };
+        if taken(keys[slot], &keys) {
+            keys[slot] = BINDABLE
+                .into_iter()
+                .find(|&key| !taken(key, &keys))
+                .expect("more bindable keys than actions");
+        }
     }
     let mut seen: Vec<String> = keys.iter().copied().map(key_name).collect();
     seen.sort();
     seen.dedup();
-    (seen.len() == ACTIONS).then_some(SeatBinds(keys))
+    (seen.len() == ACTIONS).then_some((SeatBinds(keys), moved))
+}
+
+/// Move a key a retired one was moved to off a key the other seat holds,
+/// onto the first one nobody holds: two seats share one keyboard, and a
+/// clash puts the whole table back to stock, the very loss the move was
+/// for.
+pub fn rehome(binds: &mut [SeatBinds; BOUND_SEATS], seat: usize, slot: usize) {
+    let key = binds[seat].0[slot];
+    let held = |key: KeyCode, binds: &[SeatBinds; BOUND_SEATS]| {
+        binds.iter().enumerate().any(|(s, seat_binds)| {
+            seat_binds
+                .0
+                .iter()
+                .enumerate()
+                .any(|(at, &k)| (s, at) != (seat, slot) && k == key)
+        })
+    };
+    if held(key, binds) {
+        let free = BINDABLE
+            .into_iter()
+            .find(|&key| !held(key, binds))
+            .expect("more bindable keys than actions");
+        binds[seat].0[slot] = free;
+    }
 }
 
 #[cfg(test)]
@@ -425,6 +476,32 @@ mod tests {
             default_binds()[1].key(Action::ClearAll),
             KeyCode::NumpadDecimal
         );
+    }
+
+    /// Num . was bindable before it was P2's stock clear-all: a player who
+    /// had it on another action, on either seat, keeps their layout, and
+    /// the moved key goes to one nobody holds.
+    #[test]
+    fn a_moved_num_enter_gives_way_to_a_key_already_held() {
+        // On the same seat.
+        let old = "KeyU KeyK KeyJ KeyL Numpad8 Numpad5 Numpad4 Numpad6 NumpadDecimal NumpadEnter";
+        let (seat, moved) = parse_seat_moved(old).expect("still loads");
+        assert_eq!(moved, vec![9]);
+        assert_eq!(seat.key(Action::Remove), KeyCode::NumpadDecimal, "kept");
+        assert_ne!(seat.key(Action::ClearAll), KeyCode::NumpadDecimal);
+        // On the other seat.
+        let old = "KeyU KeyK KeyJ KeyL Numpad8 Numpad5 Numpad4 Numpad6 Numpad0 NumpadEnter";
+        let (p2, moved) = parse_seat_moved(old).expect("still loads");
+        let mut p1 = default_binds()[0];
+        p1.0[0] = KeyCode::NumpadDecimal;
+        let mut binds = [p1, p2];
+        assert!(!all_distinct(&binds), "the clash the move made");
+        for slot in moved {
+            rehome(&mut binds, 1, slot);
+        }
+        assert!(all_distinct(&binds), "{binds:?}");
+        assert_eq!(binds[0].0[0], KeyCode::NumpadDecimal, "P1 keeps its key");
+        assert_eq!(binds[1].key(Action::MoveUp), KeyCode::KeyU, "P2 its others");
     }
 
     #[test]

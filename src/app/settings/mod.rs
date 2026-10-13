@@ -468,6 +468,8 @@ impl GameSettings {
     pub fn parse(text: &str) -> (GameSettings, crate::app::keycaps::KeyCaps) {
         let mut settings = GameSettings::default();
         let mut caps = crate::app::keycaps::KeyCaps::default();
+        // Slots whose saved key was retired and moved (see `binds::rehome`).
+        let mut moved: Vec<(usize, usize)> = Vec::new();
         for line in text.lines() {
             let Some((key, value)) = line.split_once(':') else {
                 continue;
@@ -552,8 +554,9 @@ impl GameSettings {
                 "keyboard" => settings.keyboard = crate::app::keycaps::Layout::from_key(value),
                 "keys_p1" | "keys_p2" => {
                     let seat = usize::from(key.trim() == "keys_p2");
-                    if let Some(seat_binds) = crate::app::binds::parse_seat(value) {
+                    if let Some((seat_binds, slots)) = crate::app::binds::parse_seat_moved(value) {
                         settings.binds[seat] = seat_binds;
+                        moved.extend(slots.into_iter().map(|slot| (seat, slot)));
                     }
                 }
                 "puzzle_speed" => {
@@ -571,6 +574,9 @@ impl GameSettings {
         // The two keyboard seats share one keyboard: a file that binds the
         // same key twice across seats would leave a seat shadowed, so the
         // whole table goes back to stock rather than half-work.
+        for (seat, slot) in moved {
+            crate::app::binds::rehome(&mut settings.binds, seat, slot);
+        }
         if !crate::app::binds::all_distinct(&settings.binds) {
             settings.binds = default_binds();
         }
@@ -950,6 +956,25 @@ mod tests {
         let (reparsed, recaps) = GameSettings::parse(&settings.to_text(&caps));
         assert_eq!(reparsed, settings);
         assert_eq!(recaps, caps, "the caps table rides the same file");
+    }
+
+    /// A file from when Num Enter was P2's clear-all, with Num . on P1:
+    /// both layouts load, P2's clear-all moved to a key neither holds,
+    /// rather than the clash putting both seats back to stock.
+    #[test]
+    fn an_old_num_enter_beside_a_held_num_dot_keeps_both_layouts() {
+        use crate::app::binds::{Action, key_name};
+        let mut p1 = default_binds()[0];
+        p1.0[0] = KeyCode::NumpadDecimal;
+        let p1_line: Vec<String> = p1.0.iter().copied().map(key_name).collect();
+        let text = format!(
+            "keys_p1: {}\nkeys_p2: KeyU KeyK KeyJ KeyL Numpad8 Numpad5 Numpad4 Numpad6 Numpad0 NumpadEnter\n",
+            p1_line.join(" ")
+        );
+        let (settings, _) = GameSettings::parse(&text);
+        assert_eq!(settings.binds[0], p1, "P1 as saved");
+        assert_eq!(settings.binds[1].key(Action::MoveUp), KeyCode::KeyU);
+        assert!(crate::app::binds::all_distinct(&settings.binds));
     }
 
     /// The `beach` line is kept only while it still parses as an address.
