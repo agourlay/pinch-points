@@ -394,20 +394,20 @@ pub(super) fn winner_name(
     names: &SeatNames,
 ) -> Option<String> {
     let mode = teams::in_play(settings, online, seats.0);
-    let leaders = side_panels::leading_seats(sim.0.scores(), seats.0, mode);
+    let leaders = seating::leading_seats(sim.0.scores(), seats.0, mode);
     let seat = leaders.iter().position(|&led| led)?;
     Some(names.label(settings.tr(), seat as u8))
 }
 
 pub(in crate::app) fn check_versus_over(
     sim: Res<Sim>,
-    seating: side_panels::Seating,
+    seating: seating::Seating,
     settings: Res<settings::GameSettings>,
     log: RoundLog,
     mut highlight: ResMut<Highlight>,
     mut next_vphase: ResMut<NextState<VersusPhase>>,
 ) {
-    let side_panels::Seating {
+    let seating::Seating {
         seats,
         names: seat_names,
         online,

@@ -131,7 +131,7 @@ pub fn score_the_call(
     };
     // The same winners the standings crown, teams and all.
     let mode = crate::app::teams::in_play(&settings, &online, seats);
-    let winners = crate::app::side_panels::leading_seats(sim.0.scores(), seats, mode);
+    let winners = crate::app::seating::leading_seats(sim.0.scores(), seats, mode);
     let Some(session) = &mut online.0 else {
         return;
     };

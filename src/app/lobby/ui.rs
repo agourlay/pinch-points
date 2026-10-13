@@ -278,7 +278,7 @@ pub fn update_lobby_players(
     for (row, mut text, mut color) in &mut rows {
         let (line, tone) = match state.table.get(row.0) {
             Some(who) => (
-                crate::app::side_panels::beside_the_robot(
+                crate::app::seating::beside_the_robot(
                     bot_at(&state, row.0),
                     &format!("{}. {who}", row.0 + 1),
                 ),

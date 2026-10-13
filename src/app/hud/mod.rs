@@ -441,7 +441,7 @@ pub struct Modes<'w> {
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct HudSources<'w> {
     modes: Modes<'w>,
-    seating: crate::app::side_panels::Seating<'w>,
+    seating: crate::app::seating::Seating<'w>,
     sim: Res<'w, Sim>,
     campaign: Res<'w, Campaign>,
     settings: Res<'w, GameSettings>,

@@ -424,7 +424,7 @@ fn round_from(
 /// recording named the seat, or by its number.
 fn winner_of(replay: &Replay, tr: &crate::app::i18n::Tr) -> Option<String> {
     let board = replay.playback();
-    let leaders = crate::app::side_panels::leading_seats(
+    let leaders = crate::app::seating::leading_seats(
         board.scores(),
         board.castle_seats(),
         crate::app::teams::TeamMode::Solo,

@@ -8,8 +8,8 @@ use crate::app::cycle::Cycle;
 use crate::app::i18n::fill;
 use crate::app::menu_ui;
 use crate::app::palette;
+use crate::app::seating::leading_seats;
 use crate::app::settings::GameSettings;
-use crate::app::side_panels::leading_seats;
 use crate::app::teams::TeamMode;
 use crate::app::{Screen, Seats, Sim};
 use crate::sim::MAX_PLAYERS;
@@ -197,7 +197,7 @@ impl Tournament {
     /// The unique holder of the most round wins, if there is one. Only
     /// meaningful free-for-all; [`Tournament::winner`] is the one to ask.
     fn champion(&self) -> Option<u8> {
-        crate::app::side_panels::unique_max(&self.wins).map(|s| s as u8)
+        crate::app::seating::unique_max(&self.wins).map(|s| s as u8)
     }
 
     /// Who took the series, under the mode it was played in. In team play
@@ -215,7 +215,7 @@ impl Tournament {
                     .map_or(0, |&seat| self.wins[usize::from(seat)])
             })
             .collect();
-        crate::app::side_panels::unique_max(&tallies).map(|team| Champion::Team(team as u8))
+        crate::app::seating::unique_max(&tallies).map(|team| Champion::Team(team as u8))
     }
 }
 

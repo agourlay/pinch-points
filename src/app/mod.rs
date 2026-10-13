@@ -72,6 +72,7 @@ pub mod progress;
 pub mod replays;
 mod results;
 mod schedule;
+mod seating;
 mod session;
 mod settings;
 mod side_panels;

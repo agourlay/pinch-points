@@ -219,13 +219,13 @@ fn credit_round(stats: &mut Stats, scratch: &mut RoundScratch, outcome: RoundOut
 pub fn record_round(
     mut commands: Commands,
     sim: Res<crate::app::Sim>,
-    seating: crate::app::side_panels::Seating,
+    seating: crate::app::seating::Seating,
     daily: Res<crate::app::Daily>,
     tournament: Res<crate::app::tournament::Tournament>,
     mut trophies: Trophies,
     mut scratch: ResMut<RoundScratch>,
 ) {
-    let crate::app::side_panels::Seating {
+    let crate::app::seating::Seating {
         seats,
         online,
         controllers,
@@ -255,7 +255,7 @@ pub fn record_round(
         );
     }
     let mode = crate::app::teams::in_play(&trophies.settings, &online, seats.0);
-    let winners = crate::app::side_panels::leading_seats(sim.0.scores(), seats.0, mode);
+    let winners = crate::app::seating::leading_seats(sim.0.scores(), seats.0, mode);
     let won = winners[seat as usize];
     credit_round(
         &mut trophies.stats,

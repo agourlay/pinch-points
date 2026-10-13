@@ -5,8 +5,8 @@ use crate::app::i18n::fill;
 use crate::app::menu_ui;
 use crate::app::net::Online;
 use crate::app::palette;
+use crate::app::seating::leading_seats;
 use crate::app::settings::GameSettings;
-use crate::app::side_panels::leading_seats;
 use crate::app::teams::TeamMode;
 use crate::app::{Campaign, Sim};
 use crate::sim::MAX_PLAYERS;
@@ -311,11 +311,11 @@ pub fn spawn_versus_results(
     settings: Res<GameSettings>,
     art: Res<crate::app::art::Art>,
     mut rng: ResMut<crate::app::effects::VisualRng>,
-    seating: crate::app::side_panels::Seating,
+    seating: crate::app::seating::Seating,
     extras: RoundExtras,
 ) {
     let local = seating.local();
-    let crate::app::side_panels::Seating {
+    let crate::app::seating::Seating {
         seats,
         controllers,
         names,
@@ -351,7 +351,7 @@ pub fn spawn_versus_results(
     }
 
     let rows = standings_rows(&settings, &names, scores, count, mode, |seat| {
-        crate::app::side_panels::seat_tag(tr, &controllers, local, seat)
+        crate::app::seating::seat_tag(tr, &controllers, local, seat)
     });
     let haul = board.crabs_banked();
     let awards = award_rows(&settings, &names, &tally, board, seats.0, mode);
@@ -410,14 +410,14 @@ pub fn spawn_versus_results(
                 // table stay lined up whoever holds which seat.
                 let bot = seat.filter(|&seat| kinds.bot(seat));
                 let room = match bot {
-                    Some(seat) => crate::app::side_panels::robot_inline(&art, seat, 22.0),
+                    Some(seat) => crate::app::seating::robot_inline(&art, seat, 22.0),
                     // The robot itself, unseen: a box only takes its room
                     // once its image has loaded, and Bevy's own blank one
                     // never does, so it took none and these rows sat a
                     // robot's width off the bots'.
                     None => InlineImage {
                         color: Color::NONE,
-                        ..crate::app::side_panels::robot_inline(&art, 0, 22.0)
+                        ..crate::app::seating::robot_inline(&art, 0, 22.0)
                     },
                 };
                 let (font, ink) = (row.0.clone(), row.1);
@@ -425,7 +425,7 @@ pub fn spawn_versus_results(
                     .with_children(|text| {
                         text.spawn(room);
                         text.spawn((
-                            TextSpan::new(crate::app::side_panels::beside_the_robot(true, &line)),
+                            TextSpan::new(crate::app::seating::beside_the_robot(true, &line)),
                             font,
                             ink,
                         ));

@@ -233,7 +233,7 @@ pub struct PostParts<'w, 's> {
 /// the one the next placement will take.
 ///
 /// That last is marked only for seats played at this screen (see
-/// [`crate::app::side_panels::played_here`]): it glows and rocks in the
+/// [`crate::app::seating::played_here`]): it glows and rocks in the
 /// sand, in time with its dot on the owner's score chip.
 ///
 /// Wear keeps a post's ink and takes its edges instead of dimming it away
@@ -244,7 +244,7 @@ pub fn dress_signposts(
     sim: Res<Sim>,
     art: Res<Art>,
     settings: Res<crate::app::settings::GameSettings>,
-    seating: crate::app::side_panels::Seating,
+    seating: crate::app::seating::Seating,
     mut posts: Query<(&mut SignpostSprite, &mut Sprite, &mut Transform, &Children)>,
     parts: PostParts,
 ) {
