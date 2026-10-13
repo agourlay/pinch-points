@@ -257,11 +257,7 @@ impl OnlineSession {
                 // The results card is where a table talks most, and the
                 // spectators' prompt offers it there: a line dropped here
                 // was a key that did nothing for anyone but its sender.
-                NetMsg::Chat { name, text } => {
-                    if let Some(said) = self.take_chat(host, from, name, text) {
-                        self.heard.push(said);
-                    }
-                }
+                NetMsg::Chat { name, text } => self.hear_chat(host, from, name, text),
                 NetMsg::Inputs(_)
                 | NetMsg::Hash { .. }
                 | NetMsg::Pause { .. }

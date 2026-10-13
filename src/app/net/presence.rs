@@ -16,6 +16,49 @@ use crate::app::settings::GameSettings;
 use crate::app::side_panels::EventLog;
 use crate::app::{Controllers, Paused, RoundNotice, Screen, SeatController, SeatNames, palette};
 
+/// Whether the round has stopped moving, for how long, and who the status
+/// line is naming for it.
+///
+/// Measured by the frame number rather than by whether the next frame's
+/// inputs happen to be in, because the second question is asked at a
+/// moment where the answer is always no: the sim advances until it
+/// *cannot*, and the tick that watches for stalls runs after it, in
+/// `Update`. So it always found the next frame's slots empty and always
+/// called a healthy round stalled.
+#[derive(Default)]
+pub(super) struct StallWatch {
+    /// Seconds the round has been unable to move, and the frame it has
+    /// been unable to move off.
+    pub(super) stalled_for: f32,
+    pub(super) stalled_on: u32,
+    /// Who the status line is naming, and how long it has left to keep
+    /// naming them.
+    ///
+    /// A latch rather than a reading of `stalled_for`, because that number
+    /// snaps back to zero the moment one frame gets through, and a limping
+    /// round gets a frame through all the time. Reading it directly put the
+    /// line on and off once a second.
+    pub(super) waiting_on: Option<u8>,
+    pub(super) waiting_hold: f32,
+}
+
+impl StallWatch {
+    /// Nothing is stuck and nobody is being waited for, as of `frame`: a
+    /// new round, or a round holding still on purpose.
+    pub(super) fn reset(&mut self, frame: u32) {
+        let Self {
+            stalled_for,
+            stalled_on,
+            waiting_on,
+            waiting_hold,
+        } = self;
+        *stalled_for = 0.0;
+        *stalled_on = frame;
+        *waiting_hold = 0.0;
+        *waiting_on = None;
+    }
+}
+
 /// How long a round waits on a silent player before handing their seat to
 /// an AI. Long enough that a burst of loss cannot be mistaken for somebody
 /// leaving, since the resend tail repeats every tick, and short enough that a

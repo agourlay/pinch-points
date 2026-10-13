@@ -93,6 +93,21 @@ impl OnlineSession {
         }
     }
 
+    /// A line said to the table, taken as [`Self::take_chat`] takes it
+    /// and put in the round's feed: mid-round and on the results card
+    /// alike.
+    pub(super) fn hear_chat(
+        &mut self,
+        host: bool,
+        from: usize,
+        name: crate::transport::WireName,
+        text: crate::transport::WireChat,
+    ) {
+        if let Some(said) = self.take_chat(host, from, name, text) {
+            self.heard.push(said);
+        }
+    }
+
     /// Take a line said to the table, and pass it on if this is the hub.
     ///
     /// Two jobs the lobby already does and the round did not. A spoke
