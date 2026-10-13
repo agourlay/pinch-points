@@ -60,22 +60,18 @@ pub fn sync_gull_sprites(
         commands
             .spawn((
                 GullSprite(id),
-                Sprite {
-                    image: art.gull.clone(),
-                    custom_size: Some(Vec2::splat(TILE * 0.78)),
-                    ..default()
-                },
+                layout::image_sprite(&art.gull, Color::WHITE, Vec2::splat(TILE * 0.78)),
                 Transform::from_translation(pos.extend(layout::z::CREATURE + 0.2))
                     .with_rotation(layout::dir_rotation(gull.dir)),
             ))
             .with_children(|parent| {
                 parent.spawn((
                     CreatureShadow,
-                    Sprite {
-                        image: art.shadow.clone(),
-                        custom_size: Some(Vec2::new(TILE * 0.72, TILE * 0.54)),
-                        ..default()
-                    },
+                    layout::image_sprite(
+                        &art.shadow,
+                        Color::WHITE,
+                        Vec2::new(TILE * 0.72, TILE * 0.54),
+                    ),
                     Transform::from_translation(Vec3::new(0.0, 0.0, -0.5)),
                 ));
             });

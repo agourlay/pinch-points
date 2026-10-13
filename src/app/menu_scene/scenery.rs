@@ -230,12 +230,11 @@ fn spawn_shore(commands: &mut Commands, art: &art::Art, rng: &mut VisualRng, siz
     commands.spawn((
         MenuShore,
         ShoreFoam { base_y: foam_y },
-        Sprite {
-            image: art.foam.clone(),
-            color: Color::srgba(1.0, 1.0, 1.0, 0.65),
-            custom_size: Some(Vec2::new(w + 40.0, 12.0)),
-            ..default()
-        },
+        crate::app::layout::image_sprite(
+            &art.foam,
+            Color::srgba(1.0, 1.0, 1.0, 0.65),
+            Vec2::new(w + 40.0, 12.0),
+        ),
         Transform::from_translation(Vec3::new(0.0, foam_y, 0.1)),
     ));
     spawn_swell(commands, rng, w, sea_top, sea_h, bottom);
@@ -435,12 +434,11 @@ fn spawn_beach_props(
         if prop.shadow > 0.0 {
             commands.spawn((
                 MenuShore,
-                Sprite {
-                    image: art.shadow.clone(),
-                    color: Color::srgba(0.36, 0.28, 0.18, 0.28),
-                    custom_size: Some(Vec2::new(prop.shadow, prop.shadow * 0.42)),
-                    ..default()
-                },
+                crate::app::layout::image_sprite(
+                    &art.shadow,
+                    Color::srgba(0.36, 0.28, 0.18, 0.28),
+                    Vec2::new(prop.shadow, prop.shadow * 0.42),
+                ),
                 // Leaning the way the board's shadows fall (`layout::SUN`):
                 // the sun is over the same shoulder on every screen.
                 Transform::from_translation(Vec3::new(
@@ -498,12 +496,11 @@ fn spawn_beach_props(
     for _ in 0..5 {
         commands.spawn((
             MenuShore,
-            Sprite {
-                image: art.foam.clone(),
-                color: Color::srgba(0.55, 0.47, 0.34, 0.22),
-                custom_size: Some(Vec2::new(rng.range(120.0, 240.0), rng.range(10.0, 18.0))),
-                ..default()
-            },
+            crate::app::layout::image_sprite(
+                &art.foam,
+                Color::srgba(0.55, 0.47, 0.34, 0.22),
+                Vec2::new(rng.range(120.0, 240.0), rng.range(10.0, 18.0)),
+            ),
             Transform::from_translation(Vec3::new(
                 rng.range(-w / 2.0, w / 2.0),
                 bottom + SHORE_H - rng.range(6.0, 34.0),

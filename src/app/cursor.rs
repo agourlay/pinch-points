@@ -287,12 +287,11 @@ fn cursor_sprite(commands: &mut Commands, art: &crate::app::art::Art, player: u8
     };
     commands.spawn((
         Cursor::seated(player),
-        Sprite {
-            image: art.bracket.clone(),
-            color: bracket_color(player),
-            custom_size: Some(Vec2::splat(TILE * if player % 2 == 1 { 0.80 } else { 1.0 })),
-            ..default()
-        },
+        layout::image_sprite(
+            &art.bracket,
+            bracket_color(player),
+            Vec2::splat(TILE * if player % 2 == 1 { 0.80 } else { 1.0 }),
+        ),
         Transform::from_translation(Vec3::new(0.0, 0.0, layout::z::CURSOR)).with_rotation(rotation),
     ));
 }

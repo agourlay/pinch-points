@@ -42,18 +42,8 @@ pub use water::{
     WaterFoam, Waterline, spawn_water_foam, spawn_waterline, update_water_foam, update_waterline,
 };
 
+use crate::app::layout::image_sprite;
 use bevy::prelude::*;
-
-/// A tinted sprite at a fixed size: the shape almost every board sprite
-/// takes.
-fn image_sprite(image: &Handle<Image>, tint: Color, size: Vec2) -> Sprite {
-    Sprite {
-        image: image.clone(),
-        color: tint,
-        custom_size: Some(size),
-        ..default()
-    }
-}
 
 /// One side of the board, for the things drawn along all four: the tide's
 /// bars and foam, and the wet sand fringe.

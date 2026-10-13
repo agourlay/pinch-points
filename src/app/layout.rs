@@ -71,6 +71,17 @@ pub mod z {
     pub const PIP: f32 = 5.7;
 }
 
+/// A tinted sprite at a fixed size: the shape almost every sprite in the
+/// world takes, on the board and off it.
+pub fn image_sprite(image: &Handle<Image>, tint: Color, size: Vec2) -> Sprite {
+    Sprite {
+        image: image.clone(),
+        color: tint,
+        custom_size: Some(size),
+        ..default()
+    }
+}
+
 /// The board's size in world units: the sand, wall to wall.
 pub fn board_extent(board: &Board) -> Vec2 {
     Vec2::new(

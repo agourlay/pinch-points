@@ -266,12 +266,11 @@ pub fn burst(commands: &mut Commands, rng: &mut VisualRng, spec: &Burst) {
                 life: rng.range(0.35, 0.6),
                 ..default()
             },
-            Sprite {
-                image: spec.image.clone(),
-                color: spec.color,
-                custom_size: Some(Vec2::splat(spec.size * rng.range(0.7, 1.3))),
-                ..default()
-            },
+            layout::image_sprite(
+                &spec.image,
+                spec.color,
+                Vec2::splat(spec.size * rng.range(0.7, 1.3)),
+            ),
             Transform::from_translation(spec.pos.extend(layout::z::PARTICLE)),
         ));
     }
@@ -295,12 +294,11 @@ fn feathers(commands: &mut Commands, rng: &mut VisualRng, art: &Art, pos: Vec2) 
                 life: rng.range(0.45, 0.8),
                 ..default()
             },
-            Sprite {
-                image: art.feather.clone(),
-                color: FEATHER_LIT,
-                custom_size: Some(Vec2::splat(rng.range(11.0, 18.0))),
-                ..default()
-            },
+            layout::image_sprite(
+                &art.feather,
+                FEATHER_LIT,
+                Vec2::splat(rng.range(11.0, 18.0)),
+            ),
             Transform::from_translation(pos.extend(layout::z::PARTICLE)),
         ));
     }
@@ -342,11 +340,7 @@ fn flying_away(commands: &mut Commands, art: &Art, pos: Vec2, heading: Vec2, cal
             life: 0.75,
             ..default()
         },
-        Sprite {
-            image: art.gull_fly.clone(),
-            custom_size: Some(Vec2::splat(TILE * 0.78)),
-            ..default()
-        },
+        layout::image_sprite(&art.gull_fly, Color::WHITE, Vec2::splat(TILE * 0.78)),
         Transform::from_translation(pos.extend(layout::z::PARTICLE))
             .with_rotation(Quat::from_rotation_z(heading.to_angle())),
     ));
@@ -421,12 +415,11 @@ pub fn spark_trail(commands: &mut Commands, rng: &mut VisualRng, art: &Art, pos:
                 life: rng.range(0.35, 0.6),
                 ..default()
             },
-            Sprite {
-                image: art.star.clone(),
-                color: Color::srgba(1.0, 0.92, 0.45, 0.9),
-                custom_size: Some(Vec2::splat(rng.range(6.0, 11.0))),
-                ..default()
-            },
+            layout::image_sprite(
+                &art.star,
+                Color::srgba(1.0, 0.92, 0.45, 0.9),
+                Vec2::splat(rng.range(6.0, 11.0)),
+            ),
             Transform::from_translation((pos + spread).extend(layout::z::PARTICLE)),
         ));
     }
@@ -477,12 +470,11 @@ pub fn confetti(commands: &mut Commands, rng: &mut VisualRng, art: &Art, color: 
                 life: rng.range(1.6, 3.0),
                 ..default()
             },
-            Sprite {
-                image: art.star.clone(),
-                color: color.lighter(rng.range(0.0, 0.2)),
-                custom_size: Some(Vec2::splat(rng.range(8.0, 16.0))),
-                ..default()
-            },
+            layout::image_sprite(
+                &art.star,
+                color.lighter(rng.range(0.0, 0.2)),
+                Vec2::splat(rng.range(8.0, 16.0)),
+            ),
             Transform::from_translation(Vec3::new(x, y, layout::z::CONFETTI)),
         ));
     }
@@ -934,12 +926,7 @@ pub fn crab_trails(
                     life: rng.range(0.25, 0.4),
                     ..default()
                 },
-                Sprite {
-                    image: art.puff.clone(),
-                    color: SAND_DRY,
-                    custom_size: Some(Vec2::splat(rng.range(5.0, 8.0))),
-                    ..default()
-                },
+                layout::image_sprite(&art.puff, SAND_DRY, Vec2::splat(rng.range(5.0, 8.0))),
                 Transform::from_translation(pos.extend(layout::z::PARTICLE)),
             ));
         }
@@ -1094,12 +1081,11 @@ pub fn moment_effects(
                         ..default()
                     },
                     // The arrow off the lost post, in its owner's paint.
-                    Sprite {
-                        image: art.sign_paint.clone(),
-                        color: palette::seat_paint(*owner),
-                        custom_size: Some(Vec2::splat(layout::SIGN_SIZE)),
-                        ..default()
-                    },
+                    layout::image_sprite(
+                        &art.sign_paint,
+                        palette::seat_paint(*owner),
+                        Vec2::splat(layout::SIGN_SIZE),
+                    ),
                     Transform::from_translation(pos.extend(layout::z::PARTICLE))
                         .with_rotation(layout::dir_rotation(*dir)),
                 ));
@@ -1134,12 +1120,11 @@ pub fn moment_effects(
                         fade_in: 0.0,
                         ..default()
                     },
-                    Sprite {
-                        image: art.puff.clone(),
-                        color: Color::srgba(1.0, 1.0, 1.0, 1.0),
-                        custom_size: Some(Vec2::splat(TILE * 1.1)),
-                        ..default()
-                    },
+                    layout::image_sprite(
+                        &art.puff,
+                        Color::srgba(1.0, 1.0, 1.0, 1.0),
+                        Vec2::splat(TILE * 1.1),
+                    ),
                     Transform::from_translation(pos.extend(layout::z::FLASH)),
                 ));
                 burst(

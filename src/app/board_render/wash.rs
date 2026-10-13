@@ -10,7 +10,7 @@
 //! left holding, and the results card comes up on its own schedule as it
 //! always did.
 
-use super::{BoardStatic, z};
+use super::{BoardStatic, image_sprite, z};
 use crate::app::Sim;
 use crate::app::art::Art;
 use crate::app::layout::TILE;
@@ -86,12 +86,7 @@ pub fn start_tide_wash(
         BoardStatic,
         TideWash { age: 0.0 },
         WashFoam,
-        Sprite {
-            image: art.foam.clone(),
-            color: Color::srgba(1.0, 1.0, 1.0, 0.92),
-            custom_size: Some(Vec2::ZERO),
-            ..default()
-        },
+        image_sprite(&art.foam, Color::srgba(1.0, 1.0, 1.0, 0.92), Vec2::ZERO),
         Transform::from_translation(Vec3::new(0.0, 0.0, z::PIP + 0.12)),
     ));
     // The sea arriving, felt rather than seen.

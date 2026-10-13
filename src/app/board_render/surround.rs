@@ -143,12 +143,11 @@ pub(super) fn spawn_dusk_shore(commands: &mut Commands, board: &Board, art: &Art
     ));
     commands.spawn((
         BoardStatic,
-        Sprite {
-            image: art.foam.clone(),
-            color: Color::srgba(1.0, 1.0, 1.0, 0.45),
-            custom_size: Some(Vec2::new(REACH, 12.0)),
-            ..default()
-        },
+        image_sprite(
+            &art.foam,
+            Color::srgba(1.0, 1.0, 1.0, 0.45),
+            Vec2::new(REACH, 12.0),
+        ),
         Transform::from_translation(Vec3::new(0.0, shore + 2.0, z::SAND - 9.6)),
     ));
     // Crests further out, fainter, thinner and more broken toward the
@@ -163,12 +162,11 @@ pub(super) fn spawn_dusk_shore(commands: &mut Commands, board: &Board, art: &Art
             let length = rng.range(70.0, 190.0);
             commands.spawn((
                 BoardStatic,
-                Sprite {
-                    image: art.foam.clone(),
-                    color: Color::srgba(1.0, 1.0, 1.0, alpha),
-                    custom_size: Some(Vec2::new(length, depth)),
-                    ..default()
-                },
+                image_sprite(
+                    &art.foam,
+                    Color::srgba(1.0, 1.0, 1.0, alpha),
+                    Vec2::new(length, depth),
+                ),
                 Transform::from_translation(Vec3::new(
                     x + length / 2.0,
                     shore + lift + rng.range(-5.0, 5.0),

@@ -272,11 +272,11 @@ pub fn sync_crab_sprites(
             .with_children(|parent| {
                 parent.spawn((
                     CreatureShadow,
-                    Sprite {
-                        image: art.shadow.clone(),
-                        custom_size: Some(Vec2::new(size.x * 1.35, size.y * 1.15)),
-                        ..default()
-                    },
+                    layout::image_sprite(
+                        &art.shadow,
+                        Color::WHITE,
+                        Vec2::new(size.x * 1.35, size.y * 1.15),
+                    ),
                     Transform::from_translation(Vec3::new(0.0, 0.0, -0.5)),
                 ));
                 parent.spawn(crab_claw(&art, crab.handed, side));

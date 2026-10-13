@@ -446,9 +446,7 @@ pub fn update_side_panels(
             palette::seat_paint(panel.0)
         };
         let edge = BorderColor::all(edge);
-        if *border != edge {
-            *border = edge;
-        }
+        border.set_if_neq(edge);
     }
     for (medal, mut bg) in medals {
         menu_ui::set_bg(&mut bg, MEDALS[rank[medal.0 as usize]]);
@@ -489,9 +487,7 @@ pub fn update_side_panels(
         } else {
             Visibility::Hidden
         };
-        if *visibility != target {
-            *visibility = target;
-        }
+        visibility.set_if_neq(target);
     }
 }
 
@@ -529,9 +525,7 @@ pub fn update_arrow_dots(
         } else {
             palette::PIP_OFF
         });
-        if *border != edge {
-            *border = edge;
-        }
+        border.set_if_neq(edge);
     }
     for (fill, mut node, mut bg) in &mut fills {
         let life = lives[usize::from(fill.seat)]

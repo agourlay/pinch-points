@@ -309,9 +309,7 @@ pub fn dress_signposts(
                     true => Visibility::Inherited,
                     false => Visibility::Hidden,
                 };
-                if *shown != want {
-                    *shown = want;
-                }
+                shown.set_if_neq(want);
                 if marked {
                     halo.color = palette::GOLD.with_alpha(pulse);
                 }
