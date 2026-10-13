@@ -244,14 +244,22 @@ impl OnlineSession {
         let Some(peer) = self.peers.holder_of(seat) else {
             return;
         };
-        self.transport.forget(peer);
-        // The row goes with the socket's entry, so nothing kept about the
-        // departed is read against whoever moved up into its index.
-        self.peers.forget(peer);
+        self.forget_peer(peer);
         debug_assert!(
             self.peers.len() <= self.transport.peer_count(),
             "a peer's row outlived the peer it was kept for"
         );
+    }
+
+    /// Drop a peer from the socket and from everything kept by its index.
+    ///
+    /// The row goes with the socket's entry, so nothing kept about the
+    /// departed is read against whoever moved up into its index, and the
+    /// same goes for a tide vote it had standing.
+    pub(super) fn forget_peer(&mut self, peer: usize) {
+        self.transport.forget(peer);
+        self.peers.forget(peer);
+        self.stands.votes.voter_left(peer);
     }
 
     /// Host, during the round: drop every spectator that has gone quiet.
@@ -267,8 +275,7 @@ impl OnlineSession {
                     && row.silence >= WATCHER_GONE_AFTER
             });
             if gone {
-                self.transport.forget(peer);
-                self.peers.forget(peer);
+                self.forget_peer(peer);
             }
         }
     }
@@ -289,8 +296,7 @@ impl OnlineSession {
                 .get(peer)
                 .is_some_and(|peer| peer.silence >= ABANDON_AFTER)
             {
-                self.transport.forget(peer);
-                self.peers.forget(peer);
+                self.forget_peer(peer);
             }
         }
     }

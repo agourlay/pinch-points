@@ -1152,6 +1152,51 @@ mod homecoming_tests {
         assert!(!open(&session), "not the host");
     }
 
+    /// One watcher, one vote. The card can be reopened and pressed again
+    /// inside the window, and every press used to count: one keen watcher
+    /// outvoted a room. Now the latest press is the watcher changing its
+    /// mind.
+    #[test]
+    fn a_watcher_pressing_again_changes_its_vote_rather_than_adding_one() {
+        use crate::sim::TideEvent;
+        let mut session = hosting_session(6);
+        session.peers.row(0).place = Place::Watching;
+        session.peers.row(1).place = Place::Watching;
+        let (sand, swap, mania) = (
+            TideEvent::FreshSand.index() as u8,
+            TideEvent::CastleSwap.index() as u8,
+            TideEvent::CrabMania.index() as u8,
+        );
+        // Peer 0 stuffs the box for a swap; peer 1 wants fresh sand.
+        for _ in 0..5 {
+            session.take_vote(true, 0, swap);
+        }
+        session.take_vote(true, 1, sand);
+        // One each, a tie, which goes to the earlier event on the list.
+        assert_eq!(
+            session.stands.votes.settle(10.0),
+            Some(TideEvent::FreshSand),
+            "five presses are one vote"
+        );
+
+        // And a vote moves with its voter when a peer before it goes.
+        let mut session = hosting_session(7);
+        for peer in 0..3 {
+            session.peers.row(peer).place = Place::Watching;
+        }
+        session.take_vote(true, 0, mania);
+        session.take_vote(true, 1, sand);
+        session.take_vote(true, 2, sand);
+        session.forget_peer(0);
+        // Old peer 2 is now peer 1, and changes its mind: still two votes
+        // in all, not three.
+        session.take_vote(true, 1, mania);
+        assert_eq!(
+            session.stands.votes.settle(10.0),
+            Some(TideEvent::CrabMania)
+        );
+    }
+
     /// A direct `PINCH_HOST` pair keeps no launch plan, and
     /// `follows_the_round` reads an empty plan as "everybody hears" so the
     /// two keep talking to the one peer they have. Spectating is the place

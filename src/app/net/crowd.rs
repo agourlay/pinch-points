@@ -48,7 +48,7 @@ impl OnlineSession {
     /// who may be heard is the part worth being able to test.
     pub(super) fn take_vote(&mut self, host: bool, from: usize, event: u8) {
         if host && self.watching_this_round(from) {
-            self.stands.votes.cast(event);
+            self.stands.votes.cast(from, event);
         }
     }
 

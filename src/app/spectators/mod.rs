@@ -537,10 +537,10 @@ mod tests {
         // The first pick opens the window; the rest fall into it.
         let fresh = TideEvent::FreshSand.index() as u8;
         let swap = TideEvent::CastleSwap.index() as u8;
-        votes.cast(fresh);
+        votes.cast(1, fresh);
         assert!(votes.open().is_some(), "the first pick opened it");
-        votes.cast(swap);
-        votes.cast(swap);
+        votes.cast(2, swap);
+        votes.cast(3, swap);
 
         // It stays open for its few seconds, then gives the majority.
         assert_eq!(votes.settle(1.0), None, "still open");
@@ -548,14 +548,14 @@ mod tests {
 
         // And then they wait, however many of them there are.
         assert!(votes.waiting().is_some());
-        votes.cast(fresh);
+        votes.cast(4, fresh);
         assert!(
             votes.open().is_none(),
             "a vote during the wait opens nothing"
         );
         assert_eq!(votes.settle(COOLDOWN), None);
         assert!(votes.waiting().is_none(), "the wait is over");
-        votes.cast(fresh);
+        votes.cast(5, fresh);
         assert!(votes.open().is_some(), "and they may call again");
     }
 
@@ -566,8 +566,8 @@ mod tests {
     fn a_tied_vote_breaks_the_same_way_every_time() {
         let pick = |order: [TideEvent; 2]| {
             let mut votes = SpectatorVotes::default();
-            for event in order {
-                votes.cast(event.index() as u8);
+            for (voter, event) in order.into_iter().enumerate() {
+                votes.cast(voter, event.index() as u8);
             }
             votes.settle(WINDOW)
         };
@@ -584,7 +584,7 @@ mod tests {
     #[test]
     fn a_vote_still_open_at_the_wave_is_dropped_rather_than_held() {
         let mut votes = SpectatorVotes::default();
-        votes.cast(TideEvent::FreshSand.index() as u8);
+        votes.cast(7, TideEvent::FreshSand.index() as u8);
         assert!(votes.open().is_some());
 
         votes.forget_open();
@@ -598,7 +598,7 @@ mod tests {
         // The wait itself is left alone, so dropping a window mid-cooldown
         // does not hand the next one back early.
         let mut votes = SpectatorVotes::default();
-        votes.cast(TideEvent::FreshSand.index() as u8);
+        votes.cast(8, TideEvent::FreshSand.index() as u8);
         assert!(votes.settle(WINDOW).is_some());
         votes.forget_open();
         assert!(votes.waiting().is_some(), "still waiting");
@@ -612,7 +612,7 @@ mod tests {
         for event in [TideEvent::Monopoly, TideEvent::GullAttack] {
             assert!(!SPECTATOR_EVENTS.contains(&event), "{event:?}");
             let mut votes = SpectatorVotes::default();
-            votes.cast(event.index() as u8);
+            votes.cast(9, event.index() as u8);
             assert!(votes.open().is_none(), "{event:?} is not on the list");
         }
         assert_eq!(
@@ -834,7 +834,7 @@ mod tests {
                 session
                     .stands
                     .votes
-                    .cast(TideEvent::FreshSand.index() as u8);
+                    .cast(90, TideEvent::FreshSand.index() as u8);
             }
             app.world_mut()
                 .resource_mut::<Time>()
@@ -885,7 +885,7 @@ mod tests {
     #[test]
     fn the_wait_ends_with_the_round_rather_than_freezing_into_the_next() {
         let mut votes = SpectatorVotes::default();
-        votes.cast(TideEvent::FreshSand.index() as u8);
+        votes.cast(10, TideEvent::FreshSand.index() as u8);
         assert_eq!(votes.settle(WINDOW), Some(TideEvent::FreshSand));
         assert!(votes.waiting().is_some(), "a wait was earned");
 
@@ -895,7 +895,7 @@ mod tests {
 
         votes.forget_all();
         assert!(votes.waiting().is_none(), "and the round takes it away");
-        votes.cast(TideEvent::FreshSand.index() as u8);
+        votes.cast(11, TideEvent::FreshSand.index() as u8);
         assert!(votes.open().is_some(), "the next round starts them fresh");
     }
 
@@ -927,7 +927,7 @@ mod tests {
             session
                 .stands
                 .votes
-                .cast(TideEvent::FreshSand.index() as u8);
+                .cast(91, TideEvent::FreshSand.index() as u8);
         }
 
         let _ = app.world_mut().run_system_once(forget_spectating);

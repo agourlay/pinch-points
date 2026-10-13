@@ -36,8 +36,12 @@ pub(super) const COOLDOWN: f32 = 25.0;
 /// on a frame, where it cannot be lost.
 #[derive(Default)]
 pub struct SpectatorVotes {
-    /// Picks since the window opened, one count per `SPECTATOR_EVENTS` seat.
-    tally: [u16; SPECTATOR_EVENTS.len()],
+    /// Picks since the window opened: who picked (a peer index), and
+    /// which `SPECTATOR_EVENTS` seat. One per voter, the latest standing,
+    /// so a watcher who reopens the card and presses again changes its
+    /// mind rather than stuffing the box. The winner calls were already
+    /// one per peer (`Peer::pick`); this was a bare count.
+    ballots: Vec<(usize, usize)>,
     /// Seconds left of an open window, or zero when none is open.
     open_for: f32,
     /// Seconds until spectators may call again.
@@ -45,9 +49,10 @@ pub struct SpectatorVotes {
 }
 
 impl SpectatorVotes {
-    /// Take a spectator's pick. The first one inside a quiet stretch opens
-    /// the window; the rest fall into it.
-    pub fn cast(&mut self, event: u8) {
+    /// Take `voter`'s pick. The first one inside a quiet stretch opens
+    /// the window; the rest fall into it, and a voter heard twice keeps
+    /// only its latest.
+    pub fn cast(&mut self, voter: usize, event: u8) {
         let Some(at) = SPECTATOR_EVENTS
             .iter()
             .position(|e| e.index() == usize::from(event))
@@ -58,10 +63,26 @@ impl SpectatorVotes {
             return;
         }
         if self.open_for <= 0.0 {
-            self.tally = [0; SPECTATOR_EVENTS.len()];
+            self.ballots.clear();
             self.open_for = WINDOW;
         }
-        self.tally[at] = self.tally[at].saturating_add(1);
+        match self.ballots.iter_mut().find(|(who, _)| *who == voter) {
+            Some(ballot) => ballot.1 = at,
+            None => self.ballots.push((voter, at)),
+        }
+    }
+
+    /// A peer has been forgotten: its ballot goes with it, and every voter
+    /// behind it moves down one, as the peer indices themselves do. Left
+    /// alone, the next voter to move into its index would replace its
+    /// ballot rather than cast its own.
+    pub fn voter_left(&mut self, peer: usize) {
+        self.ballots.retain(|(who, _)| *who != peer);
+        for (who, _) in &mut self.ballots {
+            if *who > peer {
+                *who -= 1;
+            }
+        }
     }
 
     /// Run the window down; the event the spectators settled on, once it closes.
@@ -81,8 +102,11 @@ impl SpectatorVotes {
         }
         self.open_for = 0.0;
         self.cooldown = COOLDOWN;
-        let (at, votes) = self
-            .tally
+        let mut tally = [0u16; SPECTATOR_EVENTS.len()];
+        for (_, at) in self.ballots.drain(..) {
+            tally[at] = tally[at].saturating_add(1);
+        }
+        let (at, votes) = tally
             .iter()
             .enumerate()
             .max_by_key(|(at, votes)| (**votes, std::cmp::Reverse(*at)))?;
@@ -92,7 +116,7 @@ impl SpectatorVotes {
     /// Drop an open window without settling it, leaving any wait alone.
     pub fn forget_open(&mut self) {
         self.open_for = 0.0;
-        self.tally = [0; SPECTATOR_EVENTS.len()];
+        self.ballots.clear();
     }
 
     /// Forget the vote and the wait both: the round they belonged to is
