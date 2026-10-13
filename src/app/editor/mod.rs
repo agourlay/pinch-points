@@ -129,6 +129,27 @@ fn write_level(path: &std::path::Path, text: &str) -> std::io::Result<bool> {
     Ok(is_new)
 }
 
+/// Where a build before 0.8.1 filed a level called `name`: its file names
+/// kept only ASCII letters and digits, so "Café" went to `caf.txt` and a
+/// Russian name to `level.txt`. Read only to tidy such a file away once
+/// the level is saved under its whole name (see the F2 arm), or the shelf
+/// would list the level twice.
+fn ascii_era_path(name: &str) -> std::path::PathBuf {
+    let mut stem = String::new();
+    for ch in name.chars().take(40) {
+        if ch.is_ascii_alphanumeric() {
+            stem.push(ch.to_ascii_lowercase());
+        } else if !stem.ends_with('-') {
+            stem.push('-');
+        }
+    }
+    let stem = match stem.trim_matches('-') {
+        "" => "level",
+        trimmed => trimmed,
+    };
+    custom_dir().join(format!("{stem}.txt"))
+}
+
 /// Where a level called `name` is filed. One file per name, so saving is
 /// keeping rather than replacing.
 ///
@@ -724,7 +745,16 @@ pub fn editor_commands(
             state.offer = None;
             state.feedback = match write_level(&path, &level.to_text()) {
                 Ok(is_new) => {
-                    if is_new {
+                    // The same level under the name an older build cut it
+                    // to: one level, so one file, the new one. Only when
+                    // that file really holds a level of this name, as
+                    // `level.txt` may well hold another.
+                    let legacy = ascii_era_path(&state.name);
+                    let moved = legacy != path && files_level_named(&legacy, &state.name);
+                    if moved {
+                        let _ = std::fs::remove_file(&legacy);
+                    }
+                    if is_new && !moved {
                         saved.write(crate::app::LevelSaved);
                     }
                     let named = state.name.clone();
@@ -1119,6 +1149,18 @@ mod tests {
             "saved over its own earlier self on the first press"
         );
         let _ = std::fs::remove_file(&path);
+
+        // Filed by an older build under the ASCII it kept of the name: the
+        // level moves to its whole name, and is not listed twice.
+        let name = "Café Legacy Probe";
+        let legacy = ascii_era_path(name);
+        assert!(legacy.ends_with("caf-legacy-probe.txt"), "{legacy:?}");
+        crate::app::paths::write_atomic(&legacy, &format!("name: {name}\n")).expect("wrote");
+        app.world_mut().resource_mut::<EditorState>().name = name.to_string();
+        tap(&mut app, KeyCode::F2);
+        assert!(save_path(name).exists(), "saved under its whole name");
+        assert!(!legacy.exists(), "and the old file tidied away");
+        let _ = std::fs::remove_file(save_path(name));
     }
 
     /// The posts dial is a puzzle's rule, so it is inert on a beach - and
