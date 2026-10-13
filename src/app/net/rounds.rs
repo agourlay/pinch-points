@@ -309,10 +309,8 @@ impl OnlineSession {
         // bytes carry it, and they are what every board is built from, by
         // the same rule (`beach_in_play`), so a beach the table outgrew is
         // not named while the generated one is played.
-        use crate::app::cycle::Cycle;
-        use crate::app::match_setup::{MapChoice, beach_from, beach_in_play};
-        let map = MapChoice::from_index(usize::from(self.terms.map));
-        let beach = beach_in_play(map, beach_from(&self.beach), self.seats)
+        use crate::app::match_setup::{TermsDials, beach_from, beach_in_play};
+        let beach = beach_in_play(self.terms.map(), beach_from(&self.beach), self.seats)
             .map_or_else(String::new, |level| level.name);
         NetMsg::Roster {
             seats: self.seats,

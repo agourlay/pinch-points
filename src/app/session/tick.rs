@@ -152,10 +152,7 @@ pub(in crate::app) fn advance_sim(
         let tally = &mut *tally;
         // The level every peer gives an abandoned seat, from the terms the
         // table agreed on, so the chair plays the same on all of them.
-        let level = {
-            use crate::app::cycle::Cycle;
-            BotLevel::from_index(usize::from(session.terms.bot_level))
-        };
+        let level = match_setup::TermsDials::bot_level(&session.terms);
         let mut advanced = false;
         let committed = session.pump_with(action, &extra, |net| {
             if let Some(mut frame_actions) = net.session.advance() {

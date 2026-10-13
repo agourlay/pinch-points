@@ -12,6 +12,7 @@
 //! corners on one side and two edges on the other.
 
 use crate::app::cycle::Cycle;
+use crate::app::match_setup::TermsDials;
 use crate::app::net;
 use crate::app::settings::GameSettings;
 use crate::sim::MAX_PLAYERS;
@@ -107,7 +108,7 @@ impl Cycle for TeamMode {
 /// mode that does not fit the seat count falls back to free-for-all.
 pub(crate) fn in_play(settings: &GameSettings, online: &net::Online, seats: u8) -> TeamMode {
     let wanted = match &online.0 {
-        Some(session) => TeamMode::from_index(usize::from(session.terms.teams)),
+        Some(session) => session.terms.teams(),
         None => settings.team_mode,
     };
     if wanted.fits(seats) {

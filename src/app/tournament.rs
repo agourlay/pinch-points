@@ -4,8 +4,8 @@
 //! the results card grows a series block (and a champion headline once the
 //! series is decided).
 
-use crate::app::cycle::Cycle;
 use crate::app::i18n::fill;
+use crate::app::match_setup::TermsDials;
 use crate::app::menu_ui;
 use crate::app::palette;
 use crate::app::seating::leading_seats;
@@ -140,11 +140,7 @@ impl Tournament {
     ) -> Self {
         let crate::transport::SeriesStanding { round, wins } =
             standing.unwrap_or_else(crate::transport::SeriesStanding::opening);
-        Self::taken_up(
-            SeriesLength::from_index(usize::from(terms.series)),
-            round,
-            wins,
-        )
+        Self::taken_up(terms.series(), round, wins)
     }
 
     /// Where this series stands, in the form the wire carries it, or

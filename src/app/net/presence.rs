@@ -10,12 +10,11 @@
 //! table.
 
 use super::*;
-use crate::app::cycle::Cycle;
 use crate::app::i18n::fill;
+use crate::app::match_setup::TermsDials;
 use crate::app::settings::GameSettings;
 use crate::app::side_panels::EventLog;
 use crate::app::{Controllers, Paused, RoundNotice, Screen, SeatController, SeatNames, palette};
-use crate::sim::BotLevel;
 
 /// How long a round waits on a silent player before handing their seat to
 /// an AI. Long enough that a burst of loss cannot be mistaken for somebody
@@ -391,7 +390,7 @@ pub(crate) fn abandon_the_departed(
         return;
     };
     session.abandon_stalled(time.delta_secs(), paused.0);
-    let level = BotLevel::from_index(usize::from(session.terms.bot_level));
+    let level = session.terms.bot_level();
     let tr = settings.tr();
     // Both roads end in the same list (the host decides, a joiner is told),
     // so reading it is how this stays one piece of code rather than two.

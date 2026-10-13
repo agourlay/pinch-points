@@ -21,32 +21,17 @@ pub fn board_from(terms: &MatchTerms, seats: u8, beach: &[u8]) -> crate::sim::Bo
     // Checked here as well because here is the one place both ends pass
     // through, with the same bytes and the same `seats`, so host and
     // joiner fall back to the same generated arena on the same tick.
-    let map = MapChoice::from_index(usize::from(terms.map));
-    let Some(level) = beach_in_play(map, beach_from(beach), seats) else {
+    let Some(level) = beach_in_play(terms.map(), beach_from(beach), seats) else {
         return board_for(terms, seats);
     };
     let mut board = level.board();
-    apply_terms(
-        &mut board,
-        GullPressure::from_index(usize::from(terms.gulls)),
-        RoundLength::from_index(usize::from(terms.round)),
-        posts_from(terms),
-    );
+    apply_terms(&mut board, terms.gulls(), terms.round(), terms.posts());
     board
 }
 
 pub fn board_for(terms: &MatchTerms, seats: u8) -> crate::sim::Board {
-    let mut board = versus_board(
-        MapChoice::from_index(usize::from(terms.map)),
-        terms.seed,
-        seats,
-    );
-    apply_terms(
-        &mut board,
-        GullPressure::from_index(usize::from(terms.gulls)),
-        RoundLength::from_index(usize::from(terms.round)),
-        posts_from(terms),
-    );
+    let mut board = versus_board(terms.map(), terms.seed, seats);
+    apply_terms(&mut board, terms.gulls(), terms.round(), terms.posts());
     board
 }
 
@@ -85,7 +70,7 @@ pub fn apply_terms(
 
 /// Which seats the AI holds under these terms: the top `bots` of `seats`.
 pub fn bot_seats_from(terms: &MatchTerms, seats: u8) -> [Option<BotLevel>; MAX_PLAYERS] {
-    let level = BotLevel::from_index(usize::from(terms.bot_level));
+    let level = terms.bot_level();
     let mut out = [None; MAX_PLAYERS];
     for seat in seats.saturating_sub(terms.bots)..seats {
         if let Some(slot) = out.get_mut(usize::from(seat)) {

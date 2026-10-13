@@ -178,11 +178,53 @@ pub enum Row {
 /// one is a knife fight, and past six a beach is more arrow than sand.
 pub const POSTS_RANGE: std::ops::RangeInclusive<u8> = 1..=6;
 
-/// The arrows a set of terms allows, inside the dial's range: the byte is
-/// whatever a host put there, and a cap of zero is a round nobody can play.
-/// Every peer clamps the same byte the same way, so they still agree.
-pub fn posts_from(terms: &MatchTerms) -> u8 {
-    terms.posts.clamp(*POSTS_RANGE.start(), *POSTS_RANGE.end())
+/// The dials a set of wire terms names, read back as the app's own types.
+///
+/// [`MatchTerms`] carries bare indices because it lives in `transport`,
+/// which knows nothing of the app; every read of one goes through here, so
+/// an index means the same dial wherever it is read.
+pub trait TermsDials {
+    fn map(&self) -> MapChoice;
+    fn gulls(&self) -> GullPressure;
+    fn round(&self) -> RoundLength;
+    fn bot_level(&self) -> BotLevel;
+    fn series(&self) -> crate::app::tournament::SeriesLength;
+    fn teams(&self) -> crate::app::teams::TeamMode;
+    /// The arrows the terms allow, inside the dial's range: the byte is
+    /// whatever a host put there, and a cap of zero is a round nobody can
+    /// play. Every peer clamps the same byte the same way, so they still
+    /// agree.
+    fn posts(&self) -> u8;
+}
+
+impl TermsDials for MatchTerms {
+    fn map(&self) -> MapChoice {
+        MapChoice::from_index(usize::from(self.map))
+    }
+
+    fn gulls(&self) -> GullPressure {
+        GullPressure::from_index(usize::from(self.gulls))
+    }
+
+    fn round(&self) -> RoundLength {
+        RoundLength::from_index(usize::from(self.round))
+    }
+
+    fn bot_level(&self) -> BotLevel {
+        BotLevel::from_index(usize::from(self.bot_level))
+    }
+
+    fn series(&self) -> crate::app::tournament::SeriesLength {
+        crate::app::tournament::SeriesLength::from_index(usize::from(self.series))
+    }
+
+    fn teams(&self) -> crate::app::teams::TeamMode {
+        crate::app::teams::TeamMode::from_index(usize::from(self.teams))
+    }
+
+    fn posts(&self) -> u8 {
+        self.posts.clamp(*POSTS_RANGE.start(), *POSTS_RANGE.end())
+    }
 }
 
 /// The most seats the AI can hold: everyone but one human.
@@ -363,21 +405,15 @@ pub fn config_from_terms(terms: &MatchTerms) -> (MatchConfig, crate::app::teams:
     let config = MatchConfig {
         seats: bots.max(2),
         bots,
-        controllers: [SeatController::Ai(BotLevel::from_index(usize::from(terms.bot_level)));
-            MAX_PLAYERS],
-        map: MapChoice::from_index(usize::from(terms.map)),
-        custom: 0,
-        gulls: GullPressure::from_index(usize::from(terms.gulls)),
-        round: RoundLength::from_index(usize::from(terms.round)),
-        posts: posts_from(terms),
-        series: crate::app::tournament::SeriesLength::from_index(usize::from(terms.series)),
-        armed: false,
-        bots_welcome: true,
+        controllers: [SeatController::Ai(terms.bot_level()); MAX_PLAYERS],
+        map: terms.map(),
+        gulls: terms.gulls(),
+        round: terms.round(),
+        posts: terms.posts(),
+        series: terms.series(),
+        ..MatchConfig::default()
     };
-    (
-        config,
-        crate::app::teams::TeamMode::from_index(usize::from(terms.teams)),
-    )
+    (config, terms.teams())
 }
 
 /// The same terms on a new beach: a fresh seed, and the map stepped on as
@@ -397,11 +433,11 @@ pub fn config_from_terms(terms: &MatchTerms) -> (MatchConfig, crate::app::teams:
 /// built from it: from round two the terms named a map nobody was
 /// playing, which is what a peer in line read off its roster card.
 pub fn next_round_terms(terms: MatchTerms, seats: u8, seed: u64) -> MatchTerms {
-    if MapChoice::from_index(usize::from(terms.map)) == MapChoice::Custom {
+    if terms.map() == MapChoice::Custom {
         return MatchTerms { seed, ..terms };
     }
     let mut config = MatchConfig {
-        map: MapChoice::from_index(usize::from(terms.map)),
+        map: terms.map(),
         seats,
         ..MatchConfig::default()
     };
@@ -425,7 +461,7 @@ pub fn next_round_terms(terms: MatchTerms, seats: u8, seed: u64) -> MatchTerms {
 /// board fell back to a generated arena, so the terms card and the roster
 /// named a beach nobody was on.
 pub fn fit_terms(terms: MatchTerms, seats: u8, beach: &[u8]) -> MatchTerms {
-    let map = MapChoice::from_index(usize::from(terms.map));
+    let map = terms.map();
     if map == MapChoice::Custom {
         return match beach_in_play(map, beach_from(beach), seats) {
             Some(_) => terms,
@@ -443,7 +479,7 @@ pub fn fit_terms(terms: MatchTerms, seats: u8, beach: &[u8]) -> MatchTerms {
 
 /// Whether the terms put the round on the host's handmade beach.
 pub fn is_custom(terms: &MatchTerms) -> bool {
-    MapChoice::from_index(usize::from(terms.map)) == MapChoice::Custom
+    terms.map() == MapChoice::Custom
 }
 
 /// Whether `map` has room for a table of `seats`. Five and six castles
