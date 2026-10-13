@@ -188,9 +188,8 @@ pub struct Watch {
     /// re-pointing one in place keeps the seat and changes the direction;
     /// the direction is kept to draw the ghost of a post already gone.
     posts_at: HashMap<(u8, u8), (PlayerId, Direction)>,
-    flying: usize,
-    event_at: Option<u64>,
-    last_event: Option<TideEvent>,
+    /// The most recent tide event and the tick it fired on.
+    tide_event: Option<(TideEvent, u64)>,
     spun_by: Option<PlayerId>,
     lure: Option<PlayerId>,
     /// Whether a Right Claws call was on, which decides what a crab banked
@@ -206,12 +205,32 @@ pub struct Watch {
     /// that is gone next has landed in its keep, and is told as banking
     /// there rather than where it was picked up.
     in_flight: std::collections::HashSet<u32>,
-    /// Where each gull was in the air, `None` while it was on the sand: a
-    /// gull that had a flight position and now has none has just landed.
-    gulls_aloft: HashMap<u32, Option<Vec2>>,
-    /// Where each gull was last drawn, for the one that is gone next frame,
-    /// and by its keys which gulls were already here, for the one that is new.
-    gulls_at: HashMap<u32, Vec2>,
+    /// Every gull on the beach, by id: by its keys which gulls were
+    /// already here, for the one that is new.
+    gulls: HashMap<u32, SeenGull>,
+}
+
+/// One gull as the last look saw it.
+#[derive(Clone, Copy)]
+struct SeenGull {
+    /// Where it was drawn, for the one that is gone next frame.
+    at: Vec2,
+    /// Whether it was in the air: one that was and now is not has just
+    /// landed.
+    aloft: bool,
+}
+
+impl Watch {
+    /// The tide event fired since `prev`, if one did.
+    fn fired_since(&self, prev: &Watch) -> Option<TideEvent> {
+        let (event, at) = self.tide_event?;
+        (prev.tide_event.map(|(_, then)| then) != Some(at)).then_some(event)
+    }
+
+    /// How many gulls were in the air.
+    fn flying(&self) -> usize {
+        self.gulls.values().filter(|gull| gull.aloft).count()
+    }
 }
 
 impl Watch {
@@ -236,13 +255,7 @@ impl Watch {
                     Some(((x, y), (sp.owner, sp.dir)))
                 })
                 .collect(),
-            flying: board
-                .gulls()
-                .iter()
-                .filter(|g| matches!(g.state, GullState::Flying { .. }))
-                .count(),
-            event_at: board.last_event().map(|(_, at)| at),
-            last_event: board.last_event().map(|(event, _)| event),
+            tide_event: board.last_event(),
             spun_by: board.event_spun_by(),
             lure: board.lure().map(|(owner, _)| owner),
             claw: board.in_claw_call(),
@@ -256,19 +269,16 @@ impl Watch {
                 .map(|c| (c.id, *c))
                 .collect(),
             in_flight: board.sweeping().iter().map(|f| f.crab.id).collect(),
-            gulls_aloft: board
+            gulls: board
                 .gulls()
                 .iter()
                 .map(|g| {
-                    let aloft = matches!(g.state, GullState::Flying { .. })
-                        .then(|| layout::creature_pos(board, g.tile, g.dir, g.progress));
-                    (g.id, aloft)
+                    let seen = SeenGull {
+                        at: layout::creature_pos(board, g.tile, g.dir, g.progress),
+                        aloft: matches!(g.state, GullState::Flying { .. }),
+                    };
+                    (g.id, seen)
                 })
-                .collect(),
-            gulls_at: board
-                .gulls()
-                .iter()
-                .map(|g| (g.id, layout::creature_pos(board, g.tile, g.dir, g.progress)))
                 .collect(),
         }
     }
@@ -333,53 +343,52 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab, claw: bool) -> SimEven
             TileKind::Empty
         }
     };
+    let priced = || prev.bank_points(board.crab_value(prev.kind), claw);
     // The tide's own doing, which no tile records. Its keep is where the
     // crab is flown to, and a banker with no castle to fly it to is not a
     // thing the sim makes, so the tiles have the last word if it happens.
-    if let Some(owner) = board.swept_home(prev.id)
-        && let Some((kx, ky)) = board.castle_of(owner)
-    {
-        return SimEvent::CrabBanked {
-            id: prev.id,
+    let swept = board
+        .swept_home(prev.id)
+        .and_then(|owner| Some((owner, board.castle_of(owner)?)));
+    let (owner, keep, points) = match swept {
+        // What the sim paid, not a second pricing off the clock: a crab in
+        // flight banks under the call it was swept under.
+        Some((owner, (kx, ky))) => (
             owner,
-            pos,
-            keep: layout::tile_center(board, kx, ky),
-            // What the sim paid, not a second pricing off the clock: a
-            // crab in flight banks under the call it was swept under.
-            points: board
-                .swept_paid(prev.id)
-                .unwrap_or_else(|| prev.bank_points(board.crab_value(prev.kind), claw)),
-            kind: prev.kind,
-            handed: prev.handed,
-        };
-    }
-    let here = tile_or_empty(i32::from(x), i32::from(y));
-    let ahead = (i32::from(x) + dx, i32::from(y) + dy);
-    let entering = tile_or_empty(ahead.0, ahead.1);
-    // Which of the two tiles is the castle is also *where* it is, and this
-    // is the only moment anybody knows: the board it was read from is this
-    // frame's, and the event is consumed on the next.
-    let keep_at = |at: (i32, i32)| layout::tile_center(board, at.0 as u8, at.1 as u8);
-    match (here, entering) {
-        (TileKind::Castle(owner), _) => SimEvent::CrabBanked {
-            id: prev.id,
-            owner,
-            pos,
-            keep: keep_at((i32::from(x), i32::from(y))),
-            points: prev.bank_points(board.crab_value(prev.kind), claw),
-            kind: prev.kind,
-            handed: prev.handed,
-        },
-        (_, TileKind::Castle(owner)) => SimEvent::CrabBanked {
-            id: prev.id,
-            owner,
-            pos,
-            keep: keep_at(ahead),
-            points: prev.bank_points(board.crab_value(prev.kind), claw),
-            kind: prev.kind,
-            handed: prev.handed,
-        },
-        _ => SimEvent::CrabEaten { pos },
+            layout::tile_center(board, kx, ky),
+            board.swept_paid(prev.id).unwrap_or_else(priced),
+        ),
+        None => {
+            let here = (i32::from(x), i32::from(y));
+            let ahead = (here.0 + dx, here.1 + dy);
+            // Which of the two tiles is the castle is also *where* it is,
+            // and this is the only moment anybody knows: the board it was
+            // read from is this frame's, and the event is consumed on the
+            // next.
+            let castle = match (
+                tile_or_empty(here.0, here.1),
+                tile_or_empty(ahead.0, ahead.1),
+            ) {
+                (TileKind::Castle(owner), _) => (owner, here),
+                (_, TileKind::Castle(owner)) => (owner, ahead),
+                _ => return SimEvent::CrabEaten { pos },
+            };
+            let (owner, (kx, ky)) = castle;
+            (
+                owner,
+                layout::tile_center(board, kx as u8, ky as u8),
+                priced(),
+            )
+        }
+    };
+    SimEvent::CrabBanked {
+        id: prev.id,
+        owner,
+        pos,
+        keep,
+        points,
+        kind: prev.kind,
+        handed: prev.handed,
     }
 }
 
@@ -433,8 +442,7 @@ fn gull_departures(
     next: &Watch,
     events: &mut Vec<SimEvent>,
 ) {
-    let mania = next.event_at != prev.event_at && next.last_event == Some(TideEvent::CrabMania);
-    if mania {
+    if next.fired_since(prev) == Some(TideEvent::CrabMania) {
         return;
     }
     let castles: Vec<Vec2> = board
@@ -442,10 +450,11 @@ fn gull_departures(
         .filter(|(_, _, kind)| matches!(kind, TileKind::Castle(_)))
         .map(|(x, y, _)| layout::tile_center(board, x, y))
         .collect();
-    for (id, &pos) in &prev.gulls_at {
-        if next.gulls_at.contains_key(id) {
+    for (id, gull) in &prev.gulls {
+        if next.gulls.contains_key(id) {
             continue;
         }
+        let pos = gull.at;
         let nearest = castles
             .iter()
             .copied()
@@ -529,21 +538,15 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
     // one gull off and brings one on in the same tick, and a raider can
     // leave on the tick another lands, so the count holds and the new
     // bird came in without a screech or a feed line.
-    if next
-        .gulls_at
-        .keys()
-        .any(|id| !prev.gulls_at.contains_key(id))
-    {
+    if next.gulls.keys().any(|id| !prev.gulls.contains_key(id)) {
         events.push(SimEvent::GullArrived);
     }
-    if next.flying > prev.flying {
+    if next.flying() > prev.flying() {
         events.push(SimEvent::GullTookOff);
     }
     for gull in board.gulls() {
         let now_flying = matches!(gull.state, GullState::Flying { .. });
-        if let Some(Some(_)) = prev.gulls_aloft.get(&gull.id)
-            && !now_flying
-        {
+        if prev.gulls.get(&gull.id).is_some_and(|seen| seen.aloft) && !now_flying {
             events.push(SimEvent::GullLanded {
                 pos: layout::creature_pos(board, gull.tile, gull.dir, gull.progress),
             });
@@ -590,10 +593,7 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
             });
         }
     }
-    if next.event_at.is_some()
-        && next.event_at != prev.event_at
-        && let Some(event) = next.last_event
-    {
+    if let Some(event) = next.fired_since(prev) {
         events.push(SimEvent::TideEventFired {
             event,
             by: next.spun_by,
