@@ -608,10 +608,10 @@ impl Fields {
                 // The trophies' business, not the beach's: a snapshot
                 // carries the rules and nothing else.
                 spun_by: None,
+                // Drained within the tick that fills it, so a snapshot
+                // taken between ticks never has one to carry.
                 queue: Vec::new(),
             },
-            // Drained within the tick that fills it, so a snapshot taken
-            // between ticks never has one to carry.
             // News for the frame it happened on, and this is not that
             // frame: a round picked back up has no sweep to report.
             swept_home: Vec::new(),

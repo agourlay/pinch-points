@@ -12,8 +12,9 @@ pub(crate) struct Tide {
     /// Tide events fire only where enabled (versus arenas, the attract
     /// beach), never in puzzles or goal-checked challenges.
     pub(crate) enabled: bool,
-    /// Ticks until the roulette may spin again; set when any event fires.
-    /// See [`EVENT_COOLDOWN`].
+    /// Ticks until the roulette may spin again; set when an event fires,
+    /// or under [`Rules::timed_lock`] only when one that lasts does. See
+    /// [`EVENT_COOLDOWN`].
     pub(crate) cooldown: u32,
     /// Active spawn mania: spawners flood crabs or emit gulls instead.
     pub(crate) mania: Option<(Mania, u32)>,

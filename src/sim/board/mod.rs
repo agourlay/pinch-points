@@ -250,7 +250,8 @@ pub struct Rules {
     pub gull_period: u32,
     /// How many gulls the ambient spawner allows on the beach at once.
     /// [`GULL_CAP`] unless a versus beach bigger than the classic one asked
-    /// for more (`set_versus_rules`), which is the one place it moves.
+    /// for more (`set_versus_rules`), or a level file or a snapshot names
+    /// one of its own (`gull_cap:`).
     pub gull_cap: u8,
     /// Whether the flock turns over: at the spawner's turn with the flock
     /// full, the oldest gull clear of the castles flies off and a fresh
@@ -396,7 +397,10 @@ pub struct Board {
     /// and hashing it would only make this build disagree with builds it
     /// is playing identically to.
     swept_home: Vec<Swept>,
-    /// Crabs Crab Monopoly is carrying home, in the order they land (see
+    /// Crabs Crab Monopoly is carrying home, in the order they were swept:
+    /// one sweep's crabs land in that order, but a second Monopoly fired
+    /// while the first is in the air adds its crabs after the first's,
+    /// and some of them land before the first's last ones do (see
     /// [`Rules::sweep_flight`]).
     sweeping: Vec<Sweeping>,
 }

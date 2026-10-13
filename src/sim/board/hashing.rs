@@ -256,8 +256,11 @@ impl Board {
             CapPolicy::Reject => 1,
         });
         // The quiet spell after a lure. Appended here rather than slotted
-        // in beside `lure`, where it belongs by meaning, because field
-        // order is the format and only the tail is safe to grow.
+        // in beside `lure`, where it belongs by meaning, to keep the order
+        // stable. Field order is the format all the same: any field added,
+        // at the tail or mid-stream as several rules since have been, is a
+        // different hash, and ships with a protocol bump so builds that
+        // hash differently never sit at one table.
         h.u32(self.lure_cooldown);
         h.u32(self.tide.cooldown);
         // Crab Monopoly's crabs in the air: live state that decides whose
