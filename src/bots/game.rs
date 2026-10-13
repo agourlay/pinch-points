@@ -14,7 +14,7 @@ use super::listener::{BotId, GameLink, GameMsg, Listener, View, lock};
 use super::lookahead;
 use super::protocol::{self, Act, Clock, Outcome, SeatKind, Table, You};
 pub use super::seat::SeatResult;
-use super::seat::{BotDriver, Journal, Turn, act_of, outcome, placings, refusal};
+use super::seat::{BotDriver, Journal, Presence, Turn, act_of, outcome, placings, refusal};
 use crate::sim::{
     Board, BotLevel, Hand, Level, MAX_PLAYERS, PlayerAction, PlayerId, Replay, bot_action_with,
 };
@@ -165,10 +165,17 @@ impl Match<'_, '_> {
         // game while this one waits (a cup plays fixtures side by side)
         // does not cut short a wait that began before it.
         let mut absent: Vec<bool> = vec![false; n];
+        // When each seat's wait began: as the game started, or when its bot
+        // came back and was greeted afresh. A bot that was ready and then
+        // dropped waits on from there, not from its going.
+        let mut began: Vec<Instant> = vec![Instant::now(); n];
         for seat in 0..n {
             let Some(bot) = &self.bots[seat] else {
                 continue;
             };
+            if let Presence::Waiting { since } = bot.presence {
+                began[seat] = since;
+            }
             absent[seat] = self.listener.absent(bot.id);
             came[seat] = bot.connected;
             if bot.connected {
@@ -181,9 +188,9 @@ impl Match<'_, '_> {
             let now = Instant::now();
             let mut waiting = false;
             for bot in self.bots.iter_mut().flatten() {
-                if bot.ready || bot.forfeit {
+                let Presence::Waiting { since } = bot.presence else {
                     continue;
-                }
+                };
                 let seat = usize::from(bot.seat);
                 // A bot that has already forfeited a game for never coming,
                 // and has not connected since, is not waited for again: a
@@ -196,11 +203,11 @@ impl Match<'_, '_> {
                 } else {
                     self.spec.forfeit_after
                 };
-                if now.duration_since(bot.waiting_since) < limit {
+                if now.duration_since(since) < limit {
                     waiting = true;
                     continue;
                 }
-                bot.forfeit = true;
+                bot.presence = Presence::Forfeit;
                 let why = if bot.connected {
                     "never said ready"
                 } else if came[seat] {
@@ -230,7 +237,7 @@ impl Match<'_, '_> {
             // and given its ten seconds from now.
             if let GameMsg::Back { seat, serial } = msg
                 && let Some(Some(bot)) = self.bots.get_mut(usize::from(seat))
-                && !bot.forfeit
+                && !bot.forfeited()
             {
                 let at = usize::from(seat);
                 came[at] = true;
@@ -240,8 +247,9 @@ impl Match<'_, '_> {
                 bot.connected = true;
                 // Whatever it said on the old connection, the new one is
                 // asked again.
-                bot.ready = false;
-                bot.waiting_since = Instant::now();
+                let now = Instant::now();
+                bot.presence = Presence::Waiting { since: now };
+                began[at] = now;
                 let id = bot.id;
                 greeted[at] = self.listener.greet(id, &self.hello(seat, false));
                 continue;
@@ -250,7 +258,11 @@ impl Match<'_, '_> {
                 && let Some(Some(bot)) = self.bots.get_mut(usize::from(seat))
             {
                 bot.connected = false;
-                bot.ready = false;
+                if bot.presence == Presence::Ready {
+                    bot.presence = Presence::Waiting {
+                        since: began[usize::from(seat)],
+                    };
+                }
                 continue;
             }
             self.take(msg, 0);
@@ -486,7 +498,7 @@ impl Match<'_, '_> {
         }
         let n = self.n();
         let forfeits: Vec<bool> = (0..n)
-            .map(|seat| self.bots[seat].as_ref().is_some_and(|b| b.forfeit))
+            .map(|seat| self.bots[seat].as_ref().is_some_and(BotDriver::forfeited))
             .collect();
         let scores: Vec<u32> = self.spec.board.scores()[..n].to_vec();
         let places = placings(&scores, &forfeits);

@@ -74,16 +74,36 @@ pub struct Journal<'a> {
     pub game: u32,
 }
 
+/// Where a seat stands on taking part, whatever its connection does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Presence {
+    /// Not ready yet, since `since`: waiting for a connection, or for
+    /// `ready`.
+    Waiting { since: Instant },
+    /// Said `ready`: in the game.
+    Ready,
+    /// Out of the game for good, whatever its bot goes on sending.
+    Forfeit,
+}
+
+impl Presence {
+    /// It said `ready`, or came back ready to go on: in the game, unless
+    /// it has forfeited.
+    fn ready(self) -> Presence {
+        match self {
+            Presence::Forfeit => Presence::Forfeit,
+            Presence::Waiting { .. } | Presence::Ready => Presence::Ready,
+        }
+    }
+}
+
 /// One bot's seat.
 pub struct BotDriver {
     pub id: BotId,
     pub seat: PlayerId,
     pub name: String,
     pub connected: bool,
-    pub ready: bool,
-    pub forfeit: bool,
-    /// When the seat started waiting: for a connection, or for `ready`.
-    pub waiting_since: Instant,
+    pub presence: Presence,
     /// Send `hello` again (with `resumed`) before the next tick.
     pub rehello: bool,
     deadline: Duration,
@@ -117,9 +137,9 @@ impl BotDriver {
             seat,
             name,
             connected,
-            ready: false,
-            forfeit: false,
-            waiting_since: Instant::now(),
+            presence: Presence::Waiting {
+                since: Instant::now(),
+            },
             rehello: false,
             deadline,
             in_hand: None,
@@ -135,7 +155,12 @@ impl BotDriver {
 
     /// In the game and able to hear it.
     pub fn playing(&self) -> bool {
-        self.connected && self.ready && !self.forfeit
+        self.connected && self.presence == Presence::Ready
+    }
+
+    /// Out of the game for good.
+    pub fn forfeited(&self) -> bool {
+        self.presence == Presence::Forfeit
     }
 
     /// Whether to send tick `t` now.
@@ -180,7 +205,7 @@ impl BotDriver {
         match msg {
             GameMsg::Reply { reply, at, .. } => self.reply(reply, at, t, journal),
             GameMsg::Ready { .. } => {
-                self.ready = !self.forfeit;
+                self.presence = self.presence.ready();
                 false
             }
             GameMsg::Garbled { why, .. } => {
@@ -203,7 +228,7 @@ impl BotDriver {
             GameMsg::Back { .. } => {
                 self.connected = true;
                 self.rehello = true;
-                self.ready = !self.forfeit;
+                self.presence = self.presence.ready();
                 self.awake_at = 0;
                 self.outstanding = None;
                 (journal.console)(format!("  {name} is back at tick {t}"));
@@ -330,7 +355,7 @@ impl BotDriver {
     /// The game is over: what was sent and never answered is missed.
     pub fn close(&mut self) {
         self.result.missed = self.result.sent.saturating_sub(self.answered_count);
-        self.result.forfeit = self.forfeit;
+        self.result.forfeit = self.forfeited();
     }
 }
 
@@ -473,7 +498,7 @@ mod tests {
             game: 1,
         };
         let mut seat = BotDriver::new(0, 0, "b".into(), true, Duration::from_millis(33));
-        seat.ready = true;
+        seat.presence = Presence::Ready;
         let now = Instant::now();
         assert_eq!(seat.turn(0, now), Turn::Send);
         seat.sent(0, now);
@@ -523,7 +548,7 @@ mod tests {
             game: 1,
         };
         let mut seat = BotDriver::new(0, 0, "b".into(), true, Duration::from_millis(33));
-        seat.ready = true;
+        seat.presence = Presence::Ready;
         let now = Instant::now();
         seat.sent(0, now);
         let GameMsg::Reply {
@@ -559,7 +584,7 @@ mod tests {
             game: 1,
         };
         let mut seat = BotDriver::new(0, 0, "b".into(), true, Duration::from_millis(33));
-        seat.forfeit = true;
+        seat.presence = Presence::Forfeit;
         let place = Act::Place {
             x: 1,
             y: 1,
