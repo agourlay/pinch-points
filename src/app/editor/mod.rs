@@ -105,6 +105,18 @@ fn is_new_here(path: &std::path::Path) -> bool {
     !path.exists()
 }
 
+/// Whether the level filed at `path` goes by `name`, which makes it this
+/// level and not another: levels are known by their name, progress and
+/// all. A level pasted back in and saved again is its own file's owner,
+/// and asking twice before writing it reads as somebody else's.
+fn files_level_named(path: &std::path::Path, name: &str) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|text| {
+        text.lines()
+            .find_map(|line| line.strip_prefix("name:"))
+            .is_some_and(|filed| filed.trim() == name)
+    })
+}
+
 /// Write a level out, and say whether that brought it into being.
 ///
 /// The answer is read before the write, which would make it true either
@@ -698,7 +710,9 @@ pub fn editor_commands(
     if keys.just_pressed(KeyCode::F2) {
         let level = level_here(&state, board, &state.name);
         let path = save_path(&state.name);
-        let stranger = !is_new_here(&path) && !state.mine.contains(&state.name);
+        let stranger = !is_new_here(&path)
+            && !state.mine.contains(&state.name)
+            && !files_level_named(&path, &state.name);
         // A file this session did not write is somebody else's level until
         // the author says otherwise: the first press only says whose it
         // is, and the second replaces it. Written at once, the note that
@@ -1093,6 +1107,16 @@ mod tests {
         assert!(
             app.world().resource::<EditorState>().offer.is_none(),
             "no question about its own file"
+        );
+        // A file holding a level by this very name is this level, written
+        // in another session or pasted back in: saved at once too.
+        app.world_mut().resource_mut::<EditorState>().mine.clear();
+        crate::app::paths::write_atomic(&path, &format!("name: {name}\nold: true\n"))
+            .expect("wrote");
+        tap(&mut app, KeyCode::F2);
+        assert!(
+            !on_disk().contains("old: true"),
+            "saved over its own earlier self on the first press"
         );
         let _ = std::fs::remove_file(&path);
     }
