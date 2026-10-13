@@ -5,7 +5,7 @@
 
 use super::{
     CommitScheme, DEADZONE_RANGE, GameSettings, REPEAT_DELAY_RANGE, REPEAT_INTERVAL_RANGE,
-    SeatInput, UI_SCALE_MAX, UI_SCALE_MIN, VOLUME_RANGE,
+    SeatInput, UI_SCALE_MAX, UI_SCALE_MIN, VOLUME_RANGE, clamp_in,
 };
 use crate::app::Screen;
 use crate::app::cycle::{Cycle, dial};
@@ -416,17 +416,13 @@ pub fn settings_input(
         }
         Row::CommitKeys => settings.commit = settings.commit.cycled(turn),
         Row::RepeatDelay => {
-            settings.repeat_delay = f32::clamp(
-                settings.repeat_delay + step * 0.05,
-                *REPEAT_DELAY_RANGE.start(),
-                *REPEAT_DELAY_RANGE.end(),
-            );
+            settings.repeat_delay =
+                clamp_in(settings.repeat_delay + step * 0.05, &REPEAT_DELAY_RANGE);
         }
         Row::RepeatRate => {
-            settings.repeat_interval = f32::clamp(
+            settings.repeat_interval = clamp_in(
                 settings.repeat_interval + step * 0.02,
-                *REPEAT_INTERVAL_RANGE.start(),
-                *REPEAT_INTERVAL_RANGE.end(),
+                &REPEAT_INTERVAL_RANGE,
             );
         }
         Row::MusicOn => settings.music_on = !settings.music_on,

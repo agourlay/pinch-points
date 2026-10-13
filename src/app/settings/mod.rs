@@ -46,6 +46,18 @@ pub const REPEAT_INTERVAL_RANGE: std::ops::RangeInclusive<f32> = 0.03..=0.2;
 pub const UI_SCALE_MIN: u8 = 60;
 pub const UI_SCALE_MAX: u8 = 100;
 
+/// `value` held inside `range`, for the dials the card steps and the
+/// numbers the file reads, which keep to the same bounds.
+pub(crate) fn clamp_in<T: PartialOrd + Copy>(value: T, range: &std::ops::RangeInclusive<T>) -> T {
+    if value < *range.start() {
+        *range.start()
+    } else if value > *range.end() {
+        *range.end()
+    } else {
+        value
+    }
+}
+
 /// What drives one of the two keyboard seats. Pads fill the table from the
 /// top down, so with two pads and no ceremony pad one drives P2 and pad
 /// two drives P1; this is how you say otherwise.

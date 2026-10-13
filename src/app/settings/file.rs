@@ -4,12 +4,33 @@
 use super::{
     CommitScheme, DEADZONE_RANGE, GameSettings, PuzzleSpeed, REPEAT_DELAY_RANGE,
     REPEAT_INTERVAL_RANGE, REPLAY_CAP_MAX, REPLAY_CAP_MIN, SeatInput, UI_SCALE_MAX, UI_SCALE_MIN,
-    VOLUME_RANGE,
+    VOLUME_RANGE, clamp_in,
 };
 use crate::app::binds::default_binds;
 use crate::app::i18n::Lang;
 use crate::app::teams::TeamMode;
 use crate::sim::MAX_PLAYERS;
+
+/// A switch as the file spells it.
+fn on_off(on: bool) -> &'static str {
+    if on { "on" } else { "off" }
+}
+
+/// A switch read back: anything but "off" is on, so a switch that a file
+/// mangled, or one from before the switch existed, stays on.
+fn is_on(value: &str) -> bool {
+    value != "off"
+}
+
+/// A saved number read and held inside `range`, or `None` when it does
+/// not read at all (the setting then keeps its default). Out of range is
+/// clamped rather than thrown away: a hand-edited 101 means "loud".
+fn parse_in<T: std::str::FromStr + PartialOrd + Copy>(
+    value: &str,
+    range: &std::ops::RangeInclusive<T>,
+) -> Option<T> {
+    value.parse().ok().map(|v| clamp_in(v, range))
+}
 
 /// The settings file, under the XDG config directory.
 fn settings_path() -> std::path::PathBuf {
@@ -60,23 +81,23 @@ impl GameSettings {
             commit.key(),
             repeat_delay,
             repeat_interval,
-            if *music_on { "on" } else { "off" },
+            on_off(*music_on),
             music_volume,
-            if *sfx_on { "on" } else { "off" },
+            on_off(*sfx_on),
             sfx_volume,
             puzzle_speed.percent(),
             team_mode.key(),
             language.key(),
-            if *rumble { "on" } else { "off" },
+            on_off(*rumble),
             pad_deadzone,
             if *colorblind { "colorblind" } else { "classic" },
-            if *fullscreen { "on" } else { "off" },
+            on_off(*fullscreen),
             ui_scale,
-            if *reduced_motion { "on" } else { "off" },
+            on_off(*reduced_motion),
             names.join("|"),
             replay_cap,
             last_beach,
-            if *check_updates { "on" } else { "off" },
+            on_off(*check_updates),
             caps.to_text(),
             keyboard.map_or("auto", crate::app::keycaps::Layout::key),
             seat_input[0].name(),
@@ -104,26 +125,18 @@ impl GameSettings {
                 "p1_input" => settings.seat_input[0] = SeatInput::from_name(value),
                 "p2_input" => settings.seat_input[1] = SeatInput::from_name(value),
                 "repeat_delay" => {
-                    if let Ok(v) = value.parse() {
-                        settings.repeat_delay =
-                            f32::clamp(v, *REPEAT_DELAY_RANGE.start(), *REPEAT_DELAY_RANGE.end());
-                    }
+                    let read = parse_in(value, &REPEAT_DELAY_RANGE);
+                    settings.repeat_delay = read.unwrap_or(settings.repeat_delay);
                 }
                 "repeat_interval" => {
-                    if let Ok(v) = value.parse() {
-                        settings.repeat_interval = f32::clamp(
-                            v,
-                            *REPEAT_INTERVAL_RANGE.start(),
-                            *REPEAT_INTERVAL_RANGE.end(),
-                        );
-                    }
+                    let read = parse_in(value, &REPEAT_INTERVAL_RANGE);
+                    settings.repeat_interval = read.unwrap_or(settings.repeat_interval);
                 }
-                "music_on" => settings.music_on = value != "off",
-                "sfx_on" => settings.sfx_on = value != "off",
+                "music_on" => settings.music_on = is_on(value),
+                "sfx_on" => settings.sfx_on = is_on(value),
                 "music" => {
-                    if let Ok(v) = value.parse::<u8>() {
-                        settings.music_volume = v.min(*VOLUME_RANGE.end());
-                    }
+                    let read = parse_in(value, &VOLUME_RANGE);
+                    settings.music_volume = read.unwrap_or(settings.music_volume);
                 }
                 // Was an on/off toggle before it became a slider; the old
                 // words still parse so an existing settings.txt keeps working.
@@ -131,31 +144,25 @@ impl GameSettings {
                     settings.sfx_volume = match value {
                         "off" => 0,
                         "on" => 100,
-                        _ => value
-                            .parse::<u8>()
-                            .map_or(settings.sfx_volume, |v| v.min(*VOLUME_RANGE.end())),
+                        _ => parse_in(value, &VOLUME_RANGE).unwrap_or(settings.sfx_volume),
                     };
                 }
                 "replay_cap" => {
-                    if let Ok(v) = value.parse::<u8>() {
-                        settings.replay_cap = v.clamp(REPLAY_CAP_MIN, REPLAY_CAP_MAX);
-                    }
+                    let read = parse_in(value, &(REPLAY_CAP_MIN..=REPLAY_CAP_MAX));
+                    settings.replay_cap = read.unwrap_or(settings.replay_cap);
                 }
                 "teams" => settings.team_mode = TeamMode::from_key(value),
                 "language" => settings.language = Lang::from_key(value),
-                "rumble" => settings.rumble = value != "off",
+                "rumble" => settings.rumble = is_on(value),
                 "pad_deadzone" => {
-                    if let Ok(v) = value.parse::<u8>() {
-                        settings.pad_deadzone =
-                            v.clamp(*DEADZONE_RANGE.start(), *DEADZONE_RANGE.end());
-                    }
+                    let read = parse_in(value, &DEADZONE_RANGE);
+                    settings.pad_deadzone = read.unwrap_or(settings.pad_deadzone);
                 }
                 "palette" => settings.colorblind = value == "colorblind",
-                "fullscreen" => settings.fullscreen = value != "off",
+                "fullscreen" => settings.fullscreen = is_on(value),
                 "ui_scale" => {
-                    if let Ok(v) = value.parse::<u8>() {
-                        settings.ui_scale = v.clamp(UI_SCALE_MIN, UI_SCALE_MAX);
-                    }
+                    let read = parse_in(value, &(UI_SCALE_MIN..=UI_SCALE_MAX));
+                    settings.ui_scale = read.unwrap_or(settings.ui_scale);
                 }
                 "reduced_motion" => settings.reduced_motion = value == "on",
                 // `a|b|c|d`, so a name may hold spaces. Missing trailing
@@ -173,7 +180,7 @@ impl GameSettings {
                         settings.last_beach = value.to_string();
                     }
                 }
-                "updates" => settings.check_updates = value != "off",
+                "updates" => settings.check_updates = is_on(value),
                 "keycaps" => caps = crate::app::keycaps::KeyCaps::parse(value),
                 "keyboard" => settings.keyboard = crate::app::keycaps::Layout::from_key(value),
                 "keys_p1" | "keys_p2" => {
