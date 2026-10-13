@@ -173,10 +173,24 @@ impl Tournament {
         self.state == SeriesState::Decided
     }
 
-    /// Whether the tally settles the series: somebody has a majority of the
-    /// rounds, or the last round has been played.
-    fn tally_decides(&self) -> bool {
-        let best = *self.wins.iter().max().unwrap_or(&0);
+    /// Whether the tally settles the series: the one winner a tally can
+    /// name ([`Tournament::winner`]) has a majority of the rounds, or the
+    /// last round has been played.
+    ///
+    /// The winner and not merely the most wins: a tied round goes to every
+    /// leader, so a best of three tied twice stood at two rounds apiece,
+    /// each a majority, and was called decided with nobody to crown and a
+    /// round still to play.
+    fn tally_decides(&self, mode: TeamMode, seats: u8) -> bool {
+        let best = match self.winner(mode, seats) {
+            None => 0,
+            Some(Champion::Seat(seat)) => self.wins[usize::from(seat)],
+            // Every member holds the team's tally.
+            Some(Champion::Team(team)) => mode
+                .seats_of(team, seats)
+                .first()
+                .map_or(0, |&seat| self.wins[usize::from(seat)]),
+        };
         best >= self.length.target() || self.round >= self.length.rounds()
     }
 
@@ -229,7 +243,7 @@ pub fn record_series_round(
             tournament.wins[seat] += 1;
         }
     }
-    if tournament.tally_decides() {
+    if tournament.tally_decides(mode, seats.0) {
         tournament.state = SeriesState::Decided;
     }
 }
@@ -566,7 +580,7 @@ mod tests {
             let mut t = Tournament::start(length);
             t.wins = wins;
             t.round = round;
-            t.tally_decides()
+            t.tally_decides(TeamMode::Solo, 4)
         };
         assert!(
             decided(SeriesLength::BestOfThree, [2, 0, 0, 0, 0, 0], 2),
@@ -581,6 +595,24 @@ mod tests {
             decided(SeriesLength::BestOfThree, [1, 1, 1, 0, 0, 0], 3),
             "the third round ends it however it stands"
         );
+        // Two tied rounds give both leaders two, and nobody the series: the
+        // third round is still to play.
+        assert!(
+            !decided(SeriesLength::BestOfThree, [2, 2, 0, 0, 0, 0], 2),
+            "a shared majority decides nothing"
+        );
+        assert!(decided(SeriesLength::BestOfThree, [3, 2, 0, 0, 0, 0], 3));
+    }
+
+    /// A team series is decided by the team's tally, which every member
+    /// holds: the tie between team-mates is not a tie.
+    #[test]
+    fn a_team_majority_decides_a_team_series() {
+        let mut t = Tournament::start(SeriesLength::BestOfThree);
+        t.wins = [2, 2, 0, 0, 0, 0];
+        t.round = 2;
+        assert!(t.tally_decides(TeamMode::Pairs, 4));
+        assert!(!t.tally_decides(TeamMode::Solo, 4));
     }
 
     #[test]
