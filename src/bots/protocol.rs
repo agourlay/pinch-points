@@ -228,6 +228,7 @@ pub fn hello(board: &Board, table: &Table, seat: PlayerId, resumed: bool) -> Val
             "sweep_flight": board.rules().sweep_flight,
             "sweep_keeps_worth": board.rules().sweep_keeps_worth,
             "whole_flock": board.rules().whole_flock,
+            "fair_spawns": board.rules().fair_spawns,
             "castle_raids": board.rules().castle_raids,
             "events": board.events_enabled(),
         },

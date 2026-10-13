@@ -323,6 +323,18 @@ pub struct Rules {
     /// the sweep is written on each crab ([`Sweeping::claw_call`]). On for
     /// versus only, and a file that does not say so keeps the old reading.
     pub sweep_keeps_worth: bool,
+    /// Whether the spawner holes that open on the same tick take turns
+    /// at the beach's crab cap.
+    ///
+    /// Tried in reading order, the top-left hole always spawned and, once
+    /// the beach was at its cap, the ones read last went without. Six
+    /// holes on a beach at the cap all round gave the top-left one 14%
+    /// more crabs than the bottom-right one, and its castle the extra
+    /// points. With this on, a tick that leaves a hole out tries them
+    /// from one drawn at random. On for versus only: Beach Day's stages
+    /// were tuned on reading order, and a file that does not say so keeps
+    /// it.
+    pub fair_spawns: bool,
     /// Round length in ticks (the tide, spec §3.6). None = untimed. When it
     /// reaches zero the sim freezes: scores are locked at the wave.
     pub round_length: Option<u32>,
@@ -360,6 +372,7 @@ impl Default for Rules {
             sweep_flight: false,
             whole_flock: false,
             sweep_keeps_worth: false,
+            fair_spawns: false,
             round_length: None,
             castle_raids: true,
         }

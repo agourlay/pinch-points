@@ -100,6 +100,10 @@ const TICKS: u64 = 10_000;
 ///
 /// Why it has moved, most recent first:
 ///
+/// - 2026-10-13: `fair_spawns` joined the fingerprint, when versus holes
+///   that open on the same tick started drawing which of them the crab
+///   cap leaves out. Off on this board, so only the hash's reach grew:
+///   the round reproduces the old hash without it.
 /// - 2026-10-13: `whole_flock` and `sweep_keeps_worth` joined the
 ///   fingerprint, with the claw call each crab in the air was swept under,
 ///   when versus started keeping its flock whole as it turns over and
@@ -148,7 +152,7 @@ const TICKS: u64 = 10_000;
 ///   rules moved that day too: the lure stopped stacking, the roulette
 ///   stopped rolling gull events into the surge, and the spawners took a
 ///   crab cap.
-const EXPECTED_HASH: u64 = 0xcd88_c766_74da_a7c5;
+const EXPECTED_HASH: u64 = 0x1a12_9818_8f8b_13bf;
 
 #[test]
 fn ten_thousand_ticks_reproduce_exactly() {

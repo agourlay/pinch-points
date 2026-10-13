@@ -2309,3 +2309,54 @@ fn the_newest_signpost_is_by_sequence_and_ignores_rivals_and_evictions() {
     assert_eq!(board.newest_signpost_of(0), Some((5, 5, 3)));
     assert_eq!(board.newest_signpost_of(1), None);
 }
+
+/// Which of two holes opening together takes the last room under the crab
+/// cap: always the one read first in reading order, unless the board
+/// draws for it ([`Rules::fair_spawns`]), when either may.
+#[test]
+fn the_last_room_under_the_cap_goes_by_draw_when_spawns_are_fair() {
+    let left_wins = |fair: bool| -> Vec<bool> {
+        (0..40u64)
+            .map(|seed| {
+                let mut board = Board::new(9, 7, seed);
+                board.rules_mut().fair_spawns = fair;
+                board.set_tile(
+                    0,
+                    3,
+                    TileKind::Spawner(Spawner {
+                        dir: Right,
+                        period: 1,
+                    }),
+                );
+                board.set_tile(
+                    8,
+                    3,
+                    TileKind::Spawner(Spawner {
+                        dir: Left,
+                        period: 1,
+                    }),
+                );
+                // Off the holes' row, so nothing walks into a newcomer.
+                let spots = (1..8u8).flat_map(|x| [0u8, 1, 5, 6].map(|y| (x, y)));
+                for (x, y) in spots.take(board.crab_cap() - 1) {
+                    board.spawn_crab(x, y, Up, Handedness::Left, CrabKind::Common);
+                }
+                let before = board.crabs().iter().map(|c| c.id).max();
+                board.tick_idle();
+                let new: Vec<&Crab> = board
+                    .crabs()
+                    .iter()
+                    .filter(|c| Some(c.id) > before)
+                    .collect();
+                assert_eq!(new.len(), 1, "seed {seed}: one room, one crab");
+                board.coords(new[0].tile).0 < 4
+            })
+            .collect()
+    };
+    assert!(left_wins(false).iter().all(|&left| left), "reading order");
+    let fair = left_wins(true);
+    assert!(
+        fair.iter().any(|&left| left) && fair.iter().any(|&left| !left),
+        "{fair:?}"
+    );
+}

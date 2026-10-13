@@ -51,6 +51,7 @@ pub fn set_versus_rules(board: &mut Board, period: u32) {
     rules.sweep_flight = true;
     rules.whole_flock = true;
     rules.sweep_keeps_worth = true;
+    rules.fair_spawns = true;
 }
 
 /// A castle spot per seat for a board of the given size.

@@ -138,6 +138,9 @@ impl Level {
         if rules.sweep_keeps_worth {
             let _ = writeln!(out, "sweep_keeps_worth: on");
         }
+        if rules.fair_spawns {
+            let _ = writeln!(out, "fair_spawns: on");
+        }
         if let Some(round) = rules.round_length {
             let _ = writeln!(out, "round: {round}");
         }
@@ -344,6 +347,7 @@ impl Header {
             "sweep_flight" => self.rules.sweep_flight = value == "on",
             "whole_flock" => self.rules.whole_flock = value == "on",
             "sweep_keeps_worth" => self.rules.sweep_keeps_worth = value == "on",
+            "fair_spawns" => self.rules.fair_spawns = value == "on",
             "golden_every" => {
                 self.rules.golden_every = crate::sim::board::golden_every(
                     value

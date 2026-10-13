@@ -46,6 +46,7 @@ impl Board {
                     sweep_flight: _,
                     whole_flock: _,
                     sweep_keeps_worth: _,
+                    fair_spawns: _,
                     round_length: _,
                     castle_raids: _,
                 },
@@ -288,6 +289,7 @@ impl Board {
         }
         h.bool(self.rules.whole_flock);
         h.bool(self.rules.sweep_keeps_worth);
+        h.bool(self.rules.fair_spawns);
     }
 }
 
@@ -350,6 +352,10 @@ mod tests {
             (
                 "rules.sweep_keeps_worth",
                 Box::new(|b| b.rules_mut().sweep_keeps_worth = true),
+            ),
+            (
+                "rules.fair_spawns",
+                Box::new(|b| b.rules_mut().fair_spawns = true),
             ),
             (
                 "rules.round_length",

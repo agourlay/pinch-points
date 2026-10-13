@@ -152,7 +152,8 @@ rules, the clock and the table:
            "gull_period": 240, "gull_cap": 6, "gull_turnover": true,
            "golden_every": 5400, "golden_value": 30, "timed_lock": true,
            "sweep_flight": true, "sweep_keeps_worth": true,
-           "whole_flock": true, "castle_raids": true, "events": true},
+           "whole_flock": true, "fair_spawns": true, "castle_raids": true,
+           "events": true},
  "clock": {"mode": "fast_forward", "deadline_ms": 33, "input_delay": 0},
  "cursor": {"fair": false}}
 ```
@@ -207,8 +208,11 @@ still in the air when the tide comes in banks on the last tick. With
 `sweep_keeps_worth` each crab banks what it was worth when Crab Monopoly
 fired, under the Right Claws call in force then (its `claw_call`), and a
 Right Claws starting while it is in the air does not touch it; without it,
-it banks under whatever call is running when it lands. A listener older
-than a field leaves it out, and an absent one means `false`.
+it banks under whatever call is running when it lands. With
+`fair_spawns`, a tick on which more holes open than the crab cap has room
+for tries them starting from one drawn at random; without it they are
+tried in reading order, top-left first. A listener older than a field
+leaves it out, and an absent one means `false`.
 
 ### `ready`
 

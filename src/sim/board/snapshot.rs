@@ -72,6 +72,9 @@ impl Board {
         if self.rules.sweep_keeps_worth {
             let _ = writeln!(out, "sweep_keeps_worth: on");
         }
+        if self.rules.fair_spawns {
+            let _ = writeln!(out, "fair_spawns: on");
+        }
         // The whole call, public or not: a round resumed from a code
         // sends its golden crab out where and when this one would have.
         if let Some((at, tile)) = self.golden_call {
@@ -252,6 +255,7 @@ struct Fields {
     sweep_flight: bool,
     whole_flock: bool,
     sweep_keeps_worth: bool,
+    fair_spawns: bool,
     sweeping: Vec<Sweeping>,
     golden_call: Option<(u64, u8, u8)>,
     round_length: Option<u32>,
@@ -333,6 +337,7 @@ impl Fields {
             "sweep_flight" => self.sweep_flight = value == "on",
             "whole_flock" => self.whole_flock = value == "on",
             "sweep_keeps_worth" => self.sweep_keeps_worth = value == "on",
+            "fair_spawns" => self.fair_spawns = value == "on",
             "golden_call" => {
                 self.golden_call = Some((
                     next_num(&mut words, "golden_call tick")?,
@@ -581,6 +586,7 @@ impl Fields {
                 sweep_flight: self.sweep_flight,
                 whole_flock: self.whole_flock,
                 sweep_keeps_worth: self.sweep_keeps_worth,
+                fair_spawns: self.fair_spawns,
                 round_length: self.round_length,
                 castle_raids: !self.no_castle_raids,
             },
@@ -883,6 +889,7 @@ mod tests {
         board.rules_mut().sweep_flight = true;
         board.rules_mut().whole_flock = true;
         board.rules_mut().sweep_keeps_worth = true;
+        board.rules_mut().fair_spawns = true;
         board.set_events_enabled(true);
         board.rules_mut().round_length = Some(1234);
         board.rules_mut().gull_period = 97;
@@ -987,6 +994,7 @@ mod tests {
             "sweep_flight: on",
             "whole_flock: on",
             "sweep_keeps_worth: on",
+            "fair_spawns: on",
             " common claws",
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
@@ -1082,6 +1090,7 @@ mod tests {
                 "sweep_flight:",
                 "whole_flock:",
                 "sweep_keeps_worth:",
+                "fair_spawns:",
                 "sweeping:",
                 "golden_call:",
                 "round:",

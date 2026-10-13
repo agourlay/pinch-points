@@ -236,6 +236,7 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
             "sweep_keeps_worth",
             switch(hello, "rules.sweep_keeps_worth"),
         ),
+        ("fair_spawns", switch(hello, "rules.fair_spawns")),
     ] {
         if on {
             let _ = writeln!(out, "{rule}: on");
@@ -532,6 +533,7 @@ mod tests {
             "sweep_flight:",
             "whole_flock:",
             "sweep_keeps_worth:",
+            "fair_spawns:",
             "event_cooldown:",
             "claw_call:",
         ] {

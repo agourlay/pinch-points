@@ -75,18 +75,43 @@ impl Board {
     }
 
     pub(super) fn run_spawners(&mut self) {
-        for t in 0..self.grid.tiles.len() {
+        // Manias override the cadence: floods every 8 ticks.
+        let period = |s: Spawner, mania: Option<(Mania, u32)>| match mania {
+            Some((Mania::Crab | Mania::Gull, _)) => 8,
+            None => u64::from(s.period),
+        };
+        // The holes that open this tick, in reading order.
+        let mut open: Vec<usize> = (0..self.grid.tiles.len())
+            .filter(|&t| {
+                matches!(self.grid.tiles[t], TileKind::Spawner(s)
+                    if self.tick.is_multiple_of(period(s, self.tide.mania)))
+            })
+            .collect();
+        // The beach fills to the cap and then waits for it to clear.
+        // Crab Mania floods past it, which is the event, but only to twice
+        // the cap, the same way Gull Mania stops at three flocks: unbounded,
+        // it buried the board under two crabs a tile.
+        let ceiling = match self.tide.mania {
+            Some((Mania::Crab, _)) => self.crab_cap() * 2,
+            _ => self.crab_cap(),
+        };
+        // When the room left under the cap is less than the holes opening,
+        // which holes get it is drawn ([`Rules::fair_spawns`]). Only a tick
+        // that leaves a hole out draws, so a beach that never fills plays
+        // as it did in reading order.
+        let room = ceiling.saturating_sub(self.crabs.len());
+        if self.rules.fair_spawns
+            && !matches!(self.tide.mania, Some((Mania::Gull, _)))
+            && room > 0
+            && room < open.len()
+        {
+            let first = self.rng.next_u32() as usize % open.len();
+            open.rotate_left(first);
+        }
+        for t in open {
             let TileKind::Spawner(s) = self.grid.tiles[t] else {
                 continue;
             };
-            // Manias override the cadence: floods every 8 ticks.
-            let period = match self.tide.mania {
-                Some((Mania::Crab | Mania::Gull, _)) => 8,
-                None => u64::from(s.period),
-            };
-            if !self.tick.is_multiple_of(period) {
-                continue;
-            }
             if let Some((Mania::Gull, _)) = self.tide.mania {
                 // Balance: the mania flood is dramatic but bounded. Beyond
                 // three flocks' worth the beach becomes unplayable for the
@@ -97,14 +122,6 @@ impl Board {
                 }
                 continue;
             }
-            // The beach fills to the cap and then waits for it to clear.
-            // Crab Mania floods past it, which is the event, but only to
-            // twice the cap, the same way Gull Mania stops at three flocks:
-            // unbounded, it buried the board under two crabs a tile.
-            let ceiling = match self.tide.mania {
-                Some((Mania::Crab, _)) => self.crab_cap() * 2,
-                _ => self.crab_cap(),
-            };
             if self.crabs.len() >= ceiling {
                 continue;
             }
