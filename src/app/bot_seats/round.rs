@@ -177,13 +177,7 @@ impl BotRound {
             game: self.game,
         };
         while let Some(msg) = self.link.try_recv() {
-            let seat = match &msg {
-                crate::bots::listener::GameMsg::Reply { seat, .. }
-                | crate::bots::listener::GameMsg::Ready { seat }
-                | crate::bots::listener::GameMsg::Garbled { seat, .. }
-                | crate::bots::listener::GameMsg::Dropped { seat }
-                | crate::bots::listener::GameMsg::Back { seat, .. } => *seat,
-            };
+            let seat = msg.seat();
             if let Some(driver) = self.drivers.iter_mut().find(|d| d.seat == seat) {
                 // Anything at all from it: it is not hung.
                 if let Some(quiet) = self.quiet_since.get_mut(usize::from(seat)) {

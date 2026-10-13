@@ -153,6 +153,19 @@ pub enum GameMsg {
     },
 }
 
+impl GameMsg {
+    /// The seat it came from.
+    pub fn seat(&self) -> PlayerId {
+        match self {
+            GameMsg::Reply { seat, .. }
+            | GameMsg::Ready { seat }
+            | GameMsg::Garbled { seat, .. }
+            | GameMsg::Dropped { seat }
+            | GameMsg::Back { seat, .. } => *seat,
+        }
+    }
+}
+
 /// The board a game is on now, for answering lookaheads off the game's own
 /// thread.
 pub struct View {

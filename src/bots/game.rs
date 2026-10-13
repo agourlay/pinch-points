@@ -135,13 +135,7 @@ impl Match<'_, '_> {
 
     /// Hand one message to the seat it is for.
     fn take(&mut self, msg: GameMsg, t: u64) -> bool {
-        let seat = match &msg {
-            GameMsg::Reply { seat, .. }
-            | GameMsg::Ready { seat }
-            | GameMsg::Garbled { seat, .. }
-            | GameMsg::Dropped { seat }
-            | GameMsg::Back { seat, .. } => usize::from(*seat),
-        };
+        let seat = usize::from(msg.seat());
         let Some(Some(bot)) = self.bots.get_mut(seat) else {
             return false;
         };
