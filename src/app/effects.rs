@@ -827,9 +827,6 @@ pub fn splash_ponds(
     wet.retain(|key, _| seen.contains(key));
 }
 
-/// Walking crabs scuff the sand: tiny alternating footprints that linger
-/// and fade, plus the occasional kicked-up grain. Footfalls are paced by
-/// distance walked, tracked per crab id. Pure decoration, sim untouched.
 /// Seconds between the gold rings a called hole sends out.
 const GOLDEN_RING_EVERY: f32 = 0.45;
 
@@ -867,6 +864,9 @@ pub fn golden_call_rings(
     );
 }
 
+/// Walking crabs scuff the sand: tiny alternating footprints that linger
+/// and fade, plus the occasional kicked-up grain. Footfalls are paced by
+/// distance walked, tracked per crab id. Pure decoration, sim untouched.
 pub fn crab_trails(
     mut commands: Commands,
     sim: Res<crate::app::Sim>,
