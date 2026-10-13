@@ -320,7 +320,7 @@ pub fn spawn_versus_results(
     seating: crate::app::seating::Seating,
     extras: RoundExtras,
 ) {
-    let local = seating.local();
+    let viewer = seating.viewer();
     let crate::app::seating::Seating {
         seats,
         controllers,
@@ -357,7 +357,7 @@ pub fn spawn_versus_results(
     }
 
     let rows = standings_rows(&settings, &names, scores, count, mode, |seat| {
-        crate::app::seating::seat_tag(tr, &controllers, local, seat)
+        crate::app::seating::seat_tag(tr, &controllers, viewer, seat)
     });
     let haul = board.crabs_banked();
     let awards = award_rows(&settings, &names, &tally, board, seats.0, mode);

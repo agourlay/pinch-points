@@ -57,59 +57,92 @@ pub struct Seating<'w> {
 }
 
 impl Seating<'_> {
-    /// The seat at this keyboard: see [`local_seat`].
-    pub fn local(&self) -> Option<u8> {
-        local_seat(&self.online, self.playback.0.is_some())
+    /// Who is at this screen: see [`Viewer::of`].
+    pub fn viewer(&self) -> Viewer {
+        Viewer::of(&self.online, self.playback.0.is_some())
     }
 
     /// Whether `seat` is played at this screen: see [`played_here`].
     pub fn played_here(&self, seat: u8) -> bool {
-        played_here(
-            self.local(),
-            self.online.0.is_some(),
-            &self.controllers,
-            seat,
-        )
+        played_here(self.viewer(), &self.controllers, seat)
     }
 
     /// A seat's name and its "(you)" or "(AI)" tag, apart: a chip clips a
     /// long name and never its tag.
     pub fn name_and_tag(&self, tr: &crate::app::i18n::Tr, seat: u8) -> (String, &'static str) {
-        let tag = seat_tag(tr, &self.controllers, self.local(), seat);
+        let tag = seat_tag(tr, &self.controllers, self.viewer(), seat);
         (self.names.label(tr, seat), tag)
     }
 }
 
-/// The seat the person at this keyboard is playing, and `None` when
-/// nobody is: a spectator at somebody else's beach, or a recording.
+/// Who is in front of this screen, and so whose chair, if any, is theirs.
 ///
-/// Offline the answer is seat 0, because the person at the keyboard is
-/// always P1 there. [`seat_tag`] used to make that guess itself, from a
-/// local seat of `None`, and a spectator has one of those too: every
-/// watcher on a beach was shown the host's chair marked as its own, on
-/// the panels and on the results card both.
-pub fn local_seat(online: &Online, playback_active: bool) -> Option<u8> {
-    match &online.0 {
-        Some(session) => session.session.seat(),
-        // A recording is watched, not played, so nobody at this keyboard
-        // holds a chair in it either.
-        None if playback_active => None,
-        None => Some(0),
+/// One answer for the four ways of being at a beach. It was an
+/// `Option<u8>` from `local_seat`, whose `None` meant a spectator and a
+/// recording alike, with every caller asking the session and the playback
+/// again to tell them apart.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Viewer {
+    /// A recording playing back: watched, not played, so nobody here holds
+    /// a chair in it.
+    Replay,
+    /// Online, at somebody else's beach without a chair.
+    Spectator,
+    /// Online, in the chair this peer was dealt.
+    Peer(u8),
+    /// Offline: everyone sharing the keyboard and the pads.
+    Table,
+}
+
+impl Viewer {
+    /// Who is at this screen, with an online session the first word on it:
+    /// a peer is its seat or a spectator whatever else is loaded, and only
+    /// offline does a recording playing make this a replay.
+    ///
+    /// The header asks the other way round, recording first (see
+    /// `hud::text::header_viewer`). The two can only disagree with a
+    /// recording playing under a live session, and each keeps the answer
+    /// it has always given there.
+    pub fn of(online: &Online, playback_active: bool) -> Viewer {
+        match &online.0 {
+            Some(session) => match session.session.seat() {
+                Some(seat) => Viewer::Peer(seat),
+                None => Viewer::Spectator,
+            },
+            None if playback_active => Viewer::Replay,
+            None => Viewer::Table,
+        }
+    }
+
+    /// The seat the person at this keyboard is playing, and `None` when
+    /// nobody is: a spectator at somebody else's beach, or a recording.
+    ///
+    /// Offline the answer is seat 0, because the person at the keyboard is
+    /// always P1 there. [`seat_tag`] used to make that guess itself, from a
+    /// local seat of `None`, and a spectator has one of those too: every
+    /// watcher on a beach was shown the host's chair marked as its own, on
+    /// the panels and on the results card both.
+    pub fn seat(self) -> Option<u8> {
+        match self {
+            Viewer::Replay | Viewer::Spectator => None,
+            Viewer::Peer(seat) => Some(seat),
+            Viewer::Table => Some(0),
+        }
     }
 }
 
 /// Whether `seat` is played at this screen: offline every seat the AI
 /// does not hold, since everyone sharing the keyboard and the pads is here;
 /// online only the chair this peer was dealt; and nobody's while watching,
-/// a recording or somebody else's beach. `local` is [`local_seat`]'s.
+/// a recording or somebody else's beach.
 ///
 /// What the next-to-go mark is shown for. A table of AI is always at its
 /// cap, and marking their posts set half the beach wobbling for nobody.
-pub fn played_here(local: Option<u8>, online: bool, controllers: &Controllers, seat: u8) -> bool {
-    match local {
-        None => false,
-        Some(mine) if online => mine == seat,
-        Some(_) => controllers.0.get(usize::from(seat)) == Some(&SeatController::Local),
+pub fn played_here(viewer: Viewer, controllers: &Controllers, seat: u8) -> bool {
+    match viewer {
+        Viewer::Replay | Viewer::Spectator => false,
+        Viewer::Peer(mine) => mine == seat,
+        Viewer::Table => controllers.0.get(usize::from(seat)) == Some(&SeatController::Local),
     }
 }
 
@@ -118,12 +151,12 @@ pub fn played_here(local: Option<u8>, online: bool, controllers: &Controllers, s
 pub fn seat_tag(
     tr: &crate::app::i18n::Tr,
     controllers: &Controllers,
-    local: Option<u8>,
+    viewer: Viewer,
     seat: u8,
 ) -> &'static str {
     if controllers.ai(usize::from(seat)).is_some() {
         tr.tag_ai
-    } else if local == Some(seat) {
+    } else if viewer.seat() == Some(seat) {
         tr.tag_you
     } else {
         ""
@@ -218,31 +251,71 @@ mod seat_tag_tests {
     #[test]
     fn a_spectator_is_nobody_at_the_table_rather_than_seat_zero() {
         assert_eq!(
-            local_seat(&Online::default(), false),
+            Viewer::of(&Online::default(), false).seat(),
             Some(0),
             "offline, the keyboard is P1"
         );
         assert_eq!(
-            local_seat(&Online::default(), true),
+            Viewer::of(&Online::default(), true).seat(),
             None,
             "a recording is watched, not played"
         );
         assert_eq!(
-            local_seat(&Online(Some(session(Some(1)))), false),
+            Viewer::of(&Online(Some(session(Some(1)))), false).seat(),
             Some(1),
             "online, whatever chair the host dealt"
         );
         assert_eq!(
-            local_seat(&Online(Some(session(None))), false),
+            Viewer::of(&Online(Some(session(None))), false).seat(),
             None,
             "and a spectator holds none"
         );
 
         let controllers = Controllers::default();
-        let tag = |local, seat| seat_tag(&EN, &controllers, local, seat);
-        assert_eq!(tag(Some(0), 0), EN.tag_you);
-        assert_eq!(tag(Some(0), 1), "");
-        assert_eq!(tag(None, 0), "", "nobody's chair is the spectator's");
-        assert_eq!(tag(None, 1), "");
+        let tag = |viewer, seat| seat_tag(&EN, &controllers, viewer, seat);
+        assert_eq!(tag(Viewer::Table, 0), EN.tag_you);
+        assert_eq!(tag(Viewer::Table, 1), "");
+        assert_eq!(tag(Viewer::Peer(1), 1), EN.tag_you);
+        assert_eq!(tag(Viewer::Peer(1), 0), "");
+        let none = "nobody's chair is the spectator's";
+        assert_eq!(tag(Viewer::Spectator, 0), "", "{none}");
+        assert_eq!(tag(Viewer::Spectator, 1), "");
+        assert_eq!(tag(Viewer::Replay, 0), "", "nor a recording's");
+    }
+
+    /// The four ways of being at a beach, and which wins when a recording
+    /// plays under a live session: the session, for every seat question.
+    /// The header answers that one state the other way (it titles the
+    /// screen by the recording); `hud::text` pins its side.
+    #[test]
+    fn the_session_decides_who_sits_here_even_over_a_recording() {
+        assert_eq!(Viewer::of(&Online::default(), false), Viewer::Table);
+        assert_eq!(Viewer::of(&Online::default(), true), Viewer::Replay);
+        let seated = Online(Some(session(Some(1))));
+        let watching = Online(Some(session(None)));
+        for playback in [false, true] {
+            assert_eq!(Viewer::of(&seated, playback), Viewer::Peer(1));
+            assert_eq!(Viewer::of(&watching, playback), Viewer::Spectator);
+        }
+    }
+
+    /// The next-to-go mark: every human chair offline, only your own
+    /// online, and none for a watcher of either kind.
+    #[test]
+    fn played_here_is_each_viewers_own_hands() {
+        let mut controllers = Controllers::default();
+        controllers.0[1] = SeatController::Ai(crate::sim::BotLevel::default());
+        let here = |viewer, seat| played_here(viewer, &controllers, seat);
+        assert!(here(Viewer::Table, 0));
+        assert!(!here(Viewer::Table, 1), "the AI's chair");
+        assert!(
+            here(Viewer::Peer(1), 1),
+            "a peer's own, whoever holds it here"
+        );
+        assert!(!here(Viewer::Peer(1), 0));
+        for seat in 0..2 {
+            assert!(!here(Viewer::Spectator, seat));
+            assert!(!here(Viewer::Replay, seat));
+        }
     }
 }

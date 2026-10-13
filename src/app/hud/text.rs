@@ -8,6 +8,7 @@ use crate::app::editor::EditorState;
 use crate::app::i18n::{Tr, fill};
 use crate::app::lobby::LobbyState;
 use crate::app::net::Online;
+use crate::app::seating::Viewer;
 use crate::app::settings::GameSettings;
 use crate::app::teams::TeamMode;
 use crate::app::{
@@ -225,6 +226,21 @@ pub(super) fn puzzle_text(
     HudText::new(title, status, prompt)
 }
 
+/// Who the header is talking to, asked the way the header has always
+/// asked it: a recording playing first, then the session.
+///
+/// The seat questions ([`Viewer::of`]) ask the session first. The two
+/// disagree only with a recording playing under a live session, and each
+/// keeps the answer it has always given there: the header and the round's
+/// prompt call that a replay, while the results card's prompt (which never
+/// looked at the recording) and every seat question go by the session.
+fn header_viewer(online: &Online, playback: &Playback) -> Viewer {
+    match playback.0 {
+        Some(_) => Viewer::Replay,
+        None => Viewer::of(online, false),
+    }
+}
+
 /// The busiest screen there is, and the one that reads off the most: it
 /// takes the whole [`Readout`] rather than ten of its fields, where the
 /// order of two `&Res`es of the same shape was checked by eyesight.
@@ -245,21 +261,19 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
     } = *r;
     let scores = sim.0.scores();
     let team_mode = crate::app::teams::in_play(settings, online, seats.0);
-    let mut mode = if playback.0.is_some() {
-        tr.title_replay.to_string()
-    } else if let Some(session) = &online.0 {
-        match session.session.seat() {
-            Some(seat) => fill(tr.title_online, &[("p", &names.label(tr, seat))]),
-            None => tr.title_watching.to_string(),
+    let viewer = header_viewer(online, playback);
+    let mut mode = match viewer {
+        Viewer::Replay => tr.title_replay.to_string(),
+        Viewer::Peer(seat) => fill(tr.title_online, &[("p", &names.label(tr, seat))]),
+        Viewer::Spectator => tr.title_watching.to_string(),
+        Viewer::Table if controllers.ai_count() > 0 => {
+            let count = controllers.ai_count();
+            fill(
+                tr.title_vs_ai,
+                &[("n", &count.to_string()), ("p", &names.label(tr, 0))],
+            )
         }
-    } else if controllers.ai_count() > 0 {
-        let count = controllers.ai_count();
-        fill(
-            tr.title_vs_ai,
-            &[("n", &count.to_string()), ("p", &names.label(tr, 0))],
-        )
-    } else {
-        tr.title_turf_war.to_string()
+        Viewer::Table => tr.title_turf_war.to_string(),
     };
     if team_mode != TeamMode::Solo {
         // Every team's total, in team order, so a 2v2v2 reads as three
@@ -273,7 +287,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
     }
     // The clock itself lives in the big top-centre element; the
     // status slot carries only banners.
-    let mut status = if playback.0.is_some() && speed > 1 {
+    let mut status = if viewer == Viewer::Replay && speed > 1 {
         fill(tr.replay_speed, &[("n", &speed.to_string())])
     } else if sim.0.in_surge() && !sim.0.round_over() {
         tr.the_gulls.to_string()
@@ -330,15 +344,13 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         // A recording is watched, not played, but it *is* driven: the
         // transport bar at the foot of the board takes a pause and a
         // speed, and keys nobody is told about are keys nobody presses.
-        VersusPhase::Countdown | VersusPhase::Running if playback.0.is_some() => {
+        VersusPhase::Countdown | VersusPhase::Running if viewer == Viewer::Replay => {
             tr.prompt_replay_transport.to_string()
         }
         // Someone else's live match has no seat here, so no control
         // legend: a spectator holds nothing and places nothing. What they
         // do have is free hands, which is why they are the ones who talk.
-        VersusPhase::Countdown | VersusPhase::Running
-            if online.0.as_ref().is_some_and(|s| s.session.watching()) =>
-        {
+        VersusPhase::Countdown | VersusPhase::Running if viewer == Viewer::Spectator => {
             match r.spectator_typing {
                 Some(line) => format!("> {line}_"),
                 // What the key does right now, in the crowd's own terms: a
@@ -370,8 +382,9 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         }
         // The tide is in: the board is frozen and there is nothing to call
         // onto it, but the table is still talking, and this is where it
-        // talks most.
-        VersusPhase::Over if online.0.as_ref().is_some_and(|s| s.session.watching()) => {
+        // talks most. Asked of the session alone, as it always has been:
+        // see `header_viewer`.
+        VersusPhase::Over if Viewer::of(online, false) == Viewer::Spectator => {
             match r.spectator_typing {
                 Some(line) => format!("> {line}_"),
                 None => format!(
@@ -827,6 +840,51 @@ mod tests {
                 "four standings want four lines: {line}"
             );
         }
+    }
+
+    /// The header titles the screen by the recording when one is playing,
+    /// even under a live session, where every seat question goes by the
+    /// session instead (`seating::Viewer::of`). Both answers are the ones
+    /// they have always given; this pins the header's side of it.
+    #[test]
+    fn the_header_names_a_recording_before_the_session_under_it() {
+        let recording = Playback(Some((
+            crate::sim::Replay::new(campaign_levels().first().expect("a level").clone()),
+            0,
+        )));
+        let none = Playback::default();
+        let session = |seat: Option<u8>| {
+            let step = match seat {
+                Some(seat) => {
+                    crate::sim::Lockstep::new(seat, vec![0, 1], crate::sim::DEFAULT_DELAY)
+                }
+                None => crate::sim::Lockstep::observer(vec![0, 1], crate::sim::DEFAULT_DELAY),
+            };
+            Online(Some(crate::app::net::OnlineSession::new(
+                crate::transport::UdpTransport::host(0).expect("socket"),
+                step,
+                2,
+                crate::transport::MatchTerms::default(),
+            )))
+        };
+        let offline = Online::default();
+        assert_eq!(header_viewer(&offline, &none), Viewer::Table);
+        assert_eq!(header_viewer(&offline, &recording), Viewer::Replay);
+        for seat in [Some(1), None] {
+            let online = session(seat);
+            assert_eq!(
+                header_viewer(&online, &recording),
+                Viewer::Replay,
+                "{seat:?}"
+            );
+            assert_ne!(
+                Viewer::of(&online, true),
+                Viewer::Replay,
+                "the seat questions go by the session: {seat:?}"
+            );
+        }
+        assert_eq!(header_viewer(&session(Some(1)), &none), Viewer::Peer(1));
+        assert_eq!(header_viewer(&session(None), &none), Viewer::Spectator);
     }
 
     /// What the key does right now, in the crowd's own terms. A spectator
