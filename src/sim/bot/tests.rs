@@ -149,6 +149,27 @@ fn only_fierce_chases_a_jackpot_across_the_board() {
     }
 }
 
+/// A golden crab is worth to the chase what the board pays for it: fifty
+/// where it is rolled, which outranks a molt anywhere in reach, and thirty
+/// where it is called, which ties with one, so the nearer is taken.
+#[test]
+fn a_jackpot_is_worth_what_the_board_pays() {
+    let target = |golden_every: u32| {
+        let mut board = Board::new(15, 11, 5);
+        board.set_tile(7, 5, TileKind::Castle(1));
+        board.set_golden_every(golden_every);
+        board.spawn_crab(14, 1, Direction::Up, Handedness::Left, CrabKind::Golden);
+        board.spawn_crab(3, 3, Direction::Up, Handedness::Left, CrabKind::Molting);
+        let castle = castle_of(&board, 1).expect("a castle");
+        match chase_jackpot(&board, 1, BotLevel::Hard, castle) {
+            Some((PlayerAction::Place { x, y, .. }, _)) => (x, y),
+            other => panic!("no chase: {other:?}"),
+        }
+    };
+    assert_eq!(target(0), (14, 0), "fifty is the jackpot");
+    assert_eq!(target(600), (3, 2), "thirty ties a molt, and it is nearer");
+}
+
 /// The bot's hand has to walk. A placement far from its last one has to
 /// wait out the trip; the tile it is already standing on is free; and the
 /// walk is charged the way a player's cursor actually moves, diagonals and

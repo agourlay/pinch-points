@@ -19,8 +19,9 @@ use bevy::prelude::*;
 
 /// How far behind the leader a winner has to have been for it to be a
 /// comeback rather than the ordinary back and forth of a round. A golden
-/// crab is fifty, so this is less than one, and more than a handful of
-/// commons.
+/// crab is thirty when versus calls it ([`crate::sim::GOLDEN_CALLED_VALUE`])
+/// and fifty where it is rolled, so this is less than one either way, and
+/// more than a handful of commons.
 pub const COMEBACK_MIN: u32 = 20;
 
 /// What one seat did over the round.

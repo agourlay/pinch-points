@@ -61,6 +61,10 @@ class Beach:
         # ("evict") or is refused ("reject").
         self.cap = rules["signpost_cap"]
         self.evicts = rules["cap_policy"] == "evict"
+        # What a golden crab is worth here: less on a beach that calls one
+        # than where it is rolled. A listener older than the field only
+        # ever paid fifty.
+        self.value = dict(VALUE, golden=rules.get("golden_value", VALUE["golden"]))
         self.home = None
         self.dist = {}
 
@@ -183,7 +187,7 @@ def decide(beach, tick):
     claw_call = tick["claw_call"]
     walkers = []
     for c in tick["crabs"]:
-        value = VALUE[c["kind"]]
+        value = beach.value[c["kind"]]
         if claw_call:
             value = value * 2 if c["claw"] == "right" else -value
         eta = (256 - c["progress"] + SPEED[c["kind"]] - 1) // SPEED[c["kind"]]

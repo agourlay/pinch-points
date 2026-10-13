@@ -398,8 +398,9 @@ fn defend(
 }
 
 /// Fierce only: go after a jackpot anywhere on the beach. A golden crab pays
-/// fifty and a molt turns the whole board toward home, so unlike chasing a
-/// rival this walk pays for itself.
+/// what the board says (fifty rolled, thirty called) and a molt turns the
+/// whole board toward home, so unlike chasing a rival this walk pays for
+/// itself.
 fn chase_jackpot(
     board: &Board,
     player: PlayerId,
@@ -412,13 +413,13 @@ fn chase_jackpot(
     let mut best: Option<(u32, i32, u16, Direction)> = None;
     for crab in board.crabs() {
         let worth = match crab.kind {
-            CrabKind::Golden => 50,
+            CrabKind::Golden => board.crab_value(CrabKind::Golden),
             CrabKind::Molting => 30, // 5 points, and then the lure
             CrabKind::Giant => 10,
             CrabKind::Common | CrabKind::Juvenile | CrabKind::Sparkling => continue,
         };
         // A jackpot on the wrong claw is not a jackpot: under Right Claws
-        // a left-clawed golden crab costs fifty to bank.
+        // a left-clawed golden crab costs its whole worth to bank.
         if board.bank_worth(crab).is_none() {
             continue;
         }
