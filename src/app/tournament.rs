@@ -367,14 +367,33 @@ pub fn enter_interlude(
     // no standings, and an Enter that left mid-series. The other way
     // round it kept the old standings over a single round. For the next
     // round of the same series this is the adoption it always was.
+    //
+    // Read, not taken: the session keeps the standing for the whole round,
+    // because the host's `start_msg` packs it into every invitation it
+    // re-answers and every round it hands a watcher, and one caught up
+    // with `None` began its tally at round one with nobody on a win. A
+    // single round is never left with an old series' standing: every way
+    // into a round writes it afresh (`call_next_round`, `take_up`, the
+    // lobby launch).
     match &mut online.0 {
         Some(session) => {
             session.next_round = false;
-            let standing = session.series_standing.take();
-            *tournament = Tournament::from_terms(session.terms, standing);
+            *tournament = Tournament::from_terms(session.terms, session.series_standing);
         }
         None => tournament.round += 1,
     }
+    // A round walked into part way through, as a watcher whose `Start`
+    // went astray on the results card: the host's frames run on while the
+    // card shows, and the resend tails reach about a second back, so the
+    // beat is skipped. The standings are on the scoreboard all the same.
+    let beat = match online
+        .0
+        .as_ref()
+        .is_some_and(|session| session.catch_up.board.is_some())
+    {
+        true => 0.0,
+        false => 2.4,
+    };
     // The dial's own step, with the dial's own guards: past the shelf when
     // nothing on it seats the table, past the four-castle beaches when
     // five or six are sitting. A local series only: online the host's
@@ -391,7 +410,7 @@ pub fn enter_interlude(
     commands
         .spawn((
             InterludeUi,
-            InterludeTimer(Timer::from_seconds(2.4, TimerMode::Once)),
+            InterludeTimer(Timer::from_seconds(beat, TimerMode::Once)),
             Node {
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(12.0),
@@ -690,6 +709,55 @@ mod tests {
         );
         assert!(t.is_running());
         assert_eq!((t.round, t.wins[1]), (2, 1));
+    }
+
+    /// The interlude reads the standing off the session and leaves it
+    /// there: it is what the host packs into every invitation it re-sends
+    /// for the rest of the round, and into the round it hands a watcher.
+    /// Taken, those carried none, and a player caught up mid-series began
+    /// its tally at round one with nobody on a win.
+    #[test]
+    fn the_interlude_leaves_the_standing_for_the_round() {
+        use crate::app::net::{Online, OnlineSession};
+        use crate::transport::{MatchTerms, SeriesStanding, UdpTransport};
+
+        let mut app = App::new();
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::SeatNames>();
+        app.insert_resource(Seats(2));
+        app.init_resource::<crate::app::match_setup::MatchConfig>();
+        app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.insert_resource(Tournament::start(SeriesLength::BestOfFive));
+        let terms = MatchTerms {
+            series: 2,
+            ..MatchTerms::default()
+        };
+        let mut session = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            crate::app::net::lockstep_for(Some(0), 2),
+            2,
+            terms,
+        );
+        let standing = SeriesStanding {
+            round: 3,
+            wins: [1, 1, 0, 0, 0, 0],
+        };
+        session.series_standing = Some(standing);
+        session.next_round = true;
+        app.insert_resource(Online(Some(session)));
+        app.add_systems(Update, enter_interlude);
+        app.update();
+
+        let t = app.world().resource::<Tournament>();
+        assert_eq!((t.round, t.wins[1]), (3, 1), "the host's word, adopted");
+        let online = app.world().resource::<Online>();
+        let session = online.0.as_ref().expect("the session");
+        assert!(!session.next_round, "through the doorway");
+        assert_eq!(
+            session.series_standing,
+            Some(standing),
+            "and still there for the round"
+        );
     }
 
     /// The wire carries the series as a dial index, and the app reads it

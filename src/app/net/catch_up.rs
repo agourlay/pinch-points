@@ -34,6 +34,10 @@ pub struct CatchUp {
     /// frames of this tick have been simulated and the board is the one
     /// the lockstep's frame says.
     pub(super) owed: Vec<usize>,
+    /// Joiner: the parts of a snapshot gathered so far, for a peer that
+    /// is handed the round on its results card rather than in the lobby
+    /// (see [`OnlineSession::take_catch_up_part`]).
+    pub(super) assembly: Assembly,
 }
 
 impl OnlineSession {
@@ -47,14 +51,64 @@ impl OnlineSession {
             frame,
             board,
         } = caught;
-        let humans = invitation.terms.humans(invitation.seats);
         let mut session = OnlineSession::invited(transport, invitation);
-        session.session =
-            Lockstep::observer_from((0..humans).collect(), crate::sim::DEFAULT_DELAY, frame);
-        session.stall.reset(frame);
-        session.catch_up.board = Some(board);
-        session.catch_up.from_frame = Some(frame);
+        session.watch_from(frame, board);
         session
+    }
+
+    /// Move a session that has just taken up its invitation on to `frame`
+    /// of that round, as a watcher, with `board` for the arena to start
+    /// from.
+    fn watch_from(&mut self, frame: u32, board: Board) {
+        let humans = self.terms.humans(self.seats);
+        self.session =
+            Lockstep::observer_from((0..humans).collect(), crate::sim::DEFAULT_DELAY, frame);
+        self.stall.reset(frame);
+        self.catch_up.board = Some(board);
+        self.catch_up.from_frame = Some(frame);
+    }
+
+    /// Joiner, on the results card or still in the last round: take one
+    /// part of the round as it stands, and once the whole of it is in,
+    /// take that round up as a watcher and arm the way back into the
+    /// arena, as a `Start` for it would have. Returns whether it did.
+    ///
+    /// The lobby is not the only place a peer is handed the round. A
+    /// player the table had no chair for is dealt a watching place, and
+    /// its one `Start` comes while it sits on the results card. When that
+    /// is lost the host answers its greetings with the round as it stands
+    /// (`lost_its_start`), and the card used to drop every part: the
+    /// player sat there all round while the host sent the whole board
+    /// again every second. Put together by the same [`Assembly`] the
+    /// lobby uses, and taken up by the same steps as [`Self::caught_up`].
+    ///
+    /// Only a round this peer is not in yet counts: an invitation already
+    /// taken up wins, and a snapshot of the round just played is no news.
+    pub(super) fn take_catch_up_part(
+        &mut self,
+        frame: u32,
+        part: u8,
+        parts: u8,
+        bytes: Vec<u8>,
+    ) -> bool {
+        if self.is_host() || self.next_round {
+            return false;
+        }
+        let Some(caught) = self.catch_up.assembly.take(frame, part, parts, bytes) else {
+            return false;
+        };
+        if !self.is_next_round(&caught.invitation.terms) {
+            return false;
+        }
+        let CaughtUp {
+            invitation,
+            frame,
+            board,
+        } = caught;
+        self.take_up(invitation);
+        self.watch_from(frame, board);
+        self.next_round = true;
+        true
     }
 
     /// Host: whether `peer` came to watch after the launch, and so is one
@@ -563,6 +617,91 @@ mod session_tests {
                 "{who} is not sent back to frame zero"
             );
         }
+    }
+
+    /// A player the next round had no chair for sits on its results card,
+    /// and the one `Start` that would have dealt it a watching place is
+    /// lost. Its greeting from the card is answered with the round as it
+    /// stands (`lost_its_start`), and the card takes it: put together,
+    /// taken up as a watcher at the host's frame, on the host's board,
+    /// with the way back into the arena armed. It used to drop every part
+    /// and sit on the card all round.
+    #[test]
+    fn a_chairless_player_on_the_results_card_is_handed_the_round() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        host.home.from_lobby = true;
+        host.series_standing = Some(crate::transport::SeriesStanding {
+            round: 2,
+            wins: [1, 0, 0, 0, 0, 0],
+        });
+        host.terms.series = 1;
+        let port = host.transport.local_addr().expect("addr").port();
+        let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        bo.send(NetMsg::hello("Bo"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        drain(&mut host.transport);
+        // Cy, still on the card of the round before, greets from there.
+        let last_round = MatchTerms {
+            seed: host.terms.seed.wrapping_add(1),
+            ..MatchTerms::default()
+        };
+        let mut cy = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            lockstep_for(Some(1), 2),
+            2,
+            last_round,
+        );
+        cy.poll_between_rounds(1.0);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        drain(&mut host.transport);
+        // Bo seated, Cy dealt the watching place the table had for it.
+        host.peers.deal(&[Some(1), None]);
+
+        let mut board = generate_arena(3, 2, 12, 9);
+        for frame in 0..60 {
+            host.session.commit_local(PlayerAction::None);
+            host.session.receive(InputMsg {
+                player: 1,
+                frame: DEFAULT_DELAY + frame,
+                action: PlayerAction::None,
+            });
+            while let Some(actions) = host.session.advance() {
+                board.tick(&actions);
+            }
+        }
+        // Its `Start` never came, so Cy is still greeting from the card.
+        cy.poll_between_rounds(1.0);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        host.pump(PlayerAction::None, |_| {});
+        host.send_catch_ups(&board);
+
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            cy.poll_between_rounds(0.0);
+            if cy.next_round {
+                break;
+            }
+        }
+        assert!(cy.next_round, "on its way into the round");
+        assert!(cy.watching(), "as a watcher");
+        assert_eq!(cy.terms, host.terms, "the round being played");
+        assert_eq!(cy.session.frame(), host.session.frame(), "where it stands");
+        assert_eq!(cy.catch_up.from_frame, Some(host.session.frame()));
+        assert_eq!(
+            cy.catch_up.board.as_ref().map(Board::state_hash),
+            Some(board.state_hash()),
+            "on the host's own board"
+        );
+        assert_eq!(
+            cy.series_standing, host.series_standing,
+            "and the series as it stands, not round one"
+        );
+        drop(bo);
     }
 
     /// The direct `PINCH_HOST` pair has no lobby and nobody to catch up.

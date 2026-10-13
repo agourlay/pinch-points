@@ -387,6 +387,10 @@ fn launch_the_match(
     let spoken: Vec<u8> = bots_here.iter().map(|(seat, ..)| *seat).collect();
     session.session.speak_for(&spoken);
     session.bots_here = bots_here;
+    // Kept for the round as well as sent: the invitation the host
+    // re-answers a stray greeting with, and the round it hands a late
+    // watcher, carry it too.
+    session.series_standing = standing;
     session.stay_on_air(announcer);
     session.home.from_lobby = true;
     session.home.game_name = state.game_name.clone();

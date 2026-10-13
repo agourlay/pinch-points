@@ -822,10 +822,20 @@ impl OnlineSession {
                     self.peers.said_goodbye(from);
                     self.release_a_departed_pause(from);
                 }
-                // Only a host hands these out, and a host never receives
-                // one: a joiner in the queue is still in the lobby, and so
-                // is a watcher being caught up.
-                NetMsg::Queued { .. } | NetMsg::CatchUp { .. } => {}
+                // Only a host hands this out, and a host never receives
+                // one: a joiner in the queue is still in the lobby.
+                NetMsg::Queued { .. } => {}
+                // The next round as it stands, reaching a joiner still in
+                // the last one: the same as a `Start` for it, but walked
+                // into part way through (`take_catch_up_part`).
+                NetMsg::CatchUp {
+                    frame,
+                    part,
+                    parts,
+                    bytes,
+                } => {
+                    rearmed |= self.take_catch_up_part(frame, part, parts, bytes);
+                }
                 // A spectator talking. Players have both hands on the keys
                 // and no way to answer, which is the point: the people
                 // with nothing to hold are the ones who can say something,

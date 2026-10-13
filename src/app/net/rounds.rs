@@ -191,6 +191,17 @@ impl OnlineSession {
                         self.next_round = true;
                     }
                 }
+                // The next round as it stands, for a player dealt a
+                // watching place whose `Start` went astray: walked into
+                // part way through, as a watcher, rather than not at all.
+                NetMsg::CatchUp {
+                    frame,
+                    part,
+                    parts,
+                    bytes,
+                } => {
+                    self.take_catch_up_part(frame, part, parts, bytes);
+                }
                 // The results card is where a table talks most, and the
                 // spectators' prompt offers it there: a line dropped here
                 // was a key that did nothing for anyone but its sender.
@@ -210,9 +221,6 @@ impl OnlineSession {
                 // why the key is not offered between rounds either.
                 | NetMsg::SpectatorVote { .. }
                 | NetMsg::SpectatorTally { .. }
-                // The round is over; the next greeting is answered with
-                // the next round's `Start`, which is how they come in.
-                | NetMsg::CatchUp { .. }
                 // Calls are for a round being played, and this one is over.
                 | NetMsg::SpectatorPick { .. }
                 | NetMsg::CrowdPicks { .. }
@@ -561,7 +569,10 @@ impl OnlineSession {
             terms: self.terms,
             names: wire_table(&self.names),
             kinds: crate::transport::wire_kinds(&self.kinds),
-            standing: self.series_standing,
+            // Only ever a series' standing: the terms say whether this is
+            // one, and a standing left over from another match is not
+            // this one's to hand out.
+            standing: self.series_standing.filter(|_| self.terms.is_series()),
             beach: self.beach.clone(),
         }
     }
@@ -722,6 +733,33 @@ mod next_round_tests {
             }
         }
         assert!(!joiner.session.paused(), "told again, and playing on");
+    }
+
+    /// The invitation a host re-answers with carries the series as it
+    /// stands for as long as the round lasts, and never a standing under
+    /// terms that are not a series.
+    #[test]
+    fn the_standing_rides_every_invitation_of_a_series_only() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(1),
+        );
+        let standing = SeriesStanding {
+            round: 2,
+            wins: [1, 0, 0, 0, 0, 0],
+        };
+        host.series_standing = Some(standing);
+        let carried = |host: &OnlineSession| {
+            let NetMsg::Start { standing, .. } = host.start_msg(None) else {
+                panic!("a Start");
+            };
+            standing
+        };
+        assert_eq!(carried(&host), Some(standing));
+        host.terms.series = 0;
+        assert_eq!(carried(&host), None, "a single round has no standing");
     }
 
     /// The AI's wins are carried to the next round like everyone else's.
