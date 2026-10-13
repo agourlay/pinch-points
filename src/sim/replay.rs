@@ -83,6 +83,14 @@ const NAMES_MARK: &str = "names:";
 /// plain couch round is byte for byte what it always was.
 const KINDS_MARK: &str = "kinds:";
 
+/// The most ticks a recording may hold: twenty minutes, four times the
+/// longest round the setup screen offers (five). A recording is played
+/// through whole wherever its result is wanted, and a pasted round code is
+/// read on the spot to file it under its winner, so a code of two million
+/// idle ticks (which packs into the 4 MiB a code may unpack to) held the
+/// game still for as long as that took.
+pub const MAX_TICKS: usize = 20 * 60 * crate::sim::board::TICKS_PER_SECOND as usize;
+
 impl Replay {
     pub fn new(level: Level) -> Replay {
         Replay {
@@ -192,6 +200,11 @@ impl Replay {
             if line.is_empty() {
                 continue;
             }
+            if inputs.len() == MAX_TICKS {
+                return Err(format!(
+                    "longer than the {MAX_TICKS} ticks a round can last"
+                ));
+            }
             if line == "." {
                 inputs.push([PlayerAction::None; MAX_PLAYERS]);
                 continue;
@@ -293,6 +306,25 @@ mod tests {
             .expect("kinds");
         assert!(Level::parse(&format!("kinds:{level_part}")).is_err());
         assert!(Replay::parse(&text.replace("kinds: bot", "kinds: robot")).is_err());
+    }
+
+    /// A recording longer than any round could be is refused when read,
+    /// not played through.
+    #[test]
+    fn a_recording_longer_than_any_round_is_refused() {
+        let level = Level::parse(
+            "name: T\nposts: 1\ncrab: 0,0 R R common\nmap:\n\
+             +-+-+\n|. 0|\n+ + +\n|. .|\n+-+-+\n",
+        )
+        .expect("level");
+        let mut replay = Replay::new(level);
+        for _ in 0..MAX_TICKS {
+            replay.record([PlayerAction::None; MAX_PLAYERS]);
+        }
+        let longest = Replay::parse(&replay.to_text()).expect("the longest that reads");
+        assert_eq!(longest.inputs.len(), MAX_TICKS);
+        replay.record([PlayerAction::None; MAX_PLAYERS]);
+        assert!(Replay::parse(&replay.to_text()).is_err(), "one tick over");
     }
 
     #[test]

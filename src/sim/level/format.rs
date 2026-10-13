@@ -12,10 +12,20 @@ use crate::sim::direction::Direction;
 use crate::sim::solve::Placement;
 use crate::sim::{PlayerId, Spawner};
 
+/// The most crabs and gulls a level may start with. A beach the editor
+/// builds is at most 20x13, and a round saved mid-play carries what was on
+/// it then, both far inside this. Unbounded, a pasted code could carry a
+/// hundred thousand crab lines, and reading one through to its result
+/// (as a pasted round is, to file it) froze the game.
+pub const MAX_CREATURES: usize = 2048;
+
 impl Level {
     pub fn parse(text: &str) -> Result<Level, String> {
         let mut lines = text.lines();
         let header = parse_header(&mut lines)?;
+        if header.crabs.len() + header.gulls.len() > MAX_CREATURES {
+            return Err(format!("more than {MAX_CREATURES} crabs and gulls"));
+        }
         let mut board = parse_lattice(lines, header.seed)?;
         place_entities(&mut board, &header)?;
         let level = Level {
@@ -642,6 +652,19 @@ mod tests {
         let text =
             format!("name: T\nposts: 1\n{header}\nmap:\n+-+-+\n|.|.|\n+-+-+\n|.|#|\n+-+-+\n");
         Level::parse(&text)
+    }
+
+    /// A level with more creatures than any beach holds is refused before
+    /// a board is built for it.
+    #[test]
+    fn a_level_with_a_crowd_past_the_cap_is_refused() {
+        let crowd = |n: usize| "crab: 0,0 R R common\n".repeat(n);
+        let most = level_with(&crowd(MAX_CREATURES)).expect("the most that reads");
+        assert_eq!(most.crab_count as usize, MAX_CREATURES);
+        let err = level_with(&crowd(MAX_CREATURES + 1)).expect_err("one over");
+        assert!(err.contains(&MAX_CREATURES.to_string()), "{err}");
+        let flock = format!("{}gull: 0,0 R\n", crowd(MAX_CREATURES));
+        assert!(level_with(&flock).is_err(), "gulls count too");
     }
 
     /// Every goal a challenge can set survives being written out and read
