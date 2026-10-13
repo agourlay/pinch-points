@@ -183,7 +183,7 @@ fn spawn_score_chip(
             border_radius: BorderRadius::all(Val::Px(12.0)),
             ..default()
         },
-        BorderColor::all(palette::player_color(seat).lighter(0.08)),
+        BorderColor::all(palette::seat_paint(seat)),
         BackgroundColor(palette::player_color(seat).darker(0.22)),
     ))
     .with_children(|chip| {
@@ -443,7 +443,7 @@ pub fn update_side_panels(
         let edge = if leaders[seat] {
             LEADER_BORDER
         } else {
-            palette::player_color(panel.0).lighter(0.08)
+            palette::seat_paint(panel.0)
         };
         let edge = BorderColor::all(edge);
         if *border != edge {

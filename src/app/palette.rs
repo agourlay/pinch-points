@@ -156,6 +156,14 @@ pub fn player_color(player: u8) -> Color {
     }
 }
 
+/// The colour a seat paints its posts: its own, a touch lifted so it reads
+/// bright on the wood. The same paint marks everything that stands for the
+/// seat's posts: its cursor brackets and its score chip's edge, so the eye
+/// ties a post on the beach to the chip it scores for.
+pub fn seat_paint(seat: u8) -> Color {
+    player_color(seat).lighter(0.08)
+}
+
 /// The default flag colours. `pub(crate)` so the highlight reel, which is
 /// engine-free and therefore carries its own copy of these as raw bytes, can
 /// be tested against them.

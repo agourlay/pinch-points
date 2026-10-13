@@ -6,6 +6,11 @@ use bevy::prelude::*;
 
 pub const TILE: f32 = 64.0;
 
+/// A signpost's board on its tile, and every ghost or echo of one: a touch
+/// bigger than the flat arrow was, since the paint on it is what has to
+/// read and it sits inside the wood.
+pub const SIGN_SIZE: f32 = TILE * 0.94;
+
 /// How many screen pixels a tile may grow to: the size `tools/gen_sprites.py`
 /// draws a sprite at. Past it the art is stretched and goes soft, so the
 /// camera zooms a board no further, whatever room the window has.

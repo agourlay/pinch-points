@@ -168,7 +168,7 @@ pub fn draw_hint(
     let pos = layout::tile_center(&sim.0, x, y);
     // The signpost that goes here, as a ghost: the board's outline faint
     // and its arrow a little less so, in no seat's colour.
-    let size = Some(Vec2::splat(layout::TILE * 0.94));
+    let size = Some(Vec2::splat(layout::SIGN_SIZE));
     commands
         .spawn((
             HintGhost,

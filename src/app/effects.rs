@@ -1089,8 +1089,8 @@ pub fn moment_effects(
                     // The arrow off the lost post, in its owner's paint.
                     Sprite {
                         image: art.sign_paint.clone(),
-                        color: palette::player_color(*owner).lighter(0.08),
-                        custom_size: Some(Vec2::splat(TILE * 0.94)),
+                        color: palette::seat_paint(*owner),
+                        custom_size: Some(Vec2::splat(layout::SIGN_SIZE)),
                         ..default()
                     },
                     Transform::from_translation(pos.extend(layout::z::PARTICLE))

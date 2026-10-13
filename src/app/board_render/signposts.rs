@@ -5,7 +5,7 @@
 use super::{image_sprite, on_board, z};
 use crate::app::Sim;
 use crate::app::art::Art;
-use crate::app::layout::{self, TILE};
+use crate::app::layout::{self, SIGN_SIZE};
 use crate::app::palette;
 use crate::sim::{Direction, SignpostHealth};
 use bevy::prelude::*;
@@ -60,10 +60,6 @@ const HALO_SCALE: f32 = 1.4;
 /// How far the next-to-go post rocks either way, in radians: a loose post
 /// in the sand, not a spinning one.
 const WOBBLE: f32 = 0.12;
-
-/// The board's size on its tile: a touch bigger than the flat arrow was,
-/// since the paint on it is what has to read and it sits inside the wood.
-const SIGN_SIZE: f32 = TILE * 0.94;
 
 /// How long a post takes to settle into the sand after it is planted.
 const PLANT_POP: f32 = 0.17;
@@ -179,7 +175,7 @@ pub fn sync_signposts(
                     SignpostPaint,
                     image_sprite(
                         &art.sign_paint,
-                        paint_color(sp.owner),
+                        palette::seat_paint(sp.owner),
                         Vec2::splat(SIGN_SIZE),
                     ),
                     Transform::from_translation(Vec3::new(0.0, 0.0, 0.01)),
@@ -190,12 +186,6 @@ pub fn sync_signposts(
 
 /// The shadow a signpost drops, at full strength.
 const SIGN_SHADOW: Color = Color::srgba(0.14, 0.10, 0.06, 0.34);
-
-/// The colour a seat paints its arrows: its own, a touch lifted so it
-/// reads bright on the wood.
-fn paint_color(owner: u8) -> Color {
-    palette::player_color(owner).lighter(0.08)
-}
 
 /// A post's shadow, told apart from the post and its other children so all
 /// of them can be written in the same pass.
@@ -294,7 +284,7 @@ pub fn dress_signposts(
         if sprite.color != Color::WHITE {
             sprite.color = Color::WHITE;
         }
-        let mut paint = paint_color(post.owner);
+        let mut paint = palette::seat_paint(post.owner);
         if worn {
             paint = paint.darker(0.06);
         }

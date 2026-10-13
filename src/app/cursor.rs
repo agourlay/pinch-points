@@ -94,7 +94,7 @@ pub fn keymap(settings: &GameSettings, player: u8, commit: CommitScheme) -> KeyM
 /// Spawn one cursor per player. Shape differs per player (§8.3): player 0 is
 /// an axis-aligned square, player 1 a diamond.
 fn bracket_color(player: u8) -> Color {
-    palette::player_color(player).lighter(0.08).with_alpha(0.9)
+    palette::seat_paint(player).with_alpha(0.9)
 }
 
 /// Whether `seat` is being played by somebody sitting at this machine.
@@ -207,7 +207,7 @@ pub fn ghost_pending_posts(
         // The board's outline, faint, and its arrow a little less so: the
         // post it will be, in the seat's colour, before it goes in.
         let color = palette::player_color(seat as u8).lighter(0.2);
-        let size = Some(Vec2::splat(TILE * 0.94));
+        let size = Some(Vec2::splat(layout::SIGN_SIZE));
         commands
             .spawn((
                 PostGhost,

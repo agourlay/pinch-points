@@ -379,7 +379,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             tint: Color::WHITE,
             paint: Some((
                 art.sign_paint.clone(),
-                palette::player_color((rng.next() % 4) as u8).lighter(0.08),
+                palette::seat_paint((rng.next() % 4) as u8),
             )),
             size: Vec2::splat(rng.range(30.0, 38.0) * scale),
             shadow: 24.0 * scale,
