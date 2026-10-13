@@ -422,6 +422,9 @@ struct Tr {
     pub tag_you: &'static str,
     pub tag_ai: &'static str,
     pub haul: &'static str,
+    /// `haul` for exactly one crab, which most of these languages say
+    /// differently.
+    pub haul_one: &'static str,
     /// The round's awards under the standings (`app::awards`). `{p}` is
     /// who, one name or several joined by " & " on a tie; `{n}` the figure.
     /// The round winner who was furthest behind the leader, and by how much.
@@ -870,6 +873,38 @@ mod tests {
                     markers(en),
                     "{field} placeholders diverge in {lang:?}"
                 );
+            }
+        }
+    }
+
+    /// The modes are called what every game calls them, and one mode has
+    /// one name in a language: a trophy still saying "tide pools" or
+    /// "duel" names a mode the player cannot find on the menu (a duel is
+    /// two players; versus takes six). These are the old names each
+    /// language used, matched without case. The tide pool on the board
+    /// is terrain and keeps its name, so only words that were ever a
+    /// mode's are listed.
+    #[test]
+    fn no_line_uses_a_retired_mode_name() {
+        let retired: [(Lang, &[&str]); 8] = [
+            (Lang::En, &["turf war", "tide pool stage", "driftwood"]),
+            (Lang::Fr, &["duel", "toutes les mares"]),
+            (Lang::De, &["duell", "kampf", "jeden tümpel"]),
+            (Lang::Es, &["duelo", "charcas de marea"]),
+            (Lang::It, &["in sfida"]),
+            (Lang::Nl, &["duel", "strijd"]),
+            (Lang::Ru, &["дуэл"]),
+            (Lang::Ja, &[]),
+        ];
+        for (lang, words) in retired {
+            for (field, line) in lang.tr().strings() {
+                let line = line.to_lowercase();
+                for word in words {
+                    assert!(
+                        !line.contains(word),
+                        "{lang:?} {field} still says {word:?}: {line}"
+                    );
+                }
             }
         }
     }

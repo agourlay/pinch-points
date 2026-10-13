@@ -451,7 +451,10 @@ pub fn spawn_versus_results(
             });
             let foot = card_text(17.0, CARD_TEXT.darker(0.15));
             card.spawn((
-                Text::new(fill(tr.haul, &[("n", &haul.to_string())])),
+                Text::new(match haul {
+                    1 => tr.haul_one.to_string(),
+                    _ => fill(tr.haul, &[("n", &haul.to_string())]),
+                }),
                 foot.0,
                 foot.1,
             ));
