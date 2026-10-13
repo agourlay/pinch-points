@@ -197,6 +197,53 @@ pub struct RoundTable<'w> {
     kinds: Res<'w, SeatKinds>,
 }
 
+/// Who drives the bot seats in a round, worked out once as it opens.
+enum BotRoute {
+    /// On a couch: every seat set to a bot, each driven from the chair its
+    /// key was printed for.
+    Couch(Vec<u8>),
+    /// Online, this peer joined as a bot (route 1): the seat the host
+    /// dealt it, driven from the doorway's one chair.
+    JoinedAsBot(u8),
+    /// Online otherwise: the host's bots (route 2), seated by the session;
+    /// none at a joiner's table.
+    Hosted(Vec<(u8, BotId)>),
+}
+
+impl BotRoute {
+    /// The seats bots drive from this machine.
+    fn seats(&self) -> Vec<u8> {
+        match self {
+            BotRoute::Couch(seats) => seats.clone(),
+            BotRoute::JoinedAsBot(seat) => vec![*seat],
+            BotRoute::Hosted(hosted) => hosted.iter().map(|(seat, _)| *seat).collect(),
+        }
+    }
+
+    /// The bot that drives `seat`, if it has come.
+    fn bot_for(&self, door: &Doorway, seat: u8) -> Option<BotId> {
+        match self {
+            BotRoute::Couch(_) => door
+                .chairs
+                .iter()
+                .find(|c| c.seat == seat)
+                .and_then(|c| c.bot),
+            // The doorway's one chair is the bot's, whichever seat the
+            // host dealt this peer.
+            BotRoute::JoinedAsBot(_) => door.chairs.first().and_then(|c| c.bot),
+            BotRoute::Hosted(hosted) => hosted.iter().find(|(s, _)| *s == seat).map(|&(_, id)| id),
+        }
+    }
+
+    /// Played over the network, a lockstep committing the bots' acts.
+    fn online(&self) -> bool {
+        match self {
+            BotRoute::Couch(_) => false,
+            BotRoute::JoinedAsBot(_) | BotRoute::Hosted(_) => true,
+        }
+    }
+}
+
 /// Open the round's bot seats, on entering the arena: a driver and a hand
 /// for every seat a bot holds, `hello` to each, and the seat named for its
 /// bot. Chained after the names are resolved, which it overwrites for
@@ -219,37 +266,33 @@ pub fn begin_round(
     } = table;
     bots.round = None;
     bots.news.clear();
-    let mine = online
-        .0
-        .as_ref()
-        .filter(|session| session.bot)
-        .and_then(|session| session.session.seat());
-    // A host's bots (route 2) are named and seated by the session already.
-    let hosted: Vec<(u8, BotId)> = online
-        .0
-        .as_ref()
-        .map(|session| {
-            session
-                .bots_here
-                .iter()
-                .map(|(seat, id, _)| (*seat, *id))
-                .collect()
-        })
-        .unwrap_or_default();
-    if mine.is_none()
+    let route = match online.0.as_ref() {
+        Some(session) => match session.session.seat().filter(|_| session.bot) {
+            Some(seat) => BotRoute::JoinedAsBot(seat),
+            // A host's bots (route 2) are named and seated by the session
+            // already.
+            None => BotRoute::Hosted(
+                session
+                    .bots_here
+                    .iter()
+                    .map(|(seat, id, _)| (*seat, *id))
+                    .collect(),
+            ),
+        },
+        None => BotRoute::Couch(
+            (0..MAX_PLAYERS as u8)
+                .filter(|&seat| controllers.0[usize::from(seat)] == SeatController::Bot)
+                .collect(),
+        ),
+    };
+    if let BotRoute::Hosted(hosted) = &route
         && online.0.as_ref().is_some_and(|session| session.is_host())
         && let Some(door) = &mut bots.door
     {
         let seated: Vec<BotId> = hosted.iter().map(|(_, id)| *id).collect();
         door.seat_the_table(&seated);
     }
-    let seats: Vec<u8> = match mine {
-        Some(seat) => vec![seat],
-        None if online.0.is_some() => hosted.iter().map(|(seat, _)| *seat).collect(),
-        None => (0..MAX_PLAYERS as u8)
-            .filter(|&seat| controllers.0[usize::from(seat)] == SeatController::Bot)
-            .collect(),
-    };
+    let seats = route.seats();
     if seats.is_empty() {
         return;
     }
@@ -259,7 +302,7 @@ pub fn begin_round(
         return;
     };
     let tr = settings.tr();
-    if online.0.is_none() {
+    if let BotRoute::Couch(_) = route {
         for &seat in &seats {
             if let Some(name) = door.seat_name(tr, seat) {
                 names.0[usize::from(seat)] = name;
@@ -273,20 +316,7 @@ pub fn begin_round(
     let n = usize::from(board.seats_in_play()).max(2);
     let held: Vec<(u8, BotId)> = seats
         .iter()
-        .filter_map(|&seat| {
-            // Online the doorway's one chair is the bot's, whichever seat
-            // the host dealt this peer.
-            let id = match (mine, hosted.iter().find(|(s, _)| *s == seat)) {
-                (Some(_), _) => door.chairs.first().and_then(|c| c.bot),
-                (None, Some(&(_, id))) => Some(id),
-                (None, None) => door
-                    .chairs
-                    .iter()
-                    .find(|c| c.seat == seat)
-                    .and_then(|c| c.bot),
-            };
-            Some((seat, id?))
-        })
+        .filter_map(|&seat| Some((seat, route.bot_for(door, seat)?)))
         .collect();
     let round = BotRound::open(
         door,
@@ -294,7 +324,7 @@ pub fn begin_round(
         &held,
         (0..n).map(|seat| names.label(tr, seat as u8)).collect(),
         kinds.0[..n].to_vec(),
-        online.0.is_some(),
+        route.online(),
         game,
     );
     bots.round = Some(round);
