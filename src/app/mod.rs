@@ -75,7 +75,7 @@ mod schedule;
 mod session;
 mod settings;
 mod side_panels;
-mod sim_events;
+pub mod sim_events;
 mod spectators;
 mod stage_select;
 mod suspend;

@@ -2,10 +2,12 @@
 //! landed, and what was on the beach when it did.
 //!
 //! Run: `cargo run --example round_events -- [path]`, defaulting to the
-//! last round the game kept. A replay is the round's inputs and the sim is
+//! last round the game kept (under `$XDG_DATA_HOME`, as the game reads
+//! it). A replay is the round's inputs and the sim is
 //! deterministic, so re-running one here reproduces the beach that was
 //! played.
 
+use pinch_points::app::sim_events::{SimEvent, Watch, diff};
 use pinch_points::sim::{Replay, TICKS_PER_SECOND, TideEvent};
 
 fn name(event: TideEvent) -> &'static str {
@@ -24,8 +26,9 @@ fn name(event: TideEvent) -> &'static str {
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
-        let home = std::env::var("HOME").expect("HOME");
-        format!("{home}/.local/share/pinch-points/replays/last.txt")
+        pinch_points::app::replay_path()
+            .to_string_lossy()
+            .into_owned()
     });
     let text = std::fs::read_to_string(&path).expect("replay file");
     let replay = Replay::parse(&text).expect("replay parses");
@@ -44,20 +47,20 @@ fn main() {
 
     let mut last_seen: Option<u64> = None;
     let mut fired: Vec<(u64, TideEvent)> = Vec::new();
-    // What the right-hand feed reports, rebuilt from board state: a gull
-    // walking on, a castle losing score to a raid, a castle crossing a
-    // tier. The banks it also lists (gold, lures) are a couple of percent
-    // of crabs and cannot make a wave; these three can.
+    // What the right-hand feed reports, read off the game's own event
+    // stream rather than rebuilt from scores and headcounts: a gull walking
+    // on, a castle raided, a castle crossing a tier. A score diff counted
+    // a left claw banked under Right Claws as a raid, and a headcount
+    // missed every gull that came in as another left. The banks the feed
+    // also lists (gold, lures) are a couple of percent of crabs and cannot
+    // make a wave; these three can.
     let mut arrivals = 0usize;
     let mut raids = 0usize;
     let mut tiers = 0usize;
     let mut buckets: Vec<(usize, usize, usize)> = Vec::new();
     let bucket_ticks = 150u64; // five seconds
-    let (mut gulls, mut scores, mut tier_of) = (
-        board.gulls().len(),
-        *board.scores(),
-        board.scores().map(pinch_points::sim::castle_tier),
-    );
+    let mut watch = Watch::default();
+    let _ = diff(&board, &mut watch);
     let mut here = (0usize, 0usize, 0usize);
     for (tick, actions) in replay.inputs.iter().enumerate() {
         board.tick(actions);
@@ -67,25 +70,18 @@ fn main() {
             last_seen = Some(at);
             fired.push((at, event));
         }
-        let now = board.gulls().len();
-        if now > gulls {
-            here.0 += now - gulls;
-            arrivals += now - gulls;
-        }
-        gulls = now;
-        for (seat, &score) in board.scores().iter().enumerate() {
-            if score < scores[seat] {
+        for event in diff(&board, &mut watch) {
+            if matches!(event, SimEvent::GullArrived) {
+                here.0 += 1;
+                arrivals += 1;
+            } else if matches!(event, SimEvent::CastleRaided { .. }) {
                 here.1 += 1;
                 raids += 1;
-            }
-            let tier = pinch_points::sim::castle_tier(score);
-            if tier > tier_of[seat] {
+            } else if matches!(event, SimEvent::TierUp { .. }) {
                 here.2 += 1;
                 tiers += 1;
             }
-            tier_of[seat] = tier;
         }
-        scores = *board.scores();
         if (tick as u64 + 1).is_multiple_of(bucket_ticks) {
             buckets.push(here);
             here = (0, 0, 0);
