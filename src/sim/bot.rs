@@ -116,14 +116,22 @@ impl BotLevel {
     /// spawner holes fire on even ticks, so a seat parked on an odd slot
     /// meets every new crab a beat before a seat on an even one.
     ///
+    /// The draw takes the board's seed as well, as [`slips`] does: drawn
+    /// from the window and the seat alone, each seat sat on one schedule
+    /// in every round ever played, and the one P2 (seat 1) was dealt kept it 2%
+    /// to 4% behind on the four-player classic beach whichever castle it
+    /// held, 4.5 standard errors over 10,000 rounds. Fixed for a board's
+    /// life and carried in its snapshot, so every peer still agrees.
+    ///
     /// Ties inside a single tick are the sim's business, not the bot's:
     /// see [`Board::action_order`](Board).
-    fn acts_on(self, player: PlayerId, ticks: u64) -> bool {
+    fn acts_on(self, player: PlayerId, ticks: u64, seed: u64) -> bool {
         let cadence = self.cadence();
         let window = ticks / cadence;
         let z = avalanche(
             window.wrapping_mul(0x9E37_79B9_7F4A_7C15)
-                ^ u64::from(player).wrapping_mul(0xBF58_476D_1CE4_E5B9),
+                ^ u64::from(player).wrapping_mul(0xBF58_476D_1CE4_E5B9)
+                ^ seed,
         );
         ticks % cadence == z % cadence
     }
@@ -343,7 +351,7 @@ fn hand_arrived(board: &Board, player: PlayerId, x: u8, y: u8) -> bool {
 /// is the luxury you buy last. Each answers `None` when it has nothing to say.
 fn decide(board: &Board, player: PlayerId, level: BotLevel) -> (PlayerAction, Intent) {
     let nothing = (PlayerAction::None, Intent::Recruit);
-    if !level.acts_on(player, board.ticks()) {
+    if !level.acts_on(player, board.ticks(), board.seed()) {
         return nothing;
     }
     let Some(castle) = castle_of(board, player) else {

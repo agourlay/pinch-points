@@ -188,12 +188,12 @@ fn verdict(sweeps: &[Sweep]) {
 ///
 /// Measured, budgeted:
 ///
-/// | sweep | 2026-08-22 | 2026-09-17 | 2026-09-18 | 2026-10-02 | budget |
-/// |---|---|---|---|---|---|
-/// | generated 2p 12x9  | 0.3 | 0.7 | 1.2 | 0.2 | 2.0 |
-/// | generated 4p 12x9  | 1.3 | 1.0 | 1.0 | 0.7 | 2.5 |
-/// | generated 4p 16x11 | 1.2 | 1.3 | 1.0 | 1.4 | 3.0 |
-/// | generated 6p 21x13 | 2.5 | 2.7 | 1.4 | 1.2 | 3.5 |
+/// | sweep | 2026-08-22 | 2026-09-17 | 2026-09-18 | 2026-10-02 | 2026-10-13 | budget |
+/// |---|---|---|---|---|---|---|
+/// | generated 2p 12x9  | 0.3 | 0.7 | 1.2 | 0.2 | 0.3 | 2.0 |
+/// | generated 4p 12x9  | 1.3 | 1.0 | 1.0 | 0.7 | 0.7 | 2.5 |
+/// | generated 4p 16x11 | 1.2 | 1.3 | 1.0 | 1.4 | 1.1 | 3.0 |
+/// | generated 6p 21x13 | 2.5 | 2.7 | 1.4 | 1.2 | 1.2 | 3.5 |
 ///
 /// The 2026-09-18 column is a different experiment, not a better reading
 /// of the old one: Right Claws put a ninth face on the roulette, so every
@@ -211,6 +211,17 @@ fn verdict(sweeps: &[Sweep]) {
 /// started each round at its castle rather than anywhere at once, and
 /// the sweeps read 0.9, 1.5, 1.5 and 1.2: inside every budget, and no
 /// seat favoured.
+///
+/// The 2026-10-13 column is three changes measured together: a table of
+/// four or more always dealt a spawner hole for all but one player, the
+/// holes that open together drawing which the crab cap leaves out
+/// (`fair_spawns`), and the AI's moment to think in each window taking
+/// the board's seed. The last is the one aimed at seats: drawn from the
+/// window and the seat alone, every seat kept one schedule in every round
+/// ever played, and the second seat's held it 2% to 4% behind on the
+/// four-player classic beach whichever castle it sat at (4.5 sigma over
+/// 10,000 rounds), which the classic sweeps here, at 100 rounds, are too
+/// small to see. Nothing in it biased a seat on the generated beaches.
 ///
 /// The six-seat budget is still the uncomfortable one and its headroom is
 /// the thinnest on purpose: `tally` calls anything past about two worth

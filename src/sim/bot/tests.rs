@@ -87,18 +87,22 @@ fn every_seat_blunders_at_the_same_rate_it_is_offered() {
                 // Only the ticks this seat is actually offered a placement
                 // on: across all ticks the old draw was even, and it was
                 // the cadence picking them out that made it lopsided.
-                let offered: Vec<u64> = (0..5400u64).filter(|t| level.acts_on(seat, *t)).collect();
                 let mut slips = 0u32;
+                let mut offers = 0usize;
                 // Enough boards that the tolerance below sits at three
                 // standard errors rather than under one.
                 for seed in 0..200u64 {
+                    let offered: Vec<u64> = (0..5400u64)
+                        .filter(|t| level.acts_on(seat, *t, seed))
+                        .collect();
+                    offers += offered.len();
                     for &tick in &offered {
                         if fumble(straight, seat, level, tick, seed) != straight {
                             slips += 1;
                         }
                     }
                 }
-                f64::from(slips) / (200.0 * offered.len() as f64)
+                f64::from(slips) / offers as f64
             })
             .collect();
         for (seat, rate) in rates.iter().enumerate() {
@@ -328,7 +332,7 @@ fn a_level_thinks_at_its_own_rate_and_no_seat_thinks_more() {
     ] {
         for seat in 0..MAX_PLAYERS as u8 {
             let turns = (0..cycles * cadence)
-                .filter(|tick| level.acts_on(seat, *tick))
+                .filter(|tick| level.acts_on(seat, *tick, 0))
                 .count() as u64;
             assert_eq!(
                 turns, cycles,
@@ -337,7 +341,11 @@ fn a_level_thinks_at_its_own_rate_and_no_seat_thinks_more() {
         }
     }
     // And a slower level really is slower over the same stretch.
-    let count = |level: BotLevel| (0..1200u64).filter(|tick| level.acts_on(1, *tick)).count();
+    let count = |level: BotLevel| {
+        (0..1200u64)
+            .filter(|tick| level.acts_on(1, *tick, 0))
+            .count()
+    };
     assert_eq!(count(BotLevel::Easy) * 2, count(BotLevel::Normal));
 }
 
@@ -347,7 +355,7 @@ fn a_level_thinks_at_its_own_rate_and_no_seat_thinks_more() {
 fn decision_moments_do_not_settle_on_one_parity() {
     for seat in 0..MAX_PLAYERS as u8 {
         let odd = (0..400u64)
-            .filter(|tick| BotLevel::Normal.acts_on(seat, *tick))
+            .filter(|tick| BotLevel::Normal.acts_on(seat, *tick, 0))
             .filter(|tick| !tick.is_multiple_of(2))
             .count();
         // Twenty windows in four hundred ticks; a fixed grid would put
@@ -394,7 +402,7 @@ fn first_window_action(board: &Board, level: BotLevel) -> PlayerAction {
     loop {
         // The decision alone: the hand's walk from home has its own test.
         let action = bot_action_with(&board, 1, level, Hand::Instant);
-        if !level.acts_on(1, board.ticks()) {
+        if !level.acts_on(1, board.ticks(), board.seed()) {
             board.tick_idle();
             continue;
         }
@@ -566,7 +574,7 @@ fn bot_without_a_castle_stays_idle() {
     board.spawn_crab(0, 2, Direction::Right, Handedness::Left, CrabKind::Golden);
     let mut windows = 0;
     for _ in 0..200 {
-        if BotLevel::Normal.acts_on(2, board.ticks()) {
+        if BotLevel::Normal.acts_on(2, board.ticks(), board.seed()) {
             windows += 1;
             assert_eq!(
                 bot_action(&board, 2, BotLevel::Normal),
@@ -578,4 +586,21 @@ fn bot_without_a_castle_stays_idle() {
         board.tick_idle();
     }
     assert_eq!(windows, 10, "every window was checked");
+}
+
+/// Which tick of each window a seat thinks on is drawn per board, the way
+/// the slip is: hashed from the window and the seat alone, every seat sat
+/// on one schedule in every round ever played, and P2's put it a
+/// steady 2% to 4% behind on the four-player classic beach whichever
+/// castle it held, a handicap no number of rounds could average away.
+#[test]
+fn a_seats_thinking_moments_change_from_board_to_board() {
+    let moments = |seed: u64| -> Vec<u64> {
+        (0..400u64)
+            .filter(|tick| BotLevel::Normal.acts_on(1, *tick, seed))
+            .collect()
+    };
+    let first = moments(0);
+    let differing = (1..20u64).filter(|&seed| moments(seed) != first).count();
+    assert_eq!(differing, 19, "every other board moves P2's schedule");
 }
