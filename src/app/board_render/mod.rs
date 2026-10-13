@@ -1,7 +1,12 @@
 //! Everything drawn from board state, split by what it draws:
 //!
 //! - [`statics`]: the sand, the walls, the terrain, and the sprites that
-//!   track tile contents (signposts, turnstiles, spawner holes).
+//!   track tile contents (turnstiles, spawner holes).
+//! - [`signposts`]: the posts players plant, and how worn and settled
+//!   each one is drawn.
+//! - [`pools`]: the ponds over pool tiles, and their ripples.
+//! - [`surround`]: the shore, sea and scenery around the board, and the
+//!   cloud shadows over it.
 //! - [`castles`]: the keeps, their pennants, and the shudder a bank sets
 //!   off.
 //! - [`water`]: the tide rising around the sand, and the foam on its edge.
@@ -13,7 +18,10 @@
 //! teardown code see one `board_render`.
 
 mod castles;
+mod pools;
+mod signposts;
 mod statics;
+mod surround;
 mod wash;
 mod water;
 
@@ -22,11 +30,13 @@ pub use castles::{
     CastleFlight, CastleSprite, castle_body, cheer_tier_ups, fly_castles, kick_castles,
     sync_castles, wave_pennants,
 };
+pub use pools::ripple_pools;
+pub use signposts::{SignpostSprite, dress_signposts, sync_signposts};
 pub use statics::{
-    BoardStatic, SignpostSprite, TurnstileSprite, animate_turnstiles, dress_signposts,
-    drift_cloud_shadows, pulse_spawners, ripple_pools, spawn_static_board, sync_signposts,
+    BoardStatic, TurnstileSprite, animate_turnstiles, pulse_spawners, spawn_static_board,
     sync_turnstiles,
 };
+pub use surround::drift_cloud_shadows;
 pub use wash::{advance_tide_wash, start_tide_wash};
 pub use water::{
     WaterFoam, Waterline, spawn_water_foam, spawn_waterline, update_water_foam, update_waterline,
