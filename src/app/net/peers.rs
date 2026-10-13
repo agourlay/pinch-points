@@ -262,6 +262,16 @@ impl PeerBook {
         }
     }
 
+    /// The peers `gone` says to forget, highest index first: the order they
+    /// can be forgotten in one after another, since forgetting a peer moves
+    /// only the ones behind it, which have been dealt with already.
+    pub fn to_forget(&self, gone: impl Fn(&Peer) -> bool) -> Vec<usize> {
+        (0..self.0.len())
+            .rev()
+            .filter(|&peer| gone(&self.0[peer]))
+            .collect()
+    }
+
     /// How many peers the launch plan covers. Peers are registered in
     /// arrival order and the plan is dealt to everyone at the table when
     /// the round begins, so the planned peers are the leading run and

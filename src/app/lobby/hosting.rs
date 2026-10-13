@@ -419,22 +419,13 @@ fn note_arrivals_and_departures(
                 false => tr.lobby_joined,
             };
             let notice = fill(line, &[("p", &told)]);
-            state.say("", &notice);
-            announce_to_table(state, "", &notice);
+            tell_the_room(state, &notice);
         }
     }
     // Anyone unheard for too long has walked away: UDP will not say so, and
     // a table that keeps counting them never has room again.
     let gone: Vec<usize> = state.hosted().map_or(Vec::new(), |hosted| {
-        (0..hosted.peers.len())
-            .rev()
-            .filter(|peer| {
-                hosted
-                    .peers
-                    .get(*peer)
-                    .is_some_and(|p| p.silence > PEER_TTL)
-            })
-            .collect()
+        hosted.peers.to_forget(|row| row.silence > PEER_TTL)
     });
     for peer in gone {
         let Some(hosted) = state.hosted_mut() else {
@@ -447,8 +438,7 @@ fn note_arrivals_and_departures(
         hosted.forget_peer(peer);
         if !who.is_empty() {
             let notice = fill(tr.lobby_left, &[("p", &who)]);
-            state.say("", &notice);
-            announce_to_table(state, "", &notice);
+            tell_the_room(state, &notice);
         }
     }
 }
@@ -677,8 +667,6 @@ fn catch_up_on_the_feed(state: &LobbyState, peer: usize) {
     }
 }
 
-/// Say something to every peer at the table, as the host. An empty `who`
-/// is the lobby speaking rather than a player.
 /// The host asks the peer at place `at` of the table (1 is the host's own)
 /// to leave: it is told, and forgotten, and everyone else hears why the
 /// chair is empty. The table is the host and the peers who came to play,
@@ -701,9 +689,7 @@ pub(super) fn ask_to_leave(
         && let Some((id, who)) = door.arrived(tr).get(bot).cloned()
     {
         door.let_go(id);
-        let notice = fill(tr.lobby_kicked_feed, &[("p", &who)]);
-        state.say("", &notice);
-        announce_to_table(state, "", &notice);
+        tell_the_room(state, &fill(tr.lobby_kicked_feed, &[("p", &who)]));
         return;
     }
     let Some(&peer) = people.get(at.wrapping_sub(2)) else {
@@ -716,14 +702,16 @@ pub(super) fn ask_to_leave(
     // Told, forgotten, and kept out: a greeting already on its way would
     // otherwise seat it again as a ghost row (`UdpTransport::turn_away`).
     hosted.turn_away(peer);
-    let notice = fill(tr.lobby_kicked_feed, &[("p", &who)]);
-    state.say("", &notice);
-    announce_to_table(state, "", &notice);
+    tell_the_room(state, &fill(tr.lobby_kicked_feed, &[("p", &who)]));
 }
 
-pub(super) fn announce_to_table(state: &LobbyState, who: &str, line: &str) {
+/// Say a notice to the room as the lobby itself: in this host's own feed,
+/// and to every peer at the table. The lobby speaks with no name, which is
+/// what tells its notices from a player's line.
+fn tell_the_room(state: &mut LobbyState, notice: &str) {
+    state.say("", notice);
     if let Some(hosted) = state.hosted() {
-        hosted.transport.send(NetMsg::chat(who, line));
+        hosted.transport.send(NetMsg::chat("", notice));
     }
 }
 

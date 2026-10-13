@@ -311,14 +311,12 @@ impl OnlineSession {
     /// sent nothing and costs nothing, and is swept between rounds by
     /// [`Self::forget_the_silent`].
     pub(super) fn forget_gone_watchers(&mut self) {
-        for peer in (0..self.peers.len()).rev() {
-            let gone = self.peers.get(peer).is_some_and(|row| {
-                matches!(row.place, Place::Watching | Place::LateWatching)
-                    && row.silence >= WATCHER_GONE_AFTER
-            });
-            if gone {
-                self.forget_peer(peer);
-            }
+        let gone = self.peers.to_forget(|row| {
+            matches!(row.place, Place::Watching | Place::LateWatching)
+                && row.silence >= WATCHER_GONE_AFTER
+        });
+        for peer in gone {
+            self.forget_peer(peer);
         }
     }
 
@@ -332,14 +330,8 @@ impl OnlineSession {
     /// the card greets once a second so that silence means something.
     pub(super) fn forget_the_silent(&mut self) {
         debug_assert!(self.is_host(), "only the host keeps the table");
-        for peer in (0..self.peers.len()).rev() {
-            if self
-                .peers
-                .get(peer)
-                .is_some_and(|peer| peer.silence >= ABANDON_AFTER)
-            {
-                self.forget_peer(peer);
-            }
+        for peer in self.peers.to_forget(|row| row.silence >= ABANDON_AFTER) {
+            self.forget_peer(peer);
         }
     }
 
