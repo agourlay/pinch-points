@@ -1141,7 +1141,7 @@ mod tests {
         // A file holding a level by this very name is this level, written
         // in another session or pasted back in: saved at once too.
         app.world_mut().resource_mut::<EditorState>().mine.clear();
-        crate::app::paths::write_atomic(&path, &format!("name: {name}\nold: true\n"))
+        crate::app::paths::write_atomic(&path, format!("name: {name}\nold: true\n"))
             .expect("wrote");
         tap(&mut app, KeyCode::F2);
         assert!(
@@ -1155,7 +1155,7 @@ mod tests {
         let name = "Café Legacy Probe";
         let legacy = ascii_era_path(name);
         assert!(legacy.ends_with("caf-legacy-probe.txt"), "{legacy:?}");
-        crate::app::paths::write_atomic(&legacy, &format!("name: {name}\n")).expect("wrote");
+        crate::app::paths::write_atomic(&legacy, format!("name: {name}\n")).expect("wrote");
         app.world_mut().resource_mut::<EditorState>().name = name.to_string();
         tap(&mut app, KeyCode::F2);
         assert!(save_path(name).exists(), "saved under its whole name");

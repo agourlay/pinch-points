@@ -350,6 +350,9 @@ const RETIRED: [(&str, KeyCode); 1] = [("NumpadEnter", KeyCode::NumpadDecimal)];
 
 /// Read one `keys_pN` line. A short line, an unknown key name, or a
 /// duplicate leaves that seat on its defaults rather than half-bound.
+/// The settings file reads through [`parse_seat_moved`], which also says
+/// what it moved; this is that without the list, for the tests.
+#[cfg(test)]
 pub fn parse_seat(value: &str) -> Option<SeatBinds> {
     parse_seat_moved(value).map(|(seat, _)| seat)
 }
