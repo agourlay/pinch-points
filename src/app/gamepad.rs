@@ -81,6 +81,12 @@ pub struct PlugOrder(Vec<Entity>);
 /// A claim let go gives back the seat it took (see [`Chairs`]), so the
 /// table is the people still holding a pad. The same pad back presses
 /// Start and sits down again.
+///
+/// Given back on the setup screen only, where the claim was made and the
+/// table is on show: the table is also an online host's terms, and a pad
+/// whose battery died in the lobby rewrote them under the joiners (the
+/// AI count dialled there, the map picked there). Gone elsewhere, the
+/// seat is owed until the setup screen is next opened.
 pub fn keep_pad_order(
     pads: Query<Entity, With<Gamepad>>,
     screen: Res<State<Screen>>,
@@ -123,12 +129,15 @@ pub fn keep_pad_order(
         let mut config = config;
         let shelf = crate::app::match_setup::CustomBeaches::default();
         let beaches = beaches.as_deref().unwrap_or(&shelf);
+        let settle = *screen.get() == Screen::MatchSetup;
         chairs.retain(|&(claimed, chair)| {
-            let kept = claims.contains(&claimed);
-            if !kept && let Some(config) = config.as_deref_mut() {
+            if claims.contains(&claimed) || !settle {
+                return true;
+            }
+            if let Some(config) = config.as_deref_mut() {
                 chair.give_back(config, beaches);
             }
-            kept
+            false
         });
     }
 }
@@ -868,6 +877,35 @@ mod tests {
         app.update();
         let config = app.world().resource::<MatchConfig>();
         assert_eq!((config.seats, config.bots), (3, 1), "the AI sits back down");
+    }
+
+    /// The table is also an online host's terms: a pad that drops out in
+    /// the lobby leaves them alone, and its seat is given back the next
+    /// time the setup screen opens.
+    #[test]
+    fn a_pad_gone_in_the_lobby_changes_nothing_until_the_setup_screen() {
+        use crate::app::match_setup::MatchConfig;
+        let (mut app, pads) = setup_table(
+            MatchConfig {
+                seats: 4,
+                bots: 1,
+                ..MatchConfig::default()
+            },
+            1,
+        );
+        press_start(&mut app, pads[0]);
+        // Hosting now, with the AI dialled up in the lobby.
+        app.insert_resource(State::new(Screen::Lobby));
+        app.world_mut().resource_mut::<MatchConfig>().bots = 1;
+        app.world_mut().entity_mut(pads[0]).remove::<Gamepad>();
+        app.update();
+        let config = app.world().resource::<MatchConfig>();
+        assert_eq!((config.seats, config.bots), (4, 1), "the terms stand");
+        app.insert_resource(State::new(Screen::MatchSetup));
+        app.update();
+        let config = app.world().resource::<MatchConfig>();
+        assert_eq!(config.bots, 2, "owed, and given back to the AI there");
+        assert!(app.world().resource::<PadSeats>().2.0.is_empty());
     }
 
     /// A world with `seats` cursors and `pads` controllers plugged in.
