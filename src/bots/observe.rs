@@ -17,6 +17,17 @@ fn field<'a>(v: &'a Value, path: &str) -> Result<&'a Value, String> {
         .ok_or_else(|| format!("no `{path}`"))
 }
 
+/// A field a listener older than it leaves out: `None` then, which each
+/// reader turns into the rule that listener played by.
+fn optional<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
+    field(v, path).ok().filter(|v| !v.is_null())
+}
+
+/// An optional switch, off where it is absent.
+fn switch(v: &Value, path: &str) -> bool {
+    optional(v, path).and_then(Value::as_bool) == Some(true)
+}
+
 fn num(v: &Value, path: &str) -> Result<u64, String> {
     field(v, path)?
         .as_u64()
@@ -186,23 +197,33 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     let scores: Vec<String> = scores.iter().map(u64::to_string).collect();
     let _ = writeln!(out, "scores: {}", scores.join(" "));
     let _ = writeln!(out, "gull_period: {}", num(hello, "rules.gull_period")?);
-    if let Some(cap) = field(hello, "rules.gull_cap")?.as_u64() {
+    // The rules below came one listener at a time, and an older one says
+    // nothing of them: absent, each reads as the rule that listener
+    // played, which is the board's default (the classic flock cap, every
+    // switch off).
+    if let Some(cap) = optional(hello, "rules.gull_cap").and_then(Value::as_u64) {
         let _ = writeln!(out, "gull_cap: {cap}");
     }
-    if field(hello, "rules.gull_turnover")?.as_bool() == Some(true) {
-        let _ = writeln!(out, "gull_turnover: on");
-    }
-    if let Some(every) = field(hello, "rules.golden_every")?
-        .as_u64()
+    if let Some(every) = optional(hello, "rules.golden_every")
+        .and_then(Value::as_u64)
         .filter(|&n| n > 0)
     {
         let _ = writeln!(out, "golden_every: {every}");
     }
-    if field(hello, "rules.timed_lock")?.as_bool() == Some(true) {
-        let _ = writeln!(out, "timed_lock: on");
-    }
-    if field(hello, "rules.sweep_flight")?.as_bool() == Some(true) {
-        let _ = writeln!(out, "sweep_flight: on");
+    let timed_lock = switch(hello, "rules.timed_lock");
+    for (rule, on) in [
+        ("gull_turnover", switch(hello, "rules.gull_turnover")),
+        ("timed_lock", timed_lock),
+        ("sweep_flight", switch(hello, "rules.sweep_flight")),
+        ("whole_flock", switch(hello, "rules.whole_flock")),
+        (
+            "sweep_keeps_worth",
+            switch(hello, "rules.sweep_keeps_worth"),
+        ),
+    ] {
+        if on {
+            let _ = writeln!(out, "{rule}: on");
+        }
     }
     if let Some(round) = field(hello, "rules.round_ticks")?.as_u64() {
         let _ = writeln!(out, "round: {round}");
@@ -267,17 +288,30 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     // off the last event's tick.
     if let Some(last) = tick.get("last_event").filter(|e| !e.is_null()) {
         let fired = num(last, "tick")?;
-        // An event fires during tick `fired`, after that tick's count
-        // down, so the board one tick on still has the whole spell left.
-        let since = now.saturating_sub(fired).saturating_sub(1);
-        let quiet = u64::from(crate::sim::EVENT_COOLDOWN).saturating_sub(since);
-        if quiet > 0 {
-            let _ = writeln!(out, "event_cooldown: {quiet}");
-        }
         let index = crate::sim::TideEvent::ALL
             .iter()
             .position(|&e| super::protocol::event_token(e) == text(last, "name").unwrap_or(""))
             .ok_or("no such event")?;
+        let event = crate::sim::TideEvent::ALL[index];
+        // An event fires during tick `fired`, after that tick's count
+        // down, so the board one tick on still has the whole spell left.
+        let since = now.saturating_sub(fired).saturating_sub(1);
+        let quiet = match !timed_lock || event.lasts() {
+            true => u64::from(crate::sim::EVENT_COOLDOWN).saturating_sub(since),
+            // Under a timed lock an event over in a tick locks nothing, and
+            // leaves the wheel as it found it: locked by a timed event
+            // still running, if a vote landed this one on top of it. The
+            // lock and an event are one length and start on one tick, but
+            // the lock counts down at the start of a tick and the event at
+            // its end, so the lock has one tick more to run.
+            false => tick
+                .get("event")
+                .filter(|e| !e.is_null())
+                .map_or(Ok(0), |running| num(running, "ticks_left").map(|n| n + 1))?,
+        };
+        if quiet > 0 {
+            let _ = writeln!(out, "event_cooldown: {quiet}");
+        }
         let _ = writeln!(out, "last_event: {index} {fired}");
     }
     let _ = writeln!(out, "hwalls: {}\nvwalls: {}", hex(&h_walls), hex(&v_walls));
@@ -313,6 +347,9 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
         );
     }
     for c in &sweeping {
+        // Absent from a listener older than the field, which is a board
+        // that never reads it.
+        let called = if switch(c, "claw_call") { " claws" } else { "" };
         let tile = at(num(c, "x")?, num(c, "y")?);
         let dir = letter(text(c, "dir")?)?;
         let progress = num(c, "progress")?;
@@ -322,7 +359,7 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
         }
         let _ = writeln!(
             out,
-            "sweeping: {} {} {} {} {tile} {dir} {progress} {tile} {progress} {dir} {} {kind}",
+            "sweeping: {} {} {} {} {tile} {dir} {progress} {tile} {progress} {dir} {} {kind}{called}",
             num(c, "owner")?,
             num(c, "launch")?,
             num(c, "lands")?,
@@ -354,7 +391,7 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
 mod tests {
     use super::*;
     use crate::bots::protocol::{self, Clock, SeatKind, Table, You};
-    use crate::sim::{PlayerAction, classic_arena, generate_arena};
+    use crate::sim::{PlayerAction, TideEvent, classic_arena, generate_arena};
 
     /// The board a bot rebuilds plays forward exactly as the listener's own
     /// lookahead does: same crabs, same banks, same scores.
@@ -394,14 +431,168 @@ mod tests {
             theirs.tick_idle();
             ours.tick_idle();
             assert_eq!(theirs.scores(), ours.scores(), "at tick {}", ours.ticks());
-            let place = |b: &Board| -> Vec<(u32, u16, u16)> {
-                b.crabs()
-                    .iter()
-                    .map(|c| (c.id, c.tile, c.progress))
-                    .collect()
+            // Where each crab is, not its id: a crab spawned from here on
+            // takes the next id, which counts crabs already gone from the
+            // beach, banked or eaten, and those a bot never saw.
+            let place = |b: &Board| -> Vec<(u16, u16)> {
+                b.crabs().iter().map(|c| (c.tile, c.progress)).collect()
             };
             assert_eq!(place(&theirs), place(&ours), "at tick {}", ours.ticks());
         }
+    }
+
+    /// What a bot in seat 0 is shown of `board`: its `hello` and a `tick`.
+    fn shown(board: &Board) -> (Value, Value) {
+        let names = vec!["a".to_string(); usize::from(board.seats_in_play())];
+        let kinds = vec![SeatKind::Bot; names.len()];
+        let table = Table {
+            game: 1,
+            names: &names,
+            kinds: &kinds,
+            clock: Clock {
+                live: false,
+                deadline_ms: 33,
+                input_delay: 0,
+            },
+            cursor: false,
+        };
+        let hello = protocol::hello(board, &table, 0, false);
+        let you = You {
+            seat: 0,
+            last: None,
+        };
+        (hello, protocol::tick(board, 1, &you, &[]))
+    }
+
+    /// One line of a snapshot, by its key.
+    fn line(snapshot: &str, key: &str) -> Option<String> {
+        snapshot
+            .lines()
+            .find(|l| l.starts_with(key))
+            .map(str::to_string)
+    }
+
+    /// A versus beach, with every rule versus switches on.
+    fn versus_beach() -> Board {
+        let mut board = classic_arena(false, 2);
+        crate::sim::set_versus_rules(&mut board, 240);
+        board.set_events_enabled(true);
+        board
+    }
+
+    /// A tick with `event` called by the spectators, which fires mid-tick
+    /// as a spin of the wheel does, not between ticks as a dev hook's does.
+    fn call(board: &mut Board, event: TideEvent) {
+        let mut actions = [PlayerAction::None; MAX_PLAYERS];
+        actions[0] = PlayerAction::CallEvent(event);
+        board.tick(&actions);
+    }
+
+    #[test]
+    fn a_versus_beach_rebuilds_from_what_a_bot_sees() {
+        rebuilt_matches_the_lookahead(versus_beach(), 700);
+    }
+
+    /// Every rule versus switches on comes through, and a Crab Monopoly
+    /// swept under Right Claws keeps the call on each crab in the air.
+    #[test]
+    fn the_versus_rules_and_a_sweep_rebuild() {
+        let mut board = versus_beach();
+        for _ in 0..400 {
+            board.tick_idle();
+        }
+        call(&mut board, TideEvent::RightClaws);
+        call(&mut board, TideEvent::Monopoly);
+        assert!(!board.sweeping().is_empty(), "crabs in the air");
+        let (hello, tick) = shown(&board);
+        let theirs = board_from(&hello, &tick).expect("rebuilds").to_snapshot();
+        let ours = board.lookahead(LOOKAHEAD_SEED).to_snapshot();
+        for key in [
+            "gull_turnover:",
+            "golden_every:",
+            "timed_lock:",
+            "sweep_flight:",
+            "whole_flock:",
+            "sweep_keeps_worth:",
+            "event_cooldown:",
+            "claw_call:",
+        ] {
+            assert!(line(&ours, key).is_some(), "{key} in {ours}");
+            assert_eq!(line(&theirs, key), line(&ours, key), "{key}");
+        }
+        // Who, when and which crab, and the call it was swept under; the
+        // pose it left the sand in is the renderer's and not shown.
+        let flights = |snapshot: &str| -> Vec<(String, bool)> {
+            snapshot
+                .lines()
+                .filter(|l| l.starts_with("sweeping:"))
+                .map(|l| {
+                    let head: Vec<&str> = l.split_whitespace().take(5).collect();
+                    (head.join(" "), l.ends_with(" claws"))
+                })
+                .collect()
+        };
+        assert!(flights(&ours).iter().all(|&(_, claws)| claws));
+        assert_eq!(flights(&theirs), flights(&ours));
+    }
+
+    /// Under a timed lock an event over in a tick leaves the wheel free,
+    /// and the rebuilt board does not invent a lock the sim never set; on
+    /// top of a timed event it keeps that event's lock, to the tick.
+    #[test]
+    fn a_timed_lock_rebuilds_as_the_sim_keeps_it() {
+        let mut board = versus_beach();
+        for _ in 0..100 {
+            board.tick_idle();
+        }
+        call(&mut board, TideEvent::FreshSand);
+        let (hello, tick) = shown(&board);
+        let theirs = board_from(&hello, &tick).expect("rebuilds").to_snapshot();
+        assert_eq!(line(&theirs, "event_cooldown:"), None, "{theirs}");
+        assert_eq!(
+            line(
+                &board.lookahead(LOOKAHEAD_SEED).to_snapshot(),
+                "event_cooldown:"
+            ),
+            None
+        );
+        call(&mut board, TideEvent::SpeedUp);
+        for _ in 0..40 {
+            board.tick_idle();
+        }
+        call(&mut board, TideEvent::CastleSwap);
+        let (hello, tick) = shown(&board);
+        let theirs = board_from(&hello, &tick).expect("rebuilds").to_snapshot();
+        let ours = board.lookahead(LOOKAHEAD_SEED).to_snapshot();
+        assert!(line(&ours, "event_cooldown:").is_some(), "{ours}");
+        assert_eq!(
+            line(&theirs, "event_cooldown:"),
+            line(&ours, "event_cooldown:")
+        );
+    }
+
+    /// A listener older than a rule leaves it out of `hello`, and the board
+    /// still rebuilds, on the rule that listener played by.
+    #[test]
+    fn a_hello_from_an_older_listener_still_rebuilds() {
+        let board = classic_arena(false, 2);
+        let (mut hello, tick) = shown(&board);
+        let rules = hello["rules"].as_object_mut().expect("rules");
+        for rule in [
+            "gull_cap",
+            "gull_turnover",
+            "golden_every",
+            "golden_value",
+            "timed_lock",
+            "sweep_flight",
+            "whole_flock",
+            "sweep_keeps_worth",
+        ] {
+            assert!(rules.remove(rule).is_some(), "{rule} was in the hello");
+        }
+        let theirs = board_from(&hello, &tick).expect("rebuilds");
+        assert_eq!(theirs.gull_cap(), board.gull_cap());
+        assert!(!theirs.timed_lock() && !theirs.sweep_flight() && !theirs.whole_flock());
     }
 
     #[test]
