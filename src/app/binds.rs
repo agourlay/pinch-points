@@ -92,7 +92,11 @@ impl SeatBinds {
                 KeyCode::Numpad4,
                 KeyCode::Numpad6,
                 KeyCode::Numpad0,
-                KeyCode::NumpadEnter,
+                // Beside Num 0, which removes. Not Num Enter, which it was:
+                // that is Enter to every menu and card, so P2 clearing
+                // their arrows in the final rush could press straight
+                // through the results card the frame it opened.
+                KeyCode::NumpadDecimal,
             ])
         }
     }
@@ -163,8 +167,10 @@ pub fn global_key_from_name(name: &str) -> Option<KeyCode> {
 }
 
 /// Keys a player may bind. Anything else is ignored during capture, which
-/// keeps Escape (cancel), Enter, the function keys, the [`GLOBAL_KEYS`] and
-/// the odd media key from being swallowed by a rebind.
+/// keeps Escape (cancel), both Enters, the function keys, the
+/// [`GLOBAL_KEYS`] and the odd media key from being swallowed by a rebind.
+/// The menus read Num Enter as Enter (`menu_ui::enter`), so a seat's key
+/// there would also confirm whatever card opened under it.
 pub fn bindable(key: KeyCode) -> bool {
     !GLOBAL_KEYS.contains(&key) && BINDABLE.contains(&key)
 }
@@ -182,7 +188,7 @@ pub(crate) fn all_bindable() -> impl Iterator<Item = KeyCode> {
 /// Every key a binding may use, the [`GLOBAL_KEYS`] among them since they
 /// sit in the alphabet; [`bindable`] takes those back out. KeyCode has no
 /// iterator of its own, so the list is written down.
-const BINDABLE: [KeyCode; 82] = [
+const BINDABLE: [KeyCode; 81] = [
     KeyCode::KeyA,
     KeyCode::KeyB,
     KeyCode::KeyC,
@@ -233,7 +239,6 @@ const BINDABLE: [KeyCode; 82] = [
     KeyCode::Numpad7,
     KeyCode::Numpad8,
     KeyCode::Numpad9,
-    KeyCode::NumpadEnter,
     KeyCode::NumpadAdd,
     KeyCode::NumpadSubtract,
     KeyCode::NumpadMultiply,
@@ -337,6 +342,12 @@ pub fn to_text(binds: &[SeatBinds; BOUND_SEATS]) -> String {
     out
 }
 
+/// Keys that were once bindable and are not any more, with the key a
+/// saved binding to one moves to. Num Enter was P2's stock clear-all;
+/// read as unknown, it would have put a player's whole P2 layout back to
+/// stock for the one key.
+const RETIRED: [(&str, KeyCode); 1] = [("NumpadEnter", KeyCode::NumpadDecimal)];
+
 /// Read one `keys_pN` line. A short line, an unknown key name, or a
 /// duplicate leaves that seat on its defaults rather than half-bound.
 pub fn parse_seat(value: &str) -> Option<SeatBinds> {
@@ -346,7 +357,12 @@ pub fn parse_seat(value: &str) -> Option<SeatBinds> {
     }
     let mut keys = [KeyCode::Space; ACTIONS];
     for (slot, name) in keys.iter_mut().zip(&names) {
-        *slot = key_from_name(name)?;
+        *slot = key_from_name(name).or_else(|| {
+            RETIRED
+                .iter()
+                .find(|(retired, _)| retired == name)
+                .map(|&(_, key)| key)
+        })?;
     }
     let mut seen: Vec<String> = keys.iter().copied().map(key_name).collect();
     seen.sort();
@@ -385,6 +401,30 @@ mod tests {
                 assert!(bindable(seat.key(action)), "{action:?}");
             }
         }
+    }
+
+    /// No key a menu reads as Enter or Escape is a seat's: pressed in
+    /// play it would also confirm or close whatever card opened under it.
+    #[test]
+    fn menu_keys_are_not_bindable() {
+        for key in crate::app::menu_ui::CLOSERS {
+            assert!(!bindable(key), "{key:?}");
+            assert_eq!(key_from_name(&key_name(key)), None, "{key:?}");
+        }
+    }
+
+    /// A layout saved when Num Enter was P2's clear-all still loads, with
+    /// that one key moved to the new stock one and the rest kept.
+    #[test]
+    fn a_saved_num_enter_moves_to_the_new_stock_key() {
+        let old = "KeyU KeyK KeyJ KeyL Numpad8 Numpad5 Numpad4 Numpad6 Numpad0 NumpadEnter";
+        let seat = parse_seat(old).expect("still loads");
+        assert_eq!(seat.key(Action::ClearAll), KeyCode::NumpadDecimal);
+        assert_eq!(seat.key(Action::MoveUp), KeyCode::KeyU, "the rest is kept");
+        assert_eq!(
+            default_binds()[1].key(Action::ClearAll),
+            KeyCode::NumpadDecimal
+        );
     }
 
     #[test]
