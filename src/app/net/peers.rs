@@ -242,6 +242,26 @@ impl PeerBook {
             .collect()
     }
 
+    /// The name a chat line from `from` goes out under: the one the peer
+    /// greeted with, whatever the line itself claims, and the claim only
+    /// for a peer that never said what to call it.
+    ///
+    /// An empty name is the beach's own voice (it is what announces a
+    /// called event), so a peer that has a name may not drop it and speak
+    /// as the room, nor wear somebody else's. Only the host vets: a spoke
+    /// takes the hub's line as it stands. Refusing a line that still comes
+    /// out nameless is the caller's, on the host.
+    pub fn vouch(
+        &self,
+        from: usize,
+        claimed: crate::transport::WireName,
+    ) -> crate::transport::WireName {
+        match self.get(from).map_or("", |peer| peer.name.as_str()) {
+            "" => claimed,
+            known => crate::transport::wire_name(known),
+        }
+    }
+
     /// How many peers the launch plan covers. Peers are registered in
     /// arrival order and the plan is dealt to everyone at the table when
     /// the round begins, so the planned peers are the leading run and

@@ -113,13 +113,9 @@ impl OnlineSession {
         // and a spoke takes the vetted line as it stands: a joiner that
         // re-applied this would stamp the host's name onto the beach's own
         // voice, which is the one line that is supposed to have none.
-        let known = match host {
-            true => self.peers.get(from).map_or("", |peer| peer.name.as_str()),
-            false => "",
-        };
-        let name = match known.is_empty() {
-            false => crate::transport::wire_name(known),
-            true => name,
+        let name = match host {
+            true => self.peers.vouch(from, name),
+            false => name,
         };
         let (who, line) = (name_from_wire(&name), chat_from_wire(&text));
         if line.is_empty() {

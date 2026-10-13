@@ -543,11 +543,7 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             // written down yet: a tick at most, and the same tick for a
             // watcher as for a player, since both greet by name.
             NetMsg::Chat { name, text } => {
-                let known = peers.get(from).map_or("", |peer| peer.name.as_str());
-                let who = match known.is_empty() {
-                    false => crate::transport::wire_name(known),
-                    true => name,
-                };
+                let who = peers.vouch(from, name);
                 if !crate::transport::name_from_wire(&who).is_empty() {
                     picked.said.push((from, who, text));
                 }
