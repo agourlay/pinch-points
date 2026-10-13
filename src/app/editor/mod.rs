@@ -4,15 +4,21 @@
 //! text level format.
 
 mod brush;
+mod naming;
 mod palette;
+mod share;
+mod shelf;
 mod validate;
 
 pub use brush::Brush;
+pub use naming::editor_naming;
 pub use palette::{EditorUi, spawn_editor_ui, update_editor_palette};
+pub use shelf::{custom_dir, legacy_save_path};
 pub use validate::poll_solver;
 
 use brush::paint;
-use validate::{Validation, arena_report, orphan_warning, start_validation};
+use naming::type_a_name;
+use validate::{Validation, arena_report, start_validation};
 
 use crate::app::cursor::Cursor;
 use crate::app::i18n::fill;
@@ -73,17 +79,6 @@ impl Offer {
     }
 }
 
-/// Where the editor used to put its one and only level. Still read, so a
-/// level saved by an older build is still there; nothing writes it now.
-pub fn legacy_save_path() -> std::path::PathBuf {
-    crate::app::paths::data_dir().join("levels/custom.txt")
-}
-
-/// The shelf every saved level goes on, one file each.
-pub fn custom_dir() -> std::path::PathBuf {
-    crate::app::paths::data_dir().join("levels/custom")
-}
-
 /// Whether anything has been built on this board yet.
 ///
 /// Asked by comparing the level here against the one a fresh board of the
@@ -97,70 +92,6 @@ fn has_work(state: &EditorState, board: &Board) -> bool {
     // seed, and a blank board with a different one reads as a difference.
     let blank = Board::new(board.width(), board.height(), board.seed());
     level_here(state, board, "x").to_text() != level_here(state, &blank, "x").to_text()
-}
-
-/// Whether no level is filed under this path yet. Read before a write,
-/// which would make it true either way.
-fn is_new_here(path: &std::path::Path) -> bool {
-    !path.exists()
-}
-
-/// Whether the level filed at `path` goes by `name`, which makes it this
-/// level and not another: levels are known by their name, progress and
-/// all. A level pasted back in and saved again is its own file's owner,
-/// and asking twice before writing it reads as somebody else's.
-fn files_level_named(path: &std::path::Path, name: &str) -> bool {
-    std::fs::read_to_string(path).is_ok_and(|text| {
-        text.lines()
-            .find_map(|line| line.strip_prefix("name:"))
-            .is_some_and(|filed| filed.trim() == name)
-    })
-}
-
-/// Write a level out, and say whether that brought it into being.
-///
-/// The answer is read before the write, which would make it true either
-/// way. The trophies over this count levels, and they say so: "save 10
-/// levels in the editor". Counting every F2 counted keystrokes instead,
-/// so ten presses on one level took all three of them.
-fn write_level(path: &std::path::Path, text: &str) -> std::io::Result<bool> {
-    let is_new = !path.exists();
-    crate::app::paths::write_atomic(path, text)?;
-    Ok(is_new)
-}
-
-/// Where a build before 0.8.1 filed a level called `name`: its file names
-/// kept only ASCII letters and digits, so "Café" went to `caf.txt` and a
-/// Russian name to `level.txt`. Read only to tidy such a file away once
-/// the level is saved under its whole name (see the F2 arm), or the shelf
-/// would list the level twice.
-fn ascii_era_path(name: &str) -> std::path::PathBuf {
-    let mut stem = String::new();
-    for ch in name.chars().take(40) {
-        if ch.is_ascii_alphanumeric() {
-            stem.push(ch.to_ascii_lowercase());
-        } else if !stem.ends_with('-') {
-            stem.push('-');
-        }
-    }
-    let stem = match stem.trim_matches('-') {
-        "" => "level",
-        trimmed => trimmed,
-    };
-    custom_dir().join(format!("{stem}.txt"))
-}
-
-/// Where a level called `name` is filed. One file per name, so saving is
-/// keeping rather than replacing.
-///
-/// The name also has to survive being a file name, and every level is
-/// identified by its name (that is what progress is keyed on), so two
-/// levels sharing one would share their gold star.
-pub fn save_path(name: &str) -> std::path::PathBuf {
-    custom_dir().join(format!(
-        "{}.txt",
-        crate::app::paths::safe_stem(name, 40, "level")
-    ))
 }
 
 #[derive(Resource, Default)]
@@ -226,64 +157,6 @@ impl EditorState {
     }
 }
 
-/// Type the level's name. Reads the text a keystroke produces rather than
-/// the key code, so the player's own layout and their shift key decide
-/// what a keystroke means.
-fn type_a_name(
-    typed: &mut MessageReader<bevy::input::keyboard::KeyboardInput>,
-    keys: &ButtonInput<KeyCode>,
-    state: &mut EditorState,
-    tr: &crate::app::i18n::Tr,
-) {
-    use crate::app::typing::{Keystroke, keystrokes};
-    let ends = [KeyCode::Enter, KeyCode::NumpadEnter, KeyCode::Escape];
-    for stroke in keystrokes(typed, &ends) {
-        match stroke {
-            Keystroke::Erase => {
-                state.name.pop();
-            }
-            // A name is one line and has to fit a file name and a stage
-            // caption, so it is bounded here rather than at save.
-            Keystroke::Char(ch) if state.name.chars().count() < NAME_MAX => state.name.push(ch),
-            // The finish is decided below from just_pressed, as one branch
-            // for keyboard and pad alike.
-            Keystroke::Char(_) | Keystroke::Done(_) => {}
-        }
-    }
-    if crate::app::menu_ui::enter(keys) || keys.just_pressed(KeyCode::Escape) {
-        state.name = tidy_name(&state.name, tr);
-        state.mode = Mode::JustNamed;
-        state.feedback.clear();
-    }
-}
-
-/// How long a level's name may be.
-const NAME_MAX: usize = 28;
-
-/// A name as the editor keeps one, however it arrived: trimmed, no longer
-/// than [`NAME_MAX`], and the default name when nothing is left.
-///
-/// Typing bounds a name key by key, but a pasted level brings whatever its
-/// text says, and the level format takes an empty name as readily as a
-/// long one. An empty one is a level called nothing, and a long one went
-/// past the cap to where saving cuts a file name short, so two long names
-/// alike up to there shared one file.
-fn tidy_name(raw: &str, tr: &crate::app::i18n::Tr) -> String {
-    let capped: String = raw.trim().chars().take(NAME_MAX).collect();
-    match capped.trim_end() {
-        "" => tr.ed_default_name.to_string(),
-        name => name.to_string(),
-    }
-}
-
-/// True while the editor is spelling out a name, which is when the board
-/// keys mean letters. A run condition rather than an early return, because
-/// the cursor is walked by a system of its own: typing "Wade" otherwise
-/// walks the cursor up and then left across the beach.
-pub fn editor_naming(state: Res<EditorState>) -> bool {
-    state.is_naming()
-}
-
 pub fn enter_editor(
     mut sim: ResMut<Sim>,
     settings: Res<GameSettings>,
@@ -341,17 +214,10 @@ pub struct EditorNews<'w> {
 /// it would stand off the board until it was moved. And a check still
 /// running is dropped, because it was handed the board that went and would
 /// answer "solvable" or not over this one.
-fn replace_board(
-    board: Board,
-    sim: &mut Sim,
-    state: &mut EditorState,
-    commands: &mut Commands,
-    sprites: &BoardSprites,
-    cursors: &mut Query<(&mut Cursor, &mut Transform)>,
-) {
-    swap_board(board, sim, state, commands, sprites);
+fn replace_board(board: Board, sim: &mut Sim, state: &mut EditorState, swap: &mut BoardSwap) {
+    swap_board(board, sim, state, &mut swap.commands, &swap.sprites);
     state.solver = None;
-    crate::app::cursor::center_on(&sim.0, cursors);
+    crate::app::cursor::center_on(&sim.0, &mut swap.cursors);
 }
 
 /// Put `board` on the sand in place of the one there, which comes back.
@@ -387,14 +253,9 @@ pub fn editor_input(
     mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
     settings: Res<GameSettings>,
     bench: Workbench,
-    swap: BoardSwap,
+    mut swap: BoardSwap,
 ) {
     let Workbench { mut sim, mut state } = bench;
-    let BoardSwap {
-        mut commands,
-        sprites,
-        mut cursors,
-    } = swap;
     // Naming swallows the keyboard: every letter is a letter, not a brush.
     if state.is_naming() {
         type_a_name(&mut typed, &keys, &mut state, settings.tr());
@@ -434,14 +295,7 @@ pub fn editor_input(
             return;
         }
         state.offer = None;
-        replace_board(
-            Board::new(w, h, 0xED17),
-            &mut sim,
-            &mut state,
-            &mut commands,
-            &sprites,
-            &mut cursors,
-        );
+        replace_board(Board::new(w, h, 0xED17), &mut sim, &mut state, &mut swap);
         state.feedback = fill(
             tr.ed_resized,
             &[("w", &w.to_string()), ("h", &h.to_string())],
@@ -453,7 +307,7 @@ pub fn editor_input(
         state.feedback = settings.tr().ed_naming.to_string();
         return;
     }
-    let Some((cursor, _)) = cursors.iter().next() else {
+    let Some((cursor, _)) = swap.cursors.iter().next() else {
         return;
     };
     let (x, y) = (cursor.x, cursor.y);
@@ -502,50 +356,6 @@ pub fn editor_input(
     }
 }
 
-/// A level out of what was on the clipboard, or what to say about why not.
-///
-/// Takes the pasted code rather than the clipboard itself, so the three
-/// ways this fails (nothing readable there, a code of the wrong sort, a
-/// level this build cannot parse) each get their own answer and their own
-/// test.
-fn level_from(
-    pasted: Option<(crate::share::Kind, Vec<u8>)>,
-    tr: &crate::app::i18n::Tr,
-) -> Result<Level, String> {
-    let text =
-        crate::app::codes::payload_text(pasted, tr, crate::share::Kind::Level, tr.code_level_bad)?;
-    Level::parse(&text).map_err(|e| fill(tr.code_level_bad, &[("e", &e)]))
-}
-
-/// Whether a pasted level came from somebody else, which is what the
-/// trophy for taking a code is about: "open a level from someone else's
-/// code". Not when it is the level already on the bench, which is F3 and
-/// then F4, and not when it is one of the player's own saved levels coming
-/// back to them. Compared as the text a file would hold, name and all, so
-/// a friend's edit of your level, or your level under their name, is
-/// theirs.
-fn is_from_elsewhere(pasted: &Level, bench: &Level, shelf: &[Level]) -> bool {
-    let text = pasted.to_text();
-    text != bench.to_text() && shelf.iter().all(|own| own.to_text() != text)
-}
-
-/// Take on what a pasted level says about itself: its signpost grant, its
-/// kind and its name.
-///
-/// The kind, because opening somebody's beach and saving it back as a
-/// stage is not what either of you meant. The name, because the one on the
-/// bench belongs to the level the paste replaced, and F2 filed the pasted
-/// board over the author's own file under it, without a word when this
-/// session had saved it. And that name is taken back out of the ones this
-/// session has saved under, so saving over a file already called that
-/// says so.
-fn take_level(state: &mut EditorState, level: &Level, tr: &crate::app::i18n::Tr) {
-    state.posts = level.posts;
-    state.kind = level.kind;
-    state.name = tidy_name(&level.name, tr);
-    state.mine.remove(&state.name);
-}
-
 /// The level as it stands on the sand, under the name and the kind the
 /// author has chosen. Every command that turns the board into a level goes
 /// through here, so saving, sharing and checking cannot disagree about what
@@ -590,7 +400,7 @@ pub fn editor_commands(
     mut clipboard: ResMut<Clipboard>,
     news: EditorNews,
     mut next_screen: ResMut<NextState<Screen>>,
-    swap: BoardSwap,
+    mut swap: BoardSwap,
 ) {
     let Workbench { mut sim, mut state } = bench;
     let EditorNews {
@@ -598,75 +408,23 @@ pub fn editor_commands(
         mut shared,
         mut taken,
     } = news;
-    let BoardSwap {
-        mut commands,
-        sprites,
-        mut cursors,
-    } = swap;
     if matches!(state.mode, Mode::JustNamed) {
         state.mode = Mode::Painting;
         return;
     }
     let tr = settings.tr();
-    // F3/F4: the level as a share code, and back. A level is a couple of
-    // hundred characters, which is a thing you can put in a message - where
-    // "save it and send them the file" was never really sharing.
     if keys.just_pressed(KeyCode::F3) {
-        let level = level_here(&state, &sim.0, &state.name);
-        let (feedback, took) = crate::app::codes::copy_counted(
+        share::copy_level(&mut state, &sim.0, &mut clipboard, tr, &mut shared);
+    }
+    if keys.just_pressed(KeyCode::F4) {
+        share::paste_level(
+            &mut state,
+            &mut sim,
             &mut clipboard,
             tr,
-            crate::share::Kind::Level,
-            level.to_text().as_bytes(),
-            tr.code_copied,
+            &mut taken,
+            &mut swap,
         );
-        state.feedback = feedback;
-        if took {
-            shared.write(crate::app::CodeShared);
-        }
-    }
-    // A paste throws the board away as surely as F5 does, so once there is
-    // a level here it asks twice the same way.
-    if keys.just_pressed(KeyCode::F4) {
-        match level_from(crate::app::codes::paste(&mut clipboard), tr) {
-            Ok(_) if state.offer != Some(Offer::Paste) && has_work(&state, &sim.0) => {
-                state.offer = Some(Offer::Paste);
-                state.feedback = tr.ed_paste_confirm.into();
-            }
-            Ok(level) => {
-                state.offer = None;
-                let bench = level_here(&state, &sim.0, &state.name);
-                let shelf = crate::app::campaign::load_custom_levels();
-                if is_from_elsewhere(&level, &bench, &shelf) {
-                    taken.write(crate::app::CodeTaken);
-                }
-                take_level(&mut state, &level, tr);
-                // A pasted level is any size, so it is a board swap in
-                // full, sprites and cursor included.
-                replace_board(
-                    level.board(),
-                    &mut sim,
-                    &mut state,
-                    &mut commands,
-                    &sprites,
-                    &mut cursors,
-                );
-                // A pasted level is the one board here that nobody vetted:
-                // authored elsewhere, carried through a chat message, and
-                // dropped straight onto the sand. Checked on the way in,
-                // which for a beach is a count of its castles.
-                if level.kind == LevelKind::Arena {
-                    state.feedback = arena_report(&sim.0, tr);
-                } else {
-                    start_validation(&mut state, level);
-                    state.feedback = tr.code_level_checking.into();
-                }
-            }
-            Err(complaint) => {
-                state.offer = None;
-                state.feedback = complaint;
-            }
-        }
     }
     let board = &mut sim.0;
     // The signpost inventory is a puzzle's rule and nothing else: on a
@@ -729,47 +487,7 @@ pub fn editor_commands(
         };
     }
     if keys.just_pressed(KeyCode::F2) {
-        let level = level_here(&state, board, &state.name);
-        let path = save_path(&state.name);
-        let stranger = !is_new_here(&path)
-            && !state.mine.contains(&state.name)
-            && !files_level_named(&path, &state.name);
-        // A file this session did not write is somebody else's level until
-        // the author says otherwise: the first press only says whose it
-        // is, and the second replaces it. Written at once, the note that
-        // it had been replaced came after the level was already gone.
-        if stranger && state.offer != Some(Offer::Overwrite) {
-            state.offer = Some(Offer::Overwrite);
-            state.feedback = tr.ed_save_taken.into();
-        } else {
-            state.offer = None;
-            state.feedback = match write_level(&path, &level.to_text()) {
-                Ok(is_new) => {
-                    // The same level under the name an older build cut it
-                    // to: one level, so one file, the new one. Only when
-                    // that file really holds a level of this name, as
-                    // `level.txt` may well hold another.
-                    let legacy = ascii_era_path(&state.name);
-                    let moved = legacy != path && files_level_named(&legacy, &state.name);
-                    if moved {
-                        let _ = std::fs::remove_file(&legacy);
-                    }
-                    if is_new && !moved {
-                        saved.write(crate::app::LevelSaved);
-                    }
-                    let named = state.name.clone();
-                    state.mine.insert(named);
-                    let filed = fill(tr.ed_saved_to, &[("path", &path.display().to_string())]);
-                    let orphans = orphan_warning(&state, &level, tr);
-                    let notes = [stranger.then_some(tr.ed_saved_over), orphans.as_deref()];
-                    notes
-                        .iter()
-                        .flatten()
-                        .fold(filed, |line, note| format!("{line} - {note}"))
-                }
-                Err(e) => fill(tr.ed_save_failed, &[("e", &e.to_string())]),
-            };
-        }
+        shelf::save_level(&mut state, board, tr, &mut saved);
     }
     if crate::app::menu_ui::enter(&keys) {
         // The board being edited is put aside whole, to come back on Esc,
@@ -780,7 +498,13 @@ pub fn editor_commands(
         // seed rolls them, which is not how they stand on a board that
         // placed and erased a few.
         let played = level_here(&state, board, &state.name).board();
-        let snapshot = swap_board(played, &mut sim, &mut state, &mut commands, &sprites);
+        let snapshot = swap_board(
+            played,
+            &mut sim,
+            &mut state,
+            &mut swap.commands,
+            &swap.sprites,
+        );
         state.mode = Mode::Testing(Box::new(snapshot));
         state.feedback = tr.ed_playtest_prompt.into();
     }
@@ -869,24 +593,12 @@ pub fn rebuild_statics(
 
 #[cfg(test)]
 mod tests {
+    use super::shelf::{ascii_era_path, save_path};
     use super::*;
     use crate::sim::{CrabKind, Direction, Handedness, TileKind};
 
     fn sand() -> Board {
         Board::new(6, 5, 3)
-    }
-
-    /// Two levels with different names must not land on the same file:
-    /// progress is filed under the name, so sharing a file means sharing a
-    /// gold star. The character rule itself lives with `safe_stem`.
-    #[test]
-    fn different_names_are_different_files() {
-        assert_ne!(save_path("First Beach"), save_path("Second Beach"));
-        assert!(
-            save_path("Gull Alley").ends_with("gull-alley.txt"),
-            "{:?}",
-            save_path("Gull Alley")
-        );
     }
 
     /// The editor used to name every level "Custom", so two of them shared
@@ -988,38 +700,6 @@ mod tests {
         let back = Level::parse(&arena.to_text()).expect("round trip");
         assert_eq!(back.kind, LevelKind::Arena);
         assert_eq!(back.board().signpost_rule(), arena.board().signpost_rule());
-    }
-
-    /// A level counts once, when it comes into being. The trophies over
-    /// this say "save 10 levels", and every F2 used to raise one, so ten
-    /// presses on a single level took all three of them.
-    #[test]
-    fn saving_the_same_level_again_does_not_build_a_second_one() {
-        let dir = std::env::temp_dir().join(format!("pinch-built-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("a directory to save into");
-        let path = dir.join("my-beach.txt");
-
-        assert!(write_level(&path, "one").expect("wrote"), "a new level");
-        assert!(
-            !write_level(&path, "two").expect("wrote"),
-            "the same level again"
-        );
-        assert!(
-            !write_level(&path, "three").expect("wrote"),
-            "and again, however long the key is held"
-        );
-        assert_eq!(
-            std::fs::read_to_string(&path).expect("reads"),
-            "three",
-            "every save still lands; only the counting stops"
-        );
-
-        // A level deleted and rebuilt is a level built again.
-        std::fs::remove_file(&path).expect("removed");
-        assert!(write_level(&path, "four").expect("wrote"), "built afresh");
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// F5 throws the beach away, so once there is one it asks twice. One
@@ -1369,28 +1049,6 @@ mod tests {
         assert!(app.world().resource::<EditorState>().solver.is_none());
     }
 
-    /// A pasted name is kept the way a typed one is: trimmed, capped, and
-    /// the default when there is nothing to it.
-    #[test]
-    fn a_pasted_name_is_tidied_like_a_typed_one() {
-        let tr = &crate::app::i18n::EN;
-        let named = |name: &str| {
-            let mut state = EditorState::default();
-            let mut level = Level::from_board("x", 3, sand());
-            level.name = name.into();
-            take_level(&mut state, &level, tr);
-            state.name
-        };
-        assert_eq!(named("  Gull Alley "), "Gull Alley");
-        assert_eq!(named(""), tr.ed_default_name);
-        assert_eq!(named("   "), tr.ed_default_name);
-        let long = named(&"\u{e9}".repeat(NAME_MAX + 12));
-        assert_eq!(long.chars().count(), NAME_MAX, "cut on characters");
-        // A cut landing on a space leaves no trailing space behind it.
-        let spaced = format!("{} tail", "a".repeat(NAME_MAX - 1));
-        assert_eq!(named(&spaced), "a".repeat(NAME_MAX - 1));
-    }
-
     /// The flock dial steps from whatever board is on the sand, so a board
     /// a paste or a resize swapped in starts the dial from its own period
     /// rather than from where the last board's left it.
@@ -1400,47 +1058,6 @@ mod tests {
         assert_eq!(next_gull_period(GULL_PERIODS[1]), GULL_PERIODS[2]);
         assert_eq!(next_gull_period(GULL_PERIODS[3]), 0, "and round to off");
         assert_eq!(next_gull_period(333), GULL_PERIODS[1], "off the dial");
-    }
-
-    /// The trophy for taking a code is about somebody else's level, so the
-    /// one already on the bench (F3 then F4) and the player's own saved
-    /// levels coming back to them do not count. An edit of theirs does.
-    #[test]
-    fn only_a_level_from_elsewhere_counts_as_taken() {
-        let mut board = sand();
-        board.set_tile(0, 0, TileKind::Castle(0));
-        let mine = Level::from_board("Mine", 3, board.clone());
-        board.set_tile(2, 2, TileKind::Rock);
-        let bench = Level::from_board("Bench", 3, board.clone());
-        let shelf = [mine.clone()];
-        assert!(!is_from_elsewhere(&bench, &bench, &shelf), "F3 then F4");
-        assert!(!is_from_elsewhere(&mine, &bench, &shelf), "my own, back");
-        board.set_tile(3, 3, TileKind::Rock);
-        let theirs = Level::from_board("Mine", 3, board);
-        assert!(
-            is_from_elsewhere(&theirs, &bench, &shelf),
-            "their edit of mine"
-        );
-    }
-
-    /// A pasted level brings its name, so the next F2 files it under that
-    /// and not over the level it replaced, and saving over a file already
-    /// called that says so even when this session saved one under it.
-    #[test]
-    fn a_pasted_level_brings_its_name() {
-        let mut state = EditorState {
-            posts: 3,
-            name: "My Beach".into(),
-            ..EditorState::default()
-        };
-        state.mine.insert("My Beach".into());
-        state.mine.insert("Gull Alley".into());
-        let pasted = Level::from_board("Gull Alley", 5, sand()).with_kind(LevelKind::Arena);
-        take_level(&mut state, &pasted, &crate::app::i18n::EN);
-        assert_eq!(state.name, "Gull Alley");
-        assert_eq!((state.posts, state.kind), (5, LevelKind::Arena));
-        assert!(!state.mine.contains("Gull Alley"), "a save over it is said");
-        assert!(state.mine.contains("My Beach"), "the rest are left alone");
     }
 
     /// The Enter that commits a name must not also start a playtest: the
@@ -1518,49 +1135,5 @@ mod tests {
             app.world().resource::<EditorState>().kind,
             LevelKind::Puzzle
         );
-    }
-
-    /// A level authored here survives being carried as a share code: out
-    /// through the level format, through the codec, and back to a board with
-    /// the same walls, tiles and signpost budget on it.
-    #[test]
-    fn a_level_travels_as_a_code_and_comes_back() {
-        let mut board = sand();
-        board.set_tile(2, 2, TileKind::Rock);
-        board.set_tile(4, 3, TileKind::Castle(0));
-        board.set_wall(1, 1, Direction::Right, true);
-        board.set_wrap(true);
-        let level = Level::from_board("Custom", 5, board.clone());
-
-        let code = crate::share::encode(crate::share::Kind::Level, level.to_text().as_bytes());
-        let back = level_from(crate::share::decode(&code), &crate::app::i18n::EN)
-            .expect("our own level reads back");
-
-        assert_eq!(back.posts, 5, "the signpost budget travels with it");
-        let rebuilt = back.board();
-        assert_eq!(rebuilt.tile_at(2, 2), TileKind::Rock);
-        assert_eq!(rebuilt.tile_at(4, 3), TileKind::Castle(0));
-        assert!(rebuilt.wall_at(1, 1, Direction::Right));
-        assert!(rebuilt.wrap(), "an open-ocean level stays open");
-    }
-
-    /// The three ways a paste is not a level, each answered its own way.
-    #[test]
-    fn what_is_not_a_level_says_which_way_it_is_not() {
-        let tr = &crate::app::i18n::EN;
-        assert_eq!(
-            level_from(None, tr).err(),
-            Some(tr.code_none_pasted.to_string())
-        );
-        // A real code, for a round rather than a level.
-        let round = crate::share::encode(crate::share::Kind::Round, b"replay-v1\n");
-        let complaint = level_from(crate::share::decode(&round), tr).expect_err("not a level");
-        assert!(
-            complaint.contains("a round") && complaint.contains("a level"),
-            "{complaint}"
-        );
-        // A level code carrying something that is not a level.
-        let junk = crate::share::encode(crate::share::Kind::Level, b"not a level at all");
-        assert!(level_from(crate::share::decode(&junk), tr).is_err());
     }
 }
