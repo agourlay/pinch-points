@@ -20,13 +20,9 @@ pub(crate) fn fill_bot_actions(
         controllers.0.len(),
         "a seat with no controller"
     );
-    for (seat, action) in actions.iter_mut().enumerate() {
-        if let Some(level) = controllers.ai(seat)
-            && matches!(action, PlayerAction::None)
-        {
-            *action = bot_action(board, seat as u8, level);
-        }
-    }
+    // A table nobody has left: no seat changes hands, so neither the
+    // frame nor the level for a departed seat is ever read.
+    fill_online_bots(board, controllers, &[], BotLevel::default(), 0, actions);
 }
 
 /// The same thing for a round being played over the wire, where a seat can
@@ -107,9 +103,7 @@ pub(in crate::app) fn advance_sim(
                 break;
             };
             *idx += 1;
-            let before = awards::Reading::of(&sim.0);
-            sim.0.tick(&actions);
-            tally.observe(before, &sim.0, &actions);
+            play_tick(&mut sim.0, &actions, &mut tally, None);
         }
         return;
     }
@@ -179,9 +173,7 @@ pub(in crate::app) fn advance_sim(
                     &mut frame_actions,
                 );
                 bots.before_frame(at, sim_board);
-                let before = awards::Reading::of(sim_board);
-                sim_board.tick(&frame_actions);
-                tally.observe(before, sim_board, &frame_actions);
+                play_tick(sim_board, &frame_actions, tally, recording.as_mut());
                 bots.after_frame(at, sim_board);
                 // The board is at the lockstep's frame: the hash sent for a
                 // frame is this board's, and a late watcher is handed this
@@ -193,13 +185,6 @@ pub(in crate::app) fn advance_sim(
                     sim_board.ticks(),
                     net.session.frame()
                 );
-                if let Some(replay) = recording {
-                    replay.record(frame_actions);
-                    debug_assert!(
-                        sim_board.round_over() || replay.inputs.len() as u64 == sim_board.ticks(),
-                        "a recording out of step with its round"
-                    );
-                }
                 net.after_frame(sim_board.state_hash());
                 advanced = true;
             }
@@ -251,19 +236,31 @@ pub(in crate::app) fn advance_sim(
     // The bots' seats: the newest reply each has in hand, through its
     // hand on the beach, then the next tick out to them after this one.
     let committed = drivers.commit(&sim.0, &mut actions);
-    let before = awards::Reading::of(&sim.0);
-    sim.0.tick(&actions);
-    tally.observe(before, &sim.0, &actions);
-    if let Some(replay) = &mut recorder.0 {
-        replay.record(actions);
-        // One input a tick from the first, or the replay plays out a
-        // different round: playback feeds them to a fresh board in order.
-        debug_assert!(
-            sim.0.round_over() || replay.inputs.len() as u64 == sim.0.ticks(),
-            "a recording out of step with its round"
-        );
-    }
+    play_tick(&mut sim.0, &actions, &mut tally, recorder.0.as_mut());
     // After the recording, which is the replay kept for the bots once the
     // tide is in.
     drivers.after(&sim.0, committed, recorder.0.as_ref());
+}
+
+/// One tick of a round, however its actions arrived: the board steps, the
+/// round's tally sees the step, and a round being recorded keeps the
+/// actions.
+fn play_tick(
+    board: &mut Board,
+    actions: &[PlayerAction; MAX_PLAYERS],
+    tally: &mut awards::RoundTally,
+    recording: Option<&mut Replay>,
+) {
+    let before = awards::Reading::of(board);
+    board.tick(actions);
+    tally.observe(before, board, actions);
+    if let Some(replay) = recording {
+        replay.record(*actions);
+        // One input a tick from the first, or the replay plays out a
+        // different round: playback feeds them to a fresh board in order.
+        debug_assert!(
+            board.round_over() || replay.inputs.len() as u64 == board.ticks(),
+            "a recording out of step with its round"
+        );
+    }
 }
