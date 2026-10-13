@@ -24,9 +24,10 @@ fn heaving(board: &crate::sim::Board, remaining: u64) -> bool {
     // A board with no clock has no closing stretch to be in. Both callers
     // check that first, so this changes nothing today, but the question is
     // "is the tide coming in" and with no tide the answer is no.
-    board.round_length().is_some()
+    board.rules().round_length.is_some()
         && !board.round_over()
-        && remaining <= crate::app::hud::urgency_band(board.round_length(), crate::sim::SURGE_TICKS)
+        && remaining
+            <= crate::app::hud::urgency_band(board.rules().round_length, crate::sim::SURGE_TICKS)
 }
 
 /// How far the water reaches out from the sand's edge, in pixels.
@@ -179,7 +180,7 @@ mod tests {
 
     fn timed(round: u32, elapsed: u32) -> Board {
         let mut board = Board::new(9, 7, 1);
-        board.set_round_length(Some(round));
+        board.rules_mut().round_length = Some(round);
         for _ in 0..elapsed {
             board.tick_idle();
         }

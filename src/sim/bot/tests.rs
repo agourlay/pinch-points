@@ -157,7 +157,7 @@ fn a_jackpot_is_worth_what_the_board_pays() {
     let target = |golden_every: u32| {
         let mut board = Board::new(15, 11, 5);
         board.set_tile(7, 5, TileKind::Castle(1));
-        board.set_golden_every(golden_every);
+        board.rules_mut().golden_every = golden_every;
         board.spawn_crab(14, 1, Direction::Up, Handedness::Left, CrabKind::Golden);
         board.spawn_crab(3, 3, Direction::Up, Handedness::Left, CrabKind::Molting);
         let castle = castle_of(&board, 1).expect("a castle");

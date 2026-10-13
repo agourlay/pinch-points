@@ -322,26 +322,47 @@ mod tests {
             ),
             ("set_wrap", Box::new(|b| b.set_wrap(true))),
             ("set_score", Box::new(|b| b.set_score(0, 7))),
-            ("set_gull_period", Box::new(|b| b.set_gull_period(99))),
-            ("set_gull_cap", Box::new(|b| b.set_gull_cap(9))),
-            ("set_gull_turnover", Box::new(|b| b.set_gull_turnover(true))),
-            ("set_golden_every", Box::new(|b| b.set_golden_every(600))),
-            ("set_timed_lock", Box::new(|b| b.set_timed_lock(true))),
-            ("set_sweep_flight", Box::new(|b| b.set_sweep_flight(true))),
-            ("set_whole_flock", Box::new(|b| b.set_whole_flock(true))),
             (
-                "set_sweep_keeps_worth",
-                Box::new(|b| b.set_sweep_keeps_worth(true)),
+                "rules.gull_period",
+                Box::new(|b| b.rules_mut().gull_period = 99),
+            ),
+            ("rules.gull_cap", Box::new(|b| b.rules_mut().gull_cap = 9)),
+            (
+                "rules.gull_turnover",
+                Box::new(|b| b.rules_mut().gull_turnover = true),
             ),
             (
-                "set_round_length",
-                Box::new(|b| b.set_round_length(Some(500))),
+                "rules.golden_every",
+                Box::new(|b| b.rules_mut().golden_every = 600),
+            ),
+            (
+                "rules.timed_lock",
+                Box::new(|b| b.rules_mut().timed_lock = true),
+            ),
+            (
+                "rules.sweep_flight",
+                Box::new(|b| b.rules_mut().sweep_flight = true),
+            ),
+            (
+                "rules.whole_flock",
+                Box::new(|b| b.rules_mut().whole_flock = true),
+            ),
+            (
+                "rules.sweep_keeps_worth",
+                Box::new(|b| b.rules_mut().sweep_keeps_worth = true),
+            ),
+            (
+                "rules.round_length",
+                Box::new(|b| b.rules_mut().round_length = Some(500)),
             ),
             (
                 "set_events_enabled",
                 Box::new(|b| b.set_events_enabled(true)),
             ),
-            ("set_castle_raids", Box::new(|b| b.set_castle_raids(false))),
+            (
+                "rules.castle_raids",
+                Box::new(|b| b.rules_mut().castle_raids = false),
+            ),
             (
                 "set_signpost_rule",
                 Box::new(|b| b.set_signpost_rule(5, CapPolicy::Reject)),

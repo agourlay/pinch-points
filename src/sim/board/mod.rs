@@ -247,6 +247,7 @@ pub struct Rules {
     pub signpost_cap: u8,
     pub cap_policy: CapPolicy,
     /// Auto-spawn a gull at a PRNG edge tile every this many ticks; 0 = off.
+    /// Doubled during the final-scramble surge of a timed round.
     pub gull_period: u32,
     /// How many gulls the ambient spawner allows on the beach at once.
     /// [`GULL_CAP`] unless a versus beach bigger than the classic one asked
@@ -342,6 +343,29 @@ pub struct Rules {
     pub castle_raids: bool,
 }
 
+/// The rules of a board nobody has set any on: the versus signpost rule,
+/// no ambient gulls, an untimed round, gulls free to raid, and every rule
+/// that came in later off, which is what a file that does not name it
+/// keeps.
+impl Default for Rules {
+    fn default() -> Rules {
+        Rules {
+            signpost_cap: MAX_SIGNPOSTS_PER_PLAYER as u8,
+            cap_policy: CapPolicy::Evict,
+            gull_period: 0,
+            gull_cap: GULL_CAP as u8,
+            gull_turnover: false,
+            golden_every: 0,
+            timed_lock: false,
+            sweep_flight: false,
+            whole_flock: false,
+            sweep_keeps_worth: false,
+            round_length: None,
+            castle_raids: true,
+        }
+    }
+}
+
 /// The entire game state. No engine types, no floats, no hash maps: every
 /// tick is a pure function of prior state plus one action per seat, so the
 /// same seed and input list replays bit-identically on any platform.
@@ -410,20 +434,7 @@ impl Board {
             },
             seed,
             signposts: vec![None; w * h],
-            rules: Rules {
-                signpost_cap: MAX_SIGNPOSTS_PER_PLAYER as u8,
-                cap_policy: CapPolicy::Evict,
-                gull_period: 0,
-                gull_cap: GULL_CAP as u8,
-                gull_turnover: false,
-                golden_every: 0,
-                timed_lock: false,
-                sweep_flight: false,
-                whole_flock: false,
-                sweep_keeps_worth: false,
-                round_length: None,
-                castle_raids: true,
-            },
+            rules: Rules::default(),
             crabs: Vec::new(),
             scores: [0; MAX_PLAYERS],
             rng: Pcg32::new(seed, 0x0005_eaba_55ed),
@@ -556,13 +567,15 @@ impl Board {
 
     // --- the player's one verb -------------------------------------------
 
-    /// Let gulls into the castles, or keep them out. See `castle_raids`.
-    pub fn set_castle_raids(&mut self, raids: bool) {
-        self.rules.castle_raids = raids;
+    /// The rules this board plays by.
+    pub fn rules(&self) -> &Rules {
+        &self.rules
     }
 
-    pub fn castle_raids(&self) -> bool {
-        self.rules.castle_raids
+    /// The rules to change, before the first tick: a level, a lobby or a
+    /// test setting up the beach it plays on.
+    pub fn rules_mut(&mut self) -> &mut Rules {
+        &mut self.rules
     }
 
     /// Change the signpost cap and what happens at it. Versus keeps the
@@ -570,52 +583,6 @@ impl Board {
     pub fn set_signpost_rule(&mut self, cap: u8, policy: CapPolicy) {
         self.rules.signpost_cap = cap;
         self.rules.cap_policy = policy;
-    }
-
-    /// Auto-spawn a gull every `period` ticks (0 disables). Doubled during
-    /// the final-scramble surge of a timed round.
-    pub fn set_gull_period(&mut self, period: u32) {
-        self.rules.gull_period = period;
-    }
-
-    /// How many ambient gulls may be on the beach at once.
-    pub fn set_gull_cap(&mut self, cap: u8) {
-        self.rules.gull_cap = cap;
-    }
-
-    /// Whether the flock turns over (see [`Rules::gull_turnover`]).
-    pub fn set_gull_turnover(&mut self, on: bool) {
-        self.rules.gull_turnover = on;
-    }
-
-    /// Carry Crab Monopoly's crabs home (see [`Rules::sweep_flight`]).
-    pub fn set_sweep_flight(&mut self, on: bool) {
-        self.rules.sweep_flight = on;
-    }
-
-    /// Keep the flock whole as it turns over (see [`Rules::whole_flock`]).
-    pub fn set_whole_flock(&mut self, on: bool) {
-        self.rules.whole_flock = on;
-    }
-
-    /// Bank swept crabs at their worth when the sweep fired (see
-    /// [`Rules::sweep_keeps_worth`]).
-    pub fn set_sweep_keeps_worth(&mut self, on: bool) {
-        self.rules.sweep_keeps_worth = on;
-    }
-
-    /// Lock the wheel only for timed events (see [`Rules::timed_lock`]).
-    pub fn set_timed_lock(&mut self, on: bool) {
-        self.rules.timed_lock = on;
-    }
-
-    /// Call a golden crab once every `ticks` (see [`Rules::golden_every`]).
-    pub fn set_golden_every(&mut self, ticks: u32) {
-        self.rules.golden_every = ticks;
-    }
-
-    pub fn set_round_length(&mut self, ticks: Option<u32>) {
-        self.rules.round_length = ticks;
     }
 
     /// Open (or close) the board edges. Opening removes the border walls so
@@ -952,38 +919,6 @@ impl Board {
         &self.gulls
     }
 
-    pub fn gull_period(&self) -> u32 {
-        self.rules.gull_period
-    }
-
-    pub fn gull_cap(&self) -> u8 {
-        self.rules.gull_cap
-    }
-
-    pub fn gull_turnover(&self) -> bool {
-        self.rules.gull_turnover
-    }
-
-    pub fn golden_every(&self) -> u32 {
-        self.rules.golden_every
-    }
-
-    pub fn timed_lock(&self) -> bool {
-        self.rules.timed_lock
-    }
-
-    pub fn sweep_flight(&self) -> bool {
-        self.rules.sweep_flight
-    }
-
-    pub fn whole_flock(&self) -> bool {
-        self.rules.whole_flock
-    }
-
-    pub fn sweep_keeps_worth(&self) -> bool {
-        self.rules.sweep_keeps_worth
-    }
-
     /// The golden crab the board has called, once the call is public: the
     /// tick it comes out on and the spawner hole it comes out of, from
     /// [`GOLDEN_NOTICE`] ticks before it does.
@@ -1007,10 +942,6 @@ impl Board {
             (CrabKind::Golden, 1..) => GOLDEN_CALLED_VALUE,
             _ => kind.value(),
         }
-    }
-
-    pub fn round_length(&self) -> Option<u32> {
-        self.rules.round_length
     }
 
     /// The seed this board was constructed with.

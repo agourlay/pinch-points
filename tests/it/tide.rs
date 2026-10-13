@@ -22,7 +22,7 @@ fn beach(seed: u64) -> Board {
         board.events_enabled(),
         "an arena plays with the roulette on"
     );
-    board.set_round_length(Some(TICKS as u32));
+    board.rules_mut().round_length = Some(TICKS as u32);
     board
 }
 
@@ -119,7 +119,7 @@ fn the_roulette_reaches_every_face() {
 fn a_beach_with_events_off_stays_quiet() {
     for seed in 0..12u64 {
         let mut board = classic_arena_seeded(seed, false, 4);
-        board.set_round_length(Some(TICKS as u32));
+        board.rules_mut().round_length = Some(TICKS as u32);
         board.set_events_enabled(false);
         for tick in 0..TICKS {
             let actions = played(&board);

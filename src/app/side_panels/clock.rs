@@ -39,7 +39,7 @@ pub fn update_side_clock(
     crate::app::hud::clock_into(&mut value, ticks);
     let target = crate::app::hud::clock_color(
         ticks,
-        sim.0.round_length(),
+        sim.0.rules().round_length,
         time.elapsed_secs(),
         !settings.reduced_motion,
     );

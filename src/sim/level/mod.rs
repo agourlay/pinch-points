@@ -142,10 +142,10 @@ impl Level {
         if !self.explicit_rule && self.kind == LevelKind::Puzzle {
             board.set_signpost_rule(self.posts, CapPolicy::Reject);
             // A campaign puzzle's castle is the finish line, not a bank to
-            // be robbed: see `Board::castle_raids`. Beach Day states `rule:`
+            // be robbed: see `Rules::castle_raids`. Beach Day states `rule:`
             // and keeps its raids - there the goal is a number banked and a
             // robbery is drama, not a target that moves.
-            board.set_castle_raids(false);
+            board.rules_mut().castle_raids = false;
         }
         board
     }
@@ -208,7 +208,10 @@ impl Level {
     /// for the outcome, the solver's scan and the clock, so a stage that
     /// states a longer round is not cut off at the limit anyway.
     pub fn deadline(board: &Board) -> u64 {
-        board.round_length().map_or(PUZZLE_TICK_LIMIT, u64::from)
+        board
+            .rules()
+            .round_length
+            .map_or(PUZZLE_TICK_LIMIT, u64::from)
     }
 
     /// Win/loss state of a board created by [`Level::board`], judged by the
@@ -339,17 +342,17 @@ mod tests {
         let map = "map:\n+-+-+\n|. 0|\n+ + +\n|. .|\n+-+-+\n";
         let head = "name: T\nposts: 1\nrule: reject 1\ncrab: 0,0 R R common\n";
         let kept = Level::parse(&format!("{head}{map}")).expect("level");
-        assert!(kept.board().castle_raids(), "stated rule, raids kept");
+        assert!(kept.board().rules().castle_raids, "stated rule, raids kept");
         assert!(
             !kept.to_text().contains("raids:"),
             "the default is not written"
         );
         let off = Level::parse(&format!("{head}raids: off\n{map}")).expect("level");
-        assert!(!off.board().castle_raids());
+        assert!(!off.board().rules().castle_raids);
         let text = off.to_text();
         assert!(text.contains("raids: off"), "{text}");
         let back = Level::parse(&text).expect("round trip");
-        assert!(!back.board().castle_raids());
+        assert!(!back.board().rules().castle_raids);
     }
 
     /// A big beach's gull cap travels with the level, so a replay of a round
@@ -361,46 +364,58 @@ mod tests {
         let map = "map:\n+-+-+\n|. 0|\n+ + +\n|. .|\n+-+-+\n";
         let head = "name: T\nposts: 1\ncrab: 0,0 R R common\n";
         let plain = Level::parse(&format!("{head}{map}")).expect("level");
-        assert_eq!(usize::from(plain.board().gull_cap()), crate::sim::GULL_CAP);
+        assert_eq!(
+            usize::from(plain.board().rules().gull_cap),
+            crate::sim::GULL_CAP
+        );
         assert!(
             !plain.to_text().contains("gull_cap"),
             "the default is not written"
         );
         let big = Level::parse(&format!("{head}gull_cap: 14\n{map}")).expect("level");
-        assert_eq!(big.board().gull_cap(), 14);
+        assert_eq!(big.board().rules().gull_cap, 14);
         let back = Level::parse(&big.to_text()).expect("round trip");
-        assert_eq!(back.board().gull_cap(), 14);
+        assert_eq!(back.board().rules().gull_cap, 14);
         assert!(
-            !plain.board().gull_turnover(),
+            !plain.board().rules().gull_turnover,
             "off unless the file says so"
         );
         assert!(!plain.to_text().contains("gull_turnover"));
         let turning = Level::parse(&format!("{head}gull_turnover: on\n{map}")).expect("level");
         let back = Level::parse(&turning.to_text()).expect("round trip");
-        assert!(back.board().gull_turnover());
-        assert!(!plain.board().timed_lock(), "off unless the file says so");
+        assert!(back.board().rules().gull_turnover);
+        assert!(
+            !plain.board().rules().timed_lock,
+            "off unless the file says so"
+        );
         assert!(!plain.to_text().contains("timed_lock"));
         let timed = Level::parse(&format!("{head}timed_lock: on\n{map}")).expect("level");
         let back = Level::parse(&timed.to_text()).expect("round trip");
-        assert!(back.board().timed_lock());
-        assert!(!plain.board().sweep_flight(), "off unless the file says so");
+        assert!(back.board().rules().timed_lock);
+        assert!(
+            !plain.board().rules().sweep_flight,
+            "off unless the file says so"
+        );
         assert!(!plain.to_text().contains("sweep_flight"));
         let flying = Level::parse(&format!("{head}sweep_flight: on\n{map}")).expect("level");
         let back = Level::parse(&flying.to_text()).expect("round trip");
-        assert!(back.board().sweep_flight());
-        assert!(!plain.board().whole_flock(), "off unless the file says so");
+        assert!(back.board().rules().sweep_flight);
+        assert!(
+            !plain.board().rules().whole_flock,
+            "off unless the file says so"
+        );
         assert!(!plain.to_text().contains("whole_flock"));
         let whole = Level::parse(&format!("{head}whole_flock: on\n{map}")).expect("level");
         let back = Level::parse(&whole.to_text()).expect("round trip");
-        assert!(back.board().whole_flock());
+        assert!(back.board().rules().whole_flock);
         assert!(
-            !plain.board().sweep_keeps_worth(),
+            !plain.board().rules().sweep_keeps_worth,
             "off unless the file says so"
         );
         assert!(!plain.to_text().contains("sweep_keeps_worth"));
         let keeping = Level::parse(&format!("{head}sweep_keeps_worth: on\n{map}")).expect("level");
         let back = Level::parse(&keeping.to_text()).expect("round trip");
-        assert!(back.board().sweep_keeps_worth());
+        assert!(back.board().rules().sweep_keeps_worth);
         // A golden crab cadence too short to call a tick still to come is
         // refused, rather than calling one that never comes out.
         for every in [1, 2] {
@@ -409,7 +424,7 @@ mod tests {
             assert!(err.contains("golden_every"), "{err}");
         }
         let calling = Level::parse(&format!("{head}golden_every: 3\n{map}")).expect("level");
-        assert_eq!(calling.board().golden_every(), 3);
+        assert_eq!(calling.board().rules().golden_every, 3);
     }
 
     /// A stage that states a round longer than the campaign tick limit is
@@ -468,7 +483,7 @@ mod tests {
         let text = "name: T\nposts: 1\nrule: reject 1\nraids: on\ncrab: 0,0 R R common\nmap:\n\
                     +-+-+\n|. 0|\n+ + +\n|. .|\n+-+-+\n";
         let level = Level::parse(text).expect("level");
-        assert!(level.board().castle_raids());
+        assert!(level.board().rules().castle_raids);
         assert!(!level.to_text().contains("raids:"), "not worth writing");
     }
 

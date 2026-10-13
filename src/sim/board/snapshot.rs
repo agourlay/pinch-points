@@ -875,16 +875,16 @@ mod tests {
         );
         board.set_wrap(true);
         board.set_wall(1, 1, Direction::Up, true);
-        board.set_castle_raids(false);
-        board.set_gull_cap(9);
-        board.set_gull_turnover(true);
-        board.set_timed_lock(true);
-        board.set_sweep_flight(true);
-        board.set_whole_flock(true);
-        board.set_sweep_keeps_worth(true);
+        board.rules_mut().castle_raids = false;
+        board.rules_mut().gull_cap = 9;
+        board.rules_mut().gull_turnover = true;
+        board.rules_mut().timed_lock = true;
+        board.rules_mut().sweep_flight = true;
+        board.rules_mut().whole_flock = true;
+        board.rules_mut().sweep_keeps_worth = true;
         board.set_events_enabled(true);
-        board.set_round_length(Some(1234));
-        board.set_gull_period(97);
+        board.rules_mut().round_length = Some(1234);
+        board.rules_mut().gull_period = 97;
         board.set_signpost_rule(2, CapPolicy::Reject);
         board.set_score(0, 17);
         board.set_score(3, 4);
@@ -993,7 +993,7 @@ mod tests {
         // And the default direction, which is the one a missing line has to
         // mean: raids on writes nothing and must come back on.
         let mut raiding = awkward_board();
-        raiding.set_castle_raids(true);
+        raiding.rules_mut().castle_raids = true;
         let text = raiding.to_snapshot();
         assert!(
             !text.contains("raids:"),
@@ -1002,7 +1002,8 @@ mod tests {
         assert!(
             Board::parse_snapshot(&text)
                 .expect("its own output")
-                .castle_raids(),
+                .rules()
+                .castle_raids,
             "an absent raids line must read as raids on:\n{text}"
         );
         assert!(text.contains(" worn "), "the worn signpost:\n{text}");
@@ -1389,7 +1390,7 @@ mod tests {
                 period: 9,
             }),
         );
-        board.set_golden_every(600);
+        board.rules_mut().golden_every = 600;
         for _ in 0..10 {
             board.tick_idle();
         }

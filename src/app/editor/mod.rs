@@ -570,7 +570,7 @@ pub(super) fn level_here(state: &EditorState, board: &Board, name: &str) -> Leve
     let mut snapshot = board.clone();
     if state.kind == LevelKind::Puzzle {
         snapshot.set_signpost_rule(state.posts, crate::sim::CapPolicy::Reject);
-        snapshot.set_castle_raids(false);
+        snapshot.rules_mut().castle_raids = false;
     }
     let level = Level::from_board(name, state.posts, snapshot).with_kind(state.kind);
     Level::parse(&level.to_text()).unwrap_or(level)
@@ -692,8 +692,8 @@ pub fn editor_commands(
         };
     }
     if keys.just_pressed(KeyCode::KeyK) {
-        let period = next_gull_period(board.gull_period());
-        board.set_gull_period(period);
+        let period = next_gull_period(board.rules().gull_period);
+        board.rules_mut().gull_period = period;
         state.feedback = if period == 0 {
             tr.ed_gulls_off.into()
         } else {
@@ -927,7 +927,10 @@ mod tests {
             saved.board().state_hash(),
             "the board certified is the board saved"
         );
-        assert!(!level.board().castle_raids(), "a stage plays without raids");
+        assert!(
+            !level.board().rules().castle_raids,
+            "a stage plays without raids"
+        );
         assert!(level.to_text().contains("raids: off"));
     }
 
@@ -945,7 +948,7 @@ mod tests {
             ..EditorState::default()
         };
         let beach = level_here(&state, &board, "Beach");
-        assert!(beach.board().castle_raids());
+        assert!(beach.board().rules().castle_raids);
         assert!(!beach.to_text().contains("raids:"));
     }
 
@@ -1251,7 +1254,7 @@ mod tests {
         let played = &app.world().resource::<Sim>().0;
         let filed = level_here(state, &board, "Stage").board();
         assert_eq!(played.state_hash(), filed.state_hash(), "the file's level");
-        assert!(!played.castle_raids(), "a stage plays without raids");
+        assert!(!played.rules().castle_raids, "a stage plays without raids");
         assert_ne!(played.state_hash(), editing, "not the board as it stood");
 
         tap(&mut app, KeyCode::Escape);

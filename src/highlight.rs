@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn a_swept_crab_stays_on_the_reel_until_it_lands() {
         let mut board = Board::new(9, 7, 5);
-        board.set_sweep_flight(true);
+        board.rules_mut().sweep_flight = true;
         board.set_tile(7, 5, TileKind::Castle(1));
         board.spawn_crab(
             1,

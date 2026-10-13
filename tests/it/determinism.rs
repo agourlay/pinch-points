@@ -44,8 +44,8 @@ fn build_board(seed: u64) -> Board {
     // edge spawning with the tide surge, and a timed round that freezes the
     // final 1000 ticks of the run.
     board.spawn_gull(3, 0, Direction::Down);
-    board.set_gull_period(450);
-    board.set_round_length(Some(9_000));
+    board.rules_mut().gull_period = 450;
+    board.rules_mut().round_length = Some(9_000);
     board
 }
 
@@ -232,7 +232,7 @@ fn a_replay_reloaded_from_text_ends_on_the_same_board() {
     use pinch_points::sim::{BotLevel, Level, Replay, bot_action, classic_arena_seeded};
     for seed in [1u64, 2, 3] {
         let mut board = classic_arena_seeded(seed, false, 4);
-        board.set_round_length(Some(900));
+        board.rules_mut().round_length = Some(900);
         let mut replay = Replay::new(Level::from_board("Turf War", 3, board.clone()));
         while !board.round_over() {
             let mut actions = [PlayerAction::None; MAX_PLAYERS];

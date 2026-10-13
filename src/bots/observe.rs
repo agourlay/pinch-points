@@ -591,8 +591,12 @@ mod tests {
             assert!(rules.remove(rule).is_some(), "{rule} was in the hello");
         }
         let theirs = board_from(&hello, &tick).expect("rebuilds");
-        assert_eq!(theirs.gull_cap(), board.gull_cap());
-        assert!(!theirs.timed_lock() && !theirs.sweep_flight() && !theirs.whole_flock());
+        assert_eq!(theirs.rules().gull_cap, board.rules().gull_cap);
+        assert!(
+            !theirs.rules().timed_lock
+                && !theirs.rules().sweep_flight
+                && !theirs.rules().whole_flock
+        );
     }
 
     #[test]

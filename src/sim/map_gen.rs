@@ -16,13 +16,21 @@ const CLASSIC_AREA: u32 = 12 * 9;
 
 /// The rules of a versus round on a beach of this size, from the gull
 /// period a pressure dial names for the classic 12x9 beach: the flock
-/// turns over ([`Board::set_gull_turnover`]), the golden crab is called
-/// rather than rolled ([`Board::set_golden_every`]), the event wheel locks
-/// only while a timed event runs ([`Board::set_timed_lock`]), Crab
-/// Monopoly carries its crabs home ([`Board::set_sweep_flight`]) at what
-/// they were worth when it fired ([`Board::set_sweep_keeps_worth`]), the
-/// turnover keeps the flock whole ([`Board::set_whole_flock`]), and a big
-/// beach gets more gulls.
+/// turns over ([`Rules::gull_turnover`]), the golden crab is called
+/// rather than rolled ([`Rules::golden_every`]), the event wheel locks
+/// only while a timed event runs ([`Rules::timed_lock`]), Crab Monopoly
+/// carries its crabs home ([`Rules::sweep_flight`]) at what they were
+/// worth when it fired ([`Rules::sweep_keeps_worth`]), the turnover keeps
+/// the flock whole ([`Rules::whole_flock`]), and a big beach gets more
+/// gulls. The rules it does not name (the signpost rule, the round's
+/// length, raids) are left as the board had them.
+///
+/// [`Rules::gull_turnover`]: crate::sim::board::Rules::gull_turnover
+/// [`Rules::golden_every`]: crate::sim::board::Rules::golden_every
+/// [`Rules::timed_lock`]: crate::sim::board::Rules::timed_lock
+/// [`Rules::sweep_flight`]: crate::sim::board::Rules::sweep_flight
+/// [`Rules::sweep_keeps_worth`]: crate::sim::board::Rules::sweep_keeps_worth
+/// [`Rules::whole_flock`]: crate::sim::board::Rules::whole_flock
 ///
 /// The ambient spawner sends one gull a period and stops at a fixed cap,
 /// whatever the size, so the bigger beaches spread the same half-dozen
@@ -34,14 +42,15 @@ const CLASSIC_AREA: u32 = 12 * 9;
 pub fn set_versus_rules(board: &mut Board, period: u32) {
     let area = u32::from(board.width()) * u32::from(board.height());
     let area = area.max(CLASSIC_AREA);
-    board.set_gull_period((period * CLASSIC_AREA / area).max(1));
-    board.set_gull_cap((GULL_CAP as u32 * area / CLASSIC_AREA).min(u32::from(u8::MAX)) as u8);
-    board.set_gull_turnover(true);
-    board.set_golden_every(VERSUS_GOLDEN_EVERY);
-    board.set_timed_lock(true);
-    board.set_sweep_flight(true);
-    board.set_whole_flock(true);
-    board.set_sweep_keeps_worth(true);
+    let rules = board.rules_mut();
+    rules.gull_period = (period * CLASSIC_AREA / area).max(1);
+    rules.gull_cap = (GULL_CAP as u32 * area / CLASSIC_AREA).min(u32::from(u8::MAX)) as u8;
+    rules.gull_turnover = true;
+    rules.golden_every = VERSUS_GOLDEN_EVERY;
+    rules.timed_lock = true;
+    rules.sweep_flight = true;
+    rules.whole_flock = true;
+    rules.sweep_keeps_worth = true;
 }
 
 /// A castle spot per seat for a board of the given size.
@@ -305,8 +314,8 @@ pub fn classic_arena_seeded(seed: u64, preload_scores: bool, seats: u8) -> Board
     // preserves chirality, so a strict mirror needs equal handedness.
     board.spawn_crab(3, 2, Direction::Right, Handedness::Left, CrabKind::Molting);
     board.spawn_crab(8, 6, Direction::Left, Handedness::Left, CrabKind::Molting);
-    board.set_gull_period(240);
-    board.set_round_length(Some(3 * 60 * TICKS_PER_SECOND));
+    board.rules_mut().gull_period = 240;
+    board.rules_mut().round_length = Some(3 * 60 * TICKS_PER_SECOND);
     board.set_events_enabled(true);
     if preload_scores {
         board.set_score(0, 30);
@@ -434,7 +443,7 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
     // picks uniformly around the perimeter, so waiting for it costs a few
     // seconds and buys an unbiased start.
     set_versus_rules(&mut board, 200 + rng.next_u32() % 80);
-    board.set_round_length(Some(3 * 60 * TICKS_PER_SECOND));
+    board.rules_mut().round_length = Some(3 * 60 * TICKS_PER_SECOND);
     board.set_events_enabled(true);
     board
 }
@@ -522,13 +531,13 @@ mod tests {
         for (w, h) in [(9u8, 7u8), (12, 9)] {
             let mut board = Board::new(w, h, 1);
             set_versus_rules(&mut board, 240);
-            assert_eq!(board.gull_period(), 240, "{w}x{h}");
-            assert_eq!(usize::from(board.gull_cap()), GULL_CAP, "{w}x{h}");
+            assert_eq!(board.rules().gull_period, 240, "{w}x{h}");
+            assert_eq!(usize::from(board.rules().gull_cap), GULL_CAP, "{w}x{h}");
         }
         let mut xl = Board::new(20, 13, 1);
         set_versus_rules(&mut xl, 240);
-        assert_eq!(xl.gull_period(), 240 * 108 / 260);
-        assert_eq!(xl.gull_cap(), 14);
+        assert_eq!(xl.rules().gull_period, 240 * 108 / 260);
+        assert_eq!(xl.rules().gull_cap, 14);
     }
 
     /// The bigger beaches carry more walls, and walls can box a tile in:

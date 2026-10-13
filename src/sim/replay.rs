@@ -349,7 +349,7 @@ mod tests {
         );
         board.spawn_crab(3, 3, Direction::Down, Handedness::Right, CrabKind::Giant);
         board.spawn_gull(6, 6, Direction::Up);
-        board.set_gull_period(200);
+        board.rules_mut().gull_period = 200;
         Level::from_board("Arena", 3, board)
     }
 

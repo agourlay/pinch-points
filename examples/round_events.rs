@@ -41,7 +41,7 @@ fn main() {
     println!(
         "{} ticks recorded, round of {:?}, {} seats",
         replay.inputs.len(),
-        board.round_length(),
+        board.rules().round_length,
         board.castle_owners().max().map_or(0, |top| top + 1)
     );
 

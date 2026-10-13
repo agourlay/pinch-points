@@ -741,7 +741,7 @@ mod session_tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         host.pump(PlayerAction::None, |_| {});
         let mut board = generate_arena(3, 2, 12, 9);
-        board.set_round_length(Some(0));
+        board.rules_mut().round_length = Some(0);
         assert!(board.round_over());
         host.send_catch_ups(&board);
         assert!(host.catch_up.owed.is_empty());

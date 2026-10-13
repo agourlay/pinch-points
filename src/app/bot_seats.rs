@@ -1617,7 +1617,7 @@ mod tests {
 
     fn over(mut board: Board) -> (Board, Replay) {
         let replay = Replay::new(crate::sim::Level::from_board("T", 3, board.clone()));
-        board.set_round_length(Some(1));
+        board.rules_mut().round_length = Some(1);
         board.tick_idle();
         assert!(board.round_over());
         (board, replay)

@@ -567,7 +567,7 @@ fn a_timed_lock_holds_the_wheel_only_for_an_event_that_lasts() {
     for event in TideEvent::ALL {
         let mut board = Board::new(9, 7, 2);
         board.set_events_enabled(true);
-        board.set_timed_lock(true);
+        board.rules_mut().timed_lock = true;
         board.force_tide_event(event, 0);
         let first = board.last_event().expect("the forced event landed");
         // A tick on, so a spin landing on the same face reads as new.
@@ -587,7 +587,7 @@ fn a_timed_lock_holds_the_wheel_only_for_an_event_that_lasts() {
 fn a_timed_lock_outlasts_an_instant_event_called_on_top() {
     let mut board = Board::new(9, 7, 2);
     board.set_events_enabled(true);
-    board.set_timed_lock(true);
+    board.rules_mut().timed_lock = true;
     board.force_tide_event(TideEvent::CrabMania, 0);
     board.tick_idle();
     board.force_tide_event(TideEvent::FreshSand, 0);
@@ -1002,7 +1002,7 @@ fn gull_raid_halves_the_castle() {
 fn a_raid_with_raids_off_takes_nothing_and_still_ends_the_visit() {
     let mut board = Board::new(7, 5, 0);
     board.set_tile(4, 2, TileKind::Castle(1));
-    board.set_castle_raids(false);
+    board.rules_mut().castle_raids = false;
     board.scores[1] = 30;
     board.spawn_gull(0, 2, Right);
     let spawned_before = board.crabs_spawned();
@@ -1023,7 +1023,7 @@ fn a_raid_with_raids_off_takes_nothing_and_still_ends_the_visit() {
     // A crab walks the same lane straight in and banks, as ever.
     let mut board = Board::new(7, 5, 0);
     board.set_tile(4, 2, TileKind::Castle(1));
-    board.set_castle_raids(false);
+    board.rules_mut().castle_raids = false;
     board.spawn_crab(0, 2, Right, Handedness::Left, CrabKind::Common);
     for _ in 0..ticks_to_cross(4, 12) {
         board.tick_idle();
@@ -1189,7 +1189,7 @@ fn the_beach_fills_to_a_cap_and_mania_to_twice_it() {
 #[test]
 fn the_roulette_keeps_gulls_out_of_the_surge() {
     let mut board = party_board();
-    board.set_round_length(Some(1000));
+    board.rules_mut().round_length = Some(1000);
     assert!(!board.in_surge());
     board.apply_tide_event(TideEvent::GullMania, 0);
     assert_eq!(
@@ -1200,7 +1200,7 @@ fn the_roulette_keeps_gulls_out_of_the_surge() {
 
     // Into the last 30 seconds, where a spin lands on the gull events.
     let mut surging = party_board();
-    surging.set_round_length(Some(200));
+    surging.rules_mut().round_length = Some(200);
     surging.set_score(0, 1); // a sparkling bank needs a castle owner
     for _ in 0..100 {
         surging.tick_idle();
@@ -1242,8 +1242,8 @@ fn the_roulette_keeps_gulls_out_of_the_surge() {
 #[test]
 fn tide_freezes_the_sim_and_surges_gulls() {
     let mut board = Board::new(7, 5, 3);
-    board.set_gull_period(500);
-    board.set_round_length(Some(2000));
+    board.rules_mut().gull_period = 500;
+    board.rules_mut().round_length = Some(2000);
     common(&mut board, 0, 0, Right, Handedness::Left);
     for _ in 0..1099 {
         board.tick_idle();
@@ -1389,7 +1389,7 @@ fn a_called_event_fires_from_a_seats_input() {
 #[test]
 fn a_called_event_is_held_to_the_surge_guard_too() {
     let mut board = party_board();
-    board.set_round_length(Some(SURGE_TICKS));
+    board.rules_mut().round_length = Some(SURGE_TICKS);
     assert!(board.in_surge(), "inside the last stretch");
 
     let mut actions = [PlayerAction::None; MAX_PLAYERS];
@@ -1534,7 +1534,7 @@ fn event_monopoly_banks_half_the_loose_crabs() {
 #[test]
 fn a_flying_sweep_banks_each_crab_as_it_lands() {
     let mut board = party_board();
-    board.set_sweep_flight(true);
+    board.rules_mut().sweep_flight = true;
     for x in 0..6 {
         common(&mut board, x, 4, Right, Handedness::Left);
     }
@@ -1572,8 +1572,8 @@ fn a_flying_sweep_banks_each_crab_as_it_lands() {
 #[test]
 fn a_flying_sweep_lands_everything_at_the_wave() {
     let mut board = party_board();
-    board.set_sweep_flight(true);
-    board.set_round_length(Some(10));
+    board.rules_mut().sweep_flight = true;
+    board.rules_mut().round_length = Some(10);
     for x in 0..6 {
         common(&mut board, x, 4, Right, Handedness::Left);
     }
@@ -1601,9 +1601,9 @@ fn a_swept_crab_banks_what_it_was_worth_when_the_sweep_fired() {
         (false, true, 13),
     ] {
         let mut board = party_board();
-        board.set_sweep_flight(true);
-        board.set_timed_lock(true);
-        board.set_sweep_keeps_worth(keeps);
+        board.rules_mut().sweep_flight = true;
+        board.rules_mut().timed_lock = true;
+        board.rules_mut().sweep_keeps_worth = keeps;
         board.set_score(1, 10);
         for x in 0..6 {
             common(&mut board, x, 4, Right, Handedness::Left);
@@ -1649,7 +1649,7 @@ fn a_swept_crab_banks_what_it_was_worth_when_the_sweep_fired() {
 #[test]
 fn a_sweep_survives_a_snapshot_mid_flight() {
     let mut board = party_board();
-    board.set_sweep_flight(true);
+    board.rules_mut().sweep_flight = true;
     for x in 0..6 {
         common(&mut board, x, 4, Right, Handedness::Left);
     }
@@ -1868,11 +1868,11 @@ fn surge_doubles_gull_spawn_rate() {
     // Surged board: surge covers remaining <= 900, i.e. from tick 100 on,
     // halving the period to 50 (spawns at 0, 100, 150, 200, 250 -> capped).
     let mut board = Board::new(7, 5, 3);
-    board.set_gull_period(100);
-    board.set_round_length(Some(1000));
+    board.rules_mut().gull_period = 100;
+    board.rules_mut().round_length = Some(1000);
     // Control at the normal rate.
     let mut calm = Board::new(7, 5, 3);
-    calm.set_gull_period(100);
+    calm.rules_mut().gull_period = 100;
     for _ in 0..320 {
         board.tick_idle();
         calm.tick_idle();
@@ -1894,8 +1894,8 @@ fn surge_doubles_gull_spawn_rate() {
 #[test]
 fn a_raised_gull_cap_is_the_one_the_spawner_stops_at() {
     let mut board = Board::new(7, 5, 3);
-    board.set_gull_period(10);
-    board.set_gull_cap(9);
+    board.rules_mut().gull_period = 10;
+    board.rules_mut().gull_cap = 9;
     for _ in 0..400 {
         board.tick_idle();
     }
@@ -1910,10 +1910,10 @@ fn a_full_flock_turns_over_from_its_oldest_gull_clear_of_the_castles() {
     for (turnover, whole) in [(true, false), (true, true), (false, false), (false, true)] {
         let mut board = Board::new(9, 7, 3);
         board.set_tile(4, 3, TileKind::Castle(0));
-        board.set_gull_period(10);
-        board.set_gull_cap(3);
-        board.set_gull_turnover(turnover);
-        board.set_whole_flock(whole);
+        board.rules_mut().gull_period = 10;
+        board.rules_mut().gull_cap = 3;
+        board.rules_mut().gull_turnover = turnover;
+        board.rules_mut().whole_flock = whole;
         board.spawn_gull(4, 2, Left); // the oldest, beside the castle
         board.spawn_gull(8, 6, Up); // the oldest clear of it
         board.spawn_gull(0, 6, Up);
@@ -1947,10 +1947,10 @@ fn a_whole_flock_stays_whole_when_the_newcomer_rolls_rock() {
             board.set_tile(8, y, TileKind::Rock);
         }
         board.set_tile(4, 3, TileKind::Castle(0));
-        board.set_gull_period(10);
-        board.set_gull_cap(3);
-        board.set_gull_turnover(true);
-        board.set_whole_flock(whole);
+        board.rules_mut().gull_period = 10;
+        board.rules_mut().gull_cap = 3;
+        board.rules_mut().gull_turnover = true;
+        board.rules_mut().whole_flock = whole;
         board.spawn_gull(1, 1, Down);
         board.spawn_gull(7, 5, Up);
         board.spawn_gull(1, 5, Up);
@@ -1967,10 +1967,10 @@ fn the_final_rush_raises_a_turning_over_flocks_cap() {
     for turnover in [true, false] {
         let mut board = Board::new(9, 7, 3);
         board.set_tile(4, 3, TileKind::Castle(0));
-        board.set_gull_period(10);
-        board.set_gull_cap(2);
-        board.set_gull_turnover(turnover);
-        board.set_round_length(Some(600));
+        board.rules_mut().gull_period = 10;
+        board.rules_mut().gull_cap = 2;
+        board.rules_mut().gull_turnover = turnover;
+        board.rules_mut().round_length = Some(600);
         assert!(board.in_surge());
         board.spawn_gull(8, 6, Up);
         board.spawn_gull(0, 6, Up);
@@ -1988,7 +1988,7 @@ fn calling_board(every: u32) -> Board {
     for (x, y, dir) in [(0, 3, Right), (8, 3, Left)] {
         board.set_tile(x, y, TileKind::Spawner(Spawner { dir, period: 9 }));
     }
-    board.set_golden_every(every);
+    board.rules_mut().golden_every = every;
     board
 }
 
@@ -2038,7 +2038,7 @@ fn a_called_golden_crab_comes_out_where_and_when_it_was_called() {
 #[test]
 fn a_golden_crab_is_not_called_past_the_end_of_the_round() {
     let mut board = calling_board(600);
-    board.set_round_length(Some(150));
+    board.rules_mut().round_length = Some(150);
     while !board.round_over() {
         board.tick_idle();
         assert_eq!(board.golden_call(), None);
@@ -2150,7 +2150,7 @@ fn a_spill_into_a_cramped_corner_lands_only_on_the_open_sand() {
 #[test]
 fn the_gull_spawner_covers_the_whole_perimeter_and_faces_inward() {
     let mut board = Board::new(4, 3, 7);
-    board.set_gull_period(1);
+    board.rules_mut().gull_period = 1;
     let mut hit = std::collections::BTreeSet::new();
     for _ in 0..400 {
         board.run_gull_spawner();
@@ -2185,7 +2185,7 @@ fn the_gull_spawner_covers_the_whole_perimeter_and_faces_inward() {
 fn the_gull_spawner_walks_the_length_of_a_strip() {
     for (w, h) in [(1u8, 5u8), (5, 1)] {
         let mut board = Board::new(w, h, 3);
-        board.set_gull_period(1);
+        board.rules_mut().gull_period = 1;
         let mut hit = std::collections::BTreeSet::new();
         for _ in 0..200 {
             board.run_gull_spawner();

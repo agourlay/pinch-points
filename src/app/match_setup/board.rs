@@ -64,7 +64,7 @@ pub fn apply_terms(
     posts: u8,
 ) {
     crate::sim::set_versus_rules(board, gulls.period());
-    board.set_round_length(Some(round.ticks()));
+    board.rules_mut().round_length = Some(round.ticks());
     board.set_signpost_rule(posts, crate::sim::CapPolicy::Evict);
 }
 

@@ -1087,7 +1087,7 @@ mod tests {
         let status = |watching: u8, surging: bool| {
             let mut board = Board::new(9, 7, 1);
             if surging {
-                board.set_round_length(Some(crate::sim::SURGE_TICKS));
+                board.rules_mut().round_length = Some(crate::sim::SURGE_TICKS);
             }
             versus_text(&Readout {
                 tr: &EN,

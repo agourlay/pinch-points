@@ -108,8 +108,8 @@ mod tests {
         let copy = board.lookahead(1);
         assert_eq!(copy.crabs().len(), board.crabs().len());
         assert_eq!(copy.scores(), board.scores());
-        assert_eq!(copy.gull_period(), 0);
-        assert!(board.gull_period() > 0);
+        assert_eq!(copy.rules().gull_period, 0);
+        assert!(board.rules().gull_period > 0);
     }
 
     /// A golden crab called a minute ahead is not in the lookahead until
@@ -127,7 +127,7 @@ mod tests {
                 period: 9,
             }),
         );
-        board.set_golden_every(600);
+        board.rules_mut().golden_every = 600;
         board.tick_idle();
         let (at, _) = board.golden_call.expect("called at the stretch's start");
         assert_eq!(board.golden_call(), None, "not public yet");

@@ -94,7 +94,7 @@ fn little_beach(ticks: u32) -> Board {
     board.set_tile(0, 1, TileKind::Castle(1));
     // Two tiles from home and too far from seat 1 for the AI to reach for.
     board.spawn_crab(9, 1, Direction::Right, Handedness::Left, CrabKind::Giant);
-    board.set_round_length(Some(ticks));
+    board.rules_mut().round_length = Some(ticks);
     board.set_signpost_rule(3, CapPolicy::Evict);
     board
 }

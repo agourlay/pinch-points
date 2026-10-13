@@ -99,7 +99,7 @@ fn a_bot_never_holds_more_posts_than_the_rules_allow() {
 fn every_shipped_arena_plays_out_under_bots() {
     for seats in [2u8, 3, 4] {
         let mut board = classic_arena_seeded(u64::from(seats), false, seats);
-        board.set_round_length(Some(1800));
+        board.rules_mut().round_length = Some(1800);
         let mut safety = 0u32;
         while !board.round_over() {
             let mut actions = [PlayerAction::None; MAX_PLAYERS];

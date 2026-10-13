@@ -22,7 +22,7 @@ fn arena(seed: u64) -> Board {
     );
     board.spawn_crab(6, 6, Direction::Left, Handedness::Right, CrabKind::Giant);
     board.spawn_gull(5, 0, Direction::Down);
-    board.set_gull_period(200);
+    board.rules_mut().gull_period = 200;
     board
 }
 

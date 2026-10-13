@@ -333,9 +333,9 @@ mod tests {
     #[test]
     fn a_crab_swept_before_right_claws_lands_as_a_bank_not_a_raid() {
         let mut board = Board::new(9, 7, 5);
-        board.set_sweep_flight(true);
-        board.set_timed_lock(true);
-        board.set_sweep_keeps_worth(true);
+        board.rules_mut().sweep_flight = true;
+        board.rules_mut().timed_lock = true;
+        board.rules_mut().sweep_keeps_worth = true;
         board.set_tile(7, 5, TileKind::Castle(1));
         board.set_score(1, 10);
         for x in 1..5 {

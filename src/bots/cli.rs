@@ -212,7 +212,7 @@ impl Beach {
             }
         };
         crate::sim::set_versus_rules(&mut board, GullPressure::Normal.period());
-        board.set_round_length(Some(round.ticks()));
+        board.rules_mut().round_length = Some(round.ticks());
         board.set_signpost_rule(MAX_SIGNPOSTS_PER_PLAYER as u8, CapPolicy::Evict);
         board
     }

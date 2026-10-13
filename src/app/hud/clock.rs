@@ -129,7 +129,7 @@ pub fn update_tide_clock(
         menu_ui::set_text(&mut text, &line);
         let target = clock_color(
             ticks,
-            sim.0.round_length(),
+            sim.0.rules().round_length,
             time.elapsed_secs(),
             !settings.reduced_motion,
         );

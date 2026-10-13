@@ -6,7 +6,7 @@
 //! is the half with a round-trip contract to keep (see `tests/it/format.rs`).
 
 use super::{Goal, Level, LevelKind};
-use crate::sim::board::{Board, CapPolicy, GULL_CAP, TileKind};
+use crate::sim::board::{Board, CapPolicy, GULL_CAP, Rules, TileKind};
 use crate::sim::crab::{CrabKind, Handedness};
 use crate::sim::direction::Direction;
 use crate::sim::solve::Placement;
@@ -37,7 +37,7 @@ impl Level {
             // has no `kind:` line and has to be read off the board.
             kind: LevelKind::Puzzle,
             crab_count: header.crabs.len() as u32,
-            explicit_rule: header.rule.is_some(),
+            explicit_rule: header.explicit_rule,
             board,
         };
         let kind = header.kind.unwrap_or_else(|| inferred_kind(&level));
@@ -75,6 +75,7 @@ impl Level {
     pub fn to_text(&self) -> String {
         use std::fmt::Write;
         let board = &self.board;
+        let rules = board.rules();
         let mut out = String::new();
         let _ = writeln!(out, "name: {}", self.name);
         let _ = writeln!(out, "posts: {}", self.posts);
@@ -113,31 +114,31 @@ impl Level {
             let (x, y) = board.coords_u8(gull.tile);
             let _ = writeln!(out, "gull: {x},{y} {}", gull.dir.letter());
         }
-        if board.gull_period() > 0 {
-            let _ = writeln!(out, "gull_period: {}", board.gull_period());
+        if rules.gull_period > 0 {
+            let _ = writeln!(out, "gull_period: {}", rules.gull_period);
         }
-        if usize::from(board.gull_cap()) != GULL_CAP {
-            let _ = writeln!(out, "gull_cap: {}", board.gull_cap());
+        if usize::from(rules.gull_cap) != GULL_CAP {
+            let _ = writeln!(out, "gull_cap: {}", rules.gull_cap);
         }
-        if board.gull_turnover() {
+        if rules.gull_turnover {
             let _ = writeln!(out, "gull_turnover: on");
         }
-        if board.golden_every() > 0 {
-            let _ = writeln!(out, "golden_every: {}", board.golden_every());
+        if rules.golden_every > 0 {
+            let _ = writeln!(out, "golden_every: {}", rules.golden_every);
         }
-        if board.timed_lock() {
+        if rules.timed_lock {
             let _ = writeln!(out, "timed_lock: on");
         }
-        if board.sweep_flight() {
+        if rules.sweep_flight {
             let _ = writeln!(out, "sweep_flight: on");
         }
-        if board.whole_flock() {
+        if rules.whole_flock {
             let _ = writeln!(out, "whole_flock: on");
         }
-        if board.sweep_keeps_worth() {
+        if rules.sweep_keeps_worth {
             let _ = writeln!(out, "sweep_keeps_worth: on");
         }
-        if let Some(round) = board.round_length() {
+        if let Some(round) = rules.round_length {
             let _ = writeln!(out, "round: {round}");
         }
         if board.wrap() {
@@ -147,7 +148,7 @@ impl Level {
         // editor-made puzzle states its rule and keeps whatever raids the
         // board had, so without this line it plays, is checked and is
         // hinted with raids on while every campaign puzzle plays without.
-        if !board.castle_raids() {
+        if !rules.castle_raids {
             let _ = writeln!(out, "raids: off");
         }
         // Tide events are game state, not authoring flavour: dropping the
@@ -243,29 +244,19 @@ struct Header {
     crabs: Vec<(u8, u8, Direction, Handedness, CrabKind)>,
     spawners: Vec<(u8, u8, Direction, u32)>,
     gulls: Vec<(u8, u8, Direction)>,
-    gull_period: u32,
-    /// `None` when the file says nothing, which keeps the board's default.
-    gull_cap: Option<u8>,
-    gull_turnover: bool,
-    golden_every: u32,
-    timed_lock: bool,
-    sweep_flight: bool,
-    whole_flock: bool,
-    sweep_keeps_worth: bool,
+    /// The board's rules as the file states them, each one it does not
+    /// mention left at the default.
+    rules: Rules,
+    /// Whether the file states a `rule:`, which a puzzle without one is
+    /// given in [`Level::board`].
+    explicit_rule: bool,
     events: bool,
-    round: Option<u32>,
     seed: u64,
-    rule: Option<(u8, CapPolicy)>,
     scores: Vec<(u8, u32)>,
     goal: Goal,
     wrap: bool,
     /// `None` when the file predates the editor's puzzle/arena toggle.
     kind: Option<LevelKind>,
-    /// Inverted like the snapshot's, because raids are the one board
-    /// switch that is on by default: a file that says nothing keeps them,
-    /// and only `raids: off` turns them away. A puzzle with no `rule:` of
-    /// its own turns them off regardless, in [`Level::board`].
-    no_castle_raids: bool,
 }
 
 impl Default for Header {
@@ -277,25 +268,20 @@ impl Default for Header {
             crabs: Vec::new(),
             spawners: Vec::new(),
             gulls: Vec::new(),
-            gull_period: 0,
-            gull_cap: None,
-            gull_turnover: false,
-            golden_every: 0,
-            timed_lock: false,
-            sweep_flight: false,
-            whole_flock: false,
-            sweep_keeps_worth: false,
+            // Raids are the one board switch that is on by default: a file
+            // that says nothing keeps them, and only `raids: off` turns
+            // them away. A puzzle with no `rule:` of its own turns them off
+            // regardless, in [`Level::board`].
+            rules: Rules::default(),
+            explicit_rule: false,
             events: false,
-            round: None,
             // An arbitrary but fixed default, so a level file without a
             // `seed:` still replays identically everywhere.
             seed: 0x7ead_0001,
-            rule: None,
             scores: Vec::new(),
             goal: Goal::AllCrabs,
             wrap: false,
             kind: None,
-            no_castle_raids: false,
         }
     }
 }
@@ -346,27 +332,28 @@ impl Header {
                 self.gulls.push((x, y, dir));
             }
             "gull_period" => {
-                self.gull_period = value
+                self.rules.gull_period = value
                     .parse::<u32>()
                     .map_err(|e| format!("gull_period: {e}"))?;
             }
             "gull_cap" => {
-                self.gull_cap = Some(value.parse::<u8>().map_err(|e| format!("gull_cap: {e}"))?);
+                self.rules.gull_cap = value.parse::<u8>().map_err(|e| format!("gull_cap: {e}"))?;
             }
-            "gull_turnover" => self.gull_turnover = value == "on",
-            "timed_lock" => self.timed_lock = value == "on",
-            "sweep_flight" => self.sweep_flight = value == "on",
-            "whole_flock" => self.whole_flock = value == "on",
-            "sweep_keeps_worth" => self.sweep_keeps_worth = value == "on",
+            "gull_turnover" => self.rules.gull_turnover = value == "on",
+            "timed_lock" => self.rules.timed_lock = value == "on",
+            "sweep_flight" => self.rules.sweep_flight = value == "on",
+            "whole_flock" => self.rules.whole_flock = value == "on",
+            "sweep_keeps_worth" => self.rules.sweep_keeps_worth = value == "on",
             "golden_every" => {
-                self.golden_every = crate::sim::board::golden_every(
+                self.rules.golden_every = crate::sim::board::golden_every(
                     value
                         .parse::<u32>()
                         .map_err(|e| format!("golden_every: {e}"))?,
                 )?;
             }
             "round" => {
-                self.round = Some(value.parse::<u32>().map_err(|e| format!("round: {e}"))?);
+                self.rules.round_length =
+                    Some(value.parse::<u32>().map_err(|e| format!("round: {e}"))?);
             }
             "seed" => {
                 self.seed = value.parse::<u64>().map_err(|e| format!("seed: {e}"))?;
@@ -382,7 +369,7 @@ impl Header {
                     _ => return Err(format!("goal: bad value {value:?}")),
                 };
             }
-            "raids" => self.no_castle_raids = value == "off",
+            "raids" => self.rules.castle_raids = value != "off",
             "kind" => {
                 self.kind = Some(
                     LevelKind::from_token(value)
@@ -408,7 +395,9 @@ impl Header {
                 if cap == 0 && policy == CapPolicy::Evict {
                     return Err("rule: evict needs a cap of at least 1".to_string());
                 }
-                self.rule = Some((cap, policy));
+                self.rules.signpost_cap = cap;
+                self.rules.cap_policy = policy;
+                self.explicit_rule = true;
             }
             "score" => {
                 let (player, score) = value
@@ -590,28 +579,12 @@ fn place_entities(board: &mut Board, header: &Header) -> Result<(), String> {
         }
         board.spawn_gull(x, y, dir);
     }
-    board.set_gull_period(header.gull_period);
-    if let Some(cap) = header.gull_cap {
-        board.set_gull_cap(cap);
-    }
-    board.set_gull_turnover(header.gull_turnover);
-    board.set_golden_every(header.golden_every);
-    board.set_timed_lock(header.timed_lock);
-    board.set_sweep_flight(header.sweep_flight);
-    board.set_whole_flock(header.whole_flock);
-    board.set_sweep_keeps_worth(header.sweep_keeps_worth);
-    board.set_round_length(header.round);
-    if header.no_castle_raids {
-        board.set_castle_raids(false);
-    }
+    *board.rules_mut() = header.rules;
     if header.wrap {
         board.set_wrap(true);
     }
     if header.events {
         board.set_events_enabled(true);
-    }
-    if let Some((cap, policy)) = header.rule {
-        board.set_signpost_rule(cap, policy);
     }
     for &(player, score) in &header.scores {
         board.set_score(player, score);

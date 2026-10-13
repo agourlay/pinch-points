@@ -59,7 +59,7 @@ pub enum SimEvent {
     /// packing: it leaves the beach, as a raider does, and takes nothing.
     ///
     /// A puzzle's castles cannot be robbed, but reaching one still takes
-    /// the gull off the sand (see `Board::castle_raids` for why that is
+    /// the gull off the sand (see `Rules::castle_raids` for why that is
     /// load-bearing). Drawn as nothing, the bird walked into the keep and
     /// vanished, which is exactly what a raid looks like in versus, and
     /// players read their puzzle as lost. `pos` is where it was last
@@ -464,7 +464,7 @@ fn gull_departures(
         };
         if castle.distance(pos) > layout::TILE * 1.5 {
             events.push(SimEvent::GullFlewOff { pos });
-        } else if !board.castle_raids() {
+        } else if !board.rules().castle_raids {
             events.push(SimEvent::GullShooed { pos, castle });
         }
     }
@@ -707,7 +707,7 @@ mod tests {
         let bank_on = |events_on: bool, locked: bool| {
             let mut board = Board::new(6, 4, 7);
             board.set_events_enabled(events_on);
-            board.set_timed_lock(true);
+            board.rules_mut().timed_lock = true;
             board.set_tile(3, 1, TileKind::Castle(2));
             board.spawn_crab(
                 2,
@@ -849,7 +849,7 @@ mod tests {
         for raids in [false, true] {
             let mut board = Board::new(6, 4, 7);
             board.set_tile(3, 1, TileKind::Castle(0));
-            board.set_castle_raids(raids);
+            board.rules_mut().castle_raids = raids;
             board.spawn_gull(2, 1, Direction::Right);
             let mut watch = synced(&board);
             let mut shooed = Vec::new();
@@ -904,9 +904,9 @@ mod tests {
             board.tick_idle();
         }
         let mut watch = synced(&board);
-        board.set_gull_period(1);
-        board.set_gull_cap(1);
-        board.set_gull_turnover(true);
+        board.rules_mut().gull_period = 1;
+        board.rules_mut().gull_cap = 1;
+        board.rules_mut().gull_turnover = true;
         board.tick_idle();
         let events = diff(&board, &mut watch);
         let flew: Vec<&SimEvent> = events
@@ -940,9 +940,9 @@ mod tests {
             board.tick_idle();
         }
         let mut watch = synced(&board);
-        board.set_gull_period(1);
-        board.set_gull_cap(1);
-        board.set_gull_turnover(true);
+        board.rules_mut().gull_period = 1;
+        board.rules_mut().gull_cap = 1;
+        board.rules_mut().gull_turnover = true;
         board.tick_idle();
         let events = diff(&board, &mut watch);
         assert_eq!(board.gulls().len(), 1, "one off and one on");
@@ -972,7 +972,7 @@ mod tests {
                 period: 9,
             }),
         );
-        board.set_golden_every(600);
+        board.rules_mut().golden_every = 600;
         board.tick_idle();
         let mut watch = synced(&board);
         let mut called = Vec::new();
@@ -1010,7 +1010,7 @@ mod tests {
     fn the_gulls_crab_mania_clears_were_not_shooed() {
         let mut board = Board::new(8, 4, 7);
         board.set_tile(7, 3, TileKind::Castle(0));
-        board.set_castle_raids(false);
+        board.rules_mut().castle_raids = false;
         board.spawn_gull(0, 0, Direction::Up);
         board.spawn_gull(1, 0, Direction::Up);
         for _ in 0..3 {
@@ -1287,7 +1287,7 @@ mod tests {
     #[test]
     fn a_flying_sweep_banks_at_the_keep_when_each_crab_lands() {
         let mut board = Board::new(9, 7, 5);
-        board.set_sweep_flight(true);
+        board.rules_mut().sweep_flight = true;
         board.set_tile(7, 5, TileKind::Castle(1));
         for x in 1..5 {
             board.spawn_crab(x, 1, Direction::Down, Handedness::Left, CrabKind::Common);
@@ -1324,9 +1324,9 @@ mod tests {
     #[test]
     fn a_swept_crab_shows_what_it_paid_not_what_the_clock_says() {
         let mut board = Board::new(9, 7, 5);
-        board.set_sweep_flight(true);
-        board.set_timed_lock(true);
-        board.set_sweep_keeps_worth(true);
+        board.rules_mut().sweep_flight = true;
+        board.rules_mut().timed_lock = true;
+        board.rules_mut().sweep_keeps_worth = true;
         board.set_tile(7, 5, TileKind::Castle(1));
         board.set_score(1, 10);
         for x in 1..5 {
@@ -1366,7 +1366,7 @@ mod tests {
     fn a_swept_sparkling_crab_does_not_say_the_wheel_is_locked() {
         let mut board = Board::new(9, 7, 5);
         board.set_events_enabled(true);
-        board.set_sweep_flight(true);
+        board.rules_mut().sweep_flight = true;
         board.set_tile(7, 5, TileKind::Castle(1));
         // Front of the line first: the sparkling one is the half taken.
         board.spawn_crab(1, 1, Direction::Down, Handedness::Left, CrabKind::Sparkling);
