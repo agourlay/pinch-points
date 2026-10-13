@@ -105,16 +105,67 @@ const NAME_CHARS: usize = 12;
 /// separators are stripped, and the length cap is the same one the
 /// settings screen enforces on typed names.
 pub fn name_from_wire(bytes: &WireName) -> String {
+    tidy_from_wire(bytes, NAME_CHARS)
+}
+
+/// A wire name back into text under a cap of `chars`: see
+/// [`name_from_wire`].
+fn tidy_from_wire(bytes: &WireName, chars: usize) -> String {
     let end = bytes.iter().position(|&b| b == 0).unwrap_or(WIRE_NAME);
     let Ok(text) = std::str::from_utf8(&bytes[..end]) else {
         return String::new();
     };
     text.chars()
         .filter(|&c| !c.is_control() && c != '|' && c != ':')
-        .take(NAME_CHARS)
+        .take(chars)
         .collect::<String>()
         .trim()
         .to_string()
+}
+
+/// A name exactly as every other machine will read it: onto the wire and
+/// back. What this machine shows of its own name goes through here, so a
+/// name too wide for its 24 bytes (eight Japanese characters, not twelve)
+/// reads the same on the sender's screen as on everybody else's.
+pub fn name_as_sent(name: &str) -> String {
+    name_from_wire(&wire_name(name))
+}
+
+/// A line of chat exactly as every other machine will read it, for the
+/// sender's own echo. See [`name_as_sent`].
+pub fn chat_as_sent(line: &str) -> String {
+    chat_from_wire(&wire_chat(line))
+}
+
+/// Whether `line` still fits a chat line's wire form whole: within
+/// [`CHAT_CHARS`] and within [`WIRE_CHAT`] bytes. The typing box stops
+/// taking characters here, so what a player types is what is sent.
+pub fn chat_fits(line: &str) -> bool {
+    line.chars().count() <= CHAT_CHARS && line.len() <= WIRE_CHAT
+}
+
+/// The most characters a beach's name keeps: as many as its
+/// [`WIRE_NAME`]-byte slot in the beacon carries of Latin text. Not the
+/// player-name cap of twelve, which cut "Partida de Cangrejo 42" to
+/// "Partida de C" on every list but the host's own.
+pub const BEACH_NAME_CHARS: usize = WIRE_NAME;
+
+/// A beach's name back off the wire: tidied exactly like a player's name
+/// (it is bytes a stranger wrote) but under the beach's own cap.
+pub fn beach_name_from_wire(bytes: &WireName) -> String {
+    tidy_from_wire(bytes, BEACH_NAME_CHARS)
+}
+
+/// A beach's name as every list on the LAN will show it. The host keeps
+/// its own copy through here, so its screen and everybody else's agree.
+pub fn beach_name_as_sent(name: &str) -> String {
+    beach_name_from_wire(&wire_name(name))
+}
+
+/// Whether `name` still fits a beach name's wire slot whole: the typing
+/// box stops taking characters past this.
+pub fn beach_name_fits(name: &str) -> bool {
+    name.chars().count() <= BEACH_NAME_CHARS && name.len() <= WIRE_NAME
 }
 
 #[cfg(test)]
@@ -192,5 +243,43 @@ mod chat_tests {
         let mut junk = [0xFFu8; WIRE_CHAT];
         junk[WIRE_CHAT - 1] = 0;
         assert_eq!(chat_from_wire(&junk), "");
+    }
+}
+
+#[cfg(test)]
+mod as_sent_tests {
+    use super::*;
+
+    /// What a sender shows of its own name and line is what the wire
+    /// carries: a Japanese line loses its tail at 96 bytes (32 characters,
+    /// not 48), a Japanese name at 24 bytes (eight, not twelve), and a
+    /// beach name keeps its 24 Latin characters rather than the twelve a
+    /// player's name is held to.
+    #[test]
+    fn the_sender_sees_what_the_wire_keeps() {
+        let line = "あ".repeat(48);
+        assert_eq!(chat_as_sent(&line), "あ".repeat(32));
+        assert_eq!(chat_from_wire(&wire_chat(&line)), chat_as_sent(&line));
+        assert!(!chat_fits(&"あ".repeat(33)), "33 is past the bytes");
+        assert!(chat_fits(&"あ".repeat(32)));
+        assert!(!chat_fits(&"a".repeat(49)), "49 is past the characters");
+
+        assert_eq!(name_as_sent(&"あ".repeat(12)), "あ".repeat(8));
+        assert_eq!(name_as_sent("Anna"), "Anna");
+
+        let beach = "Partida de Cangrejo 42";
+        assert_eq!(beach_name_as_sent(beach), beach, "whole, all 22");
+        assert_eq!(
+            beach_name_from_wire(&wire_name(beach)),
+            beach,
+            "and whole off the wire"
+        );
+        assert_eq!(name_from_wire(&wire_name(beach)), "Partida de C");
+        let long = "x".repeat(48);
+        assert_eq!(beach_name_as_sent(&long), "x".repeat(24));
+        assert!(beach_name_fits(&"x".repeat(24)));
+        assert!(!beach_name_fits(&"x".repeat(25)));
+        assert!(!beach_name_fits(&"あ".repeat(9)), "27 bytes");
+        assert_eq!(beach_name_as_sent("Room | 3"), "Room  3");
     }
 }

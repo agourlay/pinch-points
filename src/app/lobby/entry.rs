@@ -199,9 +199,16 @@ fn read_line(
     typed: &mut MessageReader<bevy::input::keyboard::KeyboardInput>,
     open: &mut Typing,
 ) -> Option<String> {
+    // A beach's name has its own slot in the beacon, narrower than a line
+    // of chat: the box stops where the slot does, so the name the host
+    // typed is the name the hall reads.
+    let fits = match open.what {
+        Entry::GameName => crate::transport::beach_name_fits,
+        Entry::PlayerName | Entry::Address | Entry::Chat => crate::transport::chat_fits,
+    };
     let said = if open.suggested {
         let mut fresh = String::new();
-        match type_a_line(typed, &mut fresh) {
+        match type_a_line(typed, &mut fresh, fits) {
             // Enter over a suggestion that nothing was typed across.
             Some(said) if said.is_empty() => Some(open.text.trim().to_string()),
             Some(said) => Some(said),
@@ -214,7 +221,7 @@ fn read_line(
             }
         }
     } else {
-        type_a_line(typed, &mut open.text)
+        type_a_line(typed, &mut open.text, fits)
     };
     said.or_else(|| {
         (keys.just_pressed(KeyCode::Enter) && !keys.just_pressed(KeyCode::Escape))
@@ -297,7 +304,12 @@ pub(super) fn drive_typing(
                 if let Some(transport) = state.transport() {
                     transport.send(NetMsg::chat(&me, &line));
                 }
-                state.say(&me, &line);
+                // Echoed as it arrives everywhere else, name and line
+                // both: the wire is the one place either is cut.
+                state.say(
+                    &crate::transport::name_as_sent(&me),
+                    &crate::transport::chat_as_sent(&line),
+                );
             }
             Answered::PlayerThenGame(name) => {
                 name_myself(settings, caps, name);
@@ -313,7 +325,10 @@ pub(super) fn drive_typing(
                 intent = then;
             }
             Answered::GameNamed(name) => {
-                state.game_name = name;
+                // Kept as the beacon will carry it, so the host's own
+                // screen names the beach the way every list in the hall
+                // does. A suggestion is not typed through the box's cap.
+                state.game_name = crate::transport::beach_name_as_sent(&name);
                 intent = Some(Intent::Host);
             }
             // Kept before the beach is even dialled: whether anyone
@@ -373,9 +388,16 @@ pub(super) fn name_myself(
 /// `pub(crate)` because a spectator types during a round too, which is a
 /// fourth caller of the same act: type, Enter, Esc, capped at the length a
 /// chat line goes onto the wire at.
+///
+/// `fits` says whether a line may grow to what it would be with one more
+/// character: [`crate::transport::chat_fits`] for chat, which is the wire's
+/// own budget in characters *and* bytes, so the line typed is the line
+/// sent. A Japanese line used to run to 48 characters on the sender's
+/// screen and arrive as 32 everywhere else.
 pub(crate) fn type_a_line(
     typed: &mut MessageReader<bevy::input::keyboard::KeyboardInput>,
     line: &mut String,
+    fits: fn(&str) -> bool,
 ) -> Option<String> {
     use crate::app::typing::{Keystroke, keystrokes};
     let mut sent = None;
@@ -389,10 +411,12 @@ pub(crate) fn type_a_line(
             Keystroke::Erase => {
                 line.pop();
             }
-            Keystroke::Char(ch) if line.chars().count() < crate::transport::CHAT_CHARS => {
-                line.push(ch)
+            Keystroke::Char(ch) => {
+                line.push(ch);
+                if !fits(line) {
+                    line.pop();
+                }
             }
-            Keystroke::Char(_) => {}
         }
     }
     if dropped {
@@ -687,6 +711,90 @@ mod door_tests {
         assert!(
             state.joined().is_none(),
             "and the cursor's beach is not taken"
+        );
+    }
+
+    /// A line of chat stops where the wire does, and the sender's own
+    /// echo is the line everybody else reads. In Japanese the wire's 96
+    /// bytes are 32 characters, and the box used to take 48 of them and
+    /// echo all 48; the sender's own name was likewise twelve characters
+    /// at home and eight everywhere else.
+    #[test]
+    fn a_line_of_chat_is_typed_and_echoed_as_the_wire_carries_it() {
+        use bevy::input::ButtonState;
+        use bevy::input::keyboard::{Key, KeyboardInput};
+
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<LobbyState>();
+        app.init_resource::<MatchConfig>();
+        app.init_resource::<crate::app::bot_seats::BotSeats>();
+        app.init_resource::<Online>();
+        app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        let mut settings = GameSettings::default();
+        settings.names[0] = "あ".repeat(12);
+        app.insert_resource(settings);
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.add_message::<KeyboardInput>();
+        app.add_systems(Update, lobby_input);
+        app.world_mut().resource_mut::<LobbyState>().typing = Some(Typing::chat());
+
+        for _ in 0..48 {
+            app.world_mut().write_message(KeyboardInput {
+                key_code: KeyCode::KeyA,
+                logical_key: Key::Character("い".into()),
+                state: ButtonState::Pressed,
+                text: Some("い".into()),
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+        }
+        app.update();
+        let typed = app
+            .world()
+            .resource::<LobbyState>()
+            .typing
+            .as_ref()
+            .map(|open| open.text.clone());
+        assert_eq!(typed, Some("い".repeat(32)), "the box stops at the wire");
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::Enter,
+            logical_key: Key::Enter,
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+        app.update();
+        let state = app.world().resource::<LobbyState>();
+        let said = state.chat.last().expect("the line was echoed");
+        assert_eq!(said.who, "あ".repeat(8), "the name as the wire keeps it");
+        assert_eq!(said.line, "い".repeat(32));
+
+        // And a beach's name is kept as the beacon will carry it, even one
+        // the box never held to its cap: a suggestion taken whole.
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.world_mut().resource_mut::<LobbyState>().typing = Some(Typing {
+            text: "x".repeat(40),
+            suggested: true,
+            ..Typing::game_name("")
+        });
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        app.update();
+        assert_eq!(
+            app.world().resource::<LobbyState>().game_name,
+            "x".repeat(24),
+            "the host's own screen names the beach as the hall reads it"
         );
     }
 

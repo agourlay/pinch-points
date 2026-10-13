@@ -45,7 +45,7 @@ pub fn spectator_chat_input(
         }
         return;
     };
-    let said = crate::app::lobby::type_a_line(&mut typed, line);
+    let said = crate::app::lobby::type_a_line(&mut typed, line, crate::transport::chat_fits);
     if keys.just_pressed(KeyCode::Escape) {
         chat.0 = None;
         crate::app::menu_ui::spend(&mut keys, &crate::app::menu_ui::CLOSERS);
@@ -71,7 +71,11 @@ pub fn spectator_chat_input(
     if let Some(session) = &mut online.0 {
         session.transport.send(NetMsg::chat(&me, &said));
         // Said to the table, and shown here too: the sender is a peer like
-        // any other and its own datagram never comes back to it.
-        session.heard.push((me, said));
+        // any other and its own datagram never comes back to it. Shown as
+        // the wire carries it, which is how everyone else reads it.
+        session.heard.push((
+            crate::transport::name_as_sent(&me),
+            crate::transport::chat_as_sent(&said),
+        ));
     }
 }

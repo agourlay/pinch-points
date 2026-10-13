@@ -191,11 +191,20 @@ pub(super) fn wide_ports(round: u32, farewell: bool) -> &'static [u16] {
 /// from a build that sent none or a host that never typed one. Sanitized
 /// like any other name off the wire, because that is what it is: bytes a
 /// stranger on the LAN wrote.
-pub(super) fn beacon_name(buf: &[u8], len: usize, at: usize) -> String {
+///
+/// `read` is the reader the field takes: [`beach_name_from_wire`] for the
+/// beach, whose cap is its whole slot, and [`name_from_wire`] for its host,
+/// a player's name like any other.
+pub(super) fn beacon_name(
+    buf: &[u8],
+    len: usize,
+    at: usize,
+    read: fn(&WireName) -> String,
+) -> String {
     buf.get(at..at + WIRE_NAME)
         .filter(|_| len >= at + WIRE_NAME)
         .and_then(|bytes| WireName::try_from(bytes).ok())
-        .map(|wire| name_from_wire(&wire))
+        .map(|wire| read(&wire))
         .unwrap_or_default()
 }
 
@@ -286,8 +295,13 @@ impl Discovery {
                                 };
                                 Beacon::Here {
                                     id,
-                                    name: beacon_name(&buf, len, BEACON_NAME_AT),
-                                    host: beacon_name(&buf, len, BEACON_HOST_AT),
+                                    name: beacon_name(
+                                        &buf,
+                                        len,
+                                        BEACON_NAME_AT,
+                                        beach_name_from_wire,
+                                    ),
+                                    host: beacon_name(&buf, len, BEACON_HOST_AT, name_from_wire),
                                     taken,
                                     seats,
                                     running: kind == Some(BEACON_RUNNING),
@@ -596,8 +610,11 @@ mod tests {
             }
             found
         };
+        // A beach name longer than a player's: the twelve-character cap
+        // on player names used to cut it short on every list but the
+        // host's.
         let told = |taken| OnAir {
-            name: "Room 3",
+            name: "Partida de Cangrejo 42",
             host: "Anna",
             taken,
             seats: 6,
@@ -626,7 +643,7 @@ mod tests {
         assert!(!full, "and that it has room");
         assert_eq!(
             (name.as_str(), whose.as_str(), taken, seats, running),
-            ("Room 3", "Anna", 3, 6, false),
+            ("Partida de Cangrejo 42", "Anna", 3, 6, false),
             "what the beach is called, whose it is and how full: none of \
              which an address says"
         );

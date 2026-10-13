@@ -1381,8 +1381,8 @@ mod wire_fuzz_probe {
             let _ = NetMsg::peek_version(&bytes);
             // Both names the beacon carries: the beach's, and the host's
             // behind it, which is the one that runs off a short packet.
-            let _ = beacon_name(&bytes, bytes.len(), BEACON_NAME_AT);
-            let _ = beacon_name(&bytes, bytes.len(), BEACON_HOST_AT);
+            let _ = beacon_name(&bytes, bytes.len(), BEACON_NAME_AT, beach_name_from_wire);
+            let _ = beacon_name(&bytes, bytes.len(), BEACON_HOST_AT, name_from_wire);
         }
     }
 }

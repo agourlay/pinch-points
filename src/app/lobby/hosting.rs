@@ -163,7 +163,7 @@ pub fn host_tick(
     // The host's own view of the table, and the peers': the same list,
     // sent on every beacon tick so a lost one costs a second, not a screen
     // that stays wrong until somebody joins or leaves.
-    state.table = state.roster(tr, &settings.names[0]);
+    state.table = state.roster(tr, &crate::transport::name_as_sent(&settings.names[0]));
     state.table_kinds = state.roster_kinds();
     // The bots that came straight here sit after the people.
     for (_, name) in &arrived {
@@ -328,21 +328,7 @@ fn launch_the_match(
         map: map_for(config, seats).index() as u8,
         ..crate::app::match_setup::terms(config, settings.team_mode, seed)
     };
-    // The table's names: the host is seat 0 under its own P1 name, and
-    // each seated peer under the name its greeting carried. Empty slots
-    // (AI seats, the nameless) fall back to seat labels on every screen.
-    let mut names: [String; MAX_PLAYERS] = Default::default();
-    names[0].clone_from(&settings.names[0]);
-    for (peer, slot) in plan.iter().enumerate() {
-        if let Some(seat) = slot
-            && let Some(peer) = peers.get(peer)
-        {
-            names[usize::from(*seat)].clone_from(&peer.name);
-        }
-    }
-    for (seat, _, name) in &bots_here {
-        names[usize::from(*seat)].clone_from(name);
-    }
+    let names = seat_names(&settings.names[0], &plan, &peers, &bots_here);
     let wire_names = crate::transport::wire_table(&names);
     // What holds each seat: the host's own a person, a peer's whatever its
     // greeting said, the host's bots bots, and the top seats the AI's.
@@ -409,6 +395,35 @@ fn launch_the_match(
     // count, and only the host would see a champion.
     let series = crate::app::tournament::Tournament::from_terms(terms, standing);
     arena.walk_in(session, series);
+}
+
+/// The table's names: the host is seat 0 under its own P1 name, and each
+/// seated peer under the name its greeting carried. Empty slots (AI
+/// seats, the nameless) fall back to seat labels on every screen.
+///
+/// The host's own name as the joiners will read it off the `Start`: a
+/// name wider than its 24 bytes is cut there, and the host's own screen
+/// used to keep it whole, so the scores and the feed named one player two
+/// ways. The peers' names came off the wire already.
+fn seat_names(
+    me: &str,
+    plan: &[Option<u8>],
+    peers: &PeerBook,
+    bots_here: &[(u8, crate::bots::listener::BotId, String)],
+) -> [String; MAX_PLAYERS] {
+    let mut names: [String; MAX_PLAYERS] = Default::default();
+    names[0] = crate::transport::name_as_sent(me);
+    for (peer, slot) in plan.iter().enumerate() {
+        if let Some(seat) = slot
+            && let Some(peer) = peers.get(peer)
+        {
+            names[usize::from(*seat)].clone_from(&peer.name);
+        }
+    }
+    for (seat, _, name) in bots_here {
+        names[usize::from(*seat)].clone_from(name);
+    }
+    names
 }
 
 /// Fold this tick's greetings and silences into the table: who has just
@@ -799,6 +814,23 @@ mod tests {
     fn table(n: usize, watchers: &[usize]) -> PeerBook {
         let names = vec![""; n];
         peers_named(&names, watchers)
+    }
+
+    /// The host's own seat carries its name as the joiners will read it:
+    /// a Japanese name of twelve is eight on the wire, and was twelve on
+    /// the host's own scores.
+    #[test]
+    fn the_host_wears_the_name_the_wire_gives_it() {
+        let peers = peers_named(&["Bo"], &[]);
+        let wide = "あ".repeat(12);
+        let names = seat_names(&wide, &seat_plan(&peers), &peers, &[]);
+        assert_eq!(names[0], "あ".repeat(8));
+        assert_eq!(
+            names[0],
+            crate::transport::table_from_wire(&crate::transport::wire_table(&names))[0],
+            "what the host shows is what the joiners decode"
+        );
+        assert_eq!(names[1], "Bo");
     }
 
     /// Seats go to the peers that came to play, in the order they arrived,
