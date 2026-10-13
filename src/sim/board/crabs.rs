@@ -215,7 +215,6 @@ impl Board {
         let t = crab.tile as usize;
         if let TileKind::Castle(owner) = self.grid.tiles[t] {
             self.credit_bank(owner, crab);
-            self.crabs_banked += 1;
             match crab.kind {
                 // A molt banked during a lure (anyone's) or in the quiet
                 // spell after one banks for its points and nothing more.
@@ -224,9 +223,8 @@ impl Board {
                         self.lure = Some((owner, LURE_TICKS));
                     }
                 }
-                CrabKind::Golden => self.golden_banked += 1,
                 CrabKind::Sparkling => self.tide.queue.push(owner),
-                CrabKind::Common | CrabKind::Juvenile | CrabKind::Giant => {}
+                CrabKind::Golden | CrabKind::Common | CrabKind::Juvenile | CrabKind::Giant => {}
             }
             return true;
         }

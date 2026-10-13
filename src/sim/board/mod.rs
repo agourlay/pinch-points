@@ -969,18 +969,23 @@ impl Board {
                 true => claw_call,
                 false => self.in_claw_call(),
             };
-            let points = self.credit_bank_under(owner, &crab, claw_call);
-            self.crabs_banked += 1;
-            if crab.kind == CrabKind::Golden {
-                self.golden_banked += 1;
-            }
-            self.swept_home.push(Swept {
-                crab: crab.id,
-                owner,
-                at: tick,
-                points,
-            });
+            self.bank_swept(owner, &crab, claw_call);
         }
+    }
+
+    /// Bank a crab the tide carried rather than walked, and write it down.
+    ///
+    /// Written down because it cannot be worked out later: the crab is
+    /// gone from a tile that is not a castle, which from the outside is
+    /// exactly what being eaten looks like. See [`Self::swept_home`].
+    pub(super) fn bank_swept(&mut self, owner: PlayerId, crab: &Crab, claw_call: bool) {
+        let points = self.credit_bank_under(owner, crab, claw_call);
+        self.swept_home.push(Swept {
+            crab: crab.id,
+            owner,
+            at: self.tick,
+            points,
+        });
     }
 
     /// Credit a banked crab to `owner`, under whatever the tide is asking
@@ -989,7 +994,8 @@ impl Board {
     /// Every bank goes through here, the ordinary walk into a castle and
     /// Crab Monopoly's sweep alike: the two used to add the crab's value
     /// each in their own line, and a rule that arrived later would have
-    /// landed on one of them.
+    /// landed on one of them. So does the count of crabs banked, golden
+    /// ones and all, which three sites used to bump by hand.
     ///
     /// Right Claws is that rule. While it runs, a right-clawed crab is
     /// worth twice what it says and a left-clawed one costs the same
@@ -1007,6 +1013,10 @@ impl Board {
         let points = crab.bank_points(self.crab_value(crab.kind), claw_call);
         let score = &mut self.scores[owner as usize];
         *score = score.saturating_add_signed(points);
+        self.crabs_banked += 1;
+        if crab.kind == CrabKind::Golden {
+            self.golden_banked += 1;
+        }
         points
     }
 

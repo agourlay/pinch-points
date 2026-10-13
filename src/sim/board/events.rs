@@ -238,14 +238,14 @@ impl Board {
                 // into the banker's castle.
                 let take = self.crabs.len() / 2;
                 let at = self.tick;
-                // Drained first: `credit_bank` takes `&mut self`, and the
+                // Drained first: `bank_swept` takes `&mut self`, and the
                 // sweep is a fixed-order loop over a list that is being
                 // emptied anyway.
                 let swept: Vec<Crab> = self.crabs.drain(..take).collect();
+                let claw_call = self.in_claw_call();
                 if self.rules.sweep_flight {
                     // Carried home instead, front of the line first, each
                     // with the claw call it was swept under.
-                    let claw_call = self.in_claw_call();
                     for (n, crab) in swept.into_iter().enumerate() {
                         let launch = at + SWEEP_HOLD + SWEEP_STAGGER * n as u64;
                         self.sweeping.push(Sweeping {
@@ -259,21 +259,7 @@ impl Board {
                     return;
                 }
                 for crab in swept {
-                    let points = self.credit_bank(banker, &crab);
-                    self.crabs_banked += 1;
-                    if crab.kind == CrabKind::Golden {
-                        self.golden_banked += 1;
-                    }
-                    // Written down because it cannot be worked out later:
-                    // the crab is gone from a tile that is not a castle,
-                    // which from the outside is exactly what being eaten
-                    // looks like. See `Board::swept_home`.
-                    self.swept_home.push(Swept {
-                        crab: crab.id,
-                        owner: banker,
-                        at,
-                        points,
-                    });
+                    self.bank_swept(banker, &crab, claw_call);
                 }
             }
             TideEvent::GullAttack => {
