@@ -300,6 +300,27 @@ pub struct Rules {
     /// On for versus only, and a file that does not say so keeps the
     /// instant sweep.
     pub sweep_flight: bool,
+    /// Whether the flock's turnover keeps the flock whole: the spawner
+    /// rolls the newcomer's edge tile first and sends a gull off only for
+    /// one that can land.
+    ///
+    /// The first turnover sent the old gull off before the roll, and a
+    /// roll onto rock or kelp spawns nothing, so a beach with a rocky rim
+    /// lost a gull each time and the full flock it was meant to keep
+    /// whole thinned out instead. On for versus only, and a file that
+    /// does not say so keeps the old order.
+    pub whole_flock: bool,
+    /// Whether a crab Crab Monopoly carries home banks what it was worth
+    /// when the sweep fired, rather than what it is worth when it lands.
+    ///
+    /// The instant sweep banked every crab on the tick it fired, so a
+    /// Right Claws starting later could not touch it. In flight, a
+    /// timed lock leaves the wheel free to spin Right Claws while the
+    /// crabs are still in the air, and each left-clawed one then cost its
+    /// banker the points it was meant to add. The claw call in force at
+    /// the sweep is written on each crab ([`Sweeping::claw_call`]). On for
+    /// versus only, and a file that does not say so keeps the old reading.
+    pub sweep_keeps_worth: bool,
     /// Round length in ticks (the tide, spec §3.6). None = untimed. When it
     /// reaches zero the sim freezes: scores are locked at the wave.
     pub round_length: Option<u32>,
@@ -391,6 +412,9 @@ pub struct Sweeping {
     pub launch: u64,
     /// The tick it lands and banks.
     pub lands: u64,
+    /// Whether Right Claws was running when the sweep fired, which is what
+    /// the crab banks under where [`Rules::sweep_keeps_worth`] holds.
+    pub claw_call: bool,
 }
 
 /// One crab the tide banked, for the render layer to find.
@@ -442,6 +466,8 @@ impl Board {
                 golden_every: 0,
                 timed_lock: false,
                 sweep_flight: false,
+                whole_flock: false,
+                sweep_keeps_worth: false,
                 round_length: None,
                 castle_raids: true,
             },
@@ -615,6 +641,17 @@ impl Board {
     /// Carry Crab Monopoly's crabs home (see [`Rules::sweep_flight`]).
     pub fn set_sweep_flight(&mut self, on: bool) {
         self.rules.sweep_flight = on;
+    }
+
+    /// Keep the flock whole as it turns over (see [`Rules::whole_flock`]).
+    pub fn set_whole_flock(&mut self, on: bool) {
+        self.rules.whole_flock = on;
+    }
+
+    /// Bank swept crabs at their worth when the sweep fired (see
+    /// [`Rules::sweep_keeps_worth`]).
+    pub fn set_sweep_keeps_worth(&mut self, on: bool) {
+        self.rules.sweep_keeps_worth = on;
     }
 
     /// Lock the wheel only for timed events (see [`Rules::timed_lock`]).
@@ -888,24 +925,17 @@ impl Board {
         }
     }
 
-    /// Credit a banked crab to `owner`, under whatever the tide is asking
-    /// for right now.
-    ///
-    /// Every bank goes through here, the ordinary walk into a castle and
-    /// Crab Monopoly's sweep alike: the two used to add the crab's value
-    /// each in their own line, and a rule that arrived later would have
-    /// landed on one of them.
-    ///
-    /// Right Claws is that rule. While it runs, a right-clawed crab is
-    /// worth twice what it says and a left-clawed one costs the same
-    /// again, down to nothing and no further: a score that has gone
-    /// negative is a player who has stopped playing, and this game is for
-    /// children.
     /// Bank the swept crabs due this tick, as they reach their castle.
     ///
     /// Everything still in the air lands on the last tick of a round: the
     /// sim freezes at the wave, and a crab caught mid-flight by it would
     /// be points the event promised and never paid.
+    ///
+    /// Run after this tick's timers have counted down, so without
+    /// [`Rules::sweep_keeps_worth`] a crab landing on Right Claws' last
+    /// tick banks as if the call were already over. With it the clock is
+    /// never read here: each crab banks under the call written on it when
+    /// the sweep fired.
     fn land_sweeps(&mut self) {
         if self.sweeping.is_empty() {
             return;
@@ -921,8 +951,17 @@ impl Board {
                 i += 1;
                 continue;
             }
-            let Sweeping { crab, owner, .. } = self.sweeping.remove(i);
-            self.credit_bank(owner, &crab);
+            let Sweeping {
+                crab,
+                owner,
+                claw_call,
+                ..
+            } = self.sweeping.remove(i);
+            let claw_call = match self.rules.sweep_keeps_worth {
+                true => claw_call,
+                false => self.in_claw_call(),
+            };
+            self.credit_bank_under(owner, &crab, claw_call);
             self.crabs_banked += 1;
             if crab.kind == CrabKind::Golden {
                 self.golden_banked += 1;
@@ -935,8 +974,27 @@ impl Board {
         }
     }
 
+    /// Credit a banked crab to `owner`, under whatever the tide is asking
+    /// for right now.
+    ///
+    /// Every bank goes through here, the ordinary walk into a castle and
+    /// Crab Monopoly's sweep alike: the two used to add the crab's value
+    /// each in their own line, and a rule that arrived later would have
+    /// landed on one of them.
+    ///
+    /// Right Claws is that rule. While it runs, a right-clawed crab is
+    /// worth twice what it says and a left-clawed one costs the same
+    /// again, down to nothing and no further: a score that has gone
+    /// negative is a player who has stopped playing, and this game is for
+    /// children.
     pub(super) fn credit_bank(&mut self, owner: PlayerId, crab: &Crab) {
-        let points = crab.bank_points(self.crab_value(crab.kind), self.in_claw_call());
+        self.credit_bank_under(owner, crab, self.in_claw_call());
+    }
+
+    /// [`Self::credit_bank`] under a claw call given rather than read off
+    /// the clock: a swept crab's, written down when the sweep fired.
+    fn credit_bank_under(&mut self, owner: PlayerId, crab: &Crab, claw_call: bool) {
+        let points = crab.bank_points(self.crab_value(crab.kind), claw_call);
         let score = &mut self.scores[owner as usize];
         *score = score.saturating_add_signed(points);
     }
@@ -1012,7 +1070,16 @@ impl Board {
         self.rules.sweep_flight
     }
 
-    /// Crabs Crab Monopoly is carrying home, soonest to land first.
+    pub fn whole_flock(&self) -> bool {
+        self.rules.whole_flock
+    }
+
+    pub fn sweep_keeps_worth(&self) -> bool {
+        self.rules.sweep_keeps_worth
+    }
+
+    /// Crabs Crab Monopoly is carrying home, in the order they were swept,
+    /// which is the order they land only while one sweep is in the air.
     pub fn sweeping(&self) -> &[Sweeping] {
         &self.sweeping
     }

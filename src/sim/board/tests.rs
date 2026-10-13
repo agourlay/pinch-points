@@ -1584,6 +1584,58 @@ fn a_flying_sweep_lands_everything_at_the_wave() {
     assert_eq!(board.scores()[1], 3, "and every crab paid");
 }
 
+/// A swept crab banks what it was worth when Crab Monopoly fired, where
+/// the sweep keeps its worth: a Right Claws spun while it is in the air
+/// does not make a left-clawed crab cost its banker, and one that ends
+/// while it is in the air does not let it off. Without the rule it banks
+/// under the call running when it lands, as every recording before it
+/// was played.
+#[test]
+fn a_swept_crab_banks_what_it_was_worth_when_the_sweep_fired() {
+    // (keeps worth, Right Claws at the sweep) -> the banker's score after.
+    for (keeps, called_at_fire, expected) in [
+        (true, false, 13),
+        (true, true, 7),
+        (false, false, 7),
+        (false, true, 13),
+    ] {
+        let mut board = party_board();
+        board.set_sweep_flight(true);
+        board.set_timed_lock(true);
+        board.set_sweep_keeps_worth(keeps);
+        board.set_score(1, 10);
+        for x in 0..6 {
+            common(&mut board, x, 4, Right, Handedness::Left);
+        }
+        if called_at_fire {
+            // Running at the sweep, and over before the first crab lands.
+            board.apply_tide_event(TideEvent::RightClaws, 0);
+            board.tide.claw_call = 10;
+        }
+        board.apply_tide_event(TideEvent::Monopoly, 1);
+        // Only the swept crabs bank: the ones left on the sand go.
+        board.crabs.clear();
+        for _ in 0..20 {
+            board.tick_idle();
+        }
+        if !called_at_fire {
+            // Spun mid-flight, which the timed lock leaves the wheel free
+            // to do after a Monopoly.
+            assert_eq!(board.tide.cooldown, 0, "the wheel is free");
+            board.apply_tide_event(TideEvent::RightClaws, 0);
+        }
+        assert_eq!(board.in_claw_call(), !called_at_fire);
+        while !board.sweeping().is_empty() {
+            board.tick_idle();
+        }
+        assert_eq!(
+            board.scores()[1],
+            expected,
+            "keeps worth {keeps}, called at the sweep {called_at_fire}"
+        );
+    }
+}
+
 /// A round saved mid-sweep picks up with the same crabs in the air,
 /// landing on the same ticks.
 #[test]
@@ -1846,12 +1898,13 @@ fn a_raised_gull_cap_is_the_one_the_spawner_stops_at() {
 /// attack and stays. Without turnover the flock is left as it is.
 #[test]
 fn a_full_flock_turns_over_from_its_oldest_gull_clear_of_the_castles() {
-    for turnover in [true, false] {
+    for (turnover, whole) in [(true, false), (true, true), (false, false), (false, true)] {
         let mut board = Board::new(9, 7, 3);
         board.set_tile(4, 3, TileKind::Castle(0));
         board.set_gull_period(10);
         board.set_gull_cap(3);
         board.set_gull_turnover(turnover);
+        board.set_whole_flock(whole);
         board.spawn_gull(4, 2, Left); // the oldest, beside the castle
         board.spawn_gull(8, 6, Up); // the oldest clear of it
         board.spawn_gull(0, 6, Up);
@@ -1865,6 +1918,36 @@ fn a_full_flock_turns_over_from_its_oldest_gull_clear_of_the_castles() {
         } else {
             assert_eq!(ids, [0, 1, 2]);
         }
+    }
+}
+
+/// A full flock that keeps whole sends a gull off only for a newcomer
+/// that can land: on a beach whose rim is all rock every roll misses, and
+/// the flock stays as it is rather than losing a gull at each turn. The
+/// old order sent one off first and thinned the flock out.
+#[test]
+fn a_whole_flock_stays_whole_when_the_newcomer_rolls_rock() {
+    for whole in [true, false] {
+        let mut board = Board::new(9, 7, 3);
+        for x in 0..9 {
+            board.set_tile(x, 0, TileKind::Rock);
+            board.set_tile(x, 6, TileKind::Rock);
+        }
+        for y in 0..7 {
+            board.set_tile(0, y, TileKind::Rock);
+            board.set_tile(8, y, TileKind::Rock);
+        }
+        board.set_tile(4, 3, TileKind::Castle(0));
+        board.set_gull_period(10);
+        board.set_gull_cap(3);
+        board.set_gull_turnover(true);
+        board.set_whole_flock(whole);
+        board.spawn_gull(1, 1, Down);
+        board.spawn_gull(7, 5, Up);
+        board.spawn_gull(1, 5, Up);
+        board.run_gull_spawner();
+        let expected = if whole { 3 } else { 2 };
+        assert_eq!(board.gulls().len(), expected, "whole {whole}");
     }
 }
 

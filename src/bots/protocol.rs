@@ -181,6 +181,8 @@ pub fn hello(board: &Board, table: &Table, seat: PlayerId, resumed: bool) -> Val
             "golden_value": board.crab_value(crate::sim::CrabKind::Golden),
             "timed_lock": board.timed_lock(),
             "sweep_flight": board.sweep_flight(),
+            "sweep_keeps_worth": board.sweep_keeps_worth(),
+            "whole_flock": board.whole_flock(),
             "castle_raids": board.castle_raids(),
             "events": board.events_enabled(),
         },
@@ -246,6 +248,7 @@ pub fn tick(board: &Board, game: u32, you: &You, cursors: &[Option<(u8, u8)>]) -
                 "progress": crab.progress, "kind": kind_token(crab.kind),
                 "claw": claw_token(crab.handed), "owner": flight.owner,
                 "launch": flight.launch, "lands": flight.lands,
+                "claw_call": flight.claw_call,
             })
         })
         .collect();

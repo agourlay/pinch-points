@@ -19,7 +19,9 @@ const CLASSIC_AREA: u32 = 12 * 9;
 /// turns over ([`Board::set_gull_turnover`]), the golden crab is called
 /// rather than rolled ([`Board::set_golden_every`]), the event wheel locks
 /// only while a timed event runs ([`Board::set_timed_lock`]), Crab
-/// Monopoly carries its crabs home ([`Board::set_sweep_flight`]), and a big
+/// Monopoly carries its crabs home ([`Board::set_sweep_flight`]) at what
+/// they were worth when it fired ([`Board::set_sweep_keeps_worth`]), the
+/// turnover keeps the flock whole ([`Board::set_whole_flock`]), and a big
 /// beach gets more gulls.
 ///
 /// The ambient spawner sends one gull a period and stops at a fixed cap,
@@ -38,6 +40,8 @@ pub fn set_versus_rules(board: &mut Board, period: u32) {
     board.set_golden_every(VERSUS_GOLDEN_EVERY);
     board.set_timed_lock(true);
     board.set_sweep_flight(true);
+    board.set_whole_flock(true);
+    board.set_sweep_keeps_worth(true);
 }
 
 /// A castle spot per seat for a board of the given size.

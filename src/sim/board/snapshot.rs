@@ -66,6 +66,12 @@ impl Board {
         if self.rules.sweep_flight {
             let _ = writeln!(out, "sweep_flight: on");
         }
+        if self.rules.whole_flock {
+            let _ = writeln!(out, "whole_flock: on");
+        }
+        if self.rules.sweep_keeps_worth {
+            let _ = writeln!(out, "sweep_keeps_worth: on");
+        }
         // The whole call, public or not: a round resumed from a code
         // sends its golden crab out where and when this one would have.
         if let Some((at, tile)) = self.golden_call {
@@ -154,12 +160,15 @@ impl Board {
             );
         }
         // A crab in a Crab Monopoly sweep: who it flies to, when it leaves
-        // and lands, then the crab exactly as a `crab:` line writes it.
+        // and lands, then the crab exactly as a `crab:` line writes it, and
+        // `claws` after it when it was swept under Right Claws (left off
+        // otherwise, which is how every line read before it was kept).
         for flight in &self.sweeping {
             let crab = &flight.crab;
+            let called = if flight.claw_call { " claws" } else { "" };
             let _ = writeln!(
                 out,
-                "sweeping: {} {} {} {} {} {} {} {} {} {} {} {}",
+                "sweeping: {} {} {} {} {} {} {} {} {} {} {} {}{called}",
                 flight.owner,
                 flight.launch,
                 flight.lands,
@@ -241,6 +250,8 @@ struct Fields {
     golden_every: u32,
     timed_lock: bool,
     sweep_flight: bool,
+    whole_flock: bool,
+    sweep_keeps_worth: bool,
     sweeping: Vec<Sweeping>,
     golden_call: Option<(u64, u8, u8)>,
     round_length: Option<u32>,
@@ -398,11 +409,17 @@ impl Fields {
                     ));
                 }
                 let crab = parse_crab(&mut words)?;
+                let claw_call = match words.next() {
+                    None => false,
+                    Some("claws") => true,
+                    Some(other) => return Err(format!("sweeping: bad call {other:?}")),
+                };
                 self.sweeping.push(Sweeping {
                     crab,
                     owner,
                     launch,
                     lands,
+                    claw_call,
                 });
             }
             "gull" => self.gulls.push(parse_gull(&mut words)?),
@@ -562,6 +579,8 @@ impl Fields {
                 golden_every: self.golden_every,
                 timed_lock: self.timed_lock,
                 sweep_flight: self.sweep_flight,
+                whole_flock: self.whole_flock,
+                sweep_keeps_worth: self.sweep_keeps_worth,
                 round_length: self.round_length,
                 castle_raids: !self.no_castle_raids,
             },
@@ -859,6 +878,8 @@ mod tests {
         board.set_gull_turnover(true);
         board.set_timed_lock(true);
         board.set_sweep_flight(true);
+        board.set_whole_flock(true);
+        board.set_sweep_keeps_worth(true);
         board.set_events_enabled(true);
         board.set_round_length(Some(1234));
         board.set_gull_period(97);
@@ -913,6 +934,25 @@ mod tests {
             state: GullState::Flying { remaining: 3 },
             takeoff_in: 222,
         });
+        board.sweeping.push(Sweeping {
+            crab: Crab {
+                id: 5,
+                tile: 6,
+                dir: Direction::Left,
+                progress: 40,
+                prev: Pose {
+                    tile: 6,
+                    dir: Direction::Left,
+                    progress: 20,
+                },
+                handed: Handedness::Left,
+                kind: CrabKind::Common,
+            },
+            owner: 1,
+            launch: 4330,
+            lands: 4360,
+            claw_call: true,
+        });
         board
     }
 
@@ -942,6 +982,9 @@ mod tests {
             "gull_turnover: on",
             "timed_lock: on",
             "sweep_flight: on",
+            "whole_flock: on",
+            "sweep_keeps_worth: on",
+            " common claws",
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
@@ -1033,6 +1076,8 @@ mod tests {
                 "golden_every:",
                 "timed_lock:",
                 "sweep_flight:",
+                "whole_flock:",
+                "sweep_keeps_worth:",
                 "sweeping:",
                 "golden_call:",
                 "round:",

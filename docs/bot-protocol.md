@@ -151,7 +151,8 @@ rules, the clock and the table:
            "signpost_lifetime": 300, "round_ticks": 5400,
            "gull_period": 240, "gull_cap": 6, "gull_turnover": true,
            "golden_every": 5400, "golden_value": 30, "timed_lock": true,
-           "sweep_flight": true, "castle_raids": true, "events": true},
+           "sweep_flight": true, "sweep_keeps_worth": true,
+           "whole_flock": true, "castle_raids": true, "events": true},
  "clock": {"mode": "fast_forward", "deadline_ms": 33, "input_delay": 0},
  "cursor": {"fair": false}}
 ```
@@ -188,7 +189,10 @@ bigger than the classic 12x9 has both scaled by its area. With
 `gull_turnover`, a full flock does not shut the spawner out: at its turn
 the oldest walking gull more than two tiles from every castle leaves the
 beach and a new one arrives, and in the last 30 seconds the cap is half as
-big again. `events`: whether sparkling crabs spin the tide roulette.
+big again. With `whole_flock` the newcomer's edge tile is drawn first and
+the old gull leaves only if the newcomer can land there (not rock or
+kelp); without it the old gull leaves first and an unlucky draw leaves the
+flock a gull short. `events`: whether sparkling crabs spin the tide roulette.
 After an event the roulette locks for 300 ticks (10 s), and a sparkling
 crab banked meanwhile spins nothing. With `timed_lock` only the events
 that last lock it (Crab Mania, Gull Mania, Speed Up, Slow Down, Right
@@ -199,7 +203,12 @@ the loose crabs (the oldest) off the beach for the banker. Without
 waits 66 ticks, the next setting off 4 ticks after the one before, then
 flies for 30 and banks the tick it lands. In the air (`sweeping` in the
 tick message) no gull can eat it and no arrow turns it, and anything
-still in the air when the tide comes in banks on the last tick.
+still in the air when the tide comes in banks on the last tick. With
+`sweep_keeps_worth` each crab banks what it was worth when Crab Monopoly
+fired, under the Right Claws call in force then (its `claw_call`), and a
+Right Claws starting while it is in the air does not touch it; without it,
+it banks under whatever call is running when it lands. A listener older
+than a field leaves it out, and an absent one means `false`.
 
 ### `ready`
 
@@ -249,7 +258,7 @@ cannot:
 | `you.last` | What became of your last placement, removal or clear: `accepted`, or not and the `reason` (below). `null` before you have tried one. |
 | `cursors` | Each seat's cursor, `[x, y]`, or `null` where the listener cannot see it (a remote player's, at a party). |
 | `crabs` | `x`, `y` is the tile the crab is walking *out of*; `progress` is how far, in 256ths of a tile. `kind` is `common`, `juvenile`, `giant`, `molting`, `golden` or `sparkling`; `claw` is its big claw, the side it tries first at a wall. |
-| `sweeping` | Crabs a Crab Monopoly is carrying home: the same fields as `crabs` (where it was picked up), plus the `owner` it banks for, the tick it sets off (`launch`) and the tick it lands and banks (`lands`). |
+| `sweeping` | Crabs a Crab Monopoly is carrying home: the same fields as `crabs` (where it was picked up), plus the `owner` it banks for, the tick it sets off (`launch`), the tick it lands and banks (`lands`), and whether Right Claws was running when it was swept (`claw_call`). |
 | `gulls` | The same, plus `state` (`walking` or `flying`) and `hops_left` while flying. How long until a gull next takes off is not shown: the screen does not show it either. |
 | `signposts` | Every post on the beach: its `owner`, whether a gull has `worn` it, and its `age` in ticks. |
 | `castles` | Every castle and the seat holding it now (Castle Swap trades them). |

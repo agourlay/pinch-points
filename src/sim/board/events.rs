@@ -242,7 +242,9 @@ impl Board {
                 // emptied anyway.
                 let swept: Vec<Crab> = self.crabs.drain(..take).collect();
                 if self.rules.sweep_flight {
-                    // Carried home instead, front of the line first.
+                    // Carried home instead, front of the line first, each
+                    // with the claw call it was swept under.
+                    let claw_call = self.in_claw_call();
                     for (n, crab) in swept.into_iter().enumerate() {
                         let launch = at + SWEEP_HOLD + SWEEP_STAGGER * n as u64;
                         self.sweeping.push(Sweeping {
@@ -250,6 +252,7 @@ impl Board {
                             owner: banker,
                             launch,
                             lands: launch + SWEEP_FLIGHT,
+                            claw_call,
                         });
                     }
                     return;

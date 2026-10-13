@@ -388,6 +388,19 @@ mod tests {
         let flying = Level::parse(&format!("{head}sweep_flight: on\n{map}")).expect("level");
         let back = Level::parse(&flying.to_text()).expect("round trip");
         assert!(back.board().sweep_flight());
+        assert!(!plain.board().whole_flock(), "off unless the file says so");
+        assert!(!plain.to_text().contains("whole_flock"));
+        let whole = Level::parse(&format!("{head}whole_flock: on\n{map}")).expect("level");
+        let back = Level::parse(&whole.to_text()).expect("round trip");
+        assert!(back.board().whole_flock());
+        assert!(
+            !plain.board().sweep_keeps_worth(),
+            "off unless the file says so"
+        );
+        assert!(!plain.to_text().contains("sweep_keeps_worth"));
+        let keeping = Level::parse(&format!("{head}sweep_keeps_worth: on\n{map}")).expect("level");
+        let back = Level::parse(&keeping.to_text()).expect("round trip");
+        assert!(back.board().sweep_keeps_worth());
         // A golden crab cadence too short to call a tick still to come is
         // refused, rather than calling one that never comes out.
         for every in [1, 2] {

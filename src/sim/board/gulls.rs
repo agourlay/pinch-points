@@ -67,10 +67,12 @@ impl Board {
         // Balance: the ambient flock is capped so the late round stays
         // playable (raiders leaving keeps the population cycling). Tide
         // events (GullMania, GullAttack) deliberately bypass the cap.
-        if self.gulls.len() >= self.flock_cap() {
+        let full = self.gulls.len() >= self.flock_cap();
+        if full {
             // With turnover on, a full flock makes room rather than shutting
-            // the spawner out: see `Rules::gull_turnover`.
-            if !self.rules.gull_turnover || !self.send_a_gull_off() {
+            // the spawner out: see `Rules::gull_turnover`. Under the old
+            // order the room is made before the newcomer's tile is known.
+            if !self.rules.gull_turnover || (!self.rules.whole_flock && !self.send_a_gull_off()) {
                 return;
             }
         }
@@ -96,6 +98,12 @@ impl Board {
             TileKind::Rock | TileKind::Kelp
         ) {
             return; // unlucky roll; the flock circles and tries again later
+        }
+        // Room made only for a newcomer that can land, so an unlucky roll
+        // leaves the flock as it was rather than a gull short: see
+        // `Rules::whole_flock`.
+        if full && self.rules.whole_flock && !self.send_a_gull_off() {
+            return;
         }
         self.spawn_gull(x as u8, y as u8, dir);
     }

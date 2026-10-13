@@ -44,6 +44,8 @@ impl Board {
                     golden_every: _,
                     timed_lock: _,
                     sweep_flight: _,
+                    whole_flock: _,
+                    sweep_keeps_worth: _,
                     round_length: _,
                     castle_raids: _,
                 },
@@ -276,7 +278,10 @@ impl Board {
             h.u8(flight.owner);
             h.u64(flight.launch);
             h.u64(flight.lands);
+            h.bool(flight.claw_call);
         }
+        h.bool(self.rules.whole_flock);
+        h.bool(self.rules.sweep_keeps_worth);
     }
 }
 
@@ -317,6 +322,11 @@ mod tests {
             ("set_golden_every", Box::new(|b| b.set_golden_every(600))),
             ("set_timed_lock", Box::new(|b| b.set_timed_lock(true))),
             ("set_sweep_flight", Box::new(|b| b.set_sweep_flight(true))),
+            ("set_whole_flock", Box::new(|b| b.set_whole_flock(true))),
+            (
+                "set_sweep_keeps_worth",
+                Box::new(|b| b.set_sweep_keeps_worth(true)),
+            ),
             (
                 "set_round_length",
                 Box::new(|b| b.set_round_length(Some(500))),
