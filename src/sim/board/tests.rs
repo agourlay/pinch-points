@@ -1,5 +1,6 @@
 //! The board's unit tests, spec section by spec section.
 
+use super::sweep::{SWEEP_MEMORY, Swept};
 use super::*;
 use crate::sim::direction::Direction::*;
 
@@ -1726,7 +1727,7 @@ fn a_sweep_leaves_the_fingerprint_alone() {
         common(&mut board, x, 4, Right, Handedness::Left);
     }
     let before = board.state_hash();
-    board.swept_home.push(Swept {
+    board.sweeps.landed.push(Swept {
         crab: 7,
         owner: 1,
         at: 0,

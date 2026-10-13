@@ -163,7 +163,7 @@ impl Board {
         // and lands, then the crab exactly as a `crab:` line writes it, and
         // `claws` after it when it was swept under Right Claws (left off
         // otherwise, which is how every line read before it was kept).
-        for flight in &self.sweeping {
+        for flight in &self.sweeps.in_air {
             let crab = &flight.crab;
             let called = if flight.claw_call { " claws" } else { "" };
             let _ = writeln!(
@@ -612,10 +612,12 @@ impl Fields {
                 // taken between ticks never has one to carry.
                 queue: Vec::new(),
             },
-            // News for the frame it happened on, and this is not that
-            // frame: a round picked back up has no sweep to report.
-            swept_home: Vec::new(),
-            sweeping: self.sweeping,
+            sweeps: Sweeps {
+                in_air: self.sweeping,
+                // News for the frame it happened on, and this is not that
+                // frame: a round picked back up has no sweep to report.
+                landed: Vec::new(),
+            },
         })
     }
 }
@@ -934,7 +936,7 @@ mod tests {
             state: GullState::Flying { remaining: 3 },
             takeoff_in: 222,
         });
-        board.sweeping.push(Sweeping {
+        board.sweeps.launch(Sweeping {
             crab: Crab {
                 id: 5,
                 tile: 6,

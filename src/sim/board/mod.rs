@@ -383,64 +383,9 @@ pub struct Board {
     wrap: bool,
     /// The tide roulette and what it has set running.
     pub(crate) tide: events::Tide,
-    /// Crabs the tide put straight into a keep, and who got them.
-    ///
-    /// `Monopoly` banks crabs where they stand rather than walking them
-    /// home, so afterwards nothing on the board says what became of them:
-    /// they are simply gone, from tiles that are not castles. The render
-    /// layer tells a bank from a death by reading the tile a departed crab
-    /// left, so a sweep of eighty-two crabs read as eighty-two deaths,
-    /// with no sign that anybody scored.
-    ///
-    /// Nothing in here is ever read back by the sim, which is why it stays
-    /// out of the fingerprint: it cannot make two peers play differently,
-    /// and hashing it would only make this build disagree with builds it
-    /// is playing identically to.
-    swept_home: Vec<Swept>,
-    /// Crabs Crab Monopoly is carrying home, in the order they were swept:
-    /// one sweep's crabs land in that order, but a second Monopoly fired
-    /// while the first is in the air adds its crabs after the first's,
-    /// and some of them land before the first's last ones do (see
-    /// [`Rules::sweep_flight`]).
-    sweeping: Vec<Sweeping>,
+    /// Crab Monopoly's crabs, in the air and just landed.
+    sweeps: Sweeps,
 }
-
-/// A crab on its way home in a Crab Monopoly sweep.
-#[derive(Clone, Copy, Debug)]
-pub struct Sweeping {
-    /// The crab as it stood when it was picked up.
-    pub crab: Crab,
-    /// Whose castle it is flying to, and whose score it banks into.
-    pub owner: PlayerId,
-    /// The tick it leaves the sand.
-    pub launch: u64,
-    /// The tick it lands and banks.
-    pub lands: u64,
-    /// Whether Right Claws was running when the sweep fired, which is what
-    /// the crab banks under where [`Rules::sweep_keeps_worth`] holds.
-    pub claw_call: bool,
-}
-
-/// One crab the tide banked, for the render layer to find.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-struct Swept {
-    crab: u32,
-    owner: PlayerId,
-    /// The tick it happened on. The reader runs between frames and a frame
-    /// can span several ticks - most likely the frame straight after a
-    /// sweep, which is the busiest one the renderer ever draws - so the
-    /// record has to outlive its own tick to be read at all.
-    at: u64,
-    /// What it paid, as credited: under the claw call it banked under,
-    /// which for a crab in flight is not the one running when it lands.
-    /// Kept so nobody outside has to work that out again.
-    points: i32,
-}
-
-/// How many ticks a [`Swept`] record is kept before it is pruned: long
-/// enough that a frame running several ticks behind still finds it, short
-/// enough that the list is a handful of entries and never a round's worth.
-const SWEEP_MEMORY: u64 = 8;
 
 /// Replace `dst`'s contents with `src`'s, keeping `dst`'s buffer. The one
 /// move [`Board::copy_from`] is made of.
@@ -494,8 +439,7 @@ impl Board {
             golden_call: None,
             wrap: false,
             tide: events::Tide::default(),
-            swept_home: Vec::new(),
-            sweeping: Vec::new(),
+            sweeps: Sweeps::default(),
         };
         // The border walls are the wrap rule with wrap off; the border
         // indices are stated once, in set_wrap.
@@ -537,8 +481,7 @@ impl Board {
             golden_call,
             wrap,
             tide,
-            swept_home,
-            sweeping,
+            sweeps,
         } = other;
         self.grid.copy_from(grid);
         self.seed = *seed;
@@ -559,8 +502,7 @@ impl Board {
         self.golden_call = *golden_call;
         self.wrap = *wrap;
         self.tide.copy_from(tide);
-        refill(&mut self.swept_home, swept_home);
-        refill(&mut self.sweeping, sweeping);
+        self.sweeps.copy_from(sweeps);
     }
 
     // --- level authoring -------------------------------------------------
@@ -742,9 +684,7 @@ impl Board {
         // And before anything that could add to it. Kept for a few ticks
         // rather than cleared outright: the only reader runs between
         // frames, and a frame can cover more than one tick.
-        let tick = self.tick;
-        self.swept_home
-            .retain(|swept| swept.at + SWEEP_MEMORY > tick);
+        self.sweeps.forget_before(self.tick);
         for player in self.action_order() {
             self.apply_action(player, actions[player as usize]);
         }
@@ -933,61 +873,6 @@ impl Board {
         }
     }
 
-    /// Bank the swept crabs due this tick, as they reach their castle.
-    ///
-    /// Everything still in the air lands on the last tick of a round: the
-    /// sim freezes at the wave, and a crab caught mid-flight by it would
-    /// be points the event promised and never paid.
-    ///
-    /// Run after this tick's timers have counted down, so without
-    /// [`Rules::sweep_keeps_worth`] a crab landing on Right Claws' last
-    /// tick banks as if the call were already over. With it the clock is
-    /// never read here: each crab banks under the call written on it when
-    /// the sweep fired.
-    fn land_sweeps(&mut self) {
-        if self.sweeping.is_empty() {
-            return;
-        }
-        let tick = self.tick;
-        let last = self
-            .rules
-            .round_length
-            .is_some_and(|len| tick + 1 >= u64::from(len));
-        let mut i = 0;
-        while i < self.sweeping.len() {
-            if !last && self.sweeping[i].lands > tick {
-                i += 1;
-                continue;
-            }
-            let Sweeping {
-                crab,
-                owner,
-                claw_call,
-                ..
-            } = self.sweeping.remove(i);
-            let claw_call = match self.rules.sweep_keeps_worth {
-                true => claw_call,
-                false => self.in_claw_call(),
-            };
-            self.bank_swept(owner, &crab, claw_call);
-        }
-    }
-
-    /// Bank a crab the tide carried rather than walked, and write it down.
-    ///
-    /// Written down because it cannot be worked out later: the crab is
-    /// gone from a tile that is not a castle, which from the outside is
-    /// exactly what being eaten looks like. See [`Self::swept_home`].
-    pub(super) fn bank_swept(&mut self, owner: PlayerId, crab: &Crab, claw_call: bool) {
-        let points = self.credit_bank_under(owner, crab, claw_call);
-        self.swept_home.push(Swept {
-            crab: crab.id,
-            owner,
-            at: self.tick,
-            points,
-        });
-    }
-
     /// Credit a banked crab to `owner`, under whatever the tide is asking
     /// for right now.
     ///
@@ -1099,12 +984,6 @@ impl Board {
         self.rules.sweep_keeps_worth
     }
 
-    /// Crabs Crab Monopoly is carrying home, in the order they were swept,
-    /// which is the order they land only while one sweep is in the air.
-    pub fn sweeping(&self) -> &[Sweeping] {
-        &self.sweeping
-    }
-
     /// The golden crab the board has called, once the call is public: the
     /// tick it comes out on and the spawner hole it comes out of, from
     /// [`GOLDEN_NOTICE`] ticks before it does.
@@ -1186,33 +1065,6 @@ impl Board {
     /// Crabs banked since the start, all players combined.
     pub fn crabs_banked(&self) -> u32 {
         self.crabs_banked
-    }
-
-    /// The seat a crab was banked *for* by the tide, if it was one of
-    /// those rather than one that walked home.
-    ///
-    /// The render layer's question, and the only reason [`Board`] keeps the
-    /// record: a crab that vanished off open sand looks eaten from the
-    /// outside.
-    pub fn swept_home(&self, crab: u32) -> Option<PlayerId> {
-        self.swept_home
-            .iter()
-            .find(|swept| swept.crab == crab)
-            .map(|swept| swept.owner)
-    }
-
-    /// What a crab the tide banked paid its owner, before the floor at
-    /// nothing, alongside [`Self::swept_home`].
-    ///
-    /// The one answer to it: a crab in flight banks under the claw call
-    /// written on it when the sweep fired (see
-    /// [`Rules::sweep_keeps_worth`]), not the one running when it lands,
-    /// and a reader pricing it off the clock gets the wrong sign.
-    pub fn swept_paid(&self, crab: u32) -> Option<i32> {
-        self.swept_home
-            .iter()
-            .find(|swept| swept.crab == crab)
-            .map(|swept| swept.points)
     }
 
     /// Crabs ever spawned (initial, spawner-emitted, and castle-spilled).
@@ -1313,11 +1165,14 @@ mod hashing;
 mod lookahead;
 mod signposts;
 mod snapshot;
+mod sweep;
 #[cfg(test)]
 mod tests;
 
 pub use events::{Mania, Tempo, TideEvent};
 pub use signposts::Refusal;
+pub use sweep::Sweeping;
+use sweep::Sweeps;
 
 pub use geometry::Grid;
 pub(crate) use geometry::Walker;

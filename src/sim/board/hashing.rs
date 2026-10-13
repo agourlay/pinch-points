@@ -77,9 +77,12 @@ impl Board {
             // hashing it would only make this build disagree with builds
             // playing the same round.
             seed: _,
-            swept_home: _,
-            // hash_round, at its tail
-            sweeping: _,
+            sweeps:
+                Sweeps {
+                    landed: _,
+                    // hash_round, at its tail
+                    in_air: _,
+                },
         } = self;
         let mut h = Fnv::new();
         self.hash_terrain(&mut h);
@@ -266,8 +269,8 @@ impl Board {
         // Crab Monopoly's crabs in the air: live state that decides whose
         // score moves on which tick.
         h.u8(u8::from(self.rules.sweep_flight));
-        h.u32(self.sweeping.len() as u32);
-        for flight in &self.sweeping {
+        h.u32(self.sweeps.in_air.len() as u32);
+        for flight in &self.sweeps.in_air {
             let crab = &flight.crab;
             h.u32(crab.id);
             h.u16(crab.tile);

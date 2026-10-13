@@ -248,7 +248,7 @@ impl Board {
                     // with the claw call it was swept under.
                     for (n, crab) in swept.into_iter().enumerate() {
                         let launch = at + SWEEP_HOLD + SWEEP_STAGGER * n as u64;
-                        self.sweeping.push(Sweeping {
+                        self.sweeps.launch(Sweeping {
                             crab,
                             owner: banker,
                             launch,
