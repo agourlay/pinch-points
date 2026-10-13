@@ -574,9 +574,9 @@ const KINDS: [crate::sim::CrabKind; 6] = [
 /// the board a crab is a colour, and the colour is right there.
 ///
 /// The board's worth and not the kind's, because they differ: a versus
-/// round's called golden crab is worth half what a puzzle's is
-/// (`Board::crab_value`), and a guide quoting the kind would promise fifty
-/// for a crab that banks twenty-five.
+/// round's called golden crab is worth less than a puzzle's
+/// (`Board::crab_value`, `GOLDEN_CALLED_VALUE`), and a guide quoting the
+/// kind would promise the puzzle's price for a crab that banks the other.
 fn field_guide_note(tr: &crate::app::i18n::Tr, i: usize, board: &crate::sim::Board) -> String {
     let worth = board.crab_value(KINDS[i]);
     let note = tr.crab_notes[i];
