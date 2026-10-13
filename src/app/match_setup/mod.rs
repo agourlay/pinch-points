@@ -389,9 +389,17 @@ pub fn config_from_terms(terms: &MatchTerms) -> (MatchConfig, crate::app::teams:
 /// `seats` is the table as it sits, which the terms themselves do not
 /// carry: it is what keeps a table of five off the four-castle beaches.
 /// The shelf is not consulted, because online a handmade beach rides in
-/// the invitation itself (`net/rounds.rs` resends it), so with no shelf
-/// the stepper walks past the `Custom` stop.
+/// the invitation itself (`net/rounds.rs` resends it).
+///
+/// A series on the host's own beach stays on it. Stepped like the rest,
+/// the empty shelf walked the map off `Custom` onto a generated one while
+/// `call_next_round` re-sent the same handmade beach and every board was
+/// built from it: from round two the terms named a map nobody was
+/// playing, which is what a peer in line read off its roster card.
 pub fn next_round_terms(terms: MatchTerms, seats: u8, seed: u64) -> MatchTerms {
+    if MapChoice::from_index(usize::from(terms.map)) == MapChoice::Custom {
+        return MatchTerms { seed, ..terms };
+    }
     let mut config = MatchConfig {
         map: MapChoice::from_index(usize::from(terms.map)),
         seats,
@@ -1061,6 +1069,28 @@ mod tests {
             MapChoice::from_index(usize::from(next.map)),
             MapChoice::Classic
         );
+    }
+
+    /// An online series on the host's handmade beach keeps naming it: the
+    /// beach itself is re-sent with every round, so the terms must say
+    /// `Custom` too, at any table size.
+    #[test]
+    fn a_series_on_a_handmade_beach_stays_on_it() {
+        let terms = MatchTerms {
+            map: MapChoice::Custom.index() as u8,
+            seed: 1,
+            ..MatchTerms::default()
+        };
+        for seats in 2..=6 {
+            let next = next_round_terms(terms, seats, 9);
+            assert_eq!(
+                MapChoice::from_index(usize::from(next.map)),
+                MapChoice::Custom,
+                "{seats} seats"
+            );
+            assert_eq!(next, MatchTerms { seed: 9, ..terms }, "only the seed moves");
+            assert_eq!(fit_terms(next, seats), next, "and the fit leaves it");
+        }
     }
 
     /// A table that grew after its map was picked is moved off a beach too
