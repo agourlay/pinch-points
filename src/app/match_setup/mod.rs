@@ -453,10 +453,40 @@ pub fn next_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
     // a dial should not be able to spin.
     for _ in 0..MapChoice::ALL.len() + beaches.0.len() {
         cycle_map(config, Turn::Right, beaches);
-        if holds(config.map, config.seats) {
+        // The 20x13 is chosen, never dealt (see [`sized_for`]): stepped
+        // onto it, a pair playing a best of five got 130 tiles each.
+        if holds(config.map, config.seats) && config.map != MapChoice::GenXl {
             return;
         }
     }
+}
+
+/// Seat a table of `seats` (the dial's range holds it to two to six), and
+/// keep the map one it can be played on. The one way the seat count
+/// changes on this screen, whether by the Players dial or by a pad's Start
+/// (or a pad giving its seat back): a pad claim that grew the table
+/// without it put five on the four-castle arena, the fifth with no castle
+/// all match.
+///
+/// A generated beach picked for its size follows the table, so two players
+/// do not rattle around a beach sized for six, except the 20x13, which is
+/// only ever there because somebody chose it. A handmade beach stays the
+/// one it was while it still seats everyone: `custom` counts along the
+/// beaches that fit, and a table of a new size fits a different list, so
+/// left alone the index named another beach than the one on the dial.
+pub fn reseat(config: &mut MatchConfig, seats: u8, beaches: &CustomBeaches) {
+    let picked = (config.map == MapChoice::Custom)
+        .then(|| beaches.on_shelf(config.seats, config.custom))
+        .flatten();
+    config.seats = seats.clamp(2, MAX_PLAYERS as u8);
+    config.bots = config.bots.min(config.seats - 1);
+    if let Some(custom) = picked.and_then(|shelf| beaches.among_fitting(config.seats, shelf)) {
+        config.custom = custom;
+    }
+    if config.map.is_a_plain_size() && config.map != MapChoice::GenXl {
+        config.map = sized_for(config.seats);
+    }
+    settle_map(config, beaches);
 }
 
 /// Keep the map somewhere the table can play after something other than
@@ -1004,7 +1034,7 @@ mod tests {
         );
         assert_eq!(config.seats, 5, "nobody left the table");
         next_map(&mut config, &shelf);
-        assert_eq!(config.map, MapChoice::GenXl);
+        assert_eq!(config.map, MapChoice::GenOcean, "past the 20x13");
 
         // Four seated walk every built-in beach in order.
         let mut four = MatchConfig {
@@ -1082,6 +1112,79 @@ mod tests {
         config.seats = 5;
         settle_map(&mut config, &shelf);
         assert_eq!(config.map, MapChoice::GenLarge, "and wide enough for five");
+    }
+
+    /// A series deals every beach but the 20x13, whatever the table: a
+    /// pair stepped onto it got 130 tiles each.
+    #[test]
+    fn a_series_never_deals_the_largest_beach() {
+        let shelf = CustomBeaches::default();
+        for seats in 2..=MAX_PLAYERS as u8 {
+            let mut config = MatchConfig {
+                seats,
+                ..MatchConfig::default()
+            };
+            for _ in 0..2 * MapChoice::ALL.len() {
+                next_map(&mut config, &shelf);
+                assert_ne!(config.map, MapChoice::GenXl, "{seats} seats");
+                assert!(holds(config.map, seats));
+            }
+        }
+    }
+
+    /// The seat count turning keeps a map that was chosen for what it is:
+    /// the 20x13 picked by hand, and the same handmade beach while it
+    /// still seats everyone, though it now sits elsewhere in the list of
+    /// the ones that fit.
+    #[test]
+    fn reseating_keeps_the_beach_that_was_chosen() {
+        let beach = |name: &str, castles: &str| {
+            let text = format!(
+                "name: {name}\nposts: 1\nkind: arena\ncrab: 0,1 R R common\nmap:\n\
+                 +-+-+-+\n|{castles}|\n+ + + +\n|. . .|\n+ + + +\n|. . .|\n+-+-+-+\n"
+            );
+            Beach::new(crate::sim::Level::parse(&text).expect("a level"))
+        };
+        let shelf = CustomBeaches(vec![beach("Pair", "0 . 1"), beach("Trio", "0 1 2")]);
+        let mut config = MatchConfig {
+            map: MapChoice::Custom,
+            seats: 2,
+            custom: 1,
+            ..MatchConfig::default()
+        };
+        reseat(&mut config, 3, &shelf);
+        assert_eq!((config.map, config.seats), (MapChoice::Custom, 3));
+        let fitting = shelf.fitting(config.seats);
+        assert_eq!(fitting[config.custom].level.name, "Trio");
+        reseat(&mut config, 2, &shelf);
+        assert_eq!(shelf.fitting(2)[config.custom].level.name, "Trio");
+        reseat(&mut config, 4, &shelf);
+        assert!(holds(config.map, 4) && config.map != MapChoice::Custom);
+
+        let mut xl = MatchConfig {
+            map: MapChoice::GenXl,
+            seats: 4,
+            ..MatchConfig::default()
+        };
+        reseat(&mut xl, 2, &shelf);
+        assert_eq!(xl.map, MapChoice::GenXl, "chosen by hand, kept");
+        let mut small = MatchConfig {
+            map: MapChoice::GenSmall,
+            seats: 2,
+            ..MatchConfig::default()
+        };
+        reseat(&mut small, 5, &shelf);
+        assert_eq!(small.map, sized_for(5));
+        let mut classic = MatchConfig {
+            map: MapChoice::Classic,
+            seats: 4,
+            bots: 3,
+            ..MatchConfig::default()
+        };
+        reseat(&mut classic, 5, &shelf);
+        assert!(holds(classic.map, 5));
+        reseat(&mut classic, 2, &shelf);
+        assert_eq!(classic.bots, 1, "the AI holds at most every seat but one");
     }
 
     use crate::app::settings::GameSettings;

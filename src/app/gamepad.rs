@@ -24,7 +24,42 @@ use bevy::prelude::*;
 /// humans, pad 0 is P4. This makes keyboard+pad, two pads, and two
 /// keyboards all work for two players with zero setup.
 #[derive(Resource, Default)]
-pub struct PadSeats(pub Vec<Entity>, PlugOrder);
+pub struct PadSeats(pub Vec<Entity>, PlugOrder, Chairs);
+
+/// What each claim took to seat its player, by the claiming pad, so the
+/// claim let go gives the same thing back. Without it a pad that dropped
+/// out and came back on the setup screen lost its claim but not the seat
+/// the claim had added, and its next Start added another: a table with a
+/// seat nobody played, and one more each time the battery flickered.
+#[derive(Default)]
+struct Chairs(Vec<(Entity, Chair)>);
+
+/// Where a claimed player sat down.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Chair {
+    /// A seat the AI had, which it gets back.
+    Ai,
+    /// A seat added to the table, which goes again.
+    Added,
+    /// A human seat already at a full table: nothing was taken, so
+    /// nothing is given back.
+    Taken,
+}
+
+impl Chair {
+    /// Give the chair back to the table it came from.
+    fn give_back(
+        self,
+        config: &mut crate::app::match_setup::MatchConfig,
+        beaches: &crate::app::match_setup::CustomBeaches,
+    ) {
+        match self {
+            Chair::Ai => config.bots = (config.bots + 1).min(config.seats - 1),
+            Chair::Added => crate::app::match_setup::reseat(config, config.seats - 1, beaches),
+            Chair::Taken => {}
+        }
+    }
+}
 
 /// Every pad seen, in the order it was first plugged in, unplugged ones
 /// included until the round is over. A pad that drops out keeps its place
@@ -42,12 +77,18 @@ pub struct PlugOrder(Vec<Entity>);
 /// holds its seat, empty, rather than handing the seat to the next pad
 /// in line; afterwards both are let go, or a pad unplugged after a couch
 /// match left every other pad dead for the rest of the session.
+///
+/// A claim let go gives back the seat it took (see [`Chairs`]), so the
+/// table is the people still holding a pad. The same pad back presses
+/// Start and sits down again.
 pub fn keep_pad_order(
     pads: Query<Entity, With<Gamepad>>,
     screen: Res<State<Screen>>,
     mut seats: ResMut<PadSeats>,
+    config: Option<ResMut<crate::app::match_setup::MatchConfig>>,
+    beaches: Option<Res<crate::app::match_setup::CustomBeaches>>,
 ) {
-    let PadSeats(claims, PlugOrder(order)) = &mut *seats;
+    let PadSeats(claims, PlugOrder(order), Chairs(chairs)) = &mut *seats;
     for pad in &pads {
         if order.contains(&pad) {
             continue;
@@ -58,6 +99,10 @@ pub fn keep_pad_order(
         // and steered a keyboard player's seat besides.
         if let Some(at) = claims.iter().position(|&claimed| !pads.contains(claimed)) {
             let gone = std::mem::replace(&mut claims[at], pad);
+            // The seat changes hands with the claim.
+            if let Some(chair) = chairs.iter_mut().find(|(claimed, _)| *claimed == gone) {
+                chair.0 = pad;
+            }
             if let Some(place) = order.iter().position(|&seen| seen == gone) {
                 order[place] = pad;
                 continue;
@@ -75,6 +120,16 @@ pub fn keep_pad_order(
     if !in_a_round {
         claims.retain(|&claimed| pads.contains(claimed));
         order.retain(|&seen| pads.contains(seen));
+        let mut config = config;
+        let shelf = crate::app::match_setup::CustomBeaches::default();
+        let beaches = beaches.as_deref().unwrap_or(&shelf);
+        chairs.retain(|&(claimed, chair)| {
+            let kept = claims.contains(&claimed);
+            if !kept && let Some(config) = config.as_deref_mut() {
+                chair.give_back(config, beaches);
+            }
+            kept
+        });
     }
 }
 
@@ -88,7 +143,7 @@ fn nth_pad_entity(
     claims: &PadSeats,
     index: usize,
 ) -> Option<Entity> {
-    let PadSeats(claimed, PlugOrder(order)) = claims;
+    let PadSeats(claimed, PlugOrder(order), _) = claims;
     // A pad not yet in the plug order (plugged in this frame) still
     // counts, after every pad that is.
     let fresh = pads
@@ -485,28 +540,37 @@ pub fn pad_bridge_release(
 /// seat the AI had if it had any, else in a new one. Claims drive the
 /// human seats from the top down (see [`PadSeats`]), the first claim the
 /// highest. Up to four: the keyboard's two seats and the pads' four make
-/// the six there are. Disconnected pads lose their claim.
+/// the six there are. Disconnected pads lose their claim, and the seat with
+/// it, in [`keep_pad_order`].
 pub fn pad_claim_seats(
     pads: Query<(Entity, &Gamepad)>,
     mut seats: ResMut<PadSeats>,
     mut config: ResMut<crate::app::match_setup::MatchConfig>,
+    beaches: Res<crate::app::match_setup::CustomBeaches>,
 ) {
-    seats.0.retain(|&entity| pads.get(entity).is_ok());
+    let PadSeats(claims, _, Chairs(chairs)) = &mut *seats;
     for (entity, pad) in &pads {
         if pad.just_pressed(GamepadButton::Start)
-            && !seats.0.contains(&entity)
-            && seats.0.len() < PAD_SEATS
+            && !claims.contains(&entity)
+            && claims.len() < PAD_SEATS
         {
-            seats.0.push(entity);
+            claims.push(entity);
             // One person more, and only one: the AI gives up a chair if it
             // holds one, or the table grows. Counting a seat for every
             // claim above the keyboard's two instead took the AI away from
             // a player alone against it and left P2 a human nobody played.
-            if config.bots > 0 {
+            // A table that grows is reseated, so the map still seats it.
+            let chair = if config.bots > 0 {
                 config.bots -= 1;
+                Chair::Ai
+            } else if usize::from(config.seats) < MAX_PLAYERS {
+                let seats = config.seats + 1;
+                crate::app::match_setup::reseat(&mut config, seats, &beaches);
+                Chair::Added
             } else {
-                config.seats = (config.seats + 1).min(MAX_PLAYERS as u8);
-            }
+                Chair::Taken
+            };
+            chairs.push((entity, chair));
         }
     }
 }
@@ -662,6 +726,7 @@ mod tests {
             bots: 2,
             ..MatchConfig::default()
         });
+        app.init_resource::<crate::app::match_setup::CustomBeaches>();
         for _ in 0..6 {
             app.world_mut().spawn(Gamepad::default());
         }
@@ -704,6 +769,105 @@ mod tests {
         start(&mut app, pads[0]);
         let config = app.world().resource::<MatchConfig>();
         assert_eq!((config.seats, config.bots), (2, 0), "two people, no AI");
+    }
+
+    /// The setup screen with `pads` controllers plugged in and claims
+    /// kept, for the claim tests below.
+    fn setup_table(
+        config: crate::app::match_setup::MatchConfig,
+        pads: usize,
+    ) -> (App, Vec<Entity>) {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::MatchSetup));
+        app.init_resource::<PadSeats>();
+        app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.insert_resource(config);
+        let plugged = (0..pads)
+            .map(|_| app.world_mut().spawn(Gamepad::default()).id())
+            .collect();
+        app.add_systems(Update, (keep_pad_order, pad_claim_seats).chain());
+        (app, plugged)
+    }
+
+    fn press_start(app: &mut App, pad: Entity) {
+        let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
+        gamepad.digital_mut().press(GamepadButton::Start);
+        app.update();
+        let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
+        gamepad.digital_mut().release(GamepadButton::Start);
+        gamepad.digital_mut().clear();
+    }
+
+    /// Pads joining a table on the four-castle arena move it to a beach
+    /// that seats them all: grown in place, the fifth player had no castle.
+    #[test]
+    fn a_table_grown_by_pads_is_moved_to_a_beach_that_seats_it() {
+        use crate::app::match_setup::{MapChoice, MatchConfig, holds};
+        let (mut app, pads) = setup_table(
+            MatchConfig {
+                seats: 2,
+                bots: 0,
+                map: MapChoice::Classic,
+                ..MatchConfig::default()
+            },
+            3,
+        );
+        for &pad in &pads {
+            press_start(&mut app, pad);
+        }
+        let config = app.world().resource::<MatchConfig>();
+        assert_eq!(config.seats, 5);
+        assert!(holds(config.map, 5), "five on {:?}", config.map);
+    }
+
+    /// A pad that drops out on the setup screen gives its seat back, and
+    /// coming back and pressing Start takes it again: one seat, however
+    /// often the battery flickers.
+    #[test]
+    fn a_pad_that_drops_and_rejoins_keeps_one_seat() {
+        use crate::app::match_setup::MatchConfig;
+        let (mut app, pads) = setup_table(
+            MatchConfig {
+                seats: 2,
+                bots: 0,
+                ..MatchConfig::default()
+            },
+            2,
+        );
+        press_start(&mut app, pads[0]);
+        assert_eq!(app.world().resource::<MatchConfig>().seats, 3);
+        for _ in 0..3 {
+            app.world_mut().entity_mut(pads[0]).remove::<Gamepad>();
+            app.update();
+            let config = app.world().resource::<MatchConfig>();
+            assert_eq!(config.seats, 2, "the added seat goes with the claim");
+            assert!(app.world().resource::<PadSeats>().0.is_empty());
+            app.world_mut()
+                .entity_mut(pads[0])
+                .insert(Gamepad::default());
+            app.update();
+            press_start(&mut app, pads[0]);
+            assert_eq!(app.world().resource::<MatchConfig>().seats, 3);
+        }
+
+        // A claim that took the AI's chair hands it back to the AI.
+        let (mut app, pads) = setup_table(
+            MatchConfig {
+                seats: 3,
+                bots: 1,
+                ..MatchConfig::default()
+            },
+            1,
+        );
+        press_start(&mut app, pads[0]);
+        let config = app.world().resource::<MatchConfig>();
+        assert_eq!((config.seats, config.bots), (3, 0));
+        app.world_mut().entity_mut(pads[0]).remove::<Gamepad>();
+        app.update();
+        let config = app.world().resource::<MatchConfig>();
+        assert_eq!((config.seats, config.bots), (3, 1), "the AI sits back down");
     }
 
     /// A world with `seats` cursors and `pads` controllers plugged in.

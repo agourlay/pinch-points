@@ -65,8 +65,18 @@ impl RoundOrigin<'_> {
             // seed, so replays are exact).
             RoundOrigin::Configured(config) => {
                 let seed = daily.map_or_else(clock::fresh_seed, Daily::seed_for);
-                let (w, h) = config.map.size();
-                let mut board = if config.map == match_setup::MapChoice::Custom {
+                // The last word on a table too big for its beach, whatever
+                // let it get there: the four-castle arenas clamp a table of
+                // five to four castles, and the fifth player plays the
+                // whole match with nothing to defend. [`match_setup::reseat`]
+                // keeps the dial from reading such a map; this keeps the
+                // launch from building one if anything else ever does.
+                let map = match match_setup::holds(config.map, config.seats) {
+                    true => config.map,
+                    false => match_setup::sized_for(config.seats),
+                };
+                let (w, h) = map.size();
+                let mut board = if map == match_setup::MapChoice::Custom {
                     // A beach somebody built. Locally there is nobody to
                     // send it to, so it is read off the shelf.
                     beaches
@@ -76,7 +86,7 @@ impl RoundOrigin<'_> {
                             || generate_arena(seed, config.seats, w, h),
                             |beach| beach.level.board(),
                         )
-                } else if config.map == match_setup::MapChoice::Classic {
+                } else if map == match_setup::MapChoice::Classic {
                     // Same handcrafted layout, fresh random stream: one
                     // seed's luck (gull entry points, spawn kinds) should
                     // not colour every round. Online keeps the canonical

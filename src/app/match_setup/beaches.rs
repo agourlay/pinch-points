@@ -59,6 +59,28 @@ impl CustomBeaches {
             .filter(|beach| beach.level.seats() >= seats)
             .collect()
     }
+
+    /// Where on the whole shelf the `custom`-th beach fitting `seats` sits.
+    pub fn on_shelf(&self, seats: u8, custom: usize) -> Option<usize> {
+        self.0
+            .iter()
+            .enumerate()
+            .filter(|(_, beach)| beach.level.seats() >= seats)
+            .nth(custom)
+            .map(|(shelf, _)| shelf)
+    }
+
+    /// The other way round: which of the beaches fitting `seats` the one
+    /// at `shelf` is, if it fits at all.
+    pub fn among_fitting(&self, seats: u8, shelf: usize) -> Option<usize> {
+        let beach = self.0.get(shelf)?;
+        (beach.level.seats() >= seats).then(|| {
+            self.0[..shelf]
+                .iter()
+                .filter(|beach| beach.level.seats() >= seats)
+                .count()
+        })
+    }
 }
 
 /// The aside for the map row when the shelf has beaches on it and this

@@ -398,6 +398,31 @@ mod tests {
         );
     }
 
+    /// A table of five on a four-castle beach, however it got there, is
+    /// played on a beach with a castle for every seat.
+    #[test]
+    fn a_table_too_big_for_its_beach_still_gets_a_castle_each() {
+        use crate::app::match_setup::MapChoice;
+        for map in [
+            MapChoice::Classic,
+            MapChoice::GenSmall,
+            MapChoice::GenClassic,
+        ] {
+            for seats in [5, 6] {
+                let config = match_setup::MatchConfig {
+                    map,
+                    ..armed(seats, 0)
+                };
+                let board =
+                    RoundOrigin::Configured(&config).board(None, &Default::default(), false, 0);
+                let mut owners: Vec<u8> = board.castle_owners().collect();
+                owners.sort_unstable();
+                owners.dedup();
+                assert_eq!(owners.len(), usize::from(seats), "{seats} on {map:?}");
+            }
+        }
+    }
+
     /// Two of the sources are outside the game's control, and the count
     /// they give becomes the length of every per-seat loop: a seventh seat
     /// runs off the end of the `MAX_PLAYERS`-long scores in
