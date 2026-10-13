@@ -32,10 +32,16 @@ impl PauseAction {
 
 const OPTIONS: usize = PauseAction::ALL.len();
 
-/// Whether the pause card is open, and which row is selected.
+/// The pause card, if it is up.
 #[derive(Resource, Default)]
 pub struct PauseMenu {
-    pub open: bool,
+    card: Option<OpenCard>,
+}
+
+/// What an open pause card knows, none of which means anything once it is
+/// put away.
+#[derive(Clone, Copy, Debug)]
+struct OpenCard {
     /// Whether the round was already stopped when the card was raised.
     ///
     /// A replay can be paused from its own transport before the card is
@@ -47,17 +53,36 @@ pub struct PauseMenu {
     /// match. The table's pause did not raise it, so the table playing on
     /// does not put it away either.
     own: bool,
+    /// The row under the cursor.
     selected: usize,
 }
 
 impl PauseMenu {
+    /// Whether the card is up.
+    pub fn is_open(&self) -> bool {
+        self.card.is_some()
+    }
+
     /// Whether the card is up and the round is stopped under it, which is
     /// what the count, the music and the prompt line wait on. A
     /// spectator's own card stops nothing: the table plays on behind it,
     /// and a countdown held under it left the spectator behind the match
     /// until the host forgot them as gone.
     pub fn stops_the_round(&self) -> bool {
-        self.open && !self.own
+        self.card.is_some_and(|card| !card.own)
+    }
+
+    /// The table's card, up over a round that was running: what a test
+    /// outside this module raises to see what waits on it.
+    #[cfg(test)]
+    pub(crate) fn raised() -> PauseMenu {
+        PauseMenu {
+            card: Some(OpenCard {
+                held: false,
+                own: false,
+                selected: 0,
+            }),
+        }
     }
 }
 
@@ -88,10 +113,7 @@ fn spawn_card(commands: &mut Commands, settings: &GameSettings, own: bool) {
                     menu_ui::display_font(30.0),
                     TextColor(palette::GOLD),
                 ));
-                card.spawn(Node {
-                    height: Val::Px(6.0),
-                    ..default()
-                });
+                card.spawn(menu_ui::spacer(6.0));
                 menu_ui::spawn_rows(card, OPTIONS, 24.0, PauseRow);
             });
         });
@@ -103,9 +125,9 @@ fn close(
     paused: &mut Paused,
     ui: &Query<Entity, With<PauseUi>>,
 ) {
-    menu.open = false;
-    // Give the round back exactly as the card found it.
-    paused.0 = menu.held;
+    // Give the round back exactly as the card found it; with no card up,
+    // unfrozen.
+    paused.0 = menu.card.take().is_some_and(|card| card.held);
     for entity in ui {
         commands.entity(entity).despawn();
     }
@@ -164,51 +186,55 @@ pub fn pause_input(
     // A peer's pause opens the card here too, so a frozen beach is never
     // unexplained. Their Escape is as good as ours.
     let peer_paused = online.0.as_ref().is_some_and(|s| s.session.paused());
-    if !menu.open {
+    let Some(mut open) = menu.card else {
         if escape || pad_start || peer_paused {
-            menu.open = true;
-            menu.selected = 0;
             // What to hand back on the way out: a replay stopped from its
             // own transport must still be stopped when the card closes.
-            menu.held = paused.0;
-            menu.own = false;
-            match online.0.as_mut() {
+            let held = paused.0;
+            let own = match online.0.as_mut() {
                 // Online: the peers agree on a frame to stop at, and the sim
                 // halts there by itself. Freezing the local ticker instead
                 // would stop the network pump that carries the resume.
                 Some(session) if !peer_paused => {
-                    menu.own = session.watching();
+                    let own = session.watching();
                     session.request_pause();
+                    own
                 }
-                Some(_) => {}
-                None => paused.0 = true,
-            }
-            spawn_card(&mut commands, &settings, menu.own);
+                Some(_) => false,
+                None => {
+                    paused.0 = true;
+                    false
+                }
+            };
+            menu.card = Some(OpenCard {
+                held,
+                own,
+                selected: 0,
+            });
+            spawn_card(&mut commands, &settings, own);
         }
         return;
-    }
+    };
 
     if keys.just_pressed(KeyCode::Escape) || pad_start {
-        if let Some(session) = online.0.as_mut() {
-            session.request_resume();
-        }
+        resume(&mut online);
         close(&mut commands, &mut menu, &mut paused, &ui);
         return;
     }
     // A peer resumed: everyone plays on. A spectator's own card was never
     // the table's, and stays up until they close it. It used to be shut
     // on the very next frame, so "Esc: menu" could not reach the menu.
-    if online.0.is_some() && !peer_paused && !menu.own {
+    if online.0.is_some() && !peer_paused && !open.own {
         close(&mut commands, &mut menu, &mut paused, &ui);
         return;
     }
-    let before = menu.selected;
-    menu.selected = menu_ui::nav(keys, menu.selected, OPTIONS);
+    let before = open.selected;
+    open.selected = menu_ui::nav(keys, open.selected, OPTIONS);
     // Up wins over a same-frame down, as it always has. Read only when the
     // keys did not move the cursor already: over a results card the pad's
     // d-pad also arrives as W/S through the menu bridge, and reading both
     // moved two rows a press, so Down from Continue landed on Quit.
-    let pad_nav = if menu.selected != before {
+    let pad_nav = if open.selected != before {
         menu_ui::Nav::Stay
     } else if pad_up {
         menu_ui::Nav::Up
@@ -217,21 +243,18 @@ pub fn pause_input(
     } else {
         menu_ui::Nav::Stay
     };
-    menu.selected = menu_ui::step(pad_nav, menu.selected, OPTIONS);
+    open.selected = menu_ui::step(pad_nav, open.selected, OPTIONS);
+    menu.card = Some(open);
     if menu_ui::enter(keys) || pad_accept {
-        match PauseAction::ALL[menu.selected] {
+        match PauseAction::ALL[open.selected] {
             PauseAction::Continue => {
-                if let Some(session) = online.0.as_mut() {
-                    session.request_resume();
-                }
+                resume(&mut online);
                 close(&mut commands, &mut menu, &mut paused, &ui);
             }
             PauseAction::ToMenu => {
                 // Leaving drops the session anyway, but resume first so the
                 // peers are not left frozen waiting for a player who quit.
-                if let Some(session) = online.0.as_mut() {
-                    session.request_resume();
-                }
+                resume(&mut online);
                 close(&mut commands, &mut menu, &mut paused, &ui);
                 next_screen.set(Screen::Menu);
             }
@@ -241,12 +264,18 @@ pub fn pause_input(
                 // the castle over at once, but not while the round is held
                 // still on purpose, so a player who paused and quit left
                 // the table frozen until somebody pressed Continue.
-                if let Some(session) = online.0.as_mut() {
-                    session.request_resume();
-                }
+                resume(&mut online);
                 exit.write(AppExit::Success);
             }
         }
+    }
+}
+
+/// Ask the table to play on, if this is an online round; offline the card
+/// gives the round back itself as it closes.
+fn resume(online: &mut Online) {
+    if let Some(session) = online.0.as_mut() {
+        session.request_resume();
     }
 }
 
@@ -258,8 +287,14 @@ pub fn update_pause_rows(
 ) {
     let tr = settings.tr();
     let labels = [tr.pause_continue, tr.pause_to_menu, tr.pause_quit];
+    let selected = menu.card.map(|card| card.selected);
     for (row, mut text, mut color) in &mut rows {
-        menu_ui::paint_row(row.0 == menu.selected, labels[row.0], &mut text, &mut color);
+        menu_ui::paint_row(
+            Some(row.0) == selected,
+            labels[row.0],
+            &mut text,
+            &mut color,
+        );
     }
 }
 
@@ -308,14 +343,24 @@ mod tests {
         // A versus round, running.
         app.insert_resource(State::new(Screen::Versus));
         tap(&mut app, KeyCode::Escape);
-        assert!(app.world().resource::<PauseMenu>().open, "the card opened");
+        assert!(
+            app.world().resource::<PauseMenu>().is_open(),
+            "the card opened"
+        );
         assert!(
             app.world().resource::<Paused>().0,
             "an offline round freezes with it"
         );
 
         // The card is three rows: down twice reaches the last of them.
-        let row = |app: &App| PauseAction::ALL[app.world().resource::<PauseMenu>().selected];
+        let row = |app: &App| {
+            PauseAction::ALL[app
+                .world()
+                .resource::<PauseMenu>()
+                .card
+                .expect("the card is up")
+                .selected]
+        };
         tap(&mut app, KeyCode::KeyS);
         tap(&mut app, KeyCode::KeyS);
         assert_eq!(row(&app), PauseAction::Quit);
@@ -330,7 +375,10 @@ mod tests {
 
         tap(&mut app, KeyCode::Enter);
         app.update(); // let the state transition apply
-        assert!(!app.world().resource::<PauseMenu>().open, "the card closed");
+        assert!(
+            !app.world().resource::<PauseMenu>().is_open(),
+            "the card closed"
+        );
         assert!(!app.world().resource::<Paused>().0, "and unfroze");
         assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
     }
@@ -375,7 +423,7 @@ mod tests {
         for _ in 0..3 {
             app.update();
         }
-        assert!(app.world().resource::<PauseMenu>().open, "still up");
+        assert!(app.world().resource::<PauseMenu>().is_open(), "still up");
     }
 
     /// The card takes the keyboard while it is up.
@@ -438,13 +486,21 @@ mod tests {
         };
 
         tap(&mut app, KeyCode::Escape);
-        assert!(app.world().resource::<PauseMenu>().open, "the card opened");
+        assert!(
+            app.world().resource::<PauseMenu>().is_open(),
+            "the card opened"
+        );
         let parked = cursor(&mut app);
 
         // S walks the card's rows and nothing else.
         tap(&mut app, KeyCode::KeyS);
         assert_eq!(
-            PauseAction::ALL[app.world().resource::<PauseMenu>().selected],
+            PauseAction::ALL[app
+                .world()
+                .resource::<PauseMenu>()
+                .card
+                .expect("the card is up")
+                .selected],
             PauseAction::ToMenu
         );
         assert_eq!(cursor(&mut app), parked, "the cursor stayed put");
@@ -459,7 +515,10 @@ mod tests {
 
         // Closing it hands the keys back.
         tap(&mut app, KeyCode::Escape);
-        assert!(!app.world().resource::<PauseMenu>().open, "the card closed");
+        assert!(
+            !app.world().resource::<PauseMenu>().is_open(),
+            "the card closed"
+        );
         tap(&mut app, KeyCode::KeyS);
         assert_ne!(cursor(&mut app), parked, "the cursor moves again");
     }
@@ -487,7 +546,7 @@ mod tests {
             keys.reset_all();
             keys.press(KeyCode::Escape);
             app.update();
-            assert!(!app.world().resource::<PauseMenu>().open, "{phase:?}");
+            assert!(!app.world().resource::<PauseMenu>().is_open(), "{phase:?}");
             assert!(!app.world().resource::<Paused>().0, "{phase:?}");
         }
         // And in the running phase the same press opens it.
@@ -496,7 +555,7 @@ mod tests {
         keys.reset_all();
         keys.press(KeyCode::Escape);
         app.update();
-        assert!(app.world().resource::<PauseMenu>().open);
+        assert!(app.world().resource::<PauseMenu>().is_open());
     }
 
     /// A running puzzle, with the running-phase input beside the card as
@@ -534,11 +593,14 @@ mod tests {
                 .reset_all();
         };
         tap(&mut app, KeyCode::Escape);
-        assert!(app.world().resource::<PauseMenu>().open, "the card opened");
+        assert!(
+            app.world().resource::<PauseMenu>().is_open(),
+            "the card opened"
+        );
         assert!(app.world().resource::<Paused>().0, "and froze the round");
         tap(&mut app, KeyCode::Enter);
         assert!(
-            !app.world().resource::<PauseMenu>().open,
+            !app.world().resource::<PauseMenu>().is_open(),
             "Continue closed it"
         );
         assert!(
@@ -547,9 +609,9 @@ mod tests {
         );
         // Escape again closes it the same way.
         tap(&mut app, KeyCode::Escape);
-        assert!(app.world().resource::<PauseMenu>().open);
+        assert!(app.world().resource::<PauseMenu>().is_open());
         tap(&mut app, KeyCode::Escape);
-        assert!(!app.world().resource::<PauseMenu>().open);
+        assert!(!app.world().resource::<PauseMenu>().is_open());
         assert!(
             !app.world().resource::<Paused>().0,
             "Escape out is Continue too"

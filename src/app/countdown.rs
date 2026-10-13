@@ -226,14 +226,10 @@ mod tests {
         step(&mut app, 1.0);
         step(&mut app, 1.0);
         assert_eq!(phase(&app), VersusPhase::Countdown, "two seconds in");
-        app.world_mut()
-            .resource_mut::<crate::app::pause::PauseMenu>()
-            .open = true;
+        app.insert_resource(crate::app::pause::PauseMenu::raised());
         step(&mut app, 5.0);
         assert_eq!(phase(&app), VersusPhase::Countdown, "held by the card");
-        app.world_mut()
-            .resource_mut::<crate::app::pause::PauseMenu>()
-            .open = false;
+        app.insert_resource(crate::app::pause::PauseMenu::default());
         step(&mut app, 1.1);
         // The state change lands on the next frame's transition.
         app.update();

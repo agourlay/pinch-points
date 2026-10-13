@@ -52,7 +52,7 @@ pub(super) fn play_screens(screen: Res<State<Screen>>) -> bool {
 /// this is that rule, once, for everything that reads a key while a round
 /// is up.
 pub(super) fn keys_are_free(menu: Res<crate::app::pause::PauseMenu>) -> bool {
-    !menu.open
+    !menu.is_open()
 }
 
 /// Whether a player is typing words rather than pressing keys: a seat's

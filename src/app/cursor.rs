@@ -988,9 +988,7 @@ mod tests {
     #[test]
     fn the_pause_card_keeps_its_enter() {
         let mut app = results_card(0, true, true);
-        app.world_mut()
-            .resource_mut::<crate::app::pause::PauseMenu>()
-            .open = true;
+        app.insert_resource(crate::app::pause::PauseMenu::raised());
         assert_eq!(pressing_enter(&mut app), Screen::Versus);
     }
 

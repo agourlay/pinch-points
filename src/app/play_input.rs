@@ -267,7 +267,7 @@ pub fn versus_over_input(
     // The pause card's Enter is the card's. Not gated in the schedule like
     // the other play keys, because the invitation above is followed with
     // the card up or not.
-    if pause.open || !crate::app::menu_ui::enter(&keys) {
+    if pause.is_open() || !crate::app::menu_ui::enter(&keys) {
         return;
     }
     match after_round(&online, series_on) {

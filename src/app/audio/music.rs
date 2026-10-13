@@ -556,15 +556,18 @@ mod tests {
                 settings.music_on = silence != 1;
                 settings.music_volume = if silence == 2 { 0 } else { 45 };
                 world.resource_mut::<Muted>().0 = silence == 0;
-                world.resource_mut::<crate::app::pause::PauseMenu>().open = silence == 3;
+                *world.resource_mut::<crate::app::pause::PauseMenu>() = match silence {
+                    3 => crate::app::pause::PauseMenu::raised(),
+                    _ => crate::app::pause::PauseMenu::default(),
+                };
             }
             wait(&mut app, 500.0);
             assert_eq!(playing(&mut app), 0, "silence {silence} starts nothing");
         }
         *app.world_mut().resource_mut::<GameSettings>() = GameSettings::default();
-        app.world_mut()
-            .resource_mut::<crate::app::pause::PauseMenu>()
-            .open = false;
+        *app.world_mut()
+            .resource_mut::<crate::app::pause::PauseMenu>() =
+            crate::app::pause::PauseMenu::default();
         wait(&mut app, 0.5);
         assert_eq!(playing(&mut app), 0, "the rest was held, not spent");
 
