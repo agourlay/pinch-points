@@ -437,7 +437,7 @@ impl HudSources<'_> {
                 .online
                 .0
                 .as_ref()
-                .map_or_else(Default::default, |session| session.stands.crowd),
+                .map_or_else(Default::default, |session| session.stands.tide.crowd),
             speed: speed.0,
         }
     }

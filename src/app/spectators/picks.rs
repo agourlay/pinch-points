@@ -8,6 +8,35 @@ use super::*;
 /// round, long enough to see who is doing well and too soon to know.
 pub const PICKS_OPEN_FOR: u32 = 30 * crate::sim::TICKS_PER_SECOND;
 
+/// The spectators' calls for the winner as one peer holds them: this
+/// round's count and its own call, and the record of every call it made.
+#[derive(Default)]
+pub struct WinnerCalls {
+    /// The host's word on the crowd's calls for the winner (on the host,
+    /// what it is about to say), like [`TideVote::crowd`].
+    pub picks: Picks,
+    /// Host: whether the closing count has gone to the feed this round.
+    pub picks_said: bool,
+    /// A spectator's own call this round, if it made one.
+    pub my_pick: Option<u8>,
+    /// A spectator's calls over the whole session, for the results card.
+    pub calls: Calls,
+    /// How this round's call went, once the tide is in: the seat, and
+    /// whether it won.
+    pub last_call: Option<(u8, bool)>,
+}
+
+impl WinnerCalls {
+    /// A new round: every call is for one round, while the record of them
+    /// is the session's.
+    pub fn new_round(&mut self) {
+        self.picks = Picks::default();
+        self.picks_said = false;
+        self.my_pick = None;
+        self.last_call = None;
+    }
+}
+
 /// What the host says about the crowd's calls for the winner.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Picks {
@@ -69,7 +98,10 @@ pub fn spectator_pick_input(
     mut resend: Local<f32>,
 ) {
     let crate::app::keycaps::KeyboardMut { mut keys, caps } = keyboard;
-    let open = online.0.as_ref().is_some_and(|s| s.stands.picks.open > 0);
+    let open = online
+        .0
+        .as_ref()
+        .is_some_and(|s| s.stands.winner.picks.open > 0);
     if !is_spectating(&online) || !watching.free() || watching.other_up() || !open {
         if card.is_up() {
             card.shut();
@@ -80,7 +112,7 @@ pub fn spectator_pick_input(
         return;
     };
     if crate::app::lobby::once_a_second(&mut resend, time.delta_secs())
-        && let Some(seat) = session.stands.my_pick
+        && let Some(seat) = session.stands.winner.my_pick
     {
         session.transport.send(NetMsg::SpectatorPick { seat });
     }
@@ -98,7 +130,7 @@ pub fn spectator_pick_input(
     }
     if let Some(seat) = crate::app::menu_ui::number_pressed(&keys, usize::from(session.seats)) {
         let seat = seat as u8;
-        session.stands.my_pick = Some(seat);
+        session.stands.winner.my_pick = Some(seat);
         session.transport.send(NetMsg::SpectatorPick { seat });
         card.shut();
     }
@@ -137,15 +169,16 @@ pub fn score_the_call(
     };
     let Some(seat) = session
         .stands
+        .winner
         .my_pick
         .filter(|_| session.session.watching())
     else {
         return;
     };
     let right = winners[usize::from(seat)];
-    session.stands.calls.made += 1;
-    session.stands.calls.right += u32::from(right);
-    session.stands.last_call = Some((seat, right));
+    session.stands.winner.calls.made += 1;
+    session.stands.winner.calls.right += u32::from(right);
+    session.stands.winner.last_call = Some((seat, right));
 }
 
 /// Host: tell everyone where the calls for the winner stand, when they
@@ -162,19 +195,19 @@ pub(super) fn say_the_calls(
     // Counted until they close and then held, so a spectator who leaves
     // afterwards does not take their call out of a count the feed has
     // already read out and the results card will quote.
-    let picks = match session.stands.picks_said {
-        true => session.stands.picks,
+    let picks = match session.stands.winner.picks_said {
+        true => session.stands.winner.picks,
         false => session.crowd_picks_now(),
     };
-    if picks != session.stands.picks || again {
-        session.stands.picks = picks;
+    if picks != session.stands.winner.picks || again {
+        session.stands.winner.picks = picks;
         session.transport.send(NetMsg::CrowdPicks {
             picks: picks.counts,
             open: picks.open,
         });
     }
-    if picks.open == 0 && !session.stands.picks_said {
-        session.stands.picks_said = true;
+    if picks.open == 0 && !session.stands.winner.picks_said {
+        session.stands.winner.picks_said = true;
         if picks.any() {
             let names = &session.names;
             let label = |seat: u8| crate::app::name_or_label(names, tr, seat);

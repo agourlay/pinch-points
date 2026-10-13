@@ -273,15 +273,19 @@ fn crowd_rows(
     };
     let tr = settings.tr();
     let mut rows = Vec::new();
-    if session.stands.picks.any() {
-        let list = session.stands.picks.line(|seat| names.label(tr, seat));
+    if session.stands.winner.picks.any() {
+        let list = session
+            .stands
+            .winner
+            .picks
+            .line(|seat| names.label(tr, seat));
         rows.push((
             fill(tr.crowd_picked, &[("l", &list)]),
             CARD_TEXT.darker(0.15),
         ));
     }
-    if let Some((seat, right)) = session.stands.last_call {
-        let calls = &session.stands.calls;
+    if let Some((seat, right)) = session.stands.winner.last_call {
+        let calls = &session.stands.winner.calls;
         let (a, b) = (calls.right.to_string(), calls.made.to_string());
         rows.push(match right {
             true => (fill(tr.call_right, &[("a", &a), ("b", &b)]), palette::GOLD),

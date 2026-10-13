@@ -542,7 +542,7 @@ pub(super) fn debug_spectator(
     {
         if let Some(session) = &mut online.0 {
             let seat = seat.saturating_sub(1);
-            session.stands.my_pick = Some(seat);
+            session.stands.winner.my_pick = Some(seat);
             session
                 .transport
                 .send(crate::transport::NetMsg::SpectatorPick { seat });

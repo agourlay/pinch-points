@@ -367,8 +367,8 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
                     // one thing a spectator cannot do later. The tide's
                     // key works all the same, and is named again after.
                     let session = online.0.as_ref();
-                    let open = session.map_or(0, |s| s.stands.picks.open);
-                    let call = match (open, session.and_then(|s| s.stands.my_pick)) {
+                    let open = session.map_or(0, |s| s.stands.winner.picks.open);
+                    let call = match (open, session.and_then(|s| s.stands.winner.my_pick)) {
                         (0, _) => call,
                         (n, None) => fill(tr.spectator_pick_hint, &[("n", &n.to_string())]),
                         (n, Some(seat)) => fill(

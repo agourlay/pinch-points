@@ -117,7 +117,7 @@ pub(in crate::app) fn advance_sim(
         // has one action a frame like everybody else, so a call takes the
         // frame its own placement would have had, and that placement waits
         // rather than being thrown away.
-        let call = session.stands.pending_call;
+        let call = session.stands.tide.pending_call;
         let controllers = &*drivers.controllers;
         let bots = &mut *drivers.bots;
         // Seats bots drive from this machine commit their acts where a
@@ -215,7 +215,7 @@ pub(in crate::app) fn advance_sim(
             // commit leaves it for the next frame, or they would have
             // voted for nothing.
             if committed {
-                session.stands.pending_call = None;
+                session.stands.tide.pending_call = None;
             }
         } else if let Some(seat) = local
             && (committed || session.session.paused())

@@ -301,7 +301,7 @@ impl OnlineSession {
     pub(super) fn forget_peer(&mut self, peer: usize) {
         self.transport.forget(peer);
         self.peers.forget(peer);
-        self.stands.votes.voter_left(peer);
+        self.stands.tide.votes.voter_left(peer);
     }
 
     /// Host, during the round: drop every spectator that has gone quiet.

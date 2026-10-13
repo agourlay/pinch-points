@@ -28,6 +28,50 @@ pub(super) const WINDOW: f32 = 3.0;
 /// interrupting, and a three-minute round has room for a handful.
 pub(super) const COOLDOWN: f32 = 25.0;
 
+/// The spectators' tide vote as one peer holds it: the count (the host's
+/// alone), the host's word on the crowd, and a call settled and waiting
+/// for a frame.
+#[derive(Default)]
+pub struct TideVote {
+    /// How the spectators' tide vote stands, counted by the host and
+    /// nobody else.
+    pub votes: SpectatorVotes,
+    /// The last word the host said about the crowd.
+    ///
+    /// Only the host counts, so every other peer keeps the host's word
+    /// here rather than a guess of its own. On the host it is what it is
+    /// about to say.
+    pub crowd: Crowd,
+    /// Host: how long since it last said so.
+    ///
+    /// The word is repeated on a clock as well as on a change, because a
+    /// count that only changes once a round travels in exactly one
+    /// datagram, and UDP owes nobody that datagram. Worse than a lost
+    /// pause, which the next tick makes good: the crowd's size is settled
+    /// at the launch and never changes again, so the one send goes out
+    /// while a spectator is still walking out of the lobby, where the
+    /// lobby drops it as round business (`joining::work_the_socket`).
+    /// That left the crowd unable to see itself for the whole round.
+    pub crowd_said: f32,
+    /// An event the spectators settled on, waiting for a frame to ride out on.
+    ///
+    /// Held rather than sent: it goes out as this seat's action, which is
+    /// the only carriage a peer cannot advance past without.
+    pub pending_call: Option<TideEvent>,
+}
+
+impl TideVote {
+    /// Leaving the round: the settled-but-unsent call, the vote and its
+    /// wait, and the last word about a crowd that has gone home, which
+    /// would otherwise be carried into the next round until the host's
+    /// first send happened to differ from it.
+    pub fn leave_round(&mut self) {
+        self.pending_call = None;
+        self.votes.forget_all();
+        self.crowd = Crowd::default();
+    }
+}
+
 /// The vote as the host counts it.
 ///
 /// Host side only, and deliberately outside the sim: what the spectators are

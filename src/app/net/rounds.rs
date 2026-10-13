@@ -561,7 +561,7 @@ impl OnlineSession {
         self.abandoned.clear();
         // A new round is everyone's from its first frame.
         self.catch_up = Default::default();
-        self.stands.new_round();
+        self.stands.winner.new_round();
         for peer in self.peers.iter_mut() {
             peer.pick = None;
         }

@@ -857,7 +857,7 @@ impl OnlineSession {
                     wait,
                 } => {
                     if !host {
-                        self.stands.crowd = crate::app::spectators::Crowd {
+                        self.stands.tide.crowd = crate::app::spectators::Crowd {
                             watching,
                             open,
                             wait,
@@ -877,7 +877,7 @@ impl OnlineSession {
                 // The host's word on the calls, like the tally.
                 NetMsg::CrowdPicks { picks, open } => {
                     if !host {
-                        self.stands.picks = crate::app::spectators::Picks {
+                        self.stands.winner.picks = crate::app::spectators::Picks {
                             counts: picks,
                             open,
                         };
@@ -1161,7 +1161,7 @@ mod homecoming_tests {
     #[test]
     fn a_vote_is_taken_only_from_someone_watching() {
         let sand = crate::sim::TideEvent::FreshSand.index() as u8;
-        let open = |session: &OnlineSession| session.stands.votes.open().is_some();
+        let open = |session: &OnlineSession| session.stands.tide.votes.open().is_some();
 
         // Seated: a player may not call the tide down on its own table.
         let mut session = hosting_session(1);
@@ -1210,7 +1210,7 @@ mod homecoming_tests {
         session.take_vote(true, 1, sand);
         // One each, a tie, which goes to the earlier event on the list.
         assert_eq!(
-            session.stands.votes.settle(10.0),
+            session.stands.tide.votes.settle(10.0),
             Some(TideEvent::FreshSand),
             "five presses are one vote"
         );
@@ -1228,7 +1228,7 @@ mod homecoming_tests {
         // in all, not three.
         session.take_vote(true, 1, mania);
         assert_eq!(
-            session.stands.votes.settle(10.0),
+            session.stands.tide.votes.settle(10.0),
             Some(TideEvent::CrabMania)
         );
     }
@@ -1255,7 +1255,7 @@ mod homecoming_tests {
 
         session.take_vote(true, 0, crate::sim::TideEvent::FreshSand.index() as u8);
         assert!(
-            session.stands.votes.open().is_none(),
+            session.stands.tide.votes.open().is_none(),
             "and it cannot call the tide onto the game it is playing"
         );
     }
