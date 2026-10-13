@@ -301,7 +301,8 @@ impl Discovery {
                         out.push((host, beacon));
                     }
                 }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                // A bounced announcement is no reason to stop listening.
+                Err(e) if drain_goes_on(&e) => {}
                 Err(_) => break,
             }
         }

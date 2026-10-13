@@ -46,10 +46,10 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// versus flock started turning over, the oldest gull clear of the castles
 /// flying off to make room, with the final rush raising the cap. 19 is
 /// where versus stopped rolling golden crabs and started calling one every
-/// three minutes, worth 25, with the call on the board. 20 is where the
-/// versus event wheel stopped locking after an event that is over in the
-/// tick it fires (`timed_lock` in the rules). 21 is where versus Crab
-/// Monopoly started flying its crabs home, each banking as it lands
+/// three minutes (worth 25 then, 30 since 21), with the call on the board.
+/// 20 is where the versus event wheel stopped locking after an event that
+/// is over in the tick it fires (`timed_lock` in the rules). 21 is where
+/// versus Crab Monopoly started flying its crabs home, each banking as it lands
 /// (`sweep_flight`, and the crabs in the air in every snapshot), and the
 /// called golden crab went from 25 to 30.
 ///
@@ -316,12 +316,31 @@ impl UdpTransport {
                     };
                     out.push((msg, index));
                 }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                // Nothing to take from this one, and more may be waiting.
+                Err(e) if drain_goes_on(&e) => {}
                 Err(_) => break,
             }
         }
         out
     }
+}
+
+/// Whether a failed `recv_from` leaves more to drain. `WouldBlock` is the
+/// end of the queue; the two below are a *previous send* bouncing.
+///
+/// On Windows an unconnected UDP socket reports the ICMP "port
+/// unreachable" that came back for an earlier datagram as an error on the
+/// next receive. A host keeps sending to a peer that has just quit (until
+/// it is aged out), so every tick would surface one, and stopping the
+/// drain there left everybody else's inputs waiting in the queue for a
+/// tick: the table stuttered for the one who left. The error is about
+/// somebody else and says nothing about what is still waiting, so the
+/// drain goes on. Linux never reports these on an unconnected socket.
+pub(crate) fn drain_goes_on(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionRefused
+    )
 }
 
 mod msg;
@@ -396,6 +415,20 @@ mod tests {
             })
         );
         assert_eq!(host.peer_count(), 0, "and it claimed no seat at the table");
+    }
+
+    /// A bounced earlier send (what Windows reports for a departed peer)
+    /// does not end the drain; running out of datagrams, or a real fault,
+    /// does.
+    #[test]
+    fn a_bounced_send_does_not_end_the_drain() {
+        use io::ErrorKind::*;
+        for kind in [ConnectionReset, ConnectionRefused] {
+            assert!(drain_goes_on(&io::Error::from(kind)), "{kind:?}");
+        }
+        for kind in [WouldBlock, PermissionDenied, Other] {
+            assert!(!drain_goes_on(&io::Error::from(kind)), "{kind:?}");
+        }
     }
 
     /// The socket takes peers up to [`MAX_PEERS`] and refuses the rest,
