@@ -60,7 +60,10 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// terms that name it (`beach_in_play`), the terms moving off it once
 /// the table outgrows its castles. 23 is where the round-length dial
 /// gained a one-minute stop in front of the others, so the byte the terms
-/// carry for it names a different length than it did.
+/// carry for it names a different length than it did, and a table of four
+/// or more started getting a spawner hole for all but one player (the
+/// classic beach adding its corner holes, a generated one never dealing
+/// four players the side pair alone): another version 10.
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in

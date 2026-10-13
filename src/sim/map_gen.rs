@@ -164,6 +164,14 @@ fn end_spawners(width: u8, height: u8) -> [(u8, u8, Direction); 4] {
     ]
 }
 
+/// The fewest spawner holes a table of `seats` should be dealt: one fewer
+/// than the players. Two holes feeding four castles leave the crabs on two
+/// lanes everybody fights over, and the round turns into a scrum at the
+/// same two spots; a hole for nearly every player spreads them out.
+fn holes_wanted(seats: u8) -> usize {
+    usize::from(seats.saturating_sub(1))
+}
+
 /// The four images of a tile under the arena's two mirror symmetries,
 /// left-right and top-bottom.
 ///
@@ -276,22 +284,22 @@ pub fn classic_arena_seeded(seed: u64, preload_scores: bool, seats: u8) -> Board
     }
     // Balance: strictly equal cadences. Even a 44/48 stagger measurably
     // tilted bot duels toward the faster side over a full round.
-    board.set_tile(
-        0,
-        4,
-        TileKind::Spawner(Spawner {
-            dir: Direction::Right,
-            period: 46,
-        }),
-    );
-    board.set_tile(
-        11,
-        4,
-        TileKind::Spawner(Spawner {
-            dir: Direction::Left,
-            period: 46,
-        }),
-    );
+    //
+    // The two side holes are the beach as it was drawn. A table bigger
+    // than [`holes_wanted`] lets two holes feed also gets the generated
+    // arenas' four end holes, one by each corner castle, and every hole
+    // slows to keep the crab flow the beach was balanced on.
+    let sides = side_spawners(12, 9);
+    let ends = end_spawners(12, 9);
+    let holes: Vec<(u8, u8, Direction)> = if holes_wanted(seats) > sides.len() {
+        sides.iter().chain(ends.iter()).copied().collect()
+    } else {
+        sides.to_vec()
+    };
+    let period = 46 * holes.len() as u32 / 2;
+    for (x, y, dir) in holes {
+        board.set_tile(x, y, TileKind::Spawner(Spawner { dir, period }));
+    }
     board.set_tile(5, 4, TileKind::Rock);
     board.set_tile(6, 4, TileKind::Rock);
     // Interior walls, 180-degree rotationally symmetric so both players face
@@ -357,15 +365,18 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
 
     // Spawner holes, always in complete mirror groups: the two side holes,
     // the four end holes, or (on a big beach, which would otherwise feel
-    // empty) both. Each hole then runs slower the more of them there are,
-    // so the crab flow the balance work was tuned against is unchanged.
+    // empty, or for a table [`holes_wanted`] says outnumbers the four) both.
+    // Each hole then runs slower the more of them there are, so the crab
+    // flow the balance work was tuned against is unchanged: more holes
+    // spread the crabs out, they do not add to them.
     let area = u32::from(width) * u32::from(height);
     let roll = rng.next_u32() % 2;
     let sides = side_spawners(width, height);
     let ends = end_spawners(width, height);
-    let spots: Vec<(u8, u8, Direction)> = if area >= 240 {
+    let wanted = holes_wanted(seats);
+    let spots: Vec<(u8, u8, Direction)> = if area >= 240 || wanted > ends.len() {
         sides.iter().chain(ends.iter()).copied().collect()
-    } else if roll == 0 {
+    } else if roll == 0 && wanted <= sides.len() {
         sides.to_vec()
     } else {
         ends.to_vec()
@@ -647,6 +658,39 @@ mod tests {
             assert_eq!(castles, 4, "seed {seed}");
             assert!(spawners >= 2, "seed {seed}");
             assert!(board.remaining_ticks().is_some());
+        }
+    }
+
+    /// Every beach a table can be dealt has a hole for all but one of its
+    /// players, and the extra holes slow down so the crab flow is the one
+    /// the beach was balanced on (two holes' worth at the classic cadence).
+    #[test]
+    fn a_table_gets_a_hole_for_all_but_one_player() {
+        let holes = |board: &Board| -> Vec<u32> {
+            let mut periods = Vec::new();
+            for y in 0..board.height() {
+                for x in 0..board.width() {
+                    if let TileKind::Spawner(s) = board.tile_at(x, y) {
+                        periods.push(s.period);
+                    }
+                }
+            }
+            periods
+        };
+        for seats in 2..=MAX_PLAYERS as u8 {
+            let wanted = usize::from(seats - 1);
+            if seats <= 4 {
+                let classic = holes(&classic_arena(false, seats));
+                assert!(classic.len() >= wanted, "classic, {seats} seats");
+                let flow: f64 = classic.iter().map(|&p| 1.0 / f64::from(p)).sum();
+                assert!((flow - 2.0 / 46.0).abs() < 1e-9, "classic, {seats} seats");
+            }
+            for (w, h) in [(9, 7), (12, 9), (16, 11), (20, 13)] {
+                for seed in 0..12u64 {
+                    let n = holes(&generate_arena(seed, seats, w, h)).len();
+                    assert!(n >= wanted, "{w}x{h} seed {seed}, {seats} seats: {n} holes");
+                }
+            }
         }
     }
 
