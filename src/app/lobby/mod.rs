@@ -671,7 +671,10 @@ pub fn enter_lobby(
         }
         Err(e) => {
             if state.feedback.is_empty() {
-                state.feedback = format!("discovery unavailable: {e}");
+                state.feedback = fill(
+                    settings.tr().lobby_discovery_unavailable,
+                    &[("e", &e.to_string())],
+                );
             }
         }
     }
@@ -808,7 +811,7 @@ pub fn lobby_input(
     // over a question already on screen, which a finished answer may have
     // opened earlier in this same frame.
     if intent.is_none()
-        && keys.just_pressed(KeyCode::KeyJ)
+        && caps.just_pressed(&keys, 'J')
         && !state.standing().at_a_beach()
         && state.typing.is_none()
     {
@@ -942,7 +945,9 @@ pub fn lobby_input(
         walk_the_list(&keys, &mut state);
     }
     take_a_beach(&keys, &settings, &mut state, tr, intent, auto_join);
-    if keys.just_pressed(KeyCode::KeyW)
+    // By the cap, like H, B, T and K on the same prompt: on AZERTY the
+    // key QWERTY calls W says Z, and the one that says W is elsewhere.
+    if caps.just_pressed(&keys, 'W')
         && let Standing::Choosing { watching } = &mut state.standing
     {
         *watching = !*watching;
@@ -958,6 +963,47 @@ mod tests {
 
     fn addr(last: u8) -> SocketAddr {
         format!("10.0.0.{last}:47777").parse().expect("addr")
+    }
+
+    /// W arms watching by the cap that says W, like every other letter on
+    /// the prompt. On AZERTY that is the key QWERTY calls Z, and the key
+    /// QWERTY calls W (which says Z there) does nothing.
+    #[test]
+    fn w_arms_watching_by_its_cap_on_azerty() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<LobbyState>();
+        app.init_resource::<MatchConfig>();
+        app.init_resource::<crate::app::bot_seats::BotSeats>();
+        app.init_resource::<Online>();
+        app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.insert_resource(GameSettings::default());
+        let mut azerty = crate::app::keycaps::KeyCaps::default();
+        azerty.learn(KeyCode::KeyW, 'z');
+        app.insert_resource(azerty);
+        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        app.add_systems(Update, lobby_input);
+        let tap = |app: &mut App, key: KeyCode| {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+        };
+        tap(&mut app, KeyCode::KeyW);
+        assert!(
+            !app.world().resource::<LobbyState>().watching(),
+            "that key says Z on this keyboard"
+        );
+        tap(&mut app, KeyCode::KeyZ);
+        assert!(
+            app.world().resource::<LobbyState>().watching(),
+            "the cap that says W"
+        );
     }
 
     /// Both greetings say who is greeting. The watcher's did not, and the

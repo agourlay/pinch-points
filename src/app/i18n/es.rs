@@ -554,4 +554,5 @@ pub static ES: Tr = Tr {
     replay_drop_bad: "ese archivo no es una repetición que esta versión pueda reproducir: {e}",
     ed_save_taken: "otro nivel ya tiene ese archivo - F2 otra vez lo reemplaza, o cambia el nombre de este",
     ed_failed: "algo salió mal - tu nivel sigue aquí",
+    lobby_discovery_unavailable: "no se pueden buscar partidas: {e}",
 };

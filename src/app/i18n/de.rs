@@ -561,4 +561,5 @@ pub static DE: Tr = Tr {
     replay_drop_bad: "diese Datei ist kein Replay, das diese Version abspielen kann: {e}",
     ed_save_taken: "ein anderes Level hat schon diese Datei - F2 nochmal ersetzt es, oder benenne dieses um",
     ed_failed: "etwas ist schiefgelaufen - dein Level ist noch da",
+    lobby_discovery_unavailable: "Spielsuche nicht möglich: {e}",
 };

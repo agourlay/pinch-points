@@ -820,6 +820,9 @@ struct Tr {
     /// Something failed in the editor and was caught: any playtest is
     /// stopped, and the level being built is kept.
     pub ed_failed: &'static str,
+    /// The lobby could not listen for beacons on any of its ports; `{e}`
+    /// is the system's reason, untranslated.
+    pub lobby_discovery_unavailable: &'static str,
 }
 }
 

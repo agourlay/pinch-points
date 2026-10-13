@@ -554,4 +554,5 @@ pub static IT: Tr = Tr {
     replay_drop_bad: "quel file non è un replay che questa versione sa riprodurre: {e}",
     ed_save_taken: "un altro livello ha già quel file - F2 di nuovo lo sostituisce, o rinomina questo",
     ed_failed: "qualcosa è andato storto - il tuo livello è ancora qui",
+    lobby_discovery_unavailable: "impossibile cercare partite: {e}",
 };
