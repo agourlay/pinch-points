@@ -23,6 +23,9 @@ pub enum Lang {
     Ja,
 }
 
+/// Every language, in display order. The level tables order their
+/// columns the same way, English first, so a language's column there is
+/// its [`Cycle::index`](crate::app::cycle::Cycle::index).
 pub const ALL_LANGS: [Lang; 8] = [
     Lang::En,
     Lang::Fr,
@@ -102,22 +105,6 @@ impl Lang {
         }
     }
 
-    /// This language's column in the level tables, English first. Both
-    /// tables order their columns this way, so the order lives here once
-    /// rather than being counted out again at each lookup.
-    fn column(self) -> usize {
-        match self {
-            Lang::En => 0,
-            Lang::Fr => 1,
-            Lang::De => 2,
-            Lang::Es => 3,
-            Lang::It => 4,
-            Lang::Nl => 5,
-            Lang::Ru => 6,
-            Lang::Ja => 7,
-        }
-    }
-
     /// Teaching hint for a shipped level, if it has one. Column 0 is the
     /// English name the row is keyed by, so the hints sit one place further
     /// along. Keyed by name alone, so a level on a list is asked about
@@ -127,7 +114,7 @@ impl Lang {
         LEVEL_HINTS
             .iter()
             .find(|row| row[0] == en_name)
-            .map(|row| row[1 + self.column()])
+            .map(|row| row[1 + crate::app::cycle::Cycle::index(self)])
     }
 
     /// Localized name for a built-in level; other names pass through.
@@ -143,7 +130,7 @@ impl Lang {
         LEVEL_NAMES
             .iter()
             .find(|row| row[0] == en)
-            .map_or(en, |row| row[self.column()])
+            .map_or(en, |row| row[crate::app::cycle::Cycle::index(self)])
     }
 }
 
@@ -941,7 +928,7 @@ mod tests {
             "only {} characters shipped",
             covered.len()
         );
-        let column = Lang::Ja.column();
+        let column = Lang::Ja.index();
         let mut said: String = JA.strings().iter().map(|(_, line)| *line).collect();
         for row in &LEVEL_NAMES {
             said.push_str(row[column]);
@@ -969,7 +956,7 @@ mod tests {
             "../../../assets/fonts/NotoSansMonoCJKjp-Subset.otf"
         ));
         for lang in ALL_LANGS {
-            let column = lang.column();
+            let column = lang.index();
             let mut said: String = lang.tr().strings().iter().map(|(_, line)| *line).collect();
             for row in &LEVEL_NAMES {
                 said.push_str(row[column]);
@@ -1052,14 +1039,14 @@ mod tests {
         for lang in ALL_LANGS {
             for row in &LEVEL_NAMES {
                 assert!(
-                    !row[lang.column()].trim().is_empty(),
+                    !row[lang.index()].trim().is_empty(),
                     "{:?} has no {lang:?} name",
                     row[0]
                 );
             }
             for row in &LEVEL_HINTS {
                 assert!(
-                    !row[1 + lang.column()].trim().is_empty(),
+                    !row[1 + lang.index()].trim().is_empty(),
                     "{:?} has no {lang:?} hint",
                     row[0]
                 );

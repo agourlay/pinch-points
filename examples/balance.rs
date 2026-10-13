@@ -1,25 +1,12 @@
 //! Fairness harness: identical bots on every seat. Any consistent seat
 //! advantage is map/rules bias, not skill. Run: cargo run --example balance
 
-use indicatif::{ProgressBar, ProgressStyle};
+mod common;
+
 use pinch_points::sim::{
     Board, BotLevel, MAX_PLAYERS, PlayerAction, bot_action, classic_arena, classic_arena_seeded,
     generate_arena,
 };
-
-/// A bar for one sweep of `n` games, labelled with what is being swept. The
-/// big generated-map sweeps are thousands of full rounds and a minute of
-/// otherwise-silent play; a bar is how the harness shows it is still going.
-fn sweep_bar(label: &str, n: u64) -> ProgressBar {
-    let bar = ProgressBar::new(n);
-    bar.set_style(
-        ProgressStyle::with_template("{msg:26} [{elapsed_precise}] {bar:30} {pos}/{len}")
-            .expect("progress template")
-            .progress_chars("=> "),
-    );
-    bar.set_message(label.to_owned());
-    bar
-}
 
 /// Play a round out with identical bots on every seat, calling `each_tick`
 /// after every step.
@@ -88,7 +75,10 @@ fn tally(
     let mut totals = [0f64; MAX_PLAYERS];
     let mut squares = [0f64; MAX_PLAYERS];
     let mut n = 0u32;
-    let bar = sweep_bar(label, count);
+    // The big generated-map sweeps are thousands of full rounds and a
+    // minute of otherwise-silent play; the bar, labelled with what is
+    // being swept, is how the harness shows it is still going.
+    let bar = common::bar(count, label);
     for scores in games {
         bar.inc(1);
         n += 1;
