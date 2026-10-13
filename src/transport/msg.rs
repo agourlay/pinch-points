@@ -110,6 +110,11 @@ pub enum NetMsg {
         /// What holds each place at the table (see [`kind_byte`]), so a
         /// bot wears the robot on every screen in the room.
         kinds: [u8; crate::sim::MAX_PLAYERS],
+        /// The name of the host's handmade beach when the terms say
+        /// `Custom`, empty otherwise. The terms carry only "a handmade
+        /// beach", and a joiner reading that against its own shelf named
+        /// whatever beach *it* had first, or the wrong one entirely.
+        beach: WireName,
     },
     /// Host → one peer: the host asked you to leave. The peer goes back to
     /// choosing a beach, and the host forgets it.
@@ -504,6 +509,7 @@ impl NetMsg {
                 names,
                 terms,
                 kinds,
+                beach,
             } => {
                 bytes.push(seats);
                 for name in names {
@@ -511,6 +517,7 @@ impl NetMsg {
                 }
                 bytes.extend_from_slice(&terms.encode());
                 bytes.extend_from_slice(&kinds);
+                bytes.extend_from_slice(&beach);
             }
             NetMsg::Hello { name, bot } => {
                 bytes.extend_from_slice(&name);
@@ -768,11 +775,14 @@ impl NetMsg {
                     .get(kinds_at..kinds_at + crate::sim::MAX_PLAYERS)?
                     .try_into()
                     .ok()?;
+                let beach_at = kinds_at + crate::sim::MAX_PLAYERS;
+                let beach = table.get(beach_at..beach_at + WIRE_NAME)?.try_into().ok()?;
                 Some(NetMsg::Roster {
                     seats: *body.first()?,
                     names,
                     terms,
                     kinds,
+                    beach,
                 })
             }
             TAG_CHAT => Some(NetMsg::Chat {
@@ -961,6 +971,7 @@ mod tests {
             names: [wire_name("x"); crate::sim::MAX_PLAYERS],
             terms: MatchTerms::default(),
             kinds,
+            beach: wire_name("The Pier"),
         };
         assert_eq!(NetMsg::decode(&roster.clone().encode()), Some(roster));
         let start = NetMsg::Start {
@@ -1190,6 +1201,7 @@ mod tests {
                     map: 3,
                     ..MatchTerms::default()
                 },
+                beach: [0; WIRE_NAME],
             },
             NetMsg::Abandoned { seat: 0, frame: 0 },
             NetMsg::Abandoned {

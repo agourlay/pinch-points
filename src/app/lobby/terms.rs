@@ -111,6 +111,45 @@ impl Dial {
     }
 }
 
+/// The name of the handmade beach the host's dials are on, for the
+/// roster: the one its own map dial names, or empty when the dial is on a
+/// built-in map or on no beach that will travel (both ends then build the
+/// generated arena, which [`hosts_map_label`] names).
+pub(super) fn roster_beach(
+    config: &MatchConfig,
+    beaches: &crate::app::match_setup::CustomBeaches,
+) -> crate::transport::WireName {
+    let custom = config.map == crate::app::match_setup::MapChoice::Custom;
+    let name = beaches
+        .fitting(config.seats)
+        .get(config.custom)
+        .filter(|beach| custom && !beach.too_big_to_send())
+        .map_or("", |beach| beach.level.name.as_str());
+    crate::transport::wire_name(name)
+}
+
+/// The map dial as a joiner reads it, off the host's terms and the name
+/// the roster gave the host's beach.
+///
+/// Not [`crate::app::match_setup::map_label`], which looks the beach up on
+/// *this* machine's shelf: `config_from_terms` can only say "a handmade
+/// beach, the first one", so a joiner's card named a beach of its own, or
+/// none, where the host's was going to be played.
+pub(super) fn hosts_map_label(
+    tr: &crate::app::i18n::Tr,
+    config: &MatchConfig,
+    beach: &str,
+) -> String {
+    use crate::app::match_setup::MapChoice;
+    match (config.map, beach.is_empty()) {
+        (MapChoice::Custom, false) => beach.to_string(),
+        // A handmade beach that does not travel: both ends build the
+        // generated arena in its place, as `map_label` says on the host.
+        (MapChoice::Custom, true) => tr.map_names[MapChoice::GenXl.index()].to_string(),
+        (map, _) => tr.map_names[map.index()].to_string(),
+    }
+}
+
 /// The beach these terms describe, once the table is known.
 ///
 /// The handcrafted arena seats four, and a fifth player arriving cannot be

@@ -289,11 +289,21 @@ impl OnlineSession {
     /// seat, and the terms they are playing. The same message the lobby
     /// sends while it is gathering, from the round's own copy of both.
     fn roster_msg(&self) -> NetMsg {
+        // The beach being played, by name, when it is the host's own: the
+        // bytes carry it, and they are what every board is built from.
+        use crate::app::cycle::Cycle;
+        use crate::app::match_setup::MapChoice;
+        let custom = MapChoice::from_index(usize::from(self.terms.map)) == MapChoice::Custom;
+        let beach = custom
+            .then(|| crate::app::match_setup::beach_from(&self.beach))
+            .flatten()
+            .map_or_else(String::new, |level| level.name);
         NetMsg::Roster {
             seats: self.seats,
             names: wire_table(&self.names),
             terms: self.terms,
             kinds: crate::transport::wire_kinds(&self.kinds),
+            beach: crate::transport::wire_name(&beach),
         }
     }
 
@@ -576,6 +586,31 @@ mod tests {
         );
         session.peers.deal(&plan);
         session
+    }
+
+    /// A peer in line reads the beach being played off the roster by
+    /// name: the host's handmade one, from the bytes every board is built
+    /// from, and nothing for a built-in map.
+    #[test]
+    fn the_roster_names_the_handmade_beach_in_play() {
+        use crate::app::cycle::Cycle;
+        use crate::app::match_setup::MapChoice;
+        let mut session = hosting(vec![Some(1)]);
+        let NetMsg::Roster { beach, .. } = session.roster_msg() else {
+            panic!("a roster");
+        };
+        assert_eq!(beach, [0; crate::transport::WIRE_NAME], "a built-in map");
+
+        let text = "name: Sent Beach\nposts: 2\ncrab: 0,1 R R common\nmap:\n\
+                    +-+-+-+-+-+\n|. . . . .|\n+ + + + + +\n|. . . . 0|\n\
+                    + + + + + +\n|. . . . .|\n+-+-+-+-+-+\n";
+        let level = crate::sim::Level::parse(text).expect("a level");
+        session.beach = crate::lzw::compress(level.to_text().as_bytes(), 8);
+        session.terms.map = MapChoice::Custom.index() as u8;
+        let NetMsg::Roster { beach, .. } = session.roster_msg() else {
+            panic!("a roster");
+        };
+        assert_eq!(crate::transport::beach_name_from_wire(&beach), "Sent Beach");
     }
 
     /// The launch plan is what membership means, not the seat number: a

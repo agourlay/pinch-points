@@ -189,6 +189,7 @@ pub fn host_tick(
             names,
             terms,
             kinds: crate::transport::wire_kinds(&state.table_kinds),
+            beach: super::terms::roster_beach(&config, &beaches),
         });
     }
     let (players_aboard, watchers_aboard, port) = state.hosted().map_or((0, 0, None), |hosted| {

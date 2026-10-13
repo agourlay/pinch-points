@@ -194,6 +194,9 @@ pub struct Joined {
     /// is nothing to do with the match being joined; `None` until the
     /// first roster lands.
     pub terms: Option<MatchTerms>,
+    /// What the host's handmade beach is called, from the same roster,
+    /// when its terms are on one: empty otherwise.
+    pub beach_name: String,
     /// The round as it stands, arriving in parts, for a watcher who
     /// greeted a beach mid-round (`net::catch_up`).
     catching_up: crate::app::net::catch_up::Assembly,
@@ -222,6 +225,7 @@ impl Joined {
             host_answered: false,
             played_seed: None,
             terms: None,
+            beach_name: String::new(),
             catching_up: Default::default(),
             bot: None,
             beach: None,
@@ -246,6 +250,7 @@ impl Joined {
             host_answered: true,
             played_seed: Some(played_seed),
             terms: None,
+            beach_name: String::new(),
             catching_up: Default::default(),
             bot,
             beach: None,

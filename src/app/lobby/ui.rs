@@ -513,6 +513,19 @@ pub fn update_lobby_terms(
         Some((cfg, mode)) => (cfg, *mode),
         None => (&config, settings.team_mode),
     };
+    // The host's beach by the name the roster gave it, never looked up on
+    // this machine's own shelf.
+    let hosts_beach = joined
+        .is_some()
+        .then(|| state.joined().map(|joined| joined.beach_name.as_str()))
+        .flatten();
+    let label = |dial: &Dial| {
+        let (name, value) = dial.label(tr, config, team_mode, &beaches);
+        match (dial, hosts_beach) {
+            (Dial::Map, Some(beach)) => (name, super::terms::hosts_map_label(tr, config, beach)),
+            _ => (name, value),
+        }
+    };
     for (row, mut fill) in &mut rows {
         let want = crate::app::menu_ui::band(host && row.0 == state.dial);
         crate::app::menu_ui::set_bg(&mut fill, want);
@@ -520,7 +533,7 @@ pub fn update_lobby_terms(
     for (row, mut text, mut color) in &mut names {
         let line = Dial::ALL
             .get(row.0)
-            .map(|dial| dial.label(tr, config, team_mode, &beaches).0)
+            .map(|dial| label(dial).0)
             .unwrap_or_default();
         crate::app::menu_ui::set_text(&mut text, line);
         crate::app::menu_ui::set_color(&mut color, palette::IDLE_ROW);
@@ -528,7 +541,7 @@ pub fn update_lobby_terms(
     for (row, mut text, mut color) in &mut values {
         let line = Dial::ALL
             .get(row.0)
-            .map(|dial| dial.label(tr, config, team_mode, &beaches).1)
+            .map(|dial| label(dial).1)
             .unwrap_or_default();
         // Only the host can turn them, so only the host's read as live.
         let tone = match host {
@@ -919,6 +932,61 @@ fn spawn_entry_bar(commands: &mut Commands) {
 #[cfg(test)]
 mod list_row_tests {
     use super::*;
+
+    /// A joiner's terms card names the host's handmade beach by the name
+    /// the roster carried, never by a lookup on its own shelf: the terms
+    /// say only "a handmade beach", which read against this machine's
+    /// beaches named one of its own, or the generated arena.
+    #[test]
+    fn a_joiner_reads_the_hosts_beach_by_its_name() {
+        let mut app = App::new();
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<LobbyState>();
+        app.init_resource::<MatchConfig>();
+        app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        {
+            let mut state = app.world_mut().resource_mut::<LobbyState>();
+            let mut joined = Joined::dialled(
+                UdpTransport::join(("127.0.0.1", 47997)).expect("join"),
+                false,
+            );
+            joined.terms = Some(MatchTerms {
+                map: crate::app::match_setup::MapChoice::Custom.index() as u8,
+                ..MatchTerms::default()
+            });
+            joined.beach_name = "The Pier".into();
+            state.standing = Standing::Joining(joined);
+        }
+        app.add_systems(
+            Startup,
+            |mut commands: Commands, settings: Res<GameSettings>| {
+                spawn_lobby_ui(&mut commands, settings.tr(), &LobbyArt::default());
+            },
+        );
+        app.add_systems(Update, update_lobby_terms);
+        app.update();
+        let map_value = |app: &mut App| {
+            let world = app.world_mut();
+            let mut values = world.query::<(&DialValue, &Text)>();
+            values
+                .iter(world)
+                .find(|(row, _)| Dial::ALL.get(row.0) == Some(&Dial::Map))
+                .map(|(_, text)| text.0.clone())
+                .expect("a map dial")
+        };
+        assert_eq!(map_value(&mut app), "The Pier");
+
+        // A handmade beach that does not travel is played as the generated
+        // arena at both ends, and is named so.
+        if let Some(joined) = app.world_mut().resource_mut::<LobbyState>().joined_mut() {
+            joined.beach_name.clear();
+        }
+        app.update();
+        assert_eq!(
+            map_value(&mut app),
+            crate::app::i18n::EN.map_names[crate::app::match_setup::MapChoice::GenXl.index()]
+        );
+    }
 
     /// A beach on the air, as the list holds it.
     fn beach(last: u8, name: &str, host: &str, taken: u8, running: bool) -> HostEntry {

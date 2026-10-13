@@ -397,7 +397,7 @@ pub fn join_tick(
     let mut said: Vec<(crate::transport::WireName, crate::transport::WireChat)> = Vec::new();
     let mut table: Option<(Vec<String>, [u8; MAX_PLAYERS])> = None;
     let mut kicked = false;
-    let mut host_terms: Option<MatchTerms> = None;
+    let mut host_terms: Option<(MatchTerms, crate::transport::WireName)> = None;
     let mut heard = false;
     let hello = say_hello.then(|| joined.greeting(&settings.names[0]));
     let transport = &mut joined.transport;
@@ -464,6 +464,7 @@ pub fn join_tick(
                     names,
                     terms,
                     kinds,
+                    beach,
                     ..
                 } => {
                     // The table is the leading run of named seats: the
@@ -475,7 +476,7 @@ pub fn join_tick(
                             .collect(),
                         kinds,
                     ));
-                    host_terms = Some(terms);
+                    host_terms = Some((terms, beach));
                 }
                 NetMsg::Hello { .. }
                 | NetMsg::Watch { .. }
@@ -517,10 +518,11 @@ pub fn join_tick(
             .collect();
         state.table = table;
     }
-    if let Some(terms) = host_terms
+    if let Some((terms, beach)) = host_terms
         && let Some(joined) = state.joined_mut()
     {
         joined.terms = Some(terms);
+        joined.beach_name = crate::transport::beach_name_from_wire(&beach);
     }
     for (name, text) in said {
         state.hear(&name, &text);
