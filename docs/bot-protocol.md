@@ -451,6 +451,13 @@ scored as a forfeit: last place. Once one game has been forfeited that
 way, the games that start after it while you are still away forfeit your
 seat at once rather than waiting again; reconnecting puts an end to it.
 
+A bot that restarted has lost its token. Register as before, with the same
+`name` and the same key (or, on a listener that asks for none, from the
+same address), and while your old connection is gone you are taken back
+as the bot you were: the answer is marked `"resumed": true` and carries
+your old token. A spent single-use key and your own name are not held
+against you then.
+
 ## Limits
 
 Every listener treats every byte it receives as hostile.

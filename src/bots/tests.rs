@@ -832,6 +832,52 @@ fn dropped(events: &Receiver<Event>, id: usize) {
     }
 }
 
+/// A bot that dropped and restarted, its token gone with the rest of its
+/// memory, takes its own chair back on the key and the name it came in
+/// on: not refused for a spent key or a taken name, and never a strike
+/// against its address, however often it comes back. Somebody else with
+/// the key, under another name, does not get the chair.
+#[test]
+fn a_dropped_bot_restarted_without_its_token_takes_its_chair_back() {
+    let slot_key = Key::draw();
+    let shared_key = Key::draw();
+    let (listener, events) = listen(Admission::Keys(vec![
+        Invite {
+            key: slot_key.clone(),
+            uses: Some(1),
+            owner: None,
+            slot: Some(0),
+        },
+        invite(&shared_key, Some(1)),
+    ]));
+    let addr = listener.local_addr();
+    for (name, key) in [("Greedy", &slot_key), ("Shared", &shared_key)] {
+        let (bot, answer) = Client::register(addr, name, Some(key));
+        assert_eq!(answer["type"], "registered", "{answer}");
+        let token = answer["token"].clone();
+        let id = registered(&events);
+        let mut bot = Some(bot);
+        // More times than the strikes that lock an address out.
+        for _ in 0..4 {
+            drop(bot.take());
+            dropped(&events, id);
+            let (back, answer) = Client::register(addr, name, Some(key));
+            assert_eq!(answer["type"], "registered", "{name}: {answer}");
+            assert_eq!(answer["resumed"], true, "{answer}");
+            assert_eq!(answer["token"], token, "the same bot: {answer}");
+            bot = Some(back);
+        }
+        // Sat in, the chair is not up for grabs.
+        let (_twin, answer) = Client::register(addr, name, Some(key));
+        assert_eq!(answer["type"], "error", "{answer}");
+        // Empty, it is not anybody's who holds the key.
+        drop(bot.take());
+        dropped(&events, id);
+        let (_other, answer) = Client::register(addr, "Other", Some(key));
+        assert_eq!(answer["type"], "error", "{answer}");
+    }
+}
+
 /// A bot the host lets go, asked to leave or told it has no seat, is gone
 /// for good and said to be: its going is reported, its token lands
 /// nowhere, and its name is free for the same bot started anew.

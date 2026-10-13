@@ -251,6 +251,9 @@ struct Conn {
 struct Bot {
     info: BotInfo,
     token: Token,
+    /// The key it was let in with, if one was asked for: with its name,
+    /// what lets it back in without its token (see [`comeback`]).
+    key: Option<Key>,
     conn: Option<Conn>,
     /// Round trips measured by ping, newest last.
     rtts: Vec<Duration>,
@@ -829,7 +832,7 @@ fn register_bot(
     // somebody trying keys.
     if let Some(token) = &register.token {
         let token = Token::from_wire(token);
-        let mut registry = lock(&shared.registry);
+        let registry = lock(&shared.registry);
         let Some(id) = registry.bots.iter().position(|b| b.token == token) else {
             return Err("that token is not one this listener issued".to_string());
         };
@@ -840,25 +843,17 @@ fn register_bot(
                 "this bot was let go here and its seat given away; register afresh".to_string(),
             );
         }
-        let serial = attach(&mut registry, id, writer);
-        let msg = json!({
-            "type": "registered", "name": registry.bots[id].info.name,
-            "token": registry.bots[id].token.reveal(), "resumed": true,
-        });
-        send(&mut registry, id, &msg);
-        let routes: Vec<(Sender<GameMsg>, PlayerId)> = routes_of(&registry, id);
-        drop(registry);
-        for (tx, seat) in routes {
-            let _ = tx.send(GameMsg::Back { seat, serial });
-        }
-        emit(shared, Event::Reconnected(id));
-        return Ok((id, serial));
+        return Ok(take_back(shared, registry, id, writer));
     }
     if register.name.is_empty() {
         return Err("a registration needs a `name`".to_string());
     }
     let mut config = lock(&shared.config);
     let mut registry = lock(&shared.registry);
+    if let Some(id) = comeback(&registry, &config.admission, &register, peer.ip()) {
+        drop(config);
+        return Ok(take_back(shared, registry, id, writer));
+    }
     // The key, when one is asked for: found first and spent last, so a
     // registration refused for its name does not burn a single-use key.
     let invite = match &config.admission {
@@ -941,6 +936,10 @@ fn register_bot(
             addr: peer.ip(),
         },
         token,
+        key: invite.and_then(|i| match &config.admission {
+            Admission::Keys(invites) => Some(invites[i].key.clone()),
+            Admission::Open => None,
+        }),
         conn: None,
         rtts: Vec::new(),
         pings: HashMap::new(),
@@ -962,6 +961,58 @@ fn register_bot(
     drop(registry);
     emit(shared, Event::Registered(id));
     Ok((id, serial))
+}
+
+/// The dropped bot a registration without a token is, if it is one: the
+/// same name, not connected and not let go, and let in the same way, by
+/// the same key (or, where none is asked for, from the same address).
+///
+/// A bot that restarts has lost its token with the rest of its memory,
+/// and the console tells the host it is waiting for it to come back. As a
+/// newcomer it was turned away: its name is still held for it, and its
+/// single-use key was spent bringing it in the first time, which also
+/// counted a strike against its address. The pair of key and name is
+/// what it was let in on, so it is what takes its chair back, and only
+/// while nobody is sitting in it.
+fn comeback(
+    registry: &Registry,
+    admission: &Admission,
+    register: &Register,
+    ip: IpAddr,
+) -> Option<BotId> {
+    let key = register.key.as_deref().and_then(Key::parse);
+    registry.bots.iter().position(|b| {
+        !b.retired
+            && b.conn.is_none()
+            && b.info.name.eq_ignore_ascii_case(&register.name)
+            && match admission {
+                Admission::Open => b.info.addr == ip,
+                Admission::Keys(_) => b.key.is_some() && b.key == key,
+            }
+    })
+}
+
+/// Seat bot `id` on this connection, coming back by its token or by
+/// [`comeback`]: told it is back, and every game it sits in told so.
+fn take_back(
+    shared: &Arc<Shared>,
+    mut registry: std::sync::MutexGuard<'_, Registry>,
+    id: BotId,
+    writer: TcpStream,
+) -> (BotId, u64) {
+    let serial = attach(&mut registry, id, writer);
+    let msg = json!({
+        "type": "registered", "name": registry.bots[id].info.name,
+        "token": registry.bots[id].token.reveal(), "resumed": true,
+    });
+    send(&mut registry, id, &msg);
+    let routes: Vec<(Sender<GameMsg>, PlayerId)> = routes_of(&registry, id);
+    drop(registry);
+    for (tx, seat) in routes {
+        let _ = tx.send(GameMsg::Back { seat, serial });
+    }
+    emit(shared, Event::Reconnected(id));
+    (id, serial)
 }
 
 /// Give bot `id` this connection, closing any older one it had.
