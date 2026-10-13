@@ -10,27 +10,9 @@ use super::*;
 
 /// What a host's `Start` invites this peer to: the size of the table, the
 /// chair (or none, for a watcher), the terms, who else is at it, where
-/// the series stands, and the host's own beach when it sent one.
-///
-/// Named rather than a tuple: `(seats, seat, ..)` is a count and an index
-/// next to each other, kept apart only by their order. Taken up by
-/// [`OnlineSession::take_up`] whether it arrives in the lobby, mid-round or
-/// on the results card, so there is one way to begin a round.
-pub struct Invitation {
-    pub seats: u8,
-    pub seat: Option<u8>,
-    pub terms: MatchTerms,
-    pub names: [crate::transport::WireName; MAX_PLAYERS],
-    /// What holds each seat, in wire form (`transport::kind_byte`).
-    pub kinds: [u8; MAX_PLAYERS],
-    /// Where the series stands, as the host says. A peer that greeted
-    /// mid-series is seated with the table's own tally rather than
-    /// starting a fresh one. `None` for a single round.
-    pub standing: Option<SeriesStanding>,
-    /// The host's own beach, when it sent one. A joiner has never seen the
-    /// file it came from, so it arrives with the invitation or not at all.
-    pub beach: Vec<u8>,
-}
+/// the series stands, and the host's own beach when it sent one. The
+/// message's own payload, under the name the session takes it up by.
+pub use crate::transport::Start as Invitation;
 
 /// The lockstep a peer plays a round over: the `humans` low seats, from
 /// the given chair, or from no chair at all for a watcher.
@@ -78,6 +60,23 @@ impl OnlineSession {
         self.begin_round(seats, seat, terms, table_from_wire(&names));
         self.kinds = kinds.map(crate::transport::kind_from_byte);
         self.series_standing = standing;
+    }
+
+    /// Whether a `Start` is the host calling the next round: heard by a
+    /// joiner, and with a fresh seed, which is what says so. Everything
+    /// else about the round may well be the same, and a stale copy of the
+    /// last one is the host repeating itself to somebody still greeting.
+    pub(super) fn calls_the_next_round(&self, start: &Invitation) -> bool {
+        !self.is_host() && self.is_next_round(&start.terms)
+    }
+
+    /// Take up the host's call for the next round, and arm the session to
+    /// walk back into the arena on it. Only the session is rearmed here;
+    /// the board is rebuilt on the way in, by the same path a first round
+    /// uses.
+    pub(super) fn take_the_next_round(&mut self, start: Invitation) {
+        self.take_up(start);
+        self.next_round = true;
     }
 
     /// The answer for a peer the socket picked up *after* the launch, or
@@ -169,26 +168,9 @@ impl OnlineSession {
                         self.transport.send_to(from, answer);
                     }
                 }
-                NetMsg::Start {
-                    seats,
-                    seat,
-                    terms,
-                    names,
-                    kinds,
-                    standing,
-                    beach,
-                } => {
-                    if !host && self.is_next_round(&terms) {
-                        self.take_up(Invitation {
-                            seats,
-                            seat,
-                            terms,
-                            names,
-                            kinds,
-                            standing,
-                            beach,
-                        });
-                        self.next_round = true;
+                NetMsg::Start(start) => {
+                    if self.calls_the_next_round(&start) {
+                        self.take_the_next_round(start);
                     }
                 }
                 // The next round as it stands, for a player dealt a
@@ -477,7 +459,7 @@ impl OnlineSession {
         for (peer, slot) in plan.iter().enumerate() {
             self.transport.send_to(
                 peer,
-                NetMsg::Start {
+                NetMsg::Start(Invitation {
                     seats,
                     seat: *slot,
                     terms,
@@ -485,7 +467,7 @@ impl OnlineSession {
                     kinds: crate::transport::wire_kinds(&kinds),
                     standing,
                     beach: self.beach.clone(),
-                },
+                }),
             );
         }
         self.peers.deal(&plan);
@@ -568,7 +550,7 @@ impl OnlineSession {
         // does not mistake it for a fresh round; the series standing rides
         // along all the same, in case this is the message that seats a
         // latecomer next round.
-        NetMsg::Start {
+        NetMsg::Start(Invitation {
             seats: self.seats,
             seat,
             terms: self.terms,
@@ -579,7 +561,7 @@ impl OnlineSession {
             // this one's to hand out.
             standing: self.series_standing.filter(|_| self.terms.is_series()),
             beach: self.beach.clone(),
-        }
+        })
     }
 
     /// The seat a peer index holds, or `None` for a watcher, and for a
@@ -758,7 +740,7 @@ mod next_round_tests {
         };
         host.series_standing = Some(standing);
         let carried = |host: &OnlineSession| {
-            let NetMsg::Start { standing, .. } = host.start_msg(None) else {
+            let NetMsg::Start(Invitation { standing, .. }) = host.start_msg(None) else {
                 panic!("a Start");
             };
             standing
@@ -1005,7 +987,7 @@ mod next_round_tests {
 
         let answer = host.answer_greeting(0, "Bobby", false);
         assert!(
-            matches!(answer, NetMsg::Start { seat: Some(1), .. }),
+            matches!(answer, NetMsg::Start(Invitation { seat: Some(1), .. })),
             "seated, and told so: {answer:?}"
         );
         assert_eq!(host.names[1], "Bobby", "under the name it greeted with");
@@ -1036,7 +1018,7 @@ mod next_round_tests {
         host.peers.deal(&[Some(1)]);
         let answer = host.answer_greeting(0, "", true);
         assert!(
-            matches!(answer, NetMsg::Start { seat: None, .. }),
+            matches!(answer, NetMsg::Start(Invitation { seat: None, .. })),
             "{answer:?}"
         );
         assert!(host.peers.get(0).is_some_and(Peer::watches));

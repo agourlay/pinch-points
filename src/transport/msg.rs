@@ -6,6 +6,49 @@
 
 use super::*;
 
+/// Host → joiner: the match begins with `seats` seats on `terms`; you are
+/// `seat`, and the table is called `names` (empty entries fall back to
+/// seat labels). Re-sent whenever a joiner is still saying hello.
+///
+/// One type for the message and for what it invites a peer to, taken up
+/// by `OnlineSession::take_up` whether it arrives in the lobby, mid-round
+/// or on the results card, so there is one way to begin a round. Named
+/// fields rather than a tuple: `(seats, seat, ..)` is a count and an index
+/// next to each other, kept apart only by their order.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Start {
+    pub seats: u8,
+    /// The seat this peer is given, or `None` for a peer that came to
+    /// watch. On the wire that `None` is [`SPECTATOR_SEAT`], a number
+    /// outside the range of real seats.
+    pub seat: Option<u8>,
+    pub terms: MatchTerms,
+    pub names: [WireName; crate::sim::MAX_PLAYERS],
+    /// What holds each seat (see [`kind_byte`]): the round names its
+    /// bots, so every peer draws the robot on them.
+    pub kinds: [u8; crate::sim::MAX_PLAYERS],
+    /// Where the series stands as this round begins, or `None` for a
+    /// single round. On the wire the absence is a round number of
+    /// zero, which no series ever reaches.
+    ///
+    /// The host says, because seats move: a peer that leaves between
+    /// rounds frees its chair and everyone behind it moves up one, so
+    /// a tally kept by seat number credited the departed player's
+    /// rounds to whoever moved in. The host re-deals the tally with
+    /// the chairs, and a peer admitted from the queue mid-series
+    /// learns the standings the same way.
+    pub standing: Option<SeriesStanding>,
+    /// The beach itself, when the host picked one it built rather than
+    /// one both peers already have. A generated arena travels as a
+    /// seed; a handmade one has to travel as itself, because the
+    /// joiner has never seen the file. Empty for the built-in maps.
+    ///
+    /// Compressed with the same coder the share codes use, and it has
+    /// to be: a 20x13 beach is fifteen hundred characters of text and
+    /// the datagram is a kilobyte.
+    pub beach: Vec<u8>,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum NetMsg {
     /// Handshake ping; the host learns the peer's address (and what to
@@ -35,41 +78,8 @@ pub enum NetMsg {
     Inputs(Vec<InputMsg>),
     /// State fingerprint after `frame`, for loud desync detection.
     Hash { frame: u32, hash: u64 },
-    /// Host → joiner: the match begins with `seats` seats on `terms`; you are
-    /// `seat`, and the table is called `names` (empty entries fall back to
-    /// seat labels). Re-sent whenever a joiner is still saying hello.
-    Start {
-        seats: u8,
-        /// The seat this peer is given, or `None` for a peer that came to
-        /// watch. On the wire that `None` is [`SPECTATOR_SEAT`], a number
-        /// outside the range of real seats.
-        seat: Option<u8>,
-        terms: MatchTerms,
-        names: [WireName; crate::sim::MAX_PLAYERS],
-        /// What holds each seat (see [`kind_byte`]): the round names its
-        /// bots, so every peer draws the robot on them.
-        kinds: [u8; crate::sim::MAX_PLAYERS],
-        /// Where the series stands as this round begins, or `None` for a
-        /// single round. On the wire the absence is a round number of
-        /// zero, which no series ever reaches.
-        ///
-        /// The host says, because seats move: a peer that leaves between
-        /// rounds frees its chair and everyone behind it moves up one, so
-        /// a tally kept by seat number credited the departed player's
-        /// rounds to whoever moved in. The host re-deals the tally with
-        /// the chairs, and a peer admitted from the queue mid-series
-        /// learns the standings the same way.
-        standing: Option<SeriesStanding>,
-        /// The beach itself, when the host picked one it built rather than
-        /// one both peers already have. A generated arena travels as a
-        /// seed; a handmade one has to travel as itself, because the
-        /// joiner has never seen the file. Empty for the built-in maps.
-        ///
-        /// Compressed with the same coder the share codes use, and it has
-        /// to be: a 20x13 beach is fifteen hundred characters of text and
-        /// the datagram is a kilobyte.
-        beach: Vec<u8>,
-    },
+    /// Host → joiner: the round begins (see [`Start`]).
+    Start(Start),
     /// Someone hit pause: everybody stops committing at `frame`. Re-sent
     /// every tick while paused, so a dropped datagram costs a moment of
     /// confusion rather than a stuck match.
@@ -488,7 +498,7 @@ impl NetMsg {
             NetMsg::Abandoned { .. } => vec![TAG_ABANDONED],
             NetMsg::Inputs(_) => vec![TAG_INPUTS],
             NetMsg::Hash { .. } => vec![TAG_HASH],
-            NetMsg::Start { .. } => vec![TAG_START],
+            NetMsg::Start(_) => vec![TAG_START],
             NetMsg::Pause { .. } => vec![TAG_PAUSE],
             NetMsg::SpectatorVote { .. } => vec![TAG_SPECTATOR_VOTE],
             NetMsg::SpectatorTally { .. } => vec![TAG_SPECTATOR_TALLY],
@@ -553,7 +563,7 @@ impl NetMsg {
                 bytes.extend_from_slice(&frame.to_le_bytes());
                 bytes.extend_from_slice(&hash.to_le_bytes());
             }
-            NetMsg::Start {
+            NetMsg::Start(Start {
                 seats,
                 seat,
                 terms,
@@ -561,7 +571,7 @@ impl NetMsg {
                 kinds,
                 standing,
                 beach,
-            } => {
+            }) => {
                 bytes.push(seats);
                 bytes.push(seat.unwrap_or(SPECTATOR_SEAT));
                 bytes.extend_from_slice(&terms.encode());
@@ -715,7 +725,7 @@ impl NetMsg {
                     body.get(after..after + 2)?.try_into().ok()?,
                 ));
                 let beach = body.get(after + 2..after + 2 + len)?.to_vec();
-                Some(NetMsg::Start {
+                Some(NetMsg::Start(Start {
                     seats,
                     seat,
                     terms,
@@ -723,7 +733,7 @@ impl NetMsg {
                     kinds,
                     standing,
                     beach,
-                })
+                }))
             }
             TAG_PAUSE => Some(NetMsg::Pause {
                 frame: u32::from_le_bytes(body.get(..4)?.try_into().ok()?),
@@ -842,7 +852,7 @@ mod tests {
                 name: widest,
                 text: wire_chat(&"W".repeat(CHAT_CHARS)),
             },
-            NetMsg::Start {
+            NetMsg::Start(Start {
                 seats: 6,
                 seat: Some(5),
                 terms: MatchTerms::default(),
@@ -852,7 +862,7 @@ mod tests {
                 // and the largest beach the sender will hand it.
                 standing: None,
                 beach: vec![0xAB; MAX_BEACH_BYTES],
-            },
+            }),
             NetMsg::Hash {
                 frame: u32::MAX,
                 hash: u64::MAX,
@@ -985,7 +995,7 @@ mod tests {
             beach: wire_name("The Pier"),
         };
         assert_eq!(NetMsg::decode(&roster.clone().encode()), Some(roster));
-        let start = NetMsg::Start {
+        let start = NetMsg::Start(Start {
             seats: 3,
             seat: Some(1),
             terms: MatchTerms::default(),
@@ -993,7 +1003,7 @@ mod tests {
             kinds,
             standing: None,
             beach: vec![1, 2, 3],
-        };
+        });
         assert_eq!(NetMsg::decode(&start.clone().encode()), Some(start));
         assert_eq!(
             NetMsg::decode(&NetMsg::Kicked.encode()),
@@ -1018,7 +1028,7 @@ mod tests {
     #[test]
     fn a_start_carrying_the_largest_beach_still_fits() {
         let widest = wire_name("WWWWWWWWWWWWWWWWWWWWWWWW");
-        let len = NetMsg::Start {
+        let len = NetMsg::Start(Start {
             seats: 6,
             seat: Some(5),
             terms: MatchTerms::default(),
@@ -1026,7 +1036,7 @@ mod tests {
             kinds: [0; crate::sim::MAX_PLAYERS],
             standing: None,
             beach: vec![0xAB; MAX_BEACH_BYTES],
-        }
+        })
         .encode()
         .len();
         assert!(len <= MAX_DATAGRAM, "{len} bytes");
@@ -1169,7 +1179,7 @@ mod tests {
                 frame: 990,
                 hash: 0xDEAD_BEEF_0BAD_F00D,
             },
-            NetMsg::Start {
+            NetMsg::Start(Start {
                 seats: 6,
                 seat: Some(3),
                 terms: MatchTerms {
@@ -1182,10 +1192,10 @@ mod tests {
                 kinds: [0; crate::sim::MAX_PLAYERS],
                 standing: None,
                 beach: b"a handmade beach".to_vec(),
-            },
+            }),
             // Mid-series: the round and the tally come back as they went,
             // and as a presence rather than as the zero that means none.
-            NetMsg::Start {
+            NetMsg::Start(Start {
                 seats: 4,
                 seat: Some(2),
                 terms: MatchTerms {
@@ -1199,7 +1209,7 @@ mod tests {
                     wins: [1, 0, 1, 0, 0, 0],
                 }),
                 beach: Vec::new(),
-            },
+            }),
             NetMsg::Incompatible { version: 9 },
             NetMsg::Queued { ahead: 0 },
             NetMsg::Queued { ahead: 4 },
@@ -1235,7 +1245,7 @@ mod tests {
     /// trusted, since a host on a broken build can say anything.
     #[test]
     fn a_start_that_seats_more_than_the_table_is_refused() {
-        let good = NetMsg::Start {
+        let good = NetMsg::Start(Start {
             seats: 6,
             seat: Some(5),
             terms: MatchTerms::default(),
@@ -1243,7 +1253,7 @@ mod tests {
             kinds: [0; crate::sim::MAX_PLAYERS],
             standing: None,
             beach: Vec::new(),
-        };
+        });
         assert_eq!(NetMsg::decode(&good.clone().encode()), Some(good.clone()));
         // Byte 2 is `seats` and byte 3 is `seat`, just past the tag and
         // version. Nothing outside the table survives the trip.
@@ -1260,14 +1270,14 @@ mod tests {
         watching[3] = SPECTATOR_SEAT;
         assert!(matches!(
             NetMsg::decode(&watching),
-            Some(NetMsg::Start { seat: None, .. })
+            Some(NetMsg::Start(Start { seat: None, .. }))
         ));
         // An AI's chair is not one a joiner can be sat in either: the
         // lockstep it builds carries only the humans, and being seated
         // outside it was a panic, not a refusal.
         let with_bots = |seats, bots, seat| {
             NetMsg::decode(
-                &NetMsg::Start {
+                &NetMsg::Start(Start {
                     seats,
                     seat: Some(seat),
                     terms: MatchTerms {
@@ -1278,7 +1288,7 @@ mod tests {
                     kinds: [0; crate::sim::MAX_PLAYERS],
                     standing: None,
                     beach: Vec::new(),
-                }
+                })
                 .encode(),
             )
         };
@@ -1336,7 +1346,7 @@ mod wire_fuzz_probe {
                 text: wire_chat("ready?"),
             }
             .encode(),
-            NetMsg::Start {
+            NetMsg::Start(Start {
                 seats: 6,
                 seat: Some(2),
                 terms: MatchTerms::default(),
@@ -1344,7 +1354,7 @@ mod wire_fuzz_probe {
                 kinds: [0; crate::sim::MAX_PLAYERS],
                 standing: None,
                 beach: Vec::new(),
-            }
+            })
             .encode(),
             NetMsg::Hash { frame: 7, hash: 9 }.encode(),
             // The count byte is a length off the wire, and the one field
@@ -1396,7 +1406,7 @@ mod wire_fuzz_probe {
                     "{bytes:?}"
                 );
                 // And a Start that decoded must be one we can actually seat.
-                if let NetMsg::Start { seats, seat, .. } = msg {
+                if let NetMsg::Start(Start { seats, seat, .. }) = msg {
                     assert!((2..=crate::sim::MAX_PLAYERS as u8).contains(&seats));
                     assert!(seat.is_none_or(|seat| seat < seats));
                 }

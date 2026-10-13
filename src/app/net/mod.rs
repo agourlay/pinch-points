@@ -768,33 +768,11 @@ impl OnlineSession {
                         }
                     }
                 }
-                NetMsg::Start {
-                    seats,
-                    seat,
-                    terms,
-                    names,
-                    kinds,
-                    standing,
-                    beach,
-                } if !host && self.is_next_round(&terms) => {
-                    // The host has called the next round. A fresh seed is
-                    // what says so; everything else about the round may
-                    // well be the same. Taking it up here only rearms the
-                    // session; the board is rebuilt on the way back into
-                    // the arena, by the same path a first round uses.
-                    self.take_up(Invitation {
-                        seats,
-                        seat,
-                        terms,
-                        names,
-                        kinds,
-                        standing,
-                        beach,
-                    });
-                    self.next_round = true;
+                NetMsg::Start(start) if self.calls_the_next_round(&start) => {
+                    self.take_the_next_round(start);
                     rearmed = true;
                 }
-                NetMsg::Start { names, .. } => {
+                NetMsg::Start(Invitation { names, .. }) => {
                     // Stale as a launch signal, but a joiner in the direct
                     // PINCH_HOST/PINCH_JOIN pair, which never waits in a
                     // lobby, learns the table's names from it.
@@ -1388,7 +1366,7 @@ mod homecoming_tests {
                         NetMsg::Watch { .. } => session.note_watch_wish(from),
                         NetMsg::Inputs(_)
                         | NetMsg::Hash { .. }
-                        | NetMsg::Start { .. }
+                        | NetMsg::Start(_)
                         | NetMsg::Pause { .. }
                         | NetMsg::Resume { .. }
                         | NetMsg::Queued { .. }

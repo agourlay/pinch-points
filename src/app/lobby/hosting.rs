@@ -358,7 +358,7 @@ fn launch_the_match(
     for (peer, slot) in plan.iter().enumerate() {
         transport.send_to(
             peer,
-            NetMsg::Start {
+            NetMsg::Start(Invitation {
                 seats,
                 seat: *slot,
                 terms,
@@ -366,7 +366,7 @@ fn launch_the_match(
                 kinds: wire_kinds,
                 standing,
                 beach: beach.clone(),
-            },
+            }),
         );
     }
     let mut session = OnlineSession::new(
@@ -604,7 +604,7 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             }
             NetMsg::Inputs(_)
             | NetMsg::Hash { .. }
-            | NetMsg::Start { .. }
+            | NetMsg::Start(_)
             | NetMsg::Pause { .. }
             | NetMsg::Resume { .. }
             | NetMsg::Queued { .. }

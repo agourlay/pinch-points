@@ -412,25 +412,7 @@ pub fn join_tick(
             // cannot otherwise tell.
             heard = true;
             match msg {
-                NetMsg::Start {
-                    seats,
-                    seat,
-                    terms,
-                    names,
-                    kinds,
-                    standing,
-                    beach,
-                } => {
-                    started = Some(Invitation {
-                        seats,
-                        seat,
-                        terms,
-                        names,
-                        kinds,
-                        standing,
-                        beach,
-                    })
-                }
+                NetMsg::Start(start) => started = Some(start),
                 // The host asked us to go: back to the list.
                 NetMsg::Kicked => kicked = true,
                 // The host closed its socket: the beach is gone, whether

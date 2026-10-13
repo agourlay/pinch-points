@@ -292,28 +292,11 @@ fn unpack(packed: &[u8], frame: u32) -> Option<CaughtUp> {
     if board.ticks() != u64::from(frame) {
         return None;
     }
-    let NetMsg::Start {
-        seats,
-        seat: None,
-        terms,
-        names,
-        kinds,
-        standing,
-        beach,
-    } = start
-    else {
+    let NetMsg::Start(invitation @ Invitation { seat: None, .. }) = start else {
         return None;
     };
     Some(CaughtUp {
-        invitation: Invitation {
-            seats,
-            seat: None,
-            terms,
-            names,
-            kinds,
-            standing,
-            beach,
-        },
+        invitation,
         frame,
         board,
     })
@@ -326,7 +309,7 @@ mod tests {
     use crate::transport::{MatchTerms, wire_name};
 
     fn start() -> NetMsg {
-        NetMsg::Start {
+        NetMsg::Start(Invitation {
             seats: 6,
             seat: None,
             terms: MatchTerms::default(),
@@ -334,7 +317,7 @@ mod tests {
             kinds: [0; MAX_PLAYERS],
             standing: None,
             beach: Vec::new(),
-        }
+        })
     }
 
     /// The busiest board there is: six bots on the XL beach, deep into a
@@ -431,7 +414,7 @@ mod tests {
     fn a_snapshot_that_does_not_add_up_is_refused() {
         let board = crowded();
         let frame = board.ticks() as u32;
-        let seated = NetMsg::Start {
+        let seated = NetMsg::Start(Invitation {
             seats: 6,
             seat: Some(1),
             terms: MatchTerms::default(),
@@ -439,7 +422,7 @@ mod tests {
             kinds: [0; MAX_PLAYERS],
             standing: None,
             beach: Vec::new(),
-        };
+        });
         for (msg, at) in [(seated, frame), (start(), frame + 1)] {
             let mut assembly = Assembly::default();
             let mut whole = None;
@@ -613,7 +596,7 @@ mod session_tests {
                 "{who} is sent the round as it stands"
             );
             assert!(
-                !heard.iter().any(|msg| matches!(msg, NetMsg::Start { .. })),
+                !heard.iter().any(|msg| matches!(msg, NetMsg::Start(_))),
                 "{who} is not sent back to frame zero"
             );
         }

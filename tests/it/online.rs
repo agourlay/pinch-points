@@ -6,7 +6,7 @@ use pinch_points::sim::{
     Board, CrabKind, DEFAULT_DELAY, Direction, Handedness, Lockstep, PlayerAction, Spawner,
     TileKind,
 };
-use pinch_points::transport::{MatchTerms, NetMsg, UdpTransport};
+use pinch_points::transport::{MatchTerms, NetMsg, Start, UdpTransport};
 
 fn arena(seed: u64) -> Board {
     let mut board = Board::new(12, 9, seed);
@@ -59,7 +59,7 @@ impl Peer {
                 NetMsg::Resume { frame } => {
                     self.session.receive_resume(frame);
                 }
-                NetMsg::Start { .. }
+                NetMsg::Start(_)
                 | NetMsg::Incompatible { .. }
                 | NetMsg::Queued { .. }
                 | NetMsg::Chat { .. }
@@ -601,7 +601,7 @@ fn a_launched_round_seats_every_peer_on_the_same_beach() {
         ..MatchTerms::default()
     };
 
-    let invitation = NetMsg::Start {
+    let invitation = NetMsg::Start(Start {
         seats: 2,
         seat: Some(1),
         terms,
@@ -609,12 +609,12 @@ fn a_launched_round_seats_every_peer_on_the_same_beach() {
         kinds: [0; MAX_PLAYERS],
         standing: None,
         beach: packed.clone(),
-    };
-    let Some(NetMsg::Start {
+    });
+    let Some(NetMsg::Start(Start {
         terms: heard,
         beach: sent,
         ..
-    }) = NetMsg::decode(&invitation.encode())
+    })) = NetMsg::decode(&invitation.encode())
     else {
         panic!("the invitation did not survive the wire");
     };
