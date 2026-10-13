@@ -306,13 +306,13 @@ impl OnlineSession {
     /// sends while it is gathering, from the round's own copy of both.
     fn roster_msg(&self) -> NetMsg {
         // The beach being played, by name, when it is the host's own: the
-        // bytes carry it, and they are what every board is built from.
+        // bytes carry it, and they are what every board is built from, by
+        // the same rule (`beach_in_play`), so a beach the table outgrew is
+        // not named while the generated one is played.
         use crate::app::cycle::Cycle;
-        use crate::app::match_setup::MapChoice;
-        let custom = MapChoice::from_index(usize::from(self.terms.map)) == MapChoice::Custom;
-        let beach = custom
-            .then(|| crate::app::match_setup::beach_from(&self.beach))
-            .flatten()
+        use crate::app::match_setup::{MapChoice, beach_from, beach_in_play};
+        let map = MapChoice::from_index(usize::from(self.terms.map));
+        let beach = beach_in_play(map, beach_from(&self.beach), self.seats)
             .map_or_else(String::new, |level| level.name);
         NetMsg::Roster {
             seats: self.seats,
@@ -403,7 +403,14 @@ impl OnlineSession {
         // queue can have grown it past what that beach holds: stepped on
         // again for the table as it now is, or two players at a table of
         // six would have no castle.
-        terms = crate::app::match_setup::fit_terms(terms, seats);
+        //
+        // A handmade beach is stepped off, too, once the table outgrows its
+        // castles, and is not sent any more: the terms name the beach that
+        // is played, and that is what every card reads.
+        terms = crate::app::match_setup::fit_terms(terms, seats, &self.beach);
+        if !crate::app::match_setup::is_custom(&terms) {
+            self.beach = Vec::new();
+        }
         let standing = standing.map(|SeriesStanding { round, wins }| {
             // The wins follow the chairs: seat 0 is always the host's, and
             // each peer's new seat inherits what its old seat had won, and
@@ -620,8 +627,9 @@ mod tests {
         };
         assert_eq!(beach, [0; crate::transport::WIRE_NAME], "a built-in map");
 
+        // Two castles, for the two seats at this table.
         let text = "name: Sent Beach\nposts: 2\ncrab: 0,1 R R common\nmap:\n\
-                    +-+-+-+-+-+\n|. . . . .|\n+ + + + + +\n|. . . . 0|\n\
+                    +-+-+-+-+-+\n|1 . . . .|\n+ + + + + +\n|. . . . 0|\n\
                     + + + + + +\n|. . . . .|\n+-+-+-+-+-+\n";
         let level = crate::sim::Level::parse(text).expect("a level");
         session.beach = crate::lzw::compress(level.to_text().as_bytes(), 8);
@@ -760,6 +768,86 @@ mod next_round_tests {
         assert_eq!(carried(&host), Some(standing));
         host.terms.series = 0;
         assert_eq!(carried(&host), None, "a single round has no standing");
+    }
+
+    /// A two-castle beach of the host's own, and a table that grows past
+    /// it between rounds. The round is played on the generated beach sized
+    /// for the table, and everything says so: the terms, the bytes sent
+    /// (none), the roster a peer in line reads, and the board every peer
+    /// builds. The terms used to keep naming the handmade beach for good,
+    /// and the roster its name, over a generated 20x13 nobody had asked
+    /// for.
+    #[test]
+    fn a_table_that_outgrows_the_hosts_beach_moves_off_it_for_good() {
+        use crate::app::cycle::Cycle;
+        use crate::app::match_setup::{self, MapChoice};
+        let two = crate::sim::Level::parse(
+            "name: Two\nposts: 1\ncrab: 0,1 R R common\nmap:\n\
+             +-+-+-+\n|0 . .|\n+ + + +\n|. . 1|\n+ + + +\n|. . .|\n+-+-+-+\n",
+        )
+        .expect("a level");
+        let custom = MatchTerms {
+            map: MapChoice::Custom.index() as u8,
+            ..terms(1)
+        };
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            custom,
+        );
+        host.beach = crate::lzw::compress(two.to_text().as_bytes(), 8);
+        let roster_beach = |host: &OnlineSession| {
+            let NetMsg::Roster { beach, .. } = host.roster_msg() else {
+                panic!("a roster");
+            };
+            crate::transport::beach_name_from_wire(&beach)
+        };
+        let _bo = gather(&mut host, &["Bo"]);
+        host.peers.deal(&[Some(1)]);
+        assert_eq!(roster_beach(&host), "Two", "a pair plays the host's beach");
+
+        // A pair again: the beach holds them, and stays.
+        let next = |host: &OnlineSession, seed| {
+            match_setup::next_round_terms(host.terms, host.seats, seed)
+        };
+        host.call_next_round(next(&host, 2), None);
+        assert!(match_setup::is_custom(&host.terms));
+        assert!(!host.beach.is_empty());
+
+        // Two more turn up while it plays: four at a two-castle beach.
+        let port = host.transport.local_addr().expect("addr").port();
+        let _more: Vec<UdpTransport> = ["Cy", "Dee"]
+            .into_iter()
+            .map(|name| {
+                let socket = UdpTransport::join(("127.0.0.1", port)).expect("join");
+                socket.send(NetMsg::hello(name));
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                socket
+            })
+            .collect();
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() == 3 {
+                break;
+            }
+        }
+        assert_eq!(host.transport.peer_count(), 3, "Cy and Dee are aboard");
+        host.call_next_round(next(&host, 3), None);
+        assert_eq!(host.seats, 4);
+        let sized = match_setup::sized_for(4);
+        assert_eq!(MapChoice::from_index(usize::from(host.terms.map)), sized);
+        assert!(host.beach.is_empty(), "and the beach no longer travels");
+        assert_eq!(roster_beach(&host), "", "nor is it named");
+        let board = match_setup::board_from(&host.terms, host.seats, &host.beach);
+        assert_eq!((board.width(), board.height()), sized.size());
+        assert_eq!(board.castle_seats(), 4, "a castle for everybody");
+
+        // And the series goes on from there, the way any generated map
+        // does, rather than back to a beach that cannot hold the table.
+        host.call_next_round(next(&host, 4), None);
+        assert!(!match_setup::is_custom(&host.terms));
     }
 
     /// The AI's wins are carried to the next round like everyone else's.

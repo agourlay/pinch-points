@@ -184,12 +184,15 @@ pub fn host_tick(
         // struck fresh at launch - so a placeholder rides along and the
         // card ignores it.
         let terms = crate::app::match_setup::terms(&config, settings.team_mode, 0);
+        let humans = state.table.len().min(MAX_PLAYERS) as u8;
+        let seats = humans + super::terms::launch_bots(humans, config.bots);
         hosted.transport.send(NetMsg::Roster {
-            seats: state.table.len().min(MAX_PLAYERS) as u8,
+            seats: humans,
             names,
             terms,
             kinds: crate::transport::wire_kinds(&state.table_kinds),
-            beach: super::terms::roster_beach(&config, &beaches),
+            // Named only if the table as it now sits would play it.
+            beach: super::terms::roster_beach(&config, seats, &beaches),
         });
     }
     let (players_aboard, watchers_aboard, port) = state.hosted().map_or((0, 0, None), |hosted| {
@@ -310,13 +313,9 @@ fn launch_the_match(
     //
     // A beach needs two castles, so the AI floor is raised to reach two
     // seats when only onlookers turned up (every peer a watcher, or a lone
-    // watcher aboard): a one-seat `Start` is refused by every joiner's
-    // decoder and would leave the host playing an empty beach. The same
-    // floor `call_next_round` keeps between rounds.
-    let bots = config
-        .bots
-        .min(MAX_PLAYERS as u8 - humans)
-        .max(2u8.saturating_sub(humans));
+    // watcher aboard): a one-seat `Start` would leave the host playing an
+    // empty beach.
+    let bots = super::terms::launch_bots(humans, config.bots);
     let seats = humans + bots;
     let seed = crate::app::clock::fresh_seed();
     // A beach the host built travels with the invitation; a generated one

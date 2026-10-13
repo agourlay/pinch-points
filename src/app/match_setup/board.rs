@@ -12,25 +12,19 @@ use super::*;
 /// missing or unreadable: a round on the wrong beach is a desync, but a
 /// round that never starts is worse, and the hash check will say so.
 pub fn board_from(terms: &MatchTerms, seats: u8, beach: &[u8]) -> crate::sim::Board {
-    let Some(level) = beach_from(beach) else {
+    // Only a beach that seats the table, under terms that name it
+    // ([`beach_in_play`]). The launch drops one that does not, and so does
+    // the round after it, which used to re-send the beach while working
+    // out `seats` afresh, the queue admitted between rounds making that
+    // number bigger.
+    //
+    // Checked here as well because here is the one place both ends pass
+    // through, with the same bytes and the same `seats`, so host and
+    // joiner fall back to the same generated arena on the same tick.
+    let map = MapChoice::from_index(usize::from(terms.map));
+    let Some(level) = beach_in_play(map, beach_from(beach), seats) else {
         return board_for(terms, seats);
     };
-    // A beach that cannot seat the table is no use: `castle_of` answers
-    // `None` for a seat with no castle, so that player banks nothing all
-    // round, with every peer agreeing because every peer built the same
-    // too-small beach.
-    //
-    // The launch already drops such a beach (`beach_bytes`), but the round
-    // after it does not: `call_next_round` re-sends the beach it played on
-    // while working out `seats` afresh, and the queue admitted between
-    // rounds makes that number bigger.
-    //
-    // Checked here because here is the one place both ends pass through,
-    // with the same bytes and the same `seats`, so host and joiner fall
-    // back to the same generated arena on the same tick.
-    if level.seats() < seats {
-        return board_for(terms, seats);
-    }
     let mut board = level.board();
     crate::sim::set_versus_rules(
         &mut board,

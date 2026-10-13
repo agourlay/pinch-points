@@ -55,8 +55,10 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// stopped losing a gull to a turnover whose new tile was rock
 /// (`whole_flock`), a swept crab started banking for what it was worth
 /// when Crab Monopoly fired (`sweep_keeps_worth`), a peer started saying
-/// goodbye (`Leaving`), and the roster started naming the host's
-/// handmade map.
+/// goodbye (`Leaving`), the roster started naming the host's
+/// handmade map, and a handmade map started being played only under
+/// terms that name it (`beach_in_play`), the terms moving off it once
+/// the table outgrows its castles.
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in

@@ -159,6 +159,41 @@ pub fn map_label(
     tr.map_names[config.map.index()].to_string()
 }
 
+/// The handmade beach a table of `seats` plays under `map`, out of the one
+/// at hand (`level`), or `None` when the round is on a generated beach.
+///
+/// The one place that is decided, for the shelf and the wire alike: the
+/// bytes a launch sends ([`beach_bytes`]), the name the lobby's roster
+/// gives ([`beach_on_air`]), the board every peer builds
+/// ([`super::board_from`]), the name a round's roster gives, and the terms
+/// of the next round ([`super::fit_terms`]). Decided in several places
+/// once, the roster named a handmade beach the table had outgrown while
+/// everyone played the generated arena in its place.
+///
+/// A beach with fewer castles than seats is no use: `castle_of` answers
+/// `None` for a seat with no castle, so that player banks nothing all
+/// round, with every peer agreeing because every peer built it.
+pub fn beach_in_play<L: std::borrow::Borrow<crate::sim::Level>>(
+    map: MapChoice,
+    level: Option<L>,
+    seats: u8,
+) -> Option<L> {
+    level.filter(|level| map == MapChoice::Custom && level.borrow().seats() >= seats)
+}
+
+/// The shelf beach the host's dials put on the air for a table of
+/// `seats`: the one the map dial names, when that table plays it and it
+/// fits an invitation.
+pub fn beach_on_air<'a>(
+    config: &MatchConfig,
+    seats: u8,
+    beaches: &'a CustomBeaches,
+) -> Option<&'a Beach> {
+    let beach = beaches.fitting(config.seats).get(config.custom).copied()?;
+    beach_in_play(config.map, Some(&beach.level), seats)?;
+    (!beach.too_big_to_send()).then_some(beach)
+}
+
 /// The beach the host is sending, compressed, or empty when the round is
 /// played on one both peers can build from a seed.
 ///
@@ -168,32 +203,23 @@ pub fn map_label(
 /// longer fits is dropped here, and the round falls back to the generated
 /// arena the terms name.
 pub fn beach_bytes(config: &MatchConfig, seats: u8, beaches: &CustomBeaches) -> Vec<u8> {
-    if config.map != MapChoice::Custom {
-        return Vec::new();
+    if let Some(beach) = beaches.fitting(config.seats).get(config.custom)
+        && config.map == MapChoice::Custom
+        && beach.too_big_to_send()
+    {
+        // A beach that will not fit a datagram is dropped, where the
+        // fallback is a generated arena everybody can build: sent anyway
+        // it is truncated on arrival and refused, and the joiner waits out
+        // an invitation that never decoded.
+        warn!(
+            "{:?} is too big to send ({} bytes packed, {} allowed): \
+             the round falls back to a generated beach",
+            beach.level.name,
+            beach.wire.len(),
+            crate::transport::MAX_BEACH_BYTES
+        );
     }
-    beaches
-        .fitting(config.seats)
-        .get(config.custom)
-        .filter(|beach| beach.level.seats() >= seats)
-        .filter(|beach| {
-            // A beach that will not fit a datagram is dropped here, where
-            // the fallback is a generated arena everybody can build: sent
-            // anyway it is truncated on arrival and refused, and the joiner
-            // waits out an invitation that never decoded.
-            let sendable = !beach.too_big_to_send();
-            if !sendable {
-                warn!(
-                    "{:?} is too big to send ({} bytes packed, {} allowed): \
-                     the round falls back to a generated beach",
-                    beach.level.name,
-                    beach.wire.len(),
-                    crate::transport::MAX_BEACH_BYTES
-                );
-            }
-            sendable
-        })
-        .map(|beach| beach.wire.clone())
-        .unwrap_or_default()
+    beach_on_air(config, seats, beaches).map_or_else(Vec::new, |beach| beach.wire.clone())
 }
 
 /// The beach those bytes describe, if they describe one.

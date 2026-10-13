@@ -112,20 +112,28 @@ impl Dial {
 }
 
 /// The name of the handmade beach the host's dials are on, for the
-/// roster: the one its own map dial names, or empty when the dial is on a
-/// built-in map or on no beach that will travel (both ends then build the
-/// generated arena, which [`hosts_map_label`] names).
+/// roster: the one the launch would send a table of `seats`
+/// ([`crate::app::match_setup::beach_on_air`]), or empty when the dial is
+/// on a built-in map or on no beach that will travel or seat the table
+/// (both ends then build the generated arena, which [`hosts_map_label`]
+/// names).
 pub(super) fn roster_beach(
     config: &MatchConfig,
+    seats: u8,
     beaches: &crate::app::match_setup::CustomBeaches,
 ) -> crate::transport::WireName {
-    let custom = config.map == crate::app::match_setup::MapChoice::Custom;
-    let name = beaches
-        .fitting(config.seats)
-        .get(config.custom)
-        .filter(|beach| custom && !beach.too_big_to_send())
+    let name = crate::app::match_setup::beach_on_air(config, seats, beaches)
         .map_or("", |beach| beach.level.name.as_str());
     crate::transport::wire_name(name)
+}
+
+/// The AI seats a launch deals behind `humans`: the dial, as many as there
+/// are chairs for, raised when needed so the beach has two castles (a
+/// one-seat `Start` is refused by every joiner's decoder). The same floor
+/// `call_next_round` keeps between rounds.
+pub(super) fn launch_bots(humans: u8, dial: u8) -> u8 {
+    dial.min(crate::sim::MAX_PLAYERS as u8 - humans)
+        .max(2u8.saturating_sub(humans))
 }
 
 /// The map dial as a joiner reads it, off the host's terms and the name

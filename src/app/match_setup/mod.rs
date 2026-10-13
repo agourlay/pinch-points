@@ -16,8 +16,8 @@ mod beaches;
 mod board;
 
 pub use beaches::{
-    Beach, CustomBeaches, beach_bytes, beach_from, beaches_note, cycle_map, map_label,
-    refresh_custom_beaches,
+    Beach, CustomBeaches, beach_bytes, beach_from, beach_in_play, beach_on_air, beaches_note,
+    cycle_map, map_label, refresh_custom_beaches,
 };
 pub use board::{board_for, board_from, bot_seats_from};
 
@@ -417,11 +417,33 @@ pub fn next_round_terms(terms: MatchTerms, seats: u8, seed: u64) -> MatchTerms {
 /// already does, else stepped on as [`next_map`] steps a series. For a
 /// table that grew after its map was picked, as admitting the queue
 /// between two online rounds grows it.
-pub fn fit_terms(terms: MatchTerms, seats: u8) -> MatchTerms {
-    if holds(MapChoice::from_index(usize::from(terms.map)), seats) {
+///
+/// The host's handmade beach (`beach`, the bytes the round travels with)
+/// holds the table by its castle count ([`beach_in_play`]). One the table
+/// has outgrown gives way to the generated beach sized for it, named in
+/// the terms: they used to say `Custom` round after round while every
+/// board fell back to a generated arena, so the terms card and the roster
+/// named a beach nobody was on.
+pub fn fit_terms(terms: MatchTerms, seats: u8, beach: &[u8]) -> MatchTerms {
+    let map = MapChoice::from_index(usize::from(terms.map));
+    if map == MapChoice::Custom {
+        return match beach_in_play(map, beach_from(beach), seats) {
+            Some(_) => terms,
+            None => MatchTerms {
+                map: sized_for(seats).index() as u8,
+                ..terms
+            },
+        };
+    }
+    if holds(map, seats) {
         return terms;
     }
     next_round_terms(terms, seats, terms.seed)
+}
+
+/// Whether the terms put the round on the host's handmade beach.
+pub fn is_custom(terms: &MatchTerms) -> bool {
+    MapChoice::from_index(usize::from(terms.map)) == MapChoice::Custom
 }
 
 /// Whether `map` has room for a table of `seats`. Five and six castles
@@ -858,6 +880,56 @@ mod tests {
             beach_bytes(&config, 5, &shelf).is_empty(),
             "five turned up and it has two castles"
         );
+        // And the roster, which names the beach before the launch, names
+        // the same one the launch sends: none, for five. It used to skip
+        // the count and name the beach the generated arena replaced.
+        assert_eq!(
+            beach_on_air(&config, 2, &shelf).map(|beach| beach.level.name.as_str()),
+            Some("Two")
+        );
+        assert!(beach_on_air(&config, 5, &shelf).is_none());
+    }
+
+    /// Between rounds the terms move off a handmade beach the table has
+    /// outgrown, onto the generated beach sized for it, so the terms name
+    /// the beach that is played. One that still seats the table stays,
+    /// and so does every built-in map that holds it.
+    #[test]
+    fn the_terms_give_up_a_beach_the_table_outgrew() {
+        let two = crate::sim::Level::parse(
+            "name: Two\nposts: 1\ncrab: 0,1 R R common\nmap:\n\
+             +-+-+-+\n|0 . .|\n+ + + +\n|. . 1|\n+ + + +\n|. . .|\n+-+-+-+\n",
+        )
+        .expect("a level");
+        let packed = crate::lzw::compress(two.to_text().as_bytes(), 8);
+        let custom = MatchTerms {
+            map: MapChoice::Custom.index() as u8,
+            ..MatchTerms::default()
+        };
+        assert_eq!(
+            fit_terms(custom, 2, &packed),
+            custom,
+            "two seats, two castles"
+        );
+        for seats in 3..=6u8 {
+            let fitted = fit_terms(custom, seats, &packed);
+            assert_eq!(
+                MapChoice::from_index(usize::from(fitted.map)),
+                sized_for(seats),
+                "{seats} seats"
+            );
+            assert_eq!(
+                MatchTerms {
+                    map: custom.map,
+                    ..fitted
+                },
+                custom,
+                "nothing else"
+            );
+        }
+        // No beach at all (the launch dropped it): the same.
+        let fitted = fit_terms(custom, 2, &[]);
+        assert_eq!(MapChoice::from_index(usize::from(fitted.map)), sized_for(2));
     }
 
     /// And the same beach refused again at the far end, where the round is
@@ -1073,7 +1145,9 @@ mod tests {
 
     /// An online series on the host's handmade beach keeps naming it: the
     /// beach itself is re-sent with every round, so the terms must say
-    /// `Custom` too, at any table size.
+    /// `Custom` too, at any table size. (Until the table outgrows the
+    /// beach's castles, which [`fit_terms`] decides with the beach in hand:
+    /// see `the_terms_give_up_a_beach_the_table_outgrew`.)
     #[test]
     fn a_series_on_a_handmade_beach_stays_on_it() {
         let terms = MatchTerms {
@@ -1089,7 +1163,6 @@ mod tests {
                 "{seats} seats"
             );
             assert_eq!(next, MatchTerms { seed: 9, ..terms }, "only the seed moves");
-            assert_eq!(fit_terms(next, seats), next, "and the fit leaves it");
         }
     }
 
@@ -1102,8 +1175,12 @@ mod tests {
             seed: 7,
             ..MatchTerms::default()
         };
-        assert_eq!(fit_terms(classic, 4), classic, "four fit the classic arena");
-        let six = fit_terms(classic, 6);
+        assert_eq!(
+            fit_terms(classic, 4, &[]),
+            classic,
+            "four fit the classic arena"
+        );
+        let six = fit_terms(classic, 6, &[]);
         assert!(holds(MapChoice::from_index(usize::from(six.map)), 6));
         assert_eq!(six.seed, 7, "only the map moves");
     }
