@@ -377,6 +377,150 @@ fn queued_feedback(tr: &'static crate::app::i18n::Tr, watching: bool, ahead: u8)
     }
 }
 
+/// Why a joiner was put out of the beach it greeted, each of them the
+/// end of the greeting: the socket let go, and a line saying why.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PutOut {
+    /// That beach is running a different build, which answered with the
+    /// protocol version it speaks. Greeting it again would only be ignored
+    /// again, and a joiner left saying hello forever looks exactly like a
+    /// network fault.
+    Mismatch(u8),
+    /// The host asked us to go: back to the list.
+    Kicked,
+    /// The host closed its socket: the beach is gone, whether or not its
+    /// beacon's farewell reached this listener.
+    Closed,
+}
+
+impl PutOut {
+    /// The line the status bar says it with.
+    fn feedback(self, tr: &'static crate::app::i18n::Tr) -> String {
+        match self {
+            PutOut::Mismatch(version) => fill(
+                tr.lobby_version_clash,
+                &[
+                    ("t", &version.to_string()),
+                    ("o", &crate::transport::PROTOCOL_VERSION.to_string()),
+                ],
+            ),
+            PutOut::Kicked => tr.lobby_kicked_you.to_string(),
+            PutOut::Closed => tr.lobby_host_closed.to_string(),
+        }
+    }
+}
+
+/// Everything the host said to a joiner in one frame, gathered off the
+/// socket before any of it is acted on.
+#[derive(Default)]
+struct HostWord {
+    /// Anything at all, even a message this screen throws away, is proof
+    /// somebody is there, which is the one thing a joiner cannot otherwise
+    /// tell.
+    heard: bool,
+    started: Option<Invitation>,
+    caught: Option<crate::app::net::catch_up::CaughtUp>,
+    mismatch: Option<u8>,
+    kicked: bool,
+    closed: bool,
+    queued: Option<u8>,
+    said: Vec<(crate::transport::WireName, crate::transport::WireChat)>,
+    table: Option<(Vec<String>, [u8; MAX_PLAYERS])>,
+    host_terms: Option<(MatchTerms, crate::transport::WireName)>,
+}
+
+impl HostWord {
+    /// Whether the host put this joiner out, and why. A clash of builds
+    /// outranks being asked to go, which outranks the beach closing,
+    /// whatever order they arrived in.
+    fn put_out(&self) -> Option<PutOut> {
+        if let Some(version) = self.mismatch {
+            return Some(PutOut::Mismatch(version));
+        }
+        match (self.kicked, self.closed) {
+            (true, _) => Some(PutOut::Kicked),
+            (false, true) => Some(PutOut::Closed),
+            (false, false) => None,
+        }
+    }
+}
+
+/// Greet the host if it is time, and gather what it said this frame.
+fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>) -> HostWord {
+    let mut word = HostWord::default();
+    let transport = &mut joined.transport;
+    if let Some(hello) = hello {
+        transport.send(hello);
+    }
+    for (msg, _) in transport.recv_all() {
+        word.heard = true;
+        match msg {
+            NetMsg::Start(start) => word.started = Some(start),
+            NetMsg::Kicked => word.kicked = true,
+            NetMsg::Leaving => word.closed = true,
+            // A watcher at a beach mid-round: the round as it stands,
+            // part by part, until there is a whole of it to walk into.
+            //
+            // Taken whatever this lobby asked for. The host sends it
+            // only to a peer it has placed watching this round: one
+            // that greeted to watch, and also a player it dealt a
+            // watching place for want of a chair whose `Start` was
+            // lost (`lost_its_start`). Refused here, that player
+            // walked in at frame zero, a second behind the tails.
+            NetMsg::CatchUp {
+                frame,
+                part,
+                parts,
+                bytes,
+            } => {
+                if let Some(whole) = joined.catching_up.take(frame, part, parts, bytes) {
+                    word.caught = Some(whole);
+                }
+            }
+            NetMsg::Incompatible { version } => word.mismatch = Some(version),
+            // That beach is mid-round. The greeting already repeats
+            // every second, so it doubles as the place in line: stay
+            // here, keep saying hello, and the host answers with a
+            // `Start` when the next round comes round.
+            NetMsg::Queued { ahead } => word.queued = Some(ahead),
+            NetMsg::Chat { name, text } => word.said.push((name, text)),
+            // Round things, and this screen has no round.
+            NetMsg::SpectatorVote { .. }
+            | NetMsg::SpectatorTally { .. }
+            | NetMsg::SpectatorPick { .. }
+            | NetMsg::CrowdPicks { .. } => {}
+            // Who else is here. A joiner has spoken to nobody but the
+            // host and would otherwise sit at an apparently empty beach.
+            NetMsg::Roster {
+                names,
+                terms,
+                kinds,
+                beach,
+                ..
+            } => {
+                // The table is the leading run of named seats: the
+                // host sends it in seat order and pads the rest.
+                word.table = Some((
+                    crate::transport::table_from_wire(&names)
+                        .into_iter()
+                        .take_while(|name| !name.is_empty())
+                        .collect(),
+                    kinds,
+                ));
+                word.host_terms = Some((terms, beach));
+            }
+            NetMsg::Hello { .. }
+            | NetMsg::Watch { .. }
+            | NetMsg::Inputs(_)
+            | NetMsg::Hash { .. }
+            | NetMsg::Pause { .. }
+            | NetMsg::Abandoned { .. }
+            | NetMsg::Resume { .. } => {}
+        }
+    }
+    word
+}
+
 pub fn join_tick(
     time: Res<Time>,
     settings: Res<GameSettings>,
@@ -390,122 +534,28 @@ pub fn join_tick(
         return;
     };
     let say_hello = once_a_second(&mut joined.hello_in, time.delta_secs());
-    let mut started = None;
-    let mut caught = None;
-    let mut mismatch = None;
-    let mut queued = None;
-    let mut said: Vec<(crate::transport::WireName, crate::transport::WireChat)> = Vec::new();
-    let mut table: Option<(Vec<String>, [u8; MAX_PLAYERS])> = None;
-    let mut kicked = false;
-    let mut closed = false;
-    let mut host_terms: Option<(MatchTerms, crate::transport::WireName)> = None;
-    let mut heard = false;
     let hello = say_hello.then(|| joined.greeting(&settings.names[0]));
-    let transport = &mut joined.transport;
-    {
-        if let Some(hello) = hello {
-            transport.send(hello);
-        }
-        for (msg, _) in transport.recv_all() {
-            // Anything at all, even a message this screen throws away, is
-            // proof somebody is there, which is the one thing a joiner
-            // cannot otherwise tell.
-            heard = true;
-            match msg {
-                NetMsg::Start(start) => started = Some(start),
-                // The host asked us to go: back to the list.
-                NetMsg::Kicked => kicked = true,
-                // The host closed its socket: the beach is gone, whether
-                // or not its beacon's farewell reached this listener.
-                NetMsg::Leaving => closed = true,
-                // A watcher at a beach mid-round: the round as it stands,
-                // part by part, until there is a whole of it to walk into.
-                //
-                // Taken whatever this lobby asked for. The host sends it
-                // only to a peer it has placed watching this round: one
-                // that greeted to watch, and also a player it dealt a
-                // watching place for want of a chair whose `Start` was
-                // lost (`lost_its_start`). Refused here, that player
-                // walked in at frame zero, a second behind the tails.
-                NetMsg::CatchUp {
-                    frame,
-                    part,
-                    parts,
-                    bytes,
-                } => {
-                    if let Some(whole) = joined.catching_up.take(frame, part, parts, bytes) {
-                        caught = Some(whole);
-                    }
-                }
-                NetMsg::Incompatible { version } => mismatch = Some(version),
-                // That beach is mid-round. The greeting already repeats
-                // every second, so it doubles as the place in line: stay
-                // here, keep saying hello, and the host answers with a
-                // `Start` when the next round comes round.
-                NetMsg::Queued { ahead } => queued = Some(ahead),
-                NetMsg::Chat { name, text } => said.push((name, text)),
-                // Round things, and this screen has no round.
-                NetMsg::SpectatorVote { .. }
-                | NetMsg::SpectatorTally { .. }
-                | NetMsg::SpectatorPick { .. }
-                | NetMsg::CrowdPicks { .. } => {}
-                // Who else is here. A joiner has spoken to nobody but the
-                // host and would otherwise sit at an apparently empty beach.
-                NetMsg::Roster {
-                    names,
-                    terms,
-                    kinds,
-                    beach,
-                    ..
-                } => {
-                    // The table is the leading run of named seats: the
-                    // host sends it in seat order and pads the rest.
-                    table = Some((
-                        crate::transport::table_from_wire(&names)
-                            .into_iter()
-                            .take_while(|name| !name.is_empty())
-                            .collect(),
-                        kinds,
-                    ));
-                    host_terms = Some((terms, beach));
-                }
-                NetMsg::Hello { .. }
-                | NetMsg::Watch { .. }
-                | NetMsg::Inputs(_)
-                | NetMsg::Hash { .. }
-                | NetMsg::Pause { .. }
-                | NetMsg::Abandoned { .. }
-                | NetMsg::Resume { .. } => {}
-            }
-        }
-    }
-    if answer_the_silence(&mut state, settings.tr(), heard, time.delta_secs()) {
+    let word = hear_the_host(joined, hello);
+    if answer_the_silence(&mut state, settings.tr(), word.heard, time.delta_secs()) {
         return;
     }
-    // That beach is running a different build. Say so and let go of the
-    // socket: greeting it again would only be ignored again, and a joiner
-    // left saying hello forever looks exactly like a network fault.
-    if let Some(version) = mismatch {
+    if let Some(why) = word.put_out() {
         state.let_go();
-        state.feedback = fill(
-            settings.tr().lobby_version_clash,
-            &[
-                ("t", &version.to_string()),
-                ("o", &crate::transport::PROTOCOL_VERSION.to_string()),
-            ],
-        );
+        state.feedback = why.feedback(settings.tr());
         return;
     }
-    if kicked {
-        state.let_go();
-        state.feedback = settings.tr().lobby_kicked_you.to_string();
-        return;
-    }
-    if closed {
-        state.let_go();
-        state.feedback = settings.tr().lobby_host_closed.to_string();
-        return;
-    }
+    let HostWord {
+        heard: _,
+        started,
+        caught,
+        mismatch: _,
+        kicked: _,
+        closed: _,
+        queued,
+        said,
+        table,
+        host_terms,
+    } = word;
     if let Some((table, kinds)) = table {
         state.table_kinds = kinds
             .iter()
