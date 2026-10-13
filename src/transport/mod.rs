@@ -119,6 +119,29 @@ pub struct UdpTransport {
 /// first: enough for any evening, and bounded whoever keeps knocking.
 const TURNED_AWAY: usize = 64;
 
+/// How many times a closing socket says [`NetMsg::Leaving`]. It is sent at
+/// a moment that does not come again, and one datagram is the one the
+/// network eats; the silence rules stay as the backstop for a goodbye that
+/// never arrives (a crash, a pulled cable).
+const GOODBYES: usize = 3;
+
+/// A socket that closes says so to everyone it has.
+///
+/// On drop rather than at each place a session or a beach is let go: a
+/// socket is dropped exactly when this machine stops talking on it, and
+/// never when it is handed on (into a round, back to the lobby), which
+/// moves it. So no way out of a beach (Esc in the lobby, Enter on the
+/// results card mid-series, the menu, the pause card, the window closing)
+/// can forget to say goodbye, the same promise the beacon's farewell
+/// makes.
+impl Drop for UdpTransport {
+    fn drop(&mut self) {
+        for _ in 0..GOODBYES {
+            self.send(NetMsg::Leaving);
+        }
+    }
+}
+
 /// This machine's address on the network it would reach a beach over, or
 /// `None` if it has no route out of itself.
 ///
@@ -415,6 +438,34 @@ mod tests {
             })
         );
         assert_eq!(host.peer_count(), 0, "and it claimed no seat at the table");
+    }
+
+    /// A socket that closes says so, to every peer it has, and one that
+    /// is handed on (moved) says nothing.
+    #[test]
+    fn a_closing_socket_says_goodbye() {
+        let mut host = UdpTransport::host(0).expect("bind");
+        let port = host.local_addr().expect("addr").port();
+        let joiner = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        joiner.send(NetMsg::hello("Bo"));
+        let moved = joiner;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let heard: Vec<NetMsg> = host.recv_all().into_iter().map(|(msg, _)| msg).collect();
+        assert_eq!(heard, [NetMsg::hello("Bo")], "nothing said on the move");
+        drop(moved);
+        let mut goodbyes = 0;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            goodbyes += host
+                .recv_all()
+                .into_iter()
+                .filter(|(msg, peer)| *msg == NetMsg::Leaving && *peer == 0)
+                .count();
+            if goodbyes == GOODBYES {
+                break;
+            }
+        }
+        assert_eq!(goodbyes, GOODBYES);
     }
 
     /// A bounced earlier send (what Windows reports for a departed peer)

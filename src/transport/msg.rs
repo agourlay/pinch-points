@@ -119,6 +119,13 @@ pub enum NetMsg {
     /// Host → one peer: the host asked you to leave. The peer goes back to
     /// choosing a beach, and the host forgets it.
     Kicked,
+    /// "I am going": said by a socket as it closes, to every peer it has
+    /// (see `UdpTransport`'s `Drop`). From a joiner, the host forgets it at
+    /// once rather than waiting out its silence, which left a launch or the
+    /// next round inside that window seating a ghost and freezing the
+    /// table five seconds on it. From the host, the joiners know the beach
+    /// is gone rather than waiting twenty seconds to decide so.
+    Leaving,
     /// A line said in the lobby, and who said it. The sender names itself
     /// rather than the host stamping it: a joiner's greeting is the only
     /// other place the host learns a name, and a peer that never greeted
@@ -275,12 +282,13 @@ const TAG_CATCH_UP: u8 = 15;
 const TAG_SPECTATOR_PICK: u8 = 16;
 const TAG_CROWD_PICKS: u8 = 17;
 const TAG_KICKED: u8 = 18;
+const TAG_LEAVING: u8 = 19;
 /// The last of them, which `peek_version` uses to tell one of ours from
 /// stray traffic on the port.
 ///
 /// It said `TAG_INPUTS` through two more tags, so a build of another
 /// version sending the spectators' two was ignored rather than told why.
-const HIGHEST_TAG: u8 = TAG_KICKED;
+const HIGHEST_TAG: u8 = TAG_LEAVING;
 
 /// Inputs one datagram may carry.
 ///
@@ -489,11 +497,12 @@ impl NetMsg {
             NetMsg::SpectatorPick { .. } => vec![TAG_SPECTATOR_PICK],
             NetMsg::CrowdPicks { .. } => vec![TAG_CROWD_PICKS],
             NetMsg::Kicked => vec![TAG_KICKED],
+            NetMsg::Leaving => vec![TAG_LEAVING],
             NetMsg::Incompatible { version } => return vec![TAG_INCOMPATIBLE, version],
         };
         bytes.push(PROTOCOL_VERSION);
         match self {
-            NetMsg::Incompatible { .. } | NetMsg::Kicked => {}
+            NetMsg::Incompatible { .. } | NetMsg::Kicked | NetMsg::Leaving => {}
             NetMsg::Resume { frame } => bytes.extend_from_slice(&frame.to_le_bytes()),
             NetMsg::Queued { ahead } => bytes.push(ahead),
             NetMsg::Abandoned { seat, frame } => {
@@ -635,6 +644,7 @@ impl NetMsg {
                 bot: *body.get(WIRE_NAME)? != 0,
             }),
             TAG_KICKED => Some(NetMsg::Kicked),
+            TAG_LEAVING => Some(NetMsg::Leaving),
             TAG_WATCH => Some(NetMsg::Watch {
                 name: body.get(..WIRE_NAME)?.try_into().ok()?,
             }),
@@ -827,6 +837,7 @@ mod tests {
                 bot: true,
             },
             NetMsg::Kicked,
+            NetMsg::Leaving,
             NetMsg::Chat {
                 name: widest,
                 text: wire_chat(&"W".repeat(CHAT_CHARS)),
@@ -987,6 +998,10 @@ mod tests {
         assert_eq!(
             NetMsg::decode(&NetMsg::Kicked.encode()),
             Some(NetMsg::Kicked)
+        );
+        assert_eq!(
+            NetMsg::decode(&NetMsg::Leaving.encode()),
+            Some(NetMsg::Leaving)
         );
         assert_eq!(kind_from_byte(2), crate::sim::SeatKind::Bot);
         assert_eq!(

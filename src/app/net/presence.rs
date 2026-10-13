@@ -47,6 +47,12 @@ const WATCHER_GONE_AFTER: f32 = 10.0;
 /// host shows an ordinary player.
 const HOST_GONE_AFTER: f32 = 20.0;
 
+/// How long a round held up on a seat whose player said goodbye waits
+/// before handing it over: not the five seconds of [`ABANDON_AFTER`],
+/// which are for telling a departure from a stumble, and the goodbye has
+/// already told. Just long enough for an input that crossed it to land.
+const GOODBYE_GRACE: f32 = 0.3;
+
 /// How long the picture has to have been still before the status line
 /// names whoever it is waiting for. Under a second: long enough that the
 /// ordinary rhythm of a three-frame input delay never trips it, short
@@ -190,19 +196,24 @@ impl OnlineSession {
             // player is not told the round is waiting for themselves.
             stall.waiting_on = waiting.first().copied();
         }
-        if !self.is_host() || self.stall.stalled_for < ABANDON_AFTER {
+        if !self.is_host() {
             return Vec::new();
         }
+        let served = self.stall.stalled_for >= ABANDON_AFTER;
         let gone: Vec<u8> = waiting
             .into_iter()
             .filter(|seat| match self.seat_silence(*seat) {
+                // Said it was going: the round being held up on it is all
+                // there is left to wait for, after a moment for any input
+                // that crossed the goodbye on the way.
+                Some(since) if since == f32::INFINITY => self.stall.stalled_for >= GOODBYE_GRACE,
                 // Held up by them *and* not a word from them.
-                Some(since) => since >= ABANDON_AFTER,
+                Some(since) => served && since >= ABANDON_AFTER,
                 // A seat this session cannot point at on the socket: the
                 // direct `PINCH_HOST` pair keeps no launch plan, having
                 // never been through a lobby. Nothing better to go on than
                 // the held-up frame, as it was before.
-                None => true,
+                None => served,
             })
             .collect();
         if gone.is_empty() {
@@ -496,6 +507,37 @@ mod tests {
         assert!(gone.is_empty(), "the timer restarts with the round");
         let gone = session.abandon_stalled(0.2, false);
         assert_eq!(gone, vec![1], "and a seat that really is silent still goes");
+    }
+
+    /// A player who said goodbye mid-round is not waited on for the five
+    /// seconds that tell a departure from a stumble: the goodbye already
+    /// told. Its castle goes to the AI as soon as the round is held up on
+    /// it (after a moment for an input that crossed the goodbye), and the
+    /// peer is forgotten with it.
+    #[test]
+    fn a_player_who_said_goodbye_is_not_waited_for() {
+        let transport = UdpTransport::host(0).expect("game socket");
+        let mut session = OnlineSession::new(
+            transport,
+            Lockstep::new(0, vec![0, 1], 0),
+            2,
+            MatchTerms::default(),
+        );
+        session.peers.deal(&[Some(1)]);
+        session.peers.said_goodbye(0);
+        assert!(session.peers.get(0).is_some_and(Peer::left));
+        // The first look at the held-up frame starts the clock.
+        assert!(session.abandon_stalled(0.1, false).is_empty());
+        assert!(
+            session.abandon_stalled(0.1, false).is_empty(),
+            "a moment for an input that crossed the goodbye"
+        );
+        assert_eq!(
+            session.abandon_stalled(GOODBYE_GRACE, false),
+            vec![1],
+            "and not the five seconds a silent seat gets"
+        );
+        assert_eq!(session.peers.len(), 0, "forgotten with its seat");
     }
 
     /// A peer that is still talking keeps its castle, however far behind

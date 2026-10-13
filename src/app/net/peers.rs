@@ -80,6 +80,11 @@ impl Peer {
     pub fn wants_a_chair(&self) -> bool {
         !self.watch && self.seat().is_none()
     }
+
+    /// Whether it said it was going (`NetMsg::Leaving`).
+    pub fn left(&self) -> bool {
+        self.silence == f32::INFINITY
+    }
 }
 
 /// The peers, indexed as the transport indexes them.
@@ -139,6 +144,15 @@ impl PeerBook {
     /// A peer said something, which is all this needs to know.
     pub fn heard(&mut self, peer: usize) {
         self.row(peer).silence = 0.0;
+    }
+
+    /// The peer said it is going (`NetMsg::Leaving`): its silence is
+    /// already as long as any patience, so every rule that forgets a quiet
+    /// peer (the lobby's, the results card's, a watcher's) forgets this one
+    /// at its next look rather than seconds later, and a seat it holds is
+    /// given up on the moment the round waits on it.
+    pub fn said_goodbye(&mut self, peer: usize) {
+        self.row(peer).silence = f32::INFINITY;
     }
 
     /// Age every silence by a frame.

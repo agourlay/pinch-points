@@ -397,6 +397,7 @@ pub fn join_tick(
     let mut said: Vec<(crate::transport::WireName, crate::transport::WireChat)> = Vec::new();
     let mut table: Option<(Vec<String>, [u8; MAX_PLAYERS])> = None;
     let mut kicked = false;
+    let mut closed = false;
     let mut host_terms: Option<(MatchTerms, crate::transport::WireName)> = None;
     let mut heard = false;
     let hello = say_hello.then(|| joined.greeting(&settings.names[0]));
@@ -432,6 +433,9 @@ pub fn join_tick(
                 }
                 // The host asked us to go: back to the list.
                 NetMsg::Kicked => kicked = true,
+                // The host closed its socket: the beach is gone, whether
+                // or not its beacon's farewell reached this listener.
+                NetMsg::Leaving => closed = true,
                 // A watcher at a beach mid-round: the round as it stands,
                 // part by part, until there is a whole of it to walk into.
                 //
@@ -513,6 +517,11 @@ pub fn join_tick(
     if kicked {
         state.let_go();
         state.feedback = settings.tr().lobby_kicked_you.to_string();
+        return;
+    }
+    if closed {
+        state.let_go();
+        state.feedback = settings.tr().lobby_host_closed.to_string();
         return;
     }
     if let Some((table, kinds)) = table {

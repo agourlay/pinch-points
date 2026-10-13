@@ -68,7 +68,8 @@ impl Peer {
                 | NetMsg::CatchUp { .. }
                 | NetMsg::SpectatorPick { .. }
                 | NetMsg::CrowdPicks { .. }
-                | NetMsg::Kicked => {}
+                | NetMsg::Kicked
+                | NetMsg::Leaving => {}
             }
         }
         while let Some(actions) = self.session.advance() {

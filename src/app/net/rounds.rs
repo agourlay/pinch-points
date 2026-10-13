@@ -215,6 +215,10 @@ impl OnlineSession {
                 | NetMsg::Incompatible { .. } => {}
                 // The host asked us to leave while the card was up.
                 NetMsg::Kicked => self.kicked |= !host,
+                // Gone from the card: forgotten by the sweep just below,
+                // before the next round can deal it a chair. On a joiner
+                // it is the host, and there is no next round.
+                NetMsg::Leaving => self.peers.said_goodbye(from),
             }
         }
         // After the socket is drained, so a greeting that arrived in this
@@ -945,6 +949,73 @@ mod next_round_tests {
         host.call_next_round(terms(2), None);
         assert_eq!(host.seats, 2, "Anna and Cy, nobody else");
         assert_eq!(host.names[1], "Cy");
+    }
+
+    /// A peer that leaves the results card says so, and is forgotten on
+    /// the spot: Enter mid-series, the next round called a moment later,
+    /// and no ghost dealt a chair to freeze the table on.
+    #[test]
+    fn a_peer_that_says_goodbye_on_the_card_is_forgotten_at_once() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(0, vec![0, 1, 2], DEFAULT_DELAY),
+            3,
+            terms(1),
+        );
+        host.names[0] = "Anna".into();
+        let mut sockets = gather(&mut host, &["Bo", "Cy"]);
+        // Bo walks off the card; its socket closes and says so.
+        drop(sockets.remove(0));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() == 1 {
+                break;
+            }
+        }
+        assert_eq!(host.transport.peer_count(), 1, "Bo is forgotten");
+        assert_eq!(host.peer_name(0), Some("Cy"), "and Cy moved down");
+        host.call_next_round(terms(2), None);
+        assert_eq!(host.seats, 2, "Anna and Cy, nobody else");
+    }
+
+    /// The other way round: a host that quits says so, and a joiner on
+    /// the card (or in the round) knows it at once instead of after
+    /// twenty seconds of silence.
+    #[test]
+    fn a_host_that_quits_is_gone_at_once() {
+        let host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(5),
+        );
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(5),
+        );
+        joiner.transport.send(NetMsg::hello("Bo"));
+        let mut host = host;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() == 1 {
+                break;
+            }
+        }
+        assert!(!joiner.host_gone());
+        drop(host);
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            joiner.poll_between_rounds(0.0);
+            if joiner.host_gone() {
+                break;
+            }
+        }
+        assert!(joiner.host_gone(), "told, not left to wait it out");
     }
 
     /// The host's call for the next round can land on a joiner that is

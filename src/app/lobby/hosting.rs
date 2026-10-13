@@ -612,6 +612,11 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             | NetMsg::CrowdPicks { .. }
             | NetMsg::Incompatible { .. }
             | NetMsg::Kicked => {}
+            // Gone, and said so: swept with the silent this same tick
+            // (`note_arrivals_and_departures`), with the same word in the
+            // feed, rather than counted aboard for four more seconds and
+            // dealt a chair if the host launches inside them.
+            NetMsg::Leaving => peers.said_goodbye(from),
         }
     }
     // Highest first, so each index still names the peer it was read from.
@@ -1050,6 +1055,58 @@ mod tests {
             }
         }
         assert!(told, "the peer was told why");
+    }
+
+    /// A joiner leaving the lobby says so, and the host lets it go the
+    /// same tick, with the same word in the feed the silence rule gives:
+    /// not counted aboard for four more seconds, and not dealt a chair if
+    /// the host launches inside them.
+    #[test]
+    fn a_joiner_that_says_goodbye_is_let_go_at_once() {
+        let mut state = LobbyState {
+            standing: Standing::hosting(
+                Announcer::new(0x60B).expect("announcer"),
+                UdpTransport::host(0).expect("game socket"),
+            ),
+            ..LobbyState::default()
+        };
+        let port = state
+            .hosted()
+            .expect("hosting")
+            .transport
+            .local_addr()
+            .expect("addr")
+            .port();
+        let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        bo.send(NetMsg::hello("Bo"));
+        let tick = |state: &mut LobbyState| {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let hosted = state.hosted_mut().expect("hosting");
+            let picked = work_the_socket(hosted, 0.0, crate::transport::OnAir::default());
+            note_arrivals_and_departures(state, &crate::app::i18n::EN, picked.greeted);
+        };
+        for _ in 0..40 {
+            tick(&mut state);
+            if state.hosted().expect("hosting").players_aboard() == 1 {
+                break;
+            }
+        }
+        assert_eq!(state.hosted().expect("hosting").players_aboard(), 1);
+        drop(bo);
+        for _ in 0..40 {
+            tick(&mut state);
+            if state.hosted().expect("hosting").peers.is_empty() {
+                break;
+            }
+        }
+        let hosted = state.hosted().expect("hosting");
+        assert_eq!(hosted.transport.peer_count(), 0, "let go at once");
+        assert!(hosted.peers.is_empty());
+        assert!(
+            state.chat.iter().any(|said| said.line == "Bo left"),
+            "and the table is told: {:?}",
+            state.chat
+        );
     }
 
     /// A beach that said bots are not welcome turns a bot's greeting

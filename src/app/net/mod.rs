@@ -808,6 +808,12 @@ impl OnlineSession {
                 // The host asked us to leave. It turns this address away
                 // from now on, so there is no round left here for us.
                 NetMsg::Kicked => self.kicked |= !host,
+                // Somebody closed their socket. On the host, a seat it
+                // held goes to the AI the moment the round waits on it,
+                // and anyone else is forgotten at the next sweep. On a
+                // joiner it is the host, and the round is over
+                // (`host_gone`) without twenty seconds of a still beach.
+                NetMsg::Leaving => self.peers.said_goodbye(from),
                 // Only a host hands these out, and a host never receives
                 // one: a joiner in the queue is still in the lobby, and so
                 // is a watcher being caught up.
@@ -1377,6 +1383,7 @@ mod homecoming_tests {
                         | NetMsg::SpectatorPick { .. }
                         | NetMsg::CrowdPicks { .. }
                         | NetMsg::Kicked
+                        | NetMsg::Leaving
                         | NetMsg::Incompatible { .. } => {}
                     }
                 }
