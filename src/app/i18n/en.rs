@@ -552,4 +552,5 @@ pub static EN: Tr = Tr {
     lobby_host_closed: "the host closed that game",
     replay_drop_hint: "drop a replay file on the window to watch it",
     replay_drop_bad: "that file is not a replay this build can play: {e}",
+    ed_save_taken: "another level already has that file - F2 again to replace it, or rename this one",
 };

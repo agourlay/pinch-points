@@ -552,4 +552,5 @@ pub static IT: Tr = Tr {
     lobby_host_closed: "l'host ha chiuso quella partita",
     replay_drop_hint: "trascina un file di replay sulla finestra per guardarlo",
     replay_drop_bad: "quel file non è un replay che questa versione sa riprodurre: {e}",
+    ed_save_taken: "un altro livello ha già quel file - F2 di nuovo lo sostituisce, o rinomina questo",
 };

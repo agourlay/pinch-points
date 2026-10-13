@@ -49,24 +49,52 @@ fn test_home() -> PathBuf {
 /// the shelf's label, so it keeps its case and only trades what is not a
 /// letter or digit for `_`, which is just as safe.
 ///
+/// Letters and digits of any script are kept, lowercased: kept to ASCII,
+/// every Russian or Japanese name came down to its digits or to nothing,
+/// so "Моя карта" and "わたしのマップ" both saved to the fallback and
+/// "Карта 2" and "Пляж 2" both to `2`, each overwriting the other.
+///
 /// `keep` bounds the result so a long name cannot make an absurd path, and
 /// `fallback` covers a name with nothing usable left in it, which is a
 /// thing a player can type.
 pub fn safe_stem(name: &str, keep: usize, fallback: &str) -> String {
     let mut out = String::new();
     for ch in name.chars().take(keep) {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
+        if ch.is_alphanumeric() {
+            out.extend(ch.to_lowercase());
         } else if !out.ends_with('-') {
             out.push('-');
         }
     }
     let trimmed = out.trim_matches('-');
-    if trimmed.is_empty() {
+    let stem = if trimmed.is_empty() {
         fallback.to_string()
     } else {
         trimmed.to_string()
+    };
+    // Windows keeps these names for devices, whatever the extension:
+    // `con.txt` is the console, and a level called Con never reached the
+    // disk. The `_` cannot come out of a name, so the stem stays its own.
+    match is_reserved_on_windows(&stem) {
+        true => format!("{stem}_"),
+        false => stem,
     }
+}
+
+/// Whether Windows reserves `stem` for a device: CON, PRN, AUX, NUL and
+/// COM1-9 and LPT1-9, in any case.
+fn is_reserved_on_windows(stem: &str) -> bool {
+    let stem = stem.to_ascii_lowercase();
+    if matches!(stem.as_str(), "con" | "prn" | "aux" | "nul") {
+        return true;
+    }
+    ["com", "lpt"].iter().any(|port| {
+        stem.strip_prefix(port).is_some_and(|n| {
+            // The superscript digits too: Windows reserves COM¹ as well.
+            matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+                || matches!(n, "\u{b9}" | "\u{b2}" | "\u{b3}")
+        })
+    })
 }
 
 /// Create the directory a file is about to be written into, private to the
@@ -151,13 +179,43 @@ mod tests {
         assert_eq!(safe_stem("Gull Alley", 40, "level"), "gull-alley");
         assert_eq!(safe_stem("  spaced  out  ", 40, "level"), "spaced-out");
         assert_eq!(safe_stem("Crab/../etc", 40, "level"), "crab-etc");
-        assert_eq!(safe_stem("Café *3*", 40, "level"), "caf-3");
         // Never empty, however little is left of it.
         assert_eq!(safe_stem("***", 40, "level"), "level");
         assert_eq!(safe_stem("", 40, "level"), "level");
         // Long names are cut rather than making a silly path.
         assert!(safe_stem(&"x".repeat(200), 40, "level").len() <= 40);
         assert!(safe_stem(&"x".repeat(200), 12, "round").len() <= 12);
+    }
+
+    /// Names in any script keep their letters, so two of them only share
+    /// a file when they would read the same.
+    #[test]
+    fn a_name_in_any_script_keeps_its_letters() {
+        use super::safe_stem;
+        assert_eq!(safe_stem("Моя карта", 40, "level"), "моя-карта");
+        assert_eq!(safe_stem("わたしのマップ", 40, "level"), "わたしのマップ");
+        assert_ne!(
+            safe_stem("Карта 2", 40, "level"),
+            safe_stem("Пляж 2", 40, "level")
+        );
+        assert_eq!(safe_stem("Café *3*", 40, "level"), "café-3");
+        // Bounded in characters, and still far inside any file system's
+        // limit in bytes.
+        assert!(safe_stem(&"я".repeat(200), 40, "level").len() <= 255);
+    }
+
+    /// A level called Con, Nul or Com1 is not a Windows device.
+    #[test]
+    fn a_device_name_is_not_a_file_name() {
+        use super::safe_stem;
+        for name in ["Con", "PRN", "aux", "Nul", "COM1", "lpt9", "Com\u{b9}"] {
+            let stem = safe_stem(name, 40, "level");
+            assert!(stem.ends_with('_'), "{name} -> {stem}");
+        }
+        for name in ["Cone", "Com", "Com0", "Com10", "Lpt 1", "Console"] {
+            let stem = safe_stem(name, 40, "level");
+            assert!(!stem.ends_with('_'), "{name} -> {stem}");
+        }
     }
 
     use super::*;

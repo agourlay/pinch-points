@@ -814,6 +814,9 @@ struct Tr {
     pub replay_drop_hint: &'static str,
     /// A dropped file that is not a replay this build plays.
     pub replay_drop_bad: &'static str,
+    /// F2 on a name whose file holds a different level: the first press
+    /// only says so, and a second replaces it.
+    pub ed_save_taken: &'static str,
 }
 }
 

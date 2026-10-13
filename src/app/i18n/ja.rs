@@ -548,4 +548,5 @@ pub static JA: Tr = Tr {
     lobby_host_closed: "ホストがゲームを閉じた",
     replay_drop_hint: "リプレイのファイルをウィンドウに落とすと見られるよ",
     replay_drop_bad: "このファイルはこのバージョンで見られるリプレイじゃない: {e}",
+    ed_save_taken: "同じファイルにほかの面がある もう一度F2で置きかえる",
 };

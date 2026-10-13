@@ -552,4 +552,5 @@ pub static ES: Tr = Tr {
     lobby_host_closed: "el anfitrión cerró esa partida",
     replay_drop_hint: "suelta un archivo de repetición en la ventana para verlo",
     replay_drop_bad: "ese archivo no es una repetición que esta versión pueda reproducir: {e}",
+    ed_save_taken: "otro nivel ya tiene ese archivo - F2 otra vez lo reemplaza, o cambia el nombre de este",
 };

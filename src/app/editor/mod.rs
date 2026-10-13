@@ -59,6 +59,8 @@ enum Offer {
     Resize,
     /// F4: the level on the clipboard in place of this one.
     Paste,
+    /// F2: this level saved over the file of a different one.
+    Overwrite,
 }
 
 impl Offer {
@@ -66,6 +68,7 @@ impl Offer {
         match self {
             Offer::Resize => KeyCode::F5,
             Offer::Paste => KeyCode::F4,
+            Offer::Overwrite => KeyCode::F2,
         }
     }
 }
@@ -696,23 +699,33 @@ pub fn editor_commands(
         let level = level_here(&state, board, &state.name);
         let path = save_path(&state.name);
         let stranger = !is_new_here(&path) && !state.mine.contains(&state.name);
-        state.feedback = match write_level(&path, &level.to_text()) {
-            Ok(is_new) => {
-                if is_new {
-                    saved.write(crate::app::LevelSaved);
+        // A file this session did not write is somebody else's level until
+        // the author says otherwise: the first press only says whose it
+        // is, and the second replaces it. Written at once, the note that
+        // it had been replaced came after the level was already gone.
+        if stranger && state.offer != Some(Offer::Overwrite) {
+            state.offer = Some(Offer::Overwrite);
+            state.feedback = tr.ed_save_taken.into();
+        } else {
+            state.offer = None;
+            state.feedback = match write_level(&path, &level.to_text()) {
+                Ok(is_new) => {
+                    if is_new {
+                        saved.write(crate::app::LevelSaved);
+                    }
+                    let named = state.name.clone();
+                    state.mine.insert(named);
+                    let filed = fill(tr.ed_saved_to, &[("path", &path.display().to_string())]);
+                    let orphans = orphan_warning(&state, &level, tr);
+                    let notes = [stranger.then_some(tr.ed_saved_over), orphans.as_deref()];
+                    notes
+                        .iter()
+                        .flatten()
+                        .fold(filed, |line, note| format!("{line} - {note}"))
                 }
-                let named = state.name.clone();
-                state.mine.insert(named);
-                let filed = fill(tr.ed_saved_to, &[("path", &path.display().to_string())]);
-                let orphans = orphan_warning(&state, &level, tr);
-                let notes = [stranger.then_some(tr.ed_saved_over), orphans.as_deref()];
-                notes
-                    .iter()
-                    .flatten()
-                    .fold(filed, |line, note| format!("{line} - {note}"))
-            }
-            Err(e) => fill(tr.ed_save_failed, &[("e", &e.to_string())]),
-        };
+                Err(e) => fill(tr.ed_save_failed, &[("e", &e.to_string())]),
+            };
+        }
     }
     if crate::app::menu_ui::enter(&keys) {
         // The board being edited is put aside whole, to come back on Esc,
@@ -1002,6 +1015,61 @@ mod tests {
         );
         tap(&mut app, KeyCode::F5);
         assert_eq!(size(&mut app), built, "so this press only offers again");
+    }
+
+    /// F2 onto a file this session did not write asks first: the first
+    /// press leaves the other level's file as it was and says so, and only
+    /// a second press replaces it. Saved at once, the note that a level had
+    /// been replaced arrived with that level already gone.
+    #[test]
+    fn saving_over_another_levels_file_asks_twice() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.add_message::<crate::app::LevelSaved>();
+        app.add_message::<crate::app::CodeShared>();
+        app.add_message::<crate::app::CodeTaken>();
+        app.insert_resource(Sim(sand()));
+        app.init_resource::<EditorState>();
+        app.init_resource::<GameSettings>();
+        app.init_resource::<Clipboard>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        app.add_systems(Update, (editor_input, editor_commands));
+        // A name of this test's own: the shelf is shared by every test in
+        // the process.
+        let name = "Пляж Overwrite Probe";
+        app.world_mut().resource_mut::<EditorState>().name = name.to_string();
+        let path = save_path(name);
+        crate::app::paths::write_atomic(&path, "somebody else's level").expect("wrote");
+
+        let tap = |app: &mut App, key: KeyCode| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(key);
+            app.update();
+        };
+        let on_disk = || std::fs::read_to_string(&path).expect("reads");
+        tap(&mut app, KeyCode::F2);
+        assert_eq!(on_disk(), "somebody else's level", "the first press asks");
+        assert_eq!(
+            app.world().resource::<EditorState>().feedback,
+            crate::app::i18n::EN.ed_save_taken
+        );
+        // Anything else pressed in between takes the offer back.
+        tap(&mut app, KeyCode::KeyO);
+        tap(&mut app, KeyCode::F2);
+        assert_eq!(on_disk(), "somebody else's level", "asked again");
+        tap(&mut app, KeyCode::F2);
+        assert!(on_disk().contains(name), "the second press saves");
+        // Now it is this session's own file, and saves at once.
+        app.world_mut().resource_mut::<Sim>().0.set_wrap(false);
+        tap(&mut app, KeyCode::F2);
+        assert!(
+            app.world().resource::<EditorState>().offer.is_none(),
+            "no question about its own file"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     /// The posts dial is a puzzle's rule, so it is inert on a beach - and

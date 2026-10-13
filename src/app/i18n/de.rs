@@ -559,4 +559,5 @@ pub static DE: Tr = Tr {
     lobby_host_closed: "der Gastgeber hat das Spiel geschlossen",
     replay_drop_hint: "zieh eine Replay-Datei aufs Fenster, um sie anzusehen",
     replay_drop_bad: "diese Datei ist kein Replay, das diese Version abspielen kann: {e}",
+    ed_save_taken: "ein anderes Level hat schon diese Datei - F2 nochmal ersetzt es, oder benenne dieses um",
 };
