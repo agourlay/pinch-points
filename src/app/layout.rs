@@ -71,6 +71,14 @@ pub mod z {
     pub const PIP: f32 = 5.7;
 }
 
+/// The board's size in world units: the sand, wall to wall.
+pub fn board_extent(board: &Board) -> Vec2 {
+    Vec2::new(
+        f32::from(board.width()) * TILE,
+        f32::from(board.height()) * TILE,
+    )
+}
+
 pub fn tile_center(board: &Board, x: u8, y: u8) -> Vec2 {
     let w = f32::from(board.width());
     let h = f32::from(board.height());

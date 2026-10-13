@@ -5,10 +5,10 @@
 //! own edge and grows away from it, so the sea rises around the beach and
 //! the board itself is untouched until the clock says otherwise.
 
-use super::{SWELL, WATER, WATER_MAX, WATER_MIN, image_sprite, z};
+use super::{SWELL, Side, WATER, WATER_MAX, WATER_MIN, image_sprite, z};
 use crate::app::Sim;
 use crate::app::art::Art;
-use crate::app::layout::TILE;
+use crate::app::layout;
 use crate::sim::TideEvent;
 use bevy::prelude::*;
 
@@ -45,14 +45,13 @@ fn tide_depth(board: &crate::sim::Board, remaining: u64, seconds: f32) -> f32 {
     depth
 }
 
-/// The tide's ambient clock (spec §3.6): four water bars around the board
-/// that widen outward from the sand's edge over the round. `0..4` = top,
-/// bottom, left, right.
+/// The tide's ambient clock (spec §3.6): four water bars around the board,
+/// one a side, that widen outward from the sand's edge over the round.
 #[derive(Component)]
-pub struct Waterline(pub u8);
+pub struct Waterline(pub Side);
 
 pub fn spawn_waterline(commands: &mut Commands) {
-    for side in 0..4u8 {
+    for side in Side::ALL {
         commands.spawn((
             Waterline(side),
             Sprite::from_color(WATER, Vec2::ZERO),
@@ -82,21 +81,16 @@ pub fn update_waterline(
         return;
     };
     let depth = tide_depth(board, remaining, time.elapsed_secs());
-    let w = f32::from(board.width()) * TILE;
-    let h = f32::from(board.height()) * TILE;
+    let extent = layout::board_extent(board);
     for (bar, mut sprite, mut transform) in &mut bars {
-        let (size, pos) = match bar.0 {
-            0 => (
-                Vec2::new(w + depth * 2.0, depth),
-                Vec2::new(0.0, (h + depth) / 2.0),
-            ),
-            1 => (
-                Vec2::new(w + depth * 2.0, depth),
-                Vec2::new(0.0, -(h + depth) / 2.0),
-            ),
-            2 => (Vec2::new(depth, h), Vec2::new(-(w + depth) / 2.0, 0.0)),
-            _ => (Vec2::new(depth, h), Vec2::new((w + depth) / 2.0, 0.0)),
+        let (along, across) = bar.0.span(extent);
+        // The top and bottom bars run on over the corners; the side bars
+        // stop at the sand.
+        let size = match bar.0 {
+            Side::Top | Side::Bottom => Vec2::new(along + depth * 2.0, depth),
+            Side::Left | Side::Right => Vec2::new(depth, along),
         };
+        let pos = bar.0.normal() * ((across + depth) / 2.0);
         sprite.custom_size = Some(size);
         transform.translation = pos.extend(z::WATER);
     }
@@ -104,10 +98,10 @@ pub fn update_waterline(
 
 /// The foam lip riding the waterline's outer, seaward edge.
 #[derive(Component)]
-pub struct WaterFoam(pub u8);
+pub struct WaterFoam(pub Side);
 
 pub fn spawn_water_foam(commands: &mut Commands, art: &Art) {
-    for side in 0..4u8 {
+    for side in Side::ALL {
         commands.spawn((
             WaterFoam(side),
             image_sprite(&art.foam, Color::WHITE, Vec2::ZERO),
@@ -151,31 +145,26 @@ pub fn update_water_foam(
     };
     let depth = tide_depth(board, remaining, time.elapsed_secs());
     let lap = (time.elapsed_secs() * 1.8).sin() * 1.5;
-    let w = f32::from(board.width()) * TILE;
-    let h = f32::from(board.height()) * TILE;
+    let extent = layout::board_extent(board);
     const FOAM: f32 = 7.0;
     for (bar, mut sprite, mut transform) in &mut foam {
-        let (size, pos, rot) = match bar.0 {
-            0 => (
-                Vec2::new(w + depth * 2.0, FOAM),
-                Vec2::new(0.0, h / 2.0 + depth - lap),
-                0.0,
-            ),
-            1 => (
-                Vec2::new(w + depth * 2.0, FOAM),
-                Vec2::new(0.0, -h / 2.0 - depth + lap),
-                std::f32::consts::PI,
-            ),
-            2 => (
-                Vec2::new(h, FOAM),
-                Vec2::new(-w / 2.0 - depth + lap, 0.0),
-                -std::f32::consts::FRAC_PI_2,
-            ),
-            _ => (
-                Vec2::new(h, FOAM),
-                Vec2::new(w / 2.0 + depth - lap, 0.0),
-                std::f32::consts::FRAC_PI_2,
-            ),
+        let side = bar.0;
+        let (along, across) = side.span(extent);
+        // Over the corners along the top and bottom, as the bars run.
+        let length = match side {
+            Side::Top | Side::Bottom => along + depth * 2.0,
+            Side::Left | Side::Right => along,
+        };
+        let size = Vec2::new(length, FOAM);
+        let pos = side.normal() * (across / 2.0 + depth - lap);
+        // Not `Side::rotation`: the lip keeps the turns it has always been
+        // drawn with, its up pointing out of the board at the top and the
+        // bottom and into it at the two sides.
+        let rot = match side {
+            Side::Top => 0.0,
+            Side::Bottom => std::f32::consts::PI,
+            Side::Left => -std::f32::consts::FRAC_PI_2,
+            Side::Right => std::f32::consts::FRAC_PI_2,
         };
         sprite.custom_size = Some(size);
         transform.translation = pos.extend(z::FOAM);

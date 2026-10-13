@@ -169,8 +169,10 @@ pub(super) fn fit_camera(
     let (chrome_w, chrome_top, chrome_bottom) =
         (chrome.width * ui, chrome.top * ui, chrome.bottom * ui);
     let chrome_h = chrome_top + chrome_bottom;
-    let board_w = f32::from(sim.0.width()) * layout::TILE;
-    let board_h = f32::from(sim.0.height()) * layout::TILE;
+    let Vec2 {
+        x: board_w,
+        y: board_h,
+    } = layout::board_extent(&sim.0);
     // The chrome (sidebars, header, prompt line) is fixed-size UI, so the
     // board must fit the window *minus* it; adding it to the board before
     // dividing would under-reserve and let a big grid slide under the

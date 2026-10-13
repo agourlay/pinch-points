@@ -545,8 +545,10 @@ mod tests {
         // assertion below without it.
         let survivor = app.world_mut().spawn(Marker).id();
         app.world_mut().spawn(board_render::BoardStatic);
-        app.world_mut().spawn(board_render::Waterline(0));
-        app.world_mut().spawn(board_render::WaterFoam(0));
+        app.world_mut()
+            .spawn(board_render::Waterline(board_render::Side::Top));
+        app.world_mut()
+            .spawn(board_render::WaterFoam(board_render::Side::Top));
         app.world_mut().spawn(creatures::CrabSprite {
             id: 1,
             kind: crate::sim::CrabKind::Common,

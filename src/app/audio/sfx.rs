@@ -187,7 +187,7 @@ pub fn play_events(
         }
     };
     let gain = sfx_gain(&settings, &muted);
-    let half_width = f32::from(sim.0.width()) * crate::app::layout::TILE / 2.0;
+    let half_width = crate::app::layout::board_extent(&sim.0).x / 2.0;
     let pan = |pos: &Vec2| pan_pos(half_width, *pos);
     let (mut placed, mut removed, mut evicted) = (false, false, false);
     // Banks are the busiest thing on the beach, and the one cue the sim

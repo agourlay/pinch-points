@@ -4,7 +4,7 @@
 
 use super::pools::spawn_pools;
 use super::surround::{spawn_dusk_shore, spawn_weather};
-use super::{image_sprite, on_board, z};
+use super::{Side, image_sprite, on_board, z};
 use crate::app::Sim;
 use crate::app::art::Art;
 use crate::app::layout::{self, TILE};
@@ -184,10 +184,8 @@ fn spawn_walls(commands: &mut Commands, board: &Board, art: &Art) {
             plank(commands, pos + Vec2::new(TILE / 2.0, 0.0), true);
         }
     }
-    let (w, h) = (
-        f32::from(board.width()) * TILE,
-        f32::from(board.height()) * TILE,
-    );
+    let extent = layout::board_extent(board);
+    let (w, h) = (extent.x, extent.y);
     for cy in 1..u16::from(board.height()) {
         for cx in 1..u16::from(board.width()) {
             if corner_hits[corner_index(cx, cy)] == 0 {
@@ -206,34 +204,15 @@ fn spawn_walls(commands: &mut Commands, board: &Board, art: &Art) {
     }
 
     // Wet-sand fringe: a damp gradient just outside the sand, fading toward
-    // the water. The wet.png strip fades downward; rotate per side.
-    for (size, offset, rot) in [
-        (
-            Vec2::new(w + 36.0, 18.0),
-            Vec2::new(0.0, h / 2.0 + 9.0),
-            std::f32::consts::PI,
-        ),
-        (
-            Vec2::new(w + 36.0, 18.0),
-            Vec2::new(0.0, -h / 2.0 - 9.0),
-            0.0,
-        ),
-        (
-            Vec2::new(h + 36.0, 18.0),
-            Vec2::new(-w / 2.0 - 9.0, 0.0),
-            -std::f32::consts::FRAC_PI_2,
-        ),
-        (
-            Vec2::new(h + 36.0, 18.0),
-            Vec2::new(w / 2.0 + 9.0, 0.0),
-            std::f32::consts::FRAC_PI_2,
-        ),
-    ] {
+    // the water. The wet.png strip fades downward; turned per side.
+    for side in Side::ALL {
+        let (along, across) = side.span(extent);
+        let offset = side.normal() * (across / 2.0 + 9.0);
         commands.spawn((
             BoardStatic,
-            image_sprite(&art.wet, Color::WHITE, size),
+            image_sprite(&art.wet, Color::WHITE, Vec2::new(along + 36.0, 18.0)),
             Transform::from_translation(offset.extend(z::WET))
-                .with_rotation(Quat::from_rotation_z(rot)),
+                .with_rotation(Quat::from_rotation_z(side.rotation())),
         ));
     }
 }

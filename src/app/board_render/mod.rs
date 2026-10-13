@@ -55,6 +55,51 @@ fn image_sprite(image: &Handle<Image>, tint: Color, size: Vec2) -> Sprite {
     }
 }
 
+/// One side of the board, for the things drawn along all four: the tide's
+/// bars and foam, and the wet sand fringe.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Side {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+impl Side {
+    pub const ALL: [Side; 4] = [Side::Top, Side::Bottom, Side::Left, Side::Right];
+
+    /// Out of the board across this side, in world space (y up).
+    fn normal(self) -> Vec2 {
+        match self {
+            Side::Top => Vec2::Y,
+            Side::Bottom => Vec2::NEG_Y,
+            Side::Left => Vec2::NEG_X,
+            Side::Right => Vec2::X,
+        }
+    }
+
+    /// The turn that points a strip's foot out of the board across this
+    /// side: a strip drawn fading downward fades out toward the water.
+    fn rotation(self) -> f32 {
+        match self {
+            Side::Top => std::f32::consts::PI,
+            Side::Bottom => 0.0,
+            Side::Left => -std::f32::consts::FRAC_PI_2,
+            Side::Right => std::f32::consts::FRAC_PI_2,
+        }
+    }
+
+    /// The board measured from this side, `extent` being its size: how long
+    /// this side's edge is, and how far it is across the board to the
+    /// opposite one.
+    fn span(self, extent: Vec2) -> (f32, f32) {
+        match self {
+            Side::Top | Side::Bottom => (extent.x, extent.y),
+            Side::Left | Side::Right => (extent.y, extent.x),
+        }
+    }
+}
+
 /// Whether a sprite's remembered tile exists on this board.
 ///
 /// The sync systems diff sprites against the sim by the coordinates each

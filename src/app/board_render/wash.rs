@@ -142,7 +142,7 @@ pub fn advance_tide_wash(
 ) {
     let board = &sim.0;
     let dt = time.delta_secs();
-    let half_h = f32::from(board.height()) * TILE / 2.0;
+    let half_h = crate::app::layout::board_extent(board).y / 2.0;
     let span = REACH;
     for (entity, mut wash, mut sprite, mut transform, foam) in &mut pieces {
         wash.age += dt;

@@ -31,8 +31,7 @@ pub struct CloudShadow {
 /// over the whole scene would dim the crabs and posts in the corners too,
 /// and those are the pieces a player reads under time pressure.
 pub(super) fn spawn_weather(commands: &mut Commands, board: &Board, art: &Art) {
-    let w = f32::from(board.width()) * TILE;
-    let h = f32::from(board.height()) * TILE;
+    let Vec2 { x: w, y: h } = layout::board_extent(board);
     commands.spawn((
         BoardStatic,
         image_sprite(&art.vignette, Color::WHITE, Vec2::new(w + 40.0, h + 40.0)),
@@ -106,7 +105,7 @@ const SURROUND_SAND: Color = Color::srgb(0.70, 0.61, 0.45);
 pub(super) fn spawn_dusk_shore(commands: &mut Commands, board: &Board, art: &Art) {
     // Far larger than any zoomed-out view can reach: the wave's reach.
     const REACH: f32 = super::wash::REACH;
-    let top = f32::from(board.height()) * TILE / 2.0 + 26.0;
+    let top = layout::board_extent(board).y / 2.0 + 26.0;
     let plane = |size: Vec2, at: Vec2, z: f32, color: Color| {
         (
             BoardStatic,
@@ -157,7 +156,7 @@ pub(super) fn spawn_dusk_shore(commands: &mut Commands, board: &Board, art: &Art
     // of colour. Short lengths with gaps between: one crest the width of
     // the world was a ruled line.
     let mut rng = crate::app::effects::VisualRng::seeded(board.seed() as u32 ^ 0x5EA);
-    let span = f32::from(board.width()) * TILE / 2.0 + MARGIN_TILES * TILE;
+    let span = layout::board_extent(board).x / 2.0 + MARGIN_TILES * TILE;
     for (lift, alpha, depth) in [(30.0, 0.34, 9.0), (62.0, 0.24, 7.0), (104.0, 0.15, 5.0)] {
         let mut x = -span;
         while x < span {
@@ -219,12 +218,9 @@ fn margin_seed(board: &Board) -> u32 {
 /// level looks the same every time it is played, and a little dimmer than
 /// the same things on the board.
 fn furnish_the_margin(commands: &mut Commands, board: &Board, art: &Art, shore: f32) {
-    let (w, h) = (
-        f32::from(board.width()) * TILE,
-        f32::from(board.height()) * TILE,
-    );
+    let size = layout::board_extent(board);
     let mut rng = crate::app::effects::VisualRng::seeded(margin_seed(board));
-    let spot = |rng: &mut crate::app::effects::VisualRng| margin_spot(rng, Vec2::new(w, h), shore);
+    let spot = |rng: &mut crate::app::effects::VisualRng| margin_spot(rng, size, shore);
     let z = z::SAND - 9.5;
     // Grain first, the most of it and the least of each.
     for _ in 0..900 {
