@@ -65,6 +65,23 @@ pub struct BotRound {
     log: Box<dyn std::io::Write + Send + Sync>,
 }
 
+/// What a bot at a table with people is told of the game: the fair cursor
+/// always, since a person is at it.
+fn live_table<'a>(
+    game: u32,
+    names: &'a [String],
+    kinds: &'a [SeatKind],
+    clock: Clock,
+) -> Table<'a> {
+    Table {
+        game,
+        names,
+        kinds,
+        clock,
+        cursor: true,
+    }
+}
+
 /// An act committed to the lockstep, waiting for its frame to be played.
 #[derive(Clone, Copy)]
 struct InFlight {
@@ -158,13 +175,7 @@ impl BotRound {
     }
 
     fn table(&self) -> Table<'_> {
-        Table {
-            game: self.game,
-            names: &self.names,
-            kinds: &self.kinds,
-            clock: self.clock,
-            cursor: true,
-        }
+        live_table(self.game, &self.names, &self.kinds, self.clock)
     }
 
     /// Take everything the bots have said since the last tick.
@@ -289,23 +300,36 @@ impl BotRound {
             budget: vec![lookahead::CAP_LIVE; self.names.len()],
         });
         let now = Instant::now();
-        for i in 0..self.drivers.len() {
-            let seat = self.drivers[i].seat;
-            if std::mem::take(&mut self.drivers[i].rehello) && self.drivers[i].playing() {
-                let hello = protocol::hello(board, &self.table(), seat, true);
-                self.link.send(self.drivers[i].id, &hello);
-            }
-            if self.drivers[i].turn(t, now) != Turn::Send {
-                continue;
-            }
+        let BotRound {
+            link,
+            game,
+            drivers,
+            last,
+            quiet_since,
+            names,
+            kinds,
+            clock,
+            ..
+        } = self;
+        let table = live_table(*game, names, kinds, *clock);
+        let mut send = |id: BotId, msg: &serde_json::Value| link.send(id, msg);
+        for driver in drivers {
+            let seat = driver.seat;
             let you = You {
                 seat,
-                last: self.last[usize::from(seat)],
+                last: last[usize::from(seat)],
             };
-            let msg = protocol::tick(board, self.game, &you, &cursors);
-            if self.link.send(self.drivers[i].id, &msg) {
-                self.drivers[i].sent(t, now);
-                self.quiet_since[usize::from(seat)].get_or_insert(now);
+            // A tick still being answered is no matter here: the live
+            // clock commits whatever is in hand, and waits for nobody.
+            let turn = driver.offer_tick(
+                t,
+                now,
+                &mut send,
+                || protocol::hello(board, &table, seat, true),
+                || protocol::tick(board, *game, &you, &cursors),
+            );
+            if turn == Turn::Send {
+                quiet_since[usize::from(seat)].get_or_insert(now);
             }
         }
     }

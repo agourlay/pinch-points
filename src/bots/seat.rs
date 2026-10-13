@@ -19,6 +19,7 @@
 use super::listener::{BotId, GameMsg};
 use super::protocol::{Act, Outcome, Reply};
 use crate::sim::{Board, PlayerAction, PlayerId, Refusal};
+use serde_json::Value;
 use std::collections::VecDeque;
 use std::io::Write;
 use std::time::{Duration, Instant};
@@ -185,6 +186,39 @@ impl BotDriver {
             Turn::Skip
         } else {
             Turn::Send
+        }
+    }
+
+    /// Offer this seat tick `t`: `hello` again first if it came back and
+    /// is playing, then the tick if it is its turn. `send` writes a message
+    /// to the bot and says whether it went; `hello` and `tick` build the
+    /// two messages, and only when they are sent.
+    ///
+    /// Returns the seat's turn, a tick that could not be written read as
+    /// `Skip`: nothing went out that an answer could come back to.
+    pub fn offer_tick(
+        &mut self,
+        t: u64,
+        now: Instant,
+        send: &mut dyn FnMut(BotId, &Value) -> bool,
+        hello: impl FnOnce() -> Value,
+        tick: impl FnOnce() -> Value,
+    ) -> Turn {
+        let rehello = std::mem::take(&mut self.rehello) && self.playing();
+        let turn = self.turn(t, now);
+        if rehello {
+            send(self.id, &hello());
+        }
+        match turn {
+            Turn::Skip | Turn::Busy => turn,
+            Turn::Send => {
+                if send(self.id, &tick()) {
+                    self.sent(t, now);
+                    Turn::Send
+                } else {
+                    Turn::Skip
+                }
+            }
         }
     }
 

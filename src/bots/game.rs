@@ -120,13 +120,7 @@ impl Match<'_, '_> {
     }
 
     fn table(&self) -> Table<'_> {
-        Table {
-            game: self.spec.game,
-            names: &self.spec.names,
-            kinds: &self.kinds,
-            clock: self.spec.clock,
-            cursor: self.spec.fair_cursor,
-        }
+        table_of(&self.spec, &self.kinds)
     }
 
     fn hello(&self, seat: PlayerId, resumed: bool) -> Value {
@@ -273,33 +267,40 @@ impl Match<'_, '_> {
     /// the tick waits for.
     fn send_tick(&mut self, t: u64, cursors: &[Option<(u8, u8)>]) -> usize {
         let now = Instant::now();
+        let Match {
+            listener,
+            spec,
+            kinds,
+            bots,
+            last,
+            ..
+        } = self;
+        let table = table_of(spec, kinds);
+        let mut send = |id: BotId, msg: &Value| listener.send(id, msg);
         let mut expecting = 0;
-        for seat in 0..self.n() {
-            let Some(bot) = &mut self.bots[seat] else {
+        for (seat, bot) in bots.iter_mut().enumerate() {
+            let Some(bot) = bot else {
                 continue;
             };
-            let id = bot.id;
-            let rehello = std::mem::take(&mut bot.rehello) && bot.playing();
-            let turn = bot.turn(t, now);
-            if rehello {
-                self.listener.send(id, &self.hello(seat as PlayerId, true));
-            }
+            let player = seat as PlayerId;
+            let turn = bot.offer_tick(
+                t,
+                now,
+                &mut send,
+                || protocol::hello(&spec.board, &table, player, true),
+                || {
+                    let you = You {
+                        seat: player,
+                        last: last[seat],
+                    };
+                    protocol::tick(&spec.board, spec.game, &you, cursors)
+                },
+            );
+            // A tick still being answered waits its deadline like one just
+            // sent.
             match turn {
                 Turn::Skip => {}
-                Turn::Busy => expecting += 1,
-                Turn::Send => {
-                    let you = You {
-                        seat: seat as PlayerId,
-                        last: self.last[seat],
-                    };
-                    let msg = protocol::tick(&self.spec.board, self.spec.game, &you, cursors);
-                    if self.listener.send(id, &msg)
-                        && let Some(bot) = &mut self.bots[seat]
-                    {
-                        bot.sent(t, now);
-                        expecting += 1;
-                    }
-                }
+                Turn::Busy | Turn::Send => expecting += 1,
             }
         }
         expecting
@@ -541,6 +542,17 @@ impl Match<'_, '_> {
             ticks: spec.board.ticks(),
             elapsed: started.elapsed(),
         }
+    }
+}
+
+/// What every seat is told of the game as it starts.
+fn table_of<'a>(spec: &'a GameSpec, kinds: &'a [SeatKind]) -> Table<'a> {
+    Table {
+        game: spec.game,
+        names: &spec.names,
+        kinds,
+        clock: spec.clock,
+        cursor: spec.fair_cursor,
     }
 }
 
