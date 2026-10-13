@@ -65,42 +65,31 @@ impl Doorway {
     /// A doorway on this machine: the bots' own port if it is free, any
     /// port if not (a second game on one machine, an arena running).
     pub fn open() -> std::io::Result<Doorway> {
-        let config = Config::new(Admission::Keys(Vec::new()));
-        let (listener, events) = Listener::bind(
-            SocketAddr::from(([127, 0, 0, 1], DEFAULT_PORT)),
-            config.clone(),
-        )
-        .or_else(|_| Listener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), config))?;
-        let here = listener.local_addr();
-        Ok(Doorway {
-            listener,
-            events: std::sync::Mutex::new(events),
-            here,
-            lan: None,
-            showing_lan: false,
-            chairs: Vec::new(),
-            next_chair: 0,
-            seats_fixed: false,
-        })
+        Doorway::bind([127, 0, 0, 1], false)
     }
 
     /// A doorway on the LAN, for bots straight to a host (route 2): the
     /// bots' own port on every interface if it is free, any port if not.
     /// The key is the lock here, a single-use one per chair.
     pub fn open_lan() -> std::io::Result<Doorway> {
+        Doorway::bind([0, 0, 0, 0], true)
+    }
+
+    /// A doorway listening on `ip`, the bots' own port if it is free and
+    /// any port if not; `lan` when that is the LAN, and its strings are
+    /// the LAN's.
+    fn bind(ip: [u8; 4], lan: bool) -> std::io::Result<Doorway> {
         let config = Config::new(Admission::Keys(Vec::new()));
-        let (listener, events) = Listener::bind(
-            SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)),
-            config.clone(),
-        )
-        .or_else(|_| Listener::bind(SocketAddr::from(([0, 0, 0, 0], 0)), config))?;
+        let (listener, events) =
+            Listener::bind(SocketAddr::from((ip, DEFAULT_PORT)), config.clone())
+                .or_else(|_| Listener::bind(SocketAddr::from((ip, 0)), config))?;
         let here = listener.local_addr();
         Ok(Doorway {
             listener,
             events: std::sync::Mutex::new(events),
             here,
-            lan: Some(here),
-            showing_lan: true,
+            lan: lan.then_some(here),
+            showing_lan: lan,
             chairs: Vec::new(),
             next_chair: 0,
             seats_fixed: false,
@@ -168,11 +157,7 @@ impl Doorway {
                 // Only those still here: one gone is not seated.
                 let id = chair.bot.filter(|&id| self.listener.connected(id))?;
                 let info = self.listener.bot(id)?;
-                let name = match info.owner {
-                    Some(owner) => fill(tr.bot_owned, &[("bot", &info.name), ("o", &owner)]),
-                    None => fill(tr.bot_unowned, &[("bot", &info.name)]),
-                };
-                Some((info.id, name))
+                Some((info.id, bot_name(tr, &info.name, info.owner.as_deref())))
             })
             .collect()
     }
@@ -345,10 +330,8 @@ impl Doorway {
     /// 1): its owner is whoever is at this machine, not what it declared.
     pub fn named_for(&self, tr: &crate::app::i18n::Tr, owner: &str) -> Option<String> {
         let info = self.listener.bot(self.chairs.first()?.bot?)?;
-        Some(match owner.trim().is_empty() {
-            true => fill(tr.bot_unowned, &[("bot", &info.name)]),
-            false => fill(tr.bot_owned, &[("bot", &info.name), ("o", owner.trim())]),
-        })
+        let owner = Some(owner.trim()).filter(|owner| !owner.is_empty());
+        Some(bot_name(tr, &info.name, owner))
     }
 
     /// What the seat a bot holds is called: its registered name and its
@@ -357,10 +340,15 @@ impl Doorway {
     pub fn seat_name(&self, tr: &crate::app::i18n::Tr, seat: u8) -> Option<String> {
         let chair = self.chairs.iter().find(|chair| chair.seat == seat)?;
         let info = self.listener.bot(chair.bot?)?;
-        Some(match info.owner {
-            Some(owner) => fill(tr.bot_owned, &[("bot", &info.name), ("o", &owner)]),
-            None => fill(tr.bot_unowned, &[("bot", &info.name)]),
-        })
+        Some(bot_name(tr, &info.name, info.owner.as_deref()))
+    }
+}
+
+/// A bot's seat name: "Greedy (Ana)", or "Greedy" with no owner.
+fn bot_name(tr: &crate::app::i18n::Tr, name: &str, owner: Option<&str>) -> String {
+    match owner {
+        Some(owner) => fill(tr.bot_owned, &[("bot", name), ("o", owner)]),
+        None => fill(tr.bot_unowned, &[("bot", name)]),
     }
 }
 

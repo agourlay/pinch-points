@@ -82,6 +82,21 @@ fn live_table<'a>(
     }
 }
 
+/// Where a round's seats write what they did: its decision log, and the
+/// game's own log with every note, for the author watching it.
+fn journal<'a>(
+    log: &'a mut (dyn std::io::Write + Send + Sync),
+    console: &'a mut dyn FnMut(String),
+    game: u32,
+) -> Journal<'a> {
+    Journal {
+        log,
+        console,
+        echo_notes: true,
+        game,
+    }
+}
+
 /// An act committed to the lockstep, waiting for its frame to be played.
 #[derive(Clone, Copy)]
 struct InFlight {
@@ -181,12 +196,7 @@ impl BotRound {
     /// Take everything the bots have said since the last tick.
     fn drain(&mut self, t: u64, news: &mut Vec<(u8, News)>) {
         let mut console = |line: String| info!("{line}");
-        let mut journal = Journal {
-            log: &mut self.log,
-            console: &mut console,
-            echo_notes: true,
-            game: self.game,
-        };
+        let mut journal = journal(&mut self.log, &mut console, self.game);
         while let Some(msg) = self.link.try_recv() {
             let seat = msg.seat();
             if let Some(driver) = self.drivers.iter_mut().find(|d| d.seat == seat) {
@@ -235,12 +245,7 @@ impl BotRound {
         let t = board.ticks();
         self.drain(t, news);
         let mut console = |line: String| info!("{line}");
-        let mut journal = Journal {
-            log: &mut self.log,
-            console: &mut console,
-            echo_notes: true,
-            game: self.game,
-        };
+        let mut journal = journal(&mut self.log, &mut console, self.game);
         let mut committed = Vec::new();
         for driver in &mut self.drivers {
             let seat = driver.seat;
