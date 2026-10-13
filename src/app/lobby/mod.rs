@@ -35,7 +35,7 @@ use crate::app::cycle::{Cycle, Turn};
 use crate::app::i18n::fill;
 use crate::app::match_setup::MatchConfig;
 use crate::app::menu_ui::Nav;
-use crate::app::net::{Invitation, LobbyReturn, Online, OnlineSession, PeerBook};
+use crate::app::net::{HostedBot, Invitation, LobbyReturn, Online, OnlineSession, PeerBook};
 use crate::app::palette;
 use crate::app::settings::GameSettings;
 use crate::app::{Screen, VersusPhase};
@@ -147,7 +147,7 @@ impl Hosted {
     /// Peers here to play, the ones who fill the seats. Capped at the five
     /// chairs beside the host's: seats run out long before the socket
     /// does, which takes [`MAX_PEERS`](crate::transport::MAX_PEERS), and
-    /// `seat_plan` turns the surplus into onlookers, so a table of eight
+    /// `PeerBook::seat_plan` turns the surplus into onlookers, so a table of eight
     /// would-be rivals reads as "5 aboard".
     pub fn players_aboard(&self) -> usize {
         let seatable = MAX_PLAYERS - 1;

@@ -237,7 +237,11 @@ mod tests {
             session.bot = bot;
             session.bots_here = bots_here
                 .into_iter()
-                .map(|seat| (seat, 0, "Greedy".to_string()))
+                .map(|seat| net::HostedBot {
+                    seat,
+                    id: 0,
+                    name: "Greedy".to_string(),
+                })
                 .collect();
             session
         };

@@ -209,6 +209,39 @@ impl PeerBook {
         }
     }
 
+    /// Which of the first `peers` peers get a chair, in peer order, and
+    /// which are watching (`None`). The host keeps seat 0, so the chairs
+    /// are dealt from 1.
+    ///
+    /// Seats run out before connections do: the socket takes
+    /// [`MAX_PEERS`](crate::transport::MAX_PEERS) and the table has
+    /// [`MAX_PLAYERS`](crate::sim::MAX_PLAYERS) chairs, one of them the
+    /// host's. The surplus is seated as onlookers rather than handed a seat
+    /// number the sim has no slot for, so a beach holds the host and
+    /// sixteen others in any mix: five rivals and eleven watching, or one
+    /// AI and sixteen watching.
+    ///
+    /// A watcher keeps no chair: one that asked, at the launch or since.
+    /// One that sat the last round out for want of a chair is dealt one
+    /// when there is one, and so is a peer the socket has that no row has
+    /// been written for yet. The same deal at the launch and before every
+    /// round after it, so those still here keep their seats and the queue
+    /// fills what is left, pushing the AI back a seat at a time.
+    pub fn seat_plan(&self, peers: usize) -> Vec<Option<u8>> {
+        let mut next = 1u8; // seat 0 is the host's
+        (0..peers)
+            .map(|peer| {
+                let watches = self.get(peer).is_some_and(Peer::watches);
+                if watches || usize::from(next) >= crate::sim::MAX_PLAYERS {
+                    return None;
+                }
+                let seat = next;
+                next += 1;
+                Some(seat)
+            })
+            .collect()
+    }
+
     /// How many peers the launch plan covers. Peers are registered in
     /// arrival order and the plan is dealt to everyone at the table when
     /// the round begins, so the planned peers are the leading run and

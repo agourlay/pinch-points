@@ -291,21 +291,20 @@ fn launch_the_match(
         unreachable!("launching a match from a lobby that is not hosting");
     };
     debug_assert_eq!(joined, peers.len());
-    let plan = seat_plan(&peers);
+    let plan = peers.seat_plan(peers.len());
     let people = 1 + plan.iter().filter(|seat| seat.is_some()).count() as u8;
     // The bots that came straight here (route 2) sit after the people, as
     // many as there are chairs for; the host speaks for each of them.
-    let bots_here: Vec<(u8, crate::bots::listener::BotId, String)> = arena
+    let mut bots_here: Vec<HostedBot> = arena
         .bots
         .door
         .as_ref()
         .map(|door| door.arrived(settings.tr()))
         .unwrap_or_default()
         .into_iter()
-        .take(MAX_PLAYERS - usize::from(people))
-        .enumerate()
-        .map(|(i, (id, name))| (people + i as u8, id, name))
+        .map(|(id, name)| HostedBot { seat: 0, id, name })
         .collect();
+    crate::app::net::seat_the_hosts_bots(&mut bots_here, people);
     let humans = people + bots_here.len() as u8;
     // AI seats come from the host's match setup, and sit behind the
     // humans. The host's dials and its team-scoring setting travel with
@@ -329,46 +328,12 @@ fn launch_the_match(
         ..crate::app::match_setup::terms(config, settings.team_mode, seed)
     };
     let names = seat_names(&settings.names[0], &plan, &peers, &bots_here);
-    let wire_names = crate::transport::wire_table(&names);
-    // What holds each seat: the host's own a person, a peer's whatever its
-    // greeting said, the host's bots bots, and the top seats the AI's.
-    let mut kinds = [crate::sim::SeatKind::Human; MAX_PLAYERS];
-    for (seat, ..) in &bots_here {
-        kinds[usize::from(*seat)] = crate::sim::SeatKind::Bot;
-    }
-    for (peer, slot) in plan.iter().enumerate() {
-        if let Some(seat) = slot
-            && peers.get(peer).is_some_and(|peer| peer.bot)
-        {
-            kinds[usize::from(*seat)] = crate::sim::SeatKind::Bot;
-        }
-    }
-    for seat in humans..seats {
-        kinds[usize::from(seat)] = crate::sim::SeatKind::Ai;
-    }
-    let wire_kinds = crate::transport::wire_kinds(&kinds);
-    // Seats go to the peers that came to play, in peer order; the
-    // onlookers - and anyone the table ran out of chairs for - are told
-    // they are watching.
+    let kinds = crate::app::net::seat_kinds(&plan, &peers, &bots_here, humans, seats);
     // A series begins at round one with an empty tally; a single round
     // carries no standing at all.
     let standing = terms
         .is_series()
         .then(crate::transport::SeriesStanding::opening);
-    for (peer, slot) in plan.iter().enumerate() {
-        transport.send_to(
-            peer,
-            NetMsg::Start(Invitation {
-                seats,
-                seat: *slot,
-                terms,
-                names: wire_names,
-                kinds: wire_kinds,
-                standing,
-                beach: beach.clone(),
-            }),
-        );
-    }
     let mut session = OnlineSession::new(
         transport,
         crate::app::net::lockstep_for(Some(0), humans),
@@ -380,16 +345,8 @@ fn launch_the_match(
     // nobody could say which of them was right.
     session.beach = beach;
     session.peers = peers;
-    session.peers.deal(&plan);
     session.names = names;
-    session.kinds = kinds;
-    let spoken: Vec<u8> = bots_here.iter().map(|(seat, ..)| *seat).collect();
-    session.session.speak_for(&spoken);
-    session.bots_here = bots_here;
-    // Kept for the round as well as sent: the invitation the host
-    // re-answers a stray greeting with, and the round it hands a late
-    // watcher, carry it too.
-    session.series_standing = standing;
+    session.deal(&plan, kinds, bots_here, standing);
     session.stay_on_air(announcer);
     session.home.from_lobby = true;
     session.home.game_name = state.game_name.clone();
@@ -413,21 +370,14 @@ fn seat_names(
     me: &str,
     plan: &[Option<u8>],
     peers: &PeerBook,
-    bots_here: &[(u8, crate::bots::listener::BotId, String)],
+    bots_here: &[HostedBot],
 ) -> [String; MAX_PLAYERS] {
-    let mut names: [String; MAX_PLAYERS] = Default::default();
-    names[0] = crate::transport::name_as_sent(me);
-    for (peer, slot) in plan.iter().enumerate() {
-        if let Some(seat) = slot
-            && let Some(peer) = peers.get(peer)
-        {
-            names[usize::from(*seat)].clone_from(&peer.name);
-        }
-    }
-    for (seat, _, name) in bots_here {
-        names[usize::from(*seat)].clone_from(name);
-    }
-    names
+    crate::app::net::seat_names(
+        crate::transport::name_as_sent(me),
+        plan,
+        |peer| peers.get(peer).map(|peer| peer.name.as_str()),
+        bots_here,
+    )
 }
 
 /// Fold this tick's greetings and silences into the table: who has just
@@ -775,33 +725,6 @@ pub(super) fn announce_to_table(state: &LobbyState, who: &str, line: &str) {
     }
 }
 
-/// Which peers get a seat, in peer order, and which are watching (`None`).
-///
-/// Seats run out before connections do: the socket takes
-/// [`MAX_PEERS`](crate::transport::MAX_PEERS) and the table has
-/// [`MAX_PLAYERS`] chairs, one of them the host's. The surplus is seated
-/// as onlookers rather than handed a seat number the sim has no slot for,
-/// so a beach holds the host and sixteen others in any mix: five rivals
-/// and eleven watching, or one AI and sixteen watching.
-///
-/// Named rather than counted, because the count moved: this said nine
-/// from before the socket was raised to sixteen, which is the change that
-/// made a peer in line cheap enough to allow more of them.
-pub(super) fn seat_plan(peers: &PeerBook) -> Vec<Option<u8>> {
-    let mut next = 1u8; // seat 0 is the host's
-    peers
-        .iter()
-        .map(|peer| {
-            if peer.watch || usize::from(next) >= MAX_PLAYERS {
-                return None;
-            }
-            let seat = next;
-            next += 1;
-            Some(seat)
-        })
-        .collect()
-}
-
 /// Tell the network a hosted beach is going away, if this lobby is hosting
 /// one: the host leaving the screen. Starting the match does not come
 /// through here: the launch takes the beacon into the round, which keeps
@@ -818,6 +741,11 @@ pub(super) fn say_goodbye(state: &LobbyState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The launch's deal: every peer the lobby holds.
+    fn seat_plan(peers: &PeerBook) -> Vec<Option<u8>> {
+        peers.seat_plan(peers.len())
+    }
 
     /// `n` nameless peers, the given ones watching.
     fn table(n: usize, watchers: &[usize]) -> PeerBook {

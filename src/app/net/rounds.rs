@@ -24,6 +24,76 @@ pub(crate) fn lockstep_for(seat: Option<u8>, humans: u8) -> Lockstep {
     }
 }
 
+/// The host's own bots (route 2) seated after the `people`, as many as
+/// there are chairs for, in the order they came: at the launch and again
+/// before every round, since a person leaving moves them up a chair.
+pub(crate) fn seat_the_hosts_bots(bots: &mut Vec<HostedBot>, people: u8) {
+    bots.truncate(MAX_PLAYERS - usize::from(people));
+    for (i, bot) in bots.iter_mut().enumerate() {
+        bot.seat = people + i as u8;
+    }
+}
+
+/// What every seat is before the deal says more: the AI in the top seats
+/// from `humans` up to `seats`, a person in the rest.
+fn ai_on_top(humans: u8, seats: u8) -> [crate::sim::SeatKind; MAX_PLAYERS] {
+    std::array::from_fn(
+        |seat| match seat >= usize::from(humans) && seat < usize::from(seats) {
+            true => crate::sim::SeatKind::Ai,
+            false => crate::sim::SeatKind::Human,
+        },
+    )
+}
+
+/// The table's names for a dealt `plan`: the host in seat 0 under `host`,
+/// each seated peer under what `peer_name` says it is called, and the
+/// host's own bots under theirs. Empty slots (AI seats, the nameless) fall
+/// back to seat labels on every screen.
+pub(crate) fn seat_names<'a>(
+    host: String,
+    plan: &[Option<u8>],
+    peer_name: impl Fn(usize) -> Option<&'a str>,
+    bots_here: &[HostedBot],
+) -> [String; MAX_PLAYERS] {
+    let mut names: [String; MAX_PLAYERS] = Default::default();
+    names[0] = host;
+    for (peer, slot) in plan.iter().enumerate() {
+        if let Some(seat) = slot
+            && let Some(name) = peer_name(peer)
+        {
+            names[usize::from(*seat)] = name.to_string();
+        }
+    }
+    for bot in bots_here {
+        names[usize::from(bot.seat)].clone_from(&bot.name);
+    }
+    names
+}
+
+/// What holds each seat of a dealt `plan`: the host a person, a peer
+/// whatever its greeting said, the host's own bots bots, and the top seats
+/// (`humans` up to `seats`) the AI.
+pub(crate) fn seat_kinds(
+    plan: &[Option<u8>],
+    peers: &PeerBook,
+    bots_here: &[HostedBot],
+    humans: u8,
+    seats: u8,
+) -> [crate::sim::SeatKind; MAX_PLAYERS] {
+    let mut kinds = ai_on_top(humans, seats);
+    for bot in bots_here {
+        kinds[usize::from(bot.seat)] = crate::sim::SeatKind::Bot;
+    }
+    for (peer, slot) in plan.iter().enumerate() {
+        if let Some(seat) = slot
+            && peers.get(peer).is_some_and(|row| row.bot)
+        {
+            kinds[usize::from(*seat)] = crate::sim::SeatKind::Bot;
+        }
+    }
+    kinds
+}
+
 impl OnlineSession {
     /// A session formed on a host's invitation, as a joiner's is from the
     /// lobby: the socket it greeted over, and everything the `Start` said.
@@ -222,32 +292,6 @@ impl OnlineSession {
         }
     }
 
-    /// Host: the table for the next round, admitting whoever queued while
-    /// this one played.
-    ///
-    /// Seats are handed out in peer order as they were at the launch, so
-    /// those still here keep theirs, and the queue fills what is left,
-    /// pushing the AI back a seat at a time. Returns the new plan, one
-    /// entry per peer, `None` for a peer that watches or that the table
-    /// could not fit.
-    fn next_plan(&self, peers: usize) -> Vec<Option<u8>> {
-        let mut next = 1u8; // the host keeps seat 0
-        (0..peers)
-            .map(|peer| {
-                // A watcher keeps no chair: one that asked, at the launch
-                // or since. One that sat the last round out for want of a
-                // chair is dealt one when there is one.
-                let watches = self.peers.get(peer).is_some_and(Peer::watches);
-                if watches || usize::from(next) >= MAX_PLAYERS {
-                    return None;
-                }
-                let seat = next;
-                next += 1;
-                Some(seat)
-            })
-            .collect()
-    }
-
     /// Host: what a greeting earns its sender, with what it said kept.
     ///
     /// One answer whether the round is running (`pump`) or the table is on
@@ -359,17 +403,14 @@ impl OnlineSession {
         mut terms: MatchTerms,
         standing: Option<SeriesStanding>,
     ) -> Option<SeriesStanding> {
-        let peers = self.transport.peer_count();
-        let plan = self.next_plan(peers);
+        // The table for the next round, admitting whoever queued while
+        // this one played: one entry per peer on the socket, `None` for a
+        // peer that watches or that the table could not fit.
+        let plan = self.peers.seat_plan(self.transport.peer_count());
         let people = 1 + plan.iter().flatten().count() as u8;
-        // The bots that came straight to this host (route 2) sit after the
-        // people again, as many as there are chairs for.
         let mut bots_here = std::mem::take(&mut self.bots_here);
-        bots_here.truncate(MAX_PLAYERS - usize::from(people));
-        let bots_were: Vec<u8> = bots_here.iter().map(|(seat, ..)| *seat).collect();
-        for (i, bot) in bots_here.iter_mut().enumerate() {
-            bot.0 = people + i as u8;
-        }
+        let bots_were: Vec<u8> = bots_here.iter().map(|bot| bot.seat).collect();
+        seat_the_hosts_bots(&mut bots_here, people);
         let humans = people + bots_here.len() as u8;
         // A beach needs two castles, and a host whose table has emptied is
         // still entitled to another round, against the AI, since playing
@@ -404,8 +445,8 @@ impl OnlineSession {
                     new_wins[usize::from(*new_seat)] = wins[usize::from(old_seat)];
                 }
             }
-            for ((new_seat, ..), old_seat) in bots_here.iter().zip(&bots_were) {
-                new_wins[usize::from(*new_seat)] = wins[usize::from(*old_seat)];
+            for (bot, old_seat) in bots_here.iter().zip(&bots_were) {
+                new_wins[usize::from(bot.seat)] = wins[usize::from(*old_seat)];
             }
             // And the game's AI, which sits in the top chairs: the first AI
             // seat of this round's table is the first of the next one's.
@@ -427,58 +468,60 @@ impl OnlineSession {
         // Names travel with the invitation, as they did at the launch: a
         // player admitted from the queue is a stranger to every other
         // screen until this says otherwise.
-        let mut names: [String; MAX_PLAYERS] = Default::default();
-        names[0].clone_from(&self.names[0]);
-        for (peer, slot) in plan.iter().enumerate() {
-            if let Some(seat) = slot
-                && let Some(name) = self.peer_name(peer)
-            {
-                names[usize::from(*seat)] = name.to_string();
-            }
-        }
-        for (seat, _, name) in &bots_here {
-            names[usize::from(*seat)].clone_from(name);
-        }
-        let wire = wire_table(&names);
-        // What holds each seat: the host a person, a peer whatever it
-        // greeted as, the host's bots bots, the top seats the AI.
-        let mut kinds = [crate::sim::SeatKind::Human; MAX_PLAYERS];
-        for (seat, ..) in &bots_here {
-            kinds[usize::from(*seat)] = crate::sim::SeatKind::Bot;
-        }
-        for (peer, slot) in plan.iter().enumerate() {
-            if let Some(seat) = slot
-                && self.peers.get(peer).is_some_and(|row| row.bot)
-            {
-                kinds[usize::from(*seat)] = crate::sim::SeatKind::Bot;
-            }
-        }
-        for seat in terms.humans(seats)..seats {
-            kinds[usize::from(seat)] = crate::sim::SeatKind::Ai;
-        }
+        let names = seat_names(
+            self.names[0].clone(),
+            &plan,
+            |peer| self.peer_name(peer),
+            &bots_here,
+        );
+        let kinds = seat_kinds(&plan, &self.peers, &bots_here, humans, seats);
+        self.begin_round(seats, Some(0), terms, names);
+        self.deal(&plan, kinds, bots_here, standing);
+        self.next_round = true;
+        standing
+    }
+
+    /// Host: seat a dealt table and tell every peer in `plan` its place.
+    ///
+    /// The one way a host deals, at the launch and before every round
+    /// after it: the caller has set the round's seats, terms, names and
+    /// beach on this session, and this hands out the chairs, writes down
+    /// what holds each seat, speaks for the host's own bots, and sends each
+    /// peer the `Start` it plays the round from. Every `Start` is written
+    /// off the session as it now stands, so the host plays on the very
+    /// table it sent.
+    pub(crate) fn deal(
+        &mut self,
+        plan: &[Option<u8>],
+        kinds: [crate::sim::SeatKind; MAX_PLAYERS],
+        bots_here: Vec<HostedBot>,
+        standing: Option<SeriesStanding>,
+    ) {
+        self.peers.deal(plan);
+        self.kinds = kinds;
+        let spoken: Vec<u8> = bots_here.iter().map(|bot| bot.seat).collect();
+        self.session.speak_for(&spoken);
+        self.bots_here = bots_here;
+        // Kept for the round as well as sent: the invitation the host
+        // re-answers a stray greeting with, and the round it hands a late
+        // watcher, carry it too.
+        self.series_standing = standing;
+        let names = wire_table(&self.names);
+        let kinds = crate::transport::wire_kinds(&self.kinds);
         for (peer, slot) in plan.iter().enumerate() {
             self.transport.send_to(
                 peer,
                 NetMsg::Start(Invitation {
-                    seats,
+                    seats: self.seats,
                     seat: *slot,
-                    terms,
-                    names: wire,
-                    kinds: crate::transport::wire_kinds(&kinds),
+                    terms: self.terms,
+                    names,
+                    kinds,
                     standing,
                     beach: self.beach.clone(),
                 }),
             );
         }
-        self.peers.deal(&plan);
-        self.begin_round(seats, Some(0), terms, names);
-        self.kinds = kinds;
-        let spoken: Vec<u8> = bots_here.iter().map(|(seat, ..)| *seat).collect();
-        self.session.speak_for(&spoken);
-        self.bots_here = bots_here;
-        self.series_standing = standing;
-        self.next_round = true;
-        standing
     }
 
     /// Take up the terms of a new round: a fresh board, a lockstep back at
@@ -509,12 +552,7 @@ impl OnlineSession {
         self.names = names;
         // The AI holds the top seats; anything else a person until the
         // round's kinds say otherwise, which its caller writes after this.
-        self.kinds = std::array::from_fn(|seat| {
-            match seat >= usize::from(terms.humans(seats)) && seat < usize::from(seats) {
-                true => crate::sim::SeatKind::Ai,
-                false => crate::sim::SeatKind::Human,
-            }
-        });
+        self.kinds = ai_on_top(terms.humans(seats), seats);
         self.hashes.reset();
         self.resume_echo = 0;
         // Seats given up on were last round's seats, at last round's
@@ -1243,7 +1281,11 @@ mod next_round_tests {
         host.peers.deal(&[Some(1)]);
         host.names[0] = "Anna".into();
         host.names[1] = "Bo".into();
-        host.bots_here = vec![(2, 7, "Greedy".into())];
+        host.bots_here = vec![HostedBot {
+            seat: 2,
+            id: 7,
+            name: "Greedy".into(),
+        }];
         let standing = SeriesStanding {
             round: 2,
             wins: [0, 0, 2, 0, 0, 0],
@@ -1254,7 +1296,7 @@ mod next_round_tests {
         let next = host
             .call_next_round(terms(2), Some(standing))
             .expect("a series has a standing");
-        assert_eq!(host.bots_here[0].0, 1, "the bot moved up a chair");
+        assert_eq!(host.bots_here[0].seat, 1, "the bot moved up a chair");
         assert_eq!(next.wins[1], 2, "and took its two wins with it");
         assert_eq!(next.wins[2], 0);
     }
@@ -1297,7 +1339,7 @@ mod next_round_tests {
             host.peers.get(0).is_some_and(|row| row.watch && !row.bot),
             "and is dealt no chair"
         );
-        assert_eq!(host.next_plan(1), vec![None]);
+        assert_eq!(host.peers.seat_plan(1), vec![None]);
 
         // Welcome: the same greeting is a player at the table.
         let mut host = OnlineSession::new(
@@ -1451,7 +1493,7 @@ mod next_round_tests {
             terms(1),
         );
         host.peers.deal(&[Some(1), None]);
-        assert_eq!(host.next_plan(2), vec![Some(1), Some(2)]);
+        assert_eq!(host.peers.seat_plan(2), vec![Some(1), Some(2)]);
     }
 
     /// Whoever queued while the round played gets a chair in the next one,
@@ -1467,7 +1509,7 @@ mod next_round_tests {
         // One peer played, one watched, two turned up while they played.
         host.peers.deal(&[Some(1), None]);
         host.peers.row(1).watch = true;
-        let plan = host.next_plan(4);
+        let plan = host.peers.seat_plan(4);
         assert_eq!(
             plan,
             vec![Some(1), None, Some(2), Some(3)],

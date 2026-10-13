@@ -20,6 +20,18 @@ use std::collections::VecDeque;
 /// peers already heard the first one.
 const RESUME_ECHOES: u8 = 30;
 
+/// A bot connected straight to this host (route 2): the seat it holds
+/// this round, which of the host's bots it is, and what it is called.
+///
+/// Named rather than a tuple: `(seat, id, ..)` is two small numbers next
+/// to each other, kept apart only by their order.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct HostedBot {
+    pub seat: u8,
+    pub id: crate::bots::listener::BotId,
+    pub name: String,
+}
+
 pub struct OnlineSession {
     pub transport: UdpTransport,
     pub session: Lockstep,
@@ -58,7 +70,7 @@ pub struct OnlineSession {
     /// Host side, route 2: the bots connected straight to this host, each
     /// with the seat it holds this round and what it is called. The host
     /// commits their inputs as well as its own.
-    pub bots_here: Vec<(u8, crate::bots::listener::BotId, String)>,
+    pub bots_here: Vec<HostedBot>,
     /// What each seat is called, agreed at the handshake so every peer
     /// shows the same table. Empty entries fall back to seat labels; local
     /// couch names never apply to an online round.
@@ -352,7 +364,7 @@ mod presence;
 mod rounds;
 pub(crate) use presence::{abandon_the_departed, catch_up_again, leave_a_hostless_round};
 pub use rounds::Invitation;
-pub(crate) use rounds::lockstep_for;
+pub(crate) use rounds::{lockstep_for, seat_kinds, seat_names, seat_the_hosts_bots};
 
 impl OnlineSession {
     pub fn new(

@@ -171,7 +171,7 @@ pub(super) fn online_controllers(session: &net::OnlineSession) -> Controllers {
             || session
                 .bots_here
                 .iter()
-                .any(|(bot, ..)| usize::from(*bot) == seat)
+                .any(|bot| usize::from(bot.seat) == seat)
     };
     Controllers(std::array::from_fn(|seat| match ai[seat] {
         Some(level) => SeatController::Ai(level),

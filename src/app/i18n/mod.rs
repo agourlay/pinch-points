@@ -684,7 +684,7 @@ struct Tr {
     ///
     /// It says where they are standing rather than what they will get: a
     /// chair is free next round only if one of the players does not come
-    /// back, which nobody knows yet (see `OnlineSession::next_plan`).
+    /// back, which nobody knows yet (see `PeerBook::seat_plan`).
     pub lobby_queued_prompt: &'static str,
     /// The same line for one of those who came to watch, who *can* be
     /// promised what comes next: the crowd always has room.

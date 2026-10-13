@@ -295,7 +295,7 @@ pub fn begin_round(
                 session
                     .bots_here
                     .iter()
-                    .map(|(seat, id, _)| (*seat, *id))
+                    .map(|bot| (bot.seat, bot.id))
                     .collect(),
             ),
         },
