@@ -1,7 +1,7 @@
 //! The doorway card: the one line each bot needs, a way to copy it, and
 //! what has connected so far.
 
-use super::{BotSeats, Waiting};
+use super::{BotSeats, DoorFor};
 use crate::app::i18n::fill;
 use crate::sim::MAX_PLAYERS;
 use bevy::prelude::*;
@@ -22,12 +22,13 @@ const DOOR_LINES: usize = 3 + MAX_PLAYERS + 1;
 /// What the card says, line by line, as it stands.
 fn door_lines(bots: &BotSeats, tr: &crate::app::i18n::Tr, beach: &str) -> Vec<(String, Color)> {
     let mut lines = vec![(String::new(), Color::NONE); DOOR_LINES];
-    let (Some(waiting), Some(door)) = (&bots.waiting, &bots.door) else {
+    let Some(door) = &bots.door else {
         return lines;
     };
-    let title = match waiting {
-        Waiting::Couch => tr.door_title_table.to_string(),
-        Waiting::Join => fill(tr.door_title_join, &[("b", beach)]),
+    let title = match bots.door_for {
+        DoorFor::Couch => tr.door_title_table.to_string(),
+        DoorFor::Join(_) => fill(tr.door_title_join, &[("b", beach)]),
+        DoorFor::Nothing | DoorFor::Joined(_) => return lines,
     };
     lines[0] = (title, crate::app::palette::GOLD);
     lines[1] = (
@@ -79,7 +80,7 @@ pub fn door_card(
     cards: Query<Entity, With<DoorCard>>,
     mut lines: Query<(&DoorLine, &mut Text, &mut TextColor, &mut Node)>,
 ) {
-    let up = bots.waiting.is_some() && bots.door.is_some();
+    let up = bots.door_for.card_up() && bots.door.is_some();
     if !up {
         for card in &cards {
             commands.entity(card).despawn();
@@ -144,24 +145,24 @@ pub fn door_input(
     settings: Res<crate::app::settings::GameSettings>,
 ) {
     let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
-    if bots.waiting.is_none() {
+    if !bots.door_for.card_up() {
         return;
     }
     let tr = settings.tr();
     if keys.just_pressed(KeyCode::Escape) {
-        bots.waiting = None;
+        bots.door_for = DoorFor::Nothing;
         bots.feedback.clear();
         bots.door = None;
         return;
     }
     let BotSeats {
         door,
-        waiting,
+        door_for,
         feedback,
         ..
     } = &mut *bots;
     let Some(door) = door else {
-        *waiting = None;
+        *door_for = DoorFor::Nothing;
         return;
     };
     door.poll();

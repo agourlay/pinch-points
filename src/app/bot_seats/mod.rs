@@ -36,22 +36,40 @@ pub struct BotSeats {
     round: Option<BotRound>,
     /// What the table should be told, for [`announce`] to word.
     pub news: Vec<(u8, News)>,
-    /// A doorway card is up, and what it is for.
-    pub waiting: Option<Waiting>,
+    /// What the doorway is for: a card up waiting for its bots, or the
+    /// beach its bot joined.
+    pub door_for: DoorFor,
     /// What the card has to say about the last key pressed on it.
     pub feedback: String,
-    /// The beach a bot is joining once it has registered (route 1).
-    pub join_to: Option<SocketAddr>,
     games: u32,
 }
 
-/// What a doorway card is waiting for its bots in order to do.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Waiting {
-    /// Start the match being set up on this couch.
+/// What the doorway is for, as far as this machine's next step goes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum DoorFor {
+    /// No card is up and no beach was joined through it: a host's door,
+    /// or no doorway at all.
+    #[default]
+    Nothing,
+    /// A card is up waiting for the bots to start the match being set up
+    /// on this couch.
     Couch,
-    /// Join the beach picked in the lobby as a bot (route 1).
-    Join,
+    /// A card is up waiting for the bot that joins the beach at this
+    /// address, picked in the lobby (route 1).
+    Join(SocketAddr),
+    /// Its bot has joined the beach at this address: dialled, and the
+    /// card down.
+    Joined(SocketAddr),
+}
+
+impl DoorFor {
+    /// A doorway card is up, waiting for its bots.
+    pub fn card_up(self) -> bool {
+        match self {
+            DoorFor::Couch | DoorFor::Join(_) => true,
+            DoorFor::Nothing | DoorFor::Joined(_) => false,
+        }
+    }
 }
 
 impl BotSeats {
@@ -63,9 +81,11 @@ impl BotSeats {
     /// `at_the_beach` is whether this machine is still greeting it or
     /// playing at it.
     pub fn leave_the_beach(&mut self, at_the_beach: bool) {
-        if self.join_to.is_some() && self.waiting.is_none() && !at_the_beach {
+        if let DoorFor::Joined(_) = self.door_for
+            && !at_the_beach
+        {
             self.door = None;
-            self.join_to = None;
+            self.door_for = DoorFor::Nothing;
         }
     }
 
@@ -372,9 +392,10 @@ mod tests {
     /// answered, or on another build. Its doorway does not linger.
     #[test]
     fn a_failed_join_as_a_bot_closes_its_doorway() {
+        let beach = SocketAddr::from(([127, 0, 0, 1], 1));
         let mut bots = BotSeats {
             door: Some(Doorway::open().expect("a port on this machine")),
-            join_to: Some(SocketAddr::from(([127, 0, 0, 1], 1))),
+            door_for: DoorFor::Joined(beach),
             ..BotSeats::default()
         };
         let here = bots.door.as_ref().expect("open").here();
@@ -382,14 +403,14 @@ mod tests {
         bots.leave_the_beach(true);
         assert!(bots.door.is_some());
         // While the card waits for its bot, nothing has been dialled yet.
-        bots.waiting = Some(Waiting::Join);
+        bots.door_for = DoorFor::Join(beach);
         bots.leave_the_beach(false);
         assert!(bots.door.is_some(), "the card is still up");
         // Dialled, and then put out of the beach.
-        bots.waiting = None;
+        bots.door_for = DoorFor::Joined(beach);
         bots.leave_the_beach(false);
         assert!(bots.door.is_none(), "the doorway closed");
-        assert!(bots.join_to.is_none());
+        assert_eq!(bots.door_for, DoorFor::Nothing);
         // And its port with it.
         let mut refused = false;
         for _ in 0..100 {
@@ -402,7 +423,7 @@ mod tests {
         assert!(refused, "nobody listens on {here} any more");
         // A host's doorway (route 2) has no beach to leave.
         let mut host = BotSeats {
-            door: Some(Doorway::open().expect("a port on this machine")),
+            door: Some(Doorway::open_host_here().expect("a port on this machine")),
             ..BotSeats::default()
         };
         host.leave_the_beach(false);

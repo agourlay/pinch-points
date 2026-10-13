@@ -38,10 +38,20 @@ pub struct Doorway {
     pub showing_lan: bool,
     pub chairs: Vec<Chair>,
     next_chair: u32,
+    kind: DoorKind,
+}
+
+/// What a doorway's chairs are.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DoorKind {
     /// Each chair is a seat's (a couch's bot seats, a bot joining a
-    /// party), rather than the next of however many come (a host's door):
-    /// a bot that goes leaves its seat wanting a bot, with a fresh key.
-    seats_fixed: bool,
+    /// party): a bot that goes leaves its seat wanting a bot, with a
+    /// fresh key.
+    Seats,
+    /// A host's door (route 2): each chair is the next of however many
+    /// come, and one that goes is gone. It listens on the LAN and nowhere
+    /// else.
+    Host,
 }
 
 impl Drop for Doorway {
@@ -65,20 +75,27 @@ impl Doorway {
     /// A doorway on this machine: the bots' own port if it is free, any
     /// port if not (a second game on one machine, an arena running).
     pub fn open() -> std::io::Result<Doorway> {
-        Doorway::bind([127, 0, 0, 1], false)
+        Doorway::bind([127, 0, 0, 1], DoorKind::Seats)
     }
 
     /// A doorway on the LAN, for bots straight to a host (route 2): the
     /// bots' own port on every interface if it is free, any port if not.
     /// The key is the lock here, a single-use one per chair.
     pub fn open_lan() -> std::io::Result<Doorway> {
-        Doorway::bind([0, 0, 0, 0], true)
+        Doorway::bind([0, 0, 0, 0], DoorKind::Host)
     }
 
-    /// A doorway listening on `ip`, the bots' own port if it is free and
-    /// any port if not; `lan` when that is the LAN, and its strings are
-    /// the LAN's.
-    fn bind(ip: [u8; 4], lan: bool) -> std::io::Result<Doorway> {
+    /// A host's door on this machine alone, for the tests.
+    #[cfg(test)]
+    pub(super) fn open_host_here() -> std::io::Result<Doorway> {
+        Doorway::bind([127, 0, 0, 1], DoorKind::Host)
+    }
+
+    /// A doorway of `kind` listening on `ip`, the bots' own port if it is
+    /// free and any port if not. Every interface is the LAN, and its
+    /// strings are the LAN's.
+    fn bind(ip: [u8; 4], kind: DoorKind) -> std::io::Result<Doorway> {
+        let lan = std::net::Ipv4Addr::from(ip).is_unspecified();
         let config = Config::new(Admission::Keys(Vec::new()));
         let (listener, events) =
             Listener::bind(SocketAddr::from((ip, DEFAULT_PORT)), config.clone())
@@ -92,7 +109,7 @@ impl Doorway {
             showing_lan: lan,
             chairs: Vec::new(),
             next_chair: 0,
-            seats_fixed: false,
+            kind,
         })
     }
 
@@ -195,7 +212,6 @@ impl Doorway {
     /// in it, if one sat there, is told why and let go rather than left
     /// registered to hear nothing but pings.
     pub fn seat_bots(&mut self, seats: &[u8]) {
-        self.seats_fixed = true;
         let (kept, gone): (Vec<Chair>, Vec<Chair>) = std::mem::take(&mut self.chairs)
             .into_iter()
             .partition(|chair| seats.contains(&chair.seat));
@@ -250,9 +266,9 @@ impl Doorway {
                         // is dealt.
                         None => self.listener.dismiss(
                             id,
-                            match self.seats_fixed {
-                                true => SEAT_GONE,
-                                false => NO_SEAT,
+                            match self.kind {
+                                DoorKind::Seats => SEAT_GONE,
+                                DoorKind::Host => NO_SEAT,
                             },
                         ),
                     }
@@ -263,12 +279,12 @@ impl Doorway {
                         continue;
                     };
                     self.listener.retire(id);
-                    match self.seats_fixed {
-                        true => {
+                    match self.kind {
+                        DoorKind::Seats => {
                             let (chair, seat) = (self.chairs[at].id, self.chairs[at].seat);
                             self.chairs[at] = self.keyed_chair(chair, seat);
                         }
-                        false => {
+                        DoorKind::Host => {
                             self.chairs.remove(at);
                         }
                     }
@@ -288,14 +304,14 @@ impl Doorway {
     /// Turned back, the LAN socket closes again: a card showing this
     /// machine's strings is not still taking bots from the network.
     pub fn toggle_lan(&mut self) -> std::io::Result<()> {
-        match self.lan {
+        match (self.kind, self.lan) {
             // A host's doorway listens on the LAN and nowhere else.
-            Some(lan) if lan == self.here => {}
-            Some(lan) => {
+            (DoorKind::Host, _) => {}
+            (DoorKind::Seats, Some(lan)) => {
                 self.listener.stop_listening(lan);
                 self.lan = None;
             }
-            None => {
+            (DoorKind::Seats, None) => {
                 self.lan = Some(
                     self.listener
                         .also_listen(SocketAddr::from(([0, 0, 0, 0], 0)))?,
@@ -363,7 +379,7 @@ mod tests {
     /// registered to a seat that is not there.
     #[test]
     fn a_full_table_withdraws_its_open_chair() {
-        let mut door = Doorway::open().expect("a port on this machine");
+        let mut door = Doorway::open_host_here().expect("a port on this machine");
         door.keep_a_chair_open(true);
         let string = door.open_string().expect("a chair is open");
         door.keep_a_chair_open(false);
@@ -382,7 +398,7 @@ mod tests {
     /// rather than left registered to a chair that is not there.
     #[test]
     fn a_bot_whose_chair_went_as_it_came_in_is_told() {
-        let mut door = Doorway::open().expect("a port on this machine");
+        let mut door = Doorway::open_host_here().expect("a port on this machine");
         door.keep_a_chair_open(true);
         let bot = register(&door.open_string().expect("open"), "Just Late", "Ana");
         // The table fills before the registration is heard.
@@ -410,7 +426,7 @@ mod tests {
     /// round is played.
     #[test]
     fn a_bot_dealt_no_seat_is_told_and_let_go() {
-        let mut door = Doorway::open().expect("a port on this machine");
+        let mut door = Doorway::open_host_here().expect("a port on this machine");
         door.keep_a_chair_open(true);
         let first = register(&door.open_string().expect("open"), "First", "Ana");
         seated(&mut door, 0);
@@ -558,7 +574,7 @@ mod tests {
     /// the dead bot's chair goes, and one chair stays open for the next.
     #[test]
     fn a_bot_that_leaves_a_hosts_door_is_not_seated() {
-        let mut door = Doorway::open().expect("a port on this machine");
+        let mut door = Doorway::open_host_here().expect("a port on this machine");
         door.keep_a_chair_open(true);
         let bot = TestBot::register(&door.open_string().expect("an open chair"));
         assert!(poll_until(&mut door, |d| d

@@ -725,8 +725,7 @@ fn open_door_for(
         Ok(mut door) => {
             door.seat_bots(&[0]);
             bots.door = Some(door);
-            bots.join_to = Some(addr);
-            bots.waiting = Some(crate::app::bot_seats::Waiting::Join);
+            bots.door_for = crate::app::bot_seats::DoorFor::Join(addr);
         }
         Err(e) => state.feedback = fill(tr.door_could_not_listen, &[("e", &e.to_string())]),
     }
@@ -752,15 +751,15 @@ pub fn lobby_input(
     // A doorway card is up for a bot about to join a beach: its keys are
     // its own (see `bot_seats::door_input`), and the moment its bot is in,
     // this game dials the beach as that bot's seat.
-    if bots.waiting.is_some() {
+    if bots.door_for.card_up() {
         typed.clear();
         let tr = settings.tr();
         if let Some(door) = &bots.door
             && door.ready()
-            && let Some(addr) = bots.join_to
+            && let crate::app::bot_seats::DoorFor::Join(addr) = bots.door_for
         {
             let name = door.named_for(tr, &settings.names[0]);
-            bots.waiting = None;
+            bots.door_for = crate::app::bot_seats::DoorFor::Joined(addr);
             dial_as(&mut state, &settings, tr, addr, name);
         }
         return;

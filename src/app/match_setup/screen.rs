@@ -377,7 +377,7 @@ impl MatchStart<'_> {
     /// Whether the table's bots are all in, opening the doorway for any
     /// that are not. A table with no bot seat is ready at once.
     fn bots_in(&mut self, config: &MatchConfig, tr: &crate::app::i18n::Tr) -> bool {
-        use crate::app::bot_seats::{Doorway, Waiting};
+        use crate::app::bot_seats::{DoorFor, Doorway};
         let seats = bot_seat_list(config);
         if seats.is_empty() {
             self.bots.door = None;
@@ -400,7 +400,7 @@ impl MatchStart<'_> {
         if door.ready() {
             return true;
         }
-        self.bots.waiting = Some(Waiting::Couch);
+        self.bots.door_for = DoorFor::Couch;
         false
     }
 }
@@ -421,14 +421,14 @@ pub fn match_setup_input(
     let mut start = start;
     // A doorway card is up: its keys are its own, and the match goes on
     // the moment the last bot is in.
-    if start.bots.waiting.is_some() {
+    if start.bots.door_for.card_up() {
         if start
             .bots
             .door
             .as_ref()
             .is_some_and(crate::app::bot_seats::Doorway::ready)
         {
-            start.bots.waiting = None;
+            start.bots.door_for = crate::app::bot_seats::DoorFor::Nothing;
             start.bots.feedback.clear();
             start.launch(&mut config);
         }
