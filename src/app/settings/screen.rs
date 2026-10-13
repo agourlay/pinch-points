@@ -8,7 +8,7 @@ use super::{
     SeatInput, UI_SCALE_MAX, UI_SCALE_MIN, VOLUME_RANGE,
 };
 use crate::app::Screen;
-use crate::app::cycle::{Cycle, Turn, dial};
+use crate::app::cycle::{Cycle, dial};
 use crate::app::i18n::fill;
 use crate::app::menu_ui::{self, Half};
 use crate::app::palette;
@@ -435,12 +435,7 @@ pub fn settings_input(
         Row::Sfx => settings.sfx_volume = dial(settings.sfx_volume, turn, 10, VOLUME_RANGE),
         Row::VersusMode => settings.team_mode = settings.team_mode.cycled(turn),
         Row::Speed => {
-            settings.puzzle_speed = match (settings.puzzle_speed, turn) {
-                (100, Turn::Left) | (50, Turn::Right) => 75,
-                (75, Turn::Left) => 50,
-                (75, Turn::Right) => 100,
-                (other, _) => other,
-            };
+            settings.puzzle_speed = settings.puzzle_speed.stepped(turn);
         }
         Row::Rumble => settings.rumble = !settings.rumble,
         Row::Deadzone => {
@@ -526,7 +521,10 @@ pub(super) fn row_text(
         Row::Music => (tr.set_music, format!("{}%", settings.music_volume)),
         Row::SfxOn => (tr.set_sfx_on, on_off(settings.sfx_on)),
         Row::Sfx => (tr.set_sfx, format!("{}%", settings.sfx_volume)),
-        Row::Speed => (tr.set_speed, format!("{}%", settings.puzzle_speed)),
+        Row::Speed => (
+            tr.set_speed,
+            format!("{}%", settings.puzzle_speed.percent()),
+        ),
         Row::VersusMode => (
             tr.set_versus_mode,
             tr.team_modes[settings.team_mode.index()].to_string(),
@@ -677,7 +675,7 @@ mod tests {
                 seat_input: [SeatInput::Pad(9); crate::app::binds::BOUND_SEATS],
                 music_volume: 100,
                 sfx_volume: 100,
-                puzzle_speed: 100,
+                puzzle_speed: crate::app::settings::PuzzleSpeed::Full,
                 pad_deadzone: 100,
                 ui_scale: 150,
                 replay_cap: 99,

@@ -2,8 +2,9 @@
 //! leniently, so an old or hand-edited file never breaks startup.
 
 use super::{
-    CommitScheme, DEADZONE_RANGE, GameSettings, REPEAT_DELAY_RANGE, REPEAT_INTERVAL_RANGE,
-    REPLAY_CAP_MAX, REPLAY_CAP_MIN, SeatInput, UI_SCALE_MAX, UI_SCALE_MIN, VOLUME_RANGE,
+    CommitScheme, DEADZONE_RANGE, GameSettings, PuzzleSpeed, REPEAT_DELAY_RANGE,
+    REPEAT_INTERVAL_RANGE, REPLAY_CAP_MAX, REPLAY_CAP_MIN, SeatInput, UI_SCALE_MAX, UI_SCALE_MIN,
+    VOLUME_RANGE,
 };
 use crate::app::binds::default_binds;
 use crate::app::i18n::Lang;
@@ -63,7 +64,7 @@ impl GameSettings {
             music_volume,
             if *sfx_on { "on" } else { "off" },
             sfx_volume,
-            puzzle_speed,
+            puzzle_speed.percent(),
             team_mode.key(),
             language.key(),
             if *rumble { "on" } else { "off" },
@@ -184,11 +185,7 @@ impl GameSettings {
                 }
                 "puzzle_speed" => {
                     if let Ok(v) = value.parse::<u8>() {
-                        settings.puzzle_speed = match v {
-                            0..=62 => 50,
-                            63..=87 => 75,
-                            88.. => 100,
-                        };
+                        settings.puzzle_speed = PuzzleSpeed::from_percent(v);
                     }
                 }
                 _ => {}
@@ -254,7 +251,7 @@ mod tests {
             music_volume: 80,
             sfx_on: false,
             sfx_volume: 30,
-            puzzle_speed: 75,
+            puzzle_speed: PuzzleSpeed::ThreeQuarter,
             team_mode: TeamMode::Trios,
             language: Lang::Fr,
             rumble: false,

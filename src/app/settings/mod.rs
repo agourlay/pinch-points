@@ -134,6 +134,57 @@ impl SeatInput {
     }
 }
 
+/// How fast a puzzle runs, the §8.4 single-player speed assist: three
+/// stops, as a share of the canonical tick rate. Kept in the settings file
+/// as its percent.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum PuzzleSpeed {
+    Half,
+    ThreeQuarter,
+    #[default]
+    Full,
+}
+
+impl PuzzleSpeed {
+    /// Every stop, slowest first: the order the dial turns through.
+    const ALL: [PuzzleSpeed; 3] = [
+        PuzzleSpeed::Half,
+        PuzzleSpeed::ThreeQuarter,
+        PuzzleSpeed::Full,
+    ];
+
+    /// The speed as a percent of the canonical rate, as it is shown and
+    /// saved.
+    pub fn percent(self) -> u8 {
+        match self {
+            PuzzleSpeed::Half => 50,
+            PuzzleSpeed::ThreeQuarter => 75,
+            PuzzleSpeed::Full => 100,
+        }
+    }
+
+    /// The stop nearest a saved percent, so a hand-edited file still lands
+    /// on one.
+    pub fn from_percent(percent: u8) -> PuzzleSpeed {
+        match percent {
+            0..=62 => PuzzleSpeed::Half,
+            63..=87 => PuzzleSpeed::ThreeQuarter,
+            88.. => PuzzleSpeed::Full,
+        }
+    }
+
+    /// One stop slower or faster, stopping at either end rather than
+    /// wrapping round: half speed and full are not neighbours.
+    pub fn stepped(self, turn: crate::app::cycle::Turn) -> PuzzleSpeed {
+        let at = Self::ALL.iter().position(|&s| s == self).unwrap_or(0);
+        let to = match turn {
+            crate::app::cycle::Turn::Left => at.saturating_sub(1),
+            crate::app::cycle::Turn::Right => (at + 1).min(Self::ALL.len() - 1),
+        };
+        Self::ALL[to]
+    }
+}
+
 #[derive(Resource, Clone, PartialEq, Debug)]
 pub struct GameSettings {
     /// §8.2: which keys player 1 commits a signpost on. The one-hand
@@ -156,9 +207,9 @@ pub struct GameSettings {
     pub sfx_on: bool,
     /// Sound-effect volume, 0–100 (0 is the old "off").
     pub sfx_volume: u8,
-    /// Puzzle-mode simulation speed percent (100/75/50), the §8.4
-    /// single-player speed reduction. Never applies to versus or online.
-    pub puzzle_speed: u8,
+    /// Puzzle-mode simulation speed, the §8.4 single-player speed
+    /// reduction. Never applies to versus or online.
+    pub puzzle_speed: PuzzleSpeed,
     /// How a versus round is scored: free-for-all, pairs, or trios.
     /// Presentation and win condition only; the sim is unchanged, so it is
     /// lockstep-safe.
@@ -369,7 +420,7 @@ impl Default for GameSettings {
             music_volume: 45,
             sfx_on: true,
             sfx_volume: 80,
-            puzzle_speed: 100,
+            puzzle_speed: PuzzleSpeed::Full,
             team_mode: TeamMode::default(),
             language: Lang::default(),
             rumble: true,
@@ -532,7 +583,7 @@ pub fn apply_sim_speed(
     mut fixed_time: ResMut<Time<Fixed>>,
 ) {
     let hz = if *screen.get() == Screen::Puzzle {
-        f64::from(crate::sim::TICKS_PER_SECOND) * f64::from(settings.puzzle_speed) / 100.0
+        f64::from(crate::sim::TICKS_PER_SECOND) * f64::from(settings.puzzle_speed.percent()) / 100.0
     } else {
         f64::from(crate::sim::TICKS_PER_SECOND)
     };
@@ -564,7 +615,7 @@ mod tests {
 
     /// The world `apply_sim_speed` runs in: a screen, the settings, and the
     /// fixed clock at the canonical rate.
-    fn clocked(screen: Screen, puzzle_speed: u8) -> App {
+    fn clocked(screen: Screen, puzzle_speed: PuzzleSpeed) -> App {
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.init_state::<Screen>();
@@ -588,10 +639,32 @@ mod tests {
             .as_secs_f64()
     }
 
+    /// The speed dial stops at either end, and a saved percent lands on
+    /// the nearest stop and is written back as that stop.
+    #[test]
+    fn the_speed_dial_stops_at_its_ends() {
+        use crate::app::cycle::Turn;
+        assert_eq!(PuzzleSpeed::Full.stepped(Turn::Right), PuzzleSpeed::Full);
+        assert_eq!(PuzzleSpeed::Half.stepped(Turn::Left), PuzzleSpeed::Half);
+        assert_eq!(
+            PuzzleSpeed::Full.stepped(Turn::Left),
+            PuzzleSpeed::ThreeQuarter
+        );
+        assert_eq!(
+            PuzzleSpeed::Half.stepped(Turn::Right),
+            PuzzleSpeed::ThreeQuarter
+        );
+        for speed in PuzzleSpeed::ALL {
+            assert_eq!(PuzzleSpeed::from_percent(speed.percent()), speed);
+        }
+        assert_eq!(PuzzleSpeed::from_percent(70), PuzzleSpeed::ThreeQuarter);
+        assert_eq!(PuzzleSpeed::from_percent(0), PuzzleSpeed::Half);
+    }
+
     /// The speed assist slows a puzzle to the fraction asked for.
     #[test]
     fn a_puzzle_runs_at_the_speed_asked_for() {
-        let mut app = clocked(Screen::Puzzle, 50);
+        let mut app = clocked(Screen::Puzzle, PuzzleSpeed::Half);
         app.update();
         assert!((hz(&app) - 15.0).abs() < 1e-6, "{} Hz", hz(&app));
     }
@@ -601,7 +674,7 @@ mod tests {
     #[test]
     fn every_other_screen_keeps_the_canonical_rate() {
         for screen in [Screen::Versus, Screen::Editor, Screen::Menu] {
-            let mut app = clocked(screen, 50);
+            let mut app = clocked(screen, PuzzleSpeed::Half);
             app.update();
             assert!(
                 (hz(&app) - 30.0).abs() < 1e-6,
