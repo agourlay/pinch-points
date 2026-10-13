@@ -308,29 +308,34 @@ impl Drop for Farewell {
 }
 
 /// What survives of a session when its table walks back to the lobby
-/// together at the end of a match: the sockets, still connected, and the
-/// bookkeeping the lobby needs to stand the beach back up.
-pub struct LobbyReturn {
-    /// Host side: the beacon, going back on the air as open. `None` for a
-    /// joiner.
-    pub announcer: Option<Announcer>,
-    pub transport: UdpTransport,
-    pub game_name: String,
-    /// Host side: every registered peer by its socket index, with the
-    /// name its greeting carried and whether it watches, by the same rule
-    /// the next round would have seated it. Nobody holds a chair any
-    /// more: the lobby deals them again at the launch.
-    pub peers: PeerBook,
-    /// Joiner side: this peer came to watch, and greets with `Watch`.
-    pub watching: bool,
-    pub host: bool,
-    /// The seed of the round just played. A host still on its results
-    /// card re-answers every greeting with that round's `Start`, and a
-    /// lobby that has just walked out of it must read the repeat as
-    /// stale rather than as an invitation straight back in.
-    pub played_seed: u64,
-    /// Joiner side, as a bot's seat (route 1): its name, to greet with.
-    pub bot: Option<String>,
+/// together at the end of a match: the socket, still connected, and the
+/// bookkeeping the lobby needs to stand the beach back up. What that is
+/// depends on which end of the table this was.
+pub enum LobbyReturn {
+    Host {
+        /// The beacon, going back on the air as open. `None` for the
+        /// direct `PINCH_HOST` pair, which never announced.
+        announcer: Option<Announcer>,
+        transport: UdpTransport,
+        game_name: String,
+        /// Every registered peer by its socket index, with the name its
+        /// greeting carried and whether it watches, by the same rule the
+        /// next round would have seated it. Nobody holds a chair any more:
+        /// the lobby deals them again at the launch.
+        peers: PeerBook,
+    },
+    Joiner {
+        transport: UdpTransport,
+        /// This peer came to watch, and greets with `Watch`.
+        watching: bool,
+        /// The seed of the round just played. A host still on its results
+        /// card re-answers every greeting with that round's `Start`, and a
+        /// lobby that has just walked out of it must read the repeat as
+        /// stale rather than as an invitation straight back in.
+        played_seed: u64,
+        /// As a bot's seat (route 1): its name, to greet with.
+        bot: Option<String>,
+    },
 }
 
 #[derive(Resource, Default)]
@@ -512,17 +517,21 @@ impl OnlineSession {
             wants_to_watch: _,
             greet_in: _,
         } = home;
-        LobbyReturn {
-            announcer: announcer.disarm(),
-            transport,
-            game_name,
-            peers,
-            watching,
-            host,
-            played_seed: terms.seed,
-            bot: seat
-                .filter(|_| bot)
-                .map(|seat| names[usize::from(seat)].clone()),
+        match host {
+            true => LobbyReturn::Host {
+                announcer: announcer.disarm(),
+                transport,
+                game_name,
+                peers,
+            },
+            false => LobbyReturn::Joiner {
+                transport,
+                watching,
+                played_seed: terms.seed,
+                bot: seat
+                    .filter(|_| bot)
+                    .map(|seat| names[usize::from(seat)].clone()),
+            },
         }
     }
 
@@ -1038,18 +1047,23 @@ mod homecoming_tests {
         session.stay_on_air(Announcer::new(0xB0A7).expect("announcer"));
         session.home.game_name = "Room 3".into();
         session.home.from_lobby = true;
-        let returned = session.back_to_the_lobby();
-        assert!(returned.host);
-        assert!(!returned.watching);
-        assert_eq!(returned.played_seed, 42, "the round it walked out of");
-        assert_eq!(returned.game_name, "Room 3");
+        let LobbyReturn::Host {
+            announcer,
+            transport,
+            game_name,
+            peers: _,
+        } = session.back_to_the_lobby()
+        else {
+            panic!("the host comes home as the host");
+        };
+        assert_eq!(game_name, "Room 3");
         assert_eq!(
-            returned.transport.local_addr().expect("addr").port(),
+            transport.local_addr().expect("addr").port(),
             port,
             "the same socket every peer is still talking to"
         );
         assert!(
-            returned.announcer.is_some(),
+            announcer.is_some(),
             "the beacon rides home to announce again"
         );
         std::thread::sleep(std::time::Duration::from_millis(40));
@@ -1402,14 +1416,16 @@ mod homecoming_tests {
             assert_eq!(session.transport.peer_count(), want, "peer registered");
         }
         session.peers.deal(&[Some(1), None]);
-        let returned = session.back_to_the_lobby();
-        let names: Vec<&str> = returned.peers.iter().map(|p| p.name.as_str()).collect();
+        let LobbyReturn::Host { peers, .. } = session.back_to_the_lobby() else {
+            panic!("the host comes home as the host");
+        };
+        let names: Vec<&str> = peers.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(
             names,
             ["Bo", ""],
             "each chair keeps the name its greeting carried"
         );
-        let watching: Vec<bool> = returned.peers.iter().map(Peer::watches).collect();
+        let watching: Vec<bool> = peers.iter().map(Peer::watches).collect();
         assert_eq!(watching, [false, true], "and a watcher stays a watcher");
     }
 
@@ -1426,11 +1442,16 @@ mod homecoming_tests {
                 ..MatchTerms::default()
             },
         );
-        let returned = session.back_to_the_lobby();
-        assert!(!returned.host);
-        assert!(returned.watching, "the watcher is remembered");
-        assert!(returned.announcer.is_none(), "a joiner has no beacon");
-        assert_eq!(returned.played_seed, 7);
+        let LobbyReturn::Joiner {
+            watching,
+            played_seed,
+            ..
+        } = session.back_to_the_lobby()
+        else {
+            panic!("a joiner comes home as a joiner, with no beacon");
+        };
+        assert!(watching, "the watcher is remembered");
+        assert_eq!(played_seed, 7);
     }
 }
 

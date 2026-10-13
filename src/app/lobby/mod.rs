@@ -598,40 +598,44 @@ fn settle_back_in(
     returned: LobbyReturn,
     tr: &'static crate::app::i18n::Tr,
 ) {
-    let LobbyReturn {
-        announcer,
-        transport,
-        game_name,
-        mut peers,
-        watching,
-        host,
-        played_seed,
-        bot,
-    } = returned;
-    if host {
-        // A host that never announced (the direct pair) has no beach to
-        // stand back up, and `from_lobby` keeps it from coming this way.
-        let Some(announcer) = announcer else { return };
-        // One row per peer the socket still has, no more and no fewer:
-        // the rows are indexed by the socket's own list.
-        peers.fit(transport.peer_count());
-        peers.hush();
-        state.game_name = game_name;
-        // Back on the air this frame, as open: the round the beacon was
-        // calling "running" is over.
-        state.standing = Standing::Hosting(Hosted {
+    match returned {
+        LobbyReturn::Host {
             announcer,
             transport,
-            peers,
-            announce_in: 0.0,
-        });
-    } else {
-        state.standing = Standing::Joining(Joined::returned(transport, watching, played_seed, bot));
-        state.feedback = match watching {
-            true => tr.lobby_watching,
-            false => tr.lobby_aboard,
+            game_name,
+            mut peers,
+        } => {
+            // A host that never announced (the direct pair) has no beach to
+            // stand back up, and `from_lobby` keeps it from coming this way.
+            let Some(announcer) = announcer else { return };
+            // One row per peer the socket still has, no more and no fewer:
+            // the rows are indexed by the socket's own list.
+            peers.fit(transport.peer_count());
+            peers.hush();
+            state.game_name = game_name;
+            // Back on the air this frame, as open: the round the beacon was
+            // calling "running" is over.
+            state.standing = Standing::Hosting(Hosted {
+                announcer,
+                transport,
+                peers,
+                announce_in: 0.0,
+            });
         }
-        .to_string();
+        LobbyReturn::Joiner {
+            transport,
+            watching,
+            played_seed,
+            bot,
+        } => {
+            state.standing =
+                Standing::Joining(Joined::returned(transport, watching, played_seed, bot));
+            state.feedback = match watching {
+                true => tr.lobby_watching,
+                false => tr.lobby_aboard,
+            }
+            .to_string();
+        }
     }
 }
 
@@ -1206,7 +1210,6 @@ mod tests {
 mod homecoming_tests {
     use super::*;
     use crate::app::i18n::EN;
-    use crate::app::net::PeerBook;
 
     use crate::app::lobby::hosting::peers_named;
 
@@ -1245,15 +1248,11 @@ mod homecoming_tests {
         let mut state = LobbyState::default();
         settle_back_in(
             &mut state,
-            LobbyReturn {
+            LobbyReturn::Host {
                 announcer: Some(Announcer::new(0xB0A7).expect("announcer")),
                 transport,
                 game_name: "Room 3".into(),
                 peers: peers_named(&["Bo", "Cy"], &[1]),
-                watching: false,
-                host: true,
-                played_seed: 42,
-                bot: None,
             },
             &EN,
         );
@@ -1282,16 +1281,12 @@ mod homecoming_tests {
         let mut state = LobbyState::default();
         settle_back_in(
             &mut state,
-            LobbyReturn {
+            LobbyReturn::Host {
                 announcer: Some(Announcer::new(1).expect("announcer")),
                 transport,
                 game_name: String::new(),
                 // Fewer names than the socket knows peers.
                 peers: peers_named(&["Bo"], &[0]),
-                watching: false,
-                host: true,
-                played_seed: 0,
-                bot: None,
             },
             &EN,
         );
@@ -1311,13 +1306,9 @@ mod homecoming_tests {
         let mut state = LobbyState::default();
         settle_back_in(
             &mut state,
-            LobbyReturn {
-                announcer: None,
+            LobbyReturn::Joiner {
                 transport: UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
-                game_name: String::new(),
-                peers: PeerBook::default(),
                 watching: true,
-                host: false,
                 played_seed: 42,
                 bot: None,
             },

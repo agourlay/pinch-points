@@ -922,21 +922,27 @@ mod tests {
     #[test]
     fn the_end_of_a_lobby_match_walks_the_table_back_to_the_lobby() {
         use crate::app::lobby::Homecoming;
-        use crate::app::net::Online;
+        use crate::app::net::{LobbyReturn, Online};
 
         for seat in [0, 1] {
             let mut app = results_card(seat, true, false);
             assert_eq!(pressing_enter(&mut app), Screen::Lobby, "seat {seat}");
             let homecoming = app.world().resource::<Homecoming>();
             let returned = homecoming.0.as_ref().expect("the table came home");
-            assert_eq!(returned.host, seat == 0);
+            assert_eq!(matches!(returned, LobbyReturn::Host { .. }), seat == 0);
             assert!(
                 app.world().resource::<Online>().0.is_none(),
                 "the session was handed over whole, not left behind"
             );
             if seat == 0 {
                 assert!(
-                    returned.announcer.is_some(),
+                    matches!(
+                        returned,
+                        LobbyReturn::Host {
+                            announcer: Some(_),
+                            ..
+                        }
+                    ),
                     "and the beacon came with it, to announce the beach open again"
                 );
             }
