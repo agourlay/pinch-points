@@ -434,15 +434,20 @@ pub fn join_tick(
                 NetMsg::Kicked => kicked = true,
                 // A watcher at a beach mid-round: the round as it stands,
                 // part by part, until there is a whole of it to walk into.
+                //
+                // Taken whatever this lobby asked for. The host sends it
+                // only to a peer it has placed watching this round: one
+                // that greeted to watch, and also a player it dealt a
+                // watching place for want of a chair whose `Start` was
+                // lost (`lost_its_start`). Refused here, that player
+                // walked in at frame zero, a second behind the tails.
                 NetMsg::CatchUp {
                     frame,
                     part,
                     parts,
                     bytes,
                 } => {
-                    if joined.watching
-                        && let Some(whole) = joined.catching_up.take(frame, part, parts, bytes)
-                    {
+                    if let Some(whole) = joined.catching_up.take(frame, part, parts, bytes) {
                         caught = Some(whole);
                     }
                 }

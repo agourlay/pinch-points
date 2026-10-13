@@ -656,9 +656,19 @@ impl OnlineSession {
                 NetMsg::Hello { name, bot } => {
                     if host && !self.refuse_a_bot(from, bot) {
                         self.peers.row(from).bot = bot;
-                        let answer = self.answer_greeting(from, &name_from_wire(&name), false);
-                        self.transport.send_to(from, answer);
+                        // A player dealt a watching place for want of a
+                        // chair, whose `Start` went astray: the round as it
+                        // stands, like any watcher (`lost_its_start`).
+                        if self.lost_its_start(from) {
+                            self.owe_the_round(from);
+                        } else {
+                            let answer = self.answer_greeting(from, &name_from_wire(&name), false);
+                            self.transport.send_to(from, answer);
+                        }
                     }
+                }
+                NetMsg::Watch { .. } if host && self.lost_its_start(from) => {
+                    self.owe_the_round(from);
                 }
                 NetMsg::Watch { name } => {
                     // Somebody who came to watch after the launch is sent
@@ -674,9 +684,7 @@ impl OnlineSession {
                         }
                         self.note_watch_wish(from);
                         self.peers.row(from).place = Place::LateWatching;
-                        if !self.catch_up.owed.contains(&from) {
-                            self.catch_up.owed.push(from);
-                        }
+                        self.owe_the_round(from);
                     } else if host {
                         let answer = self.answer_greeting(from, &name_from_wire(&name), true);
                         self.transport.send_to(from, answer);

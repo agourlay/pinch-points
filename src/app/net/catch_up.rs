@@ -68,6 +68,35 @@ impl OnlineSession {
         self.home.from_lobby && self.queue_place(peer).is_some()
     }
 
+    /// Host: whether `peer` was dealt a watching place in this round's
+    /// plan and is greeting anyway, so its `Start` went astray, with the
+    /// round too far along for a frame-zero `Start` to be any use.
+    ///
+    /// A launch watcher (or a player the table had no chair for, dealt a
+    /// watching place) is not a latecomer, so its greeting used to be
+    /// answered with the launch's `Start` again. That starts a session at
+    /// frame zero, and the resend tails reach about a second back: past
+    /// that, it walked onto a beach that never moved, was dropped as
+    /// silent ten seconds later, and was told the host had left after
+    /// twenty. It is handed the round as it stands instead, keeping the
+    /// place it was dealt (the plan is the leading run of placed rows, so
+    /// it must not become a late watcher).
+    pub(super) fn lost_its_start(&self, peer: usize) -> bool {
+        self.is_host()
+            && self.session.frame() >= FRAME_ZERO_REACH
+            && self
+                .peers
+                .get(peer)
+                .is_some_and(|row| row.place == Place::Watching)
+    }
+
+    /// Host: owe `peer` the round as it stands, once.
+    pub(super) fn owe_the_round(&mut self, peer: usize) {
+        if !self.catch_up.owed.contains(&peer) {
+            self.catch_up.owed.push(peer);
+        }
+    }
+
     /// Host: send each late watcher owed one the round as it stands.
     ///
     /// Called after `pump`, with the board it has just simulated: that
@@ -91,8 +120,13 @@ impl OnlineSession {
             if parts.is_empty() {
                 // A board too big to send. No board this game builds comes
                 // near, but a watcher sent nothing would greet for ever, so
-                // it gets what every latecomer used to: a place in line.
-                self.peers.row(peer).place = Place::Queued;
+                // it gets what every latecomer used to: a place in line. A
+                // watcher in the plan keeps its place, which the plan's
+                // leading run is counted from.
+                let row = self.peers.row(peer);
+                if row.place == Place::LateWatching {
+                    row.place = Place::Queued;
+                }
                 let name = self
                     .peers
                     .get(peer)
@@ -108,6 +142,11 @@ impl OnlineSession {
         }
     }
 }
+
+/// How far into a round a frame-zero `Start` still works: well inside the
+/// resend tails, which reach `DEFAULT_DELAY + MAX_COMMIT_LEAD` frames back,
+/// leaving the rest for the `Start` to travel and the session to begin.
+const FRAME_ZERO_REACH: u32 = crate::sim::MAX_COMMIT_LEAD / 2;
 
 /// Cut the round as it stands into the parts that carry it: `start`, the
 /// invitation a watcher gets, and `board` at `frame`.
@@ -458,6 +497,72 @@ mod session_tests {
             .into_iter()
             .any(|msg| matches!(msg, NetMsg::Queued { .. }));
         assert!(queued, "a player arriving mid-round waits for the next one");
+    }
+
+    /// A watcher in the launch plan whose one-shot `Start` was lost greets
+    /// again mid-round, and so does a player the table had no chair for,
+    /// dealt a watching place. Both are handed the round as it stands
+    /// rather than the launch's `Start`, which would start them at frame
+    /// zero, a second and more behind anything the tails still carry. Both
+    /// keep the place they were dealt, so the plan is not broken.
+    #[test]
+    fn a_planned_watcher_that_lost_its_start_is_sent_the_round() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        host.home.from_lobby = true;
+        let port = host.transport.local_addr().expect("addr").port();
+        let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        let mut dee = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        let mut cy = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        for (socket, msg) in [
+            (&bo, NetMsg::hello("Bo")),
+            (&dee, NetMsg::watch("Dee")),
+            (&cy, NetMsg::hello("Cy")),
+        ] {
+            socket.send(msg);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            drain(&mut host.transport);
+        }
+        // Bo seated, Dee watching as asked, Cy dealt no chair.
+        host.peers.deal(&[Some(1), None, None]);
+        assert!(!host.lost_its_start(1), "frame zero still reaches");
+
+        let mut board = generate_arena(3, 2, 12, 9);
+        for frame in 0..60 {
+            host.session.commit_local(PlayerAction::None);
+            host.session.receive(InputMsg {
+                player: 1,
+                frame: DEFAULT_DELAY + frame,
+                action: PlayerAction::None,
+            });
+            while let Some(actions) = host.session.advance() {
+                board.tick(&actions);
+            }
+        }
+        dee.send(NetMsg::watch("Dee"));
+        cy.send(NetMsg::hello("Cy"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        host.pump(PlayerAction::None, |_| {});
+        host.send_catch_ups(&board);
+
+        assert_eq!(host.peers.planned(), 3, "the plan is untouched");
+        for (who, socket) in [("Dee", &mut dee), ("Cy", &mut cy)] {
+            let heard = drain(socket);
+            assert!(
+                heard
+                    .iter()
+                    .any(|msg| matches!(msg, NetMsg::CatchUp { .. })),
+                "{who} is sent the round as it stands"
+            );
+            assert!(
+                !heard.iter().any(|msg| matches!(msg, NetMsg::Start { .. })),
+                "{who} is not sent back to frame zero"
+            );
+        }
     }
 
     /// The direct `PINCH_HOST` pair has no lobby and nobody to catch up.
