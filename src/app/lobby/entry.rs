@@ -186,6 +186,22 @@ pub(super) fn next_quick_line(tr: &crate::app::i18n::Tr, said: &str) -> &'static
     lines[next]
 }
 
+/// How far the box for `what` lets a line grow: as far as the slot it
+/// travels in, so what is typed is what everybody else reads.
+///
+/// A beach's name has its own slot in the beacon, wider than a player's
+/// name and narrower than a line of chat. A player's name is held to the
+/// name slot and the settings' cap together; under the chat budget it ran
+/// to 48 characters in the box, to be cut to twelve when it was saved and
+/// to eight Japanese ones when it was sent.
+fn fits_for(what: Entry) -> fn(&str) -> bool {
+    match what {
+        Entry::GameName => crate::transport::beach_name_fits,
+        Entry::PlayerName => crate::transport::name_fits,
+        Entry::Address | Entry::Chat => crate::transport::chat_fits,
+    }
+}
+
 /// This frame's keystrokes into the open line, and the answer if one
 /// finished it.
 ///
@@ -199,13 +215,7 @@ fn read_line(
     typed: &mut MessageReader<bevy::input::keyboard::KeyboardInput>,
     open: &mut Typing,
 ) -> Option<String> {
-    // A beach's name has its own slot in the beacon, narrower than a line
-    // of chat: the box stops where the slot does, so the name the host
-    // typed is the name the hall reads.
-    let fits = match open.what {
-        Entry::GameName => crate::transport::beach_name_fits,
-        Entry::PlayerName | Entry::Address | Entry::Chat => crate::transport::chat_fits,
-    };
+    let fits = fits_for(open.what);
     let said = if open.suggested {
         let mut fresh = String::new();
         match type_a_line(typed, &mut fresh, fits) {
@@ -939,5 +949,43 @@ mod door_tests {
         let again = typing(&app).expect("asked again");
         assert_eq!(again.what, Entry::PlayerName);
         assert!(again.suggested && !again.text.is_empty(), "{again:?}");
+    }
+
+    /// The name box stops where a name stops: at the settings' twelve
+    /// characters and the wire's 24 bytes, whichever comes first. Any name
+    /// it lets through is kept whole by `set_name` and arrives whole
+    /// everywhere else; the first character past it would not.
+    #[test]
+    fn the_name_box_holds_what_a_name_keeps() {
+        assert_eq!(
+            crate::transport::NAME_CHARS,
+            crate::app::settings::NAME_MAX,
+            "the wire and the settings agree on the cap"
+        );
+        let fits = fits_for(Entry::PlayerName);
+        for (base, past) in [("M", 'M'), ("あ", 'あ'), ("Zoë", 'ë')] {
+            let mut name = String::new();
+            while fits(&format!("{name}{base}")) {
+                name.push_str(base);
+            }
+            assert!(fits(&name));
+            assert!(!fits(&format!("{name}{past}")), "{name:?} is full");
+            let mut settings = GameSettings::default();
+            settings.set_name(0, &name);
+            assert_eq!(settings.names[0], name, "saved whole");
+            assert_eq!(crate::transport::name_as_sent(&name), name, "sent whole");
+        }
+        assert!(
+            !fits(&"あ".repeat(9)),
+            "nine Japanese characters are 27 bytes"
+        );
+        assert!(
+            !fits(&"M".repeat(13)),
+            "and thirteen of anything is past the cap"
+        );
+        assert!(
+            fits_for(Entry::Chat)(&"M".repeat(13)),
+            "a chat line is longer"
+        );
     }
 }

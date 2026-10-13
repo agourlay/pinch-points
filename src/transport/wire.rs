@@ -98,7 +98,7 @@ pub fn chat_from_wire(bytes: &WireChat) -> String {
 /// The most characters a name keeps coming off the wire: the same cap the
 /// settings screen puts on typed names (`settings::NAME_MAX`), stated here
 /// rather than imported because this layer knows nothing about menus.
-const NAME_CHARS: usize = 12;
+pub const NAME_CHARS: usize = 12;
 
 /// A wire name back into text, distrusting the sender: invalid UTF-8 is
 /// dropped rather than replaced, control characters and the save-file
@@ -142,6 +142,16 @@ pub fn chat_as_sent(line: &str) -> String {
 /// taking characters here, so what a player types is what is sent.
 pub fn chat_fits(line: &str) -> bool {
     line.chars().count() <= CHAT_CHARS && line.len() <= WIRE_CHAT
+}
+
+/// Whether `name` still fits a player name whole, on the wire and in the
+/// settings: within [`NAME_CHARS`] (the cap `settings::set_name` keeps a
+/// name to) and within [`WIRE_NAME`] bytes. The lobby's name box stops
+/// taking characters here, so the name typed is the name everyone reads;
+/// it used to run to a chat line's 48, and was cut to twelve (or to eight
+/// Japanese characters) once it was saved and sent.
+pub fn name_fits(name: &str) -> bool {
+    name.chars().count() <= NAME_CHARS && name.len() <= WIRE_NAME
 }
 
 /// The most characters a beach's name keeps: as many as its
