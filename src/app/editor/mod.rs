@@ -79,6 +79,22 @@ impl Offer {
     }
 }
 
+/// Whether to go ahead with what `offer`'s key throws away.
+///
+/// With nothing `at_stake` it goes ahead at once. With something, the
+/// first press only says what is about to go (`prompt`) and leaves the
+/// offer standing, and a second press of the same key takes it up. Going
+/// ahead always lets the offer go.
+fn ask_first(state: &mut EditorState, offer: Offer, at_stake: bool, prompt: String) -> bool {
+    if at_stake && state.offer != Some(offer) {
+        state.offer = Some(offer);
+        state.feedback = prompt;
+        return false;
+    }
+    state.offer = None;
+    true
+}
+
 /// Whether anything has been built on this board yet.
 ///
 /// Asked by comparing the level here against the one a fresh board of the
@@ -286,15 +302,14 @@ pub fn editor_input(
         let at = EDITOR_SIZES.iter().position(|&s| s == now).unwrap_or(1);
         let (w, h) = EDITOR_SIZES[(at + 1) % EDITOR_SIZES.len()];
         let tr = settings.tr();
-        if state.offer != Some(Offer::Resize) && has_work(&state, board) {
-            state.offer = Some(Offer::Resize);
-            state.feedback = fill(
-                tr.ed_resize_confirm,
-                &[("w", &w.to_string()), ("h", &h.to_string())],
-            );
+        let at_stake = has_work(&state, board);
+        let prompt = fill(
+            tr.ed_resize_confirm,
+            &[("w", &w.to_string()), ("h", &h.to_string())],
+        );
+        if !ask_first(&mut state, Offer::Resize, at_stake, prompt) {
             return;
         }
-        state.offer = None;
         replace_board(Board::new(w, h, 0xED17), &mut sim, &mut state, &mut swap);
         state.feedback = fill(
             tr.ed_resized,
@@ -541,11 +556,32 @@ pub fn editor_test_input(
     // Only Escape ends the test: Enter started it this very frame, and both
     // systems see the same just_pressed set.
     if keys.just_pressed(KeyCode::Escape)
-        && let Mode::Testing(snapshot) = std::mem::take(&mut state.mode)
+        && end_playtest(&mut sim, &mut state, &mut commands, &sprites)
     {
-        swap_board(*snapshot, &mut sim, &mut state, &mut commands, &sprites);
         state.feedback = settings.tr().ed_back.into();
     }
+}
+
+/// End a playtest, if one is running, with the board it was started from
+/// back on the sand; and say whether one was.
+///
+/// Asked before the mode is taken, not after: taking it puts the default
+/// in its place, so a recovery in the middle of naming would otherwise
+/// end the naming too.
+fn end_playtest(
+    sim: &mut Sim,
+    state: &mut EditorState,
+    commands: &mut Commands,
+    sprites: &BoardSprites,
+) -> bool {
+    if !state.is_testing() {
+        return false;
+    }
+    let Mode::Testing(snapshot) = std::mem::take(&mut state.mode) else {
+        return false;
+    };
+    swap_board(*snapshot, sim, state, commands, sprites);
+    true
 }
 
 /// The editor after something in it failed and was caught (see
@@ -560,11 +596,7 @@ pub(super) fn recover(
     sprites: &BoardSprites,
     tr: &crate::app::i18n::Tr,
 ) {
-    if state.is_testing()
-        && let Mode::Testing(snapshot) = std::mem::take(&mut state.mode)
-    {
-        swap_board(*snapshot, sim, state, commands, sprites);
-    }
+    end_playtest(sim, state, commands, sprites);
     // Whatever was mid-way (an offer, a check on another thread) was asked
     // of the moment that failed, and is let go with it.
     state.offer = None;

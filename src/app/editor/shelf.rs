@@ -2,7 +2,7 @@
 //! files the level on the bench there.
 
 use super::validate::orphan_warning;
-use super::{EditorState, Offer, level_here};
+use super::{EditorState, Offer, ask_first, level_here};
 use crate::app::i18n::fill;
 use crate::sim::Board;
 use bevy::prelude::*;
@@ -102,11 +102,7 @@ pub(super) fn save_level(
     // the author says otherwise: the first press only says whose it
     // is, and the second replaces it. Written at once, the note that
     // it had been replaced came after the level was already gone.
-    if stranger && state.offer != Some(Offer::Overwrite) {
-        state.offer = Some(Offer::Overwrite);
-        state.feedback = tr.ed_save_taken.into();
-    } else {
-        state.offer = None;
+    if ask_first(state, Offer::Overwrite, stranger, tr.ed_save_taken.into()) {
         state.feedback = match write_level(&path, &level.to_text()) {
             Ok(is_new) => {
                 // The same level under the name an older build cut it

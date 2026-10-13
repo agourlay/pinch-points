@@ -3,7 +3,7 @@
 
 use super::naming::tidy_name;
 use super::validate::{arena_report, start_validation};
-use super::{BoardSwap, EditorState, Offer, has_work, level_here, replace_board};
+use super::{BoardSwap, EditorState, Offer, ask_first, has_work, level_here, replace_board};
 use crate::app::Sim;
 use crate::app::i18n::fill;
 use crate::sim::{Board, Level, LevelKind};
@@ -91,12 +91,11 @@ pub(super) fn paste_level(
     swap: &mut BoardSwap,
 ) {
     match level_from(crate::app::codes::paste(clipboard), tr) {
-        Ok(_) if state.offer != Some(Offer::Paste) && has_work(state, &sim.0) => {
-            state.offer = Some(Offer::Paste);
-            state.feedback = tr.ed_paste_confirm.into();
-        }
         Ok(level) => {
-            state.offer = None;
+            let at_stake = has_work(state, &sim.0);
+            if !ask_first(state, Offer::Paste, at_stake, tr.ed_paste_confirm.into()) {
+                return;
+            }
             let bench = level_here(state, &sim.0, &state.name);
             let shelf = crate::app::campaign::load_custom_levels();
             if is_from_elsewhere(&level, &bench, &shelf) {
