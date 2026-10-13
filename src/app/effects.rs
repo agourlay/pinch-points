@@ -501,8 +501,9 @@ pub struct Hop {
     age: f32,
     /// Seconds in the air.
     span: f32,
-    /// How high the arc rises at its middle, in world units.
-    lift: f32,
+    /// Whether the tide threw it home from across the beach, which flies
+    /// it on [`sweep_arc`] rather than a hop over the wall.
+    swept: bool,
     /// Its shell colour, which a crab waiting to be swept glows away from.
     shell: Color,
     /// Whether it has left the sand yet: a swept crab waits its turn
@@ -515,6 +516,30 @@ pub struct Hop {
 /// How long a crab is in the air on its way into the keep. Short: the
 /// score has already moved, and a slow hop would read as lag.
 const HOP: f32 = 0.19;
+
+/// How high a crab hopping over the wall rises, in world units.
+const HOP_LIFT: f32 = 12.0;
+
+/// Where a crab waiting to be swept home is drawn: over the crabs round it,
+/// since it is the one the banner is talking about.
+pub(crate) const SWEEP_WAIT_Z: f32 = layout::z::CREATURE + 0.3;
+
+/// Where a crab the tide throws home is, `progress` of the way from where
+/// it stood to the keep, and how big it looks.
+///
+/// One arc for both ways a sweep is drawn: flown by the sim under
+/// `sweep_flight` ([`crate::app::creatures::draw_sweeps`]) and hopped by
+/// the render layer on an older board ([`bank_hop`]). Each kept its own
+/// copy once, and the older one rose without limit and flew under the
+/// fences.
+pub(crate) fn sweep_arc(from: Vec2, to: Vec2, progress: f32) -> (Vec3, f32) {
+    // Higher the further it goes, but never off the top of the beach: a
+    // crab thrown corner to corner left the board at a third of it.
+    let lift = (from.distance(to) * 0.35).min(TILE * 1.2);
+    let (at, scale) = arc(from, to, lift, progress);
+    // Over the fences while it is in the air.
+    (at.extend(layout::z::WALL + 0.3), scale)
+}
 
 /// How long a crab the tide swept home is in the air, and how far behind
 /// the one before it each sets off.
@@ -567,22 +592,26 @@ pub fn bank_hop(
             to,
             age: 0.0,
             span: HOP,
-            lift: 12.0,
+            swept: false,
             shell,
             launched: true,
             held: 0.0,
         },
-        // High enough over the board to read as thrown, not slid.
         Some(slot) => Hop {
             from,
             to,
             age: -SWEEP_STAGGER * slot as f32,
             span: SWEEP_HOP,
-            lift: from.distance(to) * 0.35,
+            swept: true,
             shell,
             launched: false,
             held: 0.0,
         },
+    };
+    let z = if hop.swept {
+        SWEEP_WAIT_Z
+    } else {
+        layout::z::CREATURE + 0.1
     };
     commands
         .spawn((
@@ -594,7 +623,7 @@ pub fn bank_hop(
                 flip_y,
                 ..default()
             },
-            Transform::from_translation(from.extend(layout::z::CREATURE + 0.1)),
+            Transform::from_translation(from.extend(z)),
         ))
         .with_child((
             Sprite {
@@ -692,10 +721,16 @@ pub fn advance_hops(
             );
             continue;
         }
-        let (at, scale) = arc(hop.from, hop.to, hop.lift, progress);
-        transform.translation.x = at.x;
-        transform.translation.y = at.y;
-        transform.scale = Vec3::splat(scale);
+        if hop.swept {
+            let (at, scale) = sweep_arc(hop.from, hop.to, progress);
+            transform.translation = at;
+            transform.scale = Vec3::splat(scale);
+        } else {
+            let (at, scale) = arc(hop.from, hop.to, HOP_LIFT, progress);
+            transform.translation.x = at.x;
+            transform.translation.y = at.y;
+            transform.scale = Vec3::splat(scale);
+        }
     }
 }
 
@@ -1536,6 +1571,23 @@ mod tests {
                 (at.y - lift - at.x * 0.5).abs() < 1e-3,
                 "bowed off the line at {step}: {at:?}"
             );
+        }
+    }
+
+    /// A crab the tide throws corner to corner stays on the beach and over
+    /// the fences the whole way, whichever of the two sweeps drew it.
+    #[test]
+    fn a_long_sweep_stays_under_the_cap_and_over_the_walls() {
+        let (from, to) = (Vec2::new(-400.0, -300.0), Vec2::new(400.0, 300.0));
+        for step in 0..=20 {
+            let progress = step as f32 / 20.0;
+            let (at, _) = sweep_arc(from, to, progress);
+            let (flat, _) = arc(from, to, 0.0, progress);
+            assert!(
+                at.y - flat.y <= TILE * 1.2 + 1e-3,
+                "too high at {step}: {at:?}"
+            );
+            assert!(at.z > layout::z::WALL, "under the fences at {step}");
         }
     }
 

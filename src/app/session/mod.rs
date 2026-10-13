@@ -82,6 +82,10 @@ pub(super) struct BoardSprites<'w, 's> {
     logs: Query<'w, 's, Entity, With<board_render::TurnstileSprite>>,
     crabs: Query<'w, 's, Entity, With<creatures::CrabSprite>>,
     gulls: Query<'w, 's, Entity, With<creatures::GullSprite>>,
+    /// Crab Monopoly's crabs in the air. Only their own system takes them
+    /// down otherwise, and it runs on the board screens alone: a round
+    /// quit inside a sweep left them glowing over the menu.
+    sweeps: Query<'w, 's, Entity, With<creatures::SweepSprite>>,
 }
 
 impl BoardSprites<'_, '_> {
@@ -96,6 +100,7 @@ impl BoardSprites<'_, '_> {
             .chain(self.logs.iter())
             .chain(self.crabs.iter())
             .chain(self.gulls.iter())
+            .chain(self.sweeps.iter())
         {
             commands.entity(entity).despawn();
         }
@@ -523,6 +528,8 @@ mod tests {
             shade: 0.0,
         });
         app.world_mut().spawn(creatures::GullSprite(1));
+        app.world_mut()
+            .spawn(creatures::SweepSprite::new(2, Vec2::ZERO));
         let before = app.world().entities().len();
         assert!(before > 5, "the fixture did not spawn");
 
@@ -552,6 +559,10 @@ mod tests {
                 .count(),
             app.world_mut()
                 .query_filtered::<Entity, With<creatures::GullSprite>>()
+                .iter(app.world())
+                .count(),
+            app.world_mut()
+                .query_filtered::<Entity, With<creatures::SweepSprite>>()
                 .iter(app.world())
                 .count(),
         ] {
