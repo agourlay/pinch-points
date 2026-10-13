@@ -357,15 +357,21 @@ pub fn enter_interlude(
     // re-deals them to the next round's seats and sends them out, so both
     // are adopted here rather than counted locally, which would advance the
     // round twice.
+    //
+    // And the whole series is taken from the invitation, length and state
+    // with the round and the tally, as walking in from the lobby does: the
+    // `Start` that brought this peer here may open a *new* match rather
+    // than continue this one. A joiner still reading the scores of a
+    // single round when the host went back to the lobby and launched a
+    // best of three was pulled straight into it, and kept "no series":
+    // no standings, and an Enter that left mid-series. The other way
+    // round it kept the old standings over a single round. For the next
+    // round of the same series this is the adoption it always was.
     match &mut online.0 {
         Some(session) => {
             session.next_round = false;
-            if let Some(crate::transport::SeriesStanding { round, wins }) =
-                session.series_standing.take()
-            {
-                tournament.round = round;
-                tournament.wins = wins;
-            }
+            let standing = session.series_standing.take();
+            *tournament = Tournament::from_terms(session.terms, standing);
         }
         None => tournament.round += 1,
     }
@@ -623,6 +629,67 @@ mod tests {
         assert_eq!(t.champion(), Some(0));
         t.wins = [2, 2, 0, 0, 0, 0];
         assert_eq!(t.champion(), None, "tied series has no champion");
+    }
+
+    /// A peer pulled from its results card into a new match takes the new
+    /// match's series, not the old one's: the invitation that arrives on
+    /// the card may be the host's next launch from the lobby, not the next
+    /// round of what was being played.
+    #[test]
+    fn an_invitation_to_a_new_match_brings_its_own_series() {
+        use crate::app::net::{Online, OnlineSession};
+        use crate::transport::{MatchTerms, SeriesStanding, UdpTransport};
+
+        let interlude = |was: Tournament, series: u8, standing: Option<SeriesStanding>| {
+            let mut app = App::new();
+            app.insert_resource(GameSettings::default());
+            app.init_resource::<crate::app::SeatNames>();
+            app.insert_resource(Seats(2));
+            app.init_resource::<crate::app::match_setup::MatchConfig>();
+            app.init_resource::<crate::app::match_setup::CustomBeaches>();
+            app.insert_resource(was);
+            let terms = MatchTerms {
+                series,
+                ..MatchTerms::default()
+            };
+            let mut session = OnlineSession::new(
+                UdpTransport::join(("127.0.0.1", 47990)).expect("socket"),
+                crate::app::net::lockstep_for(Some(1), 2),
+                2,
+                terms,
+            );
+            session.series_standing = standing;
+            session.next_round = true;
+            app.insert_resource(Online(Some(session)));
+            app.add_systems(Update, enter_interlude);
+            app.update();
+            app.world_mut()
+                .remove_resource::<Tournament>()
+                .expect("tournament")
+        };
+
+        // A single round over, then the host's best of three.
+        let t = interlude(Tournament::default(), 1, Some(SeriesStanding::opening()));
+        assert!(t.is_running(), "a series now");
+        assert_eq!((t.length, t.round), (SeriesLength::BestOfThree, 1));
+
+        // A decided best of five, then the host's single round.
+        let mut decided = Tournament::start(SeriesLength::BestOfFive);
+        decided.wins = [3, 1, 0, 0, 0, 0];
+        decided.state = SeriesState::Decided;
+        let t = interlude(decided, 0, None);
+        assert!(!t.in_series(), "no standings over a single round");
+
+        // And the next round of the same series is still the host's word.
+        let mut wins = [0; MAX_PLAYERS];
+        wins[1] = 1;
+        let t = interlude(
+            Tournament::start(SeriesLength::BestOfThree),
+            1,
+            Some(SeriesStanding { round: 2, wins }),
+        );
+        assert!(t.is_running());
+        assert_eq!((t.round, t.wins[1]), (2, 1));
     }
 
     /// The wire carries the series as a dial index, and the app reads it
