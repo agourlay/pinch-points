@@ -183,6 +183,23 @@ mod tests {
         }
     }
 
+    /// The open ocean has no edges on the couch either. The local launch
+    /// built its own board and never opened them, so a couch round on it
+    /// was played walled while the same map online wrapped.
+    #[test]
+    fn a_couch_round_on_the_open_ocean_wraps() {
+        let beaches = match_setup::CustomBeaches::default();
+        for (map, wraps) in [
+            (match_setup::MapChoice::GenOcean, true),
+            (match_setup::MapChoice::GenLarge, false),
+            (match_setup::MapChoice::Classic, false),
+        ] {
+            let config = match_setup::MatchConfig { map, ..armed(2, 0) };
+            let board = versus::RoundOrigin::Configured(&config).board(None, &beaches, false, 0);
+            assert_eq!(board.wrap(), wraps, "{map:?}");
+        }
+    }
+
     /// The daily's table is one human and three fierce rivals, built from
     /// its own config rather than the player's.
     #[test]

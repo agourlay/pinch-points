@@ -103,7 +103,7 @@ pub fn watch_live(feed: std::sync::mpsc::Receiver<crate::bots::game::Feed>) {
 use crate::app::i18n::fill;
 use crate::sim::{
     Board, BotLevel, Level, MAX_PLAYERS, PlayerAction, PuzzleOutcome, Replay, bot_action,
-    castle_spots, classic_arena, classic_arena_seeded, generate_arena,
+    castle_spots, classic_arena,
 };
 use bevy::app::{TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPolicy};
 use bevy::prelude::*;

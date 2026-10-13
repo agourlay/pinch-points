@@ -19,7 +19,7 @@ pub use beaches::{
     Beach, CustomBeaches, beach_bytes, beach_from, beach_in_play, beach_on_air, beaches_note,
     cycle_map, map_label, refresh_custom_beaches,
 };
-pub use board::{board_for, board_from, bot_seats_from};
+pub use board::{apply_terms, board_for, board_from, bot_seats_from, versus_board};
 
 mod screen;
 pub use screen::*;

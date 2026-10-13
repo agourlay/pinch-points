@@ -75,29 +75,20 @@ impl RoundOrigin<'_> {
                     true => config.map,
                     false => match_setup::sized_for(config.seats),
                 };
-                let (w, h) = map.size();
-                let mut board = if map == match_setup::MapChoice::Custom {
-                    // A beach somebody built. Locally there is nobody to
-                    // send it to, so it is read off the shelf.
-                    beaches
-                        .fitting(config.seats)
-                        .get(config.custom)
-                        .map_or_else(
-                            || generate_arena(seed, config.seats, w, h),
-                            |beach| beach.level.board(),
-                        )
-                } else if map == match_setup::MapChoice::Classic {
-                    // Same handcrafted layout, fresh random stream: one
-                    // seed's luck (gull entry points, spawn kinds) should
-                    // not colour every round. Online keeps the canonical
-                    // seed so peers agree.
-                    classic_arena_seeded(seed, false, config.seats)
-                } else {
-                    generate_arena(seed, config.seats, w, h)
+                // A beach somebody built. Locally there is nobody to send
+                // it to, so it is read off the shelf. Anything else is the
+                // map dial's own beach: the handcrafted classic gets a
+                // fresh random stream too, so one seed's luck (gull entry
+                // points, spawn kinds) does not colour every round, where
+                // online keeps the canonical seed so peers agree.
+                let shelved = (map == match_setup::MapChoice::Custom)
+                    .then(|| beaches.fitting(config.seats).into_iter().nth(config.custom))
+                    .flatten();
+                let mut board = match shelved {
+                    Some(beach) => beach.level.board(),
+                    None => match_setup::versus_board(map, seed, config.seats),
                 };
-                crate::sim::set_versus_rules(&mut board, config.gulls.period());
-                board.set_round_length(Some(config.round.ticks()));
-                board.set_signpost_rule(config.posts, crate::sim::CapPolicy::Evict);
+                match_setup::apply_terms(&mut board, config.gulls, config.round, config.posts);
                 board
             }
             RoundOrigin::Unconfigured => classic_arena(sandbox, pads.max(2)),

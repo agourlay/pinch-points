@@ -26,35 +26,61 @@ pub fn board_from(terms: &MatchTerms, seats: u8, beach: &[u8]) -> crate::sim::Bo
         return board_for(terms, seats);
     };
     let mut board = level.board();
-    crate::sim::set_versus_rules(
+    apply_terms(
         &mut board,
-        GullPressure::from_index(usize::from(terms.gulls)).period(),
+        GullPressure::from_index(usize::from(terms.gulls)),
+        RoundLength::from_index(usize::from(terms.round)),
+        posts_from(terms),
     );
-    board.set_round_length(Some(
-        RoundLength::from_index(usize::from(terms.round)).ticks(),
-    ));
-    board.set_signpost_rule(posts_from(terms), crate::sim::CapPolicy::Evict);
     board
 }
 
 pub fn board_for(terms: &MatchTerms, seats: u8) -> crate::sim::Board {
-    let map = MapChoice::from_index(usize::from(terms.map));
+    let mut board = versus_board(
+        MapChoice::from_index(usize::from(terms.map)),
+        terms.seed,
+        seats,
+    );
+    apply_terms(
+        &mut board,
+        GullPressure::from_index(usize::from(terms.gulls)),
+        RoundLength::from_index(usize::from(terms.round)),
+        posts_from(terms),
+    );
+    board
+}
+
+/// The beach a map dial names, at `seed` for a table of `seats`: the
+/// handcrafted classic arena or a generated one at the dial's size, with
+/// its edges open when the map has none. Every versus round that is not on
+/// a handmade beach starts here, online or on the couch, so the open ocean
+/// wraps on both: the couch used to build its own and left the walls up.
+///
+/// `Custom` builds the generated arena at its size, the fallback for a
+/// handmade beach that cannot be had.
+pub fn versus_board(map: MapChoice, seed: u64, seats: u8) -> crate::sim::Board {
     let (w, h) = map.size();
     let mut board = if map == MapChoice::Classic {
-        crate::sim::classic_arena_seeded(terms.seed, false, seats)
+        crate::sim::classic_arena_seeded(seed, false, seats)
     } else {
-        crate::sim::generate_arena(terms.seed, seats, w, h)
+        crate::sim::generate_arena(seed, seats, w, h)
     };
     board.set_wrap(map.wraps());
-    crate::sim::set_versus_rules(
-        &mut board,
-        GullPressure::from_index(usize::from(terms.gulls)).period(),
-    );
-    board.set_round_length(Some(
-        RoundLength::from_index(usize::from(terms.round)).ticks(),
-    ));
-    board.set_signpost_rule(posts_from(terms), crate::sim::CapPolicy::Evict);
     board
+}
+
+/// The table's rules laid over a versus beach: the gull pressure scaled to
+/// its size ([`crate::sim::set_versus_rules`]), the round's length, and the
+/// arrows each player may have standing, the oldest giving way at the cap.
+pub fn apply_terms(
+    board: &mut crate::sim::Board,
+    gulls: GullPressure,
+    round: RoundLength,
+    posts: u8,
+) {
+    crate::sim::set_versus_rules(board, gulls.period());
+    board.set_round_length(Some(round.ticks()));
+    board.set_signpost_rule(posts, crate::sim::CapPolicy::Evict);
 }
 
 /// Which seats the AI holds under these terms: the top `bots` of `seats`.
