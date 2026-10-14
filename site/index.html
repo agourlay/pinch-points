@@ -19,6 +19,8 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image:alt" content="Pinch Points, a crab-routing video game for 1 to 6 players, beside a four-player round in progress">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%F0%9F%A6%80</text></svg>">
+<meta name="theme-color" content="#d8eef7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1b26" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -30,11 +32,18 @@
     <span class="stars" hidden>★ <span class="stars-n"></span></span>
   </a>
   <div class="hero-inner">
-  <h1>🦀 Pinch Points 🦀
+  <h1><span aria-hidden="true">🦀</span> Pinch Points <span class="crab-end" aria-hidden="true">🦀</span>
     <span class="genre">a crab-routing video game</span></h1>
   <p class="lede">Place arrows in the sand and steer streams of crabs into
     your castle before time runs out. One to six players, on the couch
     or over the wire.</p>
+  <!-- What a visitor needs to know before installing: what it costs and
+       whether it runs on the machine in front of them. -->
+  <ul class="facts">
+    <li>Free and open source</li>
+    <li>Windows · macOS · Linux</li>
+    <li>Keyboard or gamepads</li>
+  </ul>
   <!-- Without script both commands show, each under its own label; with
        it, the labels become tabs and the visitor's own system is picked. -->
   <div class="install" id="install">
@@ -49,7 +58,7 @@
         <button type="button" class="copy" hidden>Copy</button>
       </div>
       <p class="install-note">Installs to <code>~/.local/bin</code> ·
-        <a href="install.sh">Read the script</a></p>
+        <a href="install.sh">Read the script</a><span class="release" hidden></span></p>
     </div>
     <div class="install-cmd" data-os="windows" role="tabpanel">
       <p class="install-label">Windows (PowerShell)</p>
@@ -58,10 +67,9 @@
         <button type="button" class="copy" hidden>Copy</button>
       </div>
       <p class="install-note">Installs to <code>%LOCALAPPDATA%\Programs</code> and adds it to your PATH ·
-        <a href="install.ps1">Read the script</a></p>
+        <a href="install.ps1">Read the script</a><span class="release" hidden></span></p>
     </div>
   </div>
-  <p class="release" hidden></p>
   <p class="alt">
     Or <a href="https://github.com/agourlay/pinch-points/releases">download a release</a>,
     or with Rust: <code>cargo install --locked pinch-points</code>
@@ -101,12 +109,33 @@
 
 <main>
 
+<!-- The rules in four lines, for a visitor who has just watched the video
+     and wants to know what they saw. Every line is the game's own rule:
+     check the sim before changing one. -->
+<section class="rules">
+  <h2>How a round plays</h2>
+  <ol>
+    <li><span class="icon" aria-hidden="true">🦀</span>
+      <b>Crabs pour in</b> from holes in the walls and walk straight
+      ahead, turning when they hit something.</li>
+    <li><span class="icon" aria-hidden="true">➡️</span>
+      <b>Drop an arrow</b> and every crab that walks over it turns that
+      way. You only get a few, so place them well.</li>
+    <li><span class="icon" aria-hidden="true">🐦</span>
+      <b>Gulls swoop in</b> and eat crabs. One that reaches your castle
+      carries off half your score.</li>
+    <li><span class="icon" aria-hidden="true">🌊</span>
+      <b>The tide is the clock</b> Gulls come twice as fast in the last
+      30 seconds, and when the wave arrives the highest score wins.</li>
+  </ol>
+</section>
+
 <section class="modes">
   <h2>What's in the box</h2>
   <ul>
     <li><b>Campaign</b> 100 solo puzzles</li>
     <li><b>Versus</b> 2-6 on one couch</li>
-    <li><b>Multiplayer</b> 6 over LAN</li>
+    <li><b>Multiplayer</b> up to 6 over LAN</li>
     <li><b>Level Editor</b> build and share</li>
     <li><b>Challenges</b> score attack</li>
     <li><b>Daily Challenge</b> same for everyone</li>
@@ -235,10 +264,11 @@ fetch("https://api.github.com/repos/agourlay/pinch-points/releases/latest")
   .then(function (rel) {
     if (!rel || !rel.tag_name || !rel.published_at) return;
     var when = new Date(rel.published_at).toLocaleDateString("en-GB",
-      { day: "numeric", month: "long", year: "numeric" });
-    var line = document.querySelector(".release");
-    line.textContent = "Latest: " + rel.tag_name + ", released " + when;
-    line.hidden = false;
+      { day: "numeric", month: "short", year: "numeric" });
+    document.querySelectorAll(".release").forEach(function (line) {
+      line.textContent = " · " + rel.tag_name + ", " + when;
+      line.hidden = false;
+    });
   })
   .catch(function () {});
 

@@ -70,7 +70,7 @@ img, video { display: block; width: 100%; height: auto; }
 
 .hero {
   position: relative;
-  padding: 56px 24px 0;
+  padding: 36px 24px 0;
   text-align: center;
   /* Sky at the top, sand underneath it. */
   background: linear-gradient(180deg, var(--sky) 0%, var(--sand) 62%);
@@ -119,11 +119,27 @@ img, video { display: block; width: 100%; height: auto; }
 }
 
 .lede {
-  margin: 0 auto 30px;
+  margin: 0 auto 14px;
   max-width: 52ch;
   font-size: 1rem;
   color: var(--ink-soft);
 }
+
+/* The three things to know before installing, as one quiet row. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 22px;
+  margin: 0 0 26px;
+  padding: 0;
+  list-style: none;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.facts li::before { content: "✓ "; color: var(--sea); }
 
 .shot, .gallery img, .together img {
   border-radius: 14px;
@@ -226,6 +242,41 @@ main h2 {
   color: var(--ink-soft);
 }
 
+/* ---- how a round plays ---- */
+
+.rules h2 { text-align: center; }
+
+.rules ol {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rules li {
+  padding: 20px 20px 22px;
+  border-radius: 14px;
+  background: var(--sand-deep);
+  font-size: 0.97rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.rules b { display: block; margin-bottom: 4px; color: var(--ink); font-size: 1.05rem; }
+.rules .icon { display: block; font-size: 1.9rem; line-height: 1; margin-bottom: 12px; }
+
+@media (max-width: 960px) {
+  .rules ol { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 560px) {
+  .rules ol { grid-template-columns: 1fr; gap: 12px; }
+  .rules li { display: grid; grid-template-columns: auto 1fr; gap: 0 14px; padding: 16px 18px; }
+  .rules .icon { grid-row: span 2; margin: 2px 0 0; }
+}
+
 /* ---- modes ---- */
 
 .modes { text-align: center; }
@@ -254,7 +305,7 @@ main h2 {
 
 .install {
   max-width: 920px;
-  margin: 0 auto 18px;
+  margin: 0 auto 10px;
   text-align: left;
 }
 
@@ -334,12 +385,8 @@ main h2 {
 
 .install-note code { font-size: 0.85em; }
 
-.release {
-  margin: 0 0 4px;
-  font-size: 0.88rem;
-  color: var(--ink-soft);
-}
-
+/* The version the command fetches, at the end of its note once GitHub
+   answers. */
 .release[hidden] { display: none; }
 
 .alt {
@@ -354,7 +401,7 @@ main h2 {
    below should stay near the top. */
 .trouble {
   max-width: 640px;
-  margin: 0 auto 44px;
+  margin: 0 auto 32px;
   font-size: 0.9rem;
   color: var(--ink-soft);
 }
@@ -399,6 +446,11 @@ footer {
 footer p { margin: 0 auto 8px; max-width: 58ch; }
 
 .fineprint { font-size: 0.85rem; color: var(--ink-soft); }
+
+/* One crab is enough on a phone: two put the second on a line alone. */
+@media (max-width: 520px) {
+  .hero h1 .crab-end { display: none; }
+}
 
 @media (max-width: 720px) {
   /* Room above the title for the GitHub link, which would sit on it. */
