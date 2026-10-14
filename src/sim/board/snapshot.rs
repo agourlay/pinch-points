@@ -148,42 +148,21 @@ impl Board {
             }
         }
         for crab in &self.crabs {
-            let _ = writeln!(
-                out,
-                "crab: {} {} {} {} {} {} {} {} {}",
-                crab.id,
-                crab.tile,
-                crab.dir.letter(),
-                crab.progress,
-                crab.prev.tile,
-                crab.prev.progress,
-                crab.prev.dir.letter(),
-                crab.handed.token(),
-                crab.kind.token()
-            );
+            let _ = writeln!(out, "crab: {}", crab_fields(crab));
         }
         // A crab in a Crab Monopoly sweep: who it flies to, when it leaves
         // and lands, then the crab exactly as a `crab:` line writes it, and
         // `claws` after it when it was swept under Right Claws (left off
         // otherwise, which is how every line read before it was kept).
         for flight in &self.sweeps.in_air {
-            let crab = &flight.crab;
             let called = if flight.claw_call { " claws" } else { "" };
             let _ = writeln!(
                 out,
-                "sweeping: {} {} {} {} {} {} {} {} {} {} {} {}{called}",
+                "sweeping: {} {} {} {}{called}",
                 flight.owner,
                 flight.launch,
                 flight.lands,
-                crab.id,
-                crab.tile,
-                crab.dir.letter(),
-                crab.progress,
-                crab.prev.tile,
-                crab.prev.progress,
-                crab.prev.dir.letter(),
-                crab.handed.token(),
-                crab.kind.token()
+                crab_fields(&flight.crab),
             );
         }
         for gull in &self.gulls {
@@ -721,6 +700,24 @@ fn parse_pose(words: &mut std::str::SplitWhitespace, who: &str) -> Result<Pose, 
         dir,
         progress,
     })
+}
+
+/// A crab as its line writes it, after the line's own key: the fields
+/// [`parse_crab`] reads back, in its order. Shared by `crab:` and the crab
+/// a `sweeping:` line carries, so the two cannot drift apart.
+fn crab_fields(crab: &Crab) -> String {
+    format!(
+        "{} {} {} {} {} {} {} {} {}",
+        crab.id,
+        crab.tile,
+        crab.dir.letter(),
+        crab.progress,
+        crab.prev.tile,
+        crab.prev.progress,
+        crab.prev.dir.letter(),
+        crab.handed.token(),
+        crab.kind.token()
+    )
 }
 
 fn parse_crab(words: &mut std::str::SplitWhitespace) -> Result<Crab, String> {

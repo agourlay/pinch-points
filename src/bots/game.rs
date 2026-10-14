@@ -92,6 +92,19 @@ pub struct Sinks<'a> {
     pub echo_notes: bool,
 }
 
+impl Sinks<'_> {
+    /// Where game `game`'s seats write what they did: the log and the
+    /// console, borrowed for as long as the seat needs them.
+    fn journal(&mut self, game: u32) -> Journal<'_> {
+        Journal {
+            log: &mut *self.log,
+            console: &mut *self.console,
+            echo_notes: self.echo_notes,
+            game,
+        }
+    }
+}
+
 /// A game going out to a window as it is played.
 pub enum Feed {
     Start(Box<Replay>),
@@ -133,13 +146,7 @@ impl Match<'_, '_> {
         let Some(Some(bot)) = self.bots.get_mut(seat) else {
             return false;
         };
-        let mut journal = Journal {
-            log: &mut *self.sinks.log,
-            console: &mut *self.sinks.console,
-            echo_notes: self.sinks.echo_notes,
-            game: self.spec.game,
-        };
-        bot.take(msg, t, &mut journal)
+        bot.take(msg, t, &mut self.sinks.journal(self.spec.game))
     }
 
     /// `hello` to every bot, then wait until each is ready or forfeits.
@@ -338,15 +345,7 @@ impl Match<'_, '_> {
         for seat in 0..self.n() {
             let player = seat as PlayerId;
             let act = match (&mut self.bots[seat], self.spec.seats[seat]) {
-                (Some(bot), _) => {
-                    let mut journal = Journal {
-                        log: &mut *self.sinks.log,
-                        console: &mut *self.sinks.console,
-                        echo_notes: self.sinks.echo_notes,
-                        game: self.spec.game,
-                    };
-                    bot.order(&mut journal)
-                }
+                (Some(bot), _) => bot.order(&mut self.sinks.journal(self.spec.game)),
                 (None, Seat::Ai(level)) => {
                     let hand = if self.spec.fair_cursor {
                         Hand::Fair

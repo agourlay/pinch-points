@@ -146,15 +146,7 @@ impl Board {
     /// drives them.
     fn hash_creatures(&self, h: &mut Fnv) {
         for crab in &self.crabs {
-            h.u32(crab.id);
-            h.u16(crab.tile);
-            h.u8(crab.dir.id());
-            h.u16(crab.progress);
-            h.u16(crab.prev.tile);
-            h.u16(crab.prev.progress);
-            h.u8(crab.prev.dir.id());
-            h.u8(crab.handed.id());
-            h.u8(crab.kind.id());
+            hash_crab(h, crab);
         }
         for &score in &self.scores {
             h.u32(score);
@@ -272,16 +264,7 @@ impl Board {
         h.u8(u8::from(self.rules.sweep_flight));
         h.u32(self.sweeps.in_air.len() as u32);
         for flight in &self.sweeps.in_air {
-            let crab = &flight.crab;
-            h.u32(crab.id);
-            h.u16(crab.tile);
-            h.u8(crab.dir.id());
-            h.u16(crab.progress);
-            h.u16(crab.prev.tile);
-            h.u16(crab.prev.progress);
-            h.u8(crab.prev.dir.id());
-            h.u8(crab.handed.id());
-            h.u8(crab.kind.id());
+            hash_crab(h, &flight.crab);
             h.u8(flight.owner);
             h.u64(flight.launch);
             h.u64(flight.lands);
@@ -291,6 +274,20 @@ impl Board {
         h.bool(self.rules.sweep_keeps_worth);
         h.bool(self.rules.fair_spawns);
     }
+}
+
+/// One crab's part of the fingerprint, the same bytes whether it walks the
+/// sand or rides a Crab Monopoly sweep home.
+fn hash_crab(h: &mut Fnv, crab: &Crab) {
+    h.u32(crab.id);
+    h.u16(crab.tile);
+    h.u8(crab.dir.id());
+    h.u16(crab.progress);
+    h.u16(crab.prev.tile);
+    h.u16(crab.prev.progress);
+    h.u8(crab.prev.dir.id());
+    h.u8(crab.handed.id());
+    h.u8(crab.kind.id());
 }
 
 #[cfg(test)]
