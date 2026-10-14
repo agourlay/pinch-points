@@ -311,8 +311,9 @@ deliberately.
   CI, with a progress bar; exits non-zero naming any level with an arrow to
   spare. Run it by hand after editing a level file.
 - `PINCH_*` env hooks skip the menus for development and testing:
-  `PINCH_SKIRMISH=classic|large|xl|ocean|custom` boots a bots match
-  (`PINCH_SERIES=3` or `=5` for a series, `PINCH_SEATS=<n>` for the table,
+  `PINCH_SKIRMISH=classic|arena|large|xl|ocean|custom` boots a bots match
+  (`arena` is the handmade classic beach, `PINCH_SERIES=3` or `=5` for a
+  series, `PINCH_SEATS=<n>` for the table,
   `PINCH_BOTS=<n>` for AI seats), and `PINCH_SANDBOX`,
   `PINCH_AUTOPLAY=<level>`, `PINCH_EDITOR`, `PINCH_MATCH`, `PINCH_REPLAY`,
   `PINCH_LIBRARY`, `PINCH_ACHIEVEMENTS`, `PINCH_SETTINGS`,

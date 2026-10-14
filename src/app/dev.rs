@@ -190,9 +190,9 @@ pub(super) enum DevHook {
     StageSelect {
         beach: bool,
     },
-    /// `PINCH_SKIRMISH=classic|large|xl|ocean|custom`, plus `PINCH_SERIES=3|5`
-    /// for a series: four seats, three of them AI. Any unrecognised
-    /// value is the classic beach.
+    /// `PINCH_SKIRMISH=classic|arena|large|xl|ocean|custom`, plus
+    /// `PINCH_SERIES=3|5` for a series: four seats, three of them AI. Any
+    /// unrecognised value is the generated beach at the classic size.
     Skirmish {
         map: match_setup::MapChoice,
         series: crate::app::tournament::SeriesLength,
@@ -249,13 +249,7 @@ impl DevHook {
         }
         if let Some(size) = var("PINCH_SKIRMISH") {
             return Some(DevHook::Skirmish {
-                map: match size.as_str() {
-                    "large" => match_setup::MapChoice::GenLarge,
-                    "xl" => match_setup::MapChoice::GenXl,
-                    "ocean" => match_setup::MapChoice::GenOcean,
-                    "custom" => match_setup::MapChoice::Custom,
-                    _ => match_setup::MapChoice::GenClassic,
-                },
+                map: skirmish_map(&size),
                 // Bare `PINCH_SERIES=1` still means the long series it
                 // always meant; `=3` asks for the short one.
                 series: match var("PINCH_SERIES").as_deref() {
@@ -364,10 +358,18 @@ pub(super) fn kickoff(
     }
 }
 
-/// Dev hook: `PINCH_SKIRMISH=classic|large|xl|ocean|custom` also names the
-/// map for a hosted lobby match.
+/// Dev hook: `PINCH_SKIRMISH=classic|arena|large|xl|ocean|custom` also
+/// names the map for a hosted lobby match.
 fn debug_map() -> Option<match_setup::MapChoice> {
-    Some(match std::env::var("PINCH_SKIRMISH").ok()?.as_str() {
+    Some(skirmish_map(&std::env::var("PINCH_SKIRMISH").ok()?))
+}
+
+/// The map a `PINCH_SKIRMISH` value names, for a bots match and a hosted
+/// lobby alike. `classic` is the generated beach at the classic size and
+/// `arena` the handmade one a new player's Versus starts on.
+fn skirmish_map(value: &str) -> match_setup::MapChoice {
+    match value {
+        "arena" => match_setup::MapChoice::Classic,
         "large" => match_setup::MapChoice::GenLarge,
         "xl" => match_setup::MapChoice::GenXl,
         "ocean" => match_setup::MapChoice::GenOcean,
@@ -375,7 +377,7 @@ fn debug_map() -> Option<match_setup::MapChoice> {
         // which is how the wire path gets exercised without a menu.
         "custom" => match_setup::MapChoice::Custom,
         _ => match_setup::MapChoice::GenClassic,
-    })
+    }
 }
 
 /// Whether a hook that reaches straight into the local board has to stand
