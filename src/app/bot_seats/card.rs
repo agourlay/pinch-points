@@ -38,7 +38,7 @@ fn door_lines(bots: &BotSeats, tr: &crate::app::i18n::Tr, beach: &str) -> Vec<(S
     for (i, chair) in door.chairs.iter().take(MAX_PLAYERS).enumerate() {
         let who = crate::app::seat_label(tr, chair.seat);
         let line = match door.bot_line(chair) {
-            Some((name, rtt)) => {
+            Some(super::BotLine::Here { name, rtt }) => {
                 let ms = rtt.map_or("-".to_string(), |d| {
                     format!("{:.1}", d.as_secs_f64() * 1000.0)
                 });
@@ -46,6 +46,9 @@ fn door_lines(bots: &BotSeats, tr: &crate::app::i18n::Tr, beach: &str) -> Vec<(S
                     "{who}  {}",
                     fill(tr.door_connected, &[("n", &name), ("ms", &ms)])
                 )
+            }
+            Some(super::BotLine::Away { name }) => {
+                format!("{who}  {}", fill(tr.door_away, &[("n", &name)]))
             }
             None => format!("{who}  {}   {}", door.string(chair), tr.door_waiting),
         };
@@ -144,7 +147,7 @@ pub fn door_input(
     mut clipboard: ResMut<Clipboard>,
     settings: Res<crate::app::settings::GameSettings>,
 ) {
-    let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
+    let crate::app::keycaps::Keyboard { keys, caps, live } = keyboard;
     if !bots.door_for.card_up() {
         return;
     }
@@ -166,7 +169,7 @@ pub fn door_input(
         return;
     };
     door.poll();
-    if caps.just_pressed(&keys, 'C')
+    if caps.global_pressed(&keys, 'C', &live)
         && let Some(chair) = door.chairs.iter().find(|chair| chair.bot.is_none())
     {
         let string = door.string(chair);

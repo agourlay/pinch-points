@@ -3,6 +3,13 @@
 
 use super::*;
 
+/// How often a mania's flood comes, in ticks.
+const MANIA_EVERY: u64 = 8;
+
+/// How many holes a mania's flood comes out of at a time, whatever the
+/// beach has: the two the mania was sized on.
+const MANIA_HOLES: usize = 2;
+
 impl Board {
     /// Place a crab directly (puzzle setups and tests; spawner tiles handle
     /// the normal case). The crab immediately wall-resolves so it never starts
@@ -35,6 +42,19 @@ impl Board {
         };
         self.resolve_walls(&mut crab);
         self.crabs.push(crab);
+    }
+
+    /// Whether a golden crab can come out this round: rolled like any kind
+    /// where nobody calls one, and where one is called, only if the round
+    /// lasts past the earliest a call lands, a third of a stretch in. A
+    /// one-minute versus round is over on that tick, so it never has one.
+    pub fn golden_crab_can_come(&self) -> bool {
+        let every = u64::from(self.rules.golden_every);
+        every == 0
+            || self
+                .rules
+                .round_length
+                .is_none_or(|len| every / 3 < u64::from(len))
     }
 
     /// Call the next golden crab at the start of each stretch, and send it
@@ -75,18 +95,35 @@ impl Board {
     }
 
     pub(super) fn run_spawners(&mut self) {
-        // Manias override the cadence: floods every 8 ticks.
-        let period = |s: Spawner, mania: Option<(Mania, u32)>| match mania {
-            Some((Mania::Crab | Mania::Gull, _)) => 8,
-            None => u64::from(s.period),
+        // The holes that open this tick, in reading order. A mania
+        // overrides each hole's cadence with a flood: every 8 ticks, the
+        // holes taking turns two at a time. Every hole every 8 ticks made
+        // the flood as big as the beach had holes, and a four-player
+        // table, with a hole for all but one of them, flooded three times
+        // as fast as the two-hole beaches the mania was sized on.
+        let holes = (0..self.grid.tiles.len())
+            .filter(|&t| matches!(self.grid.tiles[t], TileKind::Spawner(_)));
+        let mut open: Vec<usize> = match self.tide.mania {
+            Some((Mania::Crab | Mania::Gull, _)) => {
+                let count = holes.clone().count();
+                let turns = count.div_ceil(MANIA_HOLES).max(1);
+                let turn = (self.tick / MANIA_EVERY) as usize % turns;
+                match self.tick.is_multiple_of(MANIA_EVERY) {
+                    true => holes
+                        .enumerate()
+                        .filter(|(i, _)| i % turns == turn)
+                        .map(|(_, t)| t)
+                        .collect(),
+                    false => Vec::new(),
+                }
+            }
+            None => holes
+                .filter(|&t| {
+                    matches!(self.grid.tiles[t], TileKind::Spawner(s)
+                        if self.tick.is_multiple_of(u64::from(s.period)))
+                })
+                .collect(),
         };
-        // The holes that open this tick, in reading order.
-        let mut open: Vec<usize> = (0..self.grid.tiles.len())
-            .filter(|&t| {
-                matches!(self.grid.tiles[t], TileKind::Spawner(s)
-                    if self.tick.is_multiple_of(period(s, self.tide.mania)))
-            })
-            .collect();
         // The beach fills to the cap and then waits for it to clear.
         // Crab Mania floods past it, which is the event, but only to twice
         // the cap, the same way Gull Mania stops at three flocks: unbounded,

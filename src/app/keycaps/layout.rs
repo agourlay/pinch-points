@@ -140,6 +140,17 @@ impl Layout {
         }
     }
 
+    /// The signs this layout puts unshifted on its digit row, which
+    /// [`Self::caps`] leaves out: the digit row keeps its digits for every
+    /// other reader (see `KeyCaps::learn`), and only a key read by the
+    /// sign on its cap asks for these. AZERTY's "-" sits on the 6.
+    pub(super) fn digit_signs(self) -> &'static [(KeyCode, char)] {
+        match self {
+            Layout::Qwerty | Layout::Qwertz => &[],
+            Layout::Azerty => &[(KeyCode::Digit6, '-')],
+        }
+    }
+
     pub(super) fn cap(self, key: KeyCode) -> Option<char> {
         self.caps().iter().find(|(k, _)| *k == key).map(|(_, c)| *c)
     }

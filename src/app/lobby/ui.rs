@@ -451,13 +451,9 @@ pub fn update_lobby_list(
     }
 }
 
-/// Say why the map dial is offering none of the host's own beaches, under
-/// the terms it belongs to. A system of its own because
-/// [`update_lobby_terms`] already reaches for `Text` twice.
-///
-/// When there is no such thing to say and the host takes bots, the line
-/// under the Bots dial is the string a bot connects straight to this beach
-/// with (route 2), redrawn each time a bot spends it.
+/// The line under the host's dials ([`super::terms::dials_note`]). A
+/// system of its own because [`update_lobby_terms`] already reaches for
+/// `Text` twice.
 pub fn update_lobby_beach_note(
     settings: Res<GameSettings>,
     config: Res<MatchConfig>,
@@ -468,14 +464,7 @@ pub fn update_lobby_beach_note(
     let Ok(mut text) = note.single_mut() else {
         return;
     };
-    let line = crate::app::match_setup::beaches_note(&config, settings.tr(), &beaches)
-        .or_else(|| {
-            state
-                .hosted()
-                .and_then(|hosted| hosted.bot_string.clone())
-                .map(|string| format!("{}: {string}", settings.tr().lobby_bots_dial))
-        })
-        .unwrap_or_default();
+    let line = super::terms::dials_note(&state, &config, settings.tr(), &beaches);
     crate::app::menu_ui::set_text(&mut text, &line);
 }
 
@@ -494,18 +483,13 @@ pub fn update_lobby_terms(
     // A joiner reads the host's dials, off the roster, not its own setup
     // screen's: the card is meant to show the match being joined. The host,
     // and a chooser not yet at any beach, read their own config.
-    let joined = (!host)
-        .then(|| {
-            state
-                .joined()
-                .and_then(|joined| joined.host_terms.as_ref())
-                .map(|host| host.terms)
-                .map(|t| crate::app::match_setup::config_from_terms(&t))
-        })
+    let host_terms = (!host)
+        .then(|| state.joined().and_then(|joined| joined.host_terms.as_ref()))
         .flatten();
-    // Whether the beach takes bots is not one of the terms; a joiner
-    // reads it off the beacon that listed the beach.
-    let joined = joined.map(|(mut cfg, mode)| {
+    let joined = host_terms.map(|host| {
+        let (mut cfg, mode) = crate::app::match_setup::config_from_terms(&host.terms);
+        // Whether the beach takes bots is not one of the terms; a joiner
+        // reads it off the beacon that listed the beach.
         cfg.bots_welcome = state.joined_entry().is_some_and(|entry| entry.bots);
         (cfg, mode)
     });
@@ -515,19 +499,19 @@ pub fn update_lobby_terms(
     };
     // The host's beach by the name the roster gave it, never looked up on
     // this machine's own shelf.
-    let hosts_beach = joined
-        .is_some()
-        .then(|| {
-            state
-                .joined()
-                .and_then(|joined| joined.host_terms.as_ref())
-                .map(|host| host.beach_name.as_str())
-        })
-        .flatten();
+    let hosts_beach = host_terms.map(|host| host.beach_name.as_str());
+    // The table the round would be dealt as it sits now: the host works it
+    // out from its dials, a joiner reads it off the roster.
+    let dealt = match host_terms {
+        Some(host) => Some(super::terms::roster_dealt(state.table.len(), &host.terms)),
+        None => super::terms::hosts_dealt(&state, config),
+    };
     let label = |dial: &Dial| {
-        let (name, value) = dial.label(tr, config, team_mode, &beaches);
+        let (name, value) = dial.label(tr, config, team_mode, &beaches, dealt, host);
         match (dial, hosts_beach) {
-            (Dial::Map, Some(beach)) => (name, super::terms::hosts_map_label(tr, config, beach)),
+            (Dial::Map, Some(beach)) => {
+                (name, super::terms::hosts_map_label(tr, config.map, beach))
+            }
             _ => (name, value),
         }
     };
@@ -543,9 +527,14 @@ pub fn update_lobby_terms(
         crate::app::menu_ui::set_text(&mut text, line);
         crate::app::menu_ui::set_color(&mut color, palette::IDLE_ROW);
     }
+    // A joiner the host has not sent its terms yet (the second or so
+    // before the first roster) has no match to show, and its own setup
+    // painted in the meantime read as the host's.
+    let waiting = state.joined().is_some() && host_terms.is_none();
     for (row, mut text, mut color) in &mut values {
         let line = Dial::ALL
             .get(row.0)
+            .filter(|_| !waiting)
             .map(|dial| label(dial).1)
             .unwrap_or_default();
         // Only the host can turn them, so only the host's read as live.
@@ -994,6 +983,20 @@ mod list_row_tests {
         assert_eq!(
             map_value(&mut app),
             crate::app::i18n::EN.map_names[crate::app::match_setup::MapChoice::GenXl.index()]
+        );
+
+        // Before the host's first roster there is no match to show: the
+        // card waits blank rather than painting this machine's own setup
+        // as if it were the host's.
+        if let Some(joined) = app.world_mut().resource_mut::<LobbyState>().joined_mut() {
+            joined.host_terms = None;
+        }
+        app.update();
+        let world = app.world_mut();
+        let mut values = world.query::<(&DialValue, &Text)>();
+        assert!(
+            values.iter(world).all(|(_, text)| text.0.is_empty()),
+            "a joiner's card shows nothing of its own"
         );
     }
 

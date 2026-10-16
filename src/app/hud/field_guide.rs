@@ -18,6 +18,11 @@ pub struct FieldGuide;
 #[derive(Component)]
 pub struct FieldGuideNote(usize);
 
+/// The golden crab's coin and note, folded away on a round that never
+/// has one: the strip quoted a jackpot a one-minute round cannot call.
+#[derive(Component)]
+pub struct GoldenEntry;
+
 /// A crab's size in the guide. It was 20, and a crab drawn with its legs
 /// out to the corners of its square was a speck at that size.
 const LEGEND_CRAB_PX: f32 = 26.0;
@@ -60,16 +65,27 @@ pub fn update_field_guide(
     settings: Res<GameSettings>,
     sim: Res<crate::app::Sim>,
     mut notes: Query<(&FieldGuideNote, &mut Text)>,
-    mut golden_shown: Local<u32>,
+    mut golden_entries: Query<&mut Node, With<GoldenEntry>>,
+    mut golden_shown: Local<Option<(u32, bool)>>,
 ) {
     // The worths move only with the board's rules, which change when a
     // round of another kind is loaded; the golden crab's is the one that
-    // differs between them.
-    let golden = sim.0.crab_value(crate::sim::CrabKind::Golden);
-    if !settings.is_changed() && golden == *golden_shown {
+    // differs between them, and whether it comes at all.
+    let golden = (
+        sim.0.crab_value(crate::sim::CrabKind::Golden),
+        sim.0.golden_crab_can_come(),
+    );
+    if !settings.is_changed() && Some(golden) == *golden_shown {
         return;
     }
-    *golden_shown = golden;
+    *golden_shown = Some(golden);
+    let display = match golden.1 {
+        true => Display::Flex,
+        false => Display::None,
+    };
+    for mut node in &mut golden_entries {
+        node.display = display;
+    }
     let tr = settings.tr();
     for (note, mut text) in &mut notes {
         menu_ui::set_text(&mut text, &field_guide_note(tr, note.0, &sim.0));
@@ -132,21 +148,24 @@ pub(super) fn spawn_field_guide(
                     // Each on a coin of sand, the ground it is drawn for:
                     // its legs and outline are dark, and straight on the
                     // dark pill they vanished and left a blob with a claw.
-                    strip
-                        .spawn((
-                            Node {
-                                width: Val::Px(LEGEND_CRAB_PX),
-                                height: Val::Px(LEGEND_CRAB_PX),
-                                border_radius: BorderRadius::MAX,
-                                ..default()
-                            },
-                            BackgroundColor(LEGEND_SAND),
-                        ))
-                        .with_children(|icon| {
-                            icon.spawn(layer(&art.crab));
-                            icon.spawn(layer(&art.claw));
-                        });
-                    strip.spawn((
+                    let mut coin = strip.spawn((
+                        Node {
+                            width: Val::Px(LEGEND_CRAB_PX),
+                            height: Val::Px(LEGEND_CRAB_PX),
+                            border_radius: BorderRadius::MAX,
+                            ..default()
+                        },
+                        BackgroundColor(LEGEND_SAND),
+                    ));
+                    coin.with_children(|icon| {
+                        icon.spawn(layer(&art.crab));
+                        icon.spawn(layer(&art.claw));
+                    });
+                    let golden = *kind == crate::sim::CrabKind::Golden;
+                    if golden {
+                        coin.insert(GoldenEntry);
+                    }
+                    let mut note = strip.spawn((
                         FieldGuideNote(i),
                         Text::new(field_guide_note(tr, i, board)),
                         TextFont {
@@ -156,6 +175,9 @@ pub(super) fn spawn_field_guide(
                         TextLayout::no_wrap(),
                         TextColor(palette::PARCHMENT.with_alpha(0.85)),
                     ));
+                    if golden {
+                        note.insert((GoldenEntry, Node::default()));
+                    }
                 }
             });
         });

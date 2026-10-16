@@ -145,7 +145,9 @@ use presence::StallWatch;
 pub(crate) use presence::{abandon_the_departed, catch_up_again, leave_a_hostless_round};
 use pump::HashCheck;
 pub use rounds::Invitation;
-pub(crate) use rounds::{lockstep_for, seat_kinds, seat_names, seat_the_hosts_bots};
+pub(crate) use rounds::{
+    chairs_for_bots, lockstep_for, seat_kinds, seat_names, seat_the_hosts_bots,
+};
 
 impl OnlineSession {
     pub fn new(
@@ -190,17 +192,57 @@ impl OnlineSession {
         self.session.watching()
     }
 
-    /// The humans at the table and in line for it: the players in the
-    /// lockstep plus every peer owed a chair at the next deal, queued or
-    /// left without one at the launch. What the running beacon reports as
-    /// taken.
+    /// Whether the book holds no plan to go by because none was ever
+    /// dealt: the direct `PINCH_HOST`/`PINCH_JOIN` pair's first round,
+    /// which never went through a lobby. Its one peer is the player at
+    /// the other castle, though the book has it in line.
+    ///
+    /// Not merely an empty plan: a table formed in the lobby and launched
+    /// against the AI with nobody aboard has one too, and so does one
+    /// whose every planned peer has been forgotten. There, everybody on
+    /// the socket came after the launch and plays nothing this round.
+    pub(super) fn keeps_no_plan(&self) -> bool {
+        !self.home.from_lobby && self.peers.planned() == 0
+    }
+
+    /// Whether `peer` is sent the round's inputs. A joiner sends its own
+    /// to the one peer it has, the host, and the direct pair's host to its
+    /// one peer. Everyone else goes by the plan
+    /// ([`PeerBook::follows_the_round`]): a lobby table launched against
+    /// the AI, or one whose planned peers have all been forgotten, has an
+    /// empty plan and everybody on its socket in line.
+    pub(super) fn follows_the_round(&self, peer: usize) -> bool {
+        !self.is_host() || self.keeps_no_plan() || self.peers.follows_the_round(peer)
+    }
+
+    /// Whether `peer` plays this round, as far as this session can tell.
+    /// A joiner hears only the host, which always does; the host goes by
+    /// the plan, or takes the direct pair's one peer at its word.
+    pub(super) fn plays_this_round(&self, peer: usize) -> bool {
+        !self.is_host() || self.peers.seat_of(peer).is_some() || self.keeps_no_plan()
+    }
+
+    /// The chairs spoken for at the next deal: the people in the lockstep
+    /// plus every peer owed a chair, queued or left without one at the
+    /// launch, and the host's own bots only as far as the deal would still
+    /// seat them with one more person aboard. What the running beacon
+    /// reports as taken.
+    ///
+    /// Counted the way the lobby's beacon counts them
+    /// ([`crate::app::lobby::chairs_taken`]): the next deal seats a person
+    /// ahead of a bot (`seat_the_hosts_bots`), so counting the bots whole
+    /// listed four people and two bots as full while the next round would
+    /// have seated a fifth person.
     pub(crate) fn players_spoken_for(&self) -> u8 {
         let queued = self
             .peers
             .iter()
             .filter(|peer| peer.wants_a_chair())
             .count();
-        (self.session.player_count() + queued).min(MAX_PLAYERS) as u8
+        let bots = self.bots_here.len();
+        let people =
+            (self.session.player_count().saturating_sub(bots) + queued).min(MAX_PLAYERS) as u8;
+        crate::app::lobby::chairs_taken(people, bots)
     }
 }
 
@@ -433,8 +475,8 @@ mod spectator_tests {
     }
 
     /// A direct `PINCH_HOST` pair keeps no launch plan, and
-    /// `follows_the_round` reads an empty plan as "everybody hears" so the
-    /// two keep talking to the one peer they have. Spectating is the place
+    /// `follows_the_round` lets it send to its one peer all the same, so
+    /// the two keep talking to the one peer they have. Spectating is the place
     /// a peer was dealt, not something derived from that: read the other
     /// way, the host had its opponent down as a spectator, counted in the
     /// audience and allowed to vote on the game it was playing.
@@ -445,7 +487,7 @@ mod spectator_tests {
         session.peers.reach(1);
         assert_eq!(session.peers.planned(), 0, "no plan at all");
         assert!(
-            session.peers.follows_the_round(0),
+            session.follows_the_round(0),
             "and it is sent the round regardless, which is the point"
         );
 
@@ -477,7 +519,7 @@ mod spectator_tests {
         session.peers.row(1).silence = 0.0;
         let before = session.peers.len();
 
-        session.forget_gone_watchers();
+        session.forget_gone_bystanders();
 
         assert_eq!(session.peers.len(), before - 1, "one of the four went");
         assert_eq!(
@@ -493,7 +535,17 @@ mod spectator_tests {
         assert_eq!(
             session.peers.get(2).map(|p| p.place),
             Some(Place::Queued),
-            "and the one in line costs nothing, so it waits for the card"
+            "and the hand-wired pair's player is the round's own business"
+        );
+
+        // At a table formed in the lobby, somebody in line who has gone
+        // quiet goes too: it was counted as a chair taken all round.
+        session.home.from_lobby = true;
+        session.forget_gone_bystanders();
+        assert_eq!(session.peers.len(), before - 2, "the one in line went");
+        assert!(
+            session.peers.iter().all(|p| p.place != Place::Queued),
+            "and nobody is left in line"
         );
     }
 
@@ -602,6 +654,38 @@ mod table_tests {
             host.players_spoken_for(),
             MAX_PLAYERS as u8,
             "and never more chairs than the table has"
+        );
+    }
+
+    /// The host's own bots give way to a person at the next deal, so the
+    /// running beacon counts them as the lobby's does: four people and two
+    /// door bots leave a chair for a fifth person.
+    #[test]
+    fn the_running_beacon_counts_the_hosts_bots_as_giving_way() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, (0..6).collect(), DEFAULT_DELAY),
+            6,
+            MatchTerms::default(),
+        );
+        for peer in 0..3 {
+            host.peers.row(peer).place = Place::Seated(peer as u8 + 1);
+        }
+        for seat in [4, 5] {
+            host.bots_here.push(HostedBot {
+                seat,
+                id: usize::from(seat),
+                name: "Bot".into(),
+            });
+        }
+        assert_eq!(
+            host.players_spoken_for(),
+            crate::app::lobby::chairs_taken(4, 2),
+            "the lobby's count"
+        );
+        assert!(
+            host.players_spoken_for() < MAX_PLAYERS as u8,
+            "a fifth person is still seated ahead of a bot"
         );
     }
 

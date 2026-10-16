@@ -58,6 +58,12 @@ pub struct Before {
     scores: [u32; MAX_PLAYERS],
     banked: u32,
     claw_call: bool,
+    /// Every castle and its owner, as the tick found them. A crab banks
+    /// for the owner of the moment it walks in, and a Castle Swap its
+    /// sparkling crab spins later in the same tick hands that castle on:
+    /// read after, the bank went to the wrong seat and the seat it did go
+    /// to showed a raid nobody made.
+    castles: Vec<((u8, u8), PlayerId)>,
 }
 
 impl Before {
@@ -85,6 +91,18 @@ impl Before {
             scores: *board.scores(),
             banked: board.crabs_banked(),
             claw_call: board.in_claw_call(),
+            castles: board
+                .tiles()
+                .filter_map(|(x, y, kind)| match kind {
+                    TileKind::Castle(owner) => Some(((x, y), owner)),
+                    TileKind::Empty
+                    | TileKind::Rock
+                    | TileKind::Spawner(_)
+                    | TileKind::Turnstile { .. }
+                    | TileKind::Kelp
+                    | TileKind::Pool => None,
+                })
+                .collect(),
         }
     }
 
@@ -121,7 +139,10 @@ impl Before {
         let mut walking: Vec<(&Seen, PlayerId, (u8, u8))> = gone
             .iter()
             .filter(|c| after.swept_home(c.id).is_none())
-            .filter_map(|c| castle_entered(after, c).map(|(owner, at)| (*c, owner, at)))
+            .filter_map(|c| {
+                self.castle_entered(after, c)
+                    .map(|(owner, at)| (*c, owner, at))
+            })
             .collect();
         if walking.len() > walked_in {
             walking.sort_by_key(|(c, ..)| std::cmp::Reverse(c.progress));
@@ -210,25 +231,22 @@ impl Before {
     }
 }
 
-/// The castle a crab that vanished walked into, and where: the tile it
-/// stood on, or the one it was heading into (across the seam on a wrapping
-/// beach).
-fn castle_entered(after: &Board, crab: &Seen) -> Option<(PlayerId, (u8, u8))> {
-    [Some(crab.tile), after.step(crab.tile, crab.dir)]
-        .into_iter()
-        .flatten()
-        .find_map(|tile| {
-            let (x, y) = after.coords_u8(tile);
-            match after.tile_at(x, y) {
-                TileKind::Castle(owner) => Some((owner, (x, y))),
-                TileKind::Empty
-                | TileKind::Rock
-                | TileKind::Spawner(_)
-                | TileKind::Turnstile { .. }
-                | TileKind::Kelp
-                | TileKind::Pool => None,
-            }
-        })
+impl Before {
+    /// The castle a crab that vanished walked into, and whose it was when
+    /// it did: the tile it stood on, or the one it was heading into (across
+    /// the seam on a wrapping beach).
+    fn castle_entered(&self, after: &Board, crab: &Seen) -> Option<(PlayerId, (u8, u8))> {
+        [Some(crab.tile), after.step(crab.tile, crab.dir)]
+            .into_iter()
+            .flatten()
+            .find_map(|tile| {
+                let at = after.coords_u8(tile);
+                self.castles
+                    .iter()
+                    .find(|(castle, _)| *castle == at)
+                    .map(|&(_, owner)| (owner, at))
+            })
+    }
 }
 
 /// What banking `crab`, worth `value` on this board, pays, by the sim's
@@ -358,6 +376,44 @@ mod tests {
             .filter(|h| matches!(h, Happened::Banked { owner: 1, .. }))
             .count();
         assert_eq!(banked, 2, "{seen:?}");
+    }
+
+    /// A crab that banks on the tick a Castle Swap hands its castle on
+    /// banked for the owner it walked in on: no bank for the new owner,
+    /// and no raid on the old one.
+    #[test]
+    fn a_bank_on_a_castle_swap_tick_is_the_old_owners() {
+        let mut board = Board::new(5, 1, 1);
+        board.set_tile(0, 0, TileKind::Castle(0));
+        board.set_tile(4, 0, TileKind::Castle(1));
+        board.spawn_crab(2, 0, Direction::Right, Handedness::Left, CrabKind::Common);
+        let mut seen = Vec::new();
+        loop {
+            let before = Before::of(&board);
+            board.tick_idle();
+            if board.crabs().is_empty() {
+                // The swap a sparkling crab spins comes after the banks in
+                // the same tick: done here by hand, in that order.
+                board.force_tide_event(crate::sim::TideEvent::CastleSwap, 1);
+                assert_eq!(board.tile_at(4, 0), TileKind::Castle(0));
+                before.diff(&board, &mut seen);
+                break;
+            }
+            before.diff(&board, &mut seen);
+        }
+        assert_eq!(board.scores()[1], 1);
+        assert!(
+            matches!(
+                seen.as_slice(),
+                [Happened::Banked {
+                    owner: 1,
+                    x: 4,
+                    y: 0,
+                    ..
+                }]
+            ),
+            "{seen:?}"
+        );
     }
 
     /// A left-clawed crab banked at nothing during Right Claws leaves the

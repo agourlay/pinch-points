@@ -8,14 +8,68 @@ use crate::app::layout::{self, TILE};
 use crate::sim::{Board, TileKind};
 use bevy::prelude::*;
 
-/// Wet sand, shallow water, deep water: a pool's layers, bottom up, each
-/// with its tint, its size on a tile, and its size bridging two tiles
-/// (along the pair, across it).
-const POOL_LAYERS: [(Color, f32, Vec2); 3] = [
-    (Color::srgb(0.77, 0.66, 0.48), 1.1, Vec2::new(1.2, 1.0)),
-    (Color::srgb(0.44, 0.69, 0.80), 0.98, Vec2::new(1.1, 0.86)),
-    (Color::srgb(0.33, 0.57, 0.72), 0.62, Vec2::new(1.0, 0.58)),
+/// A pool's layers, bottom up: what each is drawn with, its size on a
+/// tile, and its size bridging two tiles (along the pair, across it).
+#[derive(Clone, Copy)]
+pub(crate) enum PoolLayer {
+    /// The wet sand round the water, a plain tinted sprite.
+    Shore(Color),
+    /// The shallow rim and the deep middle, drawn by the water shader.
+    Shallow,
+    Deep,
+}
+
+pub(crate) const POOL_LAYERS: [(PoolLayer, f32, Vec2); 3] = [
+    (
+        PoolLayer::Shore(Color::srgb(0.77, 0.66, 0.48)),
+        1.1,
+        Vec2::new(1.2, 1.0),
+    ),
+    (PoolLayer::Shallow, 0.98, Vec2::new(1.1, 0.86)),
+    (PoolLayer::Deep, 0.62, Vec2::new(1.0, 0.58)),
 ];
+
+/// Spawn one layer of a pond, `extent` across and placed at `place`, with
+/// `marker` on it: the wet-sand shore as a tinted puddle, the water as
+/// the water shader cut to the puddle's shape. The board's pools and the
+/// postcard's are drawn by this one function, so the two match.
+pub(crate) fn spawn_layer(
+    commands: &mut Commands,
+    art: &Art,
+    layer: PoolLayer,
+    place: Transform,
+    extent: Vec2,
+    marker: impl Bundle,
+) {
+    match layer {
+        PoolLayer::Shore(tint) => {
+            commands.spawn((marker, image_sprite(&art.puddle, tint, extent), place));
+        }
+        PoolLayer::Shallow | PoolLayer::Deep => {
+            let material = if matches!(layer, PoolLayer::Shallow) {
+                &art.water.pool_shallow
+            } else {
+                &art.water.pool_deep
+            };
+            commands.spawn((
+                marker,
+                Mesh2d(art.water.quad.clone()),
+                MeshMaterial2d(material.clone()),
+                place.with_scale(extent.extend(1.0)),
+            ));
+        }
+    }
+}
+
+/// Where the sun's glint sits on a pond `across` wide centred at `at`: up
+/// toward the light, the opposite side to the ground shadows, whichever
+/// way the puddle is turned.
+pub(crate) fn glint_place(at: Vec3, across: Vec2) -> Transform {
+    let sun = -layout::SUN.normalize() * across * 0.13;
+    Transform::from_translation(at + sun.extend(0.0))
+        .with_rotation(Quat::from_rotation_z(0.35))
+        .with_scale(Vec3::new(across.x * 0.26, across.y * 0.1, 1.0))
+}
 
 /// A pool's slow swell: a ripple rising out of the water and fading.
 #[derive(Component)]
@@ -47,10 +101,14 @@ fn tile_hash(x: u8, y: u8) -> u32 {
 /// which is what the campaign's pool-filled lanes are. A two-by-two block
 /// gets a puddle over its shared corner too, or its middle is dry.
 ///
+/// The two water layers are the water shader, which colours a pixel by
+/// where it is in the world and not by which puddle it belongs to, so the
+/// overlapping pieces still merge into one body with one moving light.
+///
 /// All of it sits under creatures and signposts, which wade over it.
 pub(super) fn spawn_pools(commands: &mut Commands, board: &Board, art: &Art) {
     let pieces = pond_pieces(board);
-    for (layer, (tint, size, bridge)) in POOL_LAYERS.into_iter().enumerate() {
+    for (layer, (kind, size, bridge)) in POOL_LAYERS.into_iter().enumerate() {
         let z = z::POOL - 0.03 + 0.01 * layer as f32;
         for piece in &pieces {
             let (at, turn, extent) = match *piece {
@@ -59,12 +117,9 @@ pub(super) fn spawn_pools(commands: &mut Commands, board: &Board, art: &Art) {
                 }
                 PondPiece::Bridge { at, turn } => (at, turn, bridge),
             };
-            commands.spawn((
-                BoardStatic,
-                image_sprite(&art.puddle, tint, extent * TILE),
-                Transform::from_translation(at.extend(z))
-                    .with_rotation(Quat::from_rotation_z(turn)),
-            ));
+            let place = Transform::from_translation(at.extend(z))
+                .with_rotation(Quat::from_rotation_z(turn));
+            spawn_layer(commands, art, kind, place, extent * TILE, BoardStatic);
         }
     }
     for (x, y, kind) in board.tiles() {
@@ -87,6 +142,15 @@ pub(super) fn spawn_pools(commands: &mut Commands, board: &Board, art: &Art) {
                 (layout::tile_center(board, x, y) + wander).extend(z::POOL + 0.005),
             )
             .with_rotation(Quat::from_rotation_z(pool_turn(hash))),
+        ));
+        commands.spawn((
+            BoardStatic,
+            Mesh2d(art.water.quad.clone()),
+            MeshMaterial2d(art.water.glint.clone()),
+            glint_place(
+                (layout::tile_center(board, x, y) + wander).extend(z::POOL + 0.004),
+                Vec2::splat(TILE),
+            ),
         ));
     }
 }

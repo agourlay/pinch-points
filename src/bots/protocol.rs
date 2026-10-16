@@ -601,7 +601,13 @@ pub fn parse_incoming(line: &str) -> Incoming {
                 .map_or(1, |n| u32::try_from(n).unwrap_or(u32::MAX))
                 .max(1),
             key: v.get("key").and_then(Value::as_str).map(|k| tidy(k, 16)),
-            token: v.get("token").and_then(Value::as_str).map(|t| tidy(t, 64)),
+            // An empty token is no token: a bot that writes `"token": ""`
+            // before it has one is registering afresh.
+            token: v
+                .get("token")
+                .and_then(Value::as_str)
+                .map(|t| tidy(t, 64))
+                .filter(|t| !t.is_empty()),
         }),
         Some("ready") => match game {
             Some(game) => Incoming::Ready { game },
@@ -845,6 +851,18 @@ mod tests {
         assert_eq!(r.name, "Greedy[31m");
         assert_eq!(r.owner, None);
         assert_eq!(r.parallel, 1);
+    }
+
+    /// A bot that writes an empty token before it has one registers
+    /// afresh, rather than being refused for a token nobody issued.
+    #[test]
+    fn an_empty_token_is_no_token() {
+        let line =
+            json!({"type": "register", "protocol": 1, "name": "New", "token": ""}).to_string();
+        let Incoming::Register(r) = parse_incoming(&line) else {
+            panic!("a registration");
+        };
+        assert_eq!(r.token, None);
     }
 
     /// A name or an owner ends up in a replay's `names:` line, which is

@@ -42,6 +42,21 @@ impl TeamMode {
         }
     }
 
+    /// The mode a table of `seats` actually plays under this one: itself
+    /// where it fits, else free-for-all.
+    pub fn played_by(self, seats: u8) -> TeamMode {
+        match self.fits(seats) {
+            true => self,
+            false => TeamMode::Solo,
+        }
+    }
+
+    /// The fewest seats past `seats` this mode fits, if any: where a
+    /// table playing free-for-all under it starts playing it.
+    pub fn fits_from(self, seats: u8) -> Option<u8> {
+        (seats.saturating_add(1)..=MAX_PLAYERS as u8).find(|&more| self.fits(more))
+    }
+
     /// The team a seat plays for.
     pub fn team_of(self, seat: u8) -> u8 {
         match self {
@@ -111,11 +126,7 @@ pub(crate) fn in_play(settings: &GameSettings, online: &net::Online, seats: u8) 
         Some(session) => session.terms.teams(),
         None => settings.team_mode,
     };
-    if wanted.fits(seats) {
-        wanted
-    } else {
-        TeamMode::Solo
-    }
+    wanted.played_by(seats)
 }
 
 /// Each team's total, indexed by team.

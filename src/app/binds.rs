@@ -161,7 +161,10 @@ pub fn all_distinct(binds: &[SeatBinds; BOUND_SEATS]) -> bool {
 /// the hint, N and P step between stages and R restarts the run; in a
 /// versus round C copies the round code. Bound to a seat, such a key would
 /// do both jobs on one press, so none is offered. Escape is kept out the
-/// same way, being how a capture is cancelled.
+/// same way, being how a capture is cancelled. The letters move with the
+/// layout, so a key bound on one keyboard can be a global's cap on
+/// another: there the global yields to the seat (see
+/// [`crate::app::keycaps::KeyCaps::global_pressed`]).
 ///
 /// Not here, on purpose: W and S, which walk the menus but are stock
 /// bindings and only read as menu keys where the seats are not playing (the

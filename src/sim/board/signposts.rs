@@ -165,6 +165,7 @@ impl Board {
             seq,
             placed: self.tick,
         });
+        self.hands[usize::from(player)] = Some((t as u16, self.tick));
     }
 
     /// Remaining life of a signpost as a 0..=1 fraction (always 1 under
@@ -193,26 +194,19 @@ impl Board {
         }
     }
 
-    /// Where a player's most recent signpost stands and when they placed it:
-    /// `(x, y, tick)`.
+    /// Where a player last put a signpost down and when: `(x, y, tick)`,
+    /// whether or not the post still stands.
     ///
     /// The anchor for a bot's cursor (see [`crate::sim::bot_action`]): the
-    /// last tile it reached, so the walk to the next can be charged for.
-    /// Read from the board, so the bot stays a pure function of the state
-    /// and every peer derives the same move for an AI seat.
-    pub fn newest_signpost_of(&self, player: PlayerId) -> Option<(u8, u8, u64)> {
-        self.signposts
-            .iter()
-            .enumerate()
-            .filter_map(|(tile, slot)| {
-                let sp = slot.as_ref().filter(|sp| sp.owner == player)?;
-                Some((tile as u16, sp.seq, sp.placed))
-            })
-            .max_by_key(|&(_, seq, _)| seq)
-            .map(|(tile, _, placed)| {
-                let (x, y) = self.coords(tile);
-                (x as u8, y as u8, placed)
-            })
+    /// last tile its hand reached, so the walk to the next can be charged
+    /// for. Read from the board, so the bot stays a pure function of the
+    /// state and every peer derives the same move for an AI seat. Read off
+    /// the posts instead, a hand whose posts had all gone (Fresh Sand, a
+    /// gull, its own pickup) was nowhere, and placed anywhere at once.
+    pub fn last_placement_of(&self, player: PlayerId) -> Option<(u8, u8, u64)> {
+        let (tile, at) = (*self.hands.get(usize::from(player))?)?;
+        let (x, y) = self.coords_u8(tile);
+        Some((x, y, at))
     }
 
     /// The slot holding `player`'s oldest signpost: the first planted or

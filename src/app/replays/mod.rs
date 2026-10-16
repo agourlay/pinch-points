@@ -332,14 +332,14 @@ pub fn update_library(
 /// Arrows pick, Enter watches, C copies a share code, V pastes one, Esc
 /// leaves.
 pub fn library_input(
-    keys: Res<ButtonInput<KeyCode>>,
+    keyboard: crate::app::keycaps::Keyboard,
     settings: Res<GameSettings>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
     mut clipboard: ResMut<Clipboard>,
     mut library: ResMut<Library>,
     mut playback: ResMut<Playback>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
+    let crate::app::keycaps::Keyboard { keys, caps, live } = keyboard;
     let tr = settings.tr();
     if keys.just_pressed(KeyCode::Escape) {
         next_screen.set(Screen::Menu);
@@ -352,7 +352,7 @@ pub fn library_input(
         library.selected = menu_ui::nav(&keys, library.selected, shown);
         library.settle();
     }
-    if caps.just_pressed(&keys, 'C') {
+    if caps.global_pressed(&keys, 'C', &live) {
         library.feedback = copy_selected(&mut clipboard, tr, &library);
     }
     if caps.just_pressed(&keys, 'V') {

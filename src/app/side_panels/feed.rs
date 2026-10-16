@@ -4,7 +4,7 @@
 //! Repeats collapse into one counted line, which is why this has state
 //! worth testing.
 
-use super::{LOG_TOP, card};
+use super::{CARD_BORDER, LOG_TOP, card};
 use crate::app::i18n::fill;
 use crate::app::menu_ui;
 use crate::app::palette;
@@ -168,18 +168,66 @@ pub fn collect_log(
     }
 }
 
-/// Render the log lines, newest at the top, older ones dimmer.
+/// The box inside the feed card the lines stack in, and are clipped to.
+#[derive(Component)]
+pub struct LogLines;
+
+/// How many of the lines, `heights` tall in order from the top with `gap`
+/// between each, fit whole in `room`. A line that would run past the foot
+/// is not drawn at all: half a line cut off by the frame read as a glitch.
+fn lines_that_fit(heights: impl IntoIterator<Item = f32>, gap: f32, room: f32) -> usize {
+    let mut used = 0.0;
+    let mut fit = 0;
+    for height in heights {
+        let next = if fit == 0 {
+            height
+        } else {
+            used + gap + height
+        };
+        if next > room + 0.5 {
+            break;
+        }
+        used = next;
+        fit += 1;
+    }
+    fit
+}
+
+/// Render the log lines, newest at the top, older ones dimmer, as many as
+/// fit whole in the card. Measured from last frame's layout, which is the
+/// one there is.
 pub fn update_log(
     log: Res<EventLog>,
-    mut lines: Query<(&LogLine, &mut Text, &mut TextColor)>,
+    mut lines: Query<(&LogLine, &mut Text, &mut TextColor, &ComputedNode)>,
+    boxes: Query<&ComputedNode, With<LogLines>>,
     mut value: Local<String>,
+    mut heights: Local<Vec<f32>>,
 ) {
-    for (line, mut text, mut color) in &mut lines {
+    let shown = boxes.single().map_or(LOG_LINES, |room| {
+        heights.clear();
+        heights.resize(LOG_LINES, 0.0);
+        for (line, _, _, node) in &lines {
+            if let Some(height) = heights.get_mut(line.0) {
+                *height = node.size.y;
+            }
+        }
+        let gap = LOG_GAP / room.inverse_scale_factor;
+        let filled = log.0.len().min(LOG_LINES);
+        lines_that_fit(heights[..filled].iter().copied(), gap, room.size.y)
+    });
+    for (line, mut text, mut color, _) in &mut lines {
         let target = match log.0.get(line.0) {
+            // A line that does not fit keeps its words, drawn clear: its
+            // height is what says whether it fits, and an emptied line would
+            // measure as fitting next frame and flicker back.
             Some(entry) => {
                 let fade = 1.0 - line.0 as f32 * 0.09;
                 entry.render_into(&mut value);
-                entry.color.with_alpha(fade)
+                if line.0 < shown {
+                    entry.color.with_alpha(fade)
+                } else {
+                    Color::NONE
+                }
             }
             None => {
                 value.clear();
@@ -191,39 +239,85 @@ pub fn update_log(
     }
 }
 
-/// Spawn the feed card, filling the sidebar below the clock.
+/// How many single-line entries the feed card is sized for. Longer ones
+/// wrap and take two; what runs past the foot is clipped, and is the
+/// oldest and dimmest anyway.
+const LOG_ROWS: f32 = 8.0;
+
+/// The gap between two entries.
+const LOG_GAP: f32 = 6.0;
+
+/// The feed card's height: its rows, the frame's room at the top and the
+/// foot, and the card's own border at each, which Bevy counts inside the
+/// height. Left out, the lines' box came out 4 px short and the eighth
+/// entry never fitted.
+const LOG_H: f32 = LOG_ROWS * menu_ui::type_scale::BODY * menu_ui::LINE_HEIGHT
+    + (LOG_ROWS - 1.0) * LOG_GAP
+    + 2.0 * menu_ui::CARD_PAD
+    + 2.0 * CARD_BORDER;
+
+/// Spawn the feed card below the clock, in the menus' driftwood frame, at
+/// one fixed size: a card that grew with each new line drew the eye every
+/// time something happened, and one filling the sidebar to the prompt line
+/// was a tall slab, mostly empty for most of a round.
 pub(super) fn spawn_feed(root: &mut ChildSpawnerCommands) {
+    let (mut node, edge, fill, shadow) = card(LOG_TOP, Some(LOG_H));
     // Its rows stack from the top, so it drops the clock card's centring.
-    let (mut node, edge, fill, shadow) = card(LOG_TOP, None);
     node.flex_direction = FlexDirection::Column;
     node.align_items = AlignItems::default();
     node.justify_content = JustifyContent::default();
-    node.row_gap = Val::Px(6.0);
+    // The frame holds the top and the sides clear of its wood; the foot is
+    // ours to keep clear, or the last line runs under the bottom band.
     node.padding = UiRect::axes(Val::Px(12.0), Val::Px(10.0));
-    node.overflow = Overflow::clip();
+    node.padding.bottom = Val::Px(menu_ui::CARD_PAD);
+    // The lines sit in a box of their own that does the clipping, inside
+    // the padding: clipped by the card itself, a line running past the
+    // foot showed half under the frame's bottom band, and clipping the
+    // card to its padding would cut off its own frame, which is a child.
+    let lines = Node {
+        flex_direction: FlexDirection::Column,
+        flex_grow: 1.0,
+        min_height: Val::Px(0.0),
+        row_gap: Val::Px(LOG_GAP),
+        overflow: Overflow::clip(),
+        ..default()
+    };
     // The card's own fill, kept rather than thinned: at 0.9 the sand behind
     // the sidebar comes through and the feed reads as a different material
     // from the clock card touching it above, (36, 34, 33) against the
     // clock's (18, 20, 28).
-    root.spawn((node, edge, fill, shadow))
-        .with_children(|list| {
-            for index in 0..LOG_LINES {
-                list.spawn((
-                    LogLine(index),
-                    Text::new(""),
-                    TextFont {
-                        font_size: FontSize::Px(menu_ui::type_scale::BODY),
-                        ..default()
-                    },
-                    TextColor(Color::NONE),
-                ));
-            }
+    root.spawn((node, edge, fill, shadow, menu_ui::Framed))
+        .with_children(|card| {
+            card.spawn((LogLines, lines)).with_children(|list| {
+                for index in 0..LOG_LINES {
+                    list.spawn((
+                        LogLine(index),
+                        Text::new(""),
+                        TextFont {
+                            font_size: FontSize::Px(menu_ui::type_scale::BODY),
+                            ..default()
+                        },
+                        TextColor(Color::NONE),
+                    ));
+                }
+            });
         });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Lines fit while they fit whole, gaps included; the first that would
+    /// run past the foot is dropped, and so is everything after it.
+    #[test]
+    fn only_whole_lines_are_drawn() {
+        assert_eq!(lines_that_fit([20.0, 20.0, 20.0], 5.0, 70.0), 3);
+        assert_eq!(lines_that_fit([20.0, 20.0, 20.0], 5.0, 69.0), 2);
+        assert_eq!(lines_that_fit([40.0, 20.0, 10.0], 5.0, 60.0), 1);
+        assert_eq!(lines_that_fit([], 5.0, 60.0), 0);
+        assert_eq!(lines_that_fit([80.0], 5.0, 60.0), 0, "one too tall");
+    }
 
     /// Repeats collapse into one counted line instead of flooding the feed,
     /// and the counted line floats back to the top when it happens again.

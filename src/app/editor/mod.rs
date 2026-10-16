@@ -37,6 +37,135 @@ const ARROWS: [(KeyCode, Direction); 4] = [
     (KeyCode::ArrowRight, Direction::Right),
 ];
 
+/// The editor's keys that follow P1's bindings, read by the editor and
+/// named by its prompts from this one answer.
+pub(crate) struct EditorKeys {
+    /// P1's movement keys, which walk the editor's cursor whatever they
+    /// are bound to (see `cursor::move_cursor`).
+    pub moves: [KeyCode; 4],
+    /// The wall toggles: the arrow keys, or P1's place keys while the
+    /// arrows are P1's movement keys, which would leave no key to build a
+    /// wall with.
+    pub walls: [(KeyCode, Direction); 4],
+    /// A playtest's placements and its removal: P1's, as a puzzle reads
+    /// them.
+    pub place: [(KeyCode, Direction); 4],
+    pub remove: KeyCode,
+}
+
+impl EditorKeys {
+    pub(crate) fn of(settings: &GameSettings) -> Self {
+        let map = crate::app::cursor::keymap(settings, 0, settings.commit);
+        let moves = map.moves.map(|(key, ..)| key);
+        let walls = match ARROWS.iter().any(|(key, _)| moves.contains(key)) {
+            true => map.places,
+            false => ARROWS,
+        };
+        Self {
+            moves,
+            walls,
+            place: map.places,
+            remove: map.remove,
+        }
+    }
+}
+
+/// A press the editor's own keys may answer: just pressed, and neither one
+/// of P1's movement keys nor a wall key.
+///
+/// The cursor walks on P1's bindings, and the brushes and commands are
+/// keys of their own, so a binding moved onto one did two things at once:
+/// rebound to ESDF, E walked the cursor up and painted kelp on every step.
+/// Movement wins, being the binding the player chose and the one the
+/// prompt names, and so do the walls when they have moved onto P1's place
+/// keys; a brush they shadow is still reached with Tab and Space.
+fn command_press<'a>(
+    keys: &'a ButtonInput<KeyCode>,
+    settings: &GameSettings,
+) -> impl Fn(KeyCode) -> bool + 'a {
+    let EditorKeys { moves, walls, .. } = EditorKeys::of(settings);
+    move |key| {
+        keys.just_pressed(key)
+            && !moves.contains(&key)
+            && !walls.iter().any(|(wall, _)| *wall == key)
+    }
+}
+
+/// Four keys as a prompt names them, in the order "WASD" spells a block
+/// (up, left, down, right): run together when each cap is one character,
+/// "ESDF", else "Up/Left/Down/Right".
+pub(crate) fn spell_block(caps: &crate::app::keycaps::KeyCaps, keys: [KeyCode; 4]) -> String {
+    let labels = keys.map(|key| caps.label(key));
+    match labels.iter().all(|label| label.chars().count() == 1) {
+        true => labels.concat(),
+        false => labels.join("/"),
+    }
+}
+
+/// `text` with the editor's `{walls}`, `{place}` and `{remove}` keys
+/// filled in: the language's own words while they are the stock arrow
+/// keys and Space, else the caps of the keys [`EditorKeys`] reads.
+pub(crate) fn spell_editor_keys(
+    text: &str,
+    tr: &crate::app::i18n::Tr,
+    caps: &crate::app::keycaps::KeyCaps,
+    settings: &GameSettings,
+) -> String {
+    let keys = EditorKeys::of(settings);
+    let block = |group: [(KeyCode, Direction); 4]| -> String {
+        if group == ARROWS {
+            return tr.ed_arrow_keys.to_string();
+        }
+        let key = |dir| {
+            group
+                .iter()
+                .find(|(_, d)| *d == dir)
+                .map(|(key, _)| *key)
+                .expect("a key for every way")
+        };
+        spell_block(
+            caps,
+            [
+                key(Direction::Up),
+                key(Direction::Left),
+                key(Direction::Down),
+                key(Direction::Right),
+            ],
+        )
+    };
+    let remove = if keys.remove == KeyCode::Space {
+        tr.ed_space_key.to_string()
+    } else {
+        caps.label(keys.remove)
+    };
+    fill(
+        text,
+        &[
+            ("walls", &block(keys.walls)),
+            ("place", &block(keys.place)),
+            ("remove", &remove),
+        ],
+    )
+}
+
+/// Whether "+" (`up`) or "-" was pressed for the posts dial. The prompt
+/// says "+/-" in every language, so the keys are the ones that say so:
+/// the US pair beside Backspace, the keypad's, and whichever key this
+/// keyboard's caps put the sign on.
+fn dial_press(
+    pressed: &impl Fn(KeyCode) -> bool,
+    keys: &ButtonInput<KeyCode>,
+    caps: &crate::app::keycaps::KeyCaps,
+    up: bool,
+) -> bool {
+    let (us, pad, sign) = if up {
+        (KeyCode::Equal, KeyCode::NumpadAdd, '+')
+    } else {
+        (KeyCode::Minus, KeyCode::NumpadSubtract, '-')
+    };
+    pressed(us) || pressed(pad) || caps.pressed_caps(keys, sign).any(pressed)
+}
+
 const EDITOR_BOARD: (u8, u8) = (12, 9);
 
 /// Beach sizes the editor offers, smallest first. The same set versus plays
@@ -278,6 +407,7 @@ pub fn editor_input(
         return;
     }
     typed.clear();
+    let pressed = command_press(&keys, &settings);
     // Beach size, on a function key. On `[` and `]`, which are *physical*
     // keys, the prompt named keys a non-US keyboard does not have; F5 is F5
     // everywhere, and one key that wraps is enough for four sizes.
@@ -296,7 +426,7 @@ pub fn editor_input(
     // of a key the prompt calls "size" threw away an unsaved level with no
     // warning and nothing to undo it with, while wiping a campaign in
     // Settings, which at least only costs stars, takes two.
-    if keys.just_pressed(KeyCode::F5) {
+    if pressed(KeyCode::F5) {
         let board = &sim.0;
         let now = (board.width(), board.height());
         let at = EDITOR_SIZES.iter().position(|&s| s == now).unwrap_or(1);
@@ -317,7 +447,7 @@ pub fn editor_input(
         );
         return;
     }
-    if keys.just_pressed(KeyCode::F1) {
+    if pressed(KeyCode::F1) {
         state.mode = Mode::Naming;
         state.feedback = settings.tr().ed_naming.to_string();
         return;
@@ -331,7 +461,7 @@ pub fn editor_input(
     // Walls on the cursor tile's edges. The rim of an open-ocean beach is
     // the seam creatures cross and takes no wall (see `Board::set_wall`),
     // which is said rather than the key quietly doing nothing.
-    for (key, dir) in ARROWS {
+    for (key, dir) in EditorKeys::of(&settings).walls {
         if keys.just_pressed(key) {
             if board.on_open_rim(x, y, dir) {
                 state.feedback = settings.tr().ed_wrap_on.to_string();
@@ -347,13 +477,13 @@ pub fn editor_input(
     // knows the old editor keeps working and the palette simply shows it
     // what it just chose; Tab walks the palette for a hand that does not.
     for brush in Brush::ALL {
-        if keys.just_pressed(brush.key()) {
+        if pressed(brush.key()) {
             state.brush = brush;
             paint(board, x, y, brush);
             state.dirty = true;
         }
     }
-    if keys.just_pressed(KeyCode::Tab) {
+    if pressed(KeyCode::Tab) {
         let at = Brush::ALL
             .iter()
             .position(|b| *b == state.brush)
@@ -365,7 +495,7 @@ pub fn editor_input(
         };
         state.brush = Brush::ALL[(at + step) % Brush::ALL.len()];
     }
-    if keys.just_pressed(KeyCode::Space) {
+    if pressed(KeyCode::Space) {
         paint(board, x, y, state.brush);
         state.dirty = true;
     }
@@ -377,14 +507,18 @@ pub fn editor_input(
 /// is being built.
 ///
 /// The rule is where the two kinds part. A puzzle is played with the
-/// inventory it grants and no evictions; an arena keeps the board's own
-/// rule, which is the one every generated beach plays under. Stamping the
+/// inventory it grants and no evictions; an arena gets the stock rule,
+/// which is the one every generated beach plays under. Stamping the
 /// puzzle rule on a handmade beach gives a versus table three signposts
 /// each and no way to replace them.
 ///
 /// A puzzle also plays without castle raids, as every campaign puzzle
 /// does: its castle is the finish line, and a gull leaving through it
-/// would move the target.
+/// would move the target. An arena plays with them, as every versus beach
+/// does, and versus never turns them back on. Stamped both ways because
+/// the board on the bench can carry the other kind's: a puzzle code
+/// pasted in and switched to an arena with F6 brought `raids: off` and
+/// its granted rule along, and saved a beach that never raided.
 ///
 /// What comes back is read from the text that will be saved, not the board
 /// on screen. The two differ when gulls were placed and erased: each
@@ -396,6 +530,10 @@ pub(super) fn level_here(state: &EditorState, board: &Board, name: &str) -> Leve
     if state.kind == LevelKind::Puzzle {
         snapshot.set_signpost_rule(state.posts, crate::sim::CapPolicy::Reject);
         snapshot.rules_mut().castle_raids = false;
+    } else {
+        let stock = crate::sim::Rules::default();
+        snapshot.set_signpost_rule(stock.signpost_cap, stock.cap_policy);
+        snapshot.rules_mut().castle_raids = stock.castle_raids;
     }
     let level = Level::from_board(name, state.posts, snapshot).with_kind(state.kind);
     Level::parse(&level.to_text()).unwrap_or(level)
@@ -409,7 +547,7 @@ pub(super) fn level_here(state: &EditorState, board: &Board, name: &str) -> Leve
 /// leaves for the menu. The frame the name is committed is sat out here
 /// (see `EditorState::named`), because the gate lifts within that frame.
 pub fn editor_commands(
-    keys: Res<ButtonInput<KeyCode>>,
+    keyboard: crate::app::keycaps::Keyboard,
     settings: Res<GameSettings>,
     bench: Workbench,
     mut clipboard: ResMut<Clipboard>,
@@ -418,6 +556,7 @@ pub fn editor_commands(
     mut swap: BoardSwap,
 ) {
     let Workbench { mut sim, mut state } = bench;
+    let crate::app::keycaps::Keyboard { keys, caps, .. } = keyboard;
     let EditorNews {
         mut saved,
         mut shared,
@@ -428,10 +567,11 @@ pub fn editor_commands(
         return;
     }
     let tr = settings.tr();
-    if keys.just_pressed(KeyCode::F3) {
+    let pressed = command_press(&keys, &settings);
+    if pressed(KeyCode::F3) {
         share::copy_level(&mut state, &sim.0, &mut clipboard, tr, &mut shared);
     }
-    if keys.just_pressed(KeyCode::F4) {
+    if pressed(KeyCode::F4) {
         share::paste_level(
             &mut state,
             &mut sim,
@@ -447,14 +587,16 @@ pub fn editor_commands(
     // the match never reads. It keeps its value across a trip through arena
     // mode rather than being zeroed.
     if state.kind == LevelKind::Puzzle {
-        if keys.just_pressed(KeyCode::Equal) {
-            state.posts = (state.posts + 1).min(9);
+        // Up to nine by the dial; a pasted level may carry more, which
+        // "+" leaves alone rather than lowering (or, at 255, overflowing).
+        if dial_press(&pressed, &keys, &caps, true) && state.posts < 9 {
+            state.posts += 1;
         }
-        if keys.just_pressed(KeyCode::Minus) {
+        if dial_press(&pressed, &keys, &caps, false) {
             state.posts = state.posts.saturating_sub(1);
         }
     }
-    if keys.just_pressed(KeyCode::KeyO) {
+    if pressed(KeyCode::KeyO) {
         let wrap = !board.wrap();
         board.set_wrap(wrap);
         state.dirty = true;
@@ -464,7 +606,7 @@ pub fn editor_commands(
             tr.ed_wrap_off.into()
         };
     }
-    if keys.just_pressed(KeyCode::KeyK) {
+    if pressed(KeyCode::KeyK) {
         let period = next_gull_period(board.rules().gull_period);
         board.rules_mut().gull_period = period;
         state.feedback = if period == 0 {
@@ -477,7 +619,7 @@ pub fn editor_commands(
         };
     }
 
-    if keys.just_pressed(KeyCode::KeyV) {
+    if pressed(KeyCode::KeyV) {
         if state.kind == LevelKind::Arena {
             // Nothing to solve: a beach is playable or it is short of
             // castles, and that is an answer this frame rather than a
@@ -491,7 +633,7 @@ pub fn editor_commands(
             state.feedback = tr.ed_validating.into();
         }
     }
-    if keys.just_pressed(KeyCode::F6) {
+    if pressed(KeyCode::F6) {
         state.kind = match state.kind {
             LevelKind::Puzzle => LevelKind::Arena,
             LevelKind::Arena => LevelKind::Puzzle,
@@ -501,7 +643,7 @@ pub fn editor_commands(
             LevelKind::Arena => tr.ed_now_arena.into(),
         };
     }
-    if keys.just_pressed(KeyCode::F2) {
+    if pressed(KeyCode::F2) {
         shelf::save_level(&mut state, board, tr, &mut saved);
     }
     if crate::app::menu_ui::enter(&keys) {
@@ -521,9 +663,9 @@ pub fn editor_commands(
             &swap.sprites,
         );
         state.mode = Mode::Testing(Box::new(snapshot));
-        state.feedback = tr.ed_playtest_prompt.into();
+        state.feedback = spell_editor_keys(tr.ed_playtest_prompt, tr, &caps, &settings);
     }
-    if keys.just_pressed(KeyCode::Escape) {
+    if pressed(KeyCode::Escape) {
         next_screen.set(Screen::Menu);
     }
 }
@@ -545,12 +687,15 @@ pub fn editor_test_input(
     let Some((cursor, _)) = cursors.iter().next() else {
         return;
     };
-    for (key, dir) in ARROWS {
+    // P1's place and remove keys, as a puzzle reads them: the arrows were
+    // fixed here, and unreachable once P1 moved on them.
+    let EditorKeys { place, remove, .. } = EditorKeys::of(&settings);
+    for (key, dir) in place {
         if keys.just_pressed(key) {
             let _ = sim.0.place_signpost(0, cursor.x, cursor.y, dir);
         }
     }
-    if keys.just_pressed(KeyCode::Space) {
+    if keys.just_pressed(remove) {
         let _ = sim.0.remove_signpost(0, cursor.x, cursor.y);
     }
     // Only Escape ends the test: Enter started it this very frame, and both
@@ -696,6 +841,41 @@ mod tests {
         assert!(!beach.to_text().contains("raids:"));
     }
 
+    /// A stage turned into a beach with F6 leaves the stage's rule behind:
+    /// a puzzle code pasted in carries `raids: off` and its granted
+    /// inventory on the board itself, and the beach saved from it never
+    /// raided, since versus does not turn raids back on.
+    #[test]
+    fn a_stage_turned_beach_plays_with_raids() {
+        let mut board = sand();
+        board.set_tile(0, 0, TileKind::Castle(0));
+        board.set_tile(5, 4, TileKind::Castle(1));
+        let puzzle = EditorState {
+            posts: 3,
+            kind: LevelKind::Puzzle,
+            ..EditorState::default()
+        };
+        // The stage as its code carries it, read back onto the bench.
+        let pasted = Level::parse(&level_here(&puzzle, &board, "Stage").to_text())
+            .expect("reads back")
+            .board();
+        assert!(!pasted.rules().castle_raids, "the stage's own rule");
+        let arena = EditorState {
+            kind: LevelKind::Arena,
+            ..puzzle
+        };
+        let beach = level_here(&arena, &pasted, "Beach");
+        let rules = *beach.board().rules();
+        let stock = crate::sim::Rules::default();
+        assert!(rules.castle_raids, "a beach raids");
+        assert_eq!(
+            (rules.signpost_cap, rules.cap_policy),
+            (stock.signpost_cap, stock.cap_policy),
+            "and plays the stock rule, not the stage's grant"
+        );
+        assert!(!beach.to_text().contains("raids:"));
+    }
+
     /// The toggle decides two things at once: which list the saved level
     /// joins, and which signpost rule it is played under. A beach saved
     /// under the puzzle rule hands a versus table three posts each and no
@@ -749,6 +929,8 @@ mod tests {
         app.init_resource::<EditorState>();
         app.init_resource::<GameSettings>();
         app.init_resource::<Clipboard>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.add_message::<bevy::input::keyboard::KeyboardInput>();
         // F5 is read by the painting system, beside the cursor it moves,
@@ -817,6 +999,8 @@ mod tests {
         app.init_resource::<EditorState>();
         app.init_resource::<GameSettings>();
         app.init_resource::<Clipboard>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.add_message::<bevy::input::keyboard::KeyboardInput>();
         app.add_systems(Update, (editor_input, editor_commands));
@@ -892,6 +1076,8 @@ mod tests {
         app.init_resource::<EditorState>();
         app.init_resource::<GameSettings>();
         app.init_resource::<Clipboard>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.add_systems(Update, editor_commands);
         app.world_mut().resource_mut::<EditorState>().posts = 3;
@@ -941,6 +1127,8 @@ mod tests {
         });
         app.init_resource::<GameSettings>();
         app.init_resource::<Clipboard>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.init_resource::<ButtonInput<KeyCode>>();
         // The test's own keys need a cursor to stand on, as in the editor.
         app.world_mut()
@@ -1002,6 +1190,8 @@ mod tests {
         });
         app.init_resource::<GameSettings>();
         app.init_resource::<Clipboard>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.world_mut()
             .spawn((Cursor::seated(0), Transform::default()));
@@ -1107,6 +1297,8 @@ mod tests {
         app.init_resource::<EditorState>();
         app.init_resource::<GameSettings>();
         app.init_resource::<Clipboard>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.add_systems(Update, editor_commands);
         app.world_mut().resource_mut::<EditorState>().mode = Mode::JustNamed;
@@ -1131,6 +1323,204 @@ mod tests {
         );
     }
 
+    /// The prompt says "+/-" in every language, so the dial answers the
+    /// keys that say so: the keypad's pair, and on a QWERTZ board the
+    /// caps beside P and where QWERTY has "/", besides the US pair.
+    #[test]
+    fn the_posts_dial_answers_the_keys_that_say_plus_and_minus() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.add_message::<crate::app::LevelSaved>();
+        app.add_message::<crate::app::CodeShared>();
+        app.add_message::<crate::app::CodeTaken>();
+        app.insert_resource(Sim(sand()));
+        app.init_resource::<EditorState>();
+        app.init_resource::<GameSettings>();
+        app.init_resource::<Clipboard>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.add_systems(Update, editor_commands);
+        app.world_mut().resource_mut::<EditorState>().posts = 3;
+        let tap = |app: &mut App, key: KeyCode| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(key);
+            app.update();
+            app.world().resource::<EditorState>().posts
+        };
+        assert_eq!(tap(&mut app, KeyCode::NumpadAdd), 4);
+        assert_eq!(tap(&mut app, KeyCode::NumpadSubtract), 3);
+        assert_eq!(tap(&mut app, KeyCode::Equal), 4, "the US pair still works");
+        assert_eq!(tap(&mut app, KeyCode::Minus), 3);
+        assert_eq!(tap(&mut app, KeyCode::BracketRight), 3, "QWERTY's ]");
+        app.world_mut()
+            .resource_mut::<crate::app::keycaps::KeyCaps>()
+            .force(Some(crate::app::keycaps::Layout::Qwertz));
+        assert_eq!(tap(&mut app, KeyCode::BracketRight), 4, "QWERTZ's +");
+        assert_eq!(tap(&mut app, KeyCode::Slash), 3, "QWERTZ's -");
+        assert_eq!(tap(&mut app, KeyCode::Digit6), 3, "a 6 on QWERTZ");
+        // AZERTY's "-" is on the 6, forced or learned from a press.
+        app.world_mut()
+            .resource_mut::<crate::app::keycaps::KeyCaps>()
+            .force(Some(crate::app::keycaps::Layout::Azerty));
+        assert_eq!(tap(&mut app, KeyCode::Digit6), 2, "AZERTY's -");
+        let mut learned = crate::app::keycaps::KeyCaps::default();
+        learned.learn(KeyCode::KeyW, 'z');
+        app.insert_resource(learned);
+        assert_eq!(tap(&mut app, KeyCode::Digit6), 1, "AZERTY's -, learned");
+        assert_eq!(tap(&mut app, KeyCode::Digit5), 1, "the rest of the row");
+        app.world_mut().resource_mut::<EditorState>().posts = 3;
+        app.world_mut()
+            .resource_mut::<crate::app::keycaps::KeyCaps>()
+            .force(Some(crate::app::keycaps::Layout::Qwertz));
+        // The cap at nine still holds on every key that says "+".
+        app.world_mut().resource_mut::<EditorState>().posts = 9;
+        assert_eq!(tap(&mut app, KeyCode::BracketRight), 9);
+        assert_eq!(tap(&mut app, KeyCode::NumpadAdd), 9);
+    }
+
+    /// The cursor walks on P1's bindings and the brushes are keys of their
+    /// own. Rebound to ESDF, E walked the cursor up and painted kelp with
+    /// the same press; movement keeps the key, and the brush is still on
+    /// Tab and Space.
+    #[test]
+    fn a_rebound_movement_key_does_not_also_paint() {
+        use crate::app::binds::Action;
+        let mut settings = GameSettings::default();
+        for (action, key) in [
+            (Action::MoveUp, KeyCode::KeyE),
+            (Action::MoveLeft, KeyCode::KeyS),
+            (Action::MoveDown, KeyCode::KeyD),
+            (Action::MoveRight, KeyCode::KeyF),
+        ] {
+            settings.binds[0].set(action, key);
+        }
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(Sim(sand()));
+        app.init_resource::<EditorState>();
+        app.insert_resource(settings);
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        app.world_mut()
+            .spawn((Cursor::seated(0), Transform::default()));
+        app.add_systems(Update, editor_input);
+        let tap = |app: &mut App, key: KeyCode| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(key);
+            app.update();
+        };
+        tap(&mut app, KeyCode::KeyE);
+        assert_eq!(
+            app.world().resource::<Sim>().0.tile_at(0, 0),
+            TileKind::Empty
+        );
+        assert_ne!(app.world().resource::<EditorState>().brush, Brush::Weed);
+        // A brush letter the bindings left alone still paints.
+        tap(&mut app, KeyCode::KeyR);
+        assert_eq!(
+            app.world().resource::<Sim>().0.tile_at(0, 0),
+            TileKind::Rock
+        );
+    }
+
+    /// P1 moving on the arrow keys left the editor no wall key and the
+    /// playtest no place key, both being the arrows. The walls move onto
+    /// P1's place keys and a playtest reads P1's place and remove keys, as a
+    /// puzzle does; the prompts name the keys that work.
+    #[test]
+    fn arrows_bound_to_movement_leave_walls_and_playtest_on_the_place_keys() {
+        use crate::app::binds::Action;
+        let mut settings = GameSettings::default();
+        let swapped = [
+            (Action::MoveUp, KeyCode::ArrowUp),
+            (Action::MoveDown, KeyCode::ArrowDown),
+            (Action::MoveLeft, KeyCode::ArrowLeft),
+            (Action::MoveRight, KeyCode::ArrowRight),
+            (Action::PlaceUp, KeyCode::KeyW),
+            (Action::PlaceDown, KeyCode::KeyS),
+            (Action::PlaceLeft, KeyCode::KeyA),
+            (Action::PlaceRight, KeyCode::KeyD),
+            (Action::Remove, KeyCode::KeyX),
+        ];
+        for (action, key) in swapped {
+            settings.binds[0].set(action, key);
+        }
+        let caps = crate::app::keycaps::KeyCaps::default();
+        let stock = GameSettings::default();
+        use crate::app::i18n::EN;
+        let walls = spell_editor_keys(EN.ed_prompt, &EN, &caps, &stock);
+        assert!(walls.contains("arrow keys walls"), "{walls}");
+        let walls = spell_editor_keys(EN.ed_prompt, &EN, &caps, &settings);
+        assert!(walls.contains("| WASD walls |"), "{walls}");
+        let test = spell_editor_keys(EN.ed_playtest_prompt, &EN, &caps, &stock);
+        assert_eq!(test, "arrow keys place | Space remove | Esc end test");
+        let test = spell_editor_keys(EN.ed_playtest_prompt, &EN, &caps, &settings);
+        assert_eq!(test, "WASD place | X remove | Esc end test");
+
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.add_message::<crate::app::LevelSaved>();
+        app.add_message::<crate::app::CodeShared>();
+        app.add_message::<crate::app::CodeTaken>();
+        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        let mut board = sand();
+        board.set_tile(0, 0, TileKind::Castle(0));
+        app.insert_resource(Sim(board));
+        app.insert_resource(EditorState {
+            posts: 3,
+            name: "Stage".into(),
+            ..EditorState::default()
+        });
+        app.insert_resource(settings);
+        app.init_resource::<Clipboard>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        let mut cursor = Cursor::seated(0);
+        (cursor.x, cursor.y) = (2, 2);
+        app.world_mut().spawn((cursor, Transform::default()));
+        let editing = |state: Res<EditorState>| !state.is_testing();
+        app.add_systems(
+            Update,
+            (
+                (editor_input, editor_commands).chain().run_if(editing),
+                editor_test_input.run_if(editor_testing),
+            )
+                .chain(),
+        );
+        let tap = |app: &mut App, key: KeyCode| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(key);
+            app.update();
+        };
+        let wall = |app: &App| app.world().resource::<Sim>().0.wall_at(2, 2, Direction::Up);
+        tap(&mut app, KeyCode::ArrowUp);
+        assert!(!wall(&app), "the arrow is P1's move key");
+        tap(&mut app, KeyCode::KeyW);
+        assert!(wall(&app), "P1's place key builds the wall");
+        tap(&mut app, KeyCode::KeyW);
+        assert!(!wall(&app), "and takes it down");
+
+        tap(&mut app, KeyCode::Enter);
+        assert!(app.world().resource::<EditorState>().is_testing());
+        let posts = |app: &App| app.world().resource::<Sim>().0.signpost_count(0);
+        tap(&mut app, KeyCode::ArrowLeft);
+        assert_eq!(posts(&app), 0, "the arrow is P1's move key");
+        tap(&mut app, KeyCode::KeyA);
+        assert_eq!(posts(&app), 1, "P1's place key");
+        tap(&mut app, KeyCode::Space);
+        assert_eq!(posts(&app), 1, "Space is not P1's remove key here");
+        tap(&mut app, KeyCode::KeyX);
+        assert_eq!(posts(&app), 0, "P1's remove key");
+    }
+
     /// The key itself, through the system that reads it: F6 flips the kind
     /// and says where the level now lands.
     #[test]
@@ -1145,6 +1535,8 @@ mod tests {
         app.init_resource::<EditorState>();
         app.init_resource::<GameSettings>();
         app.init_resource::<Clipboard>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.add_systems(Update, editor_commands);
 

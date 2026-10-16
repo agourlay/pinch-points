@@ -6,23 +6,25 @@
 //! is the half with a round-trip contract to keep (see `tests/it/format.rs`).
 
 use super::{Goal, Level, LevelKind};
-use crate::sim::board::{Board, CapPolicy, GULL_CAP, Rules, TileKind};
+use crate::sim::board::{Board, CapPolicy, GULL_CAP, MAX_CREATURES, Rules, TileKind};
 use crate::sim::crab::{CrabKind, Handedness};
 use crate::sim::direction::Direction;
 use crate::sim::solve::Placement;
 use crate::sim::{PlayerId, Spawner};
 
-/// The most crabs and gulls a level may start with. A beach the editor
-/// builds is at most 20x13, and a round saved mid-play carries what was on
-/// it then, both far inside this. Unbounded, a pasted code could carry a
-/// hundred thousand crab lines, and reading one through to its result
-/// (as a pasted round is, to file it) froze the game.
-pub const MAX_CREATURES: usize = 2048;
-
 impl Level {
     pub fn parse(text: &str) -> Result<Level, String> {
+        Level::parse_at(text, None)
+    }
+
+    /// [`Level::parse`], with the board built on `seed` instead of the
+    /// one the text names, when there is one.
+    pub(super) fn parse_at(text: &str, seed: Option<u64>) -> Result<Level, String> {
         let mut lines = text.lines();
-        let header = parse_header(&mut lines)?;
+        let mut header = parse_header(&mut lines)?;
+        if let Some(seed) = seed {
+            header.seed = seed;
+        }
         if header.crabs.len() + header.gulls.len() > MAX_CREATURES {
             return Err(format!("more than {MAX_CREATURES} crabs and gulls"));
         }
@@ -560,6 +562,17 @@ fn place_entities(board: &mut Board, header: &Header) -> Result<(), String> {
         }
         Ok(())
     };
+    // The board's switches first: a creature turns off a wall the moment it
+    // is placed, and on an open beach the rim is no wall. Placed before
+    // `wrap: on` was read, a crab on the edge facing out was turned round
+    // by a wall the level does not have.
+    *board.rules_mut() = header.rules;
+    if header.wrap {
+        board.set_wrap(true);
+    }
+    if header.events {
+        board.set_events_enabled(true);
+    }
     for &(x, y, dir, period) in &header.spawners {
         check("spawner", x, y)?;
         if period == 0 {
@@ -582,13 +595,6 @@ fn place_entities(board: &mut Board, header: &Header) -> Result<(), String> {
             ));
         }
         board.spawn_gull(x, y, dir);
-    }
-    *board.rules_mut() = header.rules;
-    if header.wrap {
-        board.set_wrap(true);
-    }
-    if header.events {
-        board.set_events_enabled(true);
     }
     for &(player, score) in &header.scores {
         board.set_score(player, score);
@@ -658,6 +664,23 @@ mod tests {
         assert!(err.contains(&MAX_CREATURES.to_string()), "{err}");
         let flock = format!("{}gull: 0,0 R\n", crowd(MAX_CREATURES));
         assert!(level_with(&flock).is_err(), "gulls count too");
+    }
+
+    /// On an open beach the rim is no wall, so a creature on the edge
+    /// facing out keeps facing out: it walks round the seam rather than
+    /// being turned by a wall the level does not have.
+    #[test]
+    fn a_creature_facing_off_an_open_beach_keeps_its_heading() {
+        let text = "name: T\nposts: 1\nwrap: on\ncrab: 0,1 L L common\ngull: 2,0 U\n\
+                    map:\n+-+-+-+\n|. . .|\n+ + + +\n|. . .|\n+-+-+-+\n";
+        let board = Level::parse(text).expect("parses").board();
+        assert_eq!(board.crabs()[0].dir, Direction::Left, "the crab");
+        assert_eq!(board.gulls()[0].dir, Direction::Up, "the gull");
+        // Walled in, the same crab turns, as ever.
+        let closed = Level::parse(&text.replace("wrap: on\n", ""))
+            .expect("parses")
+            .board();
+        assert_ne!(closed.crabs()[0].dir, Direction::Left);
     }
 
     /// Every goal a challenge can set survives being written out and read

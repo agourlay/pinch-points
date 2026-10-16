@@ -37,6 +37,7 @@ Console commands while registration is open: start, invite NAME, list.
   --per-owner N            bots one owner may enter (default 1)
   --parallel-cap N         games one bot may play at once, at most (default 8)
   --map NAME|FILE          classic, generated, small, large, xl, ocean, or a level file
+                           whose castles are marked exactly 0 to seats-1
   --round quick|short|standard|long
   --deadline MS            the reply deadline (default 33, one tick)
   --fair-cursor on|off     walk every seat's cursor at a person's pace
@@ -467,10 +468,11 @@ fn register(
     }
 }
 
-/// A finished game, for the standings.
+/// A finished game, for the standings. `None` for a game that could not
+/// be played to its end (its thread panicked): void, counted for nobody.
 struct Played {
     fixture: Fixture,
-    result: GameResult,
+    result: Option<GameResult>,
 }
 
 fn play_cup(plan: &Plan, listener: &Listener, entrants: &[Entrant]) -> Result<(), String> {
@@ -493,10 +495,6 @@ fn play_cup(plan: &Plan, listener: &Listener, entrants: &[Entrant]) -> Result<()
     );
     let total = fixtures.len();
     let started = Instant::now();
-    let (done_tx, done_rx) = mpsc::channel::<Played>();
-    let mut queue: Vec<(usize, Fixture)> = fixtures.into_iter().enumerate().collect();
-    queue.reverse();
-    let mut busy: Vec<u32> = vec![0; entrants.len()];
     let capacity: Vec<u32> = entrants
         .iter()
         .map(|e| match e.seat {
@@ -504,9 +502,54 @@ fn play_cup(plan: &Plan, listener: &Listener, entrants: &[Entrant]) -> Result<()
             Seat::Ai(_) => u32::MAX,
         })
         .collect();
-    let mut running = 0usize;
-    let mut finished: Vec<Played> = Vec::new();
     progress(started, 0, total);
+    let finished: Vec<Played> = play_all(
+        fixtures,
+        &capacity,
+        |index, fixture| play_fixture(plan, listener, entrants, index, fixture),
+        |index, done| {
+            if done.is_none() {
+                println!(
+                    "\n  g{} is void: it stopped with an internal error",
+                    index + 1
+                );
+            }
+        },
+        |done| progress(started, done, total),
+    )
+    .into_iter()
+    .map(|(fixture, result)| Played { fixture, result })
+    .collect();
+    println!();
+    let table = standings(plan, listener, entrants, &finished);
+    print!("\n{table}");
+    let _ = crate::app::paths::write_atomic(&plan.out.join("standings.txt"), &table);
+    println!("\nReplays and logs: {}/", plan.out.display());
+    Ok(())
+}
+
+/// Play every fixture, as many at once as each entrant's `capacity` (and
+/// [`MAX_RUNNING`]) allows, starting them in schedule order. Returns each
+/// fixture with what `play` made of it, in the order they finished.
+///
+/// A game whose thread panics comes back as `None`, its chairs freed like
+/// any other's. Left to unwind, it dropped its way of saying it was done
+/// without saying it, and the cup waited for it for ever.
+fn play_all<R: Send>(
+    fixtures: Vec<Fixture>,
+    capacity: &[u32],
+    play: impl Fn(usize, &Fixture) -> R + Sync,
+    mut finished_one: impl FnMut(usize, Option<&R>),
+    mut progress: impl FnMut(usize),
+) -> Vec<(Fixture, Option<R>)> {
+    let total = fixtures.len();
+    let (done_tx, done_rx) = mpsc::channel::<(usize, Fixture, Option<R>)>();
+    let mut queue: Vec<(usize, Fixture)> = fixtures.into_iter().enumerate().collect();
+    queue.reverse();
+    let mut busy: Vec<u32> = vec![0; capacity.len()];
+    let mut running = 0usize;
+    let mut finished: Vec<(Fixture, Option<R>)> = Vec::new();
+    let play = &play;
     std::thread::scope(|scope| {
         while finished.len() < total {
             // Start everything whose entrants all have a game to spare, in
@@ -525,27 +568,26 @@ fn play_cup(plan: &Plan, listener: &Listener, entrants: &[Entrant]) -> Result<()
                 running += 1;
                 let tx = done_tx.clone();
                 scope.spawn(move || {
-                    let result = play_fixture(plan, listener, entrants, index, &fixture);
-                    let _ = tx.send(Played { fixture, result });
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        play(index, &fixture)
+                    }))
+                    .ok();
+                    let _ = tx.send((index, fixture, result));
                 });
             }
-            let Ok(played) = done_rx.recv() else {
+            let Ok((index, fixture, result)) = done_rx.recv() else {
                 break;
             };
             running -= 1;
-            for &e in &played.fixture.chairs {
+            for &e in &fixture.chairs {
                 busy[e] -= 1;
             }
-            finished.push(played);
-            progress(started, finished.len(), total);
+            finished_one(index, result.as_ref());
+            finished.push((fixture, result));
+            progress(finished.len());
         }
     });
-    println!();
-    let table = standings(plan, listener, entrants, &finished);
-    print!("\n{table}");
-    let _ = crate::app::paths::write_atomic(&plan.out.join("standings.txt"), &table);
-    println!("\nReplays and logs: {}/", plan.out.display());
-    Ok(())
+    finished
 }
 
 /// How long a cup nobody is typing at keeps serving replays once it ends.
@@ -664,11 +706,17 @@ struct Tally {
 
 fn standings(plan: &Plan, listener: &Listener, entrants: &[Entrant], played: &[Played]) -> String {
     let mut tallies: Vec<Tally> = entrants.iter().map(|_| Tally::default()).collect();
+    let mut games = 0;
     for game in played {
-        let places: Vec<u32> = game.result.seats.iter().map(|s| s.placing).collect();
+        // A void game counts for nobody: no points, no game played.
+        let Some(result) = &game.result else {
+            continue;
+        };
+        games += 1;
+        let places: Vec<u32> = result.seats.iter().map(|s| s.placing).collect();
         let points = draw::points(&places);
         for (chair, &e) in game.fixture.chairs.iter().enumerate() {
-            let seat: &SeatResult = &game.result.seats[chair];
+            let seat: &SeatResult = &result.seats[chair];
             let t = &mut tallies[e];
             t.games += 1;
             t.points += points[chair];
@@ -744,9 +792,12 @@ fn standings(plan: &Plan, listener: &Listener, entrants: &[Entrant], played: &[P
         ]);
     }
     let mut out = format!(
-        "Cup {}: {} games, deadline {} ms{}, fair cursor {}, {}\n\n",
+        "Cup {}: {games} games{}, deadline {} ms{}, fair cursor {}, {}\n\n",
         plan.id,
-        played.len(),
+        match played.len() - games {
+            0 => String::new(),
+            void => format!(" ({void} void)"),
+        },
         plan.table.deadline,
         cli::slow_note(plan.table.deadline),
         if plan.table.fair { "on" } else { "off" },
@@ -967,5 +1018,38 @@ mod tests {
         assert!(dir.is_dir());
         let _ = std::fs::remove_file(file);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A game whose thread panics is void, and the cup goes on to its
+    /// end: the panicking thread used to drop its sender without a word,
+    /// and the cup waited for it for ever.
+    #[test]
+    fn a_game_that_panics_is_void_and_the_cup_finishes() {
+        let fixtures: Vec<Fixture> = (0..4)
+            .map(|beach| Fixture {
+                beach,
+                chairs: vec![0, 1],
+            })
+            .collect();
+        let mut void = Vec::new();
+        let played = play_all(
+            fixtures,
+            &[1, 1],
+            |index, _| {
+                assert_ne!(index, 1, "a game that cannot be played");
+                index
+            },
+            |index, result| {
+                if result.is_none() {
+                    void.push(index);
+                }
+            },
+            |_| {},
+        );
+        assert_eq!(played.len(), 4);
+        assert_eq!(void, vec![1]);
+        let mut results: Vec<Option<usize>> = played.into_iter().map(|(_, r)| r).collect();
+        results.sort();
+        assert_eq!(results, vec![None, Some(0), Some(2), Some(3)]);
     }
 }

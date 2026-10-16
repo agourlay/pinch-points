@@ -173,10 +173,11 @@ impl Tournament {
     /// name ([`Tournament::winner`]) has a majority of the rounds, or the
     /// last round has been played.
     ///
-    /// The winner and not merely the most wins: a tied round goes to every
-    /// leader, so a best of three tied twice stood at two rounds apiece,
-    /// each a majority, and was called decided with nobody to crown and a
-    /// round still to play.
+    /// The winner and not merely the most wins, so a lead two seats share
+    /// is never read as a majority. A tied round goes to nobody
+    /// ([`leading_seats`] names no leader in a tie), so a series can reach
+    /// its last round with the tally still level: that is decided by the
+    /// round count alone, with [`Tournament::winner`] naming no one.
     fn tally_decides(&self, mode: TeamMode, seats: u8) -> bool {
         let best = match self.winner(mode, seats) {
             None => 0,
@@ -343,7 +344,16 @@ pub fn enter_interlude(
         mut config,
         beaches,
     } = dials;
-    let mode = crate::app::teams::in_play(&settings, &online, seats.0.max(2));
+    // Online the standings are drawn on the table the host has just dealt
+    // the next round, which the tally below has been moved onto: the
+    // finished round's seats and names, still in `Seats` and `SeatNames`
+    // until the next board is built, put a newcomer's nought under the old
+    // AI's name, and left the top AI's wins off the card.
+    let (names, seats) = match &online.0 {
+        Some(session) => (crate::app::SeatNames(session.names.clone()), session.seats),
+        None => (crate::app::SeatNames(names.0.clone()), seats.0),
+    };
+    let mode = crate::app::teams::in_play(&settings, &online, seats.max(2));
     // The session is through the doorway; the flag has done its work of
     // carrying it past `end_versus`. Online, the map and the seed are the
     // host's to say and arrive in the terms; the config steps below are
@@ -432,7 +442,7 @@ pub fn enter_interlude(
                     ..default()
                 })
                 .with_children(|table| {
-                    let standings = standings(&settings, &names, &tournament, mode, seats.0.max(2));
+                    let standings = standings(&settings, &names, &tournament, mode, seats.max(2));
                     for Standing { who, stars, color } in standings {
                         for cell in [who, stars] {
                             table.spawn((
@@ -705,6 +715,59 @@ mod tests {
         );
         assert!(t.is_running());
         assert_eq!((t.round, t.wins[1]), (2, 1));
+    }
+
+    /// A player admitted from the queue between rounds: the host has dealt
+    /// the next round to three seats and moved the AI's win up one, while
+    /// `Seats` and `SeatNames` still hold the two of the round just played.
+    /// The card names the new table, so the AI's star sits by its name and
+    /// the newcomer's nought by theirs.
+    #[test]
+    fn the_interlude_names_the_table_just_dealt() {
+        use crate::app::net::{Online, OnlineSession};
+        use crate::transport::{MatchTerms, SeriesStanding, UdpTransport};
+
+        let mut app = App::new();
+        app.insert_resource(GameSettings::default());
+        let mut was = crate::app::SeatNames::default();
+        was.0[0] = "Ann".into();
+        was.0[1] = "Robo".into();
+        app.insert_resource(was);
+        app.insert_resource(Seats(2));
+        app.init_resource::<crate::app::match_setup::MatchConfig>();
+        app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.insert_resource(Tournament::start(SeriesLength::BestOfThree));
+        let terms = MatchTerms {
+            series: 1,
+            bots: 1,
+            ..MatchTerms::default()
+        };
+        let mut session = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            crate::app::net::lockstep_for(Some(0), 3),
+            3,
+            terms,
+        );
+        session.names[0] = "Ann".into();
+        session.names[1] = "Cy".into();
+        session.names[2] = "Robo".into();
+        session.series_standing = Some(SeriesStanding {
+            round: 2,
+            wins: [0, 0, 1, 0, 0, 0],
+        });
+        session.next_round = true;
+        app.insert_resource(Online(Some(session)));
+        app.add_systems(Update, enter_interlude);
+        app.update();
+
+        let mut texts = app.world_mut().query::<&Text>();
+        let cells: Vec<String> = texts.iter(app.world()).map(|t| t.0.clone()).collect();
+        let after = |who: &str| {
+            let at = cells.iter().position(|c| c == who).expect(who);
+            cells[at + 1].clone()
+        };
+        assert_eq!(after("Cy"), "", "the newcomer has no wins");
+        assert_eq!(after("Robo"), "*", "the AI keeps its win by its name");
     }
 
     /// The interlude reads the standing off the session and leaves it

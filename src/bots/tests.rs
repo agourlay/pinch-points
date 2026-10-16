@@ -1179,3 +1179,174 @@ fn a_bot_that_came_and_went_before_the_first_tick_is_not_marked_absent() {
     assert!(log.contains("left before the first tick"), "{log}");
     assert!(!listener.absent(id), "it came, so it is waited for again");
 }
+
+/// Under the fair cursor a bot's walk still under way when it drops does
+/// not land: its seat idles from the moment the connection went.
+#[test]
+fn a_dropped_bots_walk_does_not_land_under_the_fair_cursor() {
+    let (listener, events) = listen(Admission::Open);
+    let (mut bot, _) = Client::register(listener.local_addr(), "Walker", None);
+    let Ok(Event::Registered(id)) = events.recv_timeout(Duration::from_secs(5)) else {
+        panic!("no registration event");
+    };
+    let player = std::thread::spawn(move || {
+        while let Some(msg) = bot.next() {
+            if msg["type"] == "hello" {
+                bot.send(&json!({"type": "ready", "game": msg["game"]}));
+            }
+            if msg["type"] == "tick" {
+                // A post across the beach from its castle, a long walk
+                // away, and gone before the hand gets there.
+                bot.send(&json!({
+                    "game": 7, "tick": msg["tick"], "act": "place", "x": 1, "y": 0, "dir": "down",
+                }));
+                return;
+            }
+        }
+    });
+    let mut spec = spec(
+        little_beach(90),
+        vec![Seat::Bot(id), Seat::Ai(BotLevel::Easy)],
+        1000,
+    );
+    spec.fair_cursor = true;
+    let (result, log) = play(&listener, spec);
+    player.join().expect("player");
+    assert!(log.contains("connection dropped"), "{log}");
+    assert!(
+        result
+            .replay
+            .inputs
+            .iter()
+            .all(|tick| tick[0] == crate::sim::PlayerAction::None),
+        "the walk landed after the bot was gone"
+    );
+}
+
+/// A LAN socket closed and opened again on the same port takes its first
+/// bot: the stopped address is forgotten, not read as this loop's
+/// wake-up.
+#[test]
+fn a_port_listened_on_again_takes_its_first_bot() {
+    let (listener, _events) = listen(Admission::Open);
+    let lan = listener
+        .also_listen(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .expect("listen");
+    listener.stop_listening(lan);
+    // The old socket closes once its loop has woken and ended.
+    let mut again = None;
+    for _ in 0..200 {
+        if let Ok(addr) = listener.also_listen(lan) {
+            again = Some(addr);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let again = again.expect("the port free again");
+    assert_eq!(again, lan);
+    let (_bot, answer) = Client::register(again, "First", None);
+    assert_eq!(answer["type"], "registered", "{answer}");
+}
+
+/// A rival on the shared key declaring an invited owner's name takes none
+/// of that owner's places: it is refused once the name is bound, and
+/// counted apart if it declared it before.
+#[test]
+fn a_declared_owner_takes_none_of_an_invited_owners_places() {
+    let shared = Key::draw();
+    let alice = Key::draw();
+    let mut config = Config::new(Admission::Keys(vec![invite(&shared, None)]));
+    config.per_owner = Some(1);
+    let (listener, _events) =
+        Listener::bind(SocketAddr::from(([127, 0, 0, 1], 0)), config).expect("bind");
+    let addr = listener.local_addr();
+    let declare = |name: &str| {
+        let mut client = Client::connect(addr);
+        client.send(&json!({
+            "type": "register", "protocol": 1, "name": name, "owner": "alice",
+            "key": shared.to_string(),
+        }));
+        let answer = client.next().expect("answer");
+        (client, answer)
+    };
+    // Before Alice is invited, a rival declares her name.
+    let (_rival, answer) = declare("Rival");
+    assert_eq!(answer["type"], "registered", "{answer}");
+    listener.invite(Invite {
+        key: alice.clone(),
+        uses: None,
+        owner: Some("Alice".into()),
+        slot: None,
+    });
+    // Once she is, nobody else may.
+    let (_late, answer) = declare("Late Rival");
+    assert_eq!(answer["type"], "error", "{answer}");
+    // And her own bot still gets in.
+    let (_own, answer) = Client::register(addr, "Alice's", Some(&alice));
+    assert_eq!(answer["type"], "registered", "{answer}");
+    // The cup's draw counts them as two owners too: a two-seat table of
+    // the rival and Alice is not one owner facing herself.
+    let owners: Vec<Option<String>> = listener
+        .bots()
+        .iter()
+        .map(|b| Some(b.owner_key()))
+        .collect();
+    assert_eq!(owners.len(), 2);
+    assert_ne!(owners[0], owners[1]);
+    assert!(super::draw::draw(&owners, 2, 1, 1, 7).is_ok());
+}
+
+/// A bot that drops and comes back with its token between two commits
+/// does not have the reply it held on the old connection acted on: its
+/// seat idled from the moment the connection went.
+#[test]
+fn a_reply_held_across_a_drop_and_a_return_is_not_acted_on() {
+    use super::listener::GameMsg;
+    use super::protocol::{Act, Reply};
+    use super::seat::{BotDriver, Journal};
+    use std::time::Instant;
+    let mut bot = BotDriver::new(
+        super::listener::BotId::default(),
+        0,
+        "Hopper".into(),
+        true,
+        Duration::from_millis(100),
+    );
+    let mut log = Vec::new();
+    let mut console = |_: String| {};
+    let mut journal = Journal {
+        log: &mut log,
+        console: &mut console,
+        echo_notes: false,
+        game: 7,
+    };
+    bot.take(GameMsg::Ready { seat: 0 }, 0, &mut journal);
+    let now = Instant::now();
+    bot.sent(3, now);
+    let place = Act::Place {
+        x: 1,
+        y: 0,
+        dir: Direction::Down,
+    };
+    let reply = Reply {
+        game: 7,
+        tick: 3,
+        act: place,
+        wait: 0,
+        note: None,
+        garbled: None,
+    };
+    bot.take(
+        GameMsg::Reply {
+            seat: 0,
+            reply,
+            at: now,
+        },
+        3,
+        &mut journal,
+    );
+    bot.take(GameMsg::Dropped { seat: 0 }, 4, &mut journal);
+    bot.take(GameMsg::Back { seat: 0, serial: 2 }, 4, &mut journal);
+    assert!(bot.playing(), "it is back and ready");
+    assert_eq!(bot.order(&mut journal), Act::None);
+}

@@ -146,7 +146,15 @@ impl Match<'_, '_> {
         let Some(Some(bot)) = self.bots.get_mut(seat) else {
             return false;
         };
-        bot.take(msg, t, &mut self.sinks.journal(self.spec.game))
+        let dropped = matches!(msg, GameMsg::Dropped { .. });
+        let answered = bot.take(msg, t, &mut self.sinks.journal(self.spec.game));
+        // The hand lets go of a walk under way as the connection goes, not
+        // at the next commit: a bot back before then has not asked for it
+        // again.
+        if dropped {
+            self.cursors[seat].let_go();
+        }
+        answered
     }
 
     /// `hello` to every bot, then wait until each is ready or forfeits.
@@ -345,6 +353,15 @@ impl Match<'_, '_> {
         for seat in 0..self.n() {
             let player = seat as PlayerId;
             let act = match (&mut self.bots[seat], self.spec.seats[seat]) {
+                // A seat whose bot has gone (or never got going) idles:
+                // its hand lets go of any walk still under way, which
+                // would otherwise land the order on arrival with nobody
+                // there to have meant it.
+                (Some(bot), _) if !bot.playing() => {
+                    bot.idle();
+                    self.cursors[seat].let_go();
+                    Act::None
+                }
                 (Some(bot), _) => bot.order(&mut self.sinks.journal(self.spec.game)),
                 (None, Seat::Ai(level)) => {
                     let hand = if self.spec.fair_cursor {

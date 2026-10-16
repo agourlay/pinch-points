@@ -250,6 +250,10 @@ pub struct GameSettings {
     /// Drop the decorative motion: particle bursts, confetti, footprints,
     /// raid flashes, bouncing numbers, the blinking clock.
     pub reduced_motion: bool,
+    /// Smooth the edges of what is drawn on the beach (4x multisampling).
+    /// Off saves a weaker graphics chip most of its per-frame work at no
+    /// cost a player would notice on this game's sprites.
+    pub antialiasing: bool,
     /// Per-seat keyboard bindings (spec §8.4 full remapping).
     pub binds: [SeatBinds; BOUND_SEATS],
     /// What each seat is called. Empty means "no name given", and the seat
@@ -441,6 +445,7 @@ impl Default for GameSettings {
             fullscreen: true,
             ui_scale: 100,
             reduced_motion: false,
+            antialiasing: true,
             binds: default_binds(),
             names: std::array::from_fn(|_| String::new()),
             replay_cap: REPLAY_CAP_DEFAULT,

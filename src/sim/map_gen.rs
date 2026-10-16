@@ -270,8 +270,9 @@ pub fn classic_arena(preload_scores: bool, seats: u8) -> Board {
 
 /// The classic layout on an arbitrary PRNG seed. The layout is identical;
 /// only the in-round random stream (spawn kinds, gull entry points, events)
-/// differs. Online play uses the canonical seed so peers agree by
-/// construction; local play may vary it for round-to-round freshness.
+/// differs. Every versus round, online or on the couch, builds it on that
+/// round's seed (`match_setup::versus_board`): online, the seed travels in
+/// the match terms, so every peer builds the same beach from it.
 pub fn classic_arena_seeded(seed: u64, preload_scores: bool, seats: u8) -> Board {
     let mut board = Board::new(12, 9, seed);
     // The handcrafted beach is a four-castle board; six seats want a

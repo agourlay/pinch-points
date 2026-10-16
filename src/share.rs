@@ -79,7 +79,17 @@ pub fn encode(kind: Kind, payload: &[u8]) -> String {
 pub fn decode(code: &str) -> Option<(Kind, Vec<u8>)> {
     let mut chars = code
         .chars()
-        .filter(|ch| !matches!(ch, '-' | ' ' | '\t' | '\r' | '\n'));
+        // Any whitespace, the non-breaking and zero-width kinds a chat
+        // client slips in included: one of those failed a good code as
+        // "nothing readable".
+        .filter(|ch| {
+            !(*ch == '-'
+                || ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}'
+                ))
+        });
     let (p, q) = (chars.next()?, chars.next()?);
     if !p.eq_ignore_ascii_case(&'P') || !q.eq_ignore_ascii_case(&'P') {
         return None;
@@ -192,6 +202,17 @@ mod tests {
                 assert_eq!(decode(&code), Some((kind, payload.clone())), "{code}");
             }
         }
+    }
+
+    /// Pasted out of a chat, a code can carry spaces that are not ASCII:
+    /// a non-breaking one where it wrapped, a zero-width one at an end.
+    #[test]
+    fn a_code_pasted_from_a_chat_still_reads() {
+        let code = encode(Kind::Level, b"a small beach");
+        let expected = decode(&code).expect("the code as written");
+        let (head, tail) = code.split_at(6);
+        let pasted = format!("\u{FEFF}{head}\u{00A0}{tail}\u{200B}");
+        assert_eq!(decode(&pasted), Some(expected));
     }
 
     /// A code is something a person reads off one screen and types into

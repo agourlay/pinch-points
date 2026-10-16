@@ -387,7 +387,19 @@ impl Lockstep {
     /// pause in flight, which is a later one (every proposal is past
     /// `lifted`), or the first resume of a match would cancel every pause
     /// after it for as long as its echoes kept arriving.
+    ///
+    /// Nor is a resume past the [`horizon`](Self::horizon) while no pause
+    /// is in flight here: there is nothing for it to lift, and the one
+    /// thing it would do is raise `lifted`, so this peer's next pause and
+    /// every peer's early one read as echoes. That is a resume from the
+    /// last round still on the wire when this one began at frame zero. With
+    /// a pause in flight it still lifts it: a peer that resumed its own
+    /// later proposal before hearing the earliest names a frame this one
+    /// may never have accepted.
     pub fn receive_resume(&mut self, frame: u32) -> Option<u32> {
+        if !self.within_horizon(frame) && !self.paused() {
+            return None;
+        }
         let horizon = self.horizon();
         self.pause.receive_resume(frame, horizon)
     }
@@ -612,6 +624,14 @@ impl Lockstep {
         self.frame + 2 * resend_span(self.delay)
     }
 
+    /// Whether a frame number off the wire is one a peer may name now: not
+    /// past the [`horizon`](Self::horizon). Inputs, pauses and state hashes
+    /// past it are dropped alike, which is also what keeps the last round's
+    /// stragglers (named near its end) out of a round begun at frame zero.
+    pub fn within_horizon(&self, frame: u32) -> bool {
+        frame <= self.horizon()
+    }
+
     /// Feed a peer's message (duplicates and already-simulated frames are
     /// ignored, so resends are harmless).
     ///
@@ -619,8 +639,10 @@ impl Lockstep {
     /// frame accepted here makes a slot, and a peer naming frames up to
     /// `u32::MAX` would grow the table without bound.
     pub fn receive(&mut self, msg: InputMsg) {
-        let horizon = self.horizon();
-        if msg.frame < self.frame || msg.frame > horizon || !self.takes(msg.player, msg.frame) {
+        if msg.frame < self.frame
+            || !self.within_horizon(msg.frame)
+            || !self.takes(msg.player, msg.frame)
+        {
             return;
         }
         // Past the guard, the sender is a seated player (or one leaving),

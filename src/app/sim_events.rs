@@ -168,9 +168,14 @@ impl Origin {
     }
 }
 
-/// Last-seen sim facts for the diff.
+/// Which board is on the table, as far as telling one board from the next
+/// goes: its clock, its beach, and before the clock has run its origin.
+///
+/// The one rule for "is this a different board", asked by the sim
+/// observer and, through [`BoardGeneration`], by every drawing that keeps
+/// a memory of the last frame's board.
 #[derive(Default)]
-pub struct Watch {
+pub struct BoardIdentity {
     ticks: u64,
     /// The beach itself, by size and seed: what tells a round picked back
     /// up from a pasted code, which arrives mid-clock, from the board this
@@ -178,6 +183,115 @@ pub struct Watch {
     /// is further along than the board before it was.
     beach: (u8, u8, u64),
     origin: Option<Origin>,
+}
+
+impl BoardIdentity {
+    fn of(board: &crate::sim::Board) -> BoardIdentity {
+        BoardIdentity {
+            ticks: board.ticks(),
+            beach: (board.width(), board.height(), board.seed()),
+            origin: Origin::of(board),
+        }
+    }
+
+    /// Whether `next` was read off a different board from this one.
+    ///
+    /// A board swap usually rolls the tick clock back. A round picked up
+    /// from a pasted code can be further along than the last board, and is
+    /// told apart by its beach. Between two boards that have never ticked
+    /// (a puzzle's Setup phase, skipping levels from there, an editor
+    /// resize) the clock reads 0 on both sides, so those are told apart by
+    /// their origin instead: same clock, different board.
+    fn is_new(&self, next: &BoardIdentity) -> bool {
+        let Self {
+            ticks,
+            beach,
+            origin,
+        } = self;
+        next.ticks < *ticks || next.beach != *beach || (next.ticks == 0 && next.origin != *origin)
+    }
+}
+
+/// A count of the boards the table has held, one up every time the board
+/// on it is a different one (by [`BoardIdentity`]).
+///
+/// What a drawing with a memory of the last frame keys its reset on: the
+/// castle swap detector, the gull arrivals, the gulls' flights. Each kept
+/// its own guess before (the clock running backwards), which missed a
+/// round pasted in mid-clock, and flew castles across the beach, puffed
+/// sand under every gull on it, and handed recycled gull ids the last
+/// board's descents.
+///
+/// Published by [`track_board`] at the top of the render pass, so every
+/// drawing in the frame reads the same answer for the board it draws.
+#[derive(Resource, Default)]
+pub struct BoardGeneration {
+    identity: BoardIdentity,
+    generation: u64,
+}
+
+impl BoardGeneration {
+    /// The current board's number. Only ever compared for equality with a
+    /// number read earlier: different means a different board.
+    pub fn get(&self) -> u64 {
+        self.generation
+    }
+
+    /// Read `board`, counting it as a new board if it is one.
+    fn observe(&mut self, board: &crate::sim::Board) {
+        let next = BoardIdentity::of(board);
+        if self.identity.is_new(&next) {
+            self.generation += 1;
+        }
+        self.identity = next;
+    }
+
+    /// Count `board` as a new board whatever it reads like: it has just
+    /// been laid out on a fresh stage, every sprite rebuilt.
+    ///
+    /// The identity rule alone cannot see one case of that. A watcher who
+    /// lost the thread of a round is handed the round as it stands
+    /// (`take_catch_up_part`) and the arena is built again from it: the
+    /// same beach, its clock further along, which reads as the old board
+    /// ticking on. Taken for that, every crab that walked in the gap was
+    /// a bank or a death on the first frame, and the drawings carried
+    /// their memories of the frozen frame onto the new one.
+    pub fn laid_out(&mut self, board: &crate::sim::Board) {
+        self.generation += 1;
+        self.identity = BoardIdentity::of(board);
+    }
+}
+
+/// The board on the table, and which board it is: what a drawing that
+/// remembers last frame's board reads, so it can tell a new board from
+/// the old one ticking on.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct CurrentBoard<'w> {
+    pub sim: Res<'w, Sim>,
+    pub generation: Res<'w, BoardGeneration>,
+}
+
+impl CurrentBoard<'_> {
+    /// The board's [`BoardGeneration`] number.
+    pub fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+}
+
+/// Keep [`BoardGeneration`] up with the board on the table.
+pub fn track_board(sim: Res<Sim>, mut generation: ResMut<BoardGeneration>) {
+    // An untouched sim is the board last read, and reading one at tick 0
+    // copies its terrain.
+    if !sim.is_changed() {
+        return;
+    }
+    generation.observe(&sim.0);
+}
+
+/// Last-seen sim facts for the diff.
+#[derive(Default)]
+pub struct Watch {
+    identity: BoardIdentity,
     scores: [u32; MAX_PLAYERS],
     tiers: [u8; MAX_PLAYERS],
     /// Per seat, never a board-wide sum: an eviction leaves its owner's
@@ -242,9 +356,7 @@ impl Watch {
             *tier = castle_tier(score);
         }
         Watch {
-            ticks: board.ticks(),
-            beach: (board.width(), board.height(), board.seed()),
-            origin: Origin::of(board),
+            identity: BoardIdentity::of(board),
             scores: *board.scores(),
             tiers,
             posts_by: std::array::from_fn(|p| board.signpost_count(p as PlayerId)),
@@ -335,7 +447,6 @@ fn settle_banks(before: &[u32; MAX_PLAYERS], events: &mut [SimEvent]) -> [i64; M
 fn crab_departure(board: &crate::sim::Board, prev: &Crab, claw: bool) -> SimEvent {
     let pos = layout::creature_pos(board, prev.tile, prev.dir, prev.progress);
     let (x, y) = board.coords_u8(prev.tile);
-    let (dx, dy) = prev.dir.offset();
     let tile_or_empty = |x: i32, y: i32| {
         if x >= 0 && y >= 0 && x < i32::from(board.width()) && y < i32::from(board.height()) {
             board.tile_at(x as u8, y as u8)
@@ -360,7 +471,13 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab, claw: bool) -> SimEven
         ),
         None => {
             let here = (i32::from(x), i32::from(y));
-            let ahead = (here.0 + dx, here.1 + dy);
+            // The board's own step, seam and all: on a wrapping beach a
+            // crab leaving the last column walks into a castle on the
+            // first, and the plain offset read that as off the board and
+            // the crab as eaten.
+            let ahead = board
+                .step(prev.tile, prev.dir)
+                .map_or((-1, -1), |tile| board.coords(tile));
             // Which of the two tiles is the castle is also *where* it is,
             // and this is the only moment anybody knows: the board it was
             // read from is this frame's, and the event is consumed on the
@@ -471,10 +588,25 @@ fn gull_departures(
 }
 
 /// Diff the sim against the last frame and emit one message per happening.
-/// A board swap (fresh level or round, detected by the tick clock rolling
-/// back or by an un-ticked board's identity changing) resyncs silently so
-/// loading never fires a burst of stale events.
-pub fn observe_sim(sim: Res<Sim>, mut watch: Local<Watch>, mut events: MessageWriter<SimEvent>) {
+/// A board swap (a fresh level or round, or one pasted in mid-clock, as
+/// [`BoardIdentity::is_new`] tells them) resyncs silently so loading never
+/// fires a burst of stale events.
+pub fn observe_sim(
+    sim: Res<Sim>,
+    generation: Res<BoardGeneration>,
+    mut watch: Local<Watch>,
+    mut read_on: Local<Option<u64>>,
+    mut events: MessageWriter<SimEvent>,
+) {
+    // A board counted new by [`BoardGeneration`] is read afresh, nothing
+    // on it news. Its own identity rule would agree about most of them,
+    // but not a board laid out again further along the same round (see
+    // [`BoardGeneration::laid_out`]).
+    if *read_on != Some(generation.get()) {
+        *read_on = Some(generation.get());
+        *watch = Watch::of(&sim.0);
+        return;
+    }
     // An untouched sim is the board the watch was read from, so the diff
     // would find nothing. Reading one costs every tile, both creature
     // maps, and on an unticked board a copy of the terrain; a puzzle in
@@ -493,14 +625,8 @@ pub fn observe_sim(sim: Res<Sim>, mut watch: Local<Watch>, mut events: MessageWr
 /// and returns everything that happened since the last call.
 pub fn diff(board: &crate::sim::Board, watch: &mut Watch) -> Vec<SimEvent> {
     let next = Watch::of(board);
-    // A board swap usually rolls the tick clock back; everything the old
-    // board was doing is not news about the new one. Between two boards
-    // that have never ticked (a puzzle's Setup phase, skipping levels from
-    // there, an editor resize) the clock reads 0 on both sides, so those
-    // are told apart by their origin instead: same clock, different board.
-    let swapped = board.ticks() < watch.ticks
-        || next.beach != watch.beach
-        || (board.ticks() == 0 && next.origin != watch.origin);
+    // Everything the old board was doing is not news about a new one.
+    let swapped = watch.identity.is_new(&next.identity);
     let events = if swapped {
         Vec::new()
     } else {
@@ -1067,13 +1193,53 @@ mod tests {
             pasted.tick_idle();
         }
         assert!(
-            pasted.ticks() > watch.ticks,
+            pasted.ticks() > watch.identity.ticks,
             "the pasted round is further along"
         );
         assert!(
             diff(&pasted, &mut watch).is_empty(),
             "a different beach is a swap whatever its clock says"
         );
+    }
+
+    /// The board count the drawings reset on moves for a new board and for
+    /// nothing else: not for the same board ticking on, and not for a
+    /// post going in during a puzzle's Setup. A round pasted in further
+    /// along than the last one is new by its beach, which the clock alone
+    /// missed.
+    #[test]
+    fn the_board_count_moves_for_a_new_board_and_only_then() {
+        let mut generation = BoardGeneration::default();
+        let mut board = Board::new(6, 4, 7);
+        generation.observe(&board);
+        let first = generation.get();
+        for _ in 0..40 {
+            board.tick_idle();
+            generation.observe(&board);
+        }
+        assert_eq!(generation.get(), first, "the same board ticking on");
+        let mut pasted = Board::new(8, 6, 99);
+        for _ in 0..300 {
+            pasted.tick_idle();
+        }
+        generation.observe(&pasted);
+        let after_paste = generation.get();
+        assert_ne!(after_paste, first, "a pasted round mid-clock is new");
+        let rematch = Board::new(8, 6, 99);
+        generation.observe(&rematch);
+        let rematch_count = generation.get();
+        assert_ne!(rematch_count, after_paste, "a clock rolled back is new");
+        let mut setup = Board::new(8, 6, 99);
+        assert!(
+            setup.place_signpost(0, 2, 2, Direction::Up),
+            "a post goes in"
+        );
+        generation.observe(&setup);
+        assert_eq!(generation.get(), rematch_count, "a post in Setup is not");
+        let mut other = Board::new(8, 6, 99);
+        other.set_tile(3, 3, TileKind::Rock);
+        generation.observe(&other);
+        assert_ne!(generation.get(), rematch_count, "another unticked board is");
     }
 
     /// Losing your oldest signpost to the cap fires; every other way one
@@ -1212,7 +1378,7 @@ mod tests {
         large.spawn_crab(8, 6, Direction::Right, Handedness::Left, CrabKind::Common);
         large.spawn_crab(1, 1, Direction::Right, Handedness::Left, CrabKind::Giant);
         let mut watch = synced(&large);
-        assert_eq!(watch.ticks, 0);
+        assert_eq!(watch.identity.ticks, 0);
 
         // Smaller board, same seed, a different crab: the old crabs would
         // land off-board (the corner one) or read as eaten (the other).
@@ -1443,6 +1609,76 @@ mod tests {
         ));
     }
 
+    /// A crab leaving the last column of a wrapping beach walks into a
+    /// castle on the first. Read with the plain offset, the castle was off
+    /// the board and the bank a gull's dinner: feathers, and the castle's
+    /// owner never saw the crab arrive.
+    #[test]
+    fn a_crab_banking_across_the_seam_is_a_bank() {
+        let mut board = Board::new(6, 4, 7);
+        board.set_wrap(true);
+        board.set_tile(0, 1, TileKind::Castle(1));
+        board.spawn_crab(4, 1, Direction::Right, Handedness::Left, CrabKind::Common);
+        let mut watch = Watch::default();
+        diff(&board, &mut watch);
+        let mut seen = Vec::new();
+        for _ in 0..600 {
+            board.tick_idle();
+            seen.extend(diff(&board, &mut watch));
+            if board.crabs().is_empty() {
+                break;
+            }
+        }
+        assert!(board.crabs().is_empty(), "the crab went somewhere");
+        assert!(
+            seen.iter()
+                .any(|e| matches!(e, SimEvent::CrabBanked { owner: 1, .. })),
+            "into the castle over the seam: {seen:?}"
+        );
+        assert!(
+            !seen.iter().any(|e| matches!(e, SimEvent::CrabEaten { .. })),
+            "and not into a gull: {seen:?}"
+        );
+    }
+
+    /// A watcher who lost the thread is handed the round as it stands and
+    /// the arena is built again from it: the same beach, its clock further
+    /// along. Read as the old board ticking on, the crab that banked in
+    /// the gap banked again on the first frame back, sound, pip and all.
+    /// Laid out afresh, the board is new, and nothing on it is news.
+    #[test]
+    fn a_round_laid_out_again_further_along_is_not_news() {
+        let mut board = Board::new(6, 4, 7);
+        board.set_tile(3, 1, TileKind::Castle(1));
+        board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Common);
+        let mut further = board.clone();
+        while !further.crabs().is_empty() {
+            further.tick_idle();
+        }
+        assert!(further.scores()[1] > 0, "the crab banked in the gap");
+        let mut watch = Watch::default();
+        diff(&board, &mut watch);
+        let gap = diff(&further, &mut watch);
+        assert!(!gap.is_empty(), "read as the same board, the gap is news");
+        let mut app = App::new();
+        app.add_message::<SimEvent>();
+        app.insert_resource(Sim(board));
+        app.init_resource::<BoardGeneration>();
+        app.add_systems(Update, (track_board, observe_sim).chain());
+        app.update();
+        let before = app.world().resource::<BoardGeneration>().get();
+        app.world_mut()
+            .resource_mut::<BoardGeneration>()
+            .laid_out(&further);
+        app.insert_resource(Sim(further));
+        app.update();
+        let after = app.world().resource::<BoardGeneration>().get();
+        assert_ne!(after, before, "a board laid out is a new board");
+        let mut messages = app.world_mut().resource_mut::<Messages<SimEvent>>();
+        let events: Vec<_> = messages.drain().collect();
+        assert!(events.is_empty(), "and its past is not news: {events:?}");
+    }
+
     /// The app-layer harness pattern: drive the real system inside a
     /// headless Bevy App (no plugins beyond the schedule) and read the
     /// messages it wrote, proving the ECS wiring end to end.
@@ -1454,7 +1690,8 @@ mod tests {
         board.set_tile(3, 1, TileKind::Castle(1));
         board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Common);
         app.insert_resource(Sim(board));
-        app.add_systems(Update, observe_sim);
+        app.init_resource::<BoardGeneration>();
+        app.add_systems(Update, (track_board, observe_sim).chain());
         app.update(); // syncs the watch to the starting board
 
         let mut banked = false;
@@ -1484,7 +1721,8 @@ mod tests {
         board.set_tile(3, 1, TileKind::Castle(1));
         board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Common);
         app.insert_resource(Sim(board));
-        app.add_systems(Update, observe_sim);
+        app.init_resource::<BoardGeneration>();
+        app.add_systems(Update, (track_board, observe_sim).chain());
         app.update(); // syncs the watch to the starting board
 
         for _ in 0..3 {

@@ -22,6 +22,14 @@ use bevy::prelude::*;
 /// host's dials, because W there is the watch toggle; the W/S/A/D the
 /// other menus take left a pad unable to walk the list at all, and made
 /// Up a switch that turned a player into a spectator without a word.
+///
+/// The results cards over a board are the third: there the d-pad is not
+/// bridged at all. Nothing on a Won, Lost or versus results card reads
+/// W/A/S/D, but the board cursor does, as P1's keys: a bridged d-pad moved
+/// P1's cursor from P2's pad on the versus results, and a d-pad held from
+/// the Lost card into the retry's setup moved the cursor twice a step,
+/// once as the stick and once as a held W. The pad's own cursor path and
+/// the pause card read the d-pad directly.
 pub fn pad_menu_bridge(
     pads: Query<&Gamepad>,
     screen: Res<State<Screen>>,
@@ -30,9 +38,11 @@ pub fn pad_menu_bridge(
 ) {
     let quits = *screen.get() == Screen::Menu;
     let lobby = *screen.get() == Screen::Lobby;
+    let over_board = matches!(screen.get(), Screen::Puzzle | Screen::Versus);
     for pad in &pads {
         for (button, key, lobby_key) in BRIDGE {
-            let muted = quits && button == GamepadButton::East;
+            let moves = !matches!(button, GamepadButton::South | GamepadButton::East);
+            let muted = (quits && button == GamepadButton::East) || (over_board && moves);
             if pad.just_pressed(button) && !muted {
                 let key = if lobby { lobby_key } else { key };
                 keys.press(key);
@@ -137,6 +147,25 @@ mod tests {
             .digital_mut()
             .press(button);
         app.update();
+    }
+
+    /// On a results card over the board the d-pad is not W/A/S/D, which
+    /// the board cursor reads as P1's keys; South is still Enter.
+    #[test]
+    fn the_dpad_does_not_steer_the_board_from_a_results_card() {
+        let mut app = bridged(Screen::Versus);
+        press(&mut app, GamepadButton::DPadUp);
+        press(&mut app, GamepadButton::DPadLeft);
+        let keys = app.world().resource::<ButtonInput<KeyCode>>();
+        assert!(!keys.pressed(KeyCode::KeyW), "Up is not P1's W");
+        assert!(!keys.pressed(KeyCode::KeyA), "Left is not P1's A");
+        press(&mut app, GamepadButton::South);
+        assert!(
+            app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .just_pressed(KeyCode::Enter),
+            "South still takes the card's door"
+        );
     }
 
     /// B on the landing menu must not reach Escape, because Escape there

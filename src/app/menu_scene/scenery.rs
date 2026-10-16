@@ -31,41 +31,6 @@ pub struct MenuCritter {
     base_y: f32,
 }
 
-/// One short segment of a wave crest. A whole crest is a row of these, each
-/// riding the same travelling sine a little further along, so the line
-/// undulates instead of merely sliding.
-#[derive(Component)]
-pub struct WaveSegment {
-    /// Resting position; `x` doubles as the phase along the crest.
-    base: Vec2,
-    /// Height of the swell here, in pixels.
-    amp: f32,
-    /// Radians per pixel along the shore: how tight the swell is.
-    freq: f32,
-    /// Radians per second: how fast it rolls.
-    speed: f32,
-    /// This crest's offset, so lanes do not rise in unison.
-    phase: f32,
-    /// Peak whiteness of the crest.
-    brightness: f32,
-}
-
-/// The foam lip at the waterline, which breathes with the tide.
-#[derive(Component)]
-pub struct ShoreFoam {
-    base_y: f32,
-}
-
-/// Crests between the horizon and the shore. Near ones are taller,
-/// brighter and quicker; far ones flatten out toward the horizon, which is
-/// the whole of the perspective trick.
-const WAVE_LANES: usize = 7;
-
-/// Segments per crest. Fine enough that the step between neighbours is
-/// smaller than a segment is tall, so the row of them reads as one
-/// continuous curve.
-const WAVE_SEGMENTS: usize = 110;
-
 /// The sand strip's vertical extent, from the bottom of the window.
 const SHORE_H: f32 = 208.0;
 
@@ -155,89 +120,47 @@ fn spawn_shore(commands: &mut Commands, art: &art::Art, rng: &mut VisualRng, siz
             Transform::from_translation(Vec3::new(0.0, y, z)),
         )
     };
-    // A band of one colour with a second washed over it, opaque at one
-    // edge and gone at the other.
-    //
-    // As four flat bands, two of the three joins showed: a hard line across
-    // the sky a third of the way up, and another where the sea changed its
-    // mind. This is the same four colours with the steps taken out. `ramp`
-    // is opaque at its top, so a wash strongest at the *bottom* is turned
-    // over, which mirrors it left to right and does not matter here.
-    let wash = |y: f32, height: f32, color: Color, z: f32, upward: bool| {
-        (
-            MenuShore,
-            Sprite {
-                image: art.ramp.clone(),
-                color,
-                custom_size: Some(Vec2::new(w + 40.0, height)),
-                ..default()
-            },
-            Transform::from_translation(Vec3::new(0.0, y, z)).with_rotation(if upward {
-                Quat::from_rotation_z(std::f32::consts::PI)
-            } else {
-                Quat::IDENTITY
-            }),
-        )
-    };
-    // Sky: pale at the horizon, deepening all the way up.
+    // Sky: pale at the horizon, deepening all the way up: a band of the
+    // pale with the deep washed over it, opaque at the top (`ramp`'s
+    // opaque edge) and gone at the horizon, so there is no hard step.
     let sky_h = h / 2.0 - horizon;
     let sky_mid = horizon + sky_h / 2.0;
     commands.spawn(band(sky_mid, sky_h, Color::srgb(0.62, 0.79, 0.90), 0.0));
-    commands.spawn(wash(
-        sky_mid,
-        sky_h,
-        Color::srgb(0.42, 0.65, 0.85),
-        0.05,
-        false,
-    ));
-    // Sea: deep at the horizon, brightening toward the shore, and a hazy
-    // horizon line where sea and sky meet.
-    let sea_top = SHORE_H + 18.0;
-    let sea_h = (horizon - bottom) - sea_top;
-    let sea_mid = horizon - sea_h / 2.0;
-    commands.spawn(band(sea_mid, sea_h, Color::srgb(0.16, 0.36, 0.52), 0.0));
-    commands.spawn(wash(
-        sea_mid,
-        sea_h,
-        Color::srgb(0.27, 0.51, 0.63),
-        0.02,
-        true,
-    ));
-    commands.spawn(band(horizon, 3.0, Color::srgb(0.72, 0.84, 0.92), 0.1));
-    // The beach: dry sand, damper the nearer the water gets, and a wet
-    // line where the last wave reached.
-    commands.spawn(band(
-        bottom + SHORE_H / 2.0,
-        SHORE_H,
-        Color::srgb(0.86, 0.77, 0.57),
-        0.0,
-    ));
-    commands.spawn(wash(
-        bottom + SHORE_H / 2.0,
-        SHORE_H,
-        Color::srgba(0.70, 0.62, 0.45, 0.65),
-        0.02,
-        false,
-    ));
-    commands.spawn(band(
-        bottom + SHORE_H + 9.0,
-        18.0,
-        Color::srgb(0.72, 0.64, 0.47),
-        0.0,
-    ));
-    // The foam lip where the sea meets the sand; it laps in and out.
-    let foam_y = bottom + SHORE_H + 20.0;
     commands.spawn((
         MenuShore,
-        ShoreFoam { base_y: foam_y },
-        crate::app::layout::image_sprite(
-            &art.foam,
-            Color::srgba(1.0, 1.0, 1.0, 0.65),
-            Vec2::new(w + 40.0, 12.0),
-        ),
-        Transform::from_translation(Vec3::new(0.0, foam_y, 0.1)),
+        Sprite {
+            image: art.ramp.clone(),
+            color: Color::srgb(0.42, 0.65, 0.85),
+            custom_size: Some(Vec2::new(w + 40.0, sky_h)),
+            ..default()
+        },
+        Transform::from_translation(Vec3::new(0.0, sky_mid, 0.05)),
     ));
-    spawn_swell(commands, rng, w, sea_top, sea_h, bottom);
+    // The beach and the open sea, drawn by the same two shaders as the
+    // beach round a board, so the postcard is the place the rounds are
+    // played: dry rippled sand, and the sea from its waterline, where the
+    // waves run up and back, out to the horizon. It was flat bands under
+    // seven rows of stepped crest segments, which read as pixel art beside
+    // the drawn sprites.
+    let sand_top = bottom + SHORE_H + 40.0;
+    commands.spawn((
+        MenuShore,
+        Mesh2d(art.water.quad.clone()),
+        MeshMaterial2d(art.water.sand.clone()),
+        Transform::from_translation(Vec3::new(0.0, (bottom - 20.0 + sand_top) / 2.0, 0.0))
+            .with_scale(Vec3::new(w + 40.0, sand_top - bottom + 20.0, 1.0)),
+    ));
+    // Its foot a little below the old waterline: the shader's first stretch
+    // up from there is the wet sand the waves run up.
+    let sea_foot = bottom + SHORE_H - 10.0;
+    commands.spawn((
+        MenuShore,
+        Mesh2d(art.water.quad.clone()),
+        MeshMaterial2d(art.water.ocean.clone()),
+        Transform::from_translation(Vec3::new(0.0, (sea_foot + horizon) / 2.0, 0.02))
+            .with_scale(Vec3::new(w + 40.0, horizon - sea_foot, 1.0)),
+    ));
+    commands.spawn(band(horizon, 3.0, Color::srgb(0.72, 0.84, 0.92), 0.1));
     seed_travellers(commands, art, rng, w, h);
     spawn_beach_props(commands, art, rng, w, bottom);
 }
@@ -253,54 +176,9 @@ struct Prop {
     /// A second layer over the first, tinted: a signpost's paint on its
     /// board.
     paint: Option<(Handle<Image>, Color)>,
-}
-
-/// The swell: a stack of crests rolling shoreward. Each is a row of
-/// segments sampling one travelling sine, so a crest rises and falls along
-/// its length instead of sliding across rigidly.
-fn spawn_swell(
-    commands: &mut Commands,
-    rng: &mut VisualRng,
-    w: f32,
-    sea_top: f32,
-    sea_h: f32,
-    bottom: f32,
-) {
-    let seg_w = (w + 40.0) / WAVE_SEGMENTS as f32;
-    for lane in 0..WAVE_LANES {
-        // 0 at the horizon, 1 at the beach.
-        let near = (lane as f32 + 0.5) / WAVE_LANES as f32;
-        let y = bottom + sea_top + sea_h * (1.0 - near) * 0.98;
-        let amp = 1.5 + near * near * 9.0;
-        // Shorter wavelength close in: a swell you can see the shape of,
-        // not a straight streak with a hint of a bend.
-        let freq = 0.020 + near * 0.055;
-        let speed = 0.6 + near * 2.2;
-        let phase = rng.range(0.0, std::f32::consts::TAU);
-        let brightness = 0.10 + near * 0.42;
-        for segment in 0..WAVE_SEGMENTS {
-            let x = -w / 2.0 - 20.0 + seg_w * (segment as f32 + 0.5);
-            let base = Vec2::new(x, y);
-            commands.spawn((
-                MenuShore,
-                WaveSegment {
-                    base,
-                    amp,
-                    freq,
-                    speed,
-                    phase,
-                    brightness,
-                },
-                Sprite::from_color(
-                    Color::srgba(1.0, 1.0, 1.0, 0.0),
-                    // Overlap slightly: a crest should be a line, not a
-                    // dotted one.
-                    Vec2::new(seg_w + 1.5, 2.0 + near * 3.0),
-                ),
-                Transform::from_translation(base.extend(0.2)),
-            ));
-        }
-    }
+    /// A tide pool: drawn as the board draws one (see `spawn_pond`), not
+    /// as `image`.
+    pond: bool,
 }
 
 /// Pre-seed the sky and sea so the postcard never starts empty: the ambient
@@ -332,11 +210,14 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             shadow: 44.0 * scale,
             rotation: 0.0,
             paint: None,
+            pond: false,
         },
         2 => Prop {
-            // Driftwood: the turnstile log, washed up.
+            // Driftwood: the turnstile log, washed up. Not tinted past
+            // white: under the HDR camera a tint over 1 is light, and the
+            // log haloed in the bloom brighter than the foam.
             image: art.log.clone(),
-            tint: Color::srgb(1.15, 1.12, 1.05),
+            tint: Color::srgb(1.0, 0.98, 0.93),
             size: Vec2::splat(50.0 * scale),
             shadow: 40.0 * scale,
             rotation: if rng.next().is_multiple_of(2) {
@@ -345,6 +226,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
                 std::f32::consts::FRAC_PI_2
             },
             paint: None,
+            pond: false,
         },
         3 | 4 => Prop {
             image: art.kelp.clone(),
@@ -353,15 +235,18 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             shadow: 0.0,
             rotation: rng.range(-0.25, 0.25),
             paint: None,
+            pond: false,
         },
         5 => Prop {
-            // A tide pool left behind by the water.
-            image: art.pool.clone(),
-            tint: Color::srgba(1.0, 1.0, 1.0, 0.9),
+            // A tide pool left behind by the water, in the board's layers:
+            // no picture of its own.
+            image: Handle::default(),
+            tint: Color::WHITE,
             size: Vec2::splat(rng.range(46.0, 62.0) * scale),
             shadow: 0.0,
             rotation: 0.0,
             paint: None,
+            pond: true,
         },
         6 => Prop {
             // A crab burrow.
@@ -371,6 +256,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             shadow: 0.0,
             rotation: 0.0,
             paint: None,
+            pond: false,
         },
         7 => Prop {
             // A signpost nobody picked up, still pointing somewhere.
@@ -383,6 +269,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             size: Vec2::splat(rng.range(30.0, 38.0) * scale),
             shadow: 24.0 * scale,
             rotation: (rng.next() % 4) as f32 * std::f32::consts::FRAC_PI_2,
+            pond: false,
         },
         8..=10 => Prop {
             image: art.rock.clone(),
@@ -391,6 +278,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             shadow: 22.0 * scale,
             rotation: rng.range(0.0, std::f32::consts::TAU),
             paint: None,
+            pond: false,
         },
         _ => Prop {
             // A shell in the sand.
@@ -400,6 +288,7 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             shadow: 0.0,
             rotation: rng.range(0.0, std::f32::consts::TAU),
             paint: None,
+            pond: false,
         },
     }
 }
@@ -448,6 +337,14 @@ fn spawn_beach_props(
                 )),
             ));
         }
+        // A tide pool is drawn as the board draws one, so the two match: a
+        // lip of wet sand under the water shader's shallows and deep, and
+        // the sun's glint. The baked pool sprite read as a soap bubble
+        // beside the board's pools.
+        if prop.pond {
+            spawn_pond(commands, art, Vec3::new(x, y, z), prop.size);
+            continue;
+        }
         let mut piece = commands.spawn((
             MenuShore,
             Sprite {
@@ -471,43 +368,26 @@ fn spawn_beach_props(
             ));
         }
     }
-    // Grain: the flat sand band reads as paint without a little speckle,
-    // the same way the board's sand tiles do.
-    for _ in 0..90 {
-        let pale = rng.next().is_multiple_of(3);
-        let tint = if pale {
-            Color::srgba(1.0, 0.97, 0.88, 0.30)
-        } else {
-            Color::srgba(0.55, 0.46, 0.31, 0.22)
-        };
-        let size = rng.range(2.5, 7.0);
-        commands.spawn((
-            MenuShore,
-            Sprite::from_color(tint, Vec2::splat(size)),
-            Transform::from_translation(Vec3::new(
-                rng.range(-w / 2.0, w / 2.0),
-                rng.range(bottom + 4.0, bottom + SHORE_H - 6.0),
-                0.12,
-            )),
-        ));
+    // No grain or damp patches of its own: the sand shader draws both.
+}
+
+/// A tide pool on the postcard, `size` across, centred at `at`: the
+/// board's layers and glint, from the board's own table and helpers, at
+/// the size of the prop rather than of a tile.
+fn spawn_pond(commands: &mut Commands, art: &art::Art, at: Vec3, size: Vec2) {
+    use crate::app::board_render::{POOL_LAYERS, glint_place, spawn_layer};
+    // Squashed a little: the postcard's beach is seen at a slant.
+    let size = size * Vec2::new(1.0, 0.7);
+    for (layer, (kind, share, _)) in POOL_LAYERS.into_iter().enumerate() {
+        let place = Transform::from_translation(at + Vec3::new(0.0, 0.0, 0.001 * layer as f32));
+        spawn_layer(commands, art, kind, place, size * share, MenuShore);
     }
-    // Damp patches where the last waves reached: darker sand, faint, and
-    // only just below the waterline.
-    for _ in 0..5 {
-        commands.spawn((
-            MenuShore,
-            crate::app::layout::image_sprite(
-                &art.foam,
-                Color::srgba(0.55, 0.47, 0.34, 0.22),
-                Vec2::new(rng.range(120.0, 240.0), rng.range(10.0, 18.0)),
-            ),
-            Transform::from_translation(Vec3::new(
-                rng.range(-w / 2.0, w / 2.0),
-                bottom + SHORE_H - rng.range(6.0, 34.0),
-                0.15,
-            )),
-        ));
-    }
+    commands.spawn((
+        MenuShore,
+        Mesh2d(art.water.quad.clone()),
+        MeshMaterial2d(art.water.glint.clone()),
+        glint_place(at + Vec3::new(0.0, 0.0, 0.003), size),
+    ));
 }
 
 /// Everything a rebuild of the postcard sweeps away: the shore and the
@@ -657,30 +537,17 @@ fn spawn_critter(
     }
 }
 
-/// A piece of the sea that rolls in place: the marker saying which, and
-/// what rolling it moves.
-type SeaPart<Marker> = (&'static Marker, &'static mut Transform, &'static mut Sprite);
-
-/// What moves on the postcard: the travellers, and the sea's two layers.
-#[derive(bevy::ecs::system::SystemParam)]
-pub struct Movers<'w, 's> {
-    critters: Query<
-        'w,
-        's,
-        (
-            Entity,
-            &'static mut MenuCritter,
-            &'static mut Transform,
-            &'static mut Sprite,
-        ),
-    >,
-    waves: Query<'w, 's, SeaPart<WaveSegment>, Without<MenuCritter>>,
-    foam: Query<'w, 's, SeaPart<ShoreFoam>, (Without<MenuCritter>, Without<WaveSegment>)>,
-}
+/// A traveller on the postcard, and what moving it touches.
+type Critter = (
+    Entity,
+    &'static mut MenuCritter,
+    &'static mut Transform,
+    &'static mut Sprite,
+);
 
 /// Every so often something traverses the postcard: crabs scuttle the
 /// sand, gulls glide the sky, clouds drift high, and little sailboats
-/// cross the sea with a gentle bob. Waves roll shoreward on a loop.
+/// cross the sea with a gentle bob. The sea itself moves in its shader.
 pub fn menu_ambience(
     mut commands: Commands,
     time: Res<Time>,
@@ -688,13 +555,8 @@ pub fn menu_ambience(
     mut rng: ResMut<VisualRng>,
     mut countdown: Local<f32>,
     viewport: crate::app::menu_ui::Viewport,
-    movers: Movers,
+    mut critters: Query<Critter>,
 ) {
-    let Movers {
-        mut critters,
-        mut waves,
-        mut foam,
-    } = movers;
     let Some(size) = viewport.size() else {
         return;
     };
@@ -722,8 +584,12 @@ pub fn menu_ambience(
         critter.frame_clock += dt;
         match critter.kind {
             CritterKind::Crab => {
-                let frame_b = (critter.frame_clock / 0.16) as u32 % 2 == 1;
-                let want = if frame_b { &art.crab_b } else { &art.crab };
+                use crate::app::creatures::{BOB, WALK_FPS};
+                let step = critter.frame_clock * WALK_FPS;
+                let want = &art.crab_walk[step as usize % art.crab_walk.len()];
+                // The same bob as on the board.
+                let bob = 1.0 + (step * std::f32::consts::PI).sin().abs() * BOB;
+                transform.scale = Vec3::splat(bob);
                 if sprite.image != *want {
                     sprite.image = want.clone();
                 }
@@ -734,29 +600,5 @@ pub fn menu_ambience(
             }
             CritterKind::Gull | CritterKind::Cloud => {}
         }
-    }
-
-    // The swell. Each segment samples one travelling sine at its own place
-    // along the crest, so the line rolls: the crest rides up, the trough
-    // sinks, and the two chase each other shoreward. Whiteness follows the
-    // same wave: foam gathers at the top of a swell.
-    let now = time.elapsed_secs();
-    for (wave, mut transform, mut sprite) in &mut waves {
-        let angle = wave.base.x * wave.freq - now * wave.speed + wave.phase;
-        // Two sines at unrelated wavelengths: one alone is a corrugated
-        // roof, two make a sea.
-        let long = (angle * 0.37 - now * wave.speed * 0.55).sin();
-        let swell = (angle.sin() + long * 0.55) / 1.55;
-        transform.translation.y = wave.base.y + swell * wave.amp;
-        // Sharpen the crest: foam should be a line along the top of the
-        // swell, not an even glow over the whole thing.
-        let crest = ((swell + 1.0) * 0.5).powf(2.2);
-        sprite.color.set_alpha(wave.brightness * crest);
-    }
-    // The waterline breathes: the foam lip creeps up the sand and back.
-    for (shore, mut transform, mut sprite) in &mut foam {
-        let breath = (now * 0.42).sin();
-        transform.translation.y = shore.base_y + breath * 5.0;
-        sprite.color.set_alpha(0.5 + 0.22 * (breath * 0.5 + 0.5));
     }
 }

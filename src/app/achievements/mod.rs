@@ -126,6 +126,13 @@ pub struct PuzzleAttempt {
     /// arrows had expired was a clear "with one to spare", and "R: watch
     /// again" or a retry handed back an empty beach.
     pub layout: Vec<crate::sim::Placement>,
+    /// Whether the run in play is the first this session on its stage.
+    pub first_run: bool,
+    /// Every stage a run has begun on this session, kept past the screen:
+    /// the attempt starts fresh on the way in, so a stage lost, left for
+    /// the stage list and come back to read as untried, and its clear as
+    /// "first try".
+    pub ran: HashSet<(crate::app::CampaignKind, String)>,
 }
 
 impl PuzzleAttempt {

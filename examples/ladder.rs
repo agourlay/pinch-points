@@ -113,17 +113,19 @@ fn duel(a: BotLevel, b: BotLevel, rounds: u64, bar: &ProgressBar) -> (f64, f64, 
     (a_total, b_total, habits)
 }
 
-/// The share of head-to-head rounds the stronger bot has to take for the
-/// ladder to count as climbing.
+/// The share of all the points scored head to head, summed over every
+/// round of a pairing, that the stronger bot has to take for the ladder to
+/// count as climbing. A share of the points, not of rounds won: a round
+/// won narrowly counts for less than one won by a mile.
 ///
-/// Provisional, and deliberately just past a coin flip: a difficulty step
-/// that cannot win more than half its rounds is not a step, but the three
+/// Provisional, and deliberately just past an even split: a difficulty
+/// step that cannot outscore the one below it is not a step, but the three
 /// levels are close enough at the bottom that a wide margin would fail on
 /// sampling noise at the default 40 rounds.
 ///
-/// Measured 2026-10-02, when every level began walking at the fair
-/// cursor's one pace rather than its own (Easy had been slower than a
-/// person, Fierce faster): easy-normal 15.7/84.3, normal-fierce 38.4/61.6,
+/// Measured 2026-10-02 as weaker/stronger shares of the points, when
+/// every level began walking at the fair cursor's one pace rather than
+/// its own (Easy had been slower than a person, Fierce faster): easy-normal 15.7/84.3, normal-fierce 38.4/61.6,
 /// easy-fierce 12.5/87.5, against 14.6/85.4, 38.0/62.0 and 13.8/86.2 the
 /// build before. The ladder never stood on the hand: the levels differ in
 /// what they see and choose. Later that night the hand began each round
@@ -165,7 +167,7 @@ fn main() {
         let share = hi / (lo + hi);
         if share < LADDER_EDGE {
             inverted.push(format!(
-                "{} vs {}: the stronger bot took {:.1}%, wanted {:.0}% or better",
+                "{} vs {}: the stronger bot took {:.1}% of the points, wanted {:.0}% or better",
                 name(a),
                 name(b),
                 share * 100.0,

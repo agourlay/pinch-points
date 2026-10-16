@@ -213,6 +213,21 @@ fn a_bot_pays_for_the_walk_to_the_tile() {
         empty.tick_idle();
     }
     assert!(hand_arrived(&empty, 1, 8, 6), "walked from home");
+
+    // A post that has gone leaves the hand where it put it: picked up (or
+    // washed off by Fresh Sand, or worn out by a gull), the walk from it
+    // to the far corner is still a walk.
+    let mut gone = arena();
+    assert!(gone.place_signpost(1, 1, 1, Direction::Up));
+    assert!(gone.remove_signpost(1, 1, 1));
+    assert!(
+        !hand_arrived(&gone, 1, 8, 6),
+        "no teleporting once it is gone"
+    );
+    for _ in 0..23 {
+        gone.tick_idle();
+    }
+    assert!(hand_arrived(&gone, 1, 8, 6), "walked from where it placed");
 }
 
 /// With the rule off, an all-bot match's AI places anywhere at once; with

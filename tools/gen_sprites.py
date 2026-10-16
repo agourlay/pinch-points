@@ -191,8 +191,6 @@ CARAPACE = [(24, 36), (30, 27), (42, 21), (56, 21), (64, 28), (68, 40), (68, 56)
 # long ones, fanned out, were what made the old one read as a spider.
 LEGS_A = [((30, 31), (22, 19), (12, 12)), ((37, 25), (31, 13), (22, 6)),
           ((45, 22), (43, 10), (36, 4)), ((53, 22), (56, 10), (52, 4))]
-LEGS_B = [((30, 31), (20, 22), (9, 18)), ((37, 25), (29, 15), (18, 10)),
-          ((45, 22), (45, 11), (40, 3)), ((53, 22), (58, 12), (58, 5))]
 
 
 def crab_legs(d, legs, mirror):
@@ -508,10 +506,12 @@ tower(d, 48, 30, 72, 30, 12, merlons=3, grains=GRAINS[:4])
 d.rectangle([px(45, 46), px(51, 58)], fill=OUTLINE)
 save(img, "turret")
 
-# --- sand tiles: baked speckled sand, two brightness variants ----------------
+# --- sand tile: baked speckled sand -----------------------------------------
+# Only the editor's Sand brush draws it now: the board's sand is the sand
+# shader, in these colours (src/app/materials.rs), the darker tile at
+# (230, 207, 161).
 for name, base, speck_dark, speck_light in [
     ("sand_a", (237, 217, 176, 255), (219, 196, 152, 255), (247, 233, 203, 255)),
-    ("sand_b", (230, 207, 161, 255), (211, 187, 141, 255), (242, 226, 192, 255)),
 ]:
     rng = random.Random(name)  # deterministic per variant
     img = Image.new("RGBA", (SIZE * S, SIZE * S), base)
@@ -529,13 +529,15 @@ for name, base, speck_dark, speck_light in [
     save(img, name)
 
 # --- shadow: soft radial blob, black with alpha falloff ----------------------
+# Its core at two thirds: at under half, over bright sand, a shadow read as
+# a smudge and nobody could tell which way the sun was.
 img = Image.new("RGBA", (SIZE * S, SIZE * S), (0, 0, 0, 0))
 d = ImageDraw.Draw(img)
 steps = 24
 for i in range(steps):
     t = i / (steps - 1)          # 0 outer .. 1 inner
     r = int((46 - 34 * t) * S)
-    a = int(6 + 110 * t * t)
+    a = int(8 + 160 * t * t)
     d.ellipse([px(48, 48)[0] - r, px(48, 48)[1] - r,
                px(48, 48)[0] + r, px(48, 48)[1] + r], fill=(0, 0, 0, a))
 save(img, "shadow")
@@ -747,8 +749,40 @@ d.ellipse([px(28, 28), px(68, 68)], fill=(96, 74, 52, 255))
 d.ellipse([px(34, 34), px(54, 54)], fill=(126, 100, 72, 255))
 save(img, "post")
 
-# --- crab frame B: the other half of the walk cycle ------------------------
-save(crab_body(LEGS_B), "crab_b")
+# --- crab walk: four frames of an alternating gait ---------------------------
+# A second frame that moved both sides together read as a flap.
+# A crab walks with its legs out of step: each leg swings about its hip,
+# neighbours a quarter of a cycle apart, and the far side half a cycle
+# behind the near one, so at every frame some feet are planted and some
+# are reaching.
+WALK_SWING = 0.32  # radians either way about the resting pose
+
+
+def swung(leg, angle):
+    """A leg (hip, knee, foot) turned `angle` radians about its hip."""
+    hip = leg[0]
+    c, s_ = math.cos(angle), math.sin(angle)
+    def turn(q):
+        dx, dy = q[0] - hip[0], q[1] - hip[1]
+        return (hip[0] + dx * c - dy * s_, hip[1] + dx * s_ + dy * c)
+    return [hip, turn(leg[1]), turn(leg[2])]
+
+
+def crab_walk(frame):
+    img, d = canvas()
+    for side, mirror in ((0, False), (1, True)):
+        legs = []
+        for i, leg in enumerate(LEGS_A):
+            phase = 2 * math.pi * (frame / 4 + i / 4 + side / 2)
+            legs.append(swung(leg, WALK_SWING * math.sin(phase)))
+        crab_legs(d, legs, mirror)
+    body = crab_body([])
+    img.alpha_composite(body)
+    return img
+
+
+for frame in range(4):
+    save(crab_walk(frame), f"crab_walk_{frame}")
 
 # --- wet: sand-to-water gradient strip (fades downward) ----------------------
 img = Image.new("RGBA", (SIZE * S, SIZE * S), (0, 0, 0, 0))

@@ -69,6 +69,7 @@ impl Peer {
                 | NetMsg::SpectatorPick { .. }
                 | NetMsg::CrowdPicks { .. }
                 | NetMsg::Kicked
+                | NetMsg::NoBots
                 | NetMsg::Leaving => {}
             }
         }

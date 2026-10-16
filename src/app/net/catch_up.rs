@@ -40,6 +40,20 @@ pub struct CatchUp {
     pub(super) assembly: Assembly,
 }
 
+impl CatchUp {
+    /// Host: a peer is forgotten. It is owed nothing more, and those
+    /// behind it move down one with their rows, so a part is never sent
+    /// to whoever moved up into its index, or past the end of the socket.
+    pub(super) fn forget(&mut self, peer: usize) {
+        self.owed.retain(|&owed| owed != peer);
+        for owed in &mut self.owed {
+            if *owed > peer {
+                *owed -= 1;
+            }
+        }
+    }
+}
+
 impl OnlineSession {
     /// A watcher's session for a round already running: the invitation as
     /// the launch would have given it, then a lockstep that starts at the
@@ -71,7 +85,7 @@ impl OnlineSession {
     /// Joiner, on the results card or still in the last round: take one
     /// part of the round as it stands, and once the whole of it is in,
     /// take that round up as a watcher and arm the way back into the
-    /// arena, as a `Start` for it would have. Returns whether it did.
+    /// arena, as a `Start` for it would have.
     ///
     /// The lobby is not the only place a peer is handed the round. A
     /// player the table had no chair for is dealt a watching place, and
@@ -83,22 +97,17 @@ impl OnlineSession {
     /// lobby uses, and taken up by the same steps as [`Self::caught_up`].
     ///
     /// Only a round this peer is not in yet counts: an invitation already
-    /// taken up wins, and a snapshot of the round just played is no news.
-    pub(super) fn take_catch_up_part(
-        &mut self,
-        frame: u32,
-        part: u8,
-        parts: u8,
-        bytes: Vec<u8>,
-    ) -> bool {
+    /// taken up wins, and a snapshot of the round just played is no news,
+    /// unless this watcher has lost the thread of it (`lost_the_thread`).
+    pub(super) fn take_catch_up_part(&mut self, frame: u32, part: u8, parts: u8, bytes: Vec<u8>) {
         if self.is_host() || self.next_round {
-            return false;
+            return;
         }
         let Some(caught) = self.catch_up.assembly.take(frame, part, parts, bytes) else {
-            return false;
+            return;
         };
-        if !self.is_next_round(&caught.invitation.terms) {
-            return false;
+        if !self.is_next_round(&caught.invitation.terms) && !self.lost_the_thread(caught.frame) {
+            return;
         }
         let CaughtUp {
             invitation,
@@ -108,7 +117,20 @@ impl OnlineSession {
         self.take_up(invitation);
         self.watch_from(frame, board);
         self.next_round = true;
-        true
+    }
+
+    /// Watcher: whether the round as it stands at `frame` is the only way
+    /// back into the round this session is watching, because the frames
+    /// between are past every resend tail.
+    ///
+    /// A watcher whose network dropped long enough to be forgotten greets
+    /// again (`greet_a_quiet_host`) and is handed the round as it stands,
+    /// like any late watcher. Thrown away as "the round just played", it
+    /// sat on its frozen frame for good while the host fed it inputs it
+    /// could never use. A snapshot the tails can still bridge is no news,
+    /// so a watcher that only hiccuped keeps its board.
+    pub(super) fn lost_the_thread(&self, frame: u32) -> bool {
+        self.watching() && frame > self.session.frame() + TAIL_REACH
     }
 
     /// Host: whether `peer` came to watch after the launch, and so is one
@@ -197,6 +219,10 @@ impl OnlineSession {
     }
 }
 
+/// How far back the players' resend tails reach: a peer this far behind
+/// the round still gets every input it is missing from the next datagram.
+const TAIL_REACH: u32 = crate::sim::DEFAULT_DELAY + crate::sim::MAX_COMMIT_LEAD;
+
 /// How far into a round a frame-zero `Start` still works: well inside the
 /// resend tails, which reach `DEFAULT_DELAY + MAX_COMMIT_LEAD` frames back,
 /// leaving the rest for the `Start` to travel and the session to begin.
@@ -248,6 +274,8 @@ pub struct CaughtUp {
 pub struct Assembly {
     frame: Option<u32>,
     parts: Vec<Option<Vec<u8>>>,
+    /// Parts of earlier snapshots turned away since this one began.
+    refused: usize,
 }
 
 impl Assembly {
@@ -257,13 +285,27 @@ impl Assembly {
     /// over, and a part of an earlier one is a leftover of the snapshot
     /// just abandoned. A whole that will not unpack is dropped, and the
     /// next greeting brings another.
+    ///
+    /// Up to a point. The frame counts from zero again every round, and
+    /// nothing in a part says which round it is: a snapshot that never
+    /// came whole, late in one round, turned away every snapshot of the
+    /// next one for as long as its frames were lower, and the watcher sat
+    /// on the card or in the lobby while the host sent the round again
+    /// every second. Leftovers of the snapshot abandoned are fewer than a
+    /// whole snapshot's worth, so once that many earlier parts have been
+    /// turned away, they are a round this one is not part of, and the
+    /// gathering starts over on them.
     pub fn take(&mut self, frame: u32, part: u8, parts: u8, bytes: Vec<u8>) -> Option<CaughtUp> {
         match self.frame {
-            Some(current) if frame < current => return None,
+            Some(current) if frame < current && self.refused < self.parts.len() => {
+                self.refused += 1;
+                return None;
+            }
             Some(current) if frame == current && self.parts.len() == usize::from(parts) => {}
             _ => {
                 self.frame = Some(frame);
                 self.parts = vec![None; usize::from(parts)];
+                self.refused = 0;
             }
         }
         *self.parts.get_mut(usize::from(part))? = Some(bytes);
@@ -406,6 +448,37 @@ mod tests {
         }
         let caught = whole.expect("the newer snapshot completes");
         assert_eq!(caught.board.state_hash(), board.state_hash());
+    }
+
+    /// A snapshot that never came whole, late in one round, does not hold
+    /// out the next round's, whose frames count from zero again: once a
+    /// whole snapshot's worth of earlier parts has been turned away, they
+    /// are not leftovers, and the next round is put together from them.
+    #[test]
+    fn a_broken_snapshot_of_the_last_round_does_not_hold_out_the_next() {
+        let late = crowded();
+        let late_parts = pieces(&pack(&start(), late.ticks() as u32, &late));
+        assert!(late_parts.len() > 1, "a snapshot in several parts");
+        let mut assembly = Assembly::default();
+        // One part of the last round's snapshot, and the rest lost.
+        let (frame, part, parts, bytes) = late_parts[0].clone();
+        assert!(assembly.take(frame, part, parts, bytes).is_none());
+
+        // The next round, two seconds in, sent once a second while the
+        // watcher keeps greeting. It comes together within a few.
+        let mut early = generate_arena(5, 6, 20, 13);
+        for _ in 0..120 {
+            early.tick(&[PlayerAction::None; MAX_PLAYERS]);
+        }
+        let mut whole = None;
+        for _ in 0..late_parts.len() + 1 {
+            for (frame, part, parts, bytes) in pieces(&pack(&start(), 120, &early)) {
+                whole = whole.or(assembly.take(frame, part, parts, bytes));
+            }
+        }
+        let caught = whole.expect("the next round was put together");
+        assert_eq!(caught.frame, 120);
+        assert_eq!(caught.board.state_hash(), early.state_hash());
     }
 
     /// What is not a watcher's invitation, or a board whose clock does not

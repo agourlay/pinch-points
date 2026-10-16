@@ -61,6 +61,7 @@ mod play_input;
 // Public for the integration tests: a launched round's board is built
 // here, and the wire tests have to build it the way the game does.
 pub mod match_setup;
+mod materials;
 mod menu_scene;
 mod menu_ui;
 pub mod net;
@@ -71,6 +72,7 @@ mod pause;
 pub mod progress;
 pub mod replays;
 mod results;
+mod round_state;
 mod schedule;
 mod seating;
 mod session;
@@ -187,12 +189,15 @@ impl Controllers {
         self.0.iter().filter(|c| c.ai().is_some()).count()
     }
 
-    /// How many seats play themselves, the AI's and the bots': the seats
-    /// nobody at this machine's keys has a cursor in.
-    pub fn machine_count(&self) -> usize {
+    /// How many of the first `seats` seats a person at this machine plays,
+    /// each through a cursor of their own. One means the keys belong to a
+    /// single player: the table is that player against the machine, and
+    /// the legend need name only P1's keys.
+    pub fn local_count(&self, seats: u8) -> usize {
         self.0
             .iter()
-            .filter(|c| c.ai().is_some() || **c == SeatController::Bot)
+            .take(usize::from(seats))
+            .filter(|c| **c == SeatController::Local)
             .count()
     }
 

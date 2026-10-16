@@ -752,6 +752,9 @@ mod pause_echo_tests {
     #[test]
     fn a_resume_from_the_end_of_time_cannot_break_the_next_pause() {
         let mut a = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
+        // With a pause in flight, which is when a resume past the horizon
+        // is still taken (see `a_resume_past_the_horizon_lifts_nothing`).
+        a.request_pause().expect("a player may pause");
         let lifted = a
             .receive_resume(u32::MAX)
             .expect("nothing was lifted before");
@@ -763,6 +766,25 @@ mod pause_echo_tests {
         let mut b = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
         b.receive_pause(u32::MAX);
         assert_eq!(b.pause_frame(), None);
+    }
+
+    /// A resume still on the wire from the last round, naming a frame near
+    /// its end, reaches a session begun again at frame zero. With no pause
+    /// in flight there is nothing for it to lift, and taken, it raised
+    /// `lifted` to the horizon: a peer's early pause in the new round then
+    /// read as an echo of a lifted one, and was answered with a resume.
+    #[test]
+    fn a_resume_past_the_horizon_lifts_nothing() {
+        let mut a = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
+        assert!(!a.within_horizon(1790));
+        assert_eq!(a.receive_resume(1790), None, "last round's resume");
+        assert_eq!(a.lifted_pause(), None, "and nothing was lifted");
+        a.receive_pause(PAUSE_LEAD);
+        assert_eq!(a.pause_frame(), Some(PAUSE_LEAD), "a peer's early pause");
+        assert!(!a.is_lifted(PAUSE_LEAD));
+        // A pause in flight is still lifted by one past the horizon.
+        assert!(a.receive_resume(1790).is_some());
+        assert!(!a.paused());
     }
 }
 

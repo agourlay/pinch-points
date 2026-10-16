@@ -688,12 +688,12 @@ pub fn stage_select_input(
     mut denied: MessageWriter<PlacementDenied>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
-    let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
+    let crate::app::keycaps::Keyboard { keys, caps, live } = keyboard;
     // Read the layout, then move: the rows are settled and the cursor is
     // the only thing this system changes.
     let at = step(list.selected, &list.rows, &keys);
     list.selected = at;
-    let toggled = caps.just_pressed(&keys, 'C')
+    let toggled = caps.global_pressed(&keys, 'C', &live)
         || pads
             .iter()
             .any(|pad| pad.just_pressed(GamepadButton::North));
@@ -860,6 +860,7 @@ mod tests {
             app.init_resource::<StageList>();
             app.init_resource::<ButtonInput<KeyCode>>();
             app.init_resource::<crate::app::keycaps::KeyCaps>();
+            app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
             app.init_resource::<crate::app::Coop>();
             app.add_message::<PlacementDenied>();
             app.add_systems(Update, stage_select_input);
@@ -886,6 +887,7 @@ mod tests {
         app.init_resource::<StageList>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.init_resource::<crate::app::Coop>();
         app.add_systems(Update, stage_select_input);
 

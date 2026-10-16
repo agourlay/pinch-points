@@ -260,7 +260,7 @@ cannot:
 | `scores` | Banked score, per seat. |
 | `you.signposts` | How many of your posts are standing. |
 | `you.last` | What became of your last placement, removal or clear: `accepted`, or not and the `reason` (below). `null` before you have tried one. |
-| `cursors` | Each seat's cursor, `[x, y]`, or `null` where the listener cannot see it (a remote player's, at a party). |
+| `cursors` | Each seat's cursor, `[x, y]`, or `null` where the listener does not track it: a remote player's at a party, and on a couch every seat but the bots'. An arena tracks every seat. |
 | `crabs` | `x`, `y` is the tile the crab is walking *out of*; `progress` is how far, in 256ths of a tile. `kind` is `common`, `juvenile`, `giant`, `molting`, `golden` or `sparkling`; `claw` is its big claw, the side it tries first at a wall. |
 | `sweeping` | Crabs a Crab Monopoly is carrying home: the same fields as `crabs` (where it was picked up), plus the `owner` it banks for, the tick it sets off (`launch`), the tick it lands and banks (`lands`), and whether Right Claws was running when it was swept (`claw_call`). |
 | `gulls` | The same, plus `state` (`walking` or `flying`) and `hops_left` while flying. How long until a gull next takes off is not shown: the screen does not show it either. |
@@ -427,15 +427,17 @@ counts ticks from now) and every rival idle, and answers:
 
 The copy knows exactly what a player reading the board knows, and nothing
 more. Everything already on the sand is exact. Crabs that spawners will
-emit arrive on schedule (a spawner fires on `tick % period == 0`), but
+emit arrive on schedule (a spawner fires on `tick % period == 0`, or on a
+running mania's flood: see *Spawners and caps* below), but
 their kind and claw are a guess, marked `"predicted": true`. Ambient gulls
 are left out (where the next one lands is the PRNG's secret), and a gull's
 takeoffs are a guess too.
 
 A lookahead counts against your own deadline like any other thinking, and
-is capped per decision: 600 simulated ticks per tick sent in a
-fast-forward game, 60 in a live one, across all your requests for that
-tick. A request for more than is left runs as far as what is left and no
+is capped per tick of the game: 600 simulated ticks in a fast-forward
+game, 60 in a live one, across all your requests in that tick. The
+allowance comes back every tick whether or not you were sent one, so a
+bot still thinking about an earlier tick draws on the current tick's. A request for more than is left runs as far as what is left and no
 further, and its answer's `ticks` says how far that was (a round ending
 sooner stops it too): read `ticks`, never assume you got what you asked
 for. Once nothing is left, the answer is an `error`. A request is cut
@@ -480,8 +482,9 @@ Every listener treats every byte it receives as hostile.
 - A line longer than 64 KiB closes the connection.
 - A bot that floods has messages dropped, and is then disconnected. It
   may send 50 messages a second of its own accord, plus 6 for every line
-  the game sends it (a tick, a hello), and save up to 400; past that,
-  messages are dropped. The dropped messages are counted over a sliding
+  the game sends it (a tick, a hello). The clock alone saves up to 400,
+  and what the game's lines earn can stand above that, up to 2000; past
+  what is saved, messages are dropped. The dropped messages are counted over a sliding
   window, so a steady overrun adds up as surely as a burst does, and one
   now and then is forgiven. Ticks you are sent earn you room to answer;
   errors, replays and lookahead answers do not.
@@ -528,19 +531,36 @@ and carries the remainder.
    side if open; else the other side; else turn back. A post pointing into
    a wall is followed, then wall-resolved.
 
-**Tick order.** Seats act first, in an order that rotates every tick
-(one seat leads, the rest follow round the table); on two placements for
+**Tick order.** Seats act first, in an order that rotates every tick:
+seat `(t ^ (t >> 3)) % seats` leads on tick `t`, where `seats` is one past
+the highest castle owner, and the rest follow round the table; on two placements for
 one tile the earlier seat wins and the later is refused `rival_post`. Then
 posts older than their lifetime wash away, spawners emit, the ambient gull
 arrives, crabs move, gulls move, and gulls eat crabs within 48 subunits of
 them (Manhattan distance between board positions).
 
-**Spawners and caps.** A spawner emits a crab facing its `dir` on every
-tick where `tick % period == 0`, unless the beach already holds one crab
-for every 3 tiles (`CRAB_CAP_TILES_PER_CRAB`). Crab Mania floods every 8
-ticks, up to twice that cap; Gull Mania makes spawners emit gulls. The
-ambient gull spawner pauses while 6 gulls are on the beach (`GULL_CAP`).
-Spawned kinds: 70% common, 15% juvenile, 8% giant, 3% molting, 2% golden,
+**Spawners and caps.** The crab cap is one crab for every 3 tiles of the
+beach (`CRAB_CAP_TILES_PER_CRAB`), and never fewer than 8. With no mania
+running, a spawner emits a crab facing its `dir` on every tick where
+`tick % period == 0`, unless the beach already holds the cap. The holes
+opening on a tick emit in reading order while there is room; with
+`fair_spawns`, a tick with room for fewer than open starts from a drawn
+hole instead (see `rules`). A mania
+replaces every hole's own period with a flood every 8 ticks, out of two
+holes at a time: the holes in reading order take turns, hole `i` on the
+ticks where `t % 8 == 0` and `i % turns` equals `(t / 8) % turns`, with
+`turns` the hole count halved and rounded up. Crab Mania floods crabs up
+to twice the cap. Gull Mania floods gulls instead, one a hole while
+fewer than three times `rules.gull_cap` gulls are on the beach, and no
+crab comes out of a spawner at all while it runs. The ambient gull
+spawner is separate: on every tick where `tick % gull_period == 0`
+(half the period, rounded down and never below 1, in the last 30
+seconds) it lands a gull on an edge tile drawn from the PRNG, nothing if
+that tile is rock or kelp. While `rules.gull_cap` gulls are on the beach
+it lands none, unless `gull_turnover` is on: then the cap is half as big
+again in the last 30 seconds, and a full flock sends its oldest walking
+gull more than two tiles from every castle off to make room (nothing
+lands if none qualifies), as `rules` describes. Spawned kinds: 70% common, 15% juvenile, 8% giant, 3% molting, 2% golden,
 2% sparkling.
 
 **Called golden crabs.** When `golden_every` is above 0, as in every
@@ -578,7 +598,7 @@ bots on the rest.
 | `--listen ADDR` | `127.0.0.1:47710` | where to wait; `0.0.0.0:47710` lets a friend's bot in |
 | `--port P` | 47710 | the port, on the default address |
 | `--key KEY` | drawn fresh | a fixed key, for a script that starts the arena and the bot together |
-| `--map NAME\|FILE` | `classic` | `classic`, `generated`, `small`, `large`, `xl`, `ocean`, or a level file |
+| `--map NAME\|FILE` | `classic` | `classic`, `generated`, `small`, `large`, `xl`, `ocean`, or a level file whose castles are marked exactly `0` to `N-1` for an `N`-seat table: one per seat, none past them |
 | `--seats N` | seats given | a bigger table; the extra seats play `ai:normal` |
 | `--seed S` | random, printed | the same beach again, for a fair before and after |
 | `--round quick\|short\|standard\|long` | `standard` | 1, 2, 3 or 5 minutes |
@@ -630,7 +650,8 @@ protocol differs; what differs is in `hello`:
   anywhere on the network connects with it, no game window needed on its
   side, and takes a chair at the table; the host plays its moves to
   everyone. The key is good once and redrawn for the next bot, so come
-  back with your token, never the key. The seat reads with the owner you
+  back with your token, never the key: within ten seconds while the
+  table is still gathering, any time once the match is under way. The seat reads with the owner you
   declare, which the host cannot check. The clock is `live` with
   `input_delay` 3. The string is shown only while the table has a chair
   for a bot; a bot that registered but is dealt no seat when the match

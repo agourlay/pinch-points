@@ -69,8 +69,12 @@ impl Board {
                 },
             wrap: _,
             // Outside the fingerprint, each for a reason of its own: the
-            // construction seed is dead once the PRNG state (which *is*
-            // hashed) has been derived from it; the event queue is filled
+            // construction seed is not the sim's after the PRNG state
+            // (which *is* hashed) has been derived from it, though the AI
+            // reads it for its moments to think and its slips, and a peer
+            // on another seed shows here as soon as its AI moves
+            // otherwise; it travels in every snapshot, so a caught-up peer
+            // has the same one; the event queue is filled
             // and drained inside a single tick, so it is always empty by
             // the time anyone hashes; who spun the wheel is for the
             // trophies and never read by the sim; and the swept-home record is written
@@ -78,6 +82,8 @@ impl Board {
             // hashing it would only make this build disagree with builds
             // playing the same round.
             seed: _,
+            // hash_round, at its tail
+            hands: _,
             sweeps:
                 Sweeps {
                     landed: _,
@@ -273,6 +279,18 @@ impl Board {
         h.bool(self.rules.whole_flock);
         h.bool(self.rules.sweep_keeps_worth);
         h.bool(self.rules.fair_spawns);
+        // Where each hand last placed: an AI seat walks from there, so two
+        // peers that disagree on it play different moves.
+        for hand in &self.hands {
+            match hand {
+                None => h.u8(0),
+                Some((tile, at)) => {
+                    h.u8(1);
+                    h.u16(*tile);
+                    h.u64(*at);
+                }
+            }
+        }
     }
 }
 

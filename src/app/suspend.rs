@@ -82,6 +82,13 @@ impl Suspended {
         if seats < 2 || usize::from(seats) > MAX_PLAYERS {
             return Err(format!("a round cannot be played by {seats}"));
         }
+        // A seat with no castle banks nothing all round: no table this game
+        // deals, so a code that says so was written by hand.
+        if let Some(seat) =
+            (0..seats).find(|&seat| !board.castle_owners().any(|owner| owner == seat))
+        {
+            return Err(format!("seat {seat} of {seats} has no castle"));
+        }
         Ok(Suspended { seats, bots, board })
     }
 }
@@ -116,8 +123,8 @@ pub fn copy_round_code(
     mut clipboard: ResMut<Clipboard>,
     mut feed: ResMut<crate::app::side_panels::EventLog>,
 ) {
-    let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
-    if !caps.just_pressed(&keys, 'C') {
+    let crate::app::keycaps::Keyboard { keys, caps, live } = keyboard;
+    if !caps.global_pressed(&keys, 'C', &live) {
         return;
     }
     let round = Suspended {
@@ -206,6 +213,21 @@ mod tests {
             b.tick(&actions);
             assert_eq!(a.state_hash(), b.state_hash(), "diverged at tick {tick}");
         }
+    }
+
+    /// A code naming more seats than the beach has castles for is refused:
+    /// the seat with none would bank nothing all round.
+    #[test]
+    fn a_seat_with_no_castle_is_not_a_round() {
+        let round = played_round();
+        let text = round
+            .to_text()
+            .replace(&format!("seats: {}", round.seats), "seats: 6");
+        assert!(text.contains("seats: 6"), "{text}");
+        let Err(err) = Suspended::parse(&text) else {
+            panic!("six seats, fewer castles, taken");
+        };
+        assert!(err.contains("no castle"), "{err}");
     }
 
     /// The three ways a pasted code is not a round, each answered its own

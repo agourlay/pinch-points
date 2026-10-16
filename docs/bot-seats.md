@@ -180,7 +180,9 @@ than localhost, so the key is what keeps the chair for the bot the host
 invited: it is single-use, spent the moment a bot registers with it, and
 the card then draws a fresh one for the next. A bot that drops comes back
 with the secret token it was given at registration, never with the key,
-so a key read off the screen is worth nothing once it is spent. The seat
+so a key read off the screen is worth nothing once it is spent. Before the
+match starts its chair waits ten seconds for it; once the match is under
+way it waits for good, the game AI standing in meanwhile. The seat
 reads with the owner the bot declares, "Greedy (Ana's bot)", or "Greedy
 (bot)" if it gives none; the host has no way to check it, which the tag
 section says out loud. A string on the host's screen is an invitation
@@ -390,7 +392,9 @@ party's game.
 - **Wrong keys cost the sender, not the key.** Three wrong keys from one
   address and that address's keys are refused for a minute (a token, too
   long to guess, is never refused for it, so a bot behind the same proxy
-  as a guesser still gets back in). The key itself never
+  as a guesser still gets back in). Nor is a key the listener printed
+  and has seen spent: that is a bot started again with its old string,
+  not a guess, and it is told the key is spent. The key itself never
   rotates on a wrong guess, or anyone on the LAN could keep a host's card
   changing just by guessing badly.
 - **Tokens are secrets.** Random, never printed, never logged, never in

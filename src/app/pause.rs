@@ -64,7 +64,8 @@ impl PauseMenu {
     }
 
     /// Whether the card is up and the round is stopped under it, which is
-    /// what the count, the music and the prompt line wait on. A
+    /// what the count and the music wait on. (The prompt line asks only
+    /// whether a card is up: any card has the keyboard.) A
     /// spectator's own card stops nothing: the table plays on behind it,
     /// and a countdown held under it left the spectator behind the match
     /// until the host forgot them as gone.
@@ -231,9 +232,10 @@ pub fn pause_input(
     let before = open.selected;
     open.selected = menu_ui::nav(keys, open.selected, OPTIONS);
     // Up wins over a same-frame down, as it always has. Read only when the
-    // keys did not move the cursor already: over a results card the pad's
-    // d-pad also arrives as W/S through the menu bridge, and reading both
-    // moved two rows a press, so Down from Continue landed on Quit.
+    // keys did not move the cursor already, so a pad press that ever
+    // arrives as W/S as well (the menu bridge once sent the d-pad over a
+    // results card) moves one row, not two: Down from Continue landed on
+    // Quit.
     let pad_nav = if open.selected != before {
         menu_ui::Nav::Stay
     } else if pad_up {
@@ -573,6 +575,7 @@ mod tests {
         app.init_resource::<Paused>();
         app.init_resource::<Online>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.insert_resource(GameSettings::default());
         app.add_message::<AppExit>();
         app.add_message::<crate::app::LoadLevel>();

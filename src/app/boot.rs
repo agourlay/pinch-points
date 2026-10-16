@@ -8,8 +8,78 @@ use bevy::prelude::*;
 use bevy::text::FontCx;
 use parlance::Script;
 
+/// The one camera, with the light graded over the world it draws.
+///
+/// HDR so the grade runs as its own pass over everything at once: without
+/// it Bevy tonemaps inside each sprite's shader, and the water and sand
+/// shaders, which do not, would be graded differently from the sprites on
+/// them. `Linear` keeps every colour the art was drawn in and only lets
+/// the grade through; a filmic curve dulled the sand and the player
+/// colours. The interface is drawn after the grade and never touched by
+/// it, so a colour in palette.rs is the colour on screen.
 pub(super) fn setup_camera(mut commands: Commands) {
-    commands.spawn(Camera2d);
+    commands.spawn((
+        Camera2d,
+        bevy::camera::Hdr,
+        bevy::core_pipeline::tonemapping::Tonemapping::Linear,
+        grade(),
+        glow(),
+        // Spawned with it rather than left to the engine, so the settings'
+        // anti-aliasing switch (`apply_antialiasing`) always has one to set.
+        Msaa::Sample4,
+    ));
+}
+
+/// Smooth the beach's edges, or not, as the settings say: Bevy's 4x
+/// multisampling, or none. Off, a weak graphics chip skips most of its
+/// work each frame; the board is sprites and soft shaders, whose edges
+/// barely change either way.
+pub(super) fn apply_antialiasing(
+    settings: Res<crate::app::settings::GameSettings>,
+    mut cameras: Query<&mut Msaa, With<Camera2d>>,
+) {
+    let want = if settings.antialiasing {
+        Msaa::Sample4
+    } else {
+        Msaa::Off
+    };
+    for mut msaa in &mut cameras {
+        msaa.set_if_neq(want);
+    }
+}
+
+/// A warm afternoon: a little more colour, a touch of contrast in the
+/// midtones, the white point nudged toward the sun.
+fn grade() -> bevy::render::view::ColorGrading {
+    use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
+    ColorGrading {
+        global: ColorGradingGlobal {
+            temperature: 0.01,
+            post_saturation: 1.06,
+            ..default()
+        },
+        midtones: ColorGradingSection {
+            contrast: 1.04,
+            ..default()
+        },
+        ..default()
+    }
+}
+
+/// Bloom on the brightest things only: foam, glints, sparkles, the white of
+/// a gull. The threshold is in linear light, where the board's palest sand
+/// sits well under it, so the play never haloes.
+fn glow() -> bevy::post_process::bloom::Bloom {
+    use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
+    Bloom {
+        intensity: 0.09,
+        prefilter: BloomPrefilter {
+            threshold: 0.86,
+            threshold_softness: 0.12,
+        },
+        composite_mode: BloomCompositeMode::Additive,
+        ..Bloom::NATURAL
+    }
 }
 
 /// The slanted face of the UI font, for the few lines that are the game
@@ -212,8 +282,14 @@ pub(super) fn fit_camera(
         {
             ortho.scale = scale;
         }
+        // The resting place, written whenever the camera is anywhere else.
+        // Exact rather than within a deadband: `shake_camera` adds its
+        // offset to what this leaves, and a deadband let every shake
+        // smaller than it stay, so a run of small knocks walked the camera
+        // off centre for good. Compared before writing, so a camera at
+        // rest is not marked changed every frame.
         let target = Vec2::new(-offset.x, offset.y) * scale;
-        if transform.translation.truncate().distance(target) > 0.5 {
+        if transform.translation.truncate() != target {
             transform.translation.x = target.x;
             transform.translation.y = target.y;
         }
@@ -238,10 +314,10 @@ pub(super) fn fit_camera(
 /// would have shrunk from 80 pixels a tile to 64.
 ///
 /// The grid is what is fitted, but the board is drawn past it: the wooden
-/// frame, and the tide that widens out to [`board_render::RIM`] by the end
-/// of a round. The interface's margins leave room for that band at 1:1,
-/// and zoomed in it grows with everything else: at twice the size the
-/// tide ran under the prompt line. So the grid and its rim together get
+/// frame and the strip of beach round it, out to [`board_render::RIM`].
+/// The interface's margins leave room for that band at 1:1, and zoomed in
+/// it grows with everything else: at twice the size the edge of the board
+/// ran under the prompt line. So the grid and its rim together get
 /// the room they have at 1:1. That changes nothing for a board that is
 /// zoomed out, next to nothing for one near 1:1, and holds the rim to its
 /// 1:1 width however far in the board goes.
@@ -264,11 +340,10 @@ fn board_scale(board: Vec2, fit: Vec2, scale_factor: f32) -> f32 {
 
 /// Shake the camera by whatever trauma is in the pool.
 ///
-/// After [`fit_camera`], and it has to be: the fit writes the camera's
-/// resting place every frame, so the shake is an offset from wherever the
-/// fit just put it and nothing accumulates. The fit's own half-pixel
-/// deadband sees the shaken camera as moved and puts it back, which is the
-/// reset this wants.
+/// After [`fit_camera`], and it has to be (the two are chained): the fit
+/// puts the camera back at its exact resting place every frame it is
+/// anywhere else, so the shake is an offset from there and nothing
+/// accumulates, however small the shake.
 ///
 /// The throw is in screen pixels, so it is multiplied by the projection's
 /// scale: a zoomed-out board would otherwise be shaken by a fraction of
@@ -320,6 +395,51 @@ mod tests {
         assert!((new / old - 1.0).abs() < 0.01, "{new} against {old}");
     }
 
+    /// A shake is an offset from the resting place and never a step away
+    /// from it: once the trauma has drained, the camera is exactly where it
+    /// was before the first knock. With a half-pixel deadband in the fit,
+    /// shakes smaller than that stayed, and a run of small knocks (a crab
+    /// eaten is a tenth of a raid) left the board resting off centre.
+    #[test]
+    fn the_camera_comes_to_rest_where_it_started_after_a_shake() {
+        use crate::app::effects::Trauma;
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_state(Screen::Versus);
+        app.insert_resource(Sim(crate::sim::classic_arena(false, 2)));
+        app.insert_resource(UiScale(1.0));
+        app.insert_resource(crate::app::settings::GameSettings::default());
+        app.init_resource::<Trauma>();
+        app.init_resource::<Time>();
+        app.world_mut().spawn(Window::default());
+        let camera = app.world_mut().spawn(Camera2d).id();
+        app.add_systems(Update, (fit_camera, shake_camera).chain());
+        let rest = |app: &App| {
+            app.world()
+                .get::<Transform>(camera)
+                .expect("the camera has a transform")
+                .translation
+        };
+        let frame = |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_millis(16));
+            app.update();
+        };
+        frame(&mut app);
+        let home = rest(&app);
+        // Knock after knock, each too small to move the camera half a
+        // pixel, then long enough for the pool to drain.
+        for _ in 0..40 {
+            app.world_mut().resource_mut::<Trauma>().add(0.08);
+            frame(&mut app);
+        }
+        for _ in 0..120 {
+            frame(&mut app);
+        }
+        assert_eq!(rest(&app), home, "back exactly where it rested");
+    }
+
     /// In a 720p window a small board is drawn a quarter over life size,
     /// as it always was, though the classic arena there is at 1:1.
     #[test]
@@ -365,8 +485,9 @@ mod tests {
         }
     }
 
-    /// Zoomed in, the frame and the tide take no more of the screen than
-    /// they do at 1:1, so they stay out from under the interface.
+    /// Zoomed in, the frame and the beach round it take no more of the
+    /// screen than they do at 1:1, so they stay out from under the
+    /// interface.
     #[test]
     fn a_zoomed_board_keeps_its_rim_in_the_room_it_had() {
         let board = Vec2::new(12.0, 9.0) * layout::TILE;

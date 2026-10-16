@@ -312,7 +312,7 @@ fn worth_the_walk(
     if intent != Intent::Attack {
         return true;
     }
-    let Some((from_x, from_y, _)) = board.newest_signpost_of(player) else {
+    let Some((from_x, from_y, _)) = board.last_placement_of(player) else {
         return true;
     };
     let steps = i32::from(x.abs_diff(from_x)) + i32::from(y.abs_diff(from_y));
@@ -320,10 +320,11 @@ fn worth_the_walk(
 }
 
 /// Whether the bot's cursor has had time to reach `(x, y)` since its last
-/// placement, walking under the fair cursor rule. With nothing of its
-/// standing its hand is at its castle, where a person's cursor and a bot's
-/// start, as of the round's first tick: the opening placement walks like
-/// anyone's, rather than landing anywhere at once.
+/// placement, walking under the fair cursor rule. Before its first one its
+/// hand is at its castle, where a person's cursor and a bot's start, as of
+/// the round's first tick: the opening placement walks like anyone's,
+/// rather than landing anywhere at once. After it, the hand is where it
+/// last placed whether or not that post still stands.
 ///
 /// The hand is read off the board, never kept, so every peer derives the
 /// same one. Time spent idle counts toward the walk, as it does for a
@@ -333,7 +334,7 @@ fn worth_the_walk(
 /// fiercer bot is fiercer in what it sees and chooses, never in a hand no
 /// person at the table could match.
 fn hand_arrived(board: &Board, player: PlayerId, x: u8, y: u8) -> bool {
-    let (from_x, from_y, since) = board.newest_signpost_of(player).unwrap_or_else(|| {
+    let (from_x, from_y, since) = board.last_placement_of(player).unwrap_or_else(|| {
         let (x, y) = board
             .castle_of(player)
             .unwrap_or((board.width() / 2, board.height() / 2));

@@ -97,7 +97,12 @@ const MEDALS: [Color; MAX_PLAYERS] = [
 /// chips repaint without formatting anything.
 const PLACES: [&str; MAX_PLAYERS] = ["1", "2", "3", "4", "5", "6"];
 const LEADER_BORDER: Color = palette::GOLD;
-const LOG_TOP: f32 = 88.0;
+/// Where the log card starts: under the clock card, with the same gap the
+/// two have always had.
+const LOG_TOP: f32 = clock::CLOCK_TOP + clock::CLOCK_H + 14.0;
+/// The hairline round every sidebar card, which Bevy counts inside a
+/// card's height.
+const CARD_BORDER: f32 = 2.0;
 
 /// Seats ranked by score (descending, seat number breaking ties), and each
 /// seat's rank.
@@ -148,7 +153,7 @@ fn card(top: f32, height: Option<f32>) -> (Node, BorderColor, BackgroundColor, B
             height: height.map_or(Val::Auto, Val::Px),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            border: UiRect::all(Val::Px(2.0)),
+            border: UiRect::all(Val::Px(CARD_BORDER)),
             border_radius: BorderRadius::all(Val::Px(12.0)),
             ..default()
         },

@@ -374,21 +374,26 @@ pub struct Dials<'w> {
     pub beaches: Res<'w, CustomBeaches>,
 }
 
+/// The one level every AI seat of an online table plays at: the top AI
+/// seat's on this screen, since the wire carries one difficulty and a lobby
+/// has no per-seat rows to fill. A seat dialled to a bot on the couch has
+/// no level to give. The lobby's AI row names it, so a level set here
+/// long ago is not played unannounced.
+pub fn online_ai_level(config: &MatchConfig) -> crate::sim::BotLevel {
+    config.controllers[..usize::from(config.seats).min(MAX_PLAYERS)]
+        .iter()
+        .rev()
+        .find_map(|controller| controller.ai())
+        .unwrap_or_default()
+}
+
 /// The wire form of this screen's choices, for a host to send and every peer
 /// to build the same beach from. `teams` and `seed` are not on this screen:
 /// teams is a setting, and the seed is drawn when the match launches.
 pub fn terms(config: &MatchConfig, teams: crate::app::teams::TeamMode, seed: u64) -> MatchTerms {
     MatchTerms {
         bots: config.bots,
-        // Every AI seat plays at the top AI seat's level: the wire carries
-        // one difficulty, and a lobby has no per-seat rows to fill anyway.
-        // A seat dialled to a bot on the couch has no level to give.
-        bot_level: config.controllers[..usize::from(config.seats).min(MAX_PLAYERS)]
-            .iter()
-            .rev()
-            .find_map(|controller| controller.ai())
-            .unwrap_or_default()
-            .index() as u8,
+        bot_level: online_ai_level(config).index() as u8,
         map: config.map.index() as u8,
         gulls: config.gulls.index() as u8,
         round: config.round.index() as u8,
@@ -558,6 +563,18 @@ pub fn reseat(config: &mut MatchConfig, seats: u8, beaches: &CustomBeaches) {
     if config.map.is_a_plain_size() && config.map != MapChoice::GenXl {
         config.map = sized_for(config.seats);
     }
+    settle_map(config, beaches);
+}
+
+/// Make the config one this screen can seat, on the way in. The shelf may
+/// have changed since the last visit (a beach deleted, or resaved with
+/// fewer castles): a config still pointing at it is moved on, so the dial
+/// reads what will be played. And the lobby's AI dial writes the same
+/// `bots`, held only to the six an online table seats: three AI dialled
+/// there came back to a couch of two as more AI than seats, its humans
+/// counted below zero.
+pub fn settle(config: &mut MatchConfig, beaches: &CustomBeaches) {
+    config.bots = config.bots.min(config.seats - 1);
     settle_map(config, beaches);
 }
 
@@ -1106,18 +1123,13 @@ mod tests {
         )
         .expect("a level");
         let shelf = CustomBeaches(vec![Beach::new(two)]);
-        let at = |seats| MatchConfig {
-            seats,
-            ..MatchConfig::default()
-        };
-
-        assert_eq!(beaches_note(&at(2), &EN, &shelf), None, "it is on the dial");
-        let note = beaches_note(&at(4), &EN, &shelf).expect("four cannot sit at it");
+        assert_eq!(beaches_note(2, &EN, &shelf), None, "it is on the dial");
+        let note = beaches_note(4, &EN, &shelf).expect("four cannot sit at it");
         assert!(note.contains('4'), "{note}");
 
         // With nothing saved there is nothing to explain: an empty shelf is
         // not a shelf whose beaches are the wrong size.
-        assert_eq!(beaches_note(&at(4), &EN, &CustomBeaches::default()), None);
+        assert_eq!(beaches_note(4, &EN, &CustomBeaches::default()), None);
     }
 
     /// The dial walks the built-ins, then every handmade beach, and steps
@@ -1546,5 +1558,20 @@ mod tests {
         config.bots = 1;
         cycle_ai_level(&mut config, 2, Turn::Right);
         assert_eq!(config.controllers[1], SeatController::Ai(BotLevel::Easy));
+    }
+
+    /// Three AI dialled in the lobby, alone at the host's table, then back
+    /// to a couch of two: the screen counts `seats - bots` humans, and that
+    /// went below zero. It comes back as one AI and one person.
+    #[test]
+    fn the_lobbys_ai_dial_does_not_outnumber_the_couch() {
+        let mut config = MatchConfig {
+            seats: 2,
+            bots: 3,
+            ..MatchConfig::default()
+        };
+        settle(&mut config, &CustomBeaches::default());
+        assert_eq!(config.bots, 1);
+        assert_eq!(config.seats - config.bots, 1, "somebody still plays");
     }
 }

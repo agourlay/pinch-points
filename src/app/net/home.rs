@@ -393,6 +393,7 @@ mod tests {
                         | NetMsg::SpectatorPick { .. }
                         | NetMsg::CrowdPicks { .. }
                         | NetMsg::Kicked
+                        | NetMsg::NoBots
                         | NetMsg::Leaving
                         | NetMsg::Incompatible { .. } => {}
                     }

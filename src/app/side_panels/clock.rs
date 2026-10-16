@@ -8,19 +8,19 @@
 
 use super::card;
 use crate::app::Sim;
-use crate::app::settings::GameSettings;
 use bevy::prelude::*;
 
 /// The sidebar's big round clock.
 #[derive(Component)]
 pub struct SideClock;
 
-const CLOCK_TOP: f32 = 10.0;
+pub(super) const CLOCK_TOP: f32 = 10.0;
 
 /// Bigger than [`crate::app::menu_ui::type_scale::DISPLAY`], which the
 /// header's clock uses, and off the scale on purpose: it is the only
 /// thing in its card and the one number a player checks from across a
-/// room. The card is 64 tall and this is what fills it.
+/// room. The card holds 64 of digits inside its frame, and this is what
+/// fills them.
 const CLOCK_PX: f32 = 44.0;
 
 /// Drive the sidebar clock: mm:ss, red for the closing stretch of the
@@ -28,8 +28,7 @@ const CLOCK_PX: f32 = 44.0;
 /// up, so that stretch is the flat 30 s it has always been.
 pub fn update_side_clock(
     sim: Res<Sim>,
-    time: Res<Time>,
-    settings: Res<GameSettings>,
+    blink: crate::app::hud::Blink,
     mut clocks: Query<(&mut Text, &mut TextColor), With<SideClock>>,
     mut value: Local<String>,
 ) {
@@ -37,21 +36,26 @@ pub fn update_side_clock(
         return;
     };
     crate::app::hud::clock_into(&mut value, ticks);
-    let target = crate::app::hud::clock_color(
-        ticks,
-        sim.0.rules().round_length,
-        time.elapsed_secs(),
-        !settings.reduced_motion,
-    );
+    let (elapsed, blinking) = blink.read(&sim.0);
+    let target = crate::app::hud::clock_color(ticks, sim.0.rules().round_length, elapsed, blinking);
     for (mut text, mut color) in &mut clocks {
         crate::app::menu_ui::set_text(&mut text, &value);
         crate::app::menu_ui::set_color(&mut color, target);
     }
 }
 
-/// Spawn the clock card at the top of the right sidebar.
+/// How tall the clock card is: the digits' own 64 and the driftwood frame
+/// round them.
+pub(super) const CLOCK_H: f32 = 64.0 + 2.0 * crate::app::menu_ui::FRAME_PX;
+
+/// Spawn the clock card at the top of the right sidebar, in the menus'
+/// driftwood frame.
 pub(super) fn spawn_clock(root: &mut ChildSpawnerCommands) {
-    root.spawn(card(CLOCK_TOP, Some(64.0)))
+    let (mut node, edge, fill, shadow) = card(CLOCK_TOP, Some(CLOCK_H));
+    // The frame holds a card's contents clear of the wood at the top; the
+    // same at the foot keeps the digits centred between the two.
+    node.padding.bottom = Val::Px(crate::app::menu_ui::CARD_PAD);
+    root.spawn((node, edge, fill, shadow, crate::app::menu_ui::Framed))
         .with_children(|card| {
             card.spawn((
                 SideClock,

@@ -16,25 +16,6 @@ use bevy::prelude::*;
 #[derive(Component)]
 pub struct BoardStatic;
 
-/// The sand under one tile. The texture is rotated by a hash of the
-/// coordinates so the checker does not visibly repeat; arbitrary, but
-/// stable, so a board looks the same every time it loads.
-fn spawn_sand(commands: &mut Commands, art: &Art, pos: Vec2, x: u8, y: u8) {
-    let sand = if (x + y).is_multiple_of(2) {
-        &art.sand_a
-    } else {
-        &art.sand_b
-    };
-    let quarter_turns = f32::from((x.wrapping_mul(7).wrapping_add(y.wrapping_mul(13))) % 4);
-    commands.spawn((
-        BoardStatic,
-        image_sprite(sand, Color::WHITE, Vec2::splat(TILE)),
-        Transform::from_translation(pos.extend(z::SAND)).with_rotation(Quat::from_rotation_z(
-            quarter_turns * std::f32::consts::FRAC_PI_2,
-        )),
-    ));
-}
-
 /// The soft blob a thing standing on the sand casts.
 ///
 /// Without one, rocks, kelp and the fence float, and a beach lit from
@@ -68,6 +49,17 @@ fn spawn_tile_feature(
             ground_shadow(commands, art, pos, TILE * 0.98);
             commands.spawn((
                 BoardStatic,
+                super::cast_shadow(
+                    art,
+                    pos,
+                    TILE * 0.85,
+                    TILE * 0.16,
+                    0.5,
+                    z::TILE_FEATURE - 0.06,
+                ),
+            ));
+            commands.spawn((
+                BoardStatic,
                 image_sprite(&art.rock, Color::WHITE, Vec2::splat(TILE * 0.94)),
                 Transform::from_translation(pos.extend(z::TILE_FEATURE)),
             ));
@@ -96,6 +88,17 @@ fn spawn_tile_feature(
             );
             commands.spawn((
                 BoardStatic,
+                super::cast_shadow(
+                    art,
+                    pos + Vec2::new(0.0, -TILE * 0.12),
+                    TILE * 0.55,
+                    TILE * 0.14,
+                    0.3,
+                    z::TILE_FEATURE - 0.06,
+                ),
+            ));
+            commands.spawn((
+                BoardStatic,
                 image_sprite(&art.kelp, Color::WHITE, Vec2::splat(TILE * 0.94)),
                 Transform::from_translation(pos.extend(z::TILE_FEATURE)),
             ));
@@ -121,9 +124,19 @@ fn spawn_tile_feature(
 /// tile, and the driftwood fence around and through it.
 pub fn spawn_static_board(commands: &mut Commands, board: &Board, art: &Art) {
     spawn_dusk_shore(commands, board, art);
+    // The board's sand: one quad the sand shader draws as the tiles'
+    // checkerboard, rippled, damp in patches and grained in world space.
+    // It was one of two tile sprites per square, turned four ways, and a
+    // board read as the same two tiles over and over.
+    commands.spawn((
+        BoardStatic,
+        Mesh2d(art.water.quad.clone()),
+        MeshMaterial2d(art.water.board_sand.clone()),
+        Transform::from_translation(Vec3::new(0.0, 0.0, z::SAND))
+            .with_scale(layout::board_extent(board).extend(1.0)),
+    ));
     for (x, y, kind) in board.tiles() {
         let pos = layout::tile_center(board, x, y);
-        spawn_sand(commands, art, pos, x, y);
         spawn_tile_feature(commands, art, (x, y), pos, kind);
     }
     spawn_pools(commands, board, art);

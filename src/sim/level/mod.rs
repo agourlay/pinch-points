@@ -150,6 +150,26 @@ impl Level {
         board
     }
 
+    /// [`Level::board`] on a fresh random stream: the same beach, built
+    /// again from `seed`. A versus round on a beach somebody made draws a
+    /// seed like any other, or every round on it replayed the file's one
+    /// stream: the same spawn kinds, the same gull entry points, and the
+    /// AI's same moments to think.
+    ///
+    /// Built again rather than reseeded in place, because placing the
+    /// level's own gulls draws from the stream: a board whose seed was
+    /// swapped afterwards would not be the one its replay rebuilds from
+    /// the seed it records.
+    pub fn board_seeded(&self, seed: u64) -> Board {
+        match Level::parse_at(&self.to_text(), Some(seed)) {
+            Ok(level) => level.board(),
+            Err(e) => {
+                debug_assert!(false, "{:?} does not read back: {e}", self.name);
+                self.board()
+            }
+        }
+    }
+
     pub fn crab_count(&self) -> u32 {
         self.crab_count
     }
@@ -709,5 +729,27 @@ map:
         // posts: 1, so the second placement must be rejected, not evict.
         assert!(!board.place_signpost(0, 1, 1, Direction::Up));
         assert_eq!(board.signpost_count(0), 1);
+    }
+
+    /// A beach built on a round's seed is on that seed's stream, and is
+    /// the board its replay rebuilds: the level written off it names the
+    /// new seed, and placing its gull draws the same numbers again.
+    #[test]
+    fn a_beach_on_a_fresh_seed_replays_from_what_it_records() {
+        let level = Level::parse(
+            "name: B\nposts: 3\nkind: arena\nseed: 1\ngull: 4,0 R\nmap:\n\
+             +-+-+-+-+-+-+-+-+-+\n|0 . . . . . . . 1|\n+-+-+-+-+-+-+-+-+-+\n",
+        )
+        .expect("parses");
+        let fresh = level.board_seeded(77);
+        assert_eq!(fresh.seed(), 77);
+        assert_ne!(
+            fresh.state_hash(),
+            level.board_seeded(78).state_hash(),
+            "another seed, another stream"
+        );
+        let recorded = Level::from_board("B", 3, fresh.clone()).to_text();
+        let rebuilt = Level::parse(&recorded).expect("reads back").board();
+        assert_eq!(rebuilt.state_hash(), fresh.state_hash());
     }
 }

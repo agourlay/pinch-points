@@ -145,6 +145,18 @@ pub struct LobbyState {
 }
 
 impl LobbyState {
+    /// Everything back to a lobby just walked into, but the beach name
+    /// last given: kept so the next beach is pre-filled with it. Reset
+    /// whole on the way in and out, the pre-fill its doc promised never
+    /// survived to be offered.
+    fn start_over(&mut self) {
+        let game_name = std::mem::take(&mut self.game_name);
+        *self = LobbyState {
+            game_name,
+            ..LobbyState::default()
+        };
+    }
+
     /// A line of chat as it came off the wire, into the feed: both halves
     /// tidied on the way, since a stranger on the LAN wrote them.
     pub fn hear(&mut self, name: &crate::transport::WireName, text: &crate::transport::WireChat) {
@@ -438,7 +450,7 @@ pub fn enter_lobby(
     settings: Res<GameSettings>,
     art: Res<crate::app::art::Art>,
 ) {
-    *state = LobbyState::default();
+    state.start_over();
     spawn_lobby_ui(&mut commands, settings.tr(), &LobbyArt::from_art(&art));
     if let Some(returned) = homecoming.0.take() {
         settle_back_in(&mut state, returned, settings.tr());
@@ -482,7 +494,7 @@ pub fn enter_lobby(
 
 pub fn exit_lobby(mut state: ResMut<LobbyState>) {
     say_goodbye(&state);
-    *state = LobbyState::default();
+    state.start_over();
 }
 
 #[cfg(test)]
@@ -693,6 +705,24 @@ mod homecoming_tests {
             joiners.push(joiner);
         }
         (transport, joiners)
+    }
+
+    /// Leaving the lobby and coming back starts it over, but keeps the
+    /// beach name last given, which the next beach is pre-filled with.
+    #[test]
+    fn the_beach_name_outlives_the_lobby() {
+        let mut state = LobbyState {
+            game_name: "Room 3".into(),
+            feedback: "something".into(),
+            dial: 4,
+            ..LobbyState::default()
+        };
+        state.say("Ana", "hi");
+        state.start_over();
+        assert_eq!(state.game_name, "Room 3");
+        assert!(state.chat.is_empty());
+        assert!(state.feedback.is_empty());
+        assert_eq!(state.dial, 0);
     }
 
     /// A host walks back in still on the air: the same socket, the same

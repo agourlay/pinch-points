@@ -15,9 +15,14 @@ pub struct TideClock;
 
 /// mm:ss for a remaining-tick count, written into a buffer the caller
 /// keeps: the clocks repaint every frame and change once a second.
+///
+/// Rounded up, as every other countdown in the game is: a part of a
+/// second left is a second left, so 0:00 shows only once time is out and
+/// a one-minute round holds 1:00 for its first second rather than
+/// dropping to 0:59 on its first tick.
 pub(crate) fn clock_into(out: &mut String, ticks: u64) {
     use std::fmt::Write;
-    let secs = ticks / u64::from(TICKS_PER_SECOND);
+    let secs = ticks.div_ceil(u64::from(TICKS_PER_SECOND));
     out.clear();
     let _ = write!(out, "{}:{:02}", secs / 60, secs % 60);
 }
@@ -39,8 +44,8 @@ pub(crate) fn clock_text(ticks: u64) -> String {
 /// [`crate::sim::SURGE_TICKS`], so no shipped level ever left the red, and
 /// Dry Feet ran all eight of its seconds under a blinking clock.
 ///
-/// Below the band the last third stands in for it. Versus rounds are two
-/// minutes and up and keep the fixed 30 s.
+/// Below the band the last third stands in for it. Versus rounds are one
+/// minute and up, twice the band, and keep the fixed 30 s.
 ///
 /// This is the *drawn* scramble only. [`crate::sim::Board::in_surge`] is
 /// the sim's own 30 s rule, which doubles the gull spawn rate and gates
@@ -80,12 +85,30 @@ pub(crate) fn clock_color(ticks: u64, round: Option<u32>, elapsed: f32, blink: b
 /// Drive the big clock: mm:ss during a versus round, red inside the last
 /// 30 seconds, pulsing for the final 10. Colour-only pulsing: it never
 /// re-shapes the text.
+/// What a clock's closing-stretch blink reads: the frame's time, and
+/// whether it should blink at all, which it does only while the round is
+/// moving and the player has not asked for things to hold still. Under a
+/// pause card it blinked over frozen digits beside a sea that had stopped.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Blink<'w> {
+    time: Res<'w, Time>,
+    settings: Res<'w, GameSettings>,
+    round: crate::app::round_state::RoundState<'w>,
+}
+
+impl Blink<'_> {
+    /// `clock_color`'s `elapsed` and `blink` for this board.
+    pub fn read(&self, board: &crate::sim::Board) -> (f32, bool) {
+        let blink = !self.settings.reduced_motion && self.round.moving(board);
+        (self.time.elapsed_secs(), blink)
+    }
+}
+
 pub fn update_tide_clock(
     sim: Res<Sim>,
     screen: Res<State<Screen>>,
     phase: Res<State<Phase>>,
-    time: Res<Time>,
-    settings: Res<GameSettings>,
+    blink: Blink,
     mut clocks: Query<(&mut Text, &mut TextColor), With<TideClock>>,
     mut line: Local<String>,
 ) {
@@ -127,12 +150,8 @@ pub fn update_tide_clock(
         };
         clock_into(&mut line, ticks);
         menu_ui::set_text(&mut text, &line);
-        let target = clock_color(
-            ticks,
-            sim.0.rules().round_length,
-            time.elapsed_secs(),
-            !settings.reduced_motion,
-        );
+        let (elapsed, blinking) = blink.read(&sim.0);
+        let target = clock_color(ticks, sim.0.rules().round_length, elapsed, blinking);
         menu_ui::set_color(&mut color, target);
     }
 }
@@ -148,6 +167,11 @@ mod tests {
         assert_eq!(clock_text(29 * tps), "0:29");
         assert_eq!(clock_text(90 * tps), "1:30");
         assert_eq!(clock_text(600 * tps), "10:00");
+        // A part of a second still counts: the clock says 0:00 only once
+        // the time is out, and a round starts on its full length.
+        assert_eq!(clock_text(1), "0:01");
+        assert_eq!(clock_text(60 * tps - 1), "1:00");
+        assert_eq!(clock_text(29 * tps + 1), "0:30");
     }
 
     /// The clock reddens inside the last 30 seconds and blinks for the last

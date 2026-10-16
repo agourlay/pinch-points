@@ -24,7 +24,8 @@ pub fn board_from(terms: &MatchTerms, seats: u8, beach: &[u8]) -> crate::sim::Bo
     let Some(level) = beach_in_play(terms.map(), beach_from(beach), seats) else {
         return board_for(terms, seats);
     };
-    let mut board = level.board();
+    // On the round's seed, as a generated beach is.
+    let mut board = level.board_seeded(terms.seed);
     apply_terms(&mut board, terms.gulls(), terms.round(), terms.posts());
     board
 }

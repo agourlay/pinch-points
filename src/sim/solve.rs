@@ -229,7 +229,14 @@ impl<'a> Search<'a> {
             for gull in self.sim.gulls() {
                 self.visited[gull.tile as usize] = true;
             }
-            if self.sim.crabs().is_empty() {
+            // Once the goal is decided, by the same judge `wins` plays to,
+            // nothing later matters: a post only acts on what arrives at
+            // it, so a tile first reached after the decision cannot change
+            // it. A quiet beach is not a decision on a stage that plays on
+            // (a hole spawns more, a Beach Day stage banks a number or
+            // holds out to the clock), and scanning on to the deadline
+            // after a win or a loss is wasted ticks on every node.
+            if self.level.outcome(&self.sim) != PuzzleOutcome::Running {
                 break;
             }
         }
@@ -399,6 +406,66 @@ map:
             SolveOutcome::Unsolvable
         );
         assert_eq!(solve_with(&level, Effort::Budget(4)), SolveOutcome::GaveUp);
+    }
+
+    /// A beach can fall quiet and fill again: on a stage that banks a
+    /// number, the tiles the next crab out of the hole walks are still
+    /// places a post could matter. Here the turnstile sends the first crab
+    /// home and the second down to (1,2), after a spell with no crab on the
+    /// beach at all, where the scan used to stop.
+    #[test]
+    fn a_quiet_spell_does_not_end_the_scan_on_a_stage_that_plays_on() {
+        let text = "\
+name: Second Wave
+posts: 1
+rule: evict 3
+round: 600
+goal: bank 5
+spawner: 0,1 R 150
+map:
++-+-+-+
+|. 0 .|
++ + + +
+|. t .|
++ + + +
+|. . .|
++-+-+-+
+";
+        let level = Level::parse(text).expect("parses");
+        let mut search = Search::new(&level, Effort::Exhaustive);
+        let mut tiles = Vec::new();
+        search.visited_placeable_tiles(&level.board(), &mut tiles);
+        assert!(tiles.contains(&(1, 2)), "the second crab's tile: {tiles:?}");
+    }
+
+    /// The scan ends where the goal is decided, not at the deadline: once
+    /// the first crab banks a stage asking for one, the second crab's walk
+    /// down to (1,2) cannot change anything, and playing it out costs every
+    /// node of the editor's search the rest of the round.
+    #[test]
+    fn the_scan_stops_once_the_goal_is_decided() {
+        let text = "\
+name: First Wave
+posts: 1
+rule: evict 3
+round: 600
+goal: bank 1
+spawner: 0,1 R 150
+map:
++-+-+-+
+|. 0 .|
++ + + +
+|. t .|
++ + + +
+|. . .|
++-+-+-+
+";
+        let level = Level::parse(text).expect("parses");
+        let mut search = Search::new(&level, Effort::Exhaustive);
+        let mut tiles = Vec::new();
+        search.visited_placeable_tiles(&level.board(), &mut tiles);
+        assert!(!tiles.contains(&(1, 2)), "past the decision: {tiles:?}");
+        assert!(search.sim.ticks() < Level::deadline(&search.sim));
     }
 
     /// A budget must not cost correctness on a board it can afford: one

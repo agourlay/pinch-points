@@ -11,10 +11,11 @@ mod crabs;
 mod gulls;
 mod sweeps;
 
-pub use crabs::{CrabSprite, interpolate_crabs, sync_crab_sprites};
 pub(crate) use crabs::{
-    body_color, claw_color, crab_body, crab_claw, mirrored, shade_of, shell_color, sprite_side,
+    BOB, WALK_FPS, body_color, claw_color, crab_body, crab_claw, mirrored, shade_of, shell_color,
+    sprite_side,
 };
+pub use crabs::{CrabSprite, interpolate_crabs, sync_crab_sprites};
 pub use gulls::{GullSprite, interpolate_gulls, sync_gull_sprites};
 pub use sweeps::{SweepSprite, draw_sweeps};
 
@@ -58,6 +59,12 @@ pub struct Tween<'w, 's> {
     time: Res<'w, Time>,
     fixed_time: Res<'w, Time<Fixed>>,
     watch: Local<'s, (u64, f32)>,
+    /// Whether the round is moving, for whether a creature walks: a
+    /// creature's last and current poses never meet while the sim is held,
+    /// so its last step would read as walking for ever. Not the tick watch
+    /// above, which also trips on a late lockstep input, the ordinary
+    /// rhythm online, and twitched every crab into its rest pose.
+    round: crate::app::round_state::RoundState<'w>,
 }
 
 /// Where a creature is drawn `alpha` of the way from its last tick's place

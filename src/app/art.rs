@@ -25,6 +25,9 @@ pub struct Art {
     /// The driftwood frame round a menu card, nine-sliced.
     pub card_frame: Handle<Image>,
     pub crab: Handle<Image>,
+    /// A walking crab's four frames, legs out of step (see
+    /// tools/gen_sprites.py); `crab` is the crab at rest.
+    pub crab_walk: [Handle<Image>; 4],
     pub claw: Handle<Image>,
     pub gull: Handle<Image>,
     pub gull_fly: Handle<Image>,
@@ -35,7 +38,6 @@ pub struct Art {
     pub hole: Handle<Image>,
     pub castle: Handle<Image>,
     pub sand_a: Handle<Image>,
-    pub sand_b: Handle<Image>,
     pub shadow: Handle<Image>,
     pub plank: Handle<Image>,
     pub bracket: Handle<Image>,
@@ -52,7 +54,6 @@ pub struct Art {
     pub puff: Handle<Image>,
     pub foam: Handle<Image>,
     pub post: Handle<Image>,
-    pub crab_b: Handle<Image>,
     pub wet: Handle<Image>,
     pub cloud: Handle<Image>,
     pub boat: Handle<Image>,
@@ -80,6 +81,8 @@ pub struct Art {
     /// One flag chip per language, in [`ALL_LANGS`] order. Read through
     /// [`Art::flag`] rather than indexed directly.
     pub flags: [Handle<Image>; ALL_LANGS.len()],
+    /// The quad and shared materials the water shader draws with.
+    pub water: crate::app::materials::Waters,
 }
 
 impl Art {
@@ -97,6 +100,7 @@ impl Art {
             sign_shape: Default::default(),
             card_frame: Default::default(),
             crab: Default::default(),
+            crab_walk: Default::default(),
             claw: Default::default(),
             gull: Default::default(),
             gull_fly: Default::default(),
@@ -105,7 +109,6 @@ impl Art {
             hole: Default::default(),
             castle: Default::default(),
             sand_a: Default::default(),
-            sand_b: Default::default(),
             shadow: Default::default(),
             plank: Default::default(),
             bracket: Default::default(),
@@ -119,7 +122,6 @@ impl Art {
             puff: Default::default(),
             foam: Default::default(),
             post: Default::default(),
-            crab_b: Default::default(),
             wet: Default::default(),
             cloud: Default::default(),
             boat: Default::default(),
@@ -134,6 +136,7 @@ impl Art {
             vignette: Default::default(),
             ring: Default::default(),
             flags: Default::default(),
+            water: Default::default(),
         }
     }
 
@@ -153,6 +156,7 @@ impl Art {
             sign_shape,
             card_frame,
             crab,
+            crab_walk,
             claw,
             gull,
             gull_fly,
@@ -161,7 +165,6 @@ impl Art {
             hole,
             castle,
             sand_a,
-            sand_b,
             shadow,
             plank,
             bracket,
@@ -175,7 +178,6 @@ impl Art {
             puff,
             foam,
             post,
-            crab_b,
             wet,
             cloud,
             boat,
@@ -190,6 +192,9 @@ impl Art {
             ring,
             robot,
             flags,
+            // Meshes and materials, no picture of its own: its pools are
+            // cut to `puddle`, counted above.
+            water: _,
         } = self;
         [
             sign_board,
@@ -207,7 +212,6 @@ impl Art {
             hole,
             castle,
             sand_a,
-            sand_b,
             shadow,
             plank,
             bracket,
@@ -221,7 +225,6 @@ impl Art {
             puff,
             foam,
             post,
-            crab_b,
             wet,
             cloud,
             boat,
@@ -238,6 +241,7 @@ impl Art {
         ]
         .into_iter()
         .chain(flags)
+        .chain(crab_walk)
         .any(|handle| handle.id() == id)
     }
 }
@@ -272,6 +276,47 @@ pub fn mipmap_sprites(
         {
             with_mips(&mut image);
         }
+    }
+}
+
+/// Cap the card frame's mip level at the one it is drawn at, as the
+/// interface's scale and the display move.
+///
+/// The frame is nine-sliced, and where two slices meet the texture
+/// coordinates jump inside one 2x2 block of pixels: the GPU reads the jump
+/// as extreme minification and, uncapped, sampled the 1x1 level, the whole
+/// sprite averaged to one brown, so every framed card drew a thin brown
+/// line down that seam. Dropping the chain cured that and broke the frame
+/// up where it is drawn small. A fixed cap at the third level left a faint
+/// tick at the seam where the frame is drawn near its own size. Capped at
+/// the level the rest of the frame samples (its 32-texel band drawn
+/// `menu_ui::FRAME_PX` interface pixels thick), the seam samples what its
+/// neighbours do.
+pub fn fit_card_frame_mips(
+    ui_scale: Res<UiScale>,
+    windows: Query<&Window>,
+    art: Res<Art>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    use bevy::image::{ImageSampler, ImageSamplerDescriptor};
+    let factor = windows.iter().next().map_or(1.0, Window::scale_factor);
+    let drawn = crate::app::menu_ui::FRAME_PX * ui_scale.0 * factor;
+    let level = (32.0 / drawn.max(f32::EPSILON)).log2().max(0.0);
+    let current = match images.get(&art.card_frame) {
+        Some(image) => match &image.sampler {
+            ImageSampler::Descriptor(d) => Some(d.lod_max_clamp),
+            ImageSampler::Default => None,
+        },
+        None => return,
+    };
+    if current.is_some_and(|clamp| (clamp - level).abs() < 0.01) {
+        return;
+    }
+    if let Some(mut image) = images.get_mut(&art.card_frame) {
+        image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+            lod_max_clamp: level,
+            ..ImageSamplerDescriptor::linear()
+        });
     }
 }
 
@@ -357,6 +402,8 @@ impl FromWorld for Art {
     /// Built at app construction so it exists before the first state
     /// transition (the menu's OnEnter needs it immediately).
     fn from_world(world: &mut World) -> Self {
+        let puddle = world.resource::<AssetServer>().load("sprites/puddle.png");
+        let water = crate::app::materials::Waters::new(world, &puddle);
         let assets = world.resource::<AssetServer>();
         Art {
             sign_board: assets.load("sprites/sign_board.png"),
@@ -366,6 +413,9 @@ impl FromWorld for Art {
             sign_shape: assets.load("sprites/sign_shape.png"),
             card_frame: assets.load("sprites/card_frame.png"),
             crab: assets.load("sprites/crab.png"),
+            crab_walk: std::array::from_fn(|frame| {
+                assets.load(format!("sprites/crab_walk_{frame}.png"))
+            }),
             claw: assets.load("sprites/claw.png"),
             gull: assets.load("sprites/gull.png"),
             gull_fly: assets.load("sprites/gull_fly.png"),
@@ -374,21 +424,19 @@ impl FromWorld for Art {
             hole: assets.load("sprites/hole.png"),
             castle: assets.load("sprites/castle.png"),
             sand_a: assets.load("sprites/sand_a.png"),
-            sand_b: assets.load("sprites/sand_b.png"),
             shadow: assets.load("sprites/shadow.png"),
             plank: assets.load("sprites/plank.png"),
             bracket: assets.load("sprites/bracket.png"),
             crown: assets.load("sprites/crown.png"),
             kelp: assets.load("sprites/kelp.png"),
             pool: assets.load("sprites/pool.png"),
-            puddle: assets.load("sprites/puddle.png"),
+            puddle,
             ripple: assets.load("sprites/ripple.png"),
             log: assets.load("sprites/log.png"),
             star: assets.load("sprites/star.png"),
             puff: assets.load("sprites/puff.png"),
             foam: assets.load("sprites/foam.png"),
             post: assets.load("sprites/post.png"),
-            crab_b: assets.load("sprites/crab_b.png"),
             wet: assets.load("sprites/wet.png"),
             cloud: assets.load("sprites/cloud.png"),
             boat: assets.load("sprites/boat.png"),
@@ -405,6 +453,7 @@ impl FromWorld for Art {
             // Named by the language's settings key, so the set follows
             // ALL_LANGS without a second table to keep in step.
             flags: ALL_LANGS.map(|lang| assets.load(format!("sprites/flag_{}.png", lang.key()))),
+            water,
         }
     }
 }

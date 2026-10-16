@@ -42,21 +42,6 @@ pub(super) const EAR_GAP: f32 = 0.3;
 /// positional sounds get a lift to sit level with the stingers.
 const SPATIAL_GAIN: f32 = 1.4;
 
-/// Whether a post going down at `owner`'s hand is one to be heard here.
-///
-/// `seated_here` reads correctly wherever this machine answers for a seat:
-/// alone in a puzzle it is your seat, at a table every human seat sharing
-/// the speaker, online your seat and nobody else's.
-///
-/// Where this machine answers for *no* seat it says "nobody" and means it.
-/// An online spectator and a replay both spawn no cursor at all (see
-/// `cursor::spawn_versus_cursors`), so every post on the beach fell silent
-/// while the banks, the gulls and the horn played on. A machine holding no
-/// seat is watching, and a watcher hears the whole beach.
-pub(crate) fn post_is_heard(cursors: &Query<&crate::app::cursor::Cursor>, owner: u8) -> bool {
-    cursors.is_empty() || crate::app::cursor::seated_here(cursors, owner)
-}
-
 /// Where a board position lands in the listener's little stereo field.
 ///
 /// The x is mirrored: rodio's spatial mixer boosts the ear *further* from
@@ -201,6 +186,11 @@ pub fn play_events(
     let mut goldened = [false; crate::sim::MAX_PLAYERS];
     for event in events.read() {
         match event {
+            // A bank that cost (a left claw under a Right Claws call) or
+            // came to nothing is not a reward and gets none: the chime is
+            // the sound of points arriving, and the castle does not bounce
+            // for a loss either. The falling number says what happened.
+            SimEvent::CrabBanked { points, .. } if *points <= 0 => {}
             SimEvent::CrabBanked {
                 owner, kind, pos, ..
             } => {
@@ -233,16 +223,16 @@ pub fn play_events(
             // Only your own posts knock: the bots place far more often
             // than the players do, and online this was announcing arrows
             // that went down in somebody else's room. Unless nobody here
-            // holds a seat, which is what watching is: see `post_is_heard`.
+            // holds a seat, which is what watching is: see `post_noticed_here`.
             SimEvent::SignpostPlaced { owner, pos } => {
-                if post_is_heard(&cursors, *owner) {
+                if crate::app::cursor::post_noticed_here(&cursors, *owner) {
                     once(&mut commands, &mut placed, &sounds.place, gain, pan(pos));
                 }
             }
             // The other end of the same rule. In versus a post wears out
             // on its own, so ungated every bot post knocks on the way out.
             SimEvent::SignpostRemoved { owner, pos } => {
-                if post_is_heard(&cursors, *owner) {
+                if crate::app::cursor::post_noticed_here(&cursors, *owner) {
                     once(&mut commands, &mut removed, &sounds.remove, gain, pan(pos));
                 }
             }
@@ -254,7 +244,7 @@ pub fn play_events(
                 // The third end of the same rule. `CapPolicy` defaults to
                 // `Evict` in versus, so every bot placement past the cap
                 // raises one of these.
-                if post_is_heard(&cursors, *owner) {
+                if crate::app::cursor::post_noticed_here(&cursors, *owner) {
                     once(&mut commands, &mut evicted, &sounds.evict, gain, pan(pos));
                 }
             }
@@ -376,15 +366,43 @@ mod tests {
 
     /// A crab of `kind` walking into `owner`'s castle.
     fn banked(owner: u8, kind: crate::sim::CrabKind) -> SimEvent {
+        banked_for(owner, kind, 1)
+    }
+
+    /// The same crab, worth `points` to the castle it walked into.
+    fn banked_for(owner: u8, kind: crate::sim::CrabKind, points: i32) -> SimEvent {
         SimEvent::CrabBanked {
             id: 0,
             owner,
             pos: Vec2::ZERO,
             keep: Vec2::ZERO,
-            points: 1,
+            points,
             kind,
             handed: crate::sim::Handedness::Right,
         }
+    }
+
+    /// A left claw banked under a Right Claws call costs, and a cost is
+    /// not a reward: no bank chime and no golden fanfare for it, or for a
+    /// bank the empty score had nothing to give up to.
+    #[test]
+    fn a_bank_that_costs_plays_no_reward() {
+        use crate::sim::CrabKind;
+        let mut app = table(1);
+        let played = heard(&mut app, [banked_for(0, CrabKind::Common, -2)]);
+        assert_eq!(played, 0, "a loss does not chime");
+        let played = heard(&mut app, [banked_for(0, CrabKind::Golden, -50)]);
+        assert_eq!(played, 0, "nor fanfare, golden or not");
+        let played = heard(&mut app, [banked_for(0, CrabKind::Common, 0)]);
+        assert_eq!(played, 0, "and a bank cut to nothing is nothing");
+        let played = heard(
+            &mut app,
+            [
+                banked_for(1, CrabKind::Common, -1),
+                banked_for(1, CrabKind::Common, 2),
+            ],
+        );
+        assert_eq!(played, 1, "the gain in the same frame still chimes");
     }
 
     /// The rule the whole beach turns on: a post knocks when the seat that

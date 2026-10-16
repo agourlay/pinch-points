@@ -100,6 +100,10 @@ const TICKS: u64 = 10_000;
 ///
 /// Why it has moved, most recent first:
 ///
+/// - 2026-10-15: each seat's last placement joined the fingerprint, the
+///   tile and tick an AI seat's hand walks from, kept on the board so a
+///   hand outlives the post it put down. The round plays as before; only
+///   the hash's reach grew, and this board places, so it reads new bytes.
 /// - 2026-10-13: `fair_spawns` joined the fingerprint, when versus holes
 ///   that open on the same tick started drawing which of them the crab
 ///   cap leaves out. Off on this board, so only the hash's reach grew:
@@ -152,7 +156,7 @@ const TICKS: u64 = 10_000;
 ///   rules moved that day too: the lure stopped stacking, the roulette
 ///   stopped rolling gull events into the surge, and the spawners took a
 ///   crab cap.
-const EXPECTED_HASH: u64 = 0x1a12_9818_8f8b_13bf;
+const EXPECTED_HASH: u64 = 0x9d5d_d832_7b81_d8ba;
 
 #[test]
 fn ten_thousand_ticks_reproduce_exactly() {

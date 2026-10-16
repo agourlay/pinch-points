@@ -97,18 +97,22 @@ impl BotInfo {
     /// Who the bot counts as for `--per-owner` and the cup's draw: see
     /// [`owner_key`].
     pub fn owner_key(&self) -> String {
-        owner_key(self.owner.as_deref(), self.addr)
+        owner_key(self.owner.as_deref(), self.owner_declared, self.addr)
     }
 }
 
 /// Who a bot counts as, for one owner's cap and for keeping one owner's
 /// bots apart: its owner, whatever the case, or, when it declared none,
-/// the address it came from. An owner is display text with its control
-/// characters removed, so it never reads as an address's key.
-pub fn owner_key(owner: Option<&str>, addr: IpAddr) -> String {
-    match owner {
-        Some(owner) => owner.to_lowercase(),
-        None => format!("\u{1}{addr}"),
+/// the address it came from. An owner a bot declared is a different owner
+/// from the same name bound by the host's per-author key: a rival on the
+/// shared key calling itself "alice" is not the invited Alice, for the cap
+/// or for the draw. An owner is display text with its control characters
+/// removed, so neither reads as the other or as an address's key.
+pub fn owner_key(owner: Option<&str>, declared: bool, addr: IpAddr) -> String {
+    match (owner, declared) {
+        (Some(owner), false) => owner.to_lowercase(),
+        (Some(owner), true) => format!("\u{2}{}", owner.to_lowercase()),
+        (None, _) => format!("\u{1}{addr}"),
     }
 }
 
@@ -253,7 +257,7 @@ struct Registry {
     routes: HashMap<u32, Route>,
     /// Finished games' replays, and who may fetch them.
     replays: HashMap<String, (Vec<BotId>, Arc<str>)>,
-    wrong_keys: HashMap<IpAddr, (u32, Option<Instant>)>,
+    wrong_keys: HashMap<IpAddr, admit::Strikes>,
     /// Connections not registered yet, by address.
     pending: HashMap<IpAddr, usize>,
     next_serial: u64,
@@ -317,6 +321,11 @@ impl Listener {
     pub fn also_listen(&self, addr: SocketAddr) -> std::io::Result<SocketAddr> {
         let socket = TcpListener::bind(addr)?;
         let bound = socket.local_addr()?;
+        // An accept loop on this port that was stopped has ended (the port
+        // could not be bound again otherwise) and should have taken it off
+        // the list itself; make sure, or this loop would end at its first
+        // connection.
+        lock(&self.shared.stopped).retain(|a| *a != bound);
         lock(&self.shared.bound).push(bound);
         let accepting = Arc::clone(&self.shared);
         std::thread::Builder::new()

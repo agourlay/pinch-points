@@ -267,13 +267,16 @@ pub(super) fn standing_on(board: &Board, x: u8, y: u8) -> Brush {
 mod tests {
     use super::*;
 
-    /// The editor moves on WASD and paints with letters, so a brush on one
-    /// of those four does two things at once. It also must not collide
-    /// with the editor's own keys, which are just as invisible a clash.
+    /// The editor moves on P1's stock bindings and paints with letters, so
+    /// a brush on one of those does two things at once (a rebinding onto a
+    /// brush is settled at the press: see `command_press`). It also must
+    /// not collide with the editor's own keys, which are just as invisible
+    /// a clash.
     #[test]
     fn no_brush_takes_a_movement_key() {
         use bevy::prelude::KeyCode;
-        let movement = [KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD];
+        let movement =
+            super::super::EditorKeys::of(&crate::app::settings::GameSettings::default()).moves;
         let controls = [
             KeyCode::KeyK,   // gull period
             KeyCode::KeyO,   // wrapping edges

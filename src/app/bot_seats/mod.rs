@@ -17,7 +17,7 @@ mod round;
 mod test_bots;
 
 pub use card::{door_card, door_input};
-pub use doorway::Doorway;
+pub use doorway::{BotLine, Doorway};
 pub use round::{BotRound, Committed, News, STAND_IN};
 
 use crate::app::i18n::fill;

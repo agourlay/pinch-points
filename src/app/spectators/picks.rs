@@ -97,7 +97,11 @@ pub fn spectator_pick_input(
     mut online: ResMut<Online>,
     mut resend: Local<f32>,
 ) {
-    let crate::app::keycaps::KeyboardMut { mut keys, caps } = keyboard;
+    let crate::app::keycaps::KeyboardMut {
+        mut keys,
+        caps,
+        live,
+    } = keyboard;
     let open = online
         .0
         .as_ref()
@@ -117,12 +121,12 @@ pub fn spectator_pick_input(
         session.transport.send(NetMsg::SpectatorPick { seat });
     }
     if !card.is_up() {
-        if caps.just_pressed(&keys, 'P') {
+        if caps.global_pressed(&keys, 'P', &live) {
             spawn_pick_card(card.raise(), &settings, session);
         }
         return;
     }
-    if keys.just_pressed(KeyCode::Escape) || caps.just_pressed(&keys, 'P') {
+    if keys.just_pressed(KeyCode::Escape) || caps.global_pressed(&keys, 'P', &live) {
         card.shut();
         // Or the pause card, behind it in the frame, opens on the same Esc.
         crate::app::menu_ui::spend(&mut keys, &[KeyCode::Escape]);

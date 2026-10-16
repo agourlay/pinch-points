@@ -132,6 +132,14 @@ pub struct Joined {
     /// round yet. These two are how the difference gets onto the screen.
     pub(super) host_silence: f32,
     pub(super) host_answered: bool,
+    /// Seconds since the host said it was going (`NetMsg::Leaving`), or
+    /// `None` if it never did or has said anything since.
+    ///
+    /// A goodbye is a claim nothing checks, and believed on arrival one
+    /// forged datagram emptied a lobby table. So it is believed only once
+    /// it has stood for [`super::joining::LOBBY_GOODBYE_GRACE`], longer than
+    /// the host's once-a-second roster, which takes it back.
+    pub(super) host_goodbye: Option<f32>,
     /// The seed of the round just played, set when a finished match walks
     /// back into this lobby still connected. The host may still be on its
     /// results card, where it re-answers every greeting with that round's
@@ -179,6 +187,7 @@ impl Joined {
             hello_in: ANNOUNCE_EVERY,
             host_silence: 0.0,
             host_answered: false,
+            host_goodbye: None,
             played_seed: None,
             host_terms: None,
             catching_up: Default::default(),
@@ -203,6 +212,7 @@ impl Joined {
             hello_in: 0.0,
             host_silence: 0.0,
             host_answered: true,
+            host_goodbye: None,
             played_seed: Some(played_seed),
             host_terms: None,
             catching_up: Default::default(),
@@ -213,10 +223,18 @@ impl Joined {
 
     /// What this peer greets the host with: a bot's seat says so.
     pub fn greeting(&self, name: &str) -> NetMsg {
-        match &self.bot {
-            Some(seat) => NetMsg::hello_bot(seat),
-            None => greeting(self.watching, name),
+        match self.bot.is_some() {
+            true => NetMsg::hello_bot(self.speaking_as(name)),
+            false => greeting(self.watching, name),
         }
+    }
+
+    /// The name this peer goes by at the table, `me` being the player's
+    /// own: a bot's seat name when it joined as one, which is what its
+    /// greeting gave the host and so what the host vouches its chat
+    /// under.
+    pub fn speaking_as<'a>(&'a self, me: &'a str) -> &'a str {
+        self.bot.as_deref().unwrap_or(me)
     }
 
     /// The seed of the round this table walked out of, if it did.
@@ -248,6 +266,28 @@ mod tests {
                 name: crate::transport::wire_name("Bo"),
                 bot: false,
             },
+        );
+    }
+
+    /// A peer that joined as a bot speaks under the seat name it greeted
+    /// with, which is the name the host vouches its lines under: its own
+    /// echo named the player at the keyboard, and the rest of the table
+    /// read the bot's.
+    #[test]
+    fn a_bot_chats_under_the_name_it_greeted_with() {
+        let socket = UdpTransport::host(0).expect("socket");
+        let joined = Joined::returned(socket, false, 0, Some("Greedy (Ana)".into()));
+        let NetMsg::Hello { name, bot: true } = joined.greeting("Bo") else {
+            panic!("a bot greets as one");
+        };
+        // The host writes the greeting's name down, and vouches by it.
+        let mut peers = crate::app::net::PeerBook::default();
+        peers.row(0).name = crate::transport::name_from_wire(&name);
+        let vouched = peers.vouch(0, crate::transport::wire_name("Bo"));
+        assert_eq!(
+            crate::transport::name_from_wire(&vouched),
+            crate::transport::name_as_sent(joined.speaking_as("Bo")),
+            "the echo and the table read one name"
         );
     }
 }

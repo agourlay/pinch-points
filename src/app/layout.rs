@@ -43,7 +43,11 @@ pub const MAX_ZOOM: f32 = SPRITE_PX / TILE;
 /// keeps, the posts and the creatures all read it. Carried as four
 /// slightly different offsets, a rock beside a post casts at two different
 /// angles, which is the first thing an eye picks out of a flat-lit scene.
-pub const SUN: Vec2 = Vec2::new(2.5, -3.5);
+///
+/// At (2.5, -3.5) every shadow sat almost under what cast it and read as
+/// a smudge, not as light falling from one side. Nearly twice that throws
+/// them clear enough to see which way the sun is.
+pub const SUN: Vec2 = Vec2::new(4.5, -6.3);
 
 /// Z-layers, back to front.
 pub mod z {

@@ -141,7 +141,11 @@ impl Viewer {
 pub fn played_here(viewer: Viewer, controllers: &Controllers, seat: u8) -> bool {
     match viewer {
         Viewer::Replay | Viewer::Spectator => false,
-        Viewer::Peer(mine) => mine == seat,
+        // Not when this peer joined as a bot: the chair is the bot's to
+        // play, and the person here only watches it.
+        Viewer::Peer(mine) => {
+            mine == seat && controllers.0.get(usize::from(seat)) != Some(&SeatController::Bot)
+        }
         Viewer::Table => controllers.0.get(usize::from(seat)) == Some(&SeatController::Local),
     }
 }
@@ -154,9 +158,12 @@ pub fn seat_tag(
     viewer: Viewer,
     seat: u8,
 ) -> &'static str {
+    let held_by = controllers.0.get(usize::from(seat));
     if controllers.ai(usize::from(seat)).is_some() {
         tr.tag_ai
-    } else if viewer.seat() == Some(seat) {
+    } else if viewer.seat() == Some(seat) && held_by != Some(&SeatController::Bot) {
+        // A seat a bot drives wears the robot already, and is the bot's,
+        // not this person's, even when it is the chair this peer was dealt.
         tr.tag_you
     } else {
         ""
@@ -317,5 +324,16 @@ mod seat_tag_tests {
             assert!(!here(Viewer::Spectator, seat));
             assert!(!here(Viewer::Replay, seat));
         }
+    }
+
+    /// A peer that joined as a bot (route 1) is dealt a chair the bot
+    /// plays: it wears the robot, and is neither "(you)" nor marked as
+    /// this person's next to go.
+    #[test]
+    fn a_chair_this_peers_bot_plays_is_not_yours() {
+        let mut controllers = Controllers::default();
+        controllers.0[1] = SeatController::Bot;
+        assert_eq!(seat_tag(&EN, &controllers, Viewer::Peer(1), 1), "");
+        assert!(!played_here(Viewer::Peer(1), &controllers, 1));
     }
 }

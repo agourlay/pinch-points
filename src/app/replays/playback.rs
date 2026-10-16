@@ -29,13 +29,15 @@ impl PlaybackSpeed {
     }
 }
 
-/// `S` cycles 1x, 2x, 4x while a replay is playing.
+/// `S` cycles 1x, 2x, 4x while a replay is playing. The key whose cap
+/// says S, as every other letter key is read: the prompt says "S".
 pub fn playback_speed_input(
     keys: Res<ButtonInput<KeyCode>>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
     playback: Res<Playback>,
     mut speed: ResMut<PlaybackSpeed>,
 ) {
-    if playback.0.is_some() && keys.just_pressed(KeyCode::KeyS) {
+    if playback.0.is_some() && caps.just_pressed(&keys, 'S') {
         *speed = PlaybackSpeed(speed.0).stepped();
     }
 }

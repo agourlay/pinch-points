@@ -6,7 +6,7 @@
 use crate::app::art::Art;
 use crate::app::layout::{self, TILE};
 use crate::app::palette;
-use crate::app::sim_events::SimEvent;
+use crate::app::sim_events::{CurrentBoard, SimEvent};
 use crate::sim::TileKind;
 use bevy::color::Mix;
 use bevy::prelude::*;
@@ -622,6 +622,63 @@ pub fn bank_hop(commands: &mut Commands, art: &Art, crab: &BankedCrab, swept: Op
         .with_child(crab_claw(art, handed, Vec2::splat(sprite_side(kind))));
 }
 
+/// A banked crab under reduced motion: no hop over the wall, but not gone
+/// on the spot either, which is what a crab eaten looks like with the
+/// feathers taken away. It fades where it stood, claw and all, on the
+/// doorstep of the castle whose number floats up beside it.
+///
+/// The claw is its own particle rather than the body's child, so each
+/// fades and despawns itself: a child would hold its colour to the end.
+fn bank_fade(commands: &mut Commands, art: &Art, crab: &BankedCrab) {
+    use crate::app::creatures::{crab_body, crab_claw, shade_of, shell_color, sprite_side};
+    let BankedCrab {
+        id,
+        from,
+        to: _,
+        kind,
+        handed,
+    } = *crab;
+    let shell = shell_color(kind, shade_of(id));
+    let z = layout::z::CREATURE + 0.1;
+    commands.spawn((
+        standing_fade(),
+        crab_body(art, kind, handed, shell),
+        Transform::from_translation(from.extend(z)),
+    ));
+    let (claw, lift) = crab_claw(art, handed, Vec2::splat(sprite_side(kind)));
+    commands.spawn((
+        standing_fade(),
+        claw,
+        Transform::from_translation(from.extend(z) + lift.translation),
+    ));
+}
+
+/// A particle that stays exactly where and as big as it was spawned and
+/// only fades: the reduced-motion shape of a thing leaving the board.
+fn standing_fade() -> Particle {
+    Particle {
+        fade_in: 0.0,
+        life: 0.5,
+        ..default()
+    }
+}
+
+/// Whether `event` still draws anything under reduced motion. The news
+/// stays and the fireworks go: a raid's number, a gull seen leaving (or it
+/// went *in*, which is a raid), a banked crab fading at the gate rather
+/// than vanishing, and the ghost of a post traded away, which is how a
+/// player sees which arrow they lost.
+fn kept_when_calm(event: &SimEvent) -> bool {
+    matches!(
+        event,
+        SimEvent::CastleRaided { .. }
+            | SimEvent::GullShooed { .. }
+            | SimEvent::GullFlewOff { .. }
+            | SimEvent::CrabBanked { .. }
+            | SimEvent::SignpostEvicted { .. }
+    )
+}
+
 /// Where a banking crab is, and how big it looks, `progress` of the way
 /// from the tile it vanished on to the keep it vanished into.
 ///
@@ -761,6 +818,44 @@ fn splash(commands: &mut Commands, rng: &mut VisualRng, art: &Art, pos: Vec2, si
     );
 }
 
+/// A memory kept per creature id, and the board (by [`BoardGeneration`])
+/// it was filled on.
+///
+/// Crab and gull ids start again at zero on every board, so a memory
+/// pruned by id alone hands a new board's crab the last board's entry: a
+/// crab that was on dry sand there and starts in a pool here splashes on
+/// its first frame, and one that starts across the beach from where its
+/// namesake stood presses a footprint halfway between.
+///
+/// [`BoardGeneration`]: crate::app::sim_events::BoardGeneration
+pub struct BoardMemory<K, V> {
+    filled_on: Option<u64>,
+    by_id: bevy::platform::collections::HashMap<K, V>,
+}
+
+impl<K, V> Default for BoardMemory<K, V> {
+    fn default() -> Self {
+        BoardMemory {
+            filled_on: None,
+            by_id: Default::default(),
+        }
+    }
+}
+
+impl<K, V> BoardMemory<K, V> {
+    /// The memory for the board on the table: emptied first if it was
+    /// filled on another one.
+    fn of(&mut self, current: &CurrentBoard) -> &mut bevy::platform::collections::HashMap<K, V> {
+        let Self { filled_on, by_id } = self;
+        let generation = current.generation();
+        if *filled_on != Some(generation) {
+            by_id.clear();
+            *filled_on = Some(generation);
+        }
+        by_id
+    }
+}
+
 /// Whether the tile at `index` is a pool.
 fn in_pool(board: &crate::sim::Board, index: u16) -> bool {
     let (x, y) = board.coords_u8(index);
@@ -783,14 +878,15 @@ fn wades_in(was: Option<bool>, now: bool) -> bool {
 /// splash everything on it. Render-side: the sim is untouched.
 pub fn splash_ponds(
     mut commands: Commands,
-    sim: Res<crate::app::Sim>,
+    current: CurrentBoard,
     art: Res<Art>,
     settings: Res<crate::app::settings::GameSettings>,
     mut rng: ResMut<VisualRng>,
-    mut wet: Local<bevy::platform::collections::HashMap<(bool, u32), bool>>,
+    mut wet: Local<BoardMemory<(bool, u32), bool>>,
     mut seen: Local<bevy::platform::collections::HashSet<(bool, u32)>>,
 ) {
-    let board = &sim.0;
+    let board = &current.sim.0;
+    let wet = wet.of(&current);
     seen.clear();
     let mut thrown = 0;
     let creatures = board
@@ -861,18 +957,19 @@ pub fn golden_call_rings(
 /// distance walked, tracked per crab id. Pure decoration, sim untouched.
 pub fn crab_trails(
     mut commands: Commands,
-    sim: Res<crate::app::Sim>,
+    current: CurrentBoard,
     art: Res<Art>,
     settings: Res<crate::app::settings::GameSettings>,
     mut rng: ResMut<VisualRng>,
-    mut footfalls: Local<bevy::platform::collections::HashMap<u32, Footfall>>,
+    mut footfalls: Local<BoardMemory<u32, Footfall>>,
     mut seen: Local<bevy::platform::collections::HashSet<u32>>,
 ) {
     if settings.reduced_motion {
         return;
     }
     const STRIDE: f32 = 20.0;
-    let board = &sim.0;
+    let board = &current.sim.0;
+    let footfalls = footfalls.of(&current);
     seen.clear();
     for crab in board.crabs() {
         seen.insert(crab.id);
@@ -1009,18 +1106,12 @@ pub fn moment_effects(
     // but the puffs, the scatter, the shake and the full-tile white flash
     // do not. A gull turned away at a puzzle's castle still fades where it
     // stood, or it vanished into the keep, which is what a raid looks like.
+    // What survives is [`kept_when_calm`].
     let calm = settings.reduced_motion;
     // Crabs swept home so far this frame, so each sets off after the last.
     let mut sweeps = 0usize;
     for event in events.read() {
-        if calm
-            && !matches!(
-                event,
-                SimEvent::CastleRaided { .. }
-                    | SimEvent::GullShooed { .. }
-                    | SimEvent::GullFlewOff { .. }
-            )
-        {
+        if calm && !kept_when_calm(event) {
             continue;
         }
         match event {
@@ -1046,7 +1137,11 @@ pub fn moment_effects(
                     kind: *kind,
                     handed: *handed,
                 };
-                bank_hop(&mut commands, &art, &crab, swept);
+                if calm {
+                    bank_fade(&mut commands, &art, &crab);
+                } else {
+                    bank_hop(&mut commands, &art, &crab, swept);
+                }
             }
             // A gull got one: sand, and the feathers that say what kind of
             // ending this was.
@@ -1071,11 +1166,19 @@ pub fn moment_effects(
             // pointing where it pointed, swelling as it fades. Under the
             // versus cap a fourth placement takes your oldest, and it used
             // to vanish in silence somewhere else on the beach: the player
-            // sees the arrow they lost, and where they lost it.
-            SimEvent::SignpostEvicted { owner, pos, dir } => {
+            // sees the arrow they lost, and where they lost it. Calm, it
+            // fades where it stood without swelling: still the news.
+            //
+            // Only your own (or every one, watching), by the rule the
+            // trade's sound asks: a bot past its cap trades a post every
+            // few seconds, and a ghost for each was a stream of arrows
+            // nobody here had lost.
+            SimEvent::SignpostEvicted { owner, pos, dir }
+                if crate::app::cursor::post_noticed_here(&cursors, *owner) =>
+            {
                 commands.spawn((
                     Particle {
-                        grow: 1.1,
+                        grow: if calm { 0.0 } else { 1.1 },
                         life: 0.5,
                         fade_in: 0.0,
                         ..default()
@@ -1197,13 +1300,14 @@ pub fn moment_effects(
             // A post going in gets a ring under it; the pop of the post
             // itself belongs to the sprite, which `board_render` owns.
             //
-            // Only your own, for the reason the knock is only your own: on
-            // a six-seat beach five bots place and lose a post every few
-            // seconds each, and a ring for every one of them is a stream
-            // of particles over tiles nobody is watching. The picture and
-            // the sound have to agree about whose beach this is.
+            // Only your own (or every one, watching), for the reason the
+            // knock is only your own: on a six-seat beach five bots place
+            // and lose a post every few seconds each, and a ring for every
+            // one of them is a stream of particles over tiles nobody is
+            // watching. The picture and the sound ask the one rule, so they
+            // agree about whose beach this is, a watcher's included.
             SimEvent::SignpostPlaced { owner, pos }
-                if crate::app::cursor::seated_here(&cursors, *owner) =>
+                if crate::app::cursor::post_noticed_here(&cursors, *owner) =>
             {
                 ring(
                     &mut commands,
@@ -1231,7 +1335,7 @@ pub fn moment_effects(
                 );
             }
             SimEvent::SignpostRemoved { owner, pos }
-                if crate::app::cursor::seated_here(&cursors, *owner) =>
+                if crate::app::cursor::post_noticed_here(&cursors, *owner) =>
             {
                 burst(
                     &mut commands,
@@ -1249,7 +1353,9 @@ pub fn moment_effects(
             }
             // Somebody else's post: the board already shows it appearing
             // and going, which is all a rival's arrow owes anybody.
-            SimEvent::SignpostPlaced { .. } | SimEvent::SignpostRemoved { .. } => {}
+            SimEvent::SignpostPlaced { .. }
+            | SimEvent::SignpostRemoved { .. }
+            | SimEvent::SignpostEvicted { .. } => {}
             // The final scramble arrives with the sea behind it.
             SimEvent::SurgeStarted => trauma.add(0.7),
             // Out at last: what the rings have been pointing at. Gold
@@ -1314,6 +1420,151 @@ pub fn moment_effects(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reduced motion drops the fireworks and keeps the news. A banked crab
+    /// and a post traded away are news: dropped, the crab vanished on the
+    /// doorstep and the lost arrow went without a trace. Their calm shape
+    /// stands still and only fades.
+    #[test]
+    fn reduced_motion_keeps_a_bank_and_a_lost_post_without_moving_them() {
+        let banked = SimEvent::CrabBanked {
+            id: 0,
+            owner: 0,
+            pos: Vec2::ZERO,
+            keep: Vec2::X,
+            points: 1,
+            kind: crate::sim::CrabKind::Common,
+            handed: crate::sim::Handedness::Right,
+        };
+        let evicted = SimEvent::SignpostEvicted {
+            owner: 0,
+            pos: Vec2::ZERO,
+            dir: crate::sim::Direction::Up,
+        };
+        assert!(kept_when_calm(&banked), "a bank still shows");
+        assert!(kept_when_calm(&evicted), "and so does a lost post");
+        assert!(
+            !kept_when_calm(&SimEvent::CrabEaten { pos: Vec2::ZERO }),
+            "the feathers of an eaten crab are fireworks"
+        );
+        let calm = standing_fade();
+        assert_eq!(calm.velocity, Vec2::ZERO, "it does not drift");
+        assert_eq!(calm.gravity, Vec2::ZERO, "or fall");
+        assert_eq!(calm.grow, 0.0, "or swell");
+        assert_eq!(calm.spin, 0.0, "or turn");
+        assert!(calm.life > 0.0, "it is there for a moment, then gone");
+    }
+
+    /// A beach for the effect systems to draw on: `seats` cursors at this
+    /// machine (seats past them are bots, none at all is watching), and
+    /// reduced motion when `calm`.
+    fn stage(seats: u8, calm: bool) -> App {
+        let mut app = App::new();
+        app.insert_resource(Art::blank());
+        app.init_resource::<VisualRng>();
+        app.init_resource::<Trauma>();
+        app.insert_resource(crate::app::settings::GameSettings {
+            reduced_motion: calm,
+            ..default()
+        });
+        app.init_resource::<crate::app::sim_events::BoardGeneration>();
+        app.add_message::<SimEvent>();
+        for seat in 0..seats {
+            app.world_mut()
+                .spawn(crate::app::cursor::Cursor::seated(seat));
+        }
+        app
+    }
+
+    /// The particles drawn since the last call, swept away for the next.
+    fn drawn(app: &mut App) -> usize {
+        let world = app.world_mut();
+        let live: Vec<Entity> = world
+            .query_filtered::<Entity, With<Particle>>()
+            .iter(world)
+            .collect();
+        for &entity in &live {
+            world.entity_mut(entity).despawn();
+        }
+        live.len()
+    }
+
+    /// The ghost of a post traded away asks the rule its sound asks: your
+    /// own lost arrow, or every one when watching. A bot past its cap
+    /// trades a post every few seconds, and drew a ghost for each, calm or
+    /// not, while the speaker kept quiet about them.
+    #[test]
+    fn a_lost_post_is_drawn_where_it_is_heard() {
+        let traded = |owner| SimEvent::SignpostEvicted {
+            owner,
+            pos: Vec2::ZERO,
+            dir: crate::sim::Direction::Up,
+        };
+        for calm in [false, true] {
+            let mut app = stage(1, calm);
+            app.add_systems(Update, moment_effects);
+            app.world_mut().write_message(traded(0));
+            app.update();
+            assert_eq!(drawn(&mut app), 1, "your own lost arrow (calm: {calm})");
+            app.world_mut().write_message(traded(4));
+            app.update();
+            assert_eq!(drawn(&mut app), 0, "not a bot's (calm: {calm})");
+        }
+        let mut app = stage(0, false);
+        app.add_systems(Update, moment_effects);
+        app.world_mut().write_message(traded(4));
+        app.update();
+        assert_eq!(drawn(&mut app), 1, "a watcher sees every seat's");
+    }
+
+    /// Run `system` once on `first`, then once on `second` laid out in its
+    /// place, and count what the second frame drew.
+    fn drawn_on_the_next_board<M>(
+        system: impl IntoScheduleConfigs<bevy::ecs::system::ScheduleSystem, M>,
+        first: crate::sim::Board,
+        second: crate::sim::Board,
+    ) -> usize {
+        let mut app = stage(1, false);
+        app.insert_resource(crate::app::Sim(first));
+        app.add_systems(
+            Update,
+            (crate::app::sim_events::track_board, system).chain(),
+        );
+        app.update();
+        drawn(&mut app);
+        app.insert_resource(crate::app::Sim(second));
+        app.update();
+        drawn(&mut app)
+    }
+
+    /// Crab ids start again at zero on every board. Remembered by id
+    /// alone, the new board's first crab inherited the old one's: dry sand
+    /// there and a pool here was a splash on the first frame.
+    #[test]
+    fn a_crab_new_to_the_beach_has_not_waded_in() {
+        use crate::sim::{CrabKind, Direction, Handedness};
+        let mut dry = crate::sim::Board::new(6, 4, 7);
+        dry.spawn_crab(1, 1, Direction::Right, Handedness::Left, CrabKind::Common);
+        let mut wet = crate::sim::Board::new(6, 4, 8);
+        wet.set_tile(1, 1, TileKind::Pool);
+        wet.spawn_crab(1, 1, Direction::Right, Handedness::Left, CrabKind::Common);
+        assert_eq!(dry.crabs()[0].id, wet.crabs()[0].id, "the same id");
+        assert_eq!(drawn_on_the_next_board(splash_ponds, dry, wet), 0);
+    }
+
+    /// And the footprints: the new board's crab across the beach from the
+    /// old one's namesake pressed a print halfway between on its first
+    /// frame, from a step it never took.
+    #[test]
+    fn a_crab_new_to_the_beach_has_not_walked_there() {
+        use crate::sim::{CrabKind, Direction, Handedness};
+        let mut west = crate::sim::Board::new(6, 4, 7);
+        west.spawn_crab(0, 1, Direction::Right, Handedness::Left, CrabKind::Common);
+        let mut east = crate::sim::Board::new(6, 4, 8);
+        east.spawn_crab(5, 2, Direction::Left, Handedness::Left, CrabKind::Common);
+        assert_eq!(west.crabs()[0].id, east.crabs()[0].id, "the same id");
+        assert_eq!(drawn_on_the_next_board(crab_trails, west, east), 0);
+    }
 
     /// A splash asks the tile a creature is on, by the board's own count:
     /// the pool it is in, and not the sand beside it or a row over.

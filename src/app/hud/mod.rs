@@ -15,8 +15,8 @@ mod field_guide;
 mod text;
 
 use crate::app::palette::CLOCK_CALM;
+pub(crate) use clock::{Blink, clock_color, clock_into, urgency_band};
 pub use clock::{TideClock, update_tide_clock};
-pub(crate) use clock::{clock_color, clock_into, urgency_band};
 use field_guide::spawn_field_guide;
 pub use field_guide::{FieldGuide, field_guide_visibility, update_field_guide};
 pub(crate) use text::event_name;
@@ -161,7 +161,8 @@ pub fn spawn_hud(
                 column_gap: Val::Px(18.0),
                 ..default()
             },
-            BackgroundColor(palette::HEADER_FILL),
+            // `header_backdrop` shades it on its first frame.
+            BackgroundGradient::default(),
         ))
         .with_children(|bar| {
             // The title in a box of its own, because a node does not clip
@@ -228,6 +229,9 @@ pub fn spawn_hud(
             ..default()
         },))
         .with_children(|wrap| {
+            // On a pill, as the prompt is: pale text straight on the sand
+            // is unreadable, and the hint used to have the dark sea behind
+            // it before the sea moved to the bottom of the view.
             wrap.spawn((
                 HintLabel,
                 Text::new(""),
@@ -236,13 +240,21 @@ pub fn spawn_hud(
                     ..default()
                 },
                 TextColor(palette::SELECTED_ROW.with_alpha(0.85)),
+                Node {
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
+                    border_radius: BorderRadius::all(Val::Px(11.0)),
+                    display: Display::None,
+                    ..default()
+                },
+                BackgroundColor(palette::PILL_FILL),
             ));
         });
 
     // The tide clock: big, top-centre, red for the final scramble. A
     // full-width centring wrapper keeps the digits centred at any width.
     // `ZIndex(1)` lifts it above the header bar it overlaps: the bar is
-    // spawned first and opaque, and without this the digits paint behind it.
+    // spawned first, its shade nearly opaque behind the digits, and without
+    // this they paint behind it.
     commands
         .spawn((
             Node {
@@ -332,7 +344,7 @@ pub fn update_hint(
     settings: Res<GameSettings>,
     caps: Res<crate::app::keycaps::KeyCaps>,
     notes: HintNotes,
-    mut hints: Query<&mut Text, With<HintLabel>>,
+    mut hints: Query<(&mut Text, &mut Node), With<HintLabel>>,
 ) {
     let HintNotes { stuck, denied } = notes;
     let line = if *screen.get() != Screen::Puzzle {
@@ -359,8 +371,10 @@ pub fn update_hint(
             },
         )
     };
-    for mut text in &mut hints {
+    for (mut text, mut node) in &mut hints {
         menu_ui::set_text(&mut text, &line);
+        // No pill with nothing on it.
+        menu_ui::set_shown(&mut node, !line.is_empty());
     }
 }
 
@@ -431,7 +445,10 @@ impl HudSources<'_> {
             library,
             notice,
             match_menu: &modes.match_menu,
-            paused: modes.pause_menu.stops_the_round(),
+            // Any card, a spectator's own included: it stops nothing,
+            // but it holds the keyboard all the same, and the line that
+            // named the beach's keys over it named keys that were dead.
+            paused: modes.pause_menu.is_open(),
             spectator_typing: spectators.0.as_deref(),
             crowd: seating
                 .online
@@ -482,24 +499,136 @@ pub fn update_hud(sources: HudSources, mut labels: HudLabels) {
 
 /// The menu is a full-bleed postcard: the header backdrop gets out of the
 /// way there and returns on every other screen.
+///
+/// Off the menu it is a shade falling away down the bar rather than a solid
+/// strip: dark enough behind the title to read, and letting the beach run
+/// up to the top of the window instead of ending at a black band.
+///
+/// Asked of each bar rather than remembered across frames: a bar spawned
+/// after the screen last changed (a round entered straight from launch)
+/// was born unshaded and stayed that way.
 pub fn header_backdrop(
     screen: Res<State<Screen>>,
-    mut bars: Query<&mut BackgroundColor, With<HeaderBar>>,
+    mut bars: Query<&mut BackgroundGradient, With<HeaderBar>>,
 ) {
-    let target = if *screen.get() == Screen::Menu {
-        Color::NONE
-    } else {
-        palette::HEADER_FILL
-    };
+    let shaded = *screen.get() != Screen::Menu;
     for mut bg in &mut bars {
-        menu_ui::set_bg(&mut bg, target);
+        if bg.0.is_empty() == shaded {
+            *bg = if shaded {
+                header_shade()
+            } else {
+                BackgroundGradient::default()
+            };
+        }
     }
+}
+
+/// The header's shade: nearly the bar's whole fill down past the foot of
+/// its text, then gone by the bar's foot. Held dark that far for the
+/// puzzle clock, whose digits reach four fifths of the way down: a shade
+/// that thinned from halfway left the foot of a red closing-stretch clock
+/// about as bright as the sand under it.
+fn header_shade() -> BackgroundGradient {
+    BackgroundGradient::from(LinearGradient::to_bottom(vec![
+        ColorStop::percent(palette::HEADER_FILL.with_alpha(0.92), 0.0),
+        ColorStop::percent(palette::HEADER_FILL.with_alpha(0.88), 80.0),
+        ColorStop::percent(palette::HEADER_FILL.with_alpha(0.0), 100.0),
+    ]))
+}
+
+/// How long a running round shows the controls line before it fades, and
+/// how long the fade takes, in seconds.
+const PROMPT_LINGER: f32 = 6.0;
+const PROMPT_FADE: f32 = 0.8;
+
+/// What decides whether the controls line may fade: a versus round under
+/// way, unpaused, for somebody holding a seat in it.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PromptRound<'w> {
+    screen: Res<'w, State<Screen>>,
+    phase: Option<Res<'w, State<crate::app::VersusPhase>>>,
+    paused: Res<'w, crate::app::Paused>,
+    pause_menu: Res<'w, crate::app::pause::PauseMenu>,
+    online: Res<'w, crate::app::net::Online>,
+    playback: Res<'w, crate::app::Playback>,
+}
+
+impl PromptRound<'_> {
+    fn running(&self) -> bool {
+        // Only for a seat: a spectator's line is their chat draft and the
+        // crowd's vote, and a replay's is its transport keys, none of
+        // which anyone has read once and for all.
+        let seated = matches!(
+            text::header_viewer(&self.online, &self.playback),
+            crate::app::seating::Viewer::Peer(_) | crate::app::seating::Viewer::Table
+        );
+        *self.screen.get() == Screen::Versus
+            && self
+                .phase
+                .as_ref()
+                .is_some_and(|phase| *phase.get() == crate::app::VersusPhase::Running)
+            && !self.paused.0
+            && !self.pause_menu.is_open()
+            && seated
+    }
+}
+
+/// Let the controls line fade once a versus round is under way. Everyone
+/// at the table has read it by then, and it is the biggest piece of text
+/// on the screen, over the beach at the foot of the board.
+///
+/// It comes back whenever the round is not running (the countdown, a
+/// pause, the end) and for a fresh stretch whenever what it says changes.
+/// Only versus, and only for a seat (see [`PromptRound`]): a puzzle's line
+/// is its state ("Running... R to reset") as much as its keys, and stays.
+pub fn fade_prompt(
+    time: Res<Time>,
+    round: PromptRound,
+    // How long the line has shown in a running round, and what it said.
+    mut stretch: Local<(f32, String)>,
+    mut prompts: Query<(&Text, &mut TextColor, &mut BackgroundColor), With<PromptLabel>>,
+) {
+    let running = round.running();
+    let (shown_for, said) = &mut *stretch;
+    for (text, mut color, mut bg) in &mut prompts {
+        if !running || text.0 != *said {
+            *shown_for = 0.0;
+            said.clone_from(&text.0);
+        } else {
+            *shown_for += time.delta_secs();
+        }
+        let shown = prompt_shown(*shown_for);
+        menu_ui::set_color(&mut color, palette::SELECTED_ROW.with_alpha(shown));
+        menu_ui::set_bg(
+            &mut bg,
+            palette::PILL_FILL.with_alpha(palette::PILL_FILL.alpha() * shown),
+        );
+    }
+}
+
+/// How much of the controls line shows, `secs` into a stretch of running
+/// round: all of it until it has lingered, then easing out to none.
+fn prompt_shown(secs: f32) -> f32 {
+    let t = ((secs - PROMPT_LINGER) / PROMPT_FADE).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::i18n::Lang;
+
+    /// The controls line stays whole while it lingers, then fades to
+    /// nothing and stays gone, and never goes past either end.
+    #[test]
+    fn the_controls_line_lingers_then_fades_out() {
+        assert_eq!(prompt_shown(0.0), 1.0);
+        assert_eq!(prompt_shown(PROMPT_LINGER), 1.0);
+        let midway = prompt_shown(PROMPT_LINGER + PROMPT_FADE / 2.0);
+        assert!((0.1..0.9).contains(&midway), "midway through: {midway}");
+        assert_eq!(prompt_shown(PROMPT_LINGER + PROMPT_FADE), 0.0);
+        assert_eq!(prompt_shown(600.0), 0.0);
+    }
 
     /// A prompt that fits keeps its size; one that does not shrinks by
     /// exactly as much as it is too wide, since width scales with size; and

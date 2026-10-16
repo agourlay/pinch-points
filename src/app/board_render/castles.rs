@@ -91,6 +91,38 @@ pub fn castle_body(owner: Color) -> Color {
     SAND.mix(&owner, 0.62)
 }
 
+/// One of a castle's two shadows, and where it rests under the castle at
+/// its own size. The castle swells when a crab banks and when it flies in
+/// a swap, and its shadows, being its children, swelled and lunged out
+/// along the sun with it; [`steady_castle_shadows`] holds them to the
+/// ground.
+#[derive(Component)]
+pub struct CastleShadow {
+    at: Vec3,
+}
+
+/// A castle whose scale may have moved this frame.
+type SwollenCastle = (With<CastleSprite>, Changed<Transform>);
+
+/// Keep a castle's shadows where they lie and at their size however the
+/// castle swells above them: their offset and size divided by its scale,
+/// as a gull's are (a post's offset is too, though not yet its size).
+/// After the kick and the flight, which are what scale it.
+pub fn steady_castle_shadows(
+    castles: Query<(&Transform, &Children), SwollenCastle>,
+    mut shadows: Query<(&CastleShadow, &mut Transform), Without<CastleSprite>>,
+) {
+    for (castle, children) in &castles {
+        let scale = castle.scale.x.max(f32::EPSILON);
+        for child in children {
+            if let Ok((shadow, mut place)) = shadows.get_mut(*child) {
+                place.translation = (shadow.at.truncate() / scale).extend(shadow.at.z);
+                place.scale = Vec3::splat(1.0 / scale);
+            }
+        }
+    }
+}
+
 /// One piece of a castle: which sprite, how big and where, in tiles from
 /// the tile's centre, and how far in front of the keep it is drawn.
 struct Piece {
@@ -144,12 +176,32 @@ fn build_castle(parent: &mut ChildSpawnerCommands, art: &Art, tier: u8, color: C
     let footprint = if tier == 0 { 0.8 } else { 1.15 };
     // It sits on the sand rather than in it.
     parent.spawn((
+        CastleShadow {
+            at: layout::SUN.extend(-0.4),
+        },
         image_sprite(
             &art.shadow,
             Color::srgba(1.0, 1.0, 1.0, 0.7),
             Vec2::splat(TILE * footprint),
         ),
         Transform::from_translation(layout::SUN.extend(-0.4)),
+    ));
+    // And the shadow its height throws, long along the sun: the castle is
+    // the tallest thing on the beach, and grows taller with each tier.
+    let (sprite, place) = super::cast_shadow(
+        art,
+        Vec2::ZERO,
+        TILE * footprint,
+        TILE * (0.14 + 0.05 * f32::from(tier)),
+        0.45,
+        -0.41,
+    );
+    parent.spawn((
+        CastleShadow {
+            at: place.translation,
+        },
+        sprite,
+        place,
     ));
     for part in castle_parts(art, tier, color) {
         let at = (part.at * TILE).extend(part.z);
@@ -257,7 +309,7 @@ pub(crate) fn castle_parts(art: &Art, tier: u8, color: Color) -> Vec<CastlePart>
         &mut parts,
         color,
         keep.at + Vec2::new(-0.06, keep.size * TOWER_TOP),
-        0.36,
+        KEEP_POLE,
         1.3,
         0.3,
     );
@@ -288,6 +340,117 @@ fn flag(parts: &mut Vec<CastlePart>, color: Color, base: Vec2, height: f32, scal
         z,
         pennant: true,
     });
+}
+
+/// How high over a castle's centre its leader's crown floats, in tiles:
+/// clear above the top of the keep's flagpole, which rises with the tier.
+fn crown_lift(tier: u8) -> f32 {
+    let keep = keep(tier);
+    keep.at.y + keep.size * TOWER_TOP + KEEP_POLE + CROWN_SIZE * 0.32
+}
+
+/// How tall the keep's flagpole stands, in tiles.
+const KEEP_POLE: f32 = 0.36;
+
+/// How big the leader's crown is drawn, in tiles (the sprite is square,
+/// the crown in it a little smaller).
+const CROWN_SIZE: f32 = 0.5;
+
+/// The crown floating over a leading castle, by the tile the castle
+/// stands on, and how long it has been up, for its arrival.
+#[derive(Component)]
+pub struct CastleCrown {
+    x: u8,
+    y: u8,
+    age: f32,
+}
+
+/// What `crown_the_leader` reads: who sits at the table, and how.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Table<'w> {
+    screen: Res<'w, State<crate::app::Screen>>,
+    seats: Res<'w, crate::app::Seats>,
+    online: Res<'w, crate::app::net::Online>,
+    settings: Res<'w, crate::app::settings::GameSettings>,
+    time: Res<'w, Time>,
+}
+
+/// Float a crown over the castle of whoever leads, so the board itself
+/// says who is winning: a judge watching the beach could not tell without
+/// looking across at the scores.
+///
+/// The leader is the score panel's own (`seating::leading_seats`): the one
+/// top scorer, or every castle of the leading team, and nobody at zero or
+/// in a tie, so the board's crown and the panel's never disagree. Versus
+/// only: a puzzle has no one to lead. A new leader's crown drops in with a
+/// little bounce, held still under reduced motion; it follows its castle
+/// through a swap's flight.
+pub fn crown_the_leader(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    art: Res<Art>,
+    table: Table,
+    castles: Query<(&CastleSprite, &Transform), Without<CastleCrown>>,
+    mut crowns: Query<(Entity, &mut CastleCrown, &mut Transform), Without<CastleSprite>>,
+) {
+    let board = &sim.0;
+    let versus = *table.screen.get() == crate::app::Screen::Versus;
+    let mode = crate::app::teams::in_play(&table.settings, &table.online, table.seats.0);
+    let leaders = crate::app::seating::leading_seats(board.scores(), table.seats.0, mode);
+    let leading = |c: &CastleSprite| versus && leaders[usize::from(c.owner)];
+    // A crown whose castle no longer leads, or is gone, goes.
+    for (entity, crown, _) in &crowns {
+        let kept = castles
+            .iter()
+            .any(|(c, _)| c.x == crown.x && c.y == crown.y && leading(c));
+        if !kept {
+            commands.entity(entity).despawn();
+        }
+    }
+    let calm = table.settings.reduced_motion;
+    let dt = table.time.delta_secs();
+    let now = table.time.elapsed_secs();
+    for (castle, place) in &castles {
+        if !leading(castle) {
+            continue;
+        }
+        let over = place.translation.truncate()
+            + Vec2::new(0.0, crown_lift(castle.tier) * TILE * place.scale.y);
+        let found = crowns
+            .iter_mut()
+            .find(|(_, crown, _)| crown.x == castle.x && crown.y == castle.y);
+        let Some((_, mut crown, mut at)) = found else {
+            commands.spawn((
+                super::BoardStatic,
+                CastleCrown {
+                    x: castle.x,
+                    y: castle.y,
+                    age: 0.0,
+                },
+                image_sprite(&art.crown, Color::WHITE, Vec2::splat(CROWN_SIZE * TILE)),
+                Transform::from_translation(over.extend(z::TILE_FEATURE + 0.6))
+                    .with_scale(Vec3::splat(if calm { 1.0 } else { 0.0 })),
+            ));
+            continue;
+        };
+        crown.age += dt;
+        let (drop, grow) = if calm { (0.0, 1.0) } else { arrival(crown.age) };
+        // A slow breath once it has landed, so it reads as floating.
+        let bob = if calm { 0.0 } else { (now * 2.2).sin() * 1.5 };
+        at.translation = (over + Vec2::new(0.0, drop * TILE + bob)).extend(z::TILE_FEATURE + 0.6);
+        at.scale = Vec3::splat(grow);
+    }
+}
+
+/// A new leader's crown arriving `age` seconds in: how far above its
+/// resting place it is, in tiles, and how big, dropping in over a third of
+/// a second and settling with a small bounce.
+fn arrival(age: f32) -> (f32, f32) {
+    const DROP: f32 = 0.35;
+    let t = (age / DROP).clamp(0.0, 1.0);
+    // Ease-out-back: overshoots a touch, then settles.
+    let back = 1.0 + 2.7 * (t - 1.0).powi(3) + 1.7 * (t - 1.0).powi(2);
+    ((1.0 - t) * 0.4, back)
 }
 
 /// A castle's flag; waves gently in the sea breeze.
@@ -327,29 +490,19 @@ pub struct Flight {
 }
 
 /// The swap detector's memory: the castles as they stood last frame, and
-/// the board clock they stood on.
+/// which board they stood on.
 ///
-/// The clock is what tells a new board from the old one. Without it a match
+/// The board is what tells a new layout from a swap. Without it a match
 /// that ended on a CastleSwap leaves the swapped layout here, and the next
-/// round on the same map reads as a swap on its first frame.
+/// round on the same map reads as a swap on its first frame; a round
+/// pasted in mid-clock did the same, since its clock had not rolled back.
 #[derive(Default)]
 pub struct Detector {
-    ticks: u64,
+    /// The [`BoardGeneration`] the castles in `held` were read off.
+    ///
+    /// [`BoardGeneration`]: crate::app::sim_events::BoardGeneration
+    board: u64,
     held: Vec<Held>,
-}
-
-impl Detector {
-    /// Whether `board` is a different board from the one remembered: the
-    /// clock rolled back (a fresh round or level, whose clock starts at 0)
-    /// or the beach changed size under it. Either way what is remembered
-    /// says nothing about this board.
-    fn is_fresh(&self, board: &crate::sim::Board) -> bool {
-        board.ticks() < self.ticks
-            || self
-                .held
-                .iter()
-                .any(|held| !on_board(board, held.x, held.y))
-    }
 }
 
 /// A castle as the swap detector sees it: whose it is, and where.
@@ -397,14 +550,15 @@ fn hop(from: Vec2, home: Vec2, progress: f32) -> (Vec2, f32) {
 /// Runs after [`kick_castles`], which also writes scale: a bank landing in
 /// the same frame as a swap should not fight the flight for the transform.
 ///
-/// A fresh board (see [`Detector::is_fresh`]) empties both the memory and
-/// any flight still in the air, so a round that ends mid-swap leaves
-/// nothing to land on the next beach. Done here rather than on screen exit
-/// because a rematch on the same map is a board swap with no screen change
-/// in it.
+/// A new board (see [`BoardGeneration`]) empties both the memory and any
+/// flight still in the air, so a round that ends mid-swap leaves nothing
+/// to land on the next beach. Done here rather than on screen exit because
+/// a rematch on the same map is a board swap with no screen change in it.
+///
+/// [`BoardGeneration`]: crate::app::sim_events::BoardGeneration
 pub fn fly_castles(
     time: Res<Time>,
-    sim: Res<Sim>,
+    current: crate::app::sim_events::CurrentBoard,
     settings: Res<crate::app::settings::GameSettings>,
     mut flight: ResMut<CastleFlight>,
     mut before: Local<Detector>,
@@ -412,13 +566,13 @@ pub fn fly_castles(
     mut now: Local<Vec<Held>>,
     mut castles: Query<(&CastleSprite, &mut Transform)>,
 ) {
-    let board = &sim.0;
-    if before.is_fresh(board) {
+    let board = &current.sim.0;
+    if before.board != current.generation() {
         before.held.clear();
         flight.from.clear();
         flight.left = 0.0;
     }
-    before.ticks = board.ticks();
+    before.board = current.generation();
     now.clear();
     now.extend(board.tiles().filter_map(|(x, y, kind)| match kind {
         TileKind::Castle(owner) => Some(Held { x, y, owner }),
@@ -498,7 +652,8 @@ fn swapped(before: &[Held], now: &[Held]) -> bool {
     tiles(before) == tiles(now) && owners(before) == owners(now)
 }
 
-/// What each seat banked over one frame's events, added up.
+/// What each keep banked over one frame's events, added up, as the keep's
+/// centre and its total.
 ///
 /// The sim reports a bank per crab, and a castle can take several on one
 /// tick: eight, measured over a set of six-seat rounds. [`score_pip`] has
@@ -508,24 +663,46 @@ fn swapped(before: &[Held], now: &[Held]) -> bool {
 /// Summed instead: `+8` is the number that happened, and this is the only
 /// place it is ever shown.
 ///
+/// Per keep and not per seat: a seat can hold two castles (some of the
+/// shipped puzzles give the first seat two), and summed by owner both
+/// of them bounced and floated the pair's total, so a crab walking into
+/// one castle was shown arriving at both, at twice its worth.
+///
 /// [`score_pip`]: crate::app::effects::score_pip
 fn gains<'a>(
     events: impl IntoIterator<Item = &'a crate::app::sim_events::SimEvent>,
-) -> [i32; crate::sim::MAX_PLAYERS] {
+) -> Vec<(Vec2, i32)> {
     use crate::app::sim_events::SimEvent;
-    let mut gained = [0i32; crate::sim::MAX_PLAYERS];
+    let mut gained: Vec<(Vec2, i32)> = Vec::new();
     for event in events {
-        if let SimEvent::CrabBanked { owner, points, .. } = event
-            && let Some(total) = gained.get_mut(usize::from(*owner))
-        {
-            *total = total.saturating_add(*points);
+        let SimEvent::CrabBanked { keep, points, .. } = event else {
+            continue;
+        };
+        match gained.iter_mut().find(|(at, _)| same_keep(*at, *keep)) {
+            Some((_, total)) => *total = total.saturating_add(*points),
+            None => gained.push((*keep, *points)),
         }
     }
     gained
 }
 
-/// Bounce the owner's castle on every gain and float the points the banks
-/// made (or cost) over the keep, in the owner's colour.
+/// Whether two board positions name the same keep: a bank's `keep` and a
+/// castle sprite's tile centre come out of the same `tile_center`, so
+/// anything within a fraction of a tile is the one castle.
+fn same_keep(a: Vec2, b: Vec2) -> bool {
+    a.distance_squared(b) < (TILE * 0.25).powi(2)
+}
+
+/// What the keep at `at` banked this frame, out of [`gains`].
+fn gained_at(gained: &[(Vec2, i32)], at: Vec2) -> i32 {
+    gained
+        .iter()
+        .find(|(keep, _)| same_keep(*keep, at))
+        .map_or(0, |(_, points)| *points)
+}
+
+/// Bounce a castle on every gain and float the points its banks made (or
+/// cost) over the keep, in the owner's colour.
 pub fn kick_castles(
     mut commands: Commands,
     mut events: MessageReader<crate::app::sim_events::SimEvent>,
@@ -547,9 +724,8 @@ pub fn kick_castles(
         let TileKind::Castle(owner) = board.tile_at(sprite.x, sprite.y) else {
             continue;
         };
-        let Some(&points) = gained.get(usize::from(owner)) else {
-            continue;
-        };
+        let at = layout::tile_center(board, sprite.x, sprite.y);
+        let points = gained_at(&gained, at);
         if points == 0 {
             continue;
         }
@@ -562,7 +738,7 @@ pub fn kick_castles(
             &mut commands,
             // Signed: a left claw banked under a Right Claws call costs.
             format!("{points:+}"),
-            layout::tile_center(board, sprite.x, sprite.y) + Vec2::new(0.0, TILE * 0.35),
+            at + Vec2::new(0.0, TILE * 0.35),
             palette::player_color(owner).lighter(0.15),
         );
     }
@@ -677,7 +853,77 @@ pub fn wave_pennants(time: Res<Time>, mut flags: Query<(Entity, &mut Transform),
 
 #[cfg(test)]
 mod tests {
-    use super::{castle_body, castle_parts, gains, hop, keep, turrets};
+    use super::{castle_body, castle_parts, gained_at, gains, hop, keep, turrets};
+
+    /// A new leader's crown starts small and above its place and comes to
+    /// rest at full size exactly on it, and it floats clear of the keep's
+    /// flag at every tier.
+    #[test]
+    fn the_crown_lands_on_its_place_above_the_flag() {
+        use super::{CROWN_SIZE, KEEP_POLE, TOWER_TOP, arrival, crown_lift};
+        let (drop, grow) = arrival(0.0);
+        assert!(
+            drop > 0.0 && grow < 0.05,
+            "arrives from above, small: {drop} {grow}"
+        );
+        assert_eq!(
+            arrival(1.0),
+            (0.0, 1.0),
+            "and rests at full size on its place"
+        );
+        for tier in 0..=3 {
+            let keep = keep(tier);
+            let pole_top = keep.at.y + keep.size * TOWER_TOP + KEEP_POLE;
+            let crown_foot = crown_lift(tier) - CROWN_SIZE * 0.5 * 0.7;
+            assert!(
+                crown_foot > pole_top - 0.02,
+                "tier {tier}: crown on the flag"
+            );
+        }
+    }
+
+    /// A castle swelling with a bank leaves its shadows lying where they
+    /// were, at their own size: the ground does not swell.
+    #[test]
+    fn a_swelling_castle_leaves_its_shadow_on_the_ground() {
+        use super::{CastleShadow, CastleSprite, steady_castle_shadows};
+        use bevy::prelude::*;
+        let mut app = App::new();
+        let at = Vec3::new(15.0, -21.0, -0.41);
+        let castle = app
+            .world_mut()
+            .spawn((
+                CastleSprite {
+                    x: 0,
+                    y: 0,
+                    tier: 3,
+                    owner: 0,
+                },
+                Transform::from_scale(Vec3::splat(1.25)),
+            ))
+            .id();
+        let shadow = app
+            .world_mut()
+            .spawn((
+                CastleShadow { at },
+                Transform::from_translation(at),
+                ChildOf(castle),
+            ))
+            .id();
+        app.add_systems(Update, steady_castle_shadows);
+        app.update();
+        let place = app.world().get::<Transform>(shadow).expect("the shadow");
+        let drawn = place.translation.truncate() * 1.25;
+        assert!(
+            (drawn - at.truncate()).length() < 1e-4,
+            "it lunged to {drawn}"
+        );
+        assert!(
+            (place.scale.x * 1.25 - 1.0).abs() < 1e-4,
+            "it grew to {}",
+            place.scale.x
+        );
+    }
     use crate::app::art::Art;
     use crate::app::palette;
 
@@ -741,7 +987,7 @@ mod tests {
         }
     }
     use crate::app::sim_events::SimEvent;
-    use crate::sim::{CrabKind, MAX_PLAYERS};
+    use crate::sim::CrabKind;
     use bevy::prelude::*;
 
     /// A castle only ever gains pieces: every tier keeps the towers the
@@ -766,13 +1012,13 @@ mod tests {
         );
     }
 
-    /// A crab worth `points` walking into `owner`'s keep.
-    fn bank(owner: u8, points: i32) -> SimEvent {
+    /// A crab worth `points` walking into the keep at `keep`.
+    fn bank(owner: u8, keep: Vec2, points: i32) -> SimEvent {
         SimEvent::CrabBanked {
             id: 0,
             owner,
             pos: Vec2::ZERO,
-            keep: Vec2::ZERO,
+            keep,
             points,
             kind: CrabKind::Common,
             handed: crate::sim::Handedness::Right,
@@ -787,37 +1033,48 @@ mod tests {
     /// the number is simply wrong, drawn a little too dark.
     #[test]
     fn a_frame_of_banks_floats_one_number_and_it_is_the_total() {
-        assert_eq!(gains([]), [0; MAX_PLAYERS], "a quiet frame gains nobody");
-        assert_eq!(gains(&[bank(1, 3)])[1], 3, "one crab is worth its own");
-        let stream: Vec<SimEvent> = (0..8).map(|_| bank(1, 1)).collect();
+        let keep = Vec2::new(64.0, -32.0);
+        assert!(gains([]).is_empty(), "a quiet frame gains nobody");
+        assert_eq!(gained_at(&gains(&[bank(1, keep, 3)]), keep), 3);
+        let stream: Vec<SimEvent> = (0..8).map(|_| bank(1, keep, 1)).collect();
         assert_eq!(
-            gains(&stream)[1],
+            gained_at(&gains(&stream), keep),
             8,
             "eight into one keep is eight, not eight ones"
         );
         // Crabs are not all worth the same, so this is a sum and not a
         // count: a golden one is fifty walking.
-        assert_eq!(gains(&[bank(2, 50), bank(2, 1)])[2], 51);
+        let golden = gains(&[bank(2, keep, 50), bank(2, keep, 1)]);
+        assert_eq!(gained_at(&golden, keep), 51);
     }
 
-    /// Seats are added up apart. Six castles filling on one tick is six
-    /// numbers over six keeps, and each of them is that keep's own.
+    /// Keeps are added up apart, the two of one seat's included. A puzzle
+    /// that gives the first seat two castles floated the pair's total over
+    /// both of them, as if every crab had walked into each.
     #[test]
-    fn every_seat_is_counted_over_its_own_keep() {
-        let frame: Vec<SimEvent> = vec![bank(0, 1), bank(3, 2), bank(0, 4), bank(3, 1)];
-        let gained = gains(&frame);
-        assert_eq!(gained[0], 5, "two crabs home");
-        assert_eq!(gained[3], 3);
-        assert_eq!(
-            gained[1], 0,
-            "and a seat that banked nothing floats nothing"
+    fn every_keep_is_counted_on_its_own_even_two_of_one_seat() {
+        let (left, right, far) = (
+            Vec2::new(-200.0, 0.0),
+            Vec2::new(200.0, 0.0),
+            Vec2::new(0.0, 150.0),
         );
-        assert_eq!(gained.iter().sum::<i32>(), 8, "nothing counted twice");
-        // A seat past the end of the table is dropped rather than indexed
-        // off it: the owner rides in on an observed event, and every other
-        // reader of one is careful about that.
-        let stray = gains(&[bank(MAX_PLAYERS as u8, 9), bank(u8::MAX, 9)]);
-        assert_eq!(stray, [0; MAX_PLAYERS], "no seat, no number");
+        let frame = vec![
+            bank(0, left, 1),
+            bank(0, right, 2),
+            bank(0, left, 4),
+            bank(3, far, 1),
+        ];
+        let gained = gains(&frame);
+        assert_eq!(gained_at(&gained, left), 5, "two crabs home on the left");
+        assert_eq!(gained_at(&gained, right), 2, "and one on the right");
+        assert_eq!(gained_at(&gained, far), 1, "a rival's keep is its own");
+        assert_eq!(
+            gained_at(&gained, Vec2::new(0.0, -150.0)),
+            0,
+            "and a keep that banked nothing floats nothing"
+        );
+        let total: i32 = gained.iter().map(|(_, points)| points).sum();
+        assert_eq!(total, 8, "nothing counted twice");
     }
 
     /// The two ends are the point: a castle that lands a few pixels off
@@ -860,33 +1117,6 @@ mod tests {
         assert!(
             !super::swapped(&[held(1, 1, 0)], &[held(1, 1, 1)]),
             "one castle cannot swap with itself"
-        );
-    }
-
-    /// A round that ends on a swap must not fly the next round's castles
-    /// from where the last one left them: a board whose clock rolled
-    /// back, or that shrank under the remembered castles, is a fresh one.
-    #[test]
-    fn a_new_round_forgets_the_last_layout() {
-        let held = |x, y, owner| super::Held { x, y, owner };
-        let mut board = crate::sim::Board::new(12, 9, 1);
-        for _ in 0..50 {
-            board.tick_idle();
-        }
-        let detector = super::Detector {
-            ticks: board.ticks(),
-            held: vec![held(1, 1, 0), held(10, 7, 1)],
-        };
-        assert!(!detector.is_fresh(&board), "the same board, ticking on");
-        let next_round = crate::sim::Board::new(12, 9, 2);
-        assert!(detector.is_fresh(&next_round), "the clock rolled back");
-        let mut smaller = crate::sim::Board::new(9, 7, 1);
-        for _ in 0..80 {
-            smaller.tick_idle();
-        }
-        assert!(
-            detector.is_fresh(&smaller),
-            "a castle remembered off this board says the board changed"
         );
     }
 

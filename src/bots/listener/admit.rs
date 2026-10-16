@@ -2,7 +2,7 @@
 //! still registering, and the lockout an address earns by guessing keys.
 
 use super::allowance::Allowance;
-use super::wire::{attach, ping, routes_of, send};
+use super::wire::{Wire, attach, ping, routes_of, send};
 use super::{
     Admission, Bot, BotId, BotInfo, Event, GameMsg, Registry, Shared, emit, lock, owner_key,
 };
@@ -61,16 +61,58 @@ impl Drop for Pending<'_> {
     }
 }
 
+/// One address's wrong keys: when each was sent, and how long the address
+/// is turned away for, once it has sent too many.
+#[derive(Default)]
+pub(super) struct Strikes {
+    at: Vec<Instant>,
+    until: Option<Instant>,
+}
+
+impl Strikes {
+    /// A wrong key sent at `now`. Strikes older than [`LOCKOUT`] are
+    /// forgotten first: two typos this morning and one this afternoon are
+    /// not somebody guessing.
+    fn strike(&mut self, now: Instant) {
+        self.forget(now);
+        self.at.push(now);
+        if self.at.len() >= WRONG_KEYS as usize {
+            self.until = Some(now + LOCKOUT);
+            self.at.clear();
+        }
+    }
+
+    /// Turned away at `now`.
+    fn locked(&self, now: Instant) -> bool {
+        self.until.is_some_and(|until| now < until)
+    }
+
+    /// Drop what has expired by `now`.
+    fn forget(&mut self, now: Instant) {
+        self.at.retain(|&at| now.duration_since(at) < LOCKOUT);
+        if self.until.is_some_and(|until| now >= until) {
+            self.until = None;
+        }
+    }
+
+    /// Nothing left to remember.
+    fn spent(&self) -> bool {
+        self.at.is_empty() && self.until.is_none()
+    }
+}
+
 pub(super) fn locked_out(shared: &Shared, ip: IpAddr) -> bool {
     let mut registry = lock(&shared.registry);
-    match registry.wrong_keys.get(&ip) {
-        Some((_, Some(until))) if Instant::now() < *until => true,
-        Some((_, Some(_))) => {
-            registry.wrong_keys.remove(&ip);
-            false
-        }
-        _ => false,
+    let now = Instant::now();
+    let Some(strikes) = registry.wrong_keys.get_mut(&ip) else {
+        return false;
+    };
+    strikes.forget(now);
+    let locked = strikes.locked(now);
+    if strikes.spent() {
+        registry.wrong_keys.remove(&ip);
     }
+    locked
 }
 
 /// A wrong key costs the address that sent it, never the key: rotating the
@@ -78,11 +120,14 @@ pub(super) fn locked_out(shared: &Shared, ip: IpAddr) -> bool {
 /// changing just by guessing badly.
 fn wrong_key(shared: &Shared, ip: IpAddr) {
     let mut registry = lock(&shared.registry);
-    let entry = registry.wrong_keys.entry(ip).or_insert((0, None));
-    entry.0 += 1;
-    if entry.0 >= WRONG_KEYS {
-        entry.1 = Some(Instant::now() + LOCKOUT);
-    }
+    let now = Instant::now();
+    // Every address that ever mistyped a key would otherwise stay in the
+    // map for as long as the listener runs.
+    registry.wrong_keys.retain(|_, strikes| {
+        strikes.forget(now);
+        !strikes.spent()
+    });
+    registry.wrong_keys.entry(ip).or_default().strike(now);
 }
 
 /// Take a registration, or say why not. Returns the bot's id and this
@@ -99,7 +144,7 @@ pub(super) fn register_bot(
             register.protocol
         ));
     }
-    let writer = stream.try_clone().map_err(|e| e.to_string())?;
+    let wire = Wire::of(stream).map_err(|e| e.to_string())?;
     // A reconnect: the token is who the bot is, and nothing else is asked.
     // A wrong one is no strike against the address: a token is too long
     // to guess, and a stale one is a bot that outlived its listener, not
@@ -117,7 +162,7 @@ pub(super) fn register_bot(
                 "this bot was let go here and its seat given away; register afresh".to_string(),
             );
         }
-        return Ok(take_back(shared, registry, id, writer));
+        return Ok(take_back(shared, registry, id, wire));
     }
     if register.name.is_empty() {
         return Err("a registration needs a `name`".to_string());
@@ -129,7 +174,7 @@ pub(super) fn register_bot(
         // A new token: the old one was lost with the bot that held it,
         // and it is not this registration's to be handed.
         registry.bots[id].token = Token::draw();
-        return Ok(take_back(shared, registry, id, writer));
+        return Ok(take_back(shared, registry, id, wire));
     }
     // The key, when one is asked for: found first and spent last, so a
     // registration refused for its name does not burn a single-use key.
@@ -139,14 +184,27 @@ pub(super) fn register_bot(
             let Some(given) = register.key.as_deref() else {
                 return Err("this listener needs the key from its connection string".to_string());
             };
-            let found = Key::parse(given).and_then(|key| {
+            let key = Key::parse(given);
+            let found = key.as_ref().and_then(|key| {
                 invites
                     .iter()
-                    .position(|i| i.key == key && i.uses != Some(0))
+                    .position(|i| &i.key == key && i.uses != Some(0))
             });
             let Some(found) = found else {
+                // A key this listener printed and has seen spent is a bot
+                // started again with the string it was first started
+                // with, its author's debug loop, not somebody trying keys:
+                // counted, three restarts locked this machine out, the
+                // fresh key on screen with it.
+                let spent = key.is_some_and(|key| invites.iter().any(|i| i.key == key));
                 drop(registry);
                 drop(config);
+                if spent {
+                    return Err(
+                        "that key has been spent: start the bot with the string shown now"
+                            .to_string(),
+                    );
+                }
                 wrong_key(shared, peer.ip());
                 return Err("that key is not one this listener is taking".to_string());
             };
@@ -172,10 +230,31 @@ pub(super) fn register_bot(
     };
     let owner_declared = bound_owner.is_none();
     let owner = bound_owner.or(register.owner);
+    let key = owner_key(owner.as_deref(), owner_declared, peer.ip());
+    // A name the host bound to a key of its own is that key's to use: on
+    // the shared key anyone could claim it, and fill the owner's places
+    // before the owner's own bot came.
+    if owner_declared
+        && let (Some(owner), Admission::Keys(invites)) = (&owner, &config.admission)
+        && invites.iter().any(|i| {
+            i.owner.as_deref().is_some_and(|o| {
+                // The name as the invite binds it, against the name
+                // as this bot would have it bound.
+                owner_key(Some(o), false, peer.ip()) == owner_key(Some(owner), false, peer.ip())
+            })
+        })
+    {
+        return Err(format!(
+            "{owner} has a key of their own here: register with that one"
+        ));
+    }
     // A bot that declares no owner is counted under its address, so leaving
-    // the owner out is no way round the cap.
+    // the owner out is no way round the cap. The owners bots declared and
+    // the ones the host bound have different keys (see `owner_key`), so a
+    // bot that declared a name before the host invited somebody by it takes
+    // none of that person's places, and the cup's draw tells them apart
+    // the same way.
     if let Some(cap) = config.per_owner {
-        let key = owner_key(owner.as_deref(), peer.ip());
         let theirs = registry
             .bots
             .iter()
@@ -225,7 +304,7 @@ pub(super) fn register_bot(
         absent: false,
     });
     drop(config);
-    let serial = attach(&mut registry, id, writer);
+    let serial = attach(&mut registry, id, wire);
     let msg = json!({
         "type": "registered", "name": register.name,
         "token": registry.bots[id].token.reveal(),
@@ -286,9 +365,9 @@ fn take_back(
     shared: &Arc<Shared>,
     mut registry: MutexGuard<'_, Registry>,
     id: BotId,
-    writer: TcpStream,
+    wire: Wire,
 ) -> (BotId, u64) {
-    let serial = attach(&mut registry, id, writer);
+    let serial = attach(&mut registry, id, wire);
     let msg = json!({
         "type": "registered", "name": registry.bots[id].info.name,
         "token": registry.bots[id].token.reveal(), "resumed": true,
@@ -301,4 +380,32 @@ fn take_back(
     }
     emit(shared, Event::Reconnected(id));
     (id, serial)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Wrong keys spread out over more than the lockout window never add
+    /// up to one: each strike is forgotten once the window has passed.
+    #[test]
+    fn wrong_keys_far_apart_never_lock_an_address_out() {
+        let start = Instant::now();
+        let mut strikes = Strikes::default();
+        for i in 0..10 {
+            let now = start + LOCKOUT * i + Duration::from_secs(1);
+            strikes.strike(now);
+            assert!(!strikes.locked(now), "strike {i}");
+        }
+        // Three close together still do, for the lockout and no longer.
+        let now = start + LOCKOUT * 20;
+        for s in 0..3 {
+            strikes.strike(now + Duration::from_secs(s));
+        }
+        assert!(strikes.locked(now + Duration::from_secs(3)));
+        let later = now + Duration::from_secs(2) + LOCKOUT;
+        strikes.forget(later);
+        assert!(!strikes.locked(later));
+        assert!(strikes.spent());
+    }
 }

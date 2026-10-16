@@ -206,7 +206,7 @@ pub fn spectator_vote_input(
     watching: Watching<PickCard>,
     mut online: ResMut<Online>,
 ) {
-    let crate::app::keycaps::KeyboardMut { mut keys, caps } = keyboard;
+    let crate::app::keycaps::KeyboardMut { mut keys, caps, .. } = keyboard;
     // Typing takes the keyboard, losing a seat takes the job, and a round
     // that is over has no beach to call anything onto.
     if !is_spectating(&online) || !watching.free() {

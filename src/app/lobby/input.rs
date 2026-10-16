@@ -54,7 +54,7 @@ pub fn lobby_input(
     exits: LobbyExits,
     pads: Query<&Gamepad>,
 ) {
-    let crate::app::keycaps::Keyboard { keys, caps } = keyboard;
+    let crate::app::keycaps::Keyboard { keys, caps, live } = keyboard;
     let LobbyExits {
         mut next_screen,
         mut bots,
@@ -184,7 +184,7 @@ pub fn lobby_input(
     }
     let step = host_step(HostAsk {
         answered: intent == Some(Intent::Host),
-        pressed_h: caps.just_pressed(&keys, 'H'),
+        pressed_h: caps.global_pressed(&keys, 'H', &live),
         busy: state.standing().at_a_beach(),
         auto: auto_host,
     });
@@ -301,6 +301,7 @@ mod tests {
         app.insert_resource(GameSettings::default());
         let mut azerty = crate::app::keycaps::KeyCaps::default();
         azerty.learn(KeyCode::KeyW, 'z');
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.insert_resource(azerty);
         app.add_message::<bevy::input::keyboard::KeyboardInput>();
         app.add_systems(Update, lobby_input);

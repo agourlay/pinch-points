@@ -6,7 +6,7 @@ use crate::bots::connstr::{ConnString, DEFAULT_PORT, Key};
 use crate::bots::listener::{Admission, BotId, Config, Event, Invite, Listener};
 use std::net::SocketAddr;
 use std::sync::mpsc::Receiver;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// What a bot that came in but was dealt no seat is told as it goes.
 const NO_SEAT: &str = "the table filled up before this bot had a seat";
@@ -14,6 +14,14 @@ const NO_SEAT: &str = "the table filled up before this bot had a seat";
 /// What a bot is told as it goes when the seat it sat in, or was started
 /// for, stops being a bot's seat.
 const SEAT_GONE: &str = "the seat this bot was started for is no longer a bot's seat";
+
+/// How long a bot that dropped keeps its chair, for it to come back by its
+/// token (or, started again, by its key and name) before the chair is
+/// given up. A round keeps a dropped bot's seat for good, standing the AI
+/// in after a grace; without this the card and the lobby, which poll
+/// every frame, let it go the frame it dropped, and the token the
+/// protocol tells a bot to come back with was already spent.
+const COME_BACK_WITHIN: Duration = Duration::from_secs(10);
 
 /// One seat waiting for a bot, or held by one.
 pub struct Chair {
@@ -23,6 +31,9 @@ pub struct Chair {
     pub seat: u8,
     pub key: Key,
     pub bot: Option<BotId>,
+    /// When its bot dropped, while it is away: the chair stays its for
+    /// [`COME_BACK_WITHIN`].
+    away_since: Option<Instant>,
 }
 
 /// A listener on this machine for bots to register with, a chair per seat
@@ -39,6 +50,9 @@ pub struct Doorway {
     pub chairs: Vec<Chair>,
     next_chair: u32,
     kind: DoorKind,
+    /// [`COME_BACK_WITHIN`], shortened by the tests that watch a chair
+    /// given up.
+    come_back_within: Duration,
 }
 
 /// What a doorway's chairs are.
@@ -110,6 +124,7 @@ impl Doorway {
             chairs: Vec::new(),
             next_chair: 0,
             kind,
+            come_back_within: COME_BACK_WITHIN,
         })
     }
 
@@ -153,6 +168,7 @@ impl Doorway {
             seat,
             key,
             bot: None,
+            away_since: None,
         }
     }
 
@@ -235,11 +251,12 @@ impl Doorway {
     }
 
     /// Take what the listener heard: each registration sits its bot in the
-    /// chair its key was printed for, and a bot that went gives its chair
-    /// up, which finishes with it: started again it registers afresh,
-    /// under the same name. A seat's chair gets a fresh key for the next
-    /// bot; at a host's door the chair goes, and the next bot takes the
-    /// one kept open.
+    /// chair its key was printed for, and a bot that went keeps its chair
+    /// for [`COME_BACK_WITHIN`], to come back by its token or, started
+    /// again, by its string and name. Past that it gives the chair up,
+    /// which finishes with it: started again it registers afresh. A seat's
+    /// chair gets a fresh key for the next bot; at a host's door the chair
+    /// goes, and the next bot takes the one kept open.
     pub fn poll(&mut self) {
         let heard: Vec<Event> = {
             let events = self
@@ -275,28 +292,52 @@ impl Doorway {
                 }
                 // Read late: a bot that has come back since keeps its chair.
                 Event::Dropped(id) if !self.listener.connected(id) => {
-                    let Some(at) = self.chairs.iter().position(|c| c.bot == Some(id)) else {
-                        continue;
-                    };
-                    self.listener.retire(id);
-                    match self.kind {
-                        DoorKind::Seats => {
-                            let (chair, seat) = (self.chairs[at].id, self.chairs[at].seat);
-                            self.chairs[at] = self.keyed_chair(chair, seat);
-                        }
-                        DoorKind::Host => {
-                            self.chairs.remove(at);
-                        }
+                    if let Some(chair) = self.chairs.iter_mut().find(|c| c.bot == Some(id)) {
+                        chair.away_since.get_or_insert_with(Instant::now);
                     }
                 }
                 Event::Dropped(_) | Event::Reconnected(_) | Event::Refused(..) => {}
             }
         }
+        self.give_up_the_gone();
     }
 
-    /// Every chair has its bot.
+    /// Settle the chairs whose bots dropped: one back is back, and one
+    /// away past [`COME_BACK_WITHIN`] is let go. A seat's chair then gets
+    /// a fresh key for the next bot; at a host's door the chair goes.
+    fn give_up_the_gone(&mut self) {
+        let mut at = 0;
+        while at < self.chairs.len() {
+            let chair = &mut self.chairs[at];
+            let (Some(id), Some(since)) = (chair.bot, chair.away_since) else {
+                at += 1;
+                continue;
+            };
+            if self.listener.connected(id) {
+                chair.away_since = None;
+            } else if since.elapsed() >= self.come_back_within {
+                self.listener.retire(id);
+                match self.kind {
+                    DoorKind::Seats => {
+                        let (chair, seat) = (chair.id, chair.seat);
+                        self.chairs[at] = self.keyed_chair(chair, seat);
+                    }
+                    DoorKind::Host => {
+                        self.chairs.remove(at);
+                        continue;
+                    }
+                }
+            }
+            at += 1;
+        }
+    }
+
+    /// Every chair has its bot, there now: one that dropped holds its
+    /// chair for a while, but plays nothing until it is back.
     pub fn ready(&self) -> bool {
-        self.chairs.iter().all(|chair| chair.bot.is_some())
+        self.chairs
+            .iter()
+            .all(|chair| chair.bot.is_some_and(|id| self.listener.connected(id)))
     }
 
     /// Show the strings on the LAN address rather than this machine's,
@@ -332,14 +373,23 @@ impl Doorway {
     }
 
     /// What a chair's bot said it is: `Greedy 0.3`, so the author can tell
-    /// it is the build they meant to start.
-    pub fn bot_line(&self, chair: &Chair) -> Option<(String, Option<Duration>)> {
+    /// it is the build they meant to start, and whether it is there now.
+    /// A bot that dropped holds its chair for [`COME_BACK_WITHIN`], and
+    /// read as connected through that, its card showed a stale round trip
+    /// while the start was refused for want of it.
+    pub fn bot_line(&self, chair: &Chair) -> Option<BotLine> {
         let info = self.listener.bot(chair.bot?)?;
         let name = match info.version.is_empty() {
             true => info.name,
             false => format!("{} {}", info.name, info.version),
         };
-        Some((name, self.listener.rtt(info.id)))
+        Some(match self.listener.connected(info.id) {
+            true => BotLine::Here {
+                name,
+                rtt: self.listener.rtt(info.id),
+            },
+            false => BotLine::Away { name },
+        })
     }
 
     /// The seat name for a bot joining a party from this machine (route
@@ -358,6 +408,14 @@ impl Doorway {
         let info = self.listener.bot(chair.bot?)?;
         Some(bot_name(tr, &info.name, info.owner.as_deref()))
     }
+}
+
+/// What the card says of a chair's bot: there, with its round trip, or
+/// dropped and holding the chair while it may come back.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum BotLine {
+    Here { name: String, rtt: Option<Duration> },
+    Away { name: String },
 }
 
 /// A bot's seat name: "Greedy (Ana)", or "Greedy" with no owner.
@@ -548,20 +606,24 @@ mod tests {
         );
     }
 
-    /// A bot that goes before the match starts gives its chair up: the
-    /// card stops counting it, and its seat gets a fresh key.
+    /// A bot that goes before the match starts, and stays gone, gives its
+    /// chair up: the card stops counting it, and its seat gets a fresh key.
     #[test]
     fn a_bot_that_goes_gives_its_chair_up() {
         let mut door = Doorway::open().expect("a port on this machine");
+        door.come_back_within = Duration::ZERO;
         door.seat_bots(&[1]);
         let spent = door.string(&door.chairs[0]);
         let bot = TestBot::register(&spent);
         assert!(poll_until(&mut door, |d| d.ready()));
         drop(bot);
+        // Not ready the moment the listener sees it go; the chair given up
+        // when the poll reads the drop, a moment later.
         assert!(
-            poll_until(&mut door, |d| !d.ready()),
+            poll_until(&mut door, |d| d.chairs[0].bot.is_none()),
             "a dead bot kept its chair"
         );
+        assert!(!door.ready());
         assert!(door.arrived(&crate::app::i18n::EN).is_empty());
         assert_eq!(door.chairs.len(), 1, "the seat still wants a bot");
         assert_ne!(door.string(&door.chairs[0]), spent, "a fresh key");
@@ -575,6 +637,7 @@ mod tests {
     #[test]
     fn a_bot_that_leaves_a_hosts_door_is_not_seated() {
         let mut door = Doorway::open_host_here().expect("a port on this machine");
+        door.come_back_within = Duration::ZERO;
         door.keep_a_chair_open(true);
         let bot = TestBot::register(&door.open_string().expect("an open chair"));
         assert!(poll_until(&mut door, |d| d
@@ -603,5 +666,54 @@ mod tests {
             "a dead bot is still at the beach: {} chairs",
             door.chairs.len()
         );
+    }
+
+    /// A bot that drops while the card is up and is started again with the
+    /// string it was first started with keeps its chair: the card has
+    /// stopped counting it, then counts it again, on the same key. It used
+    /// to be let go the frame it dropped, its key redrawn, and the restart
+    /// refused as a wrong key.
+    #[test]
+    fn a_bot_started_again_comes_back_to_its_chair() {
+        let mut door = Doorway::open().expect("a port on this machine");
+        door.seat_bots(&[1]);
+        let string = door.string(&door.chairs[0]);
+        let bot = TestBot::register(&string);
+        assert!(poll_until(&mut door, |d| d.ready()));
+        drop(bot);
+        assert!(poll_until(&mut door, |d| !d.ready()), "away, not ready");
+        assert!(door.chairs[0].bot.is_some(), "but the chair is still its");
+        // And the card says so, rather than a round trip from before.
+        assert!(
+            matches!(door.bot_line(&door.chairs[0]), Some(BotLine::Away { .. })),
+            "{:?}",
+            door.bot_line(&door.chairs[0])
+        );
+        let _again = TestBot::register(&string);
+        assert!(poll_until(&mut door, |d| d.ready()), "back in its chair");
+        assert!(matches!(
+            door.bot_line(&door.chairs[0]),
+            Some(BotLine::Here { .. })
+        ));
+        assert_eq!(door.string(&door.chairs[0]), string, "on the same key");
+    }
+
+    /// A spent key is a bot started again too late, not somebody trying
+    /// keys: refused, but no strike against the address, so the fresh key
+    /// on screen still lets this machine in after any number of them.
+    #[test]
+    fn a_spent_key_is_no_strike() {
+        let mut door = Doorway::open().expect("a port on this machine");
+        door.come_back_within = Duration::ZERO;
+        door.seat_bots(&[1]);
+        let spent = door.string(&door.chairs[0]);
+        drop(TestBot::register(&spent));
+        assert!(poll_until(&mut door, |d| d.string(&d.chairs[0]) != spent));
+        for _ in 0..5 {
+            let answer = try_register(&spent, "Other");
+            assert!(answer.contains("spent"), "{answer}");
+        }
+        let _fresh = TestBot::register(&door.string(&door.chairs[0]));
+        assert!(poll_until(&mut door, |d| d.ready()));
     }
 }

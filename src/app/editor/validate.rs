@@ -87,6 +87,20 @@ pub(super) fn start_validation(state: &mut EditorState, level: Level) {
     state.solver = Some(Validation { slot, posts });
 }
 
+/// The way a signpost points, as an arrow: the solver's answer is read
+/// in all eight languages, and `{dir:?}` printed "Up" and "Left" in
+/// English to every one of them. The UI face draws these four, the
+/// Japanese text included, since it is the face that draws first.
+fn arrow(dir: crate::sim::Direction) -> char {
+    use crate::sim::Direction;
+    match dir {
+        Direction::Up => '↑',
+        Direction::Down => '↓',
+        Direction::Left => '←',
+        Direction::Right => '→',
+    }
+}
+
 /// Collect a finished background validation.
 pub fn poll_solver(settings: Res<GameSettings>, mut state: ResMut<EditorState>) {
     let tr = settings.tr();
@@ -100,7 +114,7 @@ pub fn poll_solver(settings: Res<GameSettings>, mut state: ResMut<EditorState>) 
         Some(SolveOutcome::Found(solution)) => {
             let described: Vec<String> = solution
                 .iter()
-                .map(|(x, y, dir)| format!("({x},{y} {dir:?})"))
+                .map(|&(x, y, dir)| format!("({x},{y} {})", arrow(dir)))
                 .collect();
             state.feedback = if solution.is_empty() {
                 tr.ed_solvable_free.into()
@@ -123,6 +137,20 @@ pub fn poll_solver(settings: Res<GameSettings>, mut state: ResMut<EditorState>) 
 
 #[cfg(test)]
 mod tests {
+    /// The solver's answer names directions with arrows, so the face
+    /// every line is drawn in has to carry them: a missing glyph draws as
+    /// nothing at all.
+    #[test]
+    fn the_ui_face_draws_the_solution_arrows() {
+        let face = crate::app::i18n::metrics::characters_in_font(include_bytes!(
+            "../../../assets/fonts/DejaVuSansMono.ttf"
+        ));
+        for dir in crate::sim::Direction::ALL {
+            let glyph = super::arrow(dir);
+            assert!(face.contains(&glyph), "{dir:?} draws as {glyph:?}");
+        }
+    }
+
     use super::super::brush::SPAWNER_PERIOD;
     use super::super::level_here;
     use super::*;
@@ -159,7 +187,7 @@ mod tests {
         use crate::app::i18n::EN;
         let (said, pending) = verdict(Some(SolveOutcome::Found(vec![(1, 2, Direction::Up)])));
         assert!(!pending, "the answer is taken");
-        assert_eq!(said, EN.ed_solvable.replace("{placements}", "(1,2 Up)"));
+        assert_eq!(said, EN.ed_solvable.replace("{placements}", "(1,2 ↑)"));
         let (said, _) = verdict(Some(SolveOutcome::Found(Vec::new())));
         assert_eq!(said, EN.ed_solvable_free);
     }

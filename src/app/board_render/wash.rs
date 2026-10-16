@@ -2,8 +2,9 @@
 //!
 //! At zero the sim stops and the scores lock, which on its own is a board
 //! that freezes and a card that comes up. The original washes the beach
-//! flat, and this is that: one wave off the sea, over the sand, and away
-//! again, with everything the round built under it.
+//! flat, and this is that: one wave off the sea along the bottom of the
+//! view, up over the sand, and away again, with everything the round built
+//! under it.
 //!
 //! Render-only and frozen-safe. Nothing here reads or writes the sim, the
 //! clock or the phase machine: the wave plays over whatever the board was
@@ -72,22 +73,25 @@ pub fn start_tide_wash(
         Sprite {
             // A ramp rather than a flat fill: solid at the front and
             // thinning away behind it, so the sea reads as a wave with a
-            // shoulder rather than as a slab of colour being slid down the
-            // window. `ramp` is opaque along its top, so it is turned over.
+            // shoulder rather than as a slab of colour being slid up the
+            // window. `ramp` is opaque along its top, which is the front
+            // of a wave coming up the beach.
             image: art.ramp.clone(),
             color: Color::srgba(0.21, 0.46, 0.67, 0.88),
             custom_size: Some(Vec2::ZERO),
             ..default()
         },
-        Transform::from_translation(Vec3::new(0.0, 0.0, z::PIP + 0.1))
-            .with_rotation(Quat::from_rotation_z(std::f32::consts::PI)),
+        Transform::from_translation(Vec3::new(0.0, 0.0, z::PIP + 0.1)),
     ));
     commands.spawn((
         BoardStatic,
         TideWash { age: 0.0 },
         WashFoam,
         image_sprite(&art.foam, Color::srgba(1.0, 1.0, 1.0, 0.92), Vec2::ZERO),
-        Transform::from_translation(Vec3::new(0.0, 0.0, z::PIP + 0.12)),
+        // The foam's scallops hang off its bottom edge: turned over, they
+        // lead a wave coming up.
+        Transform::from_translation(Vec3::new(0.0, 0.0, z::PIP + 0.12))
+            .with_rotation(Quat::from_rotation_z(std::f32::consts::PI)),
     ));
     // The sea arriving, felt rather than seen.
     trauma.add(0.45);
@@ -95,6 +99,10 @@ pub fn start_tide_wash(
 
 /// Where the wave's front stands, `age` seconds in, how deep the water
 /// behind it is, and how strongly it is drawn.
+///
+/// Measured from the sea: "the top" here is the sea's side of the beach.
+/// The sea lies along the bottom of the view, so [`advance_tide_wash`]
+/// turns these over to place them.
 ///
 /// Split out because the two ends are the whole of it: the front has to
 /// start clear of the top of the board and finish with the whole beach
@@ -122,7 +130,8 @@ fn wave(age: f32, half_height: f32) -> (f32, f32, f32) {
     (front, body, 1.0 - drained)
 }
 
-/// Carry the wave down the beach, hold it there, and drain it away.
+/// Carry the wave up the beach from the sea, hold it there, and drain it
+/// away.
 pub fn advance_tide_wash(
     time: Res<Time>,
     sim: Res<Sim>,
@@ -152,14 +161,15 @@ pub fn advance_tide_wash(
         let peak = base_alpha(foam);
         sprite.color.set_alpha(strength * peak);
         transform.translation.x = 0.0;
+        // `wave` measures from the sea's side; the sea is at the bottom.
         if foam.is_some() {
             sprite.custom_size = Some(Vec2::new(span, 24.0));
-            transform.translation.y = front;
+            transform.translation.y = -front;
             continue;
         }
-        // The body of water behind the lip, thinning away up its back.
+        // The body of water behind the lip, thinning away down its back.
         sprite.custom_size = Some(Vec2::new(span, body));
-        transform.translation.y = front + body / 2.0;
+        transform.translation.y = -(front + body / 2.0);
     }
 }
 

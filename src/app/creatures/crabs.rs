@@ -228,6 +228,20 @@ pub(crate) fn crab_claw(art: &Art, handed: Handedness, side: Vec2) -> (Sprite, T
     )
 }
 
+/// Frames a second of a walking crab's gait: three strides a second.
+pub(crate) const WALK_FPS: f32 = 12.0;
+
+/// Where in its gait a crab is when the clock reads zero, in frames:
+/// fractional, so neighbours change frame and bob at different instants.
+/// A whole number of frames, as it was, cancelled out of the bob, and a
+/// crowd throbbed in unison twelve times a second.
+fn gait_phase(id: u32) -> f32 {
+    (id % 64) as f32 * 0.618_034 * 4.0
+}
+
+/// How much a walking crab grows at the top of each step.
+pub(crate) const BOB: f32 = 0.035;
+
 /// Spawn sprites for new crabs, despawn sprites for banked ones.
 pub fn sync_crab_sprites(
     mut commands: Commands,
@@ -320,6 +334,7 @@ pub fn interpolate_crabs(
         time,
         fixed_time,
         mut watch,
+        round,
     } = tween;
     let CrabSprites {
         bodies: mut sprites,
@@ -327,6 +342,7 @@ pub fn interpolate_crabs(
     } = crabs;
     let board = &sim.0;
     let alpha = smoothing_alpha(board.ticks(), &mut watch, time.delta_secs(), &fixed_time);
+    let stopped = !round.moving(board);
     by_id.clear();
     by_id.extend(board.crabs().iter().map(|c| (c.id, *c)));
     // Precious crabs glint on one clock: they twinkle together, and the
@@ -367,21 +383,30 @@ pub fn interpolate_crabs(
         transform.translation = (pos + crowding.spread).extend(layout::z::CREATURE);
         // Scuttle: a small heading wiggle while actually moving, phased per
         // crab so a crowd shimmers instead of marching.
-        let moving = prev != curr;
+        let moving = prev != curr && !stopped;
         let wobble = if moving {
             (time.elapsed_secs() * 11.0 + f32::from(sprite.id as u16 % 32)).sin() * 0.06
         } else {
             0.0
         };
         transform.rotation = layout::dir_rotation(crab.dir) * Quat::from_rotation_z(wobble);
-        // Two-frame leg cycle while walking.
-        let frame_b = moving
-            && ((time.elapsed_secs() * 7.0 + f32::from(sprite.id as u16 % 8)) as u32)
-                .is_multiple_of(2);
-        let wanted = if frame_b { &art.crab_b } else { &art.crab };
+        // A four-frame gait while walking, legs out of step, phased per
+        // crab like the wiggle; the resting pose when standing.
+        let step = time.elapsed_secs() * WALK_FPS + gait_phase(sprite.id);
+        let wanted = if moving {
+            &art.crab_walk[step as usize % art.crab_walk.len()]
+        } else {
+            &art.crab
+        };
         if body.image != *wanted {
             body.image = wanted.clone();
         }
+        // The body rides up and down a touch with each pair of steps.
+        let bob = if moving {
+            1.0 + (step * std::f32::consts::PI).sin().abs() * BOB
+        } else {
+            1.0
+        };
         // Drawn a little smaller in a crowd, and molting crabs pulse
         // gently on top of that: they are worth chasing.
         let pulse = if sprite.kind == CrabKind::Molting {
@@ -389,7 +414,7 @@ pub fn interpolate_crabs(
         } else {
             1.0
         };
-        transform.scale = Vec3::splat(pulse * (1.0 - crowding.shrink));
+        transform.scale = Vec3::splat(pulse * bob * (1.0 - crowding.shrink));
         // The shadow: pushed out from under the body, the same way as
         // every other thing standing on this sand, since one sitting
         // exactly beneath the crab is never seen.
@@ -401,6 +426,9 @@ pub fn interpolate_crabs(
         for child in children {
             if let Ok(mut shadow) = shadows.get_mut(*child) {
                 shadow.translation = unturned(&transform, layout::SUN / body_scale, -0.5);
+                // The ground does not bob: the shadow keeps its size while
+                // the body rides up and down above it.
+                shadow.scale = Vec3::splat(1.0 / bob);
             }
         }
         // Sparkling and golden crabs actually sparkle. The golden one is

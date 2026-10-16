@@ -1495,6 +1495,35 @@ fn event_crab_mania_clears_gulls_and_floods() {
     );
 }
 
+/// A beach with six holes floods no faster than one with two: the holes
+/// take turns, two at a time, and every hole gets its turn.
+#[test]
+fn a_mania_floods_at_two_holes_however_many_the_beach_has() {
+    let mut board = Board::new(12, 9, 3);
+    let holes = [(0u8, 1u8), (0, 4), (0, 7), (11, 1), (11, 4), (11, 7)];
+    for (x, y) in holes {
+        let dir = if x == 0 { Right } else { Left };
+        board.set_tile(x, y, TileKind::Spawner(Spawner { dir, period: 1000 }));
+    }
+    board.set_events_enabled(false);
+    board.apply_tide_event(TideEvent::CrabMania, 0);
+    let mut from = std::collections::HashSet::new();
+    let before = board.crabs_spawned();
+    for _ in 0..24 {
+        let known: std::collections::HashSet<u32> = board.crabs().iter().map(|c| c.id).collect();
+        board.tick_idle();
+        for crab in board.crabs().iter().filter(|c| !known.contains(&c.id)) {
+            from.insert(crab.prev.tile);
+        }
+    }
+    assert_eq!(
+        board.crabs_spawned() - before,
+        6,
+        "two every 8 ticks, three floods"
+    );
+    assert_eq!(from.len(), 6, "each hole had its turn");
+}
+
 #[test]
 fn event_gull_mania_spawns_gulls_from_holes() {
     let mut board = party_board();
@@ -2046,6 +2075,28 @@ fn a_golden_crab_is_not_called_past_the_end_of_the_round() {
     assert!(board.crabs().iter().all(|c| c.kind != CrabKind::Golden));
 }
 
+/// What the field guide asks before quoting the golden crab: a round that
+/// ends by the earliest tick a call can land never has one, and the guide
+/// folds it away. Played out, such a round indeed brings none.
+#[test]
+fn a_round_too_short_for_a_call_says_so() {
+    let mut board = calling_board(600);
+    board.rules_mut().round_length = Some(200);
+    assert!(!board.golden_crab_can_come(), "600 / 3 is the earliest");
+    board.rules_mut().round_length = Some(201);
+    assert!(board.golden_crab_can_come());
+    board.rules_mut().golden_every = 0;
+    board.rules_mut().round_length = Some(10);
+    assert!(board.golden_crab_can_come(), "rolled, not called");
+
+    let mut short = calling_board(600);
+    short.rules_mut().round_length = Some(200);
+    while !short.round_over() {
+        short.tick_idle();
+        assert_eq!(short.golden_call(), None);
+    }
+}
+
 /// A round saved mid-call, before the call is public, sends its golden
 /// crab out exactly as the round it was saved from does.
 #[test]
@@ -2273,41 +2324,41 @@ fn a_gull_on_a_one_tile_board_has_nowhere_to_fly_and_lands_where_it_is() {
     assert!(gull.takeoff_in > 0, "a fresh takeoff timer on landing");
 }
 
-/// The bot's cursor anchor: a player's newest post is the one with the
-/// highest sequence number, and re-pointing a post in place takes a fresh
-/// number. Evicting the oldest at the cap and a rival's posts must both
-/// leave the answer alone, or a bot pays for a walk it never made.
+/// The bot's cursor anchor: where a player last put a post down, and
+/// when. Re-pointing a post in place is a placement; a rival's posts,
+/// evictions and pickups leave it alone, and so does losing every post,
+/// or the hand would be nowhere and a bot would place anywhere at once.
 #[test]
-fn the_newest_signpost_is_by_sequence_and_ignores_rivals_and_evictions() {
+fn the_last_placement_is_the_hands_and_outlives_the_post() {
     let mut board = Board::new(6, 6, 0);
-    assert_eq!(board.newest_signpost_of(0), None, "nothing placed yet");
+    assert_eq!(board.last_placement_of(0), None, "nothing placed yet");
     assert!(board.place_signpost(0, 1, 1, Right));
     board.tick_idle();
     assert!(board.place_signpost(0, 2, 2, Right));
-    assert_eq!(board.newest_signpost_of(0), Some((2, 2, 1)));
-    // Re-pointing the first post makes it the newest again, stamped now.
+    assert_eq!(board.last_placement_of(0), Some((2, 2, 1)));
+    // Re-pointing the first post puts the hand back there, as of now.
     board.tick_idle();
     assert!(board.place_signpost(0, 1, 1, Down));
-    assert_eq!(board.newest_signpost_of(0), Some((1, 1, 2)));
+    assert_eq!(board.last_placement_of(0), Some((1, 1, 2)));
     // A rival's post, however fresh, is not this player's.
     board.tick_idle();
     assert!(board.place_signpost(1, 4, 4, Left));
-    assert_eq!(board.newest_signpost_of(0), Some((1, 1, 2)));
-    assert_eq!(board.newest_signpost_of(1), Some((4, 4, 3)));
-    // A third fills the cap; a fourth evicts the oldest, which is (2, 2)
-    // now that (1, 1) was re-pointed, and the fourth is the newest.
+    assert_eq!(board.last_placement_of(0), Some((1, 1, 2)));
+    assert_eq!(board.last_placement_of(1), Some((4, 4, 3)));
+    // A third fills the cap; a fourth evicts the oldest, and is where the
+    // hand is.
     assert!(board.place_signpost(0, 3, 3, Up));
     assert!(board.place_signpost(0, 5, 5, Up));
     assert!(board.signpost_at(2, 2).is_none(), "the oldest was evicted");
-    assert!(
-        board.signpost_at(1, 1).is_some(),
-        "the re-pointed post survived"
-    );
-    assert_eq!(board.newest_signpost_of(0), Some((5, 5, 3)));
-    // Losing a rival's post changes nothing for this player.
+    assert_eq!(board.last_placement_of(0), Some((5, 5, 3)));
+    // Every post gone, the hand is still where it last placed.
+    for (x, y) in [(1, 1), (3, 3), (5, 5)] {
+        assert!(board.remove_signpost(0, x, y));
+    }
     assert!(board.remove_signpost(1, 4, 4));
-    assert_eq!(board.newest_signpost_of(0), Some((5, 5, 3)));
-    assert_eq!(board.newest_signpost_of(1), None);
+    assert_eq!(board.last_placement_of(0), Some((5, 5, 3)));
+    assert_eq!(board.last_placement_of(1), Some((4, 4, 3)));
+    assert_eq!(board.last_placement_of(6), None, "no such seat");
 }
 
 /// Which of two holes opening together takes the last room under the crab

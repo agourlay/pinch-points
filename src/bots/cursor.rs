@@ -60,6 +60,12 @@ impl SeatCursor {
         self.order
     }
 
+    /// Drop the order being walked to, leaving the hand where it is: the
+    /// seat's bot has gone, and nothing it asked for lands after.
+    pub fn let_go(&mut self) {
+        self.order = None;
+    }
+
     /// One tick: take this tick's new act (`Act::None` for none) and say
     /// what the seat does, and which act that carried out. Without the rule
     /// (`fair` false) the hand is wherever the act says, at once.

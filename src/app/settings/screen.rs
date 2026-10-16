@@ -44,6 +44,9 @@ pub enum Row {
     Fullscreen,
     UiScale,
     ReducedMotion,
+    /// Smoothing the edges of the beach, which a weak graphics chip pays
+    /// for every frame.
+    Antialiasing,
     /// How many finished rounds the shelf keeps.
     ReplayCap,
     Language,
@@ -57,7 +60,7 @@ impl Row {
     /// Display and navigation order, which is [`SECTIONS`] flattened. The
     /// rows used to run in the order they were added, which put the pad
     /// deadzone six rows below the keys it belongs with.
-    pub const ALL: [Row; 23] = [
+    pub const ALL: [Row; 24] = [
         // Controls
         Row::InputP1,
         Row::InputP2,
@@ -84,6 +87,7 @@ impl Row {
         Row::Fullscreen,
         Row::UiScale,
         Row::ReducedMotion,
+        Row::Antialiasing,
         Row::Language,
         // The game itself
         Row::UpdateCheck,
@@ -152,6 +156,7 @@ pub const SECTIONS: [&[(Group, &[Row])]; 2] = [
                 Row::Fullscreen,
                 Row::UiScale,
                 Row::ReducedMotion,
+                Row::Antialiasing,
                 Row::Language,
             ],
         ),
@@ -389,6 +394,7 @@ pub fn settings_input(
             | Row::Fullscreen
             | Row::UiScale
             | Row::ReducedMotion
+            | Row::Antialiasing
             | Row::ReplayCap
             | Row::Language
             | Row::UpdateCheck => next_screen.set(Screen::Menu),
@@ -443,6 +449,7 @@ pub fn settings_input(
             settings.ui_scale = dial(settings.ui_scale, turn, 10, UI_SCALE_MIN..=UI_SCALE_MAX);
         }
         Row::ReducedMotion => settings.reduced_motion = !settings.reduced_motion,
+        Row::Antialiasing => settings.antialiasing = !settings.antialiasing,
         Row::ReplayCap => {
             settings.replay_cap = dial(
                 settings.replay_cap,
@@ -539,6 +546,7 @@ pub(super) fn row_text(
         Row::Fullscreen => (tr.set_fullscreen, on_off(settings.fullscreen)),
         Row::UiScale => (tr.set_ui_scale, format!("{}%", settings.ui_scale)),
         Row::ReducedMotion => (tr.set_reduced_motion, on_off(settings.reduced_motion)),
+        Row::Antialiasing => (tr.set_antialiasing, on_off(settings.antialiasing)),
         Row::ReplayCap => (tr.set_replay_cap, settings.replay_cap.to_string()),
         Row::Language => (tr.set_language, settings.language.native_name().to_string()),
         Row::Keyboard => (

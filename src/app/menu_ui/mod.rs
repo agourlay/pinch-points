@@ -9,7 +9,7 @@
 mod frame;
 mod nav;
 
-pub use frame::{FOAM_DEPTH, Framed, ShoreCard, dress_cards, scale_card_frames, tide_line};
+pub use frame::{FOAM_DEPTH, FRAME_PX, Framed, ShoreCard, dress_cards, tide_line};
 pub use nav::{
     Buttons, CLOSERS, NUMBER_KEYS, Nav, enter, left_right, nav, nav_live, number_pressed, spend,
     step,
@@ -406,8 +406,8 @@ pub fn set_shown(node: &mut Mut<Node>, shown: bool) {
     }
 }
 
-/// The window as the interface sees it: its size and pixel density, and
-/// the interface's own scale over both.
+/// The window as the interface sees it: its size, in the interface's own
+/// scale.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Viewport<'w, 's> {
     windows: Query<'w, 's, &'static Window>,
@@ -421,21 +421,6 @@ impl Viewport<'_, '_> {
     pub fn size(&self) -> Option<Vec2> {
         let window = self.windows.single().ok()?;
         Some(Vec2::new(window.width(), window.height()) / self.ui_scale.0.max(f32::EPSILON))
-    }
-
-    /// The interface's scale.
-    pub fn ui_scale(&self) -> f32 {
-        self.ui_scale.0
-    }
-
-    /// Physical pixels per logical one, 1 with no window to ask.
-    pub fn scale_factor(&self) -> f32 {
-        self.windows.iter().next().map_or(1.0, Window::scale_factor)
-    }
-
-    /// Whether the interface's scale moved since this system last ran.
-    pub fn ui_scale_changed(&self) -> bool {
-        self.ui_scale.is_changed()
     }
 }
 

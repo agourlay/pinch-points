@@ -328,29 +328,15 @@ pub fn record_puzzle(
     mut commands: Commands,
     progress: Res<crate::app::progress::Progress>,
     campaign: Res<crate::app::Campaign>,
-    attempt: Res<PuzzleAttempt>,
+    mut attempt: ResMut<PuzzleAttempt>,
     mut trophies: Trophies,
 ) {
     // A solve is a solve, and the trophies over this one say "solve 100
     // puzzles": re-solving a stage is one of those.
     trophies.stats.puzzles += 1;
-    // How it was cleared, not merely that it was, and only on a stage that
-    // was still unbeaten when the attempt began: these three say "stages",
-    // and a stage already in the book is not another one. Read before the
-    // campaign sweep below, which is about the whole list rather than this
-    // stage.
-    let level = campaign.current();
-    if attempt.unbeaten {
-        if attempt.layout.len() < usize::from(level.posts) {
-            trophies.stats.under_par += 1;
-        }
-        if level.posts >= DEEP_POSTS {
-            trophies.stats.deep_solves += 1;
-        }
-        if attempt.retries == 0 {
-            trophies.stats.clean_solves += 1;
-        }
-    }
+    // Read before the campaign sweep below, which is about the whole list
+    // rather than this stage.
+    credit_stage(&mut trophies.stats, &mut attempt, campaign.current().posts);
     let builtins = &campaign.levels[..campaign.builtins.min(campaign.levels.len())];
     if !builtins.is_empty()
         && builtins
@@ -363,6 +349,29 @@ pub fn record_puzzle(
         }
     }
     trophies.credit(&mut commands);
+}
+
+/// How a stage was cleared, not merely that it was, and only on a stage
+/// that was still unbeaten when the attempt began: these three say
+/// "stages", and a stage already in the book is not another one.
+///
+/// The clear puts the stage in the book, so the attempt stops being
+/// unbeaten here. A restart keeps the attempt (same stage, same name), and
+/// it used to keep the flag too: win, R, win again credited the same
+/// stage twice, and "clear 10 stages with one to spare" fell to one stage.
+fn credit_stage(stats: &mut Stats, attempt: &mut PuzzleAttempt, posts: u8) {
+    if !std::mem::replace(&mut attempt.unbeaten, false) {
+        return;
+    }
+    if attempt.layout.len() < usize::from(posts) {
+        stats.under_par += 1;
+    }
+    if posts >= DEEP_POSTS {
+        stats.deep_solves += 1;
+    }
+    if attempt.retries == 0 && attempt.first_run {
+        stats.clean_solves += 1;
+    }
 }
 
 /// The signpost grant that marks the deep end of the campaign. The late
@@ -401,7 +410,13 @@ pub fn track_puzzle_attempt(
 
 /// A run begins: note what it was given to work with (see
 /// `PuzzleAttempt::layout`).
-pub fn note_posts_spent(sim: Res<crate::app::Sim>, mut attempt: ResMut<PuzzleAttempt>) {
+pub fn note_posts_spent(
+    sim: Res<crate::app::Sim>,
+    campaign: Res<crate::app::Campaign>,
+    mut attempt: ResMut<PuzzleAttempt>,
+) {
+    let stage = (campaign.kind, campaign.current().name.clone());
+    attempt.first_run = attempt.ran.insert(stage);
     attempt.layout = sim
         .0
         .tiles()
@@ -415,7 +430,10 @@ pub fn note_posts_spent(sim: Res<crate::app::Sim>, mut attempt: ResMut<PuzzleAtt
 /// Entering the puzzle screen starts a fresh attempt: coming back to a
 /// stage later is a new go at it, not a continuation of the last one.
 pub fn reset_puzzle_attempt(mut attempt: ResMut<PuzzleAttempt>) {
-    *attempt = PuzzleAttempt::default();
+    *attempt = PuzzleAttempt {
+        ran: std::mem::take(&mut attempt.ran),
+        ..PuzzleAttempt::default()
+    };
 }
 
 /// A level went out as a share code, or came in as one. Its own system for
@@ -632,6 +650,56 @@ mod tests {
         assert!(unbeaten(&app), "a stage never played");
     }
 
+    /// Win a stage, restart it with R, win it again: the restart is the
+    /// same attempt on the same stage, and the second clear is not another
+    /// stage for the stage trophies.
+    #[test]
+    fn a_stage_won_twice_through_a_restart_counts_once() {
+        use crate::app::{Campaign, CampaignKind, LoadLevel};
+        let mut levels = crate::sim::campaign_levels();
+        let deep = levels
+            .iter()
+            .position(|level| level.posts >= DEEP_POSTS)
+            .expect("a deep stage");
+        let posts = levels[deep].posts;
+        levels.truncate(deep + 1);
+        let builtins = levels.len();
+        let mut app = App::new();
+        app.add_message::<LoadLevel>();
+        app.init_resource::<PuzzleAttempt>();
+        app.init_resource::<crate::app::progress::Progress>();
+        app.insert_resource(Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: deep,
+            builtins,
+        });
+        app.add_systems(Update, track_puzzle_attempt);
+        let load = |app: &mut App, keep_posts: bool| {
+            app.world_mut().write_message(LoadLevel { keep_posts });
+            app.update();
+        };
+        let mut stats = Stats::default();
+        let mut clear = |app: &mut App| {
+            let mut attempt = app.world_mut().resource_mut::<PuzzleAttempt>();
+            // One signpost: well under any deep stage's grant.
+            attempt.layout = vec![(0, 0, crate::sim::Direction::Up)];
+            attempt.first_run = true;
+            credit_stage(&mut stats, &mut attempt, posts);
+        };
+
+        load(&mut app, false);
+        clear(&mut app);
+        // R on the result card: the same stage, posts kept.
+        load(&mut app, true);
+        clear(&mut app);
+        assert_eq!(
+            (stats.under_par, stats.deep_solves, stats.clean_solves),
+            (1, 1, 1),
+            "one stage, counted once"
+        );
+    }
+
     /// Entering a stage sends the same message that restarting it does, so
     /// the first-try trophy hangs entirely on telling them apart. Backwards
     /// either way it is worthless: it would go to everybody, or to nobody.
@@ -678,6 +746,35 @@ mod tests {
         app.world_mut().resource_mut::<Campaign>().index = 0;
         load(&mut app);
         assert_eq!(retries(&app), 0, "a second visit is a fresh attempt");
+    }
+
+    /// A stage lost, left for the stage list and come back to: entering the
+    /// screen starts a fresh attempt, but not a fresh first run, so the
+    /// clear is not "first try".
+    #[test]
+    fn a_stage_left_and_come_back_to_is_not_a_first_try() {
+        use crate::app::{Campaign, CampaignKind};
+        let mut levels = crate::sim::campaign_levels();
+        levels.truncate(2);
+        let builtins = levels.len();
+        let mut app = App::new();
+        app.init_resource::<PuzzleAttempt>();
+        app.insert_resource(crate::app::Sim(crate::sim::Board::new(3, 3, 1)));
+        app.insert_resource(Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        });
+        let run = |app: &mut App| {
+            let _ = app.world_mut().run_system_once(note_posts_spent);
+            app.world().resource::<PuzzleAttempt>().first_run
+        };
+        assert!(run(&mut app), "the first go at a stage");
+        let _ = app.world_mut().run_system_once(reset_puzzle_attempt);
+        assert!(!run(&mut app), "back after leaving: a second go");
+        app.world_mut().resource_mut::<Campaign>().index = 1;
+        assert!(run(&mut app), "another stage's first");
     }
 
     /// The whole-table trophy wants four different chairs, so four wins

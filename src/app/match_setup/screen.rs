@@ -101,10 +101,7 @@ pub fn enter_match_setup(
     menu.selected = 0;
     menu.naming = None;
     menu.p2_here = false;
-    // The shelf may have changed since the last visit (a beach deleted, or
-    // resaved with fewer castles): a config still pointing at it is moved
-    // on, so the dial reads what will be played.
-    settle_map(&mut config, &beaches);
+    settle(&mut config, &beaches);
     let tr = settings.tr();
     commands
         .spawn((
@@ -269,7 +266,7 @@ pub fn update_match_pad_info(
 ) {
     let tr = settings.tr();
     if let Ok(mut text) = note.single_mut() {
-        let line = beaches_note(&config, tr, &beaches).unwrap_or_default();
+        let line = beaches_note(config.seats, tr, &beaches).unwrap_or_default();
         menu_ui::set_text(&mut text, &line);
     }
     let humans = config.seats - config.bots;

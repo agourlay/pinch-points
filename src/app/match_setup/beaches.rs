@@ -27,7 +27,7 @@ pub struct Beach {
 }
 
 impl Beach {
-    pub(super) fn new(level: crate::sim::Level) -> Beach {
+    pub(crate) fn new(level: crate::sim::Level) -> Beach {
         let wire = crate::lzw::compress(level.to_text().as_bytes(), 8);
         Beach { level, wire }
     }
@@ -83,19 +83,24 @@ impl CustomBeaches {
     }
 }
 
-/// The aside for the map row when the shelf has beaches on it and this
-/// table is too big for every one of them.
+/// The aside for the map row when the shelf has beaches on it and a table
+/// of `seats` is too big for every one of them.
 ///
 /// The dial skipping an empty stop is right, a press that changes nothing
 /// being a dead press, but unsaid it looks like a beach the game has lost:
 /// two castles stop being offered the moment a third player sits down.
+///
+/// By seat count rather than off a [`MatchConfig`]: on the couch the table
+/// is the config's seats, but online it is whoever turned up, and the
+/// lobby read the couch's count against a table it had nothing to do
+/// with.
 pub fn beaches_note(
-    config: &MatchConfig,
+    seats: u8,
     tr: &crate::app::i18n::Tr,
     beaches: &CustomBeaches,
 ) -> Option<String> {
-    let all_too_small = !beaches.0.is_empty() && beaches.fitting(config.seats).is_empty();
-    all_too_small.then(|| fill(tr.map_none_seats, &[("n", &config.seats.to_string())]))
+    let all_too_small = !beaches.0.is_empty() && beaches.fitting(seats).is_empty();
+    all_too_small.then(|| fill(tr.map_none_seats, &[("n", &seats.to_string())]))
 }
 
 /// Turn the map dial one step, walking the built-in beaches and then the

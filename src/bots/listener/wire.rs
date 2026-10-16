@@ -27,10 +27,18 @@ const QUEUE_BYTES: usize = 2 * 1024 * 1024;
 pub(super) fn accept_loop(socket: &TcpListener, shared: &Arc<Shared>) {
     let me = socket.local_addr().ok();
     for stream in socket.incoming() {
-        if shared.closed.load(Ordering::SeqCst)
-            || me.is_some_and(|me| lock(&shared.stopped).contains(&me))
-        {
+        if shared.closed.load(Ordering::SeqCst) {
             return;
+        }
+        // Stopped: the address is taken off the list as this loop ends,
+        // so a socket bound to the same port later (the OS hands a freed
+        // port out again) does not take its first bot for this wake-up.
+        if let Some(me) = me {
+            let mut stopped = lock(&shared.stopped);
+            if let Some(at) = stopped.iter().position(|a| *a == me) {
+                stopped.remove(at);
+                return;
+            }
         }
         let Ok(stream) = stream else {
             continue;
@@ -169,14 +177,30 @@ fn serve(stream: TcpStream, shared: &Arc<Shared>) {
     disconnect(shared, id, serial);
 }
 
+/// A connection's two handles: the one kept to shut it, and the one its
+/// writer thread writes on. Both taken before anything is registered, so
+/// a socket that cannot be cloned is refused, never a bot registered with
+/// no connection, told nothing, its name held.
+pub(super) struct Wire {
+    stream: TcpStream,
+    writer: TcpStream,
+}
+
+impl Wire {
+    pub(super) fn of(stream: &TcpStream) -> std::io::Result<Wire> {
+        Ok(Wire {
+            stream: stream.try_clone()?,
+            writer: stream.try_clone()?,
+        })
+    }
+}
+
 /// Give bot `id` this connection, closing any older one it had.
-pub(super) fn attach(registry: &mut Registry, id: BotId, stream: TcpStream) -> u64 {
+pub(super) fn attach(registry: &mut Registry, id: BotId, wire: Wire) -> u64 {
+    let Wire { stream, writer } = wire;
     registry.next_serial += 1;
     let serial = registry.next_serial;
     let (tx, rx) = mpsc::sync_channel::<Arc<str>>(QUEUE);
-    let Ok(writer) = stream.try_clone() else {
-        return serial;
-    };
     let queued = Arc::new(AtomicUsize::new(0));
     let written = Arc::clone(&queued);
     let _ = std::thread::Builder::new()

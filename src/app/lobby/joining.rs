@@ -388,6 +388,8 @@ enum PutOut {
     Mismatch(u8),
     /// The host asked us to go: back to the list.
     Kicked,
+    /// We came as a bot, and the host is not taking bots.
+    NoBots,
     /// The host closed its socket: the beach is gone, whether or not its
     /// beacon's farewell reached this listener.
     Closed,
@@ -405,6 +407,7 @@ impl PutOut {
                 ],
             ),
             PutOut::Kicked => tr.lobby_kicked_you.to_string(),
+            PutOut::NoBots => tr.lobby_no_bots.to_string(),
             PutOut::Closed => tr.lobby_host_closed.to_string(),
         }
     }
@@ -422,6 +425,7 @@ struct HostWord {
     caught: Option<crate::app::net::catch_up::CaughtUp>,
     mismatch: Option<u8>,
     kicked: bool,
+    no_bots: bool,
     closed: bool,
     queued: Option<u8>,
     said: Vec<(crate::transport::WireName, crate::transport::WireChat)>,
@@ -437,27 +441,41 @@ impl HostWord {
         if let Some(version) = self.mismatch {
             return Some(PutOut::Mismatch(version));
         }
-        match (self.kicked, self.closed) {
-            (true, _) => Some(PutOut::Kicked),
-            (false, true) => Some(PutOut::Closed),
-            (false, false) => None,
+        // Not taking bots is being asked to go, with the reason.
+        match (self.no_bots, self.kicked, self.closed) {
+            (true, _, _) => Some(PutOut::NoBots),
+            (false, true, _) => Some(PutOut::Kicked),
+            (false, false, true) => Some(PutOut::Closed),
+            (false, false, false) => None,
         }
     }
 }
 
-/// Greet the host if it is time, and gather what it said this frame.
-fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>) -> HostWord {
+/// Greet the host if it is time, and gather what it said this frame,
+/// `delta` seconds after the last.
+fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>, delta: f32) -> HostWord {
     let mut word = HostWord::default();
+    if let Some(since) = &mut joined.host_goodbye {
+        *since += delta;
+    }
     let transport = &mut joined.transport;
     if let Some(hello) = hello {
         transport.send(hello);
     }
     for (msg, _) in transport.recv_all() {
-        word.heard = true;
+        // A goodbye starts its clock at the first copy, and any other word
+        // from the host takes it back (`Joined::host_goodbye`).
+        if msg == NetMsg::Leaving {
+            joined.host_goodbye.get_or_insert(0.0);
+        } else {
+            word.heard = true;
+            joined.host_goodbye = None;
+        }
         match msg {
             NetMsg::Start(start) => word.started = Some(start),
             NetMsg::Kicked => word.kicked = true,
-            NetMsg::Leaving => word.closed = true,
+            NetMsg::NoBots => word.no_bots = true,
+            NetMsg::Leaving => {}
             // A watcher at a beach mid-round: the round as it stands,
             // part by part, until there is a whole of it to walk into.
             //
@@ -518,8 +536,18 @@ fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>) -> HostWord {
             | NetMsg::Resume { .. } => {}
         }
     }
+    word.closed = joined
+        .host_goodbye
+        .is_some_and(|since| since >= LOBBY_GOODBYE_GRACE);
     word
 }
+
+/// How long a host's goodbye has to stand, with no word from the host
+/// since, before a lobby joiner believes it. Longer than the host's
+/// once-a-second roster, which is what takes a forged one back: the lobby
+/// host answers no single greeting. A host that really leaves the lobby
+/// says so on the beacon too (`host_closed`), which is still taken at once.
+pub(super) const LOBBY_GOODBYE_GRACE: f32 = 1.5;
 
 pub fn join_tick(
     time: Res<Time>,
@@ -535,7 +563,7 @@ pub fn join_tick(
     };
     let say_hello = once_a_second(&mut joined.hello_in, time.delta_secs());
     let hello = say_hello.then(|| joined.greeting(&settings.names[0]));
-    let word = hear_the_host(joined, hello);
+    let word = hear_the_host(joined, hello, time.delta_secs());
     if answer_the_silence(&mut state, settings.tr(), word.heard, time.delta_secs()) {
         return;
     }
@@ -550,6 +578,7 @@ pub fn join_tick(
         caught,
         mismatch: _,
         kicked: _,
+        no_bots: _,
         closed: _,
         queued,
         said,
@@ -569,7 +598,7 @@ pub fn join_tick(
     {
         joined.host_terms = Some(HostTerms {
             terms,
-            beach_name: crate::transport::beach_name_from_wire(&beach),
+            beach_name: super::terms::roster_beach_name(&beach),
         });
     }
     for (name, text) in said {
@@ -611,6 +640,76 @@ pub fn join_tick(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bot turned away for being a bot is told so, not that the host
+    /// asked it to leave: the host never singled it out. A plain kick in
+    /// the same frame is the same going, with less said.
+    #[test]
+    fn a_bot_turned_away_hears_the_beach_is_not_taking_bots() {
+        let tr = &crate::app::i18n::EN;
+        let word = HostWord {
+            no_bots: true,
+            kicked: true,
+            ..HostWord::default()
+        };
+        assert_eq!(word.put_out(), Some(PutOut::NoBots));
+        assert_eq!(PutOut::NoBots.feedback(tr), tr.lobby_no_bots);
+        let word = HostWord {
+            kicked: true,
+            ..HostWord::default()
+        };
+        assert_eq!(
+            word.put_out().map(|why| why.feedback(tr)),
+            Some(tr.lobby_kicked_you.to_string())
+        );
+    }
+
+    /// A host's goodbye in the lobby is believed only once it has stood
+    /// for the grace with nothing else from the host. Believed on arrival,
+    /// one forged datagram emptied the whole table; the host's own roster,
+    /// once a second, takes a forged one back.
+    #[test]
+    fn a_lobby_joiner_believes_a_goodbye_only_after_the_grace() {
+        let host = UdpTransport::host(0).expect("bind");
+        let port = host.local_addr().expect("addr").port();
+        let mut joined = Joined::dialled(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            false,
+        );
+        let mut host = host;
+        let settle = || std::thread::sleep(std::time::Duration::from_millis(20));
+        joined.transport.send(NetMsg::hello("Cy"));
+        settle();
+        assert_eq!(host.recv_all().len(), 1, "greeted");
+
+        // Forged, and then the host's roster comes round.
+        host.send(NetMsg::Leaving);
+        settle();
+        assert!(hear_the_host(&mut joined, None, 0.0).put_out().is_none());
+        assert!(
+            hear_the_host(&mut joined, None, 1.0).put_out().is_none(),
+            "inside the grace"
+        );
+        host.send(NetMsg::chat("Sam", "hi"));
+        settle();
+        assert!(hear_the_host(&mut joined, None, 0.1).put_out().is_none());
+        assert!(
+            hear_the_host(&mut joined, None, LOBBY_GOODBYE_GRACE)
+                .put_out()
+                .is_none(),
+            "taken back by the host's next word"
+        );
+
+        // Real: nothing after it.
+        host.send(NetMsg::Leaving);
+        settle();
+        assert!(hear_the_host(&mut joined, None, 0.0).put_out().is_none());
+        assert_eq!(
+            hear_the_host(&mut joined, None, LOBBY_GOODBYE_GRACE).put_out(),
+            Some(PutOut::Closed),
+            "and then the beach has closed"
+        );
+    }
 
     /// A frame in which somebody with a name on file is choosing a beach and
     /// nothing else is going on, so the tests below say only what they

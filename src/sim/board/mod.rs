@@ -124,13 +124,20 @@ pub const VERSUS_GOLDEN_EVERY: u32 = 3 * 60 * TICKS_PER_SECOND;
 pub const MAX_SIGNPOSTS_PER_PLAYER: usize = 3;
 /// Balance: the ambient gull spawner pauses while this many gulls are on
 /// the beach, unless the board's rules say otherwise ([`Rules::gull_cap`]).
-/// Tide events ignore the cap on purpose.
+/// Gull Mania floods past it on purpose, up to three times the cap.
 pub const GULL_CAP: usize = 6;
 /// Balance: the ambient crab spawners pause once live crabs reach this
 /// fraction of the board's tiles. Past it the beach is a carpet rather than
-/// a puzzle. Crab Mania ignores the cap, the way Gull Mania ignores
-/// [`GULL_CAP`].
+/// a puzzle. Crab Mania floods past the cap up to twice it, the way Gull
+/// Mania floods to three times [`GULL_CAP`].
 pub const CRAB_CAP_TILES_PER_CRAB: usize = 3;
+/// The most crabs and gulls a board read from text may carry, counting
+/// crabs in the air: the level format and the snapshot both refuse more.
+/// A beach the editor builds is at most 20x13, and a round saved mid-play
+/// carries what was on it then, both far inside this. Unbounded, a pasted
+/// code could carry a hundred thousand crab lines, and reading one through
+/// to its result (as a pasted round is, to file it) froze the game.
+pub const MAX_CREATURES: usize = 2048;
 /// Spec §4.2: one tile is 256 subunits; all movement is integer arithmetic.
 pub const SUBUNITS_PER_TILE: u16 = 256;
 
@@ -422,6 +429,12 @@ pub struct Board {
     pub(crate) tide: events::Tide,
     /// Crab Monopoly's crabs, in the air and just landed.
     sweeps: Sweeps,
+    /// Where each seat last put a signpost down, as the tile and the tick:
+    /// the anchor an AI seat's hand walks from to its next placement (see
+    /// [`Board::last_placement_of`]). Kept apart from the posts, because a
+    /// post can go (Fresh Sand, a gull wearing it out, its owner picking it
+    /// up) while the hand that put it there stays where it was.
+    hands: [Option<(u16, u64)>; MAX_PLAYERS],
 }
 
 /// Replace `dst`'s contents with `src`'s, keeping `dst`'s buffer. The one
@@ -464,6 +477,7 @@ impl Board {
             wrap: false,
             tide: events::Tide::default(),
             sweeps: Sweeps::default(),
+            hands: [None; MAX_PLAYERS],
         };
         // The border walls are the wrap rule with wrap off; the border
         // indices are stated once, in set_wrap.
@@ -506,6 +520,7 @@ impl Board {
             wrap,
             tide,
             sweeps,
+            hands,
         } = other;
         self.grid.copy_from(grid);
         self.seed = *seed;
@@ -527,6 +542,7 @@ impl Board {
         self.wrap = *wrap;
         self.tide.copy_from(tide);
         self.sweeps.copy_from(sweeps);
+        self.hands = *hands;
     }
 
     // --- level authoring -------------------------------------------------

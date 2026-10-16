@@ -202,8 +202,6 @@ struct Tr {
     pub ach_descs: [&'static str; 50],
     pub stats_footer: &'static str,
     pub daily_best: &'static str,
-    /// Field-guide names for the six crab kinds, spawn-mix order.
-    pub crab_names: [&'static str; 6],
     /// One-word traits shown beside the value ("fast", "lure!", ...).
     pub crab_notes: [&'static str; 6],
     // The first-boot language picker
@@ -466,6 +464,8 @@ struct Tr {
     pub set_fullscreen: &'static str,
     pub set_ui_scale: &'static str,
     pub set_reduced_motion: &'static str,
+    /// Settings row: smoothing the edges of the beach (multisampling).
+    pub set_antialiasing: &'static str,
     /// Settings row: whether start-up asks GitHub for a newer release.
     pub set_update_check: &'static str,
     /// Settings row: how many finished rounds the shelf keeps.
@@ -513,6 +513,13 @@ struct Tr {
     pub val_off: &'static str,
     /// Team modes in `TeamMode::ALL` order: free-for-all, pairs, trios.
     pub team_modes: [&'static str; 3],
+    /// The same modes by name alone, in the same order, for a line that
+    /// has no room for what each one means.
+    pub team_mode_names: [&'static str; 3],
+    /// The host's teams row when the mode dialled does not fit the table
+    /// yet: `{m}` the mode dialled (`team_mode_names`), `{n}` the seats it
+    /// starts at. Until then the round is scored free-for-all.
+    pub team_mode_waits: &'static str,
     // Match setup rows
     /// The heading over the match setup card.
     pub match_heading: &'static str,
@@ -685,7 +692,13 @@ struct Tr {
     pub ed_brushes: [&'static str; 9],
     /// The editor's readout of what the cursor is standing on.
     pub ed_under: &'static str,
+    /// Fills `{place}` and `{remove}`, as `ed_prompt` fills `{walls}`:
+    /// see `editor::spell_editor_keys`.
     pub ed_playtest_prompt: &'static str,
+    /// The arrow keys and Space, in the words the editor's two prompts
+    /// name them by while they are the stock keys.
+    pub ed_arrow_keys: &'static str,
+    pub ed_space_key: &'static str,
     pub ed_solvable: &'static str,
     pub ed_solvable_free: &'static str,
     pub ed_not_solvable: &'static str,
@@ -697,7 +710,6 @@ struct Tr {
     /// Said after the beach is resized, which starts a fresh one.
     pub ed_resized: &'static str,
     pub ed_default_name: &'static str,
-    pub ed_name_row: &'static str,
     pub ed_naming: &'static str,
     pub ed_saved_to: &'static str,
     pub ed_save_failed: &'static str,
@@ -761,8 +773,8 @@ struct Tr {
     pub door_waiting: &'static str,
     /// A chair whose bot has: its name and build, and its round trip.
     pub door_connected: &'static str,
-    /// The doorway card once its bot is in, while the beach is greeted.
-    pub door_joining: &'static str,
+    /// A chair whose bot dropped and may still come back to it: its name.
+    pub door_away: &'static str,
     /// The doorway card's keys, showing this machine's strings.
     pub door_prompt: &'static str,
     /// The doorway card's keys, showing the LAN's.
@@ -787,8 +799,6 @@ struct Tr {
     pub lobby_bots_values: [&'static str; 2],
     /// Tried to join as a bot a beach that is not taking any.
     pub lobby_no_bots: &'static str,
-    /// After a beach's name on the list, when it takes bots.
-    pub lobby_bots_tag: &'static str,
     /// The host is choosing whom to ask to leave.
     pub lobby_kick_ask: &'static str,
     /// The feed, when somebody was asked to leave.

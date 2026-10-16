@@ -105,12 +105,28 @@ pub fn record_loss(campaign: Res<Campaign>, mut hints: ResMut<Hints>) {
     hints.shown = None;
 }
 
-/// Drop the hint when the level does.
-pub fn reset_on_level(campaign: Res<Campaign>, mut hints: ResMut<Hints>) {
+/// Drop the hint when the level does, or when the posts it was a next
+/// step from are cleared. A retry keeps a hint asked for: the Lost card
+/// offers H, and the Enter it then asks for is a retry, which used to take
+/// the step off the board before it could be placed. Kept as a request,
+/// worked out again from the board the retry laid: that is the arrows the
+/// run began with, not the ones left standing when it was lost, so the
+/// step taken off the lost board could be one the retry puts back.
+///
+/// Runs after the load has built the board.
+pub fn reset_on_level(
+    campaign: Res<Campaign>,
+    sim: Res<Sim>,
+    mut loads: MessageReader<crate::app::LoadLevel>,
+    mut hints: ResMut<Hints>,
+) {
+    let cleared = loads.read().any(|load| !load.keep_posts);
     if hints.level != Some(level_of(&campaign)) {
         hints.reset(&campaign);
-    } else {
+    } else if cleared {
         hints.shown = None;
+    } else if hints.shown.is_some() {
+        hints.shown = next_step(&campaign, &sim);
     }
 }
 
@@ -130,11 +146,12 @@ fn next_step(campaign: &Campaign, sim: &Sim) -> Option<Placement> {
 pub fn hint_input(
     keys: Res<ButtonInput<KeyCode>>,
     caps: Res<crate::app::keycaps::KeyCaps>,
+    live: Res<crate::app::keycaps::LiveSeatKeys>,
     campaign: Res<Campaign>,
     sim: Res<Sim>,
     mut hints: ResMut<Hints>,
 ) {
-    if !caps.just_pressed(&keys, 'H') || !hints.offered() {
+    if !caps.global_pressed(&keys, 'H', &live) || !hints.offered() {
         return;
     }
     hints.shown = next_step(&campaign, &sim);
@@ -276,6 +293,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.init_resource::<Hints>();
         app.insert_resource(campaign_at(27));
         let level = campaign_at(27).current().clone();
@@ -432,6 +450,8 @@ mod tests {
 
         let mut app = App::new();
         app.init_resource::<Hints>();
+        app.add_message::<crate::app::LoadLevel>();
+        app.insert_resource(Sim(campaign_at(5).current().board()));
         app.insert_resource(campaign_at(5));
         for _ in 0..STUCK_AFTER {
             let _ = app.world_mut().run_system_once(record_loss);
@@ -476,20 +496,42 @@ mod tests {
         }
     }
 
-    /// Going back to the same level takes the step off the board but keeps
+    /// A retry keeps the posts and the step shown from them; going back to
+    /// the same level with the posts cleared takes the step off but keeps
     /// the count, so the offer stands; a different level starts clean.
     #[test]
     fn a_reload_keeps_the_count_and_a_new_level_clears_it() {
+        // Level 28 has two steps. The retry lays the first back down (the
+        // arrows the run began with), so the step kept is the second,
+        // whatever the lost board was shown.
+        let campaign = campaign_at(27);
+        let solution = campaign.current().solution.clone();
+        let mut retried = campaign.current().board();
+        let (x, y, dir) = solution[0];
+        assert!(retried.place_signpost(0, x, y, dir));
         let mut app = App::new();
-        app.insert_resource(campaign_at(3));
-        let hints = stuck_and_showing(&campaign_at(3));
+        let mut hints = stuck_and_showing(&campaign);
+        hints.shown = Some(solution[0]);
         app.insert_resource(hints);
+        app.insert_resource(campaign);
+        app.insert_resource(Sim(retried));
+        app.add_message::<crate::app::LoadLevel>();
         app.add_systems(Update, reset_on_level);
+        app.world_mut()
+            .write_message(crate::app::LoadLevel { keep_posts: true });
+        app.update();
+        assert_eq!(
+            app.world().resource::<Hints>().shown,
+            Some(solution[1]),
+            "a retry keeps the hint, worked out on the board it laid"
+        );
+        app.world_mut()
+            .write_message(crate::app::LoadLevel { keep_posts: false });
         app.update();
         let hints = app.world().resource::<Hints>();
         assert!(!hints.showing(), "the step is taken off");
         assert!(hints.offered(), "and the count stands");
-        app.world_mut().resource_mut::<Campaign>().index = 4;
+        app.world_mut().resource_mut::<Campaign>().index = 28;
         app.update();
         let hints = app.world().resource::<Hints>();
         assert!(!hints.offered(), "a new level starts from nothing");

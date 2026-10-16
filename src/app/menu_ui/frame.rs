@@ -1,7 +1,7 @@
 //! How a card is dressed: the driftwood frame round it and the tide
 //! lapping at its foot, given to every new card the frame it appears.
 
-use super::{CARD_PAD, Viewport};
+use super::CARD_PAD;
 use crate::app::palette;
 use bevy::color::Mix;
 use bevy::prelude::*;
@@ -12,11 +12,6 @@ use bevy::ui::widget::NodeImageMode;
 /// the dressing and no screen has to carry the art handle for it.
 #[derive(Component)]
 pub struct ShoreCard;
-
-/// The driftwood frame round a card (`card_frame.png`): nine-sliced, so its
-/// corners draw as they are and its sides stretch along the card.
-#[derive(Component)]
-pub struct CardFrame;
 
 /// A card that wears the driftwood frame but not the tide line: the menu's
 /// own sign and list, and the lobby's panels, which draw their foam
@@ -43,31 +38,32 @@ const _: () = assert!(
 );
 
 /// How thick the frame is drawn, in interface pixels.
-pub(super) const FRAME_PX: f32 = 13.0;
+pub const FRAME_PX: f32 = 13.0;
 
-/// The slice's corner scale for a frame [`FRAME_PX`] thick at this scale.
+/// The slice's corner scale for a frame [`FRAME_PX`] thick.
 ///
-/// Bevy draws a slice's border at the sprite's own pixels times this cap,
-/// in *physical* pixels, whatever the interface's scale: left fixed, a
-/// frame drawn 10 px thick at 720p came out 7 at 1080p, as the cards grew
-/// round it.
-fn frame_corner_scale(ui_scale: f32, scale_factor: f32) -> f32 {
-    FRAME_PX / FRAME_BAND * ui_scale * scale_factor
-}
+/// Bevy measures a slice's border in interface units: it divides the
+/// node's physical size by the display's scale factor and the interface's
+/// scale before laying the slices out, so the cap is the frame's own width
+/// over the band's, whatever the window. It was multiplied by both again,
+/// on the mistaken belief that slices were laid out in physical pixels,
+/// and above 100% every frame came out that much too thick, its corners rounder than the
+/// card's fill under them: at 1080p the fill showed as a dark crescent
+/// outside each wooden corner.
+const FRAME_CORNER: f32 = FRAME_PX / FRAME_BAND;
 
 /// A card's frame: driftwood, or driftwood stained with the card's own
 /// edge colour where a screen gave it one (the winner's, a loss's red),
 /// so the frame carries what the hairline under it used to.
-fn frame_bundle(art: &crate::app::art::Art, edge: Option<Color>, corner: f32) -> impl Bundle {
+fn frame_bundle(art: &crate::app::art::Art, edge: Option<Color>) -> impl Bundle {
     let tint = frame_tint(edge);
     (
-        CardFrame,
         ImageNode {
             image: art.card_frame.clone(),
             color: tint,
             image_mode: NodeImageMode::Sliced(TextureSlicer {
                 border: BorderRect::all(FRAME_SLICE),
-                max_corner_scale: corner,
+                max_corner_scale: FRAME_CORNER,
                 ..default()
             }),
             ..default()
@@ -98,26 +94,6 @@ fn frame_tint(edge: Option<Color>) -> Color {
     }
 }
 
-/// Keep every frame [`FRAME_PX`] thick in interface pixels as the
-/// interface's scale moves (see [`frame_corner_scale`]).
-pub fn scale_card_frames(
-    viewport: Viewport,
-    mut frames: Query<&mut ImageNode, With<CardFrame>>,
-    added: Query<(), Added<CardFrame>>,
-) {
-    if !viewport.ui_scale_changed() && added.is_empty() {
-        return;
-    }
-    let corner = frame_corner_scale(viewport.ui_scale(), viewport.scale_factor());
-    for mut frame in &mut frames {
-        if let NodeImageMode::Sliced(slicer) = &mut frame.image_mode
-            && (slicer.max_corner_scale - corner).abs() > f32::EPSILON
-        {
-            slicer.max_corner_scale = corner;
-        }
-    }
-}
-
 /// A card just made: what dressing it needs to know.
 type NewCard = (Entity, &'static mut Node, Option<&'static BorderColor>);
 
@@ -125,18 +101,16 @@ type NewCard = (Entity, &'static mut Node, Option<&'static BorderColor>);
 pub fn dress_cards(
     mut commands: Commands,
     art: Res<crate::app::art::Art>,
-    viewport: Viewport,
     mut cards: Query<NewCard, Added<ShoreCard>>,
     mut framed: Query<NewCard, (Added<Framed>, Without<ShoreCard>)>,
 ) {
-    let corner = frame_corner_scale(viewport.ui_scale(), viewport.scale_factor());
     for (card, mut node, edge) in &mut framed {
-        let frame = frame_card(&mut commands, &art, &mut node, edge, corner);
+        let frame = frame_card(&mut commands, &art, &mut node, edge);
         commands.entity(card).insert_children(0, &[frame]);
     }
     for (card, mut node, edge) in &mut cards {
         // Spawned before the tide, inserted after it below.
-        let frame = frame_card(&mut commands, &art, &mut node, edge, corner);
+        let frame = frame_card(&mut commands, &art, &mut node, edge);
         // The last row keeps its feet dry whatever padding the card chose.
         let dry = Val::Px(FOAM_DEPTH + 4.0);
         if px_of(node.padding.bottom).unwrap_or(0.0) < FOAM_DEPTH {
@@ -160,12 +134,11 @@ fn frame_card(
     art: &crate::app::art::Art,
     node: &mut Node,
     edge: Option<&BorderColor>,
-    corner: f32,
 ) -> Entity {
     node.border_radius = BorderRadius::all(Val::Px(FRAMED_RADIUS));
     clear_the_wood(node);
     commands
-        .spawn(frame_bundle(art, edge.map(|edge| edge.top), corner))
+        .spawn(frame_bundle(art, edge.map(|edge| edge.top)))
         .id()
 }
 
@@ -264,15 +237,11 @@ mod tests {
         );
     }
 
-    /// The frame is the same thickness in interface pixels at every scale:
-    /// its slice cap follows the interface and the display, so a card grown
-    /// to 1080p keeps its frame in proportion, and the default is the
-    /// frame's own width over the band's.
+    /// The frame is [`FRAME_PX`] thick in interface pixels: Bevy lays a
+    /// slice's band out at its texels times the cap in interface units, so
+    /// the band times the cap is the thickness, at every scale.
     #[test]
-    fn a_frame_keeps_its_thickness_at_every_scale() {
-        let at = |ui: f32, factor: f32| FRAME_BAND * frame_corner_scale(ui, factor) / (ui * factor);
-        for (ui, factor) in [(1.0, 1.0), (1.5, 1.0), (0.8, 1.0), (1.5, 2.0)] {
-            assert!((at(ui, factor) - FRAME_PX).abs() < 1e-4, "{ui} x {factor}");
-        }
+    fn a_frame_is_its_own_thickness() {
+        assert!((FRAME_BAND * FRAME_CORNER - FRAME_PX).abs() < 1e-4);
     }
 }

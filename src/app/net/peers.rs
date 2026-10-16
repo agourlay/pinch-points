@@ -283,21 +283,23 @@ impl PeerBook {
             .count()
     }
 
-    /// Whether `peer` is following the round and so needs its inputs: at
-    /// the table, or watching in step from frame zero. A peer in line for
-    /// the next round is not, and sent the whole lockstep anyway costs about
-    /// 180 datagrams a second for frames it cannot use: four people waiting
-    /// turned a table's 930 a second into 1657.
+    /// Whether `peer` is following the round by the plan, and so needs its
+    /// inputs: at the table, watching in step from frame zero, or caught up
+    /// with it since. A peer in line for the next round is not, and sent
+    /// the whole lockstep anyway costs about 180 datagrams a second for
+    /// frames it cannot use: four people waiting turned a table's 930 a
+    /// second into 1657.
     ///
-    /// Everyone hears when the book holds no plan, which is why this is not
-    /// simply `place != Queued`: `Queued` is the default place, so a joiner
-    /// (which knows one peer, the host) and the direct `PINCH_HOST` pair
-    /// (which keeps no plan) would stop sending inputs to the only peer
-    /// they have.
+    /// By the plan alone. `Queued` is the default place, so a joiner (which
+    /// knows one peer, the host) and the direct `PINCH_HOST` pair (which
+    /// deals no plan for its first round) have their one peer in line by
+    /// this book, and send to it all the same: that is the session's call
+    /// (`OnlineSession::follows_the_round`), which knows which of them it
+    /// is. An empty plan is not enough to say so: a table formed in the
+    /// lobby and launched against the AI has one too, and everybody on its
+    /// socket is in line.
     pub fn follows_the_round(&self, peer: usize) -> bool {
-        let planned = self.planned();
-        planned == 0
-            || peer < planned
+        peer < self.planned()
             || self
                 .get(peer)
                 .is_some_and(|row| row.place == Place::LateWatching)
@@ -430,16 +432,17 @@ mod tests {
         assert_eq!(peers.planned(), 1);
     }
 
-    /// The exception that keeps online play working at all: `Queued` is
-    /// the default place, and a joiner knows exactly one peer (the host)
-    /// which it has no plan for. Filtering on the place alone would stop
-    /// it sending its own inputs anywhere.
+    /// A book with no plan has nobody following the round by it: whether
+    /// its peers hear anyway is the session's to say (a joiner's host, the
+    /// direct pair's one peer), not the book's.
     #[test]
-    fn a_book_with_no_plan_sends_to_everyone() {
+    fn a_book_with_no_plan_has_nobody_following_by_it() {
         let mut peers = PeerBook::default();
         peers.reach(2);
         assert_eq!(peers.planned(), 0, "nothing was ever dealt");
-        assert!(peers.follows_the_round(0));
-        assert!(peers.follows_the_round(1));
+        assert!(!peers.follows_the_round(0));
+        assert!(!peers.follows_the_round(1));
+        peers.row(1).place = Place::LateWatching;
+        assert!(peers.follows_the_round(1), "but a late watcher does");
     }
 }

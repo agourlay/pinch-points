@@ -103,6 +103,8 @@ const BLOCKS: &[(&str, &[KeyCode])] = &[
 pub struct Keyboard<'w> {
     pub keys: Res<'w, ButtonInput<KeyCode>>,
     pub caps: Res<'w, KeyCaps>,
+    /// What a global letter yields to: see [`KeyCaps::global_pressed`].
+    pub live: Res<'w, LiveSeatKeys>,
 }
 
 /// [`Keyboard`] for a system that also spends the press it answers (see
@@ -111,6 +113,82 @@ pub struct Keyboard<'w> {
 pub struct KeyboardMut<'w> {
     pub keys: ResMut<'w, ButtonInput<KeyCode>>,
     pub caps: Res<'w, KeyCaps>,
+    /// What a global letter yields to: see [`KeyCaps::global_pressed`].
+    pub live: Res<'w, LiveSeatKeys>,
+}
+
+/// The keys the seats playing on this screen are bound to, which a
+/// global letter yields to (see [`KeyCaps::global_pressed`]). Kept by
+/// [`track_live_seat_keys`] from the bindings, the screen and whether the
+/// round is online; empty on the menus, where no seat is read.
+#[derive(Resource, Default, Debug, PartialEq, Eq)]
+pub struct LiveSeatKeys(Vec<KeyCode>);
+
+impl LiveSeatKeys {
+    /// The keys read for the seats playing on `screen`, as the seats'
+    /// input reads them ([`crate::app::cursor::keymap`]): P1's commit
+    /// scheme on a puzzle and in the editor, the arrows scheme in versus.
+    pub fn of(settings: &GameSettings, screen: crate::app::Screen, online: bool) -> Self {
+        use crate::app::settings::CommitScheme;
+        let commit = if screen == crate::app::Screen::Versus {
+            CommitScheme::Arrows
+        } else {
+            settings.commit
+        };
+        let keys = live_seats(screen, online).iter().flat_map(|&seat| {
+            let map = crate::app::cursor::keymap(settings, seat as u8, commit);
+            let moves = map.moves.map(|(key, ..)| key);
+            let places = map.places.map(|(key, _)| key);
+            moves
+                .into_iter()
+                .chain(places)
+                .chain([map.remove, map.clear_all])
+        });
+        Self(keys.collect())
+    }
+
+    pub fn holds(&self, key: KeyCode) -> bool {
+        self.0.contains(&key)
+    }
+}
+
+/// The seats whose bound keys are being read on `screen`: P1 on a puzzle
+/// and in the editor, both keyboard seats in a local versus round, and
+/// P1's layout alone online, where every player's hands are on it (see
+/// `play_input::versus_input`). None on the menus, where a global letter
+/// owes a seat nothing.
+pub fn live_seats(screen: crate::app::Screen, online: bool) -> &'static [usize] {
+    use crate::app::Screen;
+    match screen {
+        Screen::Puzzle | Screen::Editor => &[0],
+        Screen::Versus if online => &[0],
+        Screen::Versus => &[0, 1],
+        Screen::Menu
+        | Screen::Lobby
+        | Screen::Settings
+        | Screen::Controls
+        | Screen::MatchSetup
+        | Screen::Achievements
+        | Screen::StageSelect
+        | Screen::Replays
+        | Screen::Interlude
+        | Screen::Language
+        | Screen::NewVersion => &[],
+    }
+}
+
+/// Keep [`LiveSeatKeys`] to this frame's screen and bindings.
+pub fn track_live_seat_keys(
+    settings: Res<GameSettings>,
+    screen: Res<State<crate::app::Screen>>,
+    online: Res<crate::app::net::Online>,
+    mut live: ResMut<LiveSeatKeys>,
+) {
+    live.set_if_neq(LiveSeatKeys::of(
+        &settings,
+        *screen.get(),
+        online.0.is_some(),
+    ));
 }
 
 impl KeyCaps {
@@ -155,9 +233,68 @@ impl KeyCaps {
             .unwrap_or_else(|| panic!("no key spells {letter}"))
     }
 
-    /// Whether the cap that says `letter` was just pressed.
+    /// Whether the cap that says `letter` was just pressed. Not for the
+    /// [`binds::GLOBAL_LETTERS`], which every reader takes through
+    /// [`Self::global_pressed`].
     pub fn just_pressed(&self, keys: &ButtonInput<KeyCode>, letter: char) -> bool {
+        debug_assert!(
+            !binds::GLOBAL_LETTERS.contains(&letter.to_ascii_uppercase()),
+            "{letter} is global: read it through Globals"
+        );
         keys.just_pressed(self.key_for(letter))
+    }
+
+    /// Whether the global key whose cap says `letter` was just pressed,
+    /// unless that physical key is bound to a seat playing here, in which
+    /// case the press is the seat's.
+    ///
+    /// The globals are read by their cap, so which physical key they are
+    /// moves with the layout: `;` bound to a seat on QWERTY is M on AZERTY,
+    /// and without this every press of that seat key would mute the music
+    /// too. The capture refuses a key that is global on the layout of the
+    /// moment; this covers a binding made on another one. The binding is
+    /// left where the player put it, and M stays on every other M.
+    pub fn global_pressed(
+        &self,
+        keys: &ButtonInput<KeyCode>,
+        letter: char,
+        live: &LiveSeatKeys,
+    ) -> bool {
+        let key = self.key_for(letter);
+        keys.just_pressed(key) && !live.holds(key)
+    }
+
+    /// The keys just pressed whose cap says `cap`, for a symbol that
+    /// moves between layouts: QWERTZ carries "+" beside P and "-" where
+    /// QWERTY has "/", and AZERTY's "-" is on the 6 of its digit row.
+    /// Only what this keyboard is known or presumed to say, so a QWERTY
+    /// board answers nothing here and the caller names its QWERTY keys
+    /// itself.
+    pub fn pressed_caps<'a>(
+        &'a self,
+        keys: &'a ButtonInput<KeyCode>,
+        cap: char,
+    ) -> impl Iterator<Item = KeyCode> + 'a {
+        keys.get_just_pressed()
+            .copied()
+            .filter(move |&key| self.cap(key) == Some(cap) || self.digit_sign(key) == Some(cap))
+    }
+
+    /// The sign on a digit-row key, for a layout that puts one there and
+    /// that this keyboard reads as (its tells all say so). Never learned,
+    /// since a press of the row is still read as its digit everywhere else.
+    fn digit_sign(&self, key: KeyCode) -> Option<char> {
+        Layout::ALL
+            .into_iter()
+            .filter(|layout| {
+                layout
+                    .tells()
+                    .iter()
+                    .all(|&(tell, said)| self.cap(tell) == Some(said))
+            })
+            .flat_map(Layout::digit_signs)
+            .find(|(k, _)| *k == key)
+            .map(|(_, sign)| *sign)
     }
 
     /// Whether `key` is one of the [`binds::GLOBAL_KEYS`] on this keyboard,
@@ -553,8 +690,45 @@ mod tests {
 
         let mut keys = ButtonInput::<KeyCode>::default();
         keys.press(KeyCode::Semicolon);
-        assert!(azerty.just_pressed(&keys, 'M'));
-        assert!(!caps.just_pressed(&keys, 'M'));
+        let none = LiveSeatKeys::default();
+        assert!(azerty.global_pressed(&keys, 'M', &none));
+        assert!(!caps.global_pressed(&keys, 'M', &none));
+    }
+
+    /// A seat key bound on QWERTY that AZERTY's caps read as a global
+    /// letter (`;` is M) is the seat's while that seat plays: pressing it
+    /// does not mute. The M cap nobody holds still does, and on the menus,
+    /// where no seat is live, so does `;`.
+    #[test]
+    fn a_seat_key_that_is_a_global_cap_here_stays_the_seats() {
+        use crate::app::Screen;
+        use binds::Action;
+        let mut settings = GameSettings::default();
+        settings.binds[0].set(Action::ClearAll, KeyCode::Semicolon);
+        let mut azerty = KeyCaps::default();
+        azerty.presume(Some(Layout::Azerty));
+        assert_eq!(azerty.key_for('M'), KeyCode::Semicolon);
+        let live = |screen| LiveSeatKeys::of(&settings, screen, false);
+
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Semicolon);
+        assert!(!azerty.global_pressed(&keys, 'M', &live(Screen::Puzzle)));
+        assert!(!azerty.global_pressed(&keys, 'M', &live(Screen::Versus)));
+        assert!(azerty.global_pressed(&keys, 'M', &live(Screen::Menu)));
+
+        // Bound nowhere: the M cap mutes, seats or not.
+        let stock = LiveSeatKeys::of(&GameSettings::default(), Screen::Versus, false);
+        assert!(azerty.global_pressed(&keys, 'M', &stock));
+
+        // Placing on IJKL, P1 reads keys its bindings do not name: a board
+        // whose J says H gives a puzzle's hint nothing for that press.
+        settings.commit = crate::app::settings::CommitScheme::Ijkl;
+        let mut dvorak = KeyCaps::default();
+        dvorak.learn(KeyCode::KeyJ, 'h');
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyJ);
+        let puzzle = LiveSeatKeys::of(&settings, Screen::Puzzle, false);
+        assert!(!dvorak.global_pressed(&keys, 'H', &puzzle));
     }
 
     #[test]

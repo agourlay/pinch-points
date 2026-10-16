@@ -5,11 +5,10 @@
 //! - [`signposts`]: the posts players plant, and how worn and settled
 //!   each one is drawn.
 //! - [`pools`]: the ponds over pool tiles, and their ripples.
-//! - [`surround`]: the shore, sea and scenery around the board, and the
-//!   cloud shadows over it.
+//! - [`surround`]: the beach, the sea and the scenery around the board,
+//!   and the cloud shadows over it.
 //! - [`castles`]: the keeps, their pennants, and the shudder a bank sets
 //!   off.
-//! - [`water`]: the tide rising around the sand, and the foam on its edge.
 //! - [`wash`]: the wave that comes in over the whole beach when the round
 //!   is over.
 //!
@@ -22,31 +21,54 @@ mod pools;
 mod signposts;
 mod statics;
 mod surround;
+mod tide;
 mod wash;
-mod water;
 
 pub(crate) use castles::castle_parts;
 pub use castles::{
-    CastleFlight, CastleSprite, castle_body, cheer_tier_ups, fly_castles, kick_castles,
-    sync_castles, wave_pennants,
+    CastleFlight, CastleSprite, castle_body, cheer_tier_ups, crown_the_leader, fly_castles,
+    kick_castles, steady_castle_shadows, sync_castles, wave_pennants,
 };
 pub use pools::ripple_pools;
+pub(crate) use pools::{POOL_LAYERS, glint_place, spawn_layer};
 pub use signposts::{SignpostSprite, dress_signposts, sync_signposts};
 pub use statics::{
     BoardStatic, TurnstileSprite, animate_turnstiles, pulse_spawners, spawn_static_board,
     sync_turnstiles,
 };
-pub use surround::drift_cloud_shadows;
+pub use surround::{drift_cloud_shadows, lay_the_sea, sea_uniform};
 pub use wash::{advance_tide_wash, start_tide_wash};
-pub use water::{
-    WaterFoam, Waterline, spawn_water_foam, spawn_waterline, update_water_foam, update_waterline,
-};
 
 use crate::app::layout::image_sprite;
 use bevy::prelude::*;
 
-/// One side of the board, for the things drawn along all four: the tide's
-/// bars and foam, and the wet sand fringe.
+/// The shadow a thing standing `height` tall throws along the sun, from a
+/// footprint `footprint` across centred on `at`: an ellipse stretched the
+/// way the light falls and pushed out by the height. A blob straight under
+/// a tall thing hides behind it, and only its soft, nearly clear edge
+/// peeked out: a rock and its shadow read as one grey shape.
+pub(super) fn cast_shadow(
+    art: &crate::app::art::Art,
+    at: Vec2,
+    footprint: f32,
+    height: f32,
+    alpha: f32,
+    z: f32,
+) -> (Sprite, Transform) {
+    let sun = crate::app::layout::SUN.normalize();
+    (
+        image_sprite(
+            &art.shadow,
+            Color::srgba(1.0, 1.0, 1.0, alpha),
+            Vec2::new(footprint * 1.15, footprint * 0.55),
+        ),
+        Transform::from_translation((at + crate::app::layout::SUN + sun * height).extend(z))
+            .with_rotation(Quat::from_rotation_z(sun.y.atan2(sun.x))),
+    )
+}
+
+/// One side of the board, for the things drawn along all four: the wet
+/// sand fringe.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Side {
     Top,
@@ -139,19 +161,16 @@ fn clear_stale<S: OnTile, T: std::ops::Deref<Target = S>>(
 }
 
 const WALL_COLOR: Color = Color::srgb(0.35, 0.28, 0.22);
-const WATER: Color = Color::srgba(0.30, 0.58, 0.82, 0.65);
-/// How wide the water grows over the whole round, in pixels, out from the
-/// sand's edge: the bars swell seaward and never cover the board.
-const WATER_MAX: f32 = 42.0;
-/// The water's width before the round has run at all.
-const WATER_MIN: f32 = 6.0;
-/// How far the closing stretch's swell carries the water past its width.
-const SWELL: f32 = 3.0;
-
-/// How far past the sand the board is ever drawn, in world units: the tide
-/// at its widest, which reaches past the wooden frame. `boot::fit_camera`
-/// keeps this band inside the screen room it has at 1:1, so a zoomed-in
-/// board does not push its tide under the interface.
-pub(crate) const RIM: f32 = WATER_MIN + WATER_MAX + SWELL;
+/// How far past the sand the camera keeps clear round the board, in world
+/// units: the wooden frame, and the strip of beach between it and the
+/// interface. `boot::fit_camera` keeps this band inside the screen room it
+/// has at 1:1, so a zoomed-in board does not push its edge under the
+/// interface.
+///
+/// It was the tide's widest reach, when a ring of water widened round the
+/// board over a round. The ring is gone (the sea along the bottom of the
+/// view is the water now) and the band keeps its width, so no board is
+/// drawn at a different size for it.
+pub(crate) const RIM: f32 = 51.0;
 
 pub(super) use crate::app::layout::z;

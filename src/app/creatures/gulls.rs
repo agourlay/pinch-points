@@ -3,8 +3,9 @@
 
 use super::{CreatureShadow, Tween, smoothing_alpha, tweened_pos, unturned};
 use crate::app::art::Art;
+use crate::app::effects;
 use crate::app::layout::{self, TILE};
-use crate::app::{Sim, effects};
+use crate::app::sim_events::CurrentBoard;
 use crate::sim::{Gull, GullState};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -14,11 +15,11 @@ pub struct GullSprite(pub u32);
 
 /// Spawn sprites for new gulls, despawn sprites for departed ones.
 pub fn sync_gull_sprites(
-    sim: Res<Sim>,
+    current: CurrentBoard,
     fx: effects::Fx,
     mut live: Local<HashMap<u32, Gull>>,
-    // The gulls that were on the board last frame, and the clock they were
-    // on. A *sprite* being new is not a gull arriving: a level with gulls
+    // The gulls that were on the board last frame, and which board that
+    // was. A *sprite* being new is not a gull arriving: a level with gulls
     // written into it, a retry, a resumed round and an editor test run all
     // wipe the sprites and rebuild them.
     mut before: Local<(Option<u64>, Vec<u32>)>,
@@ -30,19 +31,21 @@ pub fn sync_gull_sprites(
         mut rng,
         settings,
     } = fx;
-    let board = &sim.0;
-    // A clock that has run backwards is a different board, whose gull ids
-    // start again at zero, and a board at tick zero has not run at all:
-    // nothing on either has "arrived", the birds on it are the ones it was
-    // written with. So the memory is reseeded from those birds rather than
-    // emptied, which otherwise puffs sand under every pre-placed gull.
-    let (last_ticks, seen) = &mut *before;
-    let fresh = board.ticks() == 0 || last_ticks.is_none_or(|last| board.ticks() < last);
+    let board = &current.sim.0;
+    // A different board, whose gull ids start again at zero, or a board at
+    // tick zero that has not run at all: nothing on either has "arrived",
+    // the birds on it are the ones it was written with, or (a round pasted
+    // in mid-clock, a watcher handed the round as it stands, the first time
+    // or again, since every board laid out counts as new) the ones already
+    // there. So the memory is reseeded from those birds rather than
+    // emptied, which otherwise puffs sand under every gull on the beach.
+    let (last_board, seen) = &mut *before;
+    let fresh = board.ticks() == 0 || *last_board != Some(current.generation());
     if fresh {
         seen.clear();
         seen.extend(board.gulls().iter().map(|g| g.id));
     }
-    *last_ticks = Some(board.ticks());
+    *last_board = Some(current.generation());
     live.clear();
     live.extend(board.gulls().iter().map(|g| (g.id, *g)));
     for (entity, sprite) in &existing {
@@ -113,10 +116,12 @@ pub struct GullSprites<'w, 's> {
 /// far past its tile hangs over the edge of the board with nothing to
 /// occlude it.
 pub fn interpolate_gulls(
-    sim: Res<Sim>,
+    current: CurrentBoard,
     fx: effects::Fx,
     tween: Tween,
     mut by_id: Local<HashMap<u32, Gull>>,
+    // The board `aloft` was filled on.
+    mut aloft_on: Local<Option<u64>>,
     // Gulls currently in the air. Presence is the flight: a gull that
     // turns up here without an entry has just taken off, and one whose
     // entry outlives its flight has just landed.
@@ -133,22 +138,24 @@ pub fn interpolate_gulls(
         time,
         fixed_time,
         mut watch,
+        round,
     } = tween;
     let GullSprites {
         bodies: mut sprites,
         mut shadows,
     } = gulls;
-    let board = &sim.0;
-    // Read before `smoothing_alpha`, which writes this frame's tick into
-    // the watch: after it, the two always agree and the test below is dead.
-    let fresh = board.ticks() < watch.0 || board.ticks() == 0;
+    let board = &current.sim.0;
+    let fresh = board.ticks() == 0 || *aloft_on != Some(current.generation());
+    *aloft_on = Some(current.generation());
     let alpha = smoothing_alpha(board.ticks(), &mut watch, time.delta_secs(), &fixed_time);
+    let stopped = !round.moving(board);
     by_id.clear();
     by_id.extend(board.gulls().iter().map(|g| (g.id, *g)));
-    // A clock that has run backwards is a different board, and gull ids
-    // start again at zero on every one of them. Pruned by id alone, a
-    // recycled id inherits a latched descent and a frozen altitude, and the
-    // bird slides flat over the sand with its shadow pinned under it.
+    // A different board (by `BoardGeneration`, which also knows a round
+    // pasted in mid-clock), and gull ids start again at zero on every one
+    // of them. Pruned by id alone, a recycled id inherits a latched descent
+    // and a frozen altitude, and the bird slides flat over the sand with
+    // its shadow pinned under it.
     if fresh {
         aloft.clear();
     }
@@ -200,7 +207,7 @@ pub fn interpolate_gulls(
         }
         let (scale, waddle) = if flying {
             (1.0 + 0.22 * altitude + beat * 0.05, 0.0)
-        } else if prev == curr {
+        } else if prev == curr || stopped {
             (1.0, 0.0)
         } else {
             (1.0, (t * 9.0 + phase).sin() * 0.05)

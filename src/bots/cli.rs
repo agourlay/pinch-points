@@ -5,7 +5,8 @@ use super::connstr::DEFAULT_PORT;
 use super::listener::{BotId, Listener};
 use crate::app::match_setup::{GullPressure, MapChoice, RoundLength};
 use crate::sim::{
-    Board, BotLevel, CapPolicy, Level, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER, TICKS_PER_SECOND,
+    Board, BotLevel, CapPolicy, Level, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER, PlayerId,
+    TICKS_PER_SECOND,
 };
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -274,12 +275,31 @@ impl Beach {
             Beach::Map(map) if seats > 4 && map.size().0 < crate::app::match_setup::WIDE_ENOUGH => {
                 Err(format!("the {} beach seats 2 to 4", self.name()))
             }
-            Beach::File(_, level) if level.seats() < seats => Err(format!(
-                "{} has castles for {} seats, not {seats}",
-                self.name(),
-                level.seats()
-            )),
-            Beach::Map(_) | Beach::Generated | Beach::File(..) => Ok(()),
+            Beach::File(_, level) => {
+                // Seat `n` plays castle `n`, and the table's scores run to
+                // the highest castle: a castle short is a seat with nothing
+                // to bank in, and one past the seats is somebody's bank
+                // nobody plays.
+                let mut owners: Vec<PlayerId> = level.board().castle_owners().collect();
+                owners.sort_unstable();
+                owners.dedup();
+                if owners.iter().copied().eq(0..seats) {
+                    return Ok(());
+                }
+                let marked: Vec<String> = owners.iter().map(PlayerId::to_string).collect();
+                Err(format!(
+                    "{} has castles marked {}; a table of {seats} needs castles marked 0 to {} \
+                     and no others",
+                    self.name(),
+                    if marked.is_empty() {
+                        "nowhere".to_string()
+                    } else {
+                        marked.join(", ")
+                    },
+                    seats - 1
+                ))
+            }
+            Beach::Map(_) | Beach::Generated => Ok(()),
         }
     }
 
@@ -288,7 +308,7 @@ impl Beach {
     /// arrows a seat.
     pub fn board(&self, seed: u64, seats: u8, round: RoundLength) -> Board {
         let mut board = match self {
-            Beach::File(_, level) => level.board(),
+            Beach::File(_, level) => level.board_seeded(seed),
             Beach::Map(MapChoice::Classic) => crate::sim::classic_arena_seeded(seed, false, seats),
             Beach::Generated | Beach::Map(_) => {
                 // Past the seats a classic-sized beach holds, the game
@@ -412,6 +432,25 @@ pub fn ms(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A beach file seats a table only with castles marked exactly 0 to
+    /// one less than the seats: counting the owners passed {0, 2} for two
+    /// seats, and a castle past the seats sent scores nobody was seated
+    /// for.
+    #[test]
+    fn a_beach_file_needs_a_castle_for_each_seat_and_no_more() {
+        let beach = |row: &str| {
+            let text =
+                format!("name: T\nposts: 0\ngoal: survive\nmap:\n+-+-+-+\n|{row}|\n+-+-+-+\n");
+            let level = Level::parse(&text).expect("level");
+            Beach::File(PathBuf::from("t.beach"), Box::new(level))
+        };
+        assert_eq!(beach("0 . 1").check(2), Ok(()));
+        let err = beach("0 . 2").check(2).expect_err("no castle 1");
+        assert!(err.contains("marked 0, 2"), "{err}");
+        assert!(beach("0 1 2").check(2).is_err(), "a castle past the seats");
+        assert!(beach("0 1 2").check(3).is_ok());
+    }
 
     /// Every level's word reads back as that level.
     #[test]

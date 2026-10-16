@@ -309,9 +309,10 @@ pub fn fade_music(
 pub fn toggle_mute(
     keys: Res<ButtonInput<KeyCode>>,
     caps: Res<crate::app::keycaps::KeyCaps>,
+    live: Res<crate::app::keycaps::LiveSeatKeys>,
     mut muted: ResMut<Muted>,
 ) {
-    if caps.just_pressed(&keys, 'M') {
+    if caps.global_pressed(&keys, 'M', &live) {
         muted.0 = !muted.0;
     }
 }

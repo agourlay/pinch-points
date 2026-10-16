@@ -1,11 +1,13 @@
-//! The world around the board: the dusk shore and sea behind it, the
+//! The world around the board: the beach and the sea behind it, the
 //! scenery scattered over the margin, and the light over the sand.
 
 use super::image_sprite;
 use super::statics::BoardStatic;
 use super::z;
+use crate::app::Sim;
 use crate::app::art::Art;
 use crate::app::layout::{self, TILE};
+use crate::app::materials::{WaterMaterial, WaterMode, WaterUniform};
 use crate::sim::Board;
 use bevy::prelude::*;
 
@@ -92,91 +94,198 @@ pub fn drift_cloud_shadows(
     }
 }
 
-/// The dry sand the board is staked out on: a shade darker and duller than
-/// the board's own sand, so the play stays the brightest thing on screen.
-/// It was a dim olive, which read as nowhere at all rather than as beach.
-const SURROUND_SAND: Color = Color::srgb(0.70, 0.61, 0.45);
-
-/// The world behind the board: dusk sand to every edge of the window and
-/// the sea lying along the top, so a round is played on the same beach the
-/// menu promised instead of floating in a grey void. Sized from the board
-/// rather than the window, because the camera zooms to fit the board and
-/// world units are the only ones that hold still while it does.
+/// The world behind the board: dry sand to every edge of the window, drawn
+/// by the sand shader, and the sea along the bottom of the view (see
+/// [`lay_the_sea`]), so a round is played on the same beach the menu
+/// promised instead of floating in a void. Sized from the board rather than
+/// the window, because the camera zooms to fit the board and world units
+/// are the only ones that hold still while it does.
+///
+/// The sea used to lie along the top, sized from the board, and on most
+/// boards it sat off the top of the window: the margin read as a flat
+/// expanse of one colour. It now follows the view.
 pub(super) fn spawn_dusk_shore(commands: &mut Commands, board: &Board, art: &Art) {
     // Far larger than any zoomed-out view can reach: the wave's reach.
     const REACH: f32 = super::wash::REACH;
-    let top = layout::board_extent(board).y / 2.0 + 26.0;
-    let plane = |size: Vec2, at: Vec2, z: f32, color: Color| {
-        (
-            BoardStatic,
-            Sprite::from_color(color, size),
-            Transform::from_translation(at.extend(z)),
-        )
-    };
-    // Sand under and around everything.
-    commands.spawn(plane(
-        Vec2::splat(REACH),
-        Vec2::ZERO,
-        z::SAND - 10.0,
-        SURROUND_SAND,
-    ));
-    // The sea along the top of the beach, deepening away from the shore.
-    let shore = top + TILE * 0.55;
-    commands.spawn(plane(
-        Vec2::new(REACH, REACH / 2.0),
-        Vec2::new(0.0, shore + REACH / 4.0),
-        z::SAND - 9.8,
-        Color::srgb(0.13, 0.30, 0.42),
-    ));
-    commands.spawn(plane(
-        Vec2::new(REACH, 26.0),
-        Vec2::new(0.0, shore + 13.0),
-        z::SAND - 9.7,
-        Color::srgb(0.20, 0.42, 0.55),
-    ));
-    // The wet line where the last wave reached, and its foam lip.
-    commands.spawn(plane(
-        Vec2::new(REACH, 18.0),
-        Vec2::new(0.0, shore - 9.0),
-        z::SAND - 9.7,
-        Color::srgb(0.58, 0.50, 0.37),
+    commands.spawn((
+        BoardStatic,
+        Mesh2d(art.water.quad.clone()),
+        MeshMaterial2d(art.water.sand.clone()),
+        Transform::from_translation(Vec3::new(0.0, 0.0, z::SAND - 10.0))
+            .with_scale(Vec3::new(REACH, REACH, 1.0)),
     ));
     commands.spawn((
         BoardStatic,
-        image_sprite(
-            &art.foam,
-            Color::srgba(1.0, 1.0, 1.0, 0.45),
-            Vec2::new(REACH, 12.0),
-        ),
-        Transform::from_translation(Vec3::new(0.0, shore + 2.0, z::SAND - 9.6)),
+        Sea,
+        Mesh2d(art.water.quad.clone()),
+        MeshMaterial2d(art.water.sea.clone()),
+        // Over the scenery, which is scattered without knowing where the
+        // view's bottom edge will fall: the sea covers what lands in it.
+        Transform::from_translation(Vec3::new(0.0, 0.0, SEA_Z)),
+        Visibility::Hidden,
     ));
-    // Crests further out, fainter, thinner and more broken toward the
-    // horizon, so the strip of blue is a sea coming in rather than a band
-    // of colour. Short lengths with gaps between: one crest the width of
-    // the world was a ruled line.
-    let mut rng = crate::app::effects::VisualRng::seeded(board.seed() as u32 ^ 0x5EA);
-    let span = layout::board_extent(board).x / 2.0 + MARGIN_TILES * TILE;
-    for (lift, alpha, depth) in [(30.0, 0.34, 9.0), (62.0, 0.24, 7.0), (104.0, 0.15, 5.0)] {
-        let mut x = -span;
-        while x < span {
-            let length = rng.range(70.0, 190.0);
-            commands.spawn((
-                BoardStatic,
-                image_sprite(
-                    &art.foam,
-                    Color::srgba(1.0, 1.0, 1.0, alpha),
-                    Vec2::new(length, depth),
-                ),
-                Transform::from_translation(Vec3::new(
-                    x + length / 2.0,
-                    shore + lift + rng.range(-5.0, 5.0),
-                    z::SAND - 9.65,
-                )),
-            ));
-            x += length + rng.range(30.0, 110.0);
-        }
+    furnish_the_margin(commands, board, art);
+}
+
+/// The sea along the bottom of the view.
+#[derive(Component)]
+pub struct Sea;
+
+/// Over the margin's scenery and under the board's own sand.
+const SEA_Z: f32 = z::SAND - 9.0;
+
+/// How far below the sand the sea's top keeps, world units: past the
+/// wooden frame and its shadow, with a strip of beach to spare.
+const FRAME_CLEAR: f32 = 22.0;
+
+/// How much of the view's height the sea takes along the bottom at the
+/// start of a round, in interface pixels: under the prompt line. Scaled
+/// with the interface, as the prompt and the legend are. It climbs from
+/// here as the round runs out (see [`super::tide`]).
+const SEA_VIEW: f32 = 64.0;
+
+/// How tall the band of wet sand the waves run up is, world units, and
+/// over what depth of water the sea goes from shallow to deep.
+const SEA_WET: f32 = 18.0;
+const SEA_DEEPENS: f32 = 110.0;
+
+const SEA_SHALLOW: Color = Color::srgba(0.47, 0.82, 0.80, 0.92);
+const SEA_DEEP: Color = Color::srgba(0.12, 0.42, 0.60, 1.0);
+
+/// The sea's look: its colours, its wet sand and how fast it deepens. Its
+/// height the shader measures for itself, and its mania tint
+/// [`lay_the_sea`] writes as manias come and go.
+pub fn sea_uniform() -> WaterUniform {
+    let mut water = WaterUniform::new(WaterMode::Sea, SEA_SHALLOW, SEA_DEEP);
+    water.wet = SEA_WET;
+    water.depth_span = SEA_DEEPENS;
+    water
+}
+
+/// Where the sea's quad goes for a view `bottom` (world y of the window's
+/// bottom edge), `scale` world units a logical pixel and `ui` logical
+/// pixels an interface pixel, round a board whose sand ends at
+/// `board_bottom`: its top edge and its height, or `None` when the view
+/// leaves no room for it below the board.
+///
+/// `progress` is how far through its climb the tide is, 0 to 1, and
+/// `swell` the closing stretch's heave in interface pixels. The climb is
+/// [`super::tide::RISE`] where the window has room for it and whatever
+/// room there is where it does not, less the swell's reach, so the sea
+/// reaches the top of its climb as the round ends on any window with its
+/// heave still whole. Where a small window (or the interface turned
+/// down) leaves less room than the full rise, the sea starts lower, still
+/// clear of the view's foot, so the clock moves at all. Nothing takes
+/// the top past the board's frame: a short window loses sea, never board.
+/// Whether there is room is asked without the swell, so a sea near the
+/// limit does not blink in and out on every wave. The quad runs on past
+/// the view's bottom so a shake never shows its edge.
+fn sea_span(
+    bottom: f32,
+    scale: f32,
+    ui: f32,
+    board_bottom: f32,
+    progress: f32,
+    swell: f32,
+) -> Option<(f32, f32)> {
+    let px = ui * scale;
+    let cap = board_bottom - FRAME_CLEAR;
+    let rise = super::tide::RISE * px;
+    let reach = super::tide::SWELL * px;
+    let floor = bottom + SEA_WET + 2.0 * px;
+    let start = (bottom + SEA_VIEW * px).min(cap - rise - reach).max(floor);
+    let climb = rise.min((cap - reach - start).max(0.0));
+    let resting = (start + climb * progress).min(cap);
+    if resting <= bottom + SEA_WET {
+        return None;
     }
-    furnish_the_margin(commands, board, art, shore);
+    let top = (resting + swell * px).min(cap);
+    Some((top, top - (bottom - 40.0 * scale)))
+}
+
+/// What [`lay_the_sea`] moves: where the sea's quad is, and whether there
+/// is room for it at all.
+type SeaQuad = (&'static mut Transform, &'static mut Visibility);
+
+/// What the sea is laid against: the window, the camera resting on the
+/// board, and the interface's scale.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct SeaView<'w, 's> {
+    ui_scale: Res<'w, UiScale>,
+    windows: Query<'w, 's, &'static Window>,
+    cameras: Query<'w, 's, (&'static Projection, &'static Transform), With<Camera2d>>,
+}
+
+/// What the sea's clock reads: the round's state, the frame's time, and
+/// whether the player asked for things to hold still.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct SeaRound<'w, 's> {
+    time: Res<'w, Time>,
+    settings: Res<'w, crate::app::settings::GameSettings>,
+    round: crate::app::round_state::RoundState<'w>,
+    /// The swell's own clock, run only while the round moves, so a paused
+    /// or finished sea holds where it was.
+    swell_clock: Local<'s, f32>,
+}
+
+/// Keep the sea along the bottom of the view, as wide as the window, as
+/// the camera fits the board, climbing the beach and heaving as the round
+/// runs out and coloured by a running mania. Between the fit and the
+/// shake, so it sits where the camera rests and shakes with the rest of
+/// the world.
+pub fn lay_the_sea(
+    sim: Res<Sim>,
+    art: Res<Art>,
+    view: SeaView,
+    mut round: SeaRound,
+    mut materials: ResMut<Assets<WaterMaterial>>,
+    mut sea: Query<SeaQuad, (With<Sea>, Without<Camera2d>)>,
+) {
+    let Ok((mut transform, mut visibility)) = sea.single_mut() else {
+        return;
+    };
+    let (Ok(window), Ok((Projection::Orthographic(ortho), camera))) =
+        (view.windows.single(), view.cameras.single())
+    else {
+        return;
+    };
+    let (ui, scale) = (view.ui_scale.0, ortho.scale);
+    let bottom = camera.translation.y - window.height() / 2.0 * scale;
+    let board_bottom = -layout::board_extent(&sim.0).y / 2.0;
+    if round.round.moving(&sim.0) {
+        *round.swell_clock += round.time.delta_secs();
+    }
+    let (progress, swell) =
+        super::tide::climb(&sim.0, *round.swell_clock, round.settings.reduced_motion);
+    let Some((top, height)) = sea_span(bottom, scale, ui, board_bottom, progress, swell) else {
+        if *visibility != Visibility::Hidden {
+            *visibility = Visibility::Hidden;
+        }
+        return;
+    };
+    if *visibility != Visibility::Inherited {
+        *visibility = Visibility::Inherited;
+    }
+    let width = (window.width() + 200.0) * scale;
+    let at = Vec3::new(camera.translation.x, top - height / 2.0, SEA_Z);
+    let size = Vec3::new(width, height, 1.0);
+    if transform.translation != at || transform.scale != size {
+        transform.translation = at;
+        transform.scale = size;
+    }
+    // The shader measures the quad's height itself, so the material is
+    // only touched when a mania starts or ends: it is uploaded again
+    // whenever it is.
+    let tint = (!round.round.ended(&sim.0))
+        .then(|| super::tide::mania_tint(&sim.0))
+        .flatten()
+        .map_or(LinearRgba::NONE, LinearRgba::from);
+    let stale = materials
+        .get(&art.water.sea)
+        .is_some_and(|m| m.water.tint != tint);
+    if stale && let Some(mut material) = materials.get_mut(&art.water.sea) {
+        material.water.tint = tint;
+    }
 }
 
 /// How far out from the board the margin is furnished, in tiles: past
@@ -186,14 +295,12 @@ const MARGIN_TILES: f32 = 14.0;
 
 /// A place in the margin round a board `size` wide and high, or `None` if
 /// the draw landed where nothing may go: on the board, its frame or the
-/// tide that widens past it, or in the sea above `shore`.
-fn margin_spot(rng: &mut crate::app::effects::VisualRng, size: Vec2, shore: f32) -> Option<Vec2> {
+/// tide that widens past it. The sea needs no keeping out of: it is drawn
+/// over the scenery, wherever the view puts it.
+fn margin_spot(rng: &mut crate::app::effects::VisualRng, size: Vec2) -> Option<Vec2> {
     let clear = size / 2.0 + Vec2::splat(super::RIM + 14.0);
     let reach = size / 2.0 + Vec2::splat(MARGIN_TILES * TILE);
-    let at = Vec2::new(
-        rng.range(-reach.x, reach.x),
-        rng.range(-reach.y, shore - 16.0),
-    );
+    let at = Vec2::new(rng.range(-reach.x, reach.x), rng.range(-reach.y, reach.y));
     (at.x.abs() > clear.x || at.y.abs() > clear.y).then_some(at)
 }
 
@@ -206,35 +313,20 @@ fn margin_seed(board: &Board) -> u32 {
         ^ u32::from(board.height()).wrapping_mul(0x85EB_CA77)
 }
 
-/// Scatter the beach around the board: sand grain, dune grass, driftwood,
-/// pebbles and the odd starfish.
+/// Scatter the beach around the board: dune grass, driftwood, pebbles and
+/// the odd starfish. The grain is the sand shader's.
 ///
 /// Only things that are not in the game: a rock, a pool or a hole out
 /// here would read as a piece of the board that had wandered off. Kept
 /// clear of the board, its frame and the tide that widens round it
-/// (`RIM`), and of the sea. Drawn from the board's own size and seed, so a
+/// (`RIM`). Drawn from the board's own size and seed, so a
 /// level looks the same every time it is played, and a little dimmer than
 /// the same things on the board.
-fn furnish_the_margin(commands: &mut Commands, board: &Board, art: &Art, shore: f32) {
+fn furnish_the_margin(commands: &mut Commands, board: &Board, art: &Art) {
     let size = layout::board_extent(board);
     let mut rng = crate::app::effects::VisualRng::seeded(margin_seed(board));
-    let spot = |rng: &mut crate::app::effects::VisualRng| margin_spot(rng, size, shore);
+    let spot = |rng: &mut crate::app::effects::VisualRng| margin_spot(rng, size);
     let z = z::SAND - 9.5;
-    // Grain first, the most of it and the least of each.
-    for _ in 0..900 {
-        let Some(at) = spot(&mut rng) else { continue };
-        let pale = rng.next().is_multiple_of(3);
-        let tint = if pale {
-            Color::srgba(1.0, 0.96, 0.86, 0.22)
-        } else {
-            Color::srgba(0.45, 0.37, 0.25, 0.20)
-        };
-        commands.spawn((
-            BoardStatic,
-            Sprite::from_color(tint, Vec2::splat(rng.range(2.0, 5.5))),
-            Transform::from_translation(at.extend(z)),
-        ));
-    }
     for _ in 0..140 {
         let Some(at) = spot(&mut rng) else { continue };
         let (image, tint, size, turn) = match rng.next() % 10 {
@@ -281,6 +373,117 @@ fn furnish_the_margin(commands: &mut Commands, board: &Board, art: &Art, shore: 
 mod tests {
     use super::*;
 
+    /// The sea takes the bottom of the view and never comes up onto the
+    /// board or its frame: on a short window the sea shrinks or goes, the
+    /// board does not.
+    #[test]
+    fn the_sea_keeps_to_the_bottom_of_the_view_and_off_the_board() {
+        let board_bottom = -300.0;
+        let clear = board_bottom - FRAME_CLEAR;
+        // Plenty of room below the board: the sea is its usual height.
+        let (top, height) = sea_span(-700.0, 1.0, 1.0, board_bottom, 0.0, 0.0).expect("room");
+        assert_eq!(top, -700.0 + SEA_VIEW);
+        assert!(height > SEA_VIEW, "runs on past the bottom: {height}");
+        // A tight window: the top stops short of the frame.
+        let (top, _) = sea_span(-380.0, 1.0, 1.0, board_bottom, 0.0, 0.0).expect("a little");
+        assert!(top <= clear, "{top} reaches the frame at {clear}");
+        // No room at all: no sea.
+        assert_eq!(sea_span(-320.0, 1.0, 1.0, board_bottom, 0.0, 0.0), None);
+        // Zoomed out, the same strip of window is more world.
+        let (top, _) = sea_span(-2000.0, 2.0, 1.0, board_bottom, 0.0, 0.0).expect("room");
+        assert_eq!(top, -2000.0 + SEA_VIEW * 2.0);
+        // A bigger interface, a taller strip, under a taller prompt line.
+        let (top, _) = sea_span(-2000.0, 1.0, 1.5, board_bottom, 0.0, 0.0).expect("room");
+        assert_eq!(top, -2000.0 + SEA_VIEW * 1.5);
+        // With room, the tide climbs its full rise by the end of the round.
+        let rise = super::super::tide::RISE;
+        let (top, _) = sea_span(-2000.0, 1.0, 1.0, board_bottom, 1.0, 0.0).expect("room");
+        assert_eq!(top, -2000.0 + SEA_VIEW + rise);
+        // And a swell never carries it onto the frame.
+        let (top, _) = sea_span(-380.0, 1.0, 1.0, board_bottom, 1.0, 50.0).expect("room");
+        assert!(top <= clear, "{top} swelled onto the frame at {clear}");
+    }
+
+    /// Short of room for the full rise, the tide climbs what room there is,
+    /// all the way to the end of the round, and still leaves its swell room
+    /// to rise as far as it falls: held to the full rise it hit the frame
+    /// halfway through, and with no room left over the closing heave lost
+    /// its crest against the frame.
+    #[test]
+    fn a_tight_window_still_tells_the_whole_round() {
+        let board_bottom = -300.0;
+        let cap = board_bottom - FRAME_CLEAR;
+        let reach = super::super::tide::SWELL;
+        let bottom = cap - SEA_VIEW - 20.0;
+        let at = |progress, swell| {
+            sea_span(bottom, 1.0, 1.0, board_bottom, progress, swell)
+                .unwrap()
+                .0
+        };
+        assert!(
+            at(0.5, 0.0) < at(0.9, 0.0),
+            "still climbing late in the round"
+        );
+        assert!(at(0.9, 0.0) < at(1.0, 0.0), "and right up to its end");
+        assert!(
+            (at(1.0, 0.0) - (cap - reach)).abs() < 1e-3,
+            "short of the frame by a swell"
+        );
+        let (up, down) = (
+            at(1.0, reach) - at(1.0, 0.0),
+            at(1.0, 0.0) - at(1.0, -reach),
+        );
+        assert!(
+            (up - down).abs() < 1e-3,
+            "a whole swell at the end: {up} up, {down} down"
+        );
+    }
+
+    /// Where the room under the board is less than the whole rise, the sea
+    /// starts lower so the clock still moves, and it never starts so low it
+    /// cannot be seen.
+    #[test]
+    fn a_crowded_window_still_moves_the_clock() {
+        let board_bottom = -300.0;
+        let cap = board_bottom - FRAME_CLEAR;
+        // Room under the frame for the starting strip and nothing more.
+        let bottom = cap - SEA_VIEW;
+        let at = |progress| {
+            sea_span(bottom, 1.0, 1.0, board_bottom, progress, 0.0)
+                .unwrap()
+                .0
+        };
+        assert!(
+            at(1.0) - at(0.0) > 10.0,
+            "it climbs: {} to {}",
+            at(0.0),
+            at(1.0)
+        );
+        assert!(
+            at(0.0) > bottom + SEA_WET,
+            "and starts where it can be seen"
+        );
+    }
+
+    /// Whether the sea shows is asked of its resting height, not of where
+    /// a wave has carried it, so a sea near the limit does not blink in and
+    /// out on every swell.
+    #[test]
+    fn a_swell_never_hides_the_sea() {
+        let board_bottom = -300.0;
+        let cap = board_bottom - FRAME_CLEAR;
+        let reach = super::super::tide::SWELL;
+        let bottom = cap - SEA_WET - 3.0;
+        let shown = sea_span(bottom, 1.0, 1.0, board_bottom, 0.0, 0.0).is_some();
+        for swell in [-reach, -reach / 2.0, reach / 2.0, reach] {
+            assert_eq!(
+                sea_span(bottom, 1.0, 1.0, board_bottom, 0.0, swell).is_some(),
+                shown,
+                "a swell of {swell} changed whether the sea shows"
+            );
+        }
+    }
+
     /// The margin is the same every time a level is played, and a
     /// different beach for a different level: same seed and size, same
     /// scatter; another size or seed, another.
@@ -293,23 +496,20 @@ mod tests {
     }
 
     /// The scenery keeps off the play: nothing lands on the board, its
-    /// frame, or the tide that widens round it by the end of a round, and
-    /// nothing lands in the sea.
+    /// frame, or the tide that widens round it by the end of a round.
     #[test]
-    fn the_margin_keeps_off_the_board_and_out_of_the_sea() {
+    fn the_margin_keeps_off_the_board() {
         let size = Vec2::new(12.0, 9.0) * TILE;
-        let shore = size.y / 2.0 + 26.0 + TILE * 0.55;
         let mut rng = crate::app::effects::VisualRng::seeded(7);
         let mut placed = 0;
         for _ in 0..5000 {
-            let Some(at) = margin_spot(&mut rng, size, shore) else {
+            let Some(at) = margin_spot(&mut rng, size) else {
                 continue;
             };
             placed += 1;
             let off_board = at.x.abs() > size.x / 2.0 + super::super::RIM
                 || at.y.abs() > size.y / 2.0 + super::super::RIM;
             assert!(off_board, "{at} is on the board or its tide");
-            assert!(at.y < shore, "{at} is in the sea");
         }
         assert!(placed > 1000, "only {placed} of 5000 found a place");
     }

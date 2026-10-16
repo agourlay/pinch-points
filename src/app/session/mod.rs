@@ -55,16 +55,16 @@ pub(super) struct BoardStage<'w, 's> {
     commands: Commands<'w, 's>,
     art: Res<'w, art::Art>,
     cursors: Query<'w, 's, (&'static mut cursor::Cursor, &'static mut Transform)>,
+    generation: ResMut<'w, sim_events::BoardGeneration>,
 }
 
 impl BoardStage<'_, '_> {
-    /// Draw everything about `board` that does not move: the sand and
-    /// walls, the waterline (hidden by `update_waterline` on a board with
-    /// no round timer) and the foam.
+    /// Draw everything about `board` that does not move: the beach, the
+    /// sand and the walls. And count it a new board, which a board laid
+    /// out afresh is whatever its clock says.
     fn lay_out(&mut self, board: &Board) {
+        self.generation.laid_out(board);
         board_render::spawn_static_board(&mut self.commands, board, &self.art);
-        board_render::spawn_waterline(&mut self.commands);
-        board_render::spawn_water_foam(&mut self.commands, &self.art);
     }
 }
 
@@ -77,8 +77,6 @@ pub(super) struct BoardSprites<'w, 's> {
     statics: Query<'w, 's, Entity, With<board_render::BoardStatic>>,
     posts: Query<'w, 's, Entity, With<board_render::SignpostSprite>>,
     castles: Query<'w, 's, Entity, With<board_render::CastleSprite>>,
-    water: Query<'w, 's, Entity, With<board_render::Waterline>>,
-    foam: Query<'w, 's, Entity, With<board_render::WaterFoam>>,
     logs: Query<'w, 's, Entity, With<board_render::TurnstileSprite>>,
     crabs: Query<'w, 's, Entity, With<creatures::CrabSprite>>,
     gulls: Query<'w, 's, Entity, With<creatures::GullSprite>>,
@@ -95,8 +93,6 @@ impl BoardSprites<'_, '_> {
             .iter()
             .chain(self.posts.iter())
             .chain(self.castles.iter())
-            .chain(self.water.iter())
-            .chain(self.foam.iter())
             .chain(self.logs.iter())
             .chain(self.crabs.iter())
             .chain(self.gulls.iter())
@@ -566,10 +562,6 @@ mod tests {
         // assertion below without it.
         let survivor = app.world_mut().spawn(Marker).id();
         app.world_mut().spawn(board_render::BoardStatic);
-        app.world_mut()
-            .spawn(board_render::Waterline(board_render::Side::Top));
-        app.world_mut()
-            .spawn(board_render::WaterFoam(board_render::Side::Top));
         app.world_mut().spawn(creatures::CrabSprite {
             id: 1,
             kind: crate::sim::CrabKind::Common,
@@ -593,14 +585,6 @@ mod tests {
             "the static beach survived the teardown"
         );
         for left in [
-            app.world_mut()
-                .query_filtered::<Entity, With<board_render::Waterline>>()
-                .iter(app.world())
-                .count(),
-            app.world_mut()
-                .query_filtered::<Entity, With<board_render::WaterFoam>>()
-                .iter(app.world())
-                .count(),
             app.world_mut()
                 .query_filtered::<Entity, With<creatures::CrabSprite>>()
                 .iter(app.world())
@@ -686,6 +670,65 @@ mod tests {
             replay.playback().state_hash(),
             board.state_hash(),
             "and played back, the same beach"
+        );
+    }
+
+    /// The host's call for the next round can land on a joiner still a few
+    /// frames short of the tide: the session is the new round's from then
+    /// on, and the board is still the old one. Ticked on, the old board
+    /// played the new round's first frames out, and the new board began at
+    /// tick zero with the lockstep frames ahead of it: a desync for the
+    /// whole of the next round. The board is left where it stood, nothing
+    /// is committed against it, and the joiner is walked on to the round
+    /// that was called.
+    #[test]
+    fn a_called_round_leaves_the_old_board_where_it_stood() {
+        use crate::transport::{MatchTerms, UdpTransport};
+
+        let mut app = sim_app();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.add_systems(Update, follow_the_called_round);
+        // The last round, most of the way through on this machine.
+        for _ in 0..50 {
+            app.world_mut()
+                .resource_mut::<Sim>()
+                .0
+                .tick(&[PlayerAction::None; MAX_PLAYERS]);
+        }
+        // And the next one taken up off the wire: a fresh lockstep, whose
+        // first frames need nobody's input to run.
+        let mut joiner = net::OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            crate::sim::Lockstep::new(1, vec![0, 1], crate::sim::DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        joiner.next_round = true;
+        let commit = joiner.session.next_commit();
+        app.insert_resource(net::Online(Some(joiner)));
+        app.world_mut().resource_mut::<PendingActions>().0[1] = PlayerAction::Remove { x: 1, y: 1 };
+
+        app.update();
+        assert_eq!(
+            app.world().resource::<Sim>().0.ticks(),
+            50,
+            "the old board played the new round's frames"
+        );
+        let online = app.world().resource::<net::Online>();
+        let session = online.0.as_ref().expect("the session");
+        assert_eq!(session.session.frame(), 0, "the new round is untouched");
+        assert_eq!(
+            session.session.next_commit(),
+            commit,
+            "a key meant for the old board went to the new one"
+        );
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Interlude,
+            "and on to the round that was called"
         );
     }
 

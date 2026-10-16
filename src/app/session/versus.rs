@@ -76,16 +76,16 @@ impl RoundOrigin<'_> {
                     false => match_setup::sized_for(config.seats),
                 };
                 // A beach somebody built. Locally there is nobody to send
-                // it to, so it is read off the shelf. Anything else is the
-                // map dial's own beach: the handcrafted classic gets a
-                // fresh random stream too, so one seed's luck (gull entry
+                // it to, so it is read off the shelf, and built on this
+                // round's seed. Anything else is the map dial's own beach:
+                // the handcrafted classic gets a fresh random stream too, so one seed's luck (gull entry
                 // points, spawn kinds) does not colour every round, where
                 // online keeps the canonical seed so peers agree.
                 let shelved = (map == match_setup::MapChoice::Custom)
                     .then(|| beaches.fitting(config.seats).into_iter().nth(config.custom))
                     .flatten();
                 let mut board = match shelved {
-                    Some(beach) => beach.level.board(),
+                    Some(beach) => beach.level.board_seeded(seed),
                     None => match_setup::versus_board(map, seed, config.seats),
                 };
                 match_setup::apply_terms(&mut board, config.gulls, config.round, config.posts);
@@ -460,5 +460,34 @@ pub(in crate::app) fn check_versus_over(
             });
         }
         next_vphase.set(VersusPhase::Over);
+    }
+}
+
+/// Walk a joiner straight on to the next round when the host's call for it
+/// lands before this board has finished.
+///
+/// A peer a frame or two behind the host is still playing the last frames
+/// of the round when the host, on its results card, calls the next one,
+/// and a late watcher can be handed the next round as it stands the same
+/// way. The session is the new round's from then on (`take_up`), so the
+/// old board has nothing left to play: the frames it was missing belong to
+/// a lockstep that is gone, and the pump stops ticking it. Left on the
+/// beach it stood there for good, the tide never came in, and the results
+/// card that would have followed the call never appeared. The round it was
+/// in is over for everyone else already, so the doorway is the way on.
+///
+/// A board that did finish shows its results card first, as ever:
+/// `versus_over_input` follows the call from there.
+pub(in crate::app) fn follow_the_called_round(
+    sim: Res<Sim>,
+    online: Res<net::Online>,
+    mut next_screen: ResMut<NextState<Screen>>,
+) {
+    let called = online
+        .0
+        .as_ref()
+        .is_some_and(|session| session.next_round && !session.is_host());
+    if called && !sim.0.round_over() {
+        next_screen.set(Screen::Interlude);
     }
 }

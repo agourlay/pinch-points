@@ -34,6 +34,23 @@ pub struct PadRepeat {
     held: bool,
 }
 
+const DPAD: [GamepadButton; 4] = [
+    GamepadButton::DPadUp,
+    GamepadButton::DPadDown,
+    GamepadButton::DPadLeft,
+    GamepadButton::DPadRight,
+];
+
+/// Whether this frame's direction is a fresh press: one from rest, or a
+/// d-pad button just pressed while another direction was held. The
+/// second is what a second move key does on the keyboard, stepping at
+/// once, and rocking the d-pad across is one too. Not the stick's second
+/// axis coming on, which a thumb held off-axis near the deadzone does
+/// over and over: each would step at once and restart the delay.
+fn fresh_press(was_held: bool, held: bool, dpad_just: bool) -> bool {
+    held && (!was_held || dpad_just)
+}
+
 /// The four commit directions in face-button diamond order.
 const PLACES: [(GamepadButton, Direction); 4] = [
     (GamepadButton::North, Direction::Up),
@@ -110,7 +127,8 @@ pub fn pad_move_cursor(
             continue;
         };
         let held = dx != 0 || dy != 0;
-        let just = held && !repeat.held;
+        let dpad_just = DPAD.iter().any(|&button| pad.just_pressed(button));
+        let just = fresh_press(repeat.held, held, dpad_just);
         repeat.held = held;
         if repeat.repeat.advance(
             just,
@@ -217,6 +235,13 @@ mod tests {
                 .resource_mut::<Time>()
                 .advance_by(Duration::from_secs_f32(secs));
             app.update();
+            // What the input plugin does between frames: a press is just
+            // pressed for the one frame it lands in.
+            app.world_mut()
+                .get_mut::<Gamepad>(pad)
+                .expect("the pad")
+                .digital_mut()
+                .clear();
             let world = app.world_mut();
             world
                 .query::<&Cursor>()
@@ -243,5 +268,17 @@ mod tests {
         assert_eq!(frame(&mut app, 0.1), 4, "let go, it stops");
         dpad(&mut app, true);
         assert_eq!(frame(&mut app, 0.01), 5, "and a new press steps at once");
+    }
+
+    /// A d-pad button pressed while another direction is held is a press
+    /// of its own, as a second move key is on the keyboard. The stick's
+    /// second axis flickering on near the deadzone is not.
+    #[test]
+    fn a_new_direction_on_the_pad_is_a_press() {
+        assert!(fresh_press(false, true, false), "from rest");
+        assert!(fresh_press(true, true, true), "a d-pad direction added");
+        assert!(!fresh_press(true, true, false), "held, the stick wobbling");
+        assert!(!fresh_press(true, false, false), "let go");
+        assert!(!fresh_press(false, false, false), "at rest");
     }
 }

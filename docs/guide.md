@@ -77,14 +77,15 @@ washes away after ~10 seconds, and two gull crossings destroy one.
 **Crabs** stream out of spawner holes and score by walking into any
 castle. By value/speed: common (1), juvenile (2, fast), giant (10, slow),
 molting (5; scoring one **lures every loose crab toward your castle for
-10 s, overriding all arrows**), golden (30, fast), and sparkling
+10 s, overriding all arrows**), golden (fast: 30 in versus, 50 in puzzles
+and challenges), and sparkling
 (scoring one spins the **random event** roulette: crab/gull manias, speed
 shifts, castle swaps, fresh sand…). While a timed event is still running
 the roulette is on cooldown, and the event feed says so when a sparkling
 crab is scored for nothing.
 
 **The golden crab is called.** It never just wanders out: once a round
-(twice in a long one) a banner announces it, and one spawner hole swells
+(twice in a long one, never in a one-minute one) a banner announces it, and one spawner hole swells
 and pulses gold for five seconds before the golden crab comes out of it.
 Everyone sees it coming, so it goes to whoever routes it home first.
 
@@ -227,7 +228,7 @@ score lost, so the rest of the table has something to point at too.
 | | Move | Place | Remove | Clear all |
 |---|---|---|---|---|
 | P1 | WASD | arrow keys | Space | Left Shift |
-| P2 | IJKL | numpad 8/5/4/6 | numpad 0 | numpad Enter |
+| P2 | IJKL | numpad 8/5/4/6 | numpad 0 | numpad . |
 | any seat | gamepad d-pad/stick | face buttons | L1 | R1 |
 
 Pads are plug-and-play and fill seats from the highest player down, so
@@ -318,7 +319,9 @@ deliberately.
   `PINCH_AUTOPLAY=<level>`, `PINCH_EDITOR`, `PINCH_MATCH`, `PINCH_REPLAY`,
   `PINCH_LIBRARY`, `PINCH_ACHIEVEMENTS`, `PINCH_SETTINGS`,
   `PINCH_CONTROLS`, `PINCH_LANGUAGE`, `PINCH_STAGES=tide|beach`, and
-  `PINCH_LOBBY_HOST`/`PINCH_LOBBY_JOIN`/`PINCH_LOBBY_WATCH` open the rest;
+  `PINCH_LOBBY_HOST=<n>`/`PINCH_LOBBY_JOIN`/`PINCH_LOBBY_WATCH` open the rest
+  (the host launches once `n` peers are aboard, and `PINCH_LOBBY_JOIN_BOT`
+  joins the first host heard as a bot, opening the doorway for it);
   `PINCH_AUTOPLAY` with `PINCH_NOSOLVE=1` starts each level's run without
   placing anything, so a timed level runs out.
   `PINCH_BANNER=lure|surge|<0-8>` raises an announcement, `PINCH_TIDE=<0-8>`
@@ -329,13 +332,29 @@ deliberately.
   only a person standing behind a chair can do. `PINCH_PAUSE=1`,
   `PINCH_OVER=1` and `PINCH_INTERLUDE=1` raise
   the pause card, the results card and the series interlude a couple of
-  seconds into a versus round, for shooting them. `PINCH_NET_PROBE=1`
+  seconds into a versus round, for shooting them. Each of these seven
+  fire-once hooks takes a `<VAR>_AT=<seconds>` override (`PINCH_TIDE_AT`,
+  `PINCH_BANNER_AT`, and so on) for a moment wanted on a beach that has
+  filled up.
+  With `PINCH_MATCH`, `PINCH_BOT_SEATS=<n>` hands the top `n` AI seats to
+  bot programs instead, and `PINCH_LAUNCH` presses Enter on the setup
+  screen once for an unattended start. `PINCH_BOT_KEY=<key>` gives a bot
+  doorway's first chair a key a script knew in advance (never on the LAN).
+  `PINCH_AUTOPILOT=easy|normal|hard` (or `=1` for normal) plays this
+  process's own seat with the bot brain, through the same path a keystroke
+  takes, so several processes can play a real online round unattended.
+  `PINCH_COOP` starts the Tide Pool in co-op. `PINCH_NET_PROBE=1`
   submits one scripted signpost mid-round over the wire, and `PINCH_ST_EXEC`
   runs every schedule on the single-threaded executor, for the CPU
-  measurement. `PINCH_FRAMES=1` prints the frame times every five seconds
-  (mean, 99th percentile, worst) and every frame over 20 ms as it happens,
-  which shows a stutter a vsynced frame rate hides. `PINCH_WINDOW=<w>x<h>` opens a window at a given size (it
-  and `PINCH_SCREENSHOT` both keep the game out of fullscreen), and
+  measurement. `PINCH_THREADS=<n>` caps Bevy's compute pool (`0` lifts the
+  cap), and `PINCH_SHUFFLE=<seed>`, in a build with the `shuffle` feature,
+  runs every schedule's unordered systems in a seeded shuffled order to
+  flush out a missing ordering. `PINCH_FRAMES=1` prints the frame times
+  every five seconds (mean, 99th percentile, worst) and every frame over
+  20 ms as it happens, which shows a stutter a vsynced frame rate hides.
+  `PINCH_WINDOW=<w>x<h>` opens a window at a given size (it and
+  `PINCH_SCREENSHOT` both keep the game out of fullscreen), `PINCH_ON_TOP`
+  keeps it above every other window for a screen recording, and
   `PINCH_SCREENSHOT=<path>` with `PINCH_SCREENSHOT_AT=<seconds>` took every
   picture in this guide. `PINCH_NO_UPDATE` skips the release check for a
   run, and `PINCH_UPDATE_DEMO` opens the new-version page for a made-up

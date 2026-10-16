@@ -291,6 +291,7 @@ mod tests {
         app.insert_resource(State::new(crate::app::VersusPhase::Running));
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.init_resource::<Time>();
         app.add_message::<KeyboardInput>();
         // Named, as the lobby leaves anyone who got this far: it asks

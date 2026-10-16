@@ -129,6 +129,10 @@ pub enum NetMsg {
     /// Host → one peer: the host asked you to leave. The peer goes back to
     /// choosing a beach, and the host forgets it.
     Kicked,
+    /// Host → one peer that greeted as a bot: this beach is not taking
+    /// bots. Asked to go like [`NetMsg::Kicked`], with the reason, which
+    /// the peer could not tell from a host simply asking it to leave.
+    NoBots,
     /// "I am going": said by a socket as it closes, to every peer it has
     /// (see `UdpTransport`'s `Drop`). From a joiner, the host forgets it at
     /// once rather than waiting out its silence, which left a launch or the
@@ -242,6 +246,15 @@ impl NetMsg {
         }
     }
 
+    /// Whether this is how a newcomer opens: a greeting, to play or to
+    /// watch. Every way onto a beach starts with one (the lobby, a bot's
+    /// seat, a spectator, a player in line or coming back after being
+    /// forgotten, the direct `PINCH_JOIN` pair), and it repeats until it is
+    /// answered, so a host takes nobody new on anything else.
+    pub fn greets(&self) -> bool {
+        matches!(self, NetMsg::Hello { .. } | NetMsg::Watch { .. })
+    }
+
     /// The same greeting from somebody who came to watch. Named, because
     /// the host has to be able to call the crowd something and to check
     /// what the crowd says it is called.
@@ -293,12 +306,13 @@ const TAG_SPECTATOR_PICK: u8 = 16;
 const TAG_CROWD_PICKS: u8 = 17;
 const TAG_KICKED: u8 = 18;
 const TAG_LEAVING: u8 = 19;
+const TAG_NO_BOTS: u8 = 20;
 /// The last of them, which `peek_version` uses to tell one of ours from
 /// stray traffic on the port.
 ///
 /// It said `TAG_INPUTS` through two more tags, so a build of another
 /// version sending the spectators' two was ignored rather than told why.
-const HIGHEST_TAG: u8 = TAG_LEAVING;
+const HIGHEST_TAG: u8 = TAG_NO_BOTS;
 
 /// Inputs one datagram may carry.
 ///
@@ -507,12 +521,13 @@ impl NetMsg {
             NetMsg::SpectatorPick { .. } => vec![TAG_SPECTATOR_PICK],
             NetMsg::CrowdPicks { .. } => vec![TAG_CROWD_PICKS],
             NetMsg::Kicked => vec![TAG_KICKED],
+            NetMsg::NoBots => vec![TAG_NO_BOTS],
             NetMsg::Leaving => vec![TAG_LEAVING],
             NetMsg::Incompatible { version } => return vec![TAG_INCOMPATIBLE, version],
         };
         bytes.push(PROTOCOL_VERSION);
         match self {
-            NetMsg::Incompatible { .. } | NetMsg::Kicked | NetMsg::Leaving => {}
+            NetMsg::Incompatible { .. } | NetMsg::Kicked | NetMsg::NoBots | NetMsg::Leaving => {}
             NetMsg::Resume { frame } => bytes.extend_from_slice(&frame.to_le_bytes()),
             NetMsg::Queued { ahead } => bytes.push(ahead),
             NetMsg::Abandoned { seat, frame } => {
@@ -654,6 +669,7 @@ impl NetMsg {
                 bot: *body.get(WIRE_NAME)? != 0,
             }),
             TAG_KICKED => Some(NetMsg::Kicked),
+            TAG_NO_BOTS => Some(NetMsg::NoBots),
             TAG_LEAVING => Some(NetMsg::Leaving),
             TAG_WATCH => Some(NetMsg::Watch {
                 name: body.get(..WIRE_NAME)?.try_into().ok()?,
@@ -847,6 +863,7 @@ mod tests {
                 bot: true,
             },
             NetMsg::Kicked,
+            NetMsg::NoBots,
             NetMsg::Leaving,
             NetMsg::Chat {
                 name: widest,

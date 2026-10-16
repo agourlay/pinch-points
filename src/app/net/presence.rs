@@ -89,11 +89,35 @@ const WATCHER_GONE_AFTER: f32 = 10.0;
 /// host shows an ordinary player.
 const HOST_GONE_AFTER: f32 = 20.0;
 
+/// How long a joiner hears nothing from its host, mid-round, before it
+/// greets it again (`greet_a_quiet_host`). A host sends on every tick, so
+/// a second of nothing is either a burst of loss or a host that has
+/// forgotten this peer, and a greeting costs nothing in the first case.
+const QUIET_HOST: f32 = 1.0;
+
 /// How long a round held up on a seat whose player said goodbye waits
 /// before handing it over: not the five seconds of [`ABANDON_AFTER`],
 /// which are for telling a departure from a stumble, and the goodbye has
 /// already told. Just long enough for an input that crossed it to land.
 const GOODBYE_GRACE: f32 = 0.3;
+
+/// Whether `peer` is gone by the rule every departure goes by: a goodbye
+/// that has stood for [`GOODBYE_GRACE`] with no word since, or else a
+/// silence of `patience`.
+///
+/// One rule for a seat and for the host. A goodbye is unauthenticated (any
+/// machine on the LAN can send one with the peer's address on it), so it
+/// earns a short grace whose clock any word from the peer stops
+/// (`Peer::goodbye`), not belief on arrival. The joiner read the host's
+/// goodbye at once, through the infinite silence it sets: one forged
+/// datagram walked a whole table out of a round its host was still
+/// running.
+fn has_gone(peer: &Peer, patience: f32) -> bool {
+    match peer.goodbye {
+        Some(since) => since >= GOODBYE_GRACE,
+        None => peer.silence >= patience,
+    }
+}
 
 /// How long the picture has to have been still before the status line
 /// names whoever it is waiting for. Under a second: long enough that the
@@ -134,6 +158,42 @@ impl OnlineSession {
         self.peers.age(delta);
     }
 
+    /// Joiner, mid-round: greet a host that has gone quiet, about once a
+    /// second until it is heard again.
+    ///
+    /// The host admits nobody it does not know except on a greeting
+    /// (`NetMsg::greets`), and a round sends none: inputs, hashes and
+    /// pauses only. So a peer the host has forgotten had no way back. A
+    /// seat whose Wi-Fi dropped past [`ABANDON_AFTER`] missed its one
+    /// abandonment notice and froze until it was told, wrongly, that the
+    /// host had left; a watcher forgotten as silent did the same; and the
+    /// direct `PINCH_JOIN` joiner whose one hello was lost was never let
+    /// in at all. Greeted again, the host answers: a dropped seat is told
+    /// of its abandonment with the rest of the table (`dropped`), a
+    /// watcher is handed the round as it stands, and a peer still at the
+    /// table is told what it already knows.
+    ///
+    /// Only once the host has been quiet for [`QUIET_HOST`]: a host in a
+    /// running round speaks every tick, so a joiner hearing it is let in.
+    fn greet_a_quiet_host(&mut self, delta: f32) {
+        if self.is_host() {
+            return;
+        }
+        let quiet = self
+            .peers
+            .get(0)
+            .is_none_or(|host| host.silence >= QUIET_HOST);
+        if !quiet {
+            // Armed, so the first greeting goes the moment the host has
+            // been quiet long enough rather than up to a second later.
+            self.home.greet_in = 0.0;
+            return;
+        }
+        if crate::app::lobby::once_a_second(&mut self.home.greet_in, delta) {
+            self.transport.send(self.own_greeting());
+        }
+    }
+
     /// The peer holding `seat`, and with it how long that peer has said
     /// nothing at all. `None` for a seat no peer holds: the host's own,
     /// and the AI's.
@@ -153,12 +213,15 @@ impl OnlineSession {
     /// A pause makes no difference: the pump runs through one (that is
     /// what carries the resume), so a host that is there keeps talking
     /// however still the picture is.
+    ///
+    /// A host that said goodbye is gone a moment later, by the rule a
+    /// seat's goodbye goes by ([`has_gone`]).
     pub fn host_gone(&self) -> bool {
         !self.is_host()
             && self
                 .peers
                 .get(0)
-                .is_some_and(|host| host.silence >= HOST_GONE_AFTER)
+                .is_some_and(|host| has_gone(host, HOST_GONE_AFTER))
     }
 
     /// Watch for a player who has stopped sending, and give up on them.
@@ -180,6 +243,12 @@ impl OnlineSession {
     /// than deciding and its seats never pass through here.
     pub fn abandon_stalled(&mut self, delta: f32, paused: bool) -> Vec<u8> {
         self.age_the_silence(delta);
+        self.greet_a_quiet_host(delta);
+        // Paused or not: nobody who holds no chair holds the round up, and
+        // a pause is no reason to go on counting somebody who has left.
+        if self.is_host() {
+            self.forget_gone_bystanders();
+        }
         // A paused round is stalled on purpose, and the pause is agreed:
         // holding still is what every peer was asked to do.
         //
@@ -196,9 +265,6 @@ impl OnlineSession {
             // the pause card.
             self.stall.reset(self.session.frame());
             return Vec::new();
-        }
-        if self.is_host() {
-            self.forget_gone_watchers();
         }
         // Never itself. The local slot is empty whenever this peer has not
         // committed the frame yet, which is an ordinary moment and not a
@@ -256,11 +322,9 @@ impl OnlineSession {
                 // goodbye back (`Peer::goodbye`). A goodbye is
                 // unauthenticated, so one forged with a player's address
                 // would otherwise hand a lagging castle to the AI at once.
-                Some(peer) if peer.left() => {
-                    peer.goodbye.is_some_and(|since| since >= GOODBYE_GRACE)
-                }
-                // Held up by them *and* not a word from them.
-                Some(peer) => served && peer.silence >= ABANDON_AFTER,
+                //
+                // Otherwise held up by them *and* not a word from them.
+                Some(peer) => (peer.left() || served) && has_gone(peer, ABANDON_AFTER),
                 // A seat this session cannot point at on the socket: the
                 // direct `PINCH_HOST` pair keeps no launch plan, having
                 // never been through a lobby. Nothing better to go on than
@@ -305,13 +369,12 @@ impl OnlineSession {
     /// Only the pause it called: one called since by somebody else, or a
     /// pause of its that was lifted already, is not its to lift.
     pub(super) fn release_a_departed_pause(&mut self, peer: usize) {
+        // The pause in flight, and no other: a pause of its that was
+        // lifted is not, and neither is one it called that an earlier
+        // proposal from somebody else then overtook.
         let holds = self.is_host()
-            && self.session.paused()
-            && self
-                .peers
-                .get(peer)
-                .and_then(|row| row.pause)
-                .is_some_and(|frame| !self.session.is_lifted(frame));
+            && self.session.pause_frame().is_some()
+            && self.peers.get(peer).and_then(|row| row.pause) == self.session.pause_frame();
         if holds {
             self.request_resume();
         }
@@ -340,23 +403,39 @@ impl OnlineSession {
     ///
     /// The row goes with the socket's entry, so nothing kept about the
     /// departed is read against whoever moved up into its index, and the
-    /// same goes for a tide vote it had standing.
+    /// same goes for a tide vote it had standing and the hashes it sent.
     pub(super) fn forget_peer(&mut self, peer: usize) {
         self.transport.forget(peer);
         self.peers.forget(peer);
         self.stands.tide.votes.voter_left(peer);
+        self.hashes.forget(peer);
+        self.catch_up.forget(peer);
     }
 
-    /// Host, during the round: drop every spectator that has gone quiet.
+    /// Host, during the round: drop every spectator, and everyone in line
+    /// for the next round, that has gone quiet or said goodbye.
     ///
-    /// Only spectators. A seat is the round's own business and is given up
-    /// on through `awaiting` when it holds a frame up; a peer in line is
-    /// sent nothing and costs nothing, and is swept between rounds by
-    /// [`Self::forget_the_silent`].
-    pub(super) fn forget_gone_watchers(&mut self) {
+    /// Not a seat: that is the round's own business, and is given up on
+    /// through `awaiting` when it holds a frame up.
+    ///
+    /// A peer in line is sent no frames, but it is not free. Left until
+    /// the results card's sweep ([`Self::forget_the_silent`]), one that
+    /// walked away counted as a chair taken all round: on the beacon, in
+    /// every newcomer's place in the queue, and against the room the host
+    /// has for one more, so a table with a chair free turned people away.
+    /// It greets once a second from the lobby while it waits, so its
+    /// silence means what a watcher's does. Only at a table formed in the
+    /// lobby: the direct `PINCH_HOST` pair keeps no plan, so its one
+    /// player is in line by the book, and is the round's own business.
+    pub(super) fn forget_gone_bystanders(&mut self) {
+        let lobby = self.home.from_lobby;
         let gone = self.peers.to_forget(|row| {
-            matches!(row.place, Place::Watching | Place::LateWatching)
-                && row.silence >= WATCHER_GONE_AFTER
+            let bystander = match row.place {
+                Place::Watching | Place::LateWatching => true,
+                Place::Queued => lobby,
+                Place::Seated(_) => false,
+            };
+            bystander && row.silence >= WATCHER_GONE_AFTER
         });
         for peer in gone {
             self.forget_peer(peer);
@@ -721,6 +800,13 @@ mod tests {
                 host.pump(PlayerAction::None, |_| {});
             } else {
                 host.request_pause();
+                // Bo heard it, and says so on every tick it holds there, as
+                // every peer does. Taken as Bo's own pause, the goodbye
+                // below lifted the host's pause for the table.
+                let frame = host.session.pause_frame().expect("paused");
+                bo.send(NetMsg::Pause { frame });
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                host.pump(PlayerAction::None, |_| {});
             }
             assert!(host.session.paused());
             drop(bo);
@@ -733,6 +819,88 @@ mod tests {
                 "the leaver paused: {leaver_paused}"
             );
         }
+    }
+
+    /// A watcher repeats the table's pause like everybody else, and calls
+    /// none of its own: a watcher walking out mid-pause leaves the pause
+    /// where it was, and only the player who called it lifts it by going.
+    #[test]
+    fn a_watcher_leaving_does_not_lift_the_pause() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], crate::sim::DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        let port = host.transport.local_addr().expect("addr").port();
+        let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        let dee = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        for (socket, msg) in [(&bo, NetMsg::hello("Bo")), (&dee, NetMsg::watch("Dee"))] {
+            socket.send(msg);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            host.pump(PlayerAction::None, |_| {});
+        }
+        assert_eq!(host.transport.peer_count(), 2, "Bo and Dee are aboard");
+        host.peers.deal(&[Some(1), None]);
+
+        // Bo pauses, and Dee, holding on it too, echoes it back.
+        let mut bos = Lockstep::new(1, vec![0, 1], crate::sim::DEFAULT_DELAY);
+        let frame = bos.request_pause().expect("a player may pause");
+        bo.send(NetMsg::Pause { frame });
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        host.pump(PlayerAction::None, |_| {});
+        dee.send(NetMsg::Pause { frame });
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        host.pump(PlayerAction::None, |_| {});
+        assert!(host.session.paused());
+
+        drop(dee);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        host.pump(PlayerAction::None, |_| {});
+        assert!(
+            host.peers.get(1).is_some_and(Peer::left),
+            "Dee said goodbye"
+        );
+        assert!(host.session.paused(), "Dee's goodbye lifted Bo's pause");
+
+        drop(bo);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        host.pump(PlayerAction::None, |_| {});
+        assert!(!host.session.paused(), "and Bo's own goodbye lifts it");
+    }
+
+    /// Somebody who turned up mid-round to play the next one, and then
+    /// walked off before it, is forgotten when it says goodbye rather
+    /// than on the results card. Until then it was a chair taken: on the
+    /// beacon, in every newcomer's place in the queue, and against the
+    /// room the host had for anyone else.
+    #[test]
+    fn a_player_in_line_who_leaves_mid_round_frees_the_place() {
+        let mut host = hosting(vec![0, 1]);
+        host.home.from_lobby = true;
+        let port = host.transport.local_addr().expect("addr").port();
+        let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        bo.send(NetMsg::hello("Bo"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        host.pump(PlayerAction::None, |_| {});
+        host.peers.deal(&[Some(1)]);
+
+        // Cy greets with the round under way, and is put in line.
+        let cy = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        cy.send(NetMsg::hello("Cy"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        host.pump(PlayerAction::None, |_| {});
+        assert_eq!(host.transport.peer_count(), 2, "Cy is aboard");
+        assert_eq!(host.players_spoken_for(), 3, "Cy is owed a chair");
+
+        drop(cy);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        bo.send(NetMsg::Hash { frame: 0, hash: 0 });
+        host.pump(PlayerAction::None, |_| {});
+        host.abandon_stalled(0.0, false);
+        assert_eq!(host.transport.peer_count(), 1, "Cy is forgotten");
+        assert_eq!(host.players_spoken_for(), 2, "and no chair is held for it");
+        assert_eq!(host.peers.seat_of(0), Some(1), "Bo keeps the seat");
     }
 
     /// A joiner whose host has gone quiet calls the round off itself.
@@ -768,6 +936,35 @@ mod tests {
         host.peers.deal(&[Some(1)]);
         host.abandon_stalled(HOST_GONE_AFTER * 2.0, false);
         assert!(!host.host_gone(), "the host is the host");
+    }
+
+    /// The host's goodbye goes by the rule a seat's does: believed after a
+    /// moment's grace, and taken back by any word from the host in it. A
+    /// goodbye is a claim nothing checks, and read at once, one forged
+    /// with the host's address walked the whole table out of a round its
+    /// host was still running.
+    #[test]
+    fn a_hosts_goodbye_is_believed_after_the_grace() {
+        let mut joiner = OnlineSession::new(
+            UdpTransport::host(0).expect("game socket"),
+            Lockstep::new(1, vec![0, 1], 0),
+            2,
+            MatchTerms::default(),
+        );
+        joiner.mark_heard(0);
+        // Forged: the host is still talking.
+        joiner.peers.said_goodbye(0);
+        assert!(!joiner.host_gone(), "believed on arrival");
+        joiner.abandon_stalled(GOODBYE_GRACE / 2.0, false);
+        joiner.mark_heard(0);
+        joiner.abandon_stalled(GOODBYE_GRACE * 2.0, false);
+        assert!(!joiner.host_gone(), "a host still talking is not gone");
+        // Real: nothing more from the host.
+        joiner.peers.said_goodbye(0);
+        joiner.abandon_stalled(GOODBYE_GRACE / 2.0, false);
+        assert!(!joiner.host_gone(), "still within the grace");
+        joiner.abandon_stalled(GOODBYE_GRACE, false);
+        assert!(joiner.host_gone(), "and then the host is gone");
     }
 
     /// A round that falls apart puts the player back in the hall it was
@@ -1359,5 +1556,213 @@ mod tests {
         // Said once and not once a frame, however long it plays on.
         app.update();
         assert_eq!(app.world().resource::<EventLog>().0.len(), 1);
+    }
+
+    /// Let the datagrams in flight land.
+    fn settle() {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    /// A joiner greets a host that has gone quiet mid-round, about once a
+    /// second, and says nothing while the host is talking. The direct
+    /// `PINCH_JOIN` joiner leans on this: its one hello at boot, lost or
+    /// sent before the host was up, used to be the only one.
+    #[test]
+    fn a_joiner_greets_a_quiet_host_until_it_hears_it() {
+        let mut host = UdpTransport::host(0).expect("host socket");
+        let port = host.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        joiner.names[1] = "Bo".into();
+        let greetings = |host: &mut UdpTransport| {
+            settle();
+            host.recv_all()
+                .into_iter()
+                .filter(|(msg, _)| msg.greets())
+                .count()
+        };
+
+        joiner.abandon_stalled(0.5, false);
+        assert_eq!(greetings(&mut host), 0, "half a second is nothing yet");
+        joiner.abandon_stalled(0.6, false);
+        assert_eq!(greetings(&mut host), 1, "a quiet host is greeted");
+        joiner.abandon_stalled(0.5, false);
+        assert_eq!(greetings(&mut host), 0, "about once a second");
+        joiner.abandon_stalled(0.6, false);
+        assert_eq!(greetings(&mut host), 1, "and again");
+
+        // The host speaks, as it does on every tick of a round.
+        host.send(NetMsg::Hash { frame: 0, hash: 0 });
+        settle();
+        joiner.pump(PlayerAction::None, |_| {});
+        for _ in 0..4 {
+            joiner.abandon_stalled(0.2, false);
+            host.send(NetMsg::Hash { frame: 0, hash: 0 });
+            settle();
+            joiner.pump(PlayerAction::None, |_| {});
+        }
+        assert_eq!(greetings(&mut host), 0, "a host heard is not greeted");
+    }
+
+    /// A seat the host gave up on while its network was down comes back
+    /// to a host that has forgotten it, and is told it was dropped.
+    ///
+    /// The host admits a stranger only on a greeting, and a round sends
+    /// none, so the seat's inputs were ignored: it froze, and twenty
+    /// seconds later was told the host had left, which is not what
+    /// happened. A greeting while still at the table is answered with
+    /// what the seat already knows, and changes nothing.
+    #[test]
+    fn a_dropped_seat_that_comes_back_hears_it_was_dropped() {
+        let mut host = hosting(vec![0, 1]);
+        host.home.from_lobby = true;
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        joiner.home.from_lobby = true;
+        joiner.names[1] = "Bo".into();
+        joiner.transport.send(joiner.own_greeting());
+        settle();
+        host.pump(PlayerAction::None, |_| {});
+        host.peers.deal(&[Some(1)]);
+
+        // Still at the table, and greeting anyway: harmless.
+        joiner.abandon_stalled(QUIET_HOST + 0.1, false);
+        settle();
+        host.pump(PlayerAction::None, |_| {});
+        settle();
+        joiner.pump(PlayerAction::None, |_| {});
+        assert_eq!(host.transport.peer_count(), 1, "nobody new");
+        assert_eq!(host.peers.seat_of(0), Some(1), "Bo keeps the seat");
+        assert!(!joiner.next_round, "the round's own Start is no news");
+        assert_eq!(joiner.session.seat(), Some(1));
+        assert!(!joiner.dropped());
+
+        // Its network goes; the host gives the seat to the AI, and the one
+        // notice it sends while the seat is unreachable is lost.
+        let frame = host.session.frame();
+        host.session.abandon(1, frame);
+        host.abandoned.push((1, frame));
+        host.forget_seat(1);
+        assert_eq!(host.transport.peer_count(), 0, "forgotten");
+        settle();
+        let _ = joiner.transport.recv_all();
+
+        // Back, it hears nothing, greets, and is told on the host's next
+        // tick, which repeats every abandonment to everyone it has.
+        joiner.abandon_stalled(QUIET_HOST + 0.1, false);
+        settle();
+        host.pump(PlayerAction::None, |_| {});
+        host.pump(PlayerAction::None, |_| {});
+        settle();
+        joiner.pump(PlayerAction::None, |_| {});
+        assert!(
+            joiner.dropped(),
+            "told it was dropped, not that the host left"
+        );
+        assert!(!joiner.host_gone());
+    }
+
+    /// A watcher forgotten while its network was down greets on its way
+    /// back and is handed the round as it stands, which it takes: its own
+    /// board is past anything the tails can bring back. One a frame or two
+    /// behind keeps its board.
+    #[test]
+    fn a_forgotten_watcher_is_caught_up_again() {
+        use crate::sim::{InputMsg, generate_arena};
+        let mut host = hosting(vec![0, 1]);
+        host.home.from_lobby = true;
+        let port = host.transport.local_addr().expect("addr").port();
+        let bo = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        bo.send(NetMsg::hello("Bo"));
+        let mut dee = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::observer(vec![0, 1], DEFAULT_DELAY),
+            2,
+            host.terms,
+        );
+        dee.home.from_lobby = true;
+        dee.home.wants_to_watch = true;
+        settle();
+        dee.transport.send(dee.own_greeting());
+        settle();
+        host.pump(PlayerAction::None, |_| {});
+        host.peers.deal(&[Some(1), None]);
+
+        let mut board = generate_arena(3, 2, 12, 9);
+        for frame in 0..80 {
+            host.session.commit_local(PlayerAction::None);
+            host.session.receive(InputMsg {
+                player: 1,
+                frame: DEFAULT_DELAY + frame,
+                action: PlayerAction::None,
+            });
+            while let Some(actions) = host.session.advance() {
+                board.tick(&actions);
+            }
+        }
+        // Dee heard none of it, and has been forgotten as silent.
+        host.forget_peer(1);
+        settle();
+        let _ = dee.transport.recv_all();
+        assert!(!dee.lost_the_thread(dee.session.frame() + 2), "a hiccup");
+
+        dee.abandon_stalled(QUIET_HOST + 0.1, false);
+        settle();
+        host.pump(PlayerAction::None, |_| {});
+        host.send_catch_ups(&board);
+        for _ in 0..40 {
+            settle();
+            dee.pump(PlayerAction::None, |_| {});
+            if dee.next_round {
+                break;
+            }
+        }
+        assert!(dee.next_round, "on its way back into the round");
+        assert!(dee.watching());
+        assert_eq!(dee.catch_up.from_frame, Some(host.session.frame()));
+        drop(bo);
+    }
+
+    /// A goodbye on the results card in the host's name is answered with a
+    /// greeting at once, and a host still there answers it inside the
+    /// grace. Left to the once-a-second greeting, a forged one was
+    /// believed most of the time.
+    #[test]
+    fn a_forged_goodbye_on_the_card_is_taken_back_by_the_host() {
+        let mut host = hosting(vec![0, 1]);
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        joiner.poll_between_rounds(1.0);
+        settle();
+        host.poll_between_rounds(0.0);
+        settle();
+        joiner.poll_between_rounds(0.0);
+        assert_eq!(host.transport.peer_count(), 1);
+
+        // Sent from the host's own address, as a forger would make it look.
+        host.transport.send(NetMsg::Leaving);
+        settle();
+        joiner.poll_between_rounds(0.0);
+        assert!(joiner.peers.get(0).is_some_and(Peer::left), "heard");
+        settle();
+        host.poll_between_rounds(0.0);
+        settle();
+        joiner.poll_between_rounds(GOODBYE_GRACE / 2.0);
+        joiner.poll_between_rounds(GOODBYE_GRACE);
+        assert!(!joiner.host_gone(), "the host answered");
     }
 }

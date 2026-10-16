@@ -59,8 +59,6 @@ pub(in crate::app) fn handle_load_level(
     pending.0 = [PlayerAction::None; MAX_PLAYERS];
 
     sprites.despawn_all(&mut stage.commands);
-    // Timed levels show the tide; update_waterline hides the bars when the
-    // board has no round timer, so this is free for normal puzzles.
     stage.lay_out(&sim.0);
     // The middle of the beach, and in co-op the second pair of hands a tile
     // to its right rather than on top of it, where it would hide.

@@ -67,7 +67,7 @@ pub(super) fn direct_join() -> Option<String> {
 }
 
 /// `PINCH_BOT_SEATS=n`: the top n of the AI's seats are left to bots
-/// instead, for the match-setup hook and a hosted lobby.
+/// instead. Read by the match-setup hook (`PINCH_MATCH`) alone.
 pub(super) fn bot_seats() -> Option<u8> {
     std::env::var("PINCH_BOT_SEATS").ok()?.parse().ok()
 }
@@ -317,7 +317,6 @@ pub(super) fn kickoff(
         }
         DevHook::Skirmish { map, series } => {
             config.seats = seats().unwrap_or(4).clamp(2, crate::sim::MAX_PLAYERS as u8);
-            config.bots = config.seats - 1;
             config.map = map;
             config.series = series;
             // A hand-typed PINCH_BOTS is not trusted to leave a human seat:
@@ -420,12 +419,6 @@ pub(super) fn debug_tide(mut sim: ResMut<Sim>, online: Res<net::Online>, mut hoo
     sim.0.force_tide_event(TideEvent::ALL[index], 0);
 }
 
-/// A hook that reads its variable once, waits for the round to have
-/// something on the beach worth looking at, and then fires exactly once.
-///
-/// Three hooks share the shape: read the environment into a `Local` so it
-/// is not re-read every frame, bail unless the round has run a few seconds,
-/// set a `fired` flag.
 /// The mid-round moments a screenshot can be taken of, each fired once.
 #[derive(Default)]
 pub(super) struct MomentHooks {
@@ -434,6 +427,14 @@ pub(super) struct MomentHooks {
     interlude: OneShot,
 }
 
+/// A hook that reads its variable once, waits for the round to have
+/// something on the beach worth looking at, and then fires exactly once.
+///
+/// Seven hooks share it: `PINCH_TIDE`, `PINCH_LURE`, `PINCH_SPECTATOR`,
+/// `PINCH_BANNER`, and the three [`MomentHooks`]. Each reads the
+/// environment into a `Local` so it is not re-read every frame, waits
+/// until the round has run a few seconds (or its `_AT` override), and
+/// fires once.
 #[derive(Default)]
 pub(super) struct OneShot {
     /// The variable and its `_AT` override, read on the first frame.
@@ -733,8 +734,9 @@ pub(super) fn debug_moments(
     }
 }
 
-/// Dev hook: with `PINCH_AUTOPLAY=1`, the puzzle setup phase immediately
-/// applies the level's authored solution and starts the run.
+/// Dev hook: with `PINCH_AUTOPLAY=<level>` set (the level is read by
+/// [`DevHook::Autoplay`]; any value turns this on), the puzzle setup phase
+/// immediately applies the level's authored solution and starts the run.
 ///
 /// `PINCH_NOSOLVE=1` starts the run without placing anything, so a timed
 /// level plays itself out and loses. That is the only way to reach the end

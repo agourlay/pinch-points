@@ -100,7 +100,7 @@ file to start from.
 | | Move | Place | Remove | Clear all |
 |---|---|---|---|---|
 | P1 | WASD | arrow keys | Space | Left Shift |
-| P2 | IJKL | numpad 8/5/4/6 | numpad 0 | numpad Enter |
+| P2 | IJKL | numpad 8/5/4/6 | numpad 0 | numpad . |
 | any seat | gamepad d-pad/stick | face buttons | L1 | R1 |
 
 Pads are plug-and-play and fill seats from the highest player down, so

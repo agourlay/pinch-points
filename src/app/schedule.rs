@@ -104,9 +104,20 @@ pub(super) fn run_with(watching: watch::Watch) {
                     instance_flags: InstanceFlags::empty().with_env(),
                     ..WgpuSettings::default()
                 })),
+                // A pipeline is built the first time something needs it,
+                // and built in the background by default, drawing nothing
+                // meanwhile: the title screen opened on flat beige where
+                // the sea goes, the first board on bare clear colour round
+                // it, and turning anti-aliasing over could do it again on
+                // the settings screen. Waiting the frame out instead costs
+                // a hitch on that first use. (A shader file still loading
+                // at launch is drawn with nothing either way: this is the
+                // building, not the loading.)
+                synchronous_pipeline_compilation: true,
                 ..RenderPlugin::default()
             }),
     );
+    materials::install(&mut app);
     insert_resources(&mut app, saved);
     failsafe::install(&mut app);
     add_startup(&mut app);
@@ -177,6 +188,7 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.init_resource::<match_setup::MatchConfig>();
     app.init_resource::<match_setup::CustomBeaches>();
     app.init_resource::<board_render::CastleFlight>();
+    app.init_resource::<sim_events::BoardGeneration>();
     app.init_resource::<match_setup::MatchMenu>();
     app.init_resource::<Playback>();
     app.init_resource::<net::Online>();
@@ -219,6 +231,7 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     let (settings, caps) = saved.unwrap_or_default();
     app.insert_resource(settings);
     app.insert_resource(caps);
+    app.init_resource::<keycaps::LiveSeatKeys>();
     app.init_resource::<settings::screen::SettingsMenu>();
     app.init_resource::<controls::ControlsMenu>();
     app.insert_state(opens_on);
@@ -541,7 +554,12 @@ fn add_frame_systems(app: &mut App) {
     // this frame's Shift, not last frame's.
     app.add_systems(
         PreUpdate,
-        keycaps::learn_keycaps.after(bevy::input::InputSystems),
+        (
+            keycaps::learn_keycaps,
+            // Before any global letter is read: which seat keys it yields to.
+            keycaps::track_live_seat_keys,
+        )
+            .after(bevy::input::InputSystems),
     );
     // Asked once, before the first frame draws a legend: the platform
     // knows the whole board, including the punctuation nobody will press.
@@ -710,7 +728,8 @@ fn add_play_systems(app: &mut App) {
                 hint::reset_on_level,
                 achievements::track_puzzle_attempt.run_if(in_state(Screen::Puzzle)),
             )
-                .run_if(on_message::<LoadLevel>),
+                .run_if(on_message::<LoadLevel>)
+                .after(handle_load_level),
             cursor::move_cursor.run_if(
                 not(in_state(Screen::Menu))
                     .and_then(not(editor::editor_naming))
@@ -761,10 +780,13 @@ fn add_play_systems(app: &mut App) {
             // every peer does it on the host's word, so they all do it on
             // the same frame. When it is the *host* that has gone, no word
             // is coming and no seat can be filled, so the joiners are told
-            // rather than left watching a still beach. Paired into tuple
-            // slots because the list around it is at Bevy's limit.
+            // rather than left watching a still beach. And a joiner the
+            // host's next round reaches before its own board is over goes
+            // on to it. Paired into tuple slots because the list around it
+            // is at Bevy's limit.
             (
                 check_versus_over,
+                follow_the_called_round,
                 net::abandon_the_departed,
                 net::leave_a_hostless_round,
                 net::catch_up_again,
@@ -836,7 +858,10 @@ fn add_render_systems(app: &mut App) {
     app.add_systems(
         Update,
         (
-            board_render::sync_signposts,
+            // First, and paired for the twenty-element limit: every drawing
+            // below that remembers last frame's board asks this which
+            // board it is now.
+            (sim_events::track_board, board_render::sync_signposts).chain(),
             board_render::dress_signposts,
             board_render::sync_turnstiles,
             board_render::sync_castles,
@@ -844,20 +869,18 @@ fn add_render_systems(app: &mut App) {
             board_render::cheer_tier_ups,
             // After the kick, which also writes scale: a bank landing in
             // the same frame as a swap must not fight the flight.
-            board_render::fly_castles,
+            (
+                board_render::fly_castles,
+                board_render::steady_castle_shadows,
+                board_render::crown_the_leader,
+            )
+                .chain(),
             board_render::wave_pennants,
             // Paired: the list is at Bevy's twenty-element limit.
             (creatures::sync_crab_sprites, creatures::draw_sweeps),
             creatures::sync_gull_sprites,
             creatures::interpolate_crabs,
             creatures::interpolate_gulls,
-            // Grouped: the tide's two systems in one slot, because the
-            // list around them is at Bevy's twenty-element limit.
-            (
-                board_render::update_waterline,
-                board_render::update_water_foam,
-            )
-                .chain(),
             board_render::pulse_spawners,
             // Paired for the same twenty-element limit: pools and logs are
             // the terrain that moves.
@@ -918,7 +941,7 @@ fn add_event_systems(app: &mut App) {
             menu_scene::menu_ambience.run_if(postcard_screens),
             menu_scene::refit_shore.run_if(postcard_screens),
             menu_scene::tend_backdrop,
-            (menu_ui::dress_cards, menu_ui::scale_card_frames).chain(),
+            (menu_ui::dress_cards, art::fit_card_frame_mips),
         )
             .chain()
             .in_set(Frame::Events),
@@ -931,7 +954,7 @@ fn add_chrome_systems(app: &mut App) {
         Update,
         (
             hud::update_hud,
-            hud::header_backdrop,
+            (hud::header_backdrop, hud::fade_prompt),
             hud::field_guide_visibility,
             hud::update_field_guide,
             side_panels::update_side_panels,
@@ -971,7 +994,12 @@ fn add_finish_systems(app: &mut App) {
             // of Bevy's own, and is not there to be named before that has
             // run once.
             boot::teach_the_kanji_fallback,
+            boot::apply_antialiasing,
             boot::fit_camera,
+            // The sea follows the view's bottom edge: after the fit, before
+            // the shake, so it sits where the camera rests and shakes with
+            // the world.
+            board_render::lay_the_sea,
             // After the fit, which writes the camera's resting place: the
             // shake is an offset from there.
             boot::shake_camera,

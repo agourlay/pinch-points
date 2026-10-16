@@ -159,11 +159,29 @@ fn bracket_color(player: u8) -> Color {
 /// that did not happen in this room.
 ///
 /// A **replay** and a **spectated** match answer `false` for every seat,
-/// because neither spawns a cursor at all. Banks, raids, gulls and the
-/// horn still sound; posts go in and out in silence, and their rings and
-/// puffs stand down with them.
+/// because neither spawns a cursor at all. Which is why a post's knock and
+/// its ring ask [`post_noticed_here`] rather than this.
 pub fn seated_here(cursors: &Query<&Cursor>, seat: u8) -> bool {
     cursors.iter().any(|cursor| cursor.player == seat)
+}
+
+/// Whether a post going in, coming out or traded away at `owner`'s hand is
+/// one this machine marks: the knock it makes and the ring and sand under
+/// it. One rule for the sound and the picture, so the two cannot disagree
+/// about whose beach this is.
+///
+/// [`seated_here`] reads correctly wherever this machine answers for a
+/// seat: alone in a puzzle it is your seat, at a table every human seat
+/// sharing the screen, online your seat and nobody else's.
+///
+/// Where this machine answers for *no* seat it says "nobody" and means it.
+/// An online spectator and a replay both spawn no cursor at all (see
+/// `spawn_versus_cursors`), so every post on the beach went in silent and
+/// unmarked while the banks, the gulls and the horn played on. A machine
+/// holding no seat is watching, and a watcher sees and hears the whole
+/// beach.
+pub fn post_noticed_here(cursors: &Query<&Cursor>, owner: u8) -> bool {
+    cursors.is_empty() || seated_here(cursors, owner)
 }
 
 /// Tint flashing (denied) cursors red, and dim a cursor standing on a tile
@@ -693,9 +711,9 @@ mod tests {
             .expect("seat has a cursor")
     }
 
-    /// `seated_here` is the rule three systems ask before they act:
-    /// whether a post knocks, whether its ring is drawn, and whose pad a
-    /// raid reaches. It answers for the seats with a cursor and no others,
+    /// `seated_here` is the rule the beach asks before it acts: whose pad
+    /// a raid reaches, and under [`post_noticed_here`] whether a post
+    /// knocks and is marked. It answers for the seats with a cursor and no others,
     /// which leaves out the bots, the rivals down a wire, and a replay.
     #[test]
     fn only_the_seats_with_a_cursor_are_ours() {
@@ -719,6 +737,44 @@ mod tests {
             answers[2..].iter().all(|here| !here),
             "and nobody else is: {answers:?}"
         );
+    }
+
+    /// A post is marked where its owner is seated, and everywhere on a
+    /// machine that holds no seat: a replay or a spectator sees and hears
+    /// every post, where `seated_here` alone would answer "nobody" for all
+    /// of them. The knock and the ring both ask this, so they agree.
+    #[test]
+    fn a_watcher_notices_every_post_and_a_player_only_their_own() {
+        #[derive(Resource, Default)]
+        struct Answers([bool; crate::sim::MAX_PLAYERS]);
+
+        let noticed = |app: &mut App| {
+            app.init_resource::<Answers>();
+            app.add_systems(
+                Update,
+                |cursors: Query<&Cursor>, mut answers: ResMut<Answers>| {
+                    for seat in 0..crate::sim::MAX_PLAYERS {
+                        answers.0[seat] = post_noticed_here(&cursors, seat as u8);
+                    }
+                },
+            );
+            app.update();
+            app.world().resource::<Answers>().0
+        };
+        let seated = noticed(&mut beach(2));
+        assert!(seated[0] && seated[1], "the seats at this machine");
+        assert!(!seated[2..].iter().any(|&n| n), "and no others: {seated:?}");
+        let mut watching = beach(2);
+        let cursors: Vec<Entity> = watching
+            .world_mut()
+            .query_filtered::<Entity, With<Cursor>>()
+            .iter(watching.world())
+            .collect();
+        for cursor in cursors {
+            watching.world_mut().entity_mut(cursor).despawn();
+        }
+        let watched = noticed(&mut watching);
+        assert!(watched.iter().all(|&n| n), "a watcher sees every seat");
     }
 
     /// The snap [`glide_cursors`] keeps for long jumps, and the glide it

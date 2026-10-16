@@ -24,11 +24,17 @@ pub(crate) fn lockstep_for(seat: Option<u8>, humans: u8) -> Lockstep {
     }
 }
 
+/// How many of the host's own bots (route 2) a table with `people` seated
+/// has chairs for: the people sit first, and a bot gives way to one.
+pub(crate) fn chairs_for_bots(people: u8) -> usize {
+    MAX_PLAYERS.saturating_sub(usize::from(people))
+}
+
 /// The host's own bots (route 2) seated after the `people`, as many as
 /// there are chairs for, in the order they came: at the launch and again
 /// before every round, since a person leaving moves them up a chair.
 pub(crate) fn seat_the_hosts_bots(bots: &mut Vec<HostedBot>, people: u8) {
-    bots.truncate(MAX_PLAYERS - usize::from(people));
+    bots.truncate(chairs_for_bots(people));
     for (i, bot) in bots.iter_mut().enumerate() {
         bot.seat = people + i as u8;
     }
@@ -204,18 +210,7 @@ impl OnlineSession {
         let host = self.is_host();
         self.age_the_silence(delta);
         if !host && crate::app::lobby::once_a_second(&mut self.home.greet_in, delta) {
-            // The same greeting the lobby sends, wish to watch included,
-            // so a watcher on the card does not greet as a nameless
-            // player.
-            let me = self
-                .session
-                .seat()
-                .map_or("", |seat| &self.names[usize::from(seat)]);
-            let hello = match self.bot {
-                true => NetMsg::hello_bot(me),
-                false => crate::app::lobby::greeting(self.watch_wish(), me),
-            };
-            self.transport.send(hello);
+            self.transport.send(self.own_greeting());
         }
         for (msg, from) in self.transport.recv_all() {
             // Except a goodbye, which says the opposite, and whose grace
@@ -274,17 +269,48 @@ impl OnlineSession {
                 | NetMsg::CrowdPicks { .. }
                 | NetMsg::Incompatible { .. } => {}
                 // The host asked us to leave while the card was up.
-                NetMsg::Kicked => self.kicked |= !host,
+                NetMsg::Kicked | NetMsg::NoBots => self.kicked |= !host,
                 // Gone from the card: forgotten by the sweep just below,
                 // before the next round can deal it a chair. On a joiner
-                // it is the host, and there is no next round.
-                NetMsg::Leaving => self.peers.said_goodbye(from),
+                // it is the host, and there is no next round, unless the
+                // goodbye was forged (`heard_a_goodbye`).
+                NetMsg::Leaving => self.heard_a_goodbye(from),
             }
         }
         // After the socket is drained, so a greeting that arrived in this
         // very poll counts as a word before the silence is judged.
         if host {
             self.forget_the_silent();
+        }
+    }
+
+    /// What this peer says to its host to be let in, or to be answered:
+    /// the greeting the lobby sends, wish to watch included, so a watcher
+    /// does not greet as a nameless player, and a bot's seat says a bot
+    /// drives it. One greeting from the results card and from a round
+    /// whose host has gone quiet (`greet_a_quiet_host`).
+    pub(super) fn own_greeting(&self) -> NetMsg {
+        let me = self
+            .session
+            .seat()
+            .map_or("", |seat| &self.names[usize::from(seat)]);
+        match self.bot {
+            true => NetMsg::hello_bot(me),
+            false => crate::app::lobby::greeting(self.watch_wish(), me),
+        }
+    }
+
+    /// A goodbye off the wire. On a joiner it is the host's, and a claim
+    /// nothing checks: believed only once it has stood for a moment's
+    /// grace with no word from the host since (`has_gone`). Between rounds
+    /// the host says nothing unless spoken to, so the joiner greets at once
+    /// rather than at its next once-a-second greeting: a host still there
+    /// answers within a round trip, inside the grace, and that answer takes
+    /// a forged goodbye back.
+    pub(super) fn heard_a_goodbye(&mut self, from: usize) {
+        self.peers.said_goodbye(from);
+        if !self.is_host() {
+            self.transport.send(self.own_greeting());
         }
     }
 
@@ -364,7 +390,7 @@ impl OnlineSession {
             return false;
         }
         self.peers.row(from).watch = true;
-        self.transport.send_to(from, NetMsg::Kicked);
+        self.transport.send_to(from, NetMsg::NoBots);
         true
     }
 
@@ -558,8 +584,13 @@ impl OnlineSession {
         // A new round is everyone's from its first frame.
         self.catch_up = Default::default();
         self.stands.winner.new_round();
+        // A pick and a pause are both this round's. A pause frame kept from
+        // the last round matched one called at the same frame in this, and
+        // the peer that had called the old one, leaving, lifted somebody
+        // else's (`release_a_departed_pause`).
         for peer in self.peers.iter_mut() {
             peer.pick = None;
+            peer.pause = None;
         }
         // And nobody is late for a round that has not begun. The results
         // card is a place a table sits for a while, and carrying that
@@ -1124,8 +1155,8 @@ mod next_round_tests {
     }
 
     /// The other way round: a host that quits says so, and a joiner on
-    /// the card (or in the round) knows it at once instead of after
-    /// twenty seconds of silence.
+    /// the card (or in the round) knows it a moment later (the goodbye's
+    /// grace) instead of after twenty seconds of silence.
     #[test]
     fn a_host_that_quits_is_gone_at_once() {
         let host = OnlineSession::new(
@@ -1152,14 +1183,18 @@ mod next_round_tests {
         }
         assert!(!joiner.host_gone());
         drop(host);
+        let step = 0.05;
+        let mut waited = 0.0;
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(5));
-            joiner.poll_between_rounds(0.0);
+            joiner.poll_between_rounds(step);
+            waited += step;
             if joiner.host_gone() {
                 break;
             }
         }
         assert!(joiner.host_gone(), "told, not left to wait it out");
+        assert!(waited < 1.0, "and within a second: {waited}");
     }
 
     /// The host's call for the next round can land on a joiner that is
@@ -1212,6 +1247,19 @@ mod next_round_tests {
             0,
             "and the new lockstep is untouched"
         );
+        // Nor by any pump after it, until the shell has walked the joiner
+        // out of the arena: the board is still the old one, and the frames
+        // the new lockstep has in hand are the new round's.
+        let commit = joiner.session.next_commit();
+        for _ in 0..10 {
+            joiner.pump(PlayerAction::None, |_| ticks += 1);
+        }
+        assert_eq!(
+            rearmed_in.map(|_| ticks),
+            Some(0),
+            "the old board was ticked"
+        );
+        assert_eq!(joiner.session.next_commit(), commit, "or committed for");
     }
 
     /// A series tally is kept by seat, and seats move. A peer that leaves
@@ -1325,7 +1373,7 @@ mod next_round_tests {
             told |= bot
                 .recv_all()
                 .into_iter()
-                .any(|(msg, _)| msg == NetMsg::Kicked);
+                .any(|(msg, _)| msg == NetMsg::NoBots);
             if told {
                 break;
             }

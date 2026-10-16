@@ -252,6 +252,10 @@ impl BotDriver {
             }
             GameMsg::Dropped { .. } => {
                 self.connected = false;
+                // Its seat idles from the moment the connection went: a
+                // reply it held is not acted on, even if it is back before
+                // the next commit.
+                self.in_hand = None;
                 (journal.console)(format!("  {name} dropped at tick {t}; its seat idles"));
                 let _ = writeln!(
                     journal.log,
@@ -327,6 +331,12 @@ impl BotDriver {
             self.in_hand = Some((reply, at));
         }
         unblocked
+    }
+
+    /// The seat is out of play for now: whatever reply it held is dropped,
+    /// not acted on later when it comes back.
+    pub fn idle(&mut self) {
+        self.in_hand = None;
     }
 
     /// What the bot asks this seat to do at the commit: its newest reply,

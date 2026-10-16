@@ -29,6 +29,7 @@ to connect; the arena prints the connection string to start it with.
   --port P                 the port to wait on
   --key KEY                a fixed join key instead of a fresh one
   --map NAME|FILE          classic, generated, small, large, xl, ocean, or a level file
+                           whose castles are marked exactly 0 to seats-1
   --seats N                table size; seats beyond those given play ai:normal
   --seed S                 the first beach's seed (default: random, printed)
   --round quick|short|standard|long

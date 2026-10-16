@@ -137,7 +137,7 @@ pub fn setup_input(
             apply_setup(command, &mut hand, &mut sim, &mut next_phase, &mut denied);
         }
     }
-    if keys.just_pressed(KeyCode::Enter)
+    if crate::app::menu_ui::enter(&keys)
         && let Some(mut hand) = cursors.iter_mut().find(|c| c.player == 0)
     {
         let start = SeatCommand::Start;
@@ -185,13 +185,24 @@ pub fn browse_levels(
     // way past a stage you have not cleared. Backward from the first
     // shipped stage wraps onto the last, which is as locked as anything
     // ahead: the same ladder, the same refusal.
-    let asked = if keyboard.caps.just_pressed(&keyboard.keys, 'N') {
+    let asked = if keyboard
+        .caps
+        .global_pressed(&keyboard.keys, 'N', &keyboard.live)
+    {
         start + (at - start + 1) % len
-    } else if keyboard.caps.just_pressed(&keyboard.keys, 'P') {
+    } else if keyboard
+        .caps
+        .global_pressed(&keyboard.keys, 'P', &keyboard.live)
+    {
         start + (at - start + len - 1) % len
     } else {
         return;
     };
+    // A section of one level has nowhere to browse to: reloading it would
+    // only sweep the posts the player has set up off the board.
+    if asked == at {
+        return;
+    }
     if ladder.climb_to(asked) {
         load.write(LoadLevel { keep_posts: false });
     } else {
@@ -211,17 +222,20 @@ pub fn browse_levels(
 pub fn running_input(
     keys: Res<ButtonInput<KeyCode>>,
     caps: Res<crate::app::keycaps::KeyCaps>,
+    live: Res<crate::app::keycaps::LiveSeatKeys>,
     mut load: MessageWriter<LoadLevel>,
 ) {
-    if caps.just_pressed(&keys, 'R') {
+    if caps.global_pressed(&keys, 'R', &live) {
         load.write(LoadLevel { keep_posts: true });
     }
 }
 
-/// Puzzle won/lost phase: Enter advances (or retries after a loss), R replays.
+/// Puzzle won/lost phase: Enter advances (or retries after a loss), R resets to
+/// setup with the arrows the run began with.
 pub fn done_input(
     keys: Res<ButtonInput<KeyCode>>,
     caps: Res<crate::app::keycaps::KeyCaps>,
+    live: Res<crate::app::keycaps::LiveSeatKeys>,
     phase: Res<State<Phase>>,
     mut campaign: ResMut<Campaign>,
     mut next_screen: ResMut<NextState<Screen>>,
@@ -233,7 +247,7 @@ pub fn done_input(
         next_screen.set(Screen::StageSelect);
         return;
     }
-    if keys.just_pressed(KeyCode::Enter) {
+    if crate::app::menu_ui::enter(&keys) {
         if *phase.get() != Phase::Won {
             load.write(LoadLevel { keep_posts: true });
             return;
@@ -253,7 +267,7 @@ pub fn done_input(
         // carried onto the next one.
         return;
     }
-    if caps.just_pressed(&keys, 'R') {
+    if caps.global_pressed(&keys, 'R', &live) {
         load.write(LoadLevel { keep_posts: true });
     }
 }
@@ -499,6 +513,7 @@ mod tests {
         app.insert_resource(State::new(Phase::Won));
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
         app.insert_resource(campaign(index));
         app.add_message::<LoadLevel>();
         app.add_systems(Update, done_input);
@@ -551,6 +566,16 @@ mod tests {
         assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
     }
 
+    /// Num Enter is Enter on the puzzle's cards as on every menu and the
+    /// versus results: it takes the next stage from the Won card.
+    #[test]
+    fn num_enter_takes_the_won_cards_door() {
+        let mut app = won(0);
+        tap(&mut app, KeyCode::NumpadEnter);
+        assert_eq!(loads(&app), 1, "the next stage is loaded");
+        assert_eq!(app.world().resource::<Campaign>().index, 1);
+    }
+
     /// Browsing from setup honours the ladder both ways: P from the first
     /// stage wraps onto the end of the shipped list, which is as locked as
     /// any stage ahead, and is refused with the same flash; once the first
@@ -559,29 +584,7 @@ mod tests {
     /// land on it: browsing stays within the shipped campaign.
     #[test]
     fn browsing_from_setup_honours_the_ladder_both_ways() {
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Phase>();
-        app.insert_resource(State::new(Phase::Setup));
-        app.init_resource::<ButtonInput<KeyCode>>();
-        app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.insert_resource(GameSettings::default());
-        app.init_resource::<Progress>();
-        app.insert_resource(Sim(campaign_with(0, true).levels[0].board()));
-        app.insert_resource(campaign_with(0, true));
-        app.add_message::<LoadLevel>();
-        app.add_message::<PlacementDenied>();
-        app.add_systems(Update, browse_levels);
-        let mut cursor = Cursor::seated(0);
-        (cursor.x, cursor.y) = (1, 1);
-        app.world_mut().spawn((cursor, Transform::default()));
-        let denials = |app: &App| {
-            app.world()
-                .resource::<Messages<PlacementDenied>>()
-                .iter_current_update_messages()
-                .count()
-        };
-
+        let mut app = browsing_app(campaign_with(0, true));
         tap(&mut app, KeyCode::KeyP);
         assert_eq!(
             app.world().resource::<Campaign>().index,
@@ -611,5 +614,48 @@ mod tests {
         tap(&mut app, KeyCode::KeyP);
         assert_eq!(app.world().resource::<Campaign>().index, 0, "and back");
         assert_eq!(denials(&app), 0);
+    }
+
+    /// Setup with `campaign` loaded and browsing live, P1's cursor down.
+    fn browsing_app(campaign: Campaign) -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Phase>();
+        app.insert_resource(State::new(Phase::Setup));
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<Progress>();
+        app.insert_resource(Sim(campaign.current().board()));
+        app.insert_resource(campaign);
+        app.add_message::<LoadLevel>();
+        app.add_message::<PlacementDenied>();
+        app.add_systems(Update, browse_levels);
+        let mut cursor = Cursor::seated(0);
+        (cursor.x, cursor.y) = (1, 1);
+        app.world_mut().spawn((cursor, Transform::default()));
+        app
+    }
+
+    fn denials(app: &App) -> usize {
+        app.world()
+            .resource::<Messages<PlacementDenied>>()
+            .iter_current_update_messages()
+            .count()
+    }
+
+    /// The player's own shelf with one level on it: N and P have nowhere
+    /// to go, and must not reload the level, which would sweep the posts
+    /// already set up off the board.
+    #[test]
+    fn browsing_a_shelf_of_one_keeps_the_setup() {
+        let mut app = browsing_app(campaign_with(3, true));
+        for key in [KeyCode::KeyN, KeyCode::KeyP] {
+            tap(&mut app, key);
+            assert_eq!(app.world().resource::<Campaign>().index, 3, "{key:?}");
+            assert_eq!(loads(&app), 0, "{key:?} reloads nothing");
+            assert_eq!(denials(&app), 0, "{key:?} refuses nothing");
+        }
     }
 }

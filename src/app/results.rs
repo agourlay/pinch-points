@@ -182,14 +182,14 @@ fn standings_rows(
             })
             .collect();
         standing.sort_by_key(|&(_, total, seat)| (std::cmp::Reverse(total), seat));
+        let totals: Vec<u32> = standing.iter().map(|&(_, total, _)| total).collect();
         return standing
             .iter()
-            .map(|(name, total, seat)| (name.clone(), *total, *seat))
-            .enumerate()
-            .map(|(place, (name, total, seat))| {
+            .zip(places(&totals))
+            .map(|((name, total, seat), place)| {
                 (
-                    format!("{}  {name:<13} {total:>4}", place + 1),
-                    palette::player_color(seat),
+                    format!("{place}  {name:<13} {total:>4}"),
+                    palette::player_color(*seat),
                 )
             })
             .collect();
@@ -203,20 +203,32 @@ fn standings_rows(
         .max()
         .unwrap_or(0)
         .max(MIN_WHO);
-    standing_order(scores, seats)
+    let order = standing_order(scores, seats);
+    let sorted: Vec<u32> = order.iter().map(|&seat| scores[seat as usize]).collect();
+    order
         .iter()
-        .enumerate()
-        .map(|(place, &seat)| {
+        .zip(places(&sorted))
+        .map(|(&seat, place)| {
             (
                 format!(
-                    "{}  {:<width$} {:>4}",
-                    place + 1,
+                    "{place}  {:<width$} {:>4}",
                     who(seat),
                     scores[seat as usize]
                 ),
                 palette::player_color(seat),
             )
         })
+        .collect()
+}
+
+/// The place each of `sorted` (best first) finishes in, ranked the way a
+/// leaderboard is: equal scores share a place and the next one down skips
+/// past them (1, 1, 3). A tie is a dead heat on the card, so its rows must
+/// not read as first and second.
+fn places(sorted: &[u32]) -> Vec<usize> {
+    sorted
+        .iter()
+        .map(|score| 1 + sorted.iter().filter(|other| *other > score).count())
         .collect()
 }
 
@@ -596,7 +608,7 @@ pub fn spawn_puzzle_won(
     // last of those ends only the list. So the card counts this level
     // within whichever of the two it belongs to, and only the shipped
     // section's end is the campaign's end.
-    let (place, of, custom) = campaign.place();
+    let (_, _, custom) = campaign.place();
     let last = campaign.is_last();
     let last_shipped = last && !custom;
     let board = &sim.0;
@@ -624,15 +636,7 @@ pub fn spawn_puzzle_won(
                 winner_castle(card, &art, tier, palette::player_color(owner));
             }
             saved_row(card, &art, &campaign, board);
-            let shelf = match custom {
-                true => format!("{}  ", tr.stage_custom),
-                false => String::new(),
-            };
-            card.spawn(card_line(
-                format!("{shelf}{place} / {of}  -  {name}"),
-                21.0,
-                CARD_TEXT,
-            ));
+            card.spawn(card_line(level_line(tr, &campaign, &name), 21.0, CARD_TEXT));
             card.spawn(card_line(
                 match (last, saved_all) {
                     (true, _) => tr.last_level,
@@ -644,6 +648,19 @@ pub fn spawn_puzzle_won(
             ));
         });
     });
+}
+
+/// Which level a puzzle card is about: its place in its own section and
+/// its name. Both the Won and the Lost card say it in these words, so the
+/// player's own levels read as a shelf of their own on either, the way the
+/// header bar counts them.
+fn level_line(tr: &crate::app::i18n::Tr, campaign: &Campaign, name: &str) -> String {
+    let (place, of, custom) = campaign.place();
+    let shelf = match custom {
+        true => format!("{}  ", tr.stage_custom),
+        false => String::new(),
+    };
+    format!("{shelf}{place} / {of}  -  {name}")
 }
 
 /// How big a crab is in the row of them on a puzzle's card.
@@ -757,15 +774,7 @@ pub fn spawn_puzzle_lost(
             if let (Some(sim), Some(art)) = (&sim, &art) {
                 saved_row(card, art, &campaign, &sim.0);
             }
-            card.spawn(card_line(
-                format!(
-                    "{} / {}  -  {name}",
-                    campaign.index + 1,
-                    campaign.levels.len()
-                ),
-                21.0,
-                CARD_TEXT,
-            ));
+            card.spawn(card_line(level_line(tr, &campaign, &name), 21.0, CARD_TEXT));
             card.spawn(card_line(tr.prompt_lost, 17.0, CARD_TEXT.darker(0.15)));
         });
     });
@@ -829,6 +838,34 @@ mod tests {
         assert_eq!(cards(&mut app), 0, "and gone again on retry");
     }
 
+    /// A player's own level is counted on its own shelf on the Lost card
+    /// just as on the Won card and the header: driftwood one, not stage a
+    /// hundred and one.
+    #[test]
+    fn a_lost_custom_level_counts_on_its_own_shelf() {
+        use crate::app::CampaignKind;
+        use crate::sim::campaign_levels;
+        let mut levels = campaign_levels();
+        let builtins = levels.len();
+        levels.push(levels[0].clone());
+        let campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: builtins,
+            builtins,
+        };
+        let line = level_line(&EN, &campaign, "Mine");
+        assert_eq!(line, format!("{}  1 / 1  -  Mine", EN.stage_custom));
+        let shipped = Campaign {
+            index: 3,
+            ..campaign
+        };
+        assert_eq!(
+            level_line(&EN, &shipped, "Four"),
+            format!("4 / {builtins}  -  Four")
+        );
+    }
+
     /// The series line fits the card at its widest. A team of three with
     /// the longest names a seat can carry and the most wins a series can
     /// give is one entry, and has to fit a line on its own; the card around
@@ -876,6 +913,36 @@ mod tests {
         // Each row wears its own seat colour, not its placing colour.
         assert_eq!(rows[0].1, palette::player_color(1));
         assert_eq!(rows[2].1, palette::player_color(0));
+    }
+
+    /// Equal scores share a place, and the next row down skips past them:
+    /// a dead heat is not drawn as a first and a second.
+    #[test]
+    fn tied_scores_share_a_place() {
+        assert_eq!(places(&[9, 5, 5, 0]), vec![1, 2, 2, 4]);
+        assert_eq!(places(&[4, 4]), vec![1, 1]);
+        let rows = standings_rows(
+            &GameSettings::default(),
+            &crate::app::SeatNames::default(),
+            &[7, 7, 2, 0, 0, 0],
+            3,
+            TeamMode::Solo,
+            |_| "",
+        );
+        let lines: Vec<&str> = rows.iter().map(|(line, _)| line.as_str()).collect();
+        assert!(lines[0].starts_with("1  P1"), "{lines:?}");
+        assert!(lines[1].starts_with("1  P2"), "{lines:?}");
+        assert!(lines[2].starts_with("3  P3"), "{lines:?}");
+        let teams = standings_rows(
+            &GameSettings::default(),
+            &crate::app::SeatNames::default(),
+            &[3, 3, 3, 3, 0, 0],
+            4,
+            TeamMode::Pairs,
+            |_| "",
+        );
+        assert!(teams[0].0.starts_with("1 "), "{teams:?}");
+        assert!(teams[1].0.starts_with("1 "), "{teams:?}");
     }
 
     /// Team standings collapse to one row per team, named by the seats on

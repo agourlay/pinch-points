@@ -29,7 +29,14 @@ fn parse_in<T: std::str::FromStr + PartialOrd + Copy>(
     value: &str,
     range: &std::ops::RangeInclusive<T>,
 ) -> Option<T> {
-    value.parse().ok().map(|v| clamp_in(v, range))
+    // Not a NaN, which no range holds and `clamp_in` passes through: a
+    // repeat delay of "NaN" never fired, and the dial, adding to it, kept
+    // it NaN for good.
+    value
+        .parse()
+        .ok()
+        .filter(|v: &T| v.partial_cmp(v).is_some())
+        .map(|v| clamp_in(v, range))
 }
 
 /// The settings file, under the XDG config directory.
@@ -63,6 +70,7 @@ impl GameSettings {
             fullscreen,
             ui_scale,
             reduced_motion,
+            antialiasing,
             binds,
             names,
             replay_cap,
@@ -75,7 +83,7 @@ impl GameSettings {
              music_on: {}\nmusic: {}\nsfx_on: {}\nsfx: {}\n\
              puzzle_speed: {}\nteams: {}\nlanguage: {}\n\
              rumble: {}\npad_deadzone: {}\npalette: {}\nfullscreen: {}\nui_scale: {}\n\
-             reduced_motion: {}\nnames: {}\nreplay_cap: {}\nbeach: {}\n\
+             reduced_motion: {}\nantialiasing: {}\nnames: {}\nreplay_cap: {}\nbeach: {}\n\
              updates: {}\nkeycaps: {}\nkeyboard: {}\n\
              p1_input: {}\np2_input: {}\n{}",
             commit.key(),
@@ -94,6 +102,7 @@ impl GameSettings {
             on_off(*fullscreen),
             ui_scale,
             on_off(*reduced_motion),
+            on_off(*antialiasing),
             names.join("|"),
             replay_cap,
             last_beach,
@@ -165,6 +174,7 @@ impl GameSettings {
                     settings.ui_scale = read.unwrap_or(settings.ui_scale);
                 }
                 "reduced_motion" => settings.reduced_motion = value == "on",
+                "antialiasing" => settings.antialiasing = is_on(value),
                 // `a|b|c|d`, so a name may hold spaces. Missing trailing
                 // fields simply stay unnamed.
                 "names" => {
@@ -267,6 +277,9 @@ mod tests {
             fullscreen: false,
             ui_scale: 70,
             reduced_motion: true,
+            // Off, away from its default, or a broken parse that read it
+            // back as on would pass.
+            antialiasing: false,
             check_updates: false,
             binds: {
                 let mut binds = default_binds();
@@ -365,6 +378,15 @@ mod tests {
         assert_eq!(settings.pad_deadzone, 80);
         assert!(settings.repeat_delay <= 0.5);
         assert_eq!(settings.language, Lang::En);
+        // A NaN is in no range: the default, not a delay that never fires.
+        let nan = GameSettings::parse(
+            "repeat_delay: NaN
+repeat_interval: nan
+",
+        )
+        .0;
+        assert_eq!(nan.repeat_delay, GameSettings::default().repeat_delay);
+        assert_eq!(nan.repeat_interval, GameSettings::default().repeat_interval);
     }
 
     /// A settings.txt from before the switches existed comes up with the

@@ -68,7 +68,14 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// them the crab cap leaves out (`fair_spawns`), where they had been
 /// tried top-left first. 25 is where the AI's moment to think in each
 /// window started taking the board's seed, so a peer on 24 seats the same
-/// AI on a different schedule.
+/// AI on a different schedule. 26 is where a handmade beach started being
+/// built on the round's seed rather than the one its file names
+/// (`Level::board_seeded`): another version 10. 27 is where a mania's
+/// flood started coming out of two holes at a time, the holes taking
+/// turns, where every hole had flooded at once. 28 is where an AI seat's
+/// hand started walking from where it last placed, whether or not that
+/// post still stands, where a hand with no post up had placed anywhere at
+/// once: the board carries it, and hashes it.
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in
@@ -78,7 +85,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// frozen for all time**: it is how a build tells "I cannot read this"
 /// apart from "I disagree with this", however the rest of the format
 /// moves.
-pub const PROTOCOL_VERSION: u8 = 25;
+pub const PROTOCOL_VERSION: u8 = 28;
 
 /// Connections a host accepts: five rivals (a six-seat table) and everyone
 /// else who turned up. How many of them get a seat is the lobby's
@@ -129,7 +136,8 @@ pub struct UdpTransport {
     /// would otherwise be taken back as a new peer the moment it next
     /// spoke. Each is told again instead. A person who means to come back
     /// dials again, from a fresh socket and so a fresh address.
-    turned_away: Vec<SocketAddr>,
+    /// With the word each was turned away with, which it is told again.
+    turned_away: Vec<(SocketAddr, NetMsg)>,
 }
 
 /// How many turned-away addresses a host remembers, oldest forgotten
@@ -292,17 +300,23 @@ impl UdpTransport {
     /// [`Self::forget`], and anything more from its address is answered
     /// with the same word rather than taken in as a new peer.
     pub fn turn_away(&mut self, index: usize) {
+        self.turn_away_saying(index, NetMsg::Kicked);
+    }
+
+    /// [`Self::turn_away`] with the word the peer is told and told again:
+    /// [`NetMsg::NoBots`] for a bot at a beach not taking them.
+    pub fn turn_away_saying(&mut self, index: usize, word: NetMsg) {
         let Some(&addr) = self.peers.get(index) else {
             return;
         };
         for _ in 0..3 {
-            self.send_to(index, NetMsg::Kicked);
+            self.send_to(index, word.clone());
         }
         self.forget(index);
         if self.turned_away.len() >= TURNED_AWAY {
             self.turned_away.remove(0);
         }
-        self.turned_away.push(addr);
+        self.turned_away.push((addr, word));
     }
 
     /// Send to one peer by index (host relaying / seat assignment).
@@ -318,7 +332,8 @@ impl UdpTransport {
     }
 
     /// Drain every waiting datagram as `(message, peer index)`. Unknown
-    /// senders become new peers on the host while capacity remains.
+    /// senders that greet become new peers on the host while capacity
+    /// remains; anything else from them is dropped.
     pub fn recv_all(&mut self) -> Vec<(NetMsg, usize)> {
         let mut out = Vec::new();
         // The named `Start` is 162 bytes, and the 64-byte buffer that
@@ -342,19 +357,25 @@ impl UdpTransport {
                         }
                         continue;
                     };
-                    if self.turned_away.contains(&from) {
-                        let _ = self.socket.send_to(&NetMsg::Kicked.encode(), from);
+                    if let Some((_, word)) = self.turned_away.iter().find(|(gone, _)| *gone == from)
+                    {
+                        let _ = self.socket.send_to(&word.clone().encode(), from);
                         continue;
                     }
                     let index = match self.peers.iter().position(|p| *p == from) {
                         Some(index) => index,
-                        // A goodbye from nobody this socket knows: the
-                        // second or third copy of one whose sender was
-                        // forgotten on the first. Taken as a greeting, it
-                        // sat a nameless row at the table, holding one of
-                        // the peer slots until the next sweep.
-                        None if msg == NetMsg::Leaving => continue,
-                        None if self.accept_new && self.peers.len() < self.max_peers => {
+                        // Only a greeting makes a newcomer (`NetMsg::greets`).
+                        // Anything else from an address nobody greeted from
+                        // is a stray, or a peer forgotten that will greet
+                        // again. One `Pause` from anything on the LAN froze
+                        // a running table, an `Inputs` was dealt a chair,
+                        // and the second or third copy of a goodbye whose
+                        // sender was forgotten on the first sat a nameless
+                        // row at the table until the next sweep.
+                        None if self.accept_new
+                            && msg.greets()
+                            && self.peers.len() < self.max_peers =>
+                        {
                             self.peers.push(from);
                             self.peers.len() - 1
                         }
@@ -459,6 +480,46 @@ mod tests {
             }
         }
         assert_eq!(host.peer_count(), 1);
+    }
+
+    /// Only a greeting seats a newcomer. Anything else that decodes from
+    /// an address nobody greeted from is dropped: one stray `Pause` froze
+    /// a running table, and a stray `Inputs` was given a lobby row and
+    /// dealt a chair at the next round.
+    #[test]
+    fn only_a_greeting_admits_a_newcomer() {
+        let mut host = UdpTransport::host(0).expect("bind");
+        let port = host.local_addr().expect("addr").port();
+        let stranger = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        stranger.send(NetMsg::Pause { frame: 40 });
+        stranger.send(NetMsg::Resume { frame: 40 });
+        stranger.send(NetMsg::Hash { frame: 30, hash: 1 });
+        stranger.send(NetMsg::chat("Bo", "hi"));
+        stranger.send_inputs(
+            &[InputMsg {
+                player: 1,
+                frame: 3,
+                action: crate::sim::PlayerAction::None,
+            }],
+            |_| true,
+        );
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            assert!(host.recv_all().is_empty(), "nothing from a stranger");
+        }
+        assert_eq!(host.peer_count(), 0, "and nobody new at the table");
+        // A greeting, to play or to watch, is how anybody comes in.
+        let watcher = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        stranger.send(NetMsg::hello_bot("Greedy"));
+        watcher.send(NetMsg::watch("Dee"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.recv_all();
+            if host.peer_count() == 2 {
+                break;
+            }
+        }
+        assert_eq!(host.peer_count(), 2, "both greetings were taken");
     }
 
     /// A host on another build answers the greeting instead of ignoring it,

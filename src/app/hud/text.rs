@@ -87,7 +87,38 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
     HudText::new(title, status, prompt)
 }
 
-pub(super) fn editor_text(tr: &Tr, editor: &EditorState, sim: &Sim) -> HudText {
+/// Where the editor's rebound move keys go in its prompt until the
+/// legend has been spelled: nothing [`KeyCaps::legend`] reads.
+///
+/// [`KeyCaps::legend`]: crate::app::keycaps::KeyCaps::legend
+const MOVES_SLOT: &str = "{moves}";
+
+/// P1's move keys as the editor's prompt names them, in the order "WASD"
+/// spells them (up, left, down, right), or `None` while they are WASD. The
+/// editor's cursor moves on P1's bindings, and the line said "WASD move"
+/// over rebound keys with WASD doing nothing.
+fn editor_moves(r: &Readout) -> Option<String> {
+    use crate::app::binds::Action;
+    let binds = &r.settings.binds[0];
+    let keys = [
+        Action::MoveUp,
+        Action::MoveLeft,
+        Action::MoveDown,
+        Action::MoveRight,
+    ]
+    .map(|action| binds.key(action));
+    if keys == [KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD] {
+        return None;
+    }
+    Some(crate::app::editor::spell_block(r.keycaps, keys))
+}
+
+pub(super) fn editor_text(
+    tr: &Tr,
+    editor: &EditorState,
+    sim: &Sim,
+    moves: Option<&str>,
+) -> HudText {
     let testing = editor.is_testing();
     // The title carries the level's name, which is the file it saves to
     // and the caption the stage list shows, so it has to be visible before
@@ -120,10 +151,10 @@ pub(super) fn editor_text(tr: &Tr, editor: &EditorState, sim: &Sim) -> HudText {
         }
     };
     let status = fill(&counted, &[("msg", &editor.feedback)]);
-    let prompt = if testing {
-        tr.ed_playtest_prompt.to_string()
-    } else {
-        tr.ed_prompt.to_string()
+    let prompt = match (testing, moves) {
+        (true, _) => tr.ed_playtest_prompt.to_string(),
+        (false, Some(moves)) => tr.ed_prompt.replacen("WASD", moves, 1),
+        (false, None) => tr.ed_prompt.to_string(),
     };
     HudText::new(title, status, prompt)
 }
@@ -234,7 +265,7 @@ pub(super) fn puzzle_text(
 /// keeps the answer it has always given there: the header and the round's
 /// prompt call that a replay, while the results card's prompt (which never
 /// looked at the recording) and every seat question go by the session.
-fn header_viewer(online: &Online, playback: &Playback) -> Viewer {
+pub(super) fn header_viewer(online: &Online, playback: &Playback) -> Viewer {
     match playback.0 {
         Some(_) => Viewer::Replay,
         None => Viewer::of(online, false),
@@ -266,12 +297,18 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         Viewer::Replay => tr.title_replay.to_string(),
         Viewer::Peer(seat) => fill(tr.title_online, &[("p", &names.label(tr, seat))]),
         Viewer::Spectator => tr.title_watching.to_string(),
+        // "You are P1" only when there is one "you": a couch of two humans
+        // and an AI has no single player to address.
         Viewer::Table if controllers.ai_count() > 0 => {
-            let count = controllers.ai_count();
-            fill(
-                tr.title_vs_ai,
-                &[("n", &count.to_string()), ("p", &names.label(tr, 0))],
-            )
+            let n = controllers.ai_count().to_string();
+            match controllers.local_count(seats.0) == 1 {
+                true => fill(tr.title_vs_ai, &[("n", &n), ("p", &names.label(tr, 0))]),
+                false => format!(
+                    "{}{}",
+                    tr.title_turf_war,
+                    fill(tr.lobby_ai_seats, &[("n", &n)])
+                ),
+            }
         }
         Viewer::Table => tr.title_turf_war.to_string(),
     };
@@ -402,8 +439,13 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         VersusPhase::Countdown | VersusPhase::Running if settings.custom_binds() => {
             tr.prompt_versus_custom.to_string()
         }
+        // The short legend names P1's keys alone, so it is for a table
+        // where one person plays at these keys. A couch of two against an
+        // AI still has P2 on the second block, who needs the local legend.
+        // A table of machines alone has nobody to teach either way, and
+        // keeps the lighter line.
         VersusPhase::Countdown | VersusPhase::Running
-            if online.0.is_some() || controllers.machine_count() > 0 =>
+            if online.0.is_some() || controllers.local_count(seats.0) <= 1 =>
         {
             tr.prompt_versus_short.to_string()
         }
@@ -487,6 +529,18 @@ pub(super) fn screen_text(screen: Screen, r: &Readout) -> HudText {
     // Spelled in this keyboard's caps here, once, rather than in each of
     // the legends that name the move keys.
     said.prompt = r.keycaps.legend(&said.prompt);
+    // The editor's rebound move keys, already in this keyboard's caps, go
+    // in after: put in before, caps that happen to read WASD were spelled
+    // over again as the QWERTY keys the legend means by it.
+    if screen == Screen::Editor {
+        if let Some(moves) = editor_moves(r) {
+            said.prompt = said.prompt.replacen(MOVES_SLOT, &moves, 1);
+        }
+        // The walls and a playtest's keys, after the legend for the same
+        // reason.
+        said.prompt =
+            crate::app::editor::spell_editor_keys(&said.prompt, r.tr, r.keycaps, r.settings);
+    }
     said
 }
 
@@ -557,7 +611,12 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
             String::new(),
         ),
         Screen::Lobby => lobby_text(r.tr, r.lobby),
-        Screen::Editor => editor_text(r.tr, r.editor, r.sim),
+        Screen::Editor => editor_text(
+            r.tr,
+            r.editor,
+            r.sim,
+            editor_moves(r).is_some().then_some(MOVES_SLOT),
+        ),
         Screen::Puzzle => puzzle_text(
             r.tr,
             r.lang,
@@ -739,18 +798,21 @@ mod tests {
             title,
             status,
             prompt,
-        } = editor_text(&EN, &editor, &sim);
+        } = editor_text(&EN, &editor, &sim, None);
         assert!(title.starts_with(EN.title_editor), "{title}");
         assert!(title.contains("Gull Alley"), "the name is on the header");
         // And what is being built, which decides which list it saves to.
         assert!(title.contains(EN.ed_kind_puzzle), "{title}");
         assert!(status.contains('3') && status.contains("solvable: 2"));
         assert_eq!(prompt, EN.ed_prompt);
+        // Rebound, the line names the keys that move the cursor.
+        let rebound = editor_text(&EN, &editor, &sim, Some("ESDF")).prompt;
+        assert!(rebound.starts_with("ESDF "), "{rebound}");
 
         // As a beach the status counts seats instead of an inventory the
         // match will never read.
         editor.kind = crate::sim::LevelKind::Arena;
-        let beach = editor_text(&EN, &editor, &sim);
+        let beach = editor_text(&EN, &editor, &sim, None);
         assert!(beach.title.contains(EN.ed_kind_arena), "{}", beach.title);
         assert_eq!(beach.status, "seats: 2 | solvable: 2", "{}", beach.status);
         editor.kind = crate::sim::LevelKind::Puzzle;
@@ -758,12 +820,12 @@ mod tests {
         // Typing shows a caret, so it is obvious the keyboard is spelling a
         // name rather than picking brushes.
         editor.mode = crate::app::editor::Mode::Naming;
-        let typing = editor_text(&EN, &editor, &sim).title;
+        let typing = editor_text(&EN, &editor, &sim, None).title;
         assert!(typing.ends_with('_'), "{typing}");
         editor.mode = crate::app::editor::Mode::Painting;
 
         editor.mode = crate::app::editor::Mode::Testing(Box::new(Board::new(4, 4, 0)));
-        let HudText { title, prompt, .. } = editor_text(&EN, &editor, &sim);
+        let HudText { title, prompt, .. } = editor_text(&EN, &editor, &sim, None);
         assert_eq!(title, EN.title_playtest);
         assert_eq!(prompt, EN.ed_playtest_prompt);
     }
@@ -1245,6 +1307,62 @@ mod tests {
         assert_eq!(said(&against_ai), EN.prompt_versus_short);
         assert_eq!(said(&against_bot), EN.prompt_versus_short);
         assert_eq!(said(&Controllers::default()), EN.prompt_versus_local);
+    }
+
+    /// A couch of two humans and an AI has a P2 on the second block of
+    /// keys: the prompt names both players' keys, and the header names
+    /// the AI without telling one "you" which seat is theirs.
+    #[test]
+    fn two_humans_against_an_ai_see_both_players_keys() {
+        use crate::app::{Campaign, CampaignKind, Controllers, Playback, SeatController, Seats};
+
+        let levels = campaign_levels();
+        let builtins = levels.len();
+        let campaign = Campaign {
+            kind: CampaignKind::TidePool,
+            levels,
+            index: 0,
+            builtins,
+        };
+        let settings = GameSettings::default();
+        let said = |controllers: &Controllers| {
+            versus_text(&Readout {
+                tr: &EN,
+                lang: Lang::En,
+                sim: &Sim(Board::new(9, 7, 1)),
+                campaign: &campaign,
+                coop: false,
+                phase: &State::new(Phase::Setup),
+                vphase: &State::new(VersusPhase::Running),
+                editor: &EditorState::default(),
+                online: &Online::default(),
+                playback: &Playback::default(),
+                lobby: &LobbyState::default(),
+                tournament: &crate::app::tournament::Tournament::default(),
+                seats: &Seats(3),
+                settings: &settings,
+                keycaps: &crate::app::keycaps::KeyCaps::default(),
+                names: &crate::app::SeatNames::default(),
+                controllers,
+                library: &crate::app::replays::Library::default(),
+                notice: &crate::app::RoundNotice::default(),
+                match_menu: &crate::app::match_setup::MatchMenu::default(),
+                paused: false,
+                spectator_typing: None,
+                crowd: Default::default(),
+                speed: 1,
+            })
+        };
+        let mut couch = Controllers::default();
+        couch.0[2] = SeatController::Ai(crate::sim::BotLevel::Normal);
+        let text = said(&couch);
+        assert_eq!(text.prompt, EN.prompt_versus_local);
+        assert_eq!(text.title, "Versus + 1 AI");
+        let mut lone = couch;
+        lone.0[1] = SeatController::Ai(crate::sim::BotLevel::Normal);
+        let text = said(&lone);
+        assert_eq!(text.prompt, EN.prompt_versus_short);
+        assert!(text.title.contains("you are"), "{}", text.title);
     }
 
     /// And the prompt line says so too. The screen census below builds its

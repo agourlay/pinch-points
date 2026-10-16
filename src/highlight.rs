@@ -9,7 +9,8 @@
 
 use crate::gif::Gif;
 use crate::sim::{
-    Board, CrabKind, Direction, GullState, MAX_PLAYERS, Replay, TICKS_PER_SECOND, TileKind,
+    Board, CrabKind, Direction, GullState, MAX_PLAYERS, PlayerId, Replay, TICKS_PER_SECOND,
+    TileKind,
 };
 
 /// How much of the ending the reel keeps.
@@ -118,21 +119,40 @@ impl Frame {
 }
 
 /// Which seat's castle the reel should frame: the winner, or, if the round
-/// ended level, whoever banked the most while the reel was running.
-fn deciding_seat(final_scores: &[u32; MAX_PLAYERS], gains: &[u32; MAX_PLAYERS]) -> u8 {
-    let best = final_scores.iter().max().copied().unwrap_or(0);
-    let leaders: Vec<usize> = (0..MAX_PLAYERS)
+/// ended level, whoever banked the most while the reel was running, and
+/// the lower seat if that is level too. Only seats `in_play` count, and a
+/// round nobody scored in has no leader to frame.
+fn deciding_seat(
+    final_scores: &[u32; MAX_PLAYERS],
+    gains: &[u32; MAX_PLAYERS],
+    in_play: impl Fn(usize) -> bool,
+) -> Option<u8> {
+    let seats = || (0..MAX_PLAYERS).filter(|&s| in_play(s));
+    let best = seats().map(|s| final_scores[s]).max()?;
+    if best == 0 {
+        return None;
+    }
+    seats()
         .filter(|&s| final_scores[s] == best)
-        .collect();
-    let pick = match leaders.as_slice() {
-        [only] => *only,
-        _ => leaders
-            .iter()
-            .copied()
-            .max_by_key(|&seat| gains[seat])
-            .unwrap_or(0),
-    };
-    pick as u8
+        // `max_by_key` keeps the last of a tie; reversed, the first.
+        .rev()
+        .max_by_key(|&s| gains[s])
+        .map(|s| s as u8)
+}
+
+/// The tile the reel centres on: the deciding seat's keep on `board`, the
+/// beach as it stands when the reel opens (Castle Swap hands keeps round
+/// mid-round, so the round's starting board can name a rival's), or the
+/// middle of the beach when nobody decided it.
+fn reel_focus(
+    board: &Board,
+    final_scores: &[u32; MAX_PLAYERS],
+    gains: &[u32; MAX_PLAYERS],
+) -> (u8, u8) {
+    let has_keep = |s: usize| board.castle_of(s as PlayerId).is_some();
+    deciding_seat(final_scores, gains, has_keep)
+        .and_then(|seat| board.castle_of(seat))
+        .unwrap_or((board.width() / 2, board.height() / 2))
 }
 
 /// The window's top-left tile: centred on `focus`, nudged back inside the
@@ -276,33 +296,31 @@ pub fn reel(replay: &Replay) -> Option<Vec<u8>> {
     let window = (REEL_SECONDS * TICKS_PER_SECOND) as usize;
     let start = total.saturating_sub(window);
 
-    // First pass: play it through for the final scores and for how much
-    // each seat banked inside the window, the measure of "deciding".
+    // Play it through for the final scores and for how much each seat
+    // banked inside the window, the measure of "deciding", keeping the
+    // board as the window opens to draw the reel from.
     let mut board = replay.level.board();
-    let mut at_start = [0u32; MAX_PLAYERS];
+    let mut opening = None;
     for (tick, actions) in replay.inputs.iter().enumerate() {
         if tick == start {
-            at_start = *board.scores();
+            opening = Some(board.clone());
         }
         board.tick(actions);
     }
     let finals = *board.scores();
+    let mut board = opening?;
+    let at_start = *board.scores();
     let gains = std::array::from_fn(|s| finals[s].saturating_sub(at_start[s]));
-    let seat = deciding_seat(&finals, &gains);
+    let focus = reel_focus(&board, &finals, &gains);
 
-    // Second pass: the same round again, drawing every few ticks once the
-    // window opens.
-    let mut board = replay.level.board();
-    let focus = board
-        .castle_of(seat)
-        .unwrap_or((board.width() / 2, board.height() / 2));
+    // The window again, drawing every few ticks.
     let origin = window_origin(&board, focus);
     let (width, height) = (u32::from(WINDOW_W) * TILE, u32::from(WINDOW_H) * TILE);
     let mut gif = Gif::new(width as u16, height as u16, &PALETTE);
     let delay = (100 / FPS) as u16;
     let mut frames = 0;
-    for (tick, actions) in replay.inputs.iter().enumerate() {
-        if tick >= start && (tick - start).is_multiple_of(TICKS_PER_FRAME as usize) {
+    for (tick, actions) in replay.inputs.iter().enumerate().skip(start) {
+        if (tick - start).is_multiple_of(TICKS_PER_FRAME as usize) {
             gif.add_frame(&draw(&board, origin).pixels, delay);
             frames += 1;
         }
@@ -438,9 +456,48 @@ mod tests {
 
     #[test]
     fn the_deciding_seat_is_the_winner_then_the_late_surge() {
-        assert_eq!(deciding_seat(&[10, 40, 5, 0, 0, 0], &[0; MAX_PLAYERS]), 1);
+        let all = |_: usize| true;
+        let decide = |finals, gains| deciding_seat(finals, gains, all);
+        assert_eq!(decide(&[10, 40, 5, 0, 0, 0], &[0; MAX_PLAYERS]), Some(1));
         // A dead heat goes to whoever earned it in the closing seconds.
-        assert_eq!(deciding_seat(&[40, 40, 0, 0, 0, 0], &[3, 9, 0, 0, 0, 0]), 1);
-        assert_eq!(deciding_seat(&[40, 40, 0, 0, 0, 0], &[9, 3, 0, 0, 0, 0]), 0);
+        assert_eq!(decide(&[40, 40, 0, 0, 0, 0], &[3, 9, 0, 0, 0, 0]), Some(1));
+        assert_eq!(decide(&[40, 40, 0, 0, 0, 0], &[9, 3, 0, 0, 0, 0]), Some(0));
+        // Level all the way through: the first seat, not the last.
+        assert_eq!(decide(&[40, 40, 0, 0, 0, 0], &[5, 5, 0, 0, 0, 0]), Some(0));
+    }
+
+    /// A round nobody scored in has no leader, and an empty chair is never
+    /// one: before, a scoreless round framed seat 6, which on a two-seat
+    /// beach has no keep.
+    #[test]
+    fn a_scoreless_round_or_an_empty_chair_decides_nothing() {
+        let two = |s: usize| s < 2;
+        assert_eq!(
+            deciding_seat(&[0; MAX_PLAYERS], &[0; MAX_PLAYERS], two),
+            None
+        );
+        assert_eq!(
+            deciding_seat(&[3, 0, 0, 0, 0, 9], &[0; MAX_PLAYERS], two),
+            Some(0),
+            "seat 6 is not at the table"
+        );
+        let board = classic_arena_seeded(1, false, 2);
+        let middle = (board.width() / 2, board.height() / 2);
+        assert_eq!(
+            reel_focus(&board, &[0; MAX_PLAYERS], &[0; MAX_PLAYERS]),
+            middle
+        );
+    }
+
+    /// The reel frames the winner's keep where it is when the reel opens:
+    /// after a Castle Swap that is not where it stood at the start of the
+    /// round.
+    #[test]
+    fn the_reel_frames_the_keep_the_winner_holds_now() {
+        let mut board = Board::new(20, 13, 1);
+        board.set_tile(1, 1, TileKind::Castle(1));
+        board.set_tile(18, 11, TileKind::Castle(0));
+        let finals = [0, 40, 0, 0, 0, 0];
+        assert_eq!(reel_focus(&board, &finals, &[0; MAX_PLAYERS]), (1, 1));
     }
 }

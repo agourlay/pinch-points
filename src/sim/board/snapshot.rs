@@ -20,6 +20,13 @@ use super::*;
 /// refused rather than half-read.
 const HEADER: &str = "snapshot-v1";
 
+/// The furthest clock a snapshot may carry: over four years of play at the
+/// tick rate, and nothing booked off it comes near overflowing a `u64`.
+const MAX_TICK: u64 = u32::MAX as u64;
+
+/// The furthest the spawn, placement and bank counters may have got.
+const MAX_COUNT: u32 = u32::MAX / 2;
+
 impl Board {
     /// The whole board as text.
     pub fn to_snapshot(&self) -> String {
@@ -121,6 +128,11 @@ impl Board {
         }
         if let Some((event, at)) = self.tide.last {
             let _ = writeln!(out, "last_event: {} {at}", event.index());
+        }
+        for (seat, hand) in self.hands.iter().enumerate() {
+            if let Some((tile, at)) = hand {
+                let _ = writeln!(out, "hand: {seat} {tile} {at}");
+            }
         }
         let _ = writeln!(out, "hwalls: {}", bits_to_hex(&self.grid.h_walls));
         let _ = writeln!(out, "vwalls: {}", bits_to_hex(&self.grid.v_walls));
@@ -252,6 +264,7 @@ struct Fields {
     tempo: Option<(Tempo, u32)>,
     claw_call: u32,
     last_event: Option<(TideEvent, u64)>,
+    hands: [Option<(u16, u64)>; MAX_PLAYERS],
     h_walls: Option<Vec<bool>>,
     v_walls: Option<Vec<bool>>,
     tiles: Option<Vec<TileKind>>,
@@ -368,6 +381,15 @@ impl Fields {
                     .ok_or_else(|| format!("last_event: no event {index}"))?;
                 self.last_event = Some((event, next_num(&mut words, "last_event tick")?));
             }
+            "hand" => {
+                let seat = next_num::<usize>(&mut words, "hand seat")?;
+                let tile = next_num(&mut words, "hand tile")?;
+                let at = next_num(&mut words, "hand tick")?;
+                *self
+                    .hands
+                    .get_mut(seat)
+                    .ok_or_else(|| format!("hand: no seat {seat}"))? = Some((tile, at));
+            }
             "hwalls" => self.h_walls = Some(hex_to_bits(value)?),
             "vwalls" => self.v_walls = Some(hex_to_bits(value)?),
             "tiles" => {
@@ -408,6 +430,11 @@ impl Fields {
             }
             "gull" => self.gulls.push(parse_gull(&mut words)?),
             other => return Err(format!("unknown key {other:?}")),
+        }
+        // Counted as they come, so a code with a hundred thousand of them
+        // is turned away at the first one too many rather than read whole.
+        if self.crabs.len() + self.gulls.len() + self.sweeping.len() > MAX_CREATURES {
+            return Err(format!("more than {MAX_CREATURES} crabs and gulls"));
         }
         Ok(())
     }
@@ -458,13 +485,17 @@ impl Fields {
                 "{golden_banked} golden crabs banked of {crabs_banked} crabs"
             ));
         }
-        // Each is added to on the next spawn, placement, bank or tick, and
-        // the sum has to fit.
-        if signpost_seq == u64::MAX
-            || next_crab_id == u32::MAX
-            || next_gull_id == u32::MAX
-            || crabs_banked == u32::MAX
-            || tick == u64::MAX
+        // Each is added to on the next spawn, placement, bank or tick, by
+        // more than one a tick (a golden call and a sweep are booked ticks
+        // ahead, a flood spawns crabs by the handful), so a counter one
+        // short of its type's end still overflows. Held to half of what a
+        // `u32` counts, no round ever played gets near them, and the room
+        // above is more than any round could use up.
+        if tick > MAX_TICK
+            || signpost_seq > u64::from(MAX_COUNT)
+            || next_crab_id > MAX_COUNT
+            || next_gull_id > MAX_COUNT
+            || crabs_banked > MAX_COUNT
         {
             return Err("counters: no room left to count on".to_string());
         }
@@ -520,6 +551,17 @@ impl Fields {
         }
         for gull in &self.gulls {
             poses("gull", gull.tile, gull.progress, &gull.prev)?;
+        }
+
+        // A hand stands on this beach, and put its post down on a tick
+        // already played.
+        for (tile, at) in self.hands.iter().flatten() {
+            if usize::from(*tile) >= w * h {
+                return Err(format!("hand: tile {tile} is off a {w}x{h} board"));
+            }
+            if *at > tick {
+                return Err(format!("hand: tick {at} is still to come ({tick})"));
+            }
         }
 
         // A call names a spawner hole on this beach, or the crab it
@@ -603,6 +645,7 @@ impl Fields {
                 // frame: a round picked back up has no sweep to report.
                 landed: Vec::new(),
             },
+            hands: self.hands,
         })
     }
 }
@@ -902,6 +945,7 @@ mod tests {
         board.crabs_banked = 12;
         board.golden_banked = 2;
         board.lure = Some((1, 145));
+        board.hands[1] = Some((6, 300));
         board.lure_cooldown = 60;
         board.tide.cooldown = 210;
         board.tide.mania = Some((Mania::Gull, 88));
@@ -1100,6 +1144,7 @@ mod tests {
                 "mania:",
                 "tempo:",
                 "last_event:",
+                "hand:",
                 "post:",
                 "crab:",
                 "gull:",
@@ -1205,7 +1250,22 @@ mod tests {
                 "a clock with no room",
                 bend(&good, "tick", "18446744073709551615"),
             ),
+            (
+                "a clock with no room for a call booked ahead",
+                bend(&good, "tick", &(MAX_TICK + 1).to_string()),
+            ),
+            (
+                "a crab id with no room for a flood",
+                bend(&good, "counters", &format!("99 {} 3 12 2", MAX_COUNT + 1)),
+            ),
+            (
+                "a bank count with no room for a flood",
+                bend(&good, "counters", &format!("99 7 3 {} 2", MAX_COUNT + 1)),
+            ),
             ("a lure for nobody", format!("{good}\nlure: 200 5")),
+            ("a hand from the future", bend(&good, "hand", "1 6 5000")),
+            ("a hand off the board", bend(&good, "hand", "1 20 300")),
+            ("a hand for nobody", bend(&good, "hand", "6 6 300")),
             (
                 "a crab past its tile",
                 good.replace(crab, "crab: 4 8 D 256 3 200"),
@@ -1226,6 +1286,49 @@ mod tests {
                 "{what}: parsed anyway"
             );
         }
+    }
+
+    /// The counters are held well short of their type's end, not one
+    /// short: a tick books calls and sweeps ahead of itself, and a flood
+    /// spawns crabs by the handful. At the bound a board still loads, and
+    /// plays a tick.
+    #[test]
+    fn a_snapshot_at_the_counters_bound_loads_and_plays() {
+        let good = awkward_board().to_snapshot();
+        let bent = bend(&good, "tick", &MAX_TICK.to_string());
+        let bent = bend(
+            &bent,
+            "counters",
+            &format!("99 {MAX_COUNT} {MAX_COUNT} {MAX_COUNT} 2"),
+        );
+        let mut board = Board::parse_snapshot(&bent).expect("at the bound parses");
+        for _ in 0..30 {
+            board.tick_idle();
+        }
+    }
+
+    /// A snapshot holds no more crabs and gulls than a level may, counting
+    /// the crabs in the air: a pasted code with a crowd past it is
+    /// refused, not read whole and played.
+    #[test]
+    fn a_snapshot_with_a_crowd_past_the_cap_is_refused() {
+        let good = awkward_board().to_snapshot();
+        let crab = "crab: 4 8 D 133 3 200";
+        let line = good
+            .lines()
+            .find(|l| l.starts_with(crab))
+            .expect("the fixture's crab");
+        let have = good
+            .lines()
+            .filter(|l| {
+                ["crab:", "gull:", "sweeping:"]
+                    .iter()
+                    .any(|k| l.starts_with(k))
+            })
+            .count();
+        let crowd = |n: usize| format!("{good}\n{}", format!("{line}\n").repeat(n));
+        let err = Board::parse_snapshot(&crowd(MAX_CREATURES + 1 - have)).expect_err("one over");
+        assert!(err.contains(&MAX_CREATURES.to_string()), "{err}");
     }
 
     /// The rim of an open beach takes no wall: the level format opens it
