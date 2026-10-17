@@ -316,3 +316,32 @@ fn every_shipped_puzzle_has_crabs_to_route() {
         );
     }
 }
+
+/// "Twin Logs" teaches the order a log throws a file of crabs, so its hint
+/// must name that order: the log turns its first crossing to the walker's
+/// right, which for a crab walking right is down. The hint once said "up,
+/// then down"; this replays the level untouched and reads the first two
+/// rows the crabs leave the log's row into.
+#[test]
+fn twin_logs_throws_the_first_crab_down_then_the_next_up() {
+    let level = campaign_levels()
+        .into_iter()
+        .find(|level| level.name == "Twin Logs")
+        .expect("Twin Logs ships");
+    let mut board = level.board();
+    let mut left_row: Vec<(u32, u8)> = Vec::new();
+    for _ in 0..2_000 {
+        board.tick_idle();
+        for crab in board.crabs() {
+            let (_, y) = board.coords_u8(crab.tile);
+            if y != 3 && !left_row.iter().any(|&(id, _)| id == crab.id) {
+                left_row.push((crab.id, y));
+            }
+        }
+        if left_row.len() >= 2 {
+            break;
+        }
+    }
+    let rows: Vec<u8> = left_row.iter().map(|&(_, y)| y).take(2).collect();
+    assert_eq!(rows, [4, 2], "first crab thrown down, the next up");
+}

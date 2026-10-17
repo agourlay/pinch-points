@@ -207,7 +207,7 @@ fn progress_survives_a_restart_and_a_level_inserted_ahead_of_it() {
     for name in &cleared {
         assert!(progress.mark(CampaignKind::TidePool, name));
     }
-    save_in(&path, &progress).expect("the record writes");
+    save_in(&path, &mut progress).expect("the record writes");
     let before = progress.furthest_open(&campaign);
     assert_eq!(before, 5, "the stage after the fifth cleared one is open");
 

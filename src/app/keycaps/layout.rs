@@ -89,14 +89,13 @@ impl Layout {
             Layout::Qwerty => &[],
             // ² & é " ' ( - è _ ç à ) =  /  a z e r t y u i o p ^ $
             // q s d f g h j k l m ù *    /  w x c v b n , ; : !
-            // (the "," at QWERTY's M is left out: `learnable` refuses the
-            // global keys, so no press could ever confirm or deny it)
             Layout::Azerty => &[
                 (KeyCode::Backslash, '*'),
                 (KeyCode::BracketLeft, '^'),
                 (KeyCode::BracketRight, '$'),
                 (KeyCode::Comma, ';'),
                 (KeyCode::KeyA, 'Q'),
+                (KeyCode::KeyM, ','),
                 (KeyCode::KeyQ, 'A'),
                 (KeyCode::KeyW, 'Z'),
                 (KeyCode::KeyZ, 'W'),

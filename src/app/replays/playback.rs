@@ -20,7 +20,9 @@ impl PlaybackSpeed {
     /// The speeds the key steps through.
     pub const STEPS: [u8; 3] = [1, 2, 4];
 
-    fn stepped(self) -> PlaybackSpeed {
+    /// The speed S moves to from this one. The replay's status line reads
+    /// it too, so at the top step it says S goes back to x1.
+    pub fn stepped(self) -> PlaybackSpeed {
         let next = Self::STEPS
             .iter()
             .position(|&s| s == self.0)

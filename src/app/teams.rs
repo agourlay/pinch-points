@@ -115,18 +115,125 @@ impl Cycle for TeamMode {
     const VARIANTS: &'static [Self] = &TeamMode::ALL;
 }
 
-/// How this round is scored.
+/// How a round is scored, from inputs already read: see [`Scoring`],
+/// which a system asks.
 ///
 /// Online the answer is the host's, carried in the agreed terms: as each
 /// peer's own setting, two people could watch the same round and be shown
-/// different winners. Offline it is this machine's setting. Either way a
-/// mode that does not fit the seat count falls back to free-for-all.
-pub(crate) fn in_play(settings: &GameSettings, online: &net::Online, seats: u8) -> TeamMode {
-    let wanted = match &online.0 {
-        Some(session) => session.terms.teams(),
-        None => settings.team_mode,
+/// different winners. A `replay` being watched is scored the way it was
+/// played, which it records: read off the setting, a round played in pairs
+/// and watched after switching to free-for-all crowned its top single
+/// seat. Otherwise it is this machine's `local` mode ([`local`]). Either
+/// way a mode that does not fit the seat count falls back to free-for-all.
+pub(crate) fn in_play(
+    local: TeamMode,
+    online: &net::Online,
+    replay: Option<&crate::sim::Replay>,
+    seats: u8,
+) -> TeamMode {
+    let wanted = match (replay, &online.0) {
+        (Some(replay), _) => recorded(replay),
+        (None, Some(session)) => session.terms.teams(),
+        (None, None) => local,
     };
     wanted.played_by(seats)
+}
+
+/// How a round played at this machine is scored: the player's setting,
+/// except on the daily. The daily is one board the whole world plays on
+/// the same table, every seat for itself, and a score is only comparable
+/// with another day's (and another player's) when it was not won as a
+/// pair: its four seats fit pairs, and under that setting the results
+/// card, the recording, the shelf and the trophies all crowned a team.
+pub(crate) fn local(settings: &GameSettings, daily: &crate::app::Daily) -> TeamMode {
+    if daily.active {
+        TeamMode::Solo
+    } else {
+        settings.team_mode
+    }
+}
+
+/// This machine's own say in how a round is scored ([`local`]). Its own
+/// param for a system that writes the online session, which [`Scoring`]
+/// reads: such a system hands [`in_play`] this and the session itself.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct LocalScoring<'w> {
+    pub settings: bevy::prelude::Res<'w, GameSettings>,
+    pub daily: bevy::prelude::Res<'w, crate::app::Daily>,
+}
+
+impl LocalScoring<'_> {
+    /// The mode a round played here, offline, is scored in: see [`local`].
+    pub fn mode(&self) -> TeamMode {
+        local(&self.settings, &self.daily)
+    }
+}
+
+/// How the round is scored, and so who leads it: what a system asks
+/// rather than reading the resources [`in_play`] goes by itself.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct Scoring<'w> {
+    pub local: LocalScoring<'w>,
+    pub online: bevy::prelude::Res<'w, net::Online>,
+    pub playback: bevy::prelude::Res<'w, crate::app::Playback>,
+}
+
+impl Scoring<'_> {
+    /// How the round on screen is scored, a replay's the way it was played.
+    pub fn mode(&self, seats: u8) -> TeamMode {
+        let replay = self.playback.0.as_ref().map(|(replay, _)| replay);
+        in_play(self.local.mode(), &self.online, replay, seats)
+    }
+
+    /// How the round being played here is scored, never one being
+    /// watched: a series' tally, which a replay plays no part in.
+    pub fn live_mode(&self, seats: u8) -> TeamMode {
+        in_play(self.local.mode(), &self.online, None, seats)
+    }
+
+    /// Which seats lead the round on screen ([`leading_seats`]): the one
+    /// function the board's crown and the score panel's both ask, so the
+    /// two never disagree.
+    ///
+    /// [`leading_seats`]: crate::app::seating::leading_seats
+    pub fn leaders(&self, scores: &[u32; MAX_PLAYERS], seats: u8) -> [bool; MAX_PLAYERS] {
+        crate::app::seating::leading_seats(scores, seats, self.mode(seats))
+    }
+}
+
+/// The scoring mode a recording was played under.
+pub fn recorded(replay: &crate::sim::Replay) -> TeamMode {
+    TeamMode::from_index(usize::from(replay.teams))
+}
+
+/// Who took a round, named the way the results card's headline names
+/// them: the top seat, or under a team mode every seat of the top team
+/// joined ("Anna+Bo"). `None` for a dead heat. `label` names a seat.
+///
+/// What a round is filed under on the shelf, live and pasted alike, so
+/// the file says who the card said won: filed by the first seat of the
+/// winning team, a pairs round went on the shelf as one player's win.
+pub fn winner_label(
+    scores: &[u32; MAX_PLAYERS],
+    seats: u8,
+    mode: TeamMode,
+    label: impl Fn(u8) -> String,
+) -> Option<String> {
+    let leaders = crate::app::seating::leading_seats(scores, seats, mode);
+    let seat = leaders.iter().position(|&led| led)? as u8;
+    Some(match mode {
+        TeamMode::Solo => label(seat),
+        TeamMode::Pairs | TeamMode::Trios => team_label(mode, mode.team_of(seat), seats, label),
+    })
+}
+
+/// A team's seats, each named by `label`, joined: see [`label`].
+fn team_label(mode: TeamMode, team: u8, seats: u8, label: impl Fn(u8) -> String) -> String {
+    mode.seats_of(team, seats)
+        .into_iter()
+        .map(label)
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 /// Each team's total, indexed by team.
@@ -141,6 +248,18 @@ pub fn team_scores(scores: &[u32; MAX_PLAYERS], seats: u8, mode: TeamMode) -> Ve
         .collect()
 }
 
+/// Each seat's place when the tide comes in, 1 for first, ranked the way
+/// the results card ranks its rows: by the team's total under a team mode,
+/// every seat sharing its team's place, and level totals sharing a place.
+/// What a bot is told it finished, so its `end` agrees with the card.
+pub fn placings(scores: &[u32; MAX_PLAYERS], seats: u8, mode: TeamMode) -> Vec<u32> {
+    let totals = team_scores(scores, seats, mode);
+    let places = crate::bots::seat::ranks(&totals);
+    (0..seats)
+        .map(|seat| places[usize::from(mode.team_of(seat))])
+        .collect()
+}
+
 /// What to call a team: the names of the seats on it, joined. With nobody
 /// named that reads "P1+P2", and with names it reads "Anna+Bo". Either way
 /// it says who, which "Team A" never did.
@@ -151,11 +270,7 @@ pub fn label(
     team: u8,
     seats: u8,
 ) -> String {
-    mode.seats_of(team, seats)
-        .iter()
-        .map(|&seat| names.label(settings.tr(), seat))
-        .collect::<Vec<_>>()
-        .join("+")
+    team_label(mode, team, seats, |seat| names.label(settings.tr(), seat))
 }
 
 /// The seat whose colour and order stand for a team: its lowest.
@@ -243,5 +358,22 @@ mod tests {
         }
         assert_eq!(TeamMode::from_key("2v2"), TeamMode::Pairs, "old setting");
         assert_eq!(TeamMode::from_key("nonsense"), TeamMode::Solo);
+    }
+
+    /// The daily's four seats fit pairs, and it was crowned a pair under
+    /// that setting: on its results card, in its recording, on the shelf
+    /// and in the trophies, all of which ask this.
+    #[test]
+    fn the_daily_is_every_seat_for_itself_whatever_the_setting() {
+        let settings = GameSettings {
+            team_mode: TeamMode::Pairs,
+            ..GameSettings::default()
+        };
+        let online = net::Online::default();
+        let mut daily = crate::app::Daily::default();
+        let mode = |daily: &crate::app::Daily| in_play(local(&settings, daily), &online, None, 4);
+        assert_eq!(mode(&daily), TeamMode::Pairs);
+        daily.active = true;
+        assert_eq!(mode(&daily), TeamMode::Solo);
     }
 }

@@ -147,12 +147,11 @@ pub fn door_input(
     mut clipboard: ResMut<Clipboard>,
     settings: Res<crate::app::settings::GameSettings>,
 ) {
-    let crate::app::keycaps::Keyboard { keys, caps, live } = keyboard;
     if !bots.door_for.card_up() {
         return;
     }
     let tr = settings.tr();
-    if keys.just_pressed(KeyCode::Escape) {
+    if keyboard.keys.just_pressed(KeyCode::Escape) {
         bots.door_for = DoorFor::Nothing;
         bots.feedback.clear();
         bots.door = None;
@@ -169,7 +168,7 @@ pub fn door_input(
         return;
     };
     door.poll();
-    if caps.global_pressed(&keys, 'C', &live)
+    if keyboard.global('C')
         && let Some(chair) = door.chairs.iter().find(|chair| chair.bot.is_none())
     {
         let string = door.string(chair);
@@ -178,7 +177,7 @@ pub fn door_input(
             Err(e) => fill(tr.code_copy_failed, &[("e", &e.to_string())]),
         };
     }
-    if caps.just_pressed(&keys, 'L')
+    if keyboard.just('L')
         && let Err(e) = door.toggle_lan()
     {
         *feedback = fill(tr.door_could_not_listen, &[("e", &e.to_string())]);

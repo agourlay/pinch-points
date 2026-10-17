@@ -192,6 +192,12 @@ pub fn global_key_from_name(name: &str) -> Option<KeyCode> {
     GLOBAL_KEYS.into_iter().find(|&key| key_name(key) == name)
 }
 
+/// The key `name` spells, bindable or global: every letter key a keyboard
+/// layout is read over.
+pub fn any_key_from_name(name: &str) -> Option<KeyCode> {
+    key_from_name(name).or_else(|| global_key_from_name(name))
+}
+
 /// Keys a player may bind. Anything else is ignored during capture, which
 /// keeps Escape (cancel), both Enters, the function keys, the
 /// [`GLOBAL_KEYS`] and the odd media key from being swallowed by a rebind.

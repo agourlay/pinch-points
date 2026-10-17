@@ -5,7 +5,7 @@
 use super::EditorState;
 use crate::app::i18n::fill;
 use crate::app::settings::GameSettings;
-use crate::sim::{Board, Level, LevelKind, SolveOutcome, TileKind, solve};
+use crate::sim::{ArenaProblem, Board, Level, LevelKind, SolveOutcome, TileKind, solve};
 use bevy::prelude::*;
 use std::sync::{Arc, Mutex};
 
@@ -14,30 +14,30 @@ use std::sync::{Arc, Mutex};
 /// it came back with.
 pub(super) type SolverSlot = Arc<Mutex<Option<SolveOutcome>>>;
 
-/// A check in flight: where its answer will land, and how many signposts
-/// the level it is checking grants.
+/// A check in flight: where its answer will land.
 ///
-/// The count is kept with the request because the answer quotes it ("NOT
-/// solvable - arrows granted: 3"), and the dial can be turned while the
-/// search runs: read off the bench when the answer came back, it named a
-/// count the search never tried.
+/// The answer quotes the signposts granted ("NOT solvable - arrows
+/// granted: 3"), read off the bench when it comes back. That is the count
+/// the search was handed because turning the dial is an edit
+/// ([`EditorState::edited`]) and drops the check: kept beside the request
+/// instead, a dial turned mid-search left the old search running and V
+/// saying "already validating" about a count no longer on the dial.
 pub(super) struct Validation {
     pub(super) slot: SolverSlot,
-    pub(super) posts: u8,
 }
 
 /// What the check says about a beach, which is not a thing the solver can
 /// answer: a match is not won or lost, it is only playable or not. Two
 /// castles is the floor, and crabs have to come from somewhere.
 pub(super) fn arena_report(board: &Board, tr: &crate::app::i18n::Tr) -> String {
+    if let Some(problem) = board.arena_problem() {
+        return arena_complaint(problem, tr);
+    }
     let seats = board.castle_seats();
     let holes = board
         .tiles()
         .filter(|(_, _, kind)| matches!(kind, TileKind::Spawner(_)))
         .count();
-    if seats < 2 {
-        return fill(tr.ed_arena_needs_seats, &[("n", &seats.to_string())]);
-    }
     if holes == 0 && board.crabs().is_empty() {
         return tr.ed_arena_no_crabs.to_string();
     }
@@ -45,6 +45,20 @@ pub(super) fn arena_report(board: &Board, tr: &crate::app::i18n::Tr) -> String {
         tr.ed_arena_ok,
         &[("n", &seats.to_string()), ("h", &holes.to_string())],
     )
+}
+
+/// What to say about a beach no table can sit at. A skipped seat is one no
+/// map dial offers at any size of table ([`crate::sim::Level::fits`]):
+/// seat `n` plays castle `n`, and the skipped seat would have nothing to
+/// bank in.
+fn arena_complaint(problem: ArenaProblem, tr: &crate::app::i18n::Tr) -> String {
+    match problem {
+        ArenaProblem::SkippedSeat(seat) => fill(
+            tr.ed_arena_skips_seat,
+            &[("n", &(u32::from(seat) + 1).to_string())],
+        ),
+        ArenaProblem::TooFew(seats) => fill(tr.ed_arena_needs_seats, &[("n", &seats.to_string())]),
+    }
 }
 
 /// Why the level, as it stands, will turn up on no list at all - or `None`
@@ -60,12 +74,11 @@ pub(super) fn orphan_warning(
     tr: &crate::app::i18n::Tr,
 ) -> Option<String> {
     match state.kind {
-        LevelKind::Arena if level.seats() < 2 => Some(fill(
-            tr.ed_arena_needs_seats,
-            &[("n", &level.seats().to_string())],
-        )),
+        LevelKind::Arena => level
+            .arena_problem()
+            .map(|problem| arena_complaint(problem, tr)),
         LevelKind::Puzzle if level.crab_count() == 0 => Some(tr.ed_puzzle_no_crabs.to_string()),
-        LevelKind::Arena | LevelKind::Puzzle => None,
+        LevelKind::Puzzle => None,
     }
 }
 
@@ -80,11 +93,10 @@ pub(super) fn orphan_warning(
 pub(super) fn start_validation(state: &mut EditorState, level: Level) {
     let slot: SolverSlot = Arc::new(Mutex::new(None));
     let thread_slot = Arc::clone(&slot);
-    let posts = level.posts;
     std::thread::spawn(move || {
         *thread_slot.lock().unwrap() = Some(solve(&level));
     });
-    state.solver = Some(Validation { slot, posts });
+    state.solver = Some(Validation { slot });
 }
 
 /// The way a signpost points, as an arrow: the solver's answer is read
@@ -104,10 +116,10 @@ fn arrow(dir: crate::sim::Direction) -> char {
 /// Collect a finished background validation.
 pub fn poll_solver(settings: Res<GameSettings>, mut state: ResMut<EditorState>) {
     let tr = settings.tr();
-    let Some(Validation { slot, posts }) = &state.solver else {
+    let Some(Validation { slot }) = &state.solver else {
         return;
     };
-    let posts = *posts;
+    let posts = state.posts;
     let result = slot.lock().unwrap().take();
     match result {
         None => return, // still searching
@@ -165,12 +177,11 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(GameSettings::default());
         app.insert_resource(EditorState {
-            // The dial turned while the search ran: the answer is about
-            // the two the search was handed, not the five on the dial now.
-            posts: 5,
+            // The dial cannot turn under a running search (it drops it),
+            // so the count on the bench is the one the search was handed.
+            posts: 2,
             solver: Some(Validation {
                 slot: Arc::new(Mutex::new(outcome)),
-                posts: 2,
             }),
             ..EditorState::default()
         });
@@ -243,6 +254,26 @@ mod tests {
         board.set_tile(5, 4, TileKind::Castle(1));
         let level = level_here(&arena, &board, "A Beach");
         assert_eq!(orphan_warning(&arena, &level, &EN), None);
+    }
+
+    /// Castles that skip a player seat no table, and the check and the
+    /// save both name the player skipped, counted from 1.
+    #[test]
+    fn a_beach_that_skips_a_player_says_which() {
+        use crate::app::i18n::EN;
+        let mut board = sand();
+        board.set_tile(0, 0, TileKind::Castle(0));
+        board.set_tile(5, 4, TileKind::Castle(2));
+        let said = fill(EN.ed_arena_skips_seat, &[("n", "2")]);
+        assert_eq!(arena_report(&board, &EN), said);
+        let arena = EditorState {
+            kind: LevelKind::Arena,
+            ..EditorState::default()
+        };
+        let level = level_here(&arena, &board, "Gappy");
+        assert_eq!(orphan_warning(&arena, &level, &EN), Some(said));
+        board.set_tile(3, 3, TileKind::Castle(1));
+        assert!(!arena_report(&board, &EN).contains("castle -"));
     }
 
     /// Checking a beach counts its castles instead of searching for a

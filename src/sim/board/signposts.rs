@@ -282,6 +282,35 @@ impl Board {
         self.signposts[self.index(i32::from(x), i32::from(y)) as usize]
     }
 
+    /// [`Board::signpost_at`] for coordinates the sim did not choose: an
+    /// action's, which a bot's reply or a peer's input can aim anywhere a
+    /// byte reaches. Off the board there is no post, rather than a panic.
+    pub fn try_signpost_at(&self, x: u8, y: u8) -> Option<Signpost> {
+        if !self.in_bounds(i32::from(x), i32::from(y)) {
+            return None;
+        }
+        self.signpost_at(x, y)
+    }
+
+    /// `action` as this board can take it: a placement or a removal aimed
+    /// off the board is no action at all. The tick refuses one anyway, so
+    /// the board plays the same either way; what changes is that nothing
+    /// reading the action beside the tick ever meets a tile that is not
+    /// there.
+    pub fn on_board(&self, action: PlayerAction) -> PlayerAction {
+        match action {
+            PlayerAction::Place { x, y, .. } | PlayerAction::Remove { x, y }
+                if !self.in_bounds(i32::from(x), i32::from(y)) =>
+            {
+                PlayerAction::None
+            }
+            PlayerAction::None
+            | PlayerAction::Place { .. }
+            | PlayerAction::Remove { .. }
+            | PlayerAction::CallEvent(_) => action,
+        }
+    }
+
     /// The current signpost cap rule, for serialization.
     pub fn signpost_rule(&self) -> (u8, CapPolicy) {
         (self.rules.signpost_cap, self.rules.cap_policy)

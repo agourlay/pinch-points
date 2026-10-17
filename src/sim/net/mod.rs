@@ -616,6 +616,24 @@ impl Lockstep {
             .collect()
     }
 
+    /// Every input played here for the frames a peer still in step could
+    /// be missing (see [`resend_span`]): this peer's own commits, the
+    /// seats it speaks for, and what it heard from everyone else.
+    ///
+    /// What a host repeats once its round is over: its sim has stopped,
+    /// and with it the relays, so a peer whose relay of the last frames
+    /// was lost has nobody else to hear them from.
+    pub fn played_tail(&self) -> Vec<InputMsg> {
+        let oldest_wanted = self.frame.saturating_sub(resend_span(self.delay));
+        let played = |msg: &&InputMsg| msg.frame >= oldest_wanted && msg.frame < self.frame;
+        self.history
+            .iter()
+            .filter(played)
+            .chain(self.heard.iter().filter(played))
+            .copied()
+            .collect()
+    }
+
     /// The furthest frame a peer may name: as far ahead of the frame being
     /// simulated as a resend span twice over. Frame numbers arrive off the
     /// wire, and one past this is either a peer that has run away from the

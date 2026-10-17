@@ -43,6 +43,7 @@ use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 
 use crate::app::binds;
+use crate::app::cursor::LiveSeatKeys;
 use crate::app::settings::GameSettings;
 
 /// What this keyboard's caps say, where they differ from Bevy's QWERTY
@@ -107,6 +108,20 @@ pub struct Keyboard<'w> {
     pub live: Res<'w, LiveSeatKeys>,
 }
 
+impl Keyboard<'_> {
+    /// Whether the global key whose cap says `letter` was just pressed,
+    /// unless a seat playing here holds it: see [`KeyCaps::global_pressed`].
+    pub fn global(&self, letter: char) -> bool {
+        self.caps.global_pressed(&self.keys, letter, &self.live)
+    }
+
+    /// Whether the cap that says `letter` was just pressed: see
+    /// [`KeyCaps::just_pressed`].
+    pub fn just(&self, letter: char) -> bool {
+        self.caps.just_pressed(&self.keys, letter)
+    }
+}
+
 /// [`Keyboard`] for a system that also spends the press it answers (see
 /// `menu_ui::spend`).
 #[derive(bevy::ecs::system::SystemParam)]
@@ -117,78 +132,18 @@ pub struct KeyboardMut<'w> {
     pub live: Res<'w, LiveSeatKeys>,
 }
 
-/// The keys the seats playing on this screen are bound to, which a
-/// global letter yields to (see [`KeyCaps::global_pressed`]). Kept by
-/// [`track_live_seat_keys`] from the bindings, the screen and whether the
-/// round is online; empty on the menus, where no seat is read.
-#[derive(Resource, Default, Debug, PartialEq, Eq)]
-pub struct LiveSeatKeys(Vec<KeyCode>);
-
-impl LiveSeatKeys {
-    /// The keys read for the seats playing on `screen`, as the seats'
-    /// input reads them ([`crate::app::cursor::keymap`]): P1's commit
-    /// scheme on a puzzle and in the editor, the arrows scheme in versus.
-    pub fn of(settings: &GameSettings, screen: crate::app::Screen, online: bool) -> Self {
-        use crate::app::settings::CommitScheme;
-        let commit = if screen == crate::app::Screen::Versus {
-            CommitScheme::Arrows
-        } else {
-            settings.commit
-        };
-        let keys = live_seats(screen, online).iter().flat_map(|&seat| {
-            let map = crate::app::cursor::keymap(settings, seat as u8, commit);
-            let moves = map.moves.map(|(key, ..)| key);
-            let places = map.places.map(|(key, _)| key);
-            moves
-                .into_iter()
-                .chain(places)
-                .chain([map.remove, map.clear_all])
-        });
-        Self(keys.collect())
+impl KeyboardMut<'_> {
+    /// Whether the global key whose cap says `letter` was just pressed,
+    /// unless a seat playing here holds it: see [`KeyCaps::global_pressed`].
+    pub fn global(&self, letter: char) -> bool {
+        self.caps.global_pressed(&self.keys, letter, &self.live)
     }
 
-    pub fn holds(&self, key: KeyCode) -> bool {
-        self.0.contains(&key)
+    /// Whether the cap that says `letter` was just pressed: see
+    /// [`KeyCaps::just_pressed`].
+    pub fn just(&self, letter: char) -> bool {
+        self.caps.just_pressed(&self.keys, letter)
     }
-}
-
-/// The seats whose bound keys are being read on `screen`: P1 on a puzzle
-/// and in the editor, both keyboard seats in a local versus round, and
-/// P1's layout alone online, where every player's hands are on it (see
-/// `play_input::versus_input`). None on the menus, where a global letter
-/// owes a seat nothing.
-pub fn live_seats(screen: crate::app::Screen, online: bool) -> &'static [usize] {
-    use crate::app::Screen;
-    match screen {
-        Screen::Puzzle | Screen::Editor => &[0],
-        Screen::Versus if online => &[0],
-        Screen::Versus => &[0, 1],
-        Screen::Menu
-        | Screen::Lobby
-        | Screen::Settings
-        | Screen::Controls
-        | Screen::MatchSetup
-        | Screen::Achievements
-        | Screen::StageSelect
-        | Screen::Replays
-        | Screen::Interlude
-        | Screen::Language
-        | Screen::NewVersion => &[],
-    }
-}
-
-/// Keep [`LiveSeatKeys`] to this frame's screen and bindings.
-pub fn track_live_seat_keys(
-    settings: Res<GameSettings>,
-    screen: Res<State<crate::app::Screen>>,
-    online: Res<crate::app::net::Online>,
-    mut live: ResMut<LiveSeatKeys>,
-) {
-    live.set_if_neq(LiveSeatKeys::of(
-        &settings,
-        *screen.get(),
-        online.0.is_some(),
-    ));
 }
 
 impl KeyCaps {
@@ -215,22 +170,28 @@ impl KeyCaps {
     /// so, else the one the presumed layout puts it on, else the key
     /// QWERTY spells that way. This is how a mnemonic stays on its letter
     /// across layouts.
-    pub fn key_for(&self, letter: char) -> KeyCode {
+    ///
+    /// The QWERTY key is only a guess, and not one to make once its cap is
+    /// known to say something else: on Dvorak `KeyP` says L, and P sent
+    /// there would make the L key load the previous stage. Such a letter
+    /// has no key until a press (or the platform) shows where it is.
+    pub fn key_for(&self, letter: char) -> Option<KeyCode> {
         let letter = letter.to_ascii_uppercase();
-        self.forced
-            .map_or_else(
-                || {
-                    self.learned
-                        .iter()
-                        .find(|(_, c)| **c == letter)
-                        .map(|(k, _)| *k)
-                        .or_else(|| self.presumed.and_then(|layout| layout.key_for(letter)))
-                },
-                |forced| forced.key_for(letter),
-            )
-            .or_else(|| binds::key_from_name(&format!("Key{letter}")))
-            .or_else(|| binds::global_key_from_name(&format!("Key{letter}")))
-            .unwrap_or_else(|| panic!("no key spells {letter}"))
+        let named = self.forced.map_or_else(
+            || {
+                self.learned
+                    .iter()
+                    .find(|(_, c)| **c == letter)
+                    .map(|(k, _)| *k)
+                    .or_else(|| self.presumed.and_then(|layout| layout.key_for(letter)))
+            },
+            |forced| forced.key_for(letter),
+        );
+        named.or_else(|| {
+            let name = format!("Key{letter}");
+            binds::any_key_from_name(&name)
+                .filter(|&key| self.cap(key).is_none_or(|cap| cap == letter))
+        })
     }
 
     /// Whether the cap that says `letter` was just pressed. Not for the
@@ -241,7 +202,8 @@ impl KeyCaps {
             !binds::GLOBAL_LETTERS.contains(&letter.to_ascii_uppercase()),
             "{letter} is global: read it through Globals"
         );
-        keys.just_pressed(self.key_for(letter))
+        self.key_for(letter)
+            .is_some_and(|key| keys.just_pressed(key))
     }
 
     /// Whether the global key whose cap says `letter` was just pressed,
@@ -260,8 +222,8 @@ impl KeyCaps {
         letter: char,
         live: &LiveSeatKeys,
     ) -> bool {
-        let key = self.key_for(letter);
-        keys.just_pressed(key) && !live.holds(key)
+        self.key_for(letter)
+            .is_some_and(|key| keys.just_pressed(key) && !live.holds(key))
     }
 
     /// The keys just pressed whose cap says `cap`, for a symbol that
@@ -299,11 +261,15 @@ impl KeyCaps {
 
     /// Whether `key` is one of the [`binds::GLOBAL_KEYS`] on this keyboard,
     /// read by its letter whatever the bindings say, so not a key to hand a
-    /// seat. The stock check is by position; this one is by cap.
+    /// seat. The stock check ([`binds::bindable`]) is by position; this one
+    /// is by cap. A seat is offered only what passes both: Dvorak's R key
+    /// says P and fails both, its J says H and fails this one, and its P
+    /// (which says L) fails the stock one, since bindings are kept by
+    /// position and on QWERTY that key is P again.
     pub fn is_global(&self, key: KeyCode) -> bool {
         binds::GLOBAL_LETTERS
             .iter()
-            .any(|&l| self.key_for(l) == key)
+            .any(|&l| self.key_for(l) == Some(key))
     }
 
     /// A legend with its [`BLOCKS`] respelled in this keyboard's caps:
@@ -386,16 +352,34 @@ impl KeyCaps {
     /// spelling keeps a QWERTY file empty and lets a board switched back
     /// to QWERTY unlearn itself.
     ///
+    /// Whatever the key, the numpad's aside, the cap is taken off any
+    /// other key that held it (see [`Self::evict`]).
+    ///
     /// The exception is a press that disproves the presumed layout. That
     /// one is written down even though it agrees with QWERTY, being the
     /// only record that the guess was wrong: without it the language makes
     /// the same guess at the next launch.
     pub fn learn(&mut self, key: KeyCode, cap: char) -> bool {
-        if !cap.is_ascii_graphic() || !learnable(key) {
+        if !cap.is_ascii_graphic() {
             return false;
         }
         let cap = cap.to_ascii_uppercase();
         let before = self.clone();
+        if is_numpad(key) {
+            // The numpad repeats the main block's characters: its "-" and
+            // "+" are on QWERTZ's Slash and BracketRight too, and its "*"
+            // on AZERTY's Backslash, so a press here says nothing about
+            // which main-block key carries them.
+            return false;
+        }
+        if !learnable(key) {
+            // Not a cap to write down (the digit row, a key no binding
+            // names), but still the key that says it now: AZERTY's 6
+            // typing "-" is the only word the board gives that QWERTZ's
+            // Slash no longer does.
+            self.evict(key, cap);
+            return *self != before;
+        }
         let disproves = self
             .presumed
             .and_then(|layout| layout.cap(key))
@@ -405,17 +389,36 @@ impl KeyCaps {
         }
         if !disproves && binds::key_label(key) == cap.to_string() {
             self.learned.remove(&key);
+            self.evict(key, cap);
         } else {
-            self.learned.insert(key, cap);
+            self.claim(key, cap);
         }
         for layout in Layout::ALL {
             if layout.tells().contains(&(key, cap)) {
                 for &(k, c) in layout.caps() {
-                    self.learned.entry(k).or_insert(c);
+                    if !self.learned.contains_key(&k) {
+                        self.claim(k, c);
+                    }
                 }
             }
         }
         *self != before
+    }
+
+    /// Write down that `key` says `cap`, and that no other key does.
+    fn claim(&mut self, key: KeyCode, cap: char) {
+        self.evict(key, cap);
+        self.learned.insert(key, cap);
+    }
+
+    /// Forget `cap` on every key but `key`. One cap sits on one key, so
+    /// another key still holding it is from a layout since switched away
+    /// from, and [`Self::key_for`], which asks the learned table first,
+    /// would go on sending a mnemonic there: Dvorak's N on `KeyL`
+    /// outliving a switch back to QWERTY, so that moving right went on
+    /// loading the next stage while the key that now says N did nothing.
+    fn evict(&mut self, key: KeyCode, cap: char) {
+        self.learned.retain(|&k, &mut c| k == key || c != cap);
     }
 
     /// Settings-file text: `KeyW=Z KeyA=Q`, empty on QWERTY. Presses only:
@@ -437,8 +440,8 @@ impl KeyCaps {
                 continue;
             };
             let mut chars = cap.chars();
-            if let (Some(key), Some(c), None) =
-                (binds::key_from_name(name), chars.next(), chars.next())
+            let key = binds::any_key_from_name(name);
+            if let (Some(key), Some(c), None) = (key, chars.next(), chars.next())
                 && learnable(key)
                 && c.is_ascii_graphic()
             {
@@ -450,14 +453,25 @@ impl KeyCaps {
 }
 
 /// The keys whose caps are worth learning: the bindable ones (the only
-/// ones ever shown by name), less the digit rows, whose names are the
-/// numbers whatever the unshifted cap says.
+/// ones ever shown by name) and the [`binds::GLOBAL_KEYS`], less the digit
+/// rows, whose names are the numbers whatever the unshifted cap says.
+///
+/// The global positions are learned although no seat may bind them, since
+/// a letter's cap can sit there on another layout: Dvorak and Colemak both
+/// put P on QWERTY's R, and a cap never written down is a mnemonic
+/// [`KeyCaps::key_for`] cannot find.
 pub(super) fn learnable(key: KeyCode) -> bool {
     let name = binds::key_name(key);
-    binds::bindable(key)
+    (binds::bindable(key) || binds::GLOBAL_KEYS.contains(&key))
         && key != KeyCode::Space
         && !name.starts_with("Digit")
-        && !name.starts_with("Numpad")
+        && !is_numpad(key)
+}
+
+/// A key on the numpad, which only ever repeats a character the main block
+/// has: never a cap to learn, nor one to take off another key.
+fn is_numpad(key: KeyCode) -> bool {
+    binds::key_name(key).starts_with("Numpad")
 }
 
 /// Watch every key press for what its cap says, and keep the table on disk.
@@ -473,7 +487,7 @@ pub(super) fn learnable(key: KeyCode) -> bool {
 pub fn learn_keycaps(
     mut typed: MessageReader<KeyboardInput>,
     keys: Res<ButtonInput<KeyCode>>,
-    screen: Res<State<crate::app::Screen>>,
+    unasked: Res<crate::app::language::LanguageUnasked>,
     settings: Res<GameSettings>,
     mut caps: ResMut<KeyCaps>,
 ) {
@@ -508,8 +522,8 @@ pub fn learn_keycaps(
             changed = true;
         }
     }
-    // Not on the picker: see [`crate::app::language::may_save`].
-    if changed && crate::app::language::may_save(screen.get()) {
+    // Not before a language is taken: see [`crate::app::language::LanguageUnasked::may_save`].
+    if changed && unasked.may_save() {
         settings.save(&caps);
     }
 }
@@ -526,7 +540,7 @@ mod tests {
         let mut caps = KeyCaps::default();
         caps.presume(Layout::of(Lang::Fr));
         assert_eq!(caps.legend("WASD bouger | IJKL"), "ZQSD bouger | IJKL");
-        assert_eq!(caps.key_for('M'), KeyCode::Semicolon);
+        assert_eq!(caps.key_for('M'), Some(KeyCode::Semicolon));
         assert!(caps.is_global(KeyCode::Semicolon));
         // Presumed, not learned: nothing was seen, so nothing is written.
         assert_eq!(caps.to_text(), "");
@@ -540,7 +554,7 @@ mod tests {
             "WASD",
             "QWERTZ leaves the block alone"
         );
-        assert_eq!(german.key_for('M'), KeyCode::KeyM);
+        assert_eq!(german.key_for('M'), Some(KeyCode::KeyM));
 
         let mut english = KeyCaps::default();
         english.presume(Layout::of(Lang::En));
@@ -556,7 +570,11 @@ mod tests {
         assert!(caps.learn(KeyCode::KeyW, 'w'));
         assert_eq!(caps.presumed, None);
         assert_eq!(caps.label(KeyCode::KeyW), "W");
-        assert_eq!(caps.key_for('M'), KeyCode::KeyM, "the mnemonics come home");
+        assert_eq!(
+            caps.key_for('M'),
+            Some(KeyCode::KeyM),
+            "the mnemonics come home"
+        );
         assert_eq!(caps.legend("WASD"), "WASD");
 
         // Saved, reloaded, and presumed at again: the record stands.
@@ -620,6 +638,7 @@ mod tests {
         app.init_state::<crate::app::Screen>();
         app.insert_resource(State::new(crate::app::Screen::Settings));
         app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::language::LanguageUnasked>();
         app.init_resource::<KeyCaps>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.add_message::<KeyboardInput>();
@@ -674,16 +693,16 @@ mod tests {
     #[test]
     fn mnemonics_follow_the_cap() {
         let caps = KeyCaps::default();
-        assert_eq!(caps.key_for('M'), KeyCode::KeyM);
-        assert_eq!(caps.key_for('h'), KeyCode::KeyH);
+        assert_eq!(caps.key_for('M'), Some(KeyCode::KeyM));
+        assert_eq!(caps.key_for('h'), Some(KeyCode::KeyH));
         assert!(caps.is_global(KeyCode::KeyM));
         assert!(!caps.is_global(KeyCode::Semicolon));
 
         let mut azerty = KeyCaps::default();
         azerty.learn(KeyCode::KeyW, 'z');
-        assert_eq!(azerty.key_for('M'), KeyCode::Semicolon);
-        assert_eq!(azerty.key_for('A'), KeyCode::KeyQ);
-        assert_eq!(azerty.key_for('H'), KeyCode::KeyH);
+        assert_eq!(azerty.key_for('M'), Some(KeyCode::Semicolon));
+        assert_eq!(azerty.key_for('A'), Some(KeyCode::KeyQ));
+        assert_eq!(azerty.key_for('H'), Some(KeyCode::KeyH));
         assert!(azerty.is_global(KeyCode::Semicolon));
         // Its own position still refuses a seat: `bindable` says so.
         assert!(!binds::bindable(KeyCode::KeyM));
@@ -707,8 +726,8 @@ mod tests {
         settings.binds[0].set(Action::ClearAll, KeyCode::Semicolon);
         let mut azerty = KeyCaps::default();
         azerty.presume(Some(Layout::Azerty));
-        assert_eq!(azerty.key_for('M'), KeyCode::Semicolon);
-        let live = |screen| LiveSeatKeys::of(&settings, screen, false);
+        assert_eq!(azerty.key_for('M'), Some(KeyCode::Semicolon));
+        let live = |screen| LiveSeatKeys::of(&settings, screen, false, []);
 
         let mut keys = ButtonInput::<KeyCode>::default();
         keys.press(KeyCode::Semicolon);
@@ -717,7 +736,7 @@ mod tests {
         assert!(azerty.global_pressed(&keys, 'M', &live(Screen::Menu)));
 
         // Bound nowhere: the M cap mutes, seats or not.
-        let stock = LiveSeatKeys::of(&GameSettings::default(), Screen::Versus, false);
+        let stock = LiveSeatKeys::of(&GameSettings::default(), Screen::Versus, false, []);
         assert!(azerty.global_pressed(&keys, 'M', &stock));
 
         // Placing on IJKL, P1 reads keys its bindings do not name: a board
@@ -727,8 +746,121 @@ mod tests {
         dvorak.learn(KeyCode::KeyJ, 'h');
         let mut keys = ButtonInput::<KeyCode>::default();
         keys.press(KeyCode::KeyJ);
-        let puzzle = LiveSeatKeys::of(&settings, Screen::Puzzle, false);
+        let puzzle = LiveSeatKeys::of(&settings, Screen::Puzzle, false, []);
         assert!(!dvorak.global_pressed(&keys, 'H', &puzzle));
+    }
+
+    /// In co-op the partner's cursor plays on the second seat's keys, so a
+    /// global cap among them is the partner's: on Dvorak the L key reads
+    /// N, and moving right must not load the next stage. The partner also
+    /// stands the one-hand preset down, so P1's commit keys are the
+    /// arrows again and IJKL is not read twice.
+    #[test]
+    fn a_coop_partners_keys_are_live_on_a_puzzle() {
+        use crate::app::Screen;
+        use crate::app::cursor::Cursor;
+        let mut settings = GameSettings::default();
+        settings.commit = crate::app::settings::CommitScheme::Ijkl;
+        let mut dvorak = KeyCaps::default();
+        dvorak.learn(KeyCode::KeyL, 'n');
+        assert_eq!(dvorak.key_for('N'), Some(KeyCode::KeyL));
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyL);
+
+        let pair = [Cursor::seated(0), Cursor::seated(1)];
+        let coop = LiveSeatKeys::of(&settings, Screen::Puzzle, false, &pair);
+        assert!(!dvorak.global_pressed(&keys, 'N', &coop));
+        assert!(coop.holds(KeyCode::ArrowUp), "P1 commits on the arrows");
+
+        // Alone on IJKL, L is P1's commit key: still not the global.
+        let solo = LiveSeatKeys::of(&settings, Screen::Puzzle, false, &pair[..1]);
+        assert!(!dvorak.global_pressed(&keys, 'N', &solo));
+        assert!(!solo.holds(KeyCode::ArrowUp));
+        // On the arrows with nobody at P2's keys, L is free for N.
+        settings.commit = crate::app::settings::CommitScheme::Arrows;
+        let solo = LiveSeatKeys::of(&settings, Screen::Puzzle, false, &pair[..1]);
+        assert!(dvorak.global_pressed(&keys, 'N', &solo));
+    }
+
+    /// What the platform answers for the letter keys on a board that
+    /// types `rows` (QWERTY's three letter rows, in their order), as
+    /// [`KeyCaps::adopt`] takes it.
+    fn letter_board(rows: [&str; 3]) -> Vec<(KeyCode, char)> {
+        let qwerty = ["qwertyuiop", "asdfghjkl;", "zxcvbnm,./"];
+        let mut board = Vec::new();
+        for (spelled, typed) in qwerty.iter().zip(rows) {
+            for (q, c) in spelled.chars().zip(typed.chars()) {
+                let name = match q {
+                    ';' => "Semicolon".to_string(),
+                    ',' => "Comma".to_string(),
+                    '.' => "Period".to_string(),
+                    '/' => "Slash".to_string(),
+                    q => format!("Key{}", q.to_ascii_uppercase()),
+                };
+                let key = binds::any_key_from_name(&name).unwrap();
+                board.push((key, c));
+            }
+        }
+        board
+    }
+
+    /// Dvorak and Colemak both put P on QWERTY's R, a global position
+    /// itself: the P-labelled key is the previous stage, and the key at
+    /// QWERTY's P (L on Dvorak, ";" on Colemak) is not. Every global
+    /// letter, and every other mnemonic, is found by its cap however the
+    /// global positions are shuffled, from the platform or from presses.
+    #[test]
+    fn global_letters_are_found_by_cap_on_dvorak_and_colemak() {
+        use binds::GLOBAL_LETTERS;
+        let dvorak = letter_board(["',.pyfgcrl", "aoeuidhtns", ";qjkxbmwvz"]);
+        let colemak = letter_board(["qwfpgjluy;", "arstdhneio", "zxcvbkm,./"]);
+        for (name, board) in [("dvorak", &dvorak), ("colemak", &colemak)] {
+            let mut caps = KeyCaps::default();
+            caps.adopt(board);
+            // Each cap on the board answers for its own key, the global
+            // letters among them.
+            for &(key, cap) in board.iter() {
+                let cap = cap.to_ascii_uppercase();
+                if cap.is_ascii_alphabetic() {
+                    assert_eq!(caps.key_for(cap), Some(key), "{name}: {cap}");
+                }
+                let global = GLOBAL_LETTERS.contains(&cap);
+                assert_eq!(caps.is_global(key), global, "{name}: {key:?}");
+            }
+            assert_eq!(caps.key_for('P'), Some(KeyCode::KeyR), "{name}");
+            let mut keys = ButtonInput::<KeyCode>::default();
+            keys.press(KeyCode::KeyP);
+            let none = LiveSeatKeys::default();
+            assert!(!caps.global_pressed(&keys, 'P', &none), "{name}");
+            keys.press(KeyCode::KeyR);
+            assert!(caps.global_pressed(&keys, 'P', &none), "{name}");
+            // Saved and loaded, the global positions' caps come back too.
+            assert_eq!(KeyCaps::parse(&caps.to_text()), caps, "{name}");
+
+            // Learned from presses the same: the P key pressed once.
+            let mut pressed = KeyCaps::default();
+            pressed.learn(KeyCode::KeyR, 'p');
+            assert_eq!(pressed.key_for('P'), Some(KeyCode::KeyR), "{name}");
+            assert!(!pressed.is_global(KeyCode::KeyP), "{name}");
+        }
+
+        // Only the key at QWERTY's P has been pressed so far: it is known
+        // not to say P, so no key answers for P until one says it does.
+        let mut partial = KeyCaps::default();
+        partial.learn(KeyCode::KeyP, 'l');
+        assert_eq!(partial.key_for('P'), None);
+        assert_eq!(partial.key_for('L'), Some(KeyCode::KeyP));
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::KeyP);
+        assert!(!partial.global_pressed(&keys, 'P', &LiveSeatKeys::default()));
+
+        // And back on QWERTY, one press of R or P takes P off QWERTY's R.
+        for (key, typed) in [(KeyCode::KeyR, 'r'), (KeyCode::KeyP, 'p')] {
+            let mut caps = KeyCaps::default();
+            caps.adopt(&dvorak);
+            caps.learn(key, typed);
+            assert_eq!(caps.key_for(typed), Some(key));
+        }
     }
 
     #[test]
@@ -753,6 +885,36 @@ mod tests {
         assert_eq!(caps.label(KeyCode::KeyW), "W");
     }
 
+    /// A cap sits on one key: learning it somewhere takes it off the key
+    /// that said it before, or the mnemonic stays on a layout the player
+    /// has switched away from. Pressed on a key the table never keeps (a
+    /// global letter), or on its own QWERTY key, it still moves.
+    #[test]
+    fn a_cap_learned_on_one_key_leaves_the_key_that_had_it() {
+        let mut caps = KeyCaps::default();
+        caps.learn(KeyCode::KeyL, 'n');
+        assert_eq!(caps.key_for('N'), Some(KeyCode::KeyL));
+        // Back on QWERTY: the press of N itself is not written down, being
+        // what QWERTY spells that key.
+        assert!(caps.learn(KeyCode::KeyN, 'n'));
+        assert_eq!(caps.key_for('N'), Some(KeyCode::KeyN));
+        assert_eq!(caps.label(KeyCode::KeyL), "L");
+
+        // QWERTZ, then QWERTY: Z pressed on KeyZ frees KeyY of it.
+        let mut caps = KeyCaps::default();
+        caps.learn(KeyCode::KeyZ, 'y');
+        assert_eq!(caps.key_for('Z'), Some(KeyCode::KeyY));
+        caps.learn(KeyCode::KeyZ, 'z');
+        assert_eq!(caps.key_for('Z'), Some(KeyCode::KeyZ));
+
+        // And a cap moved between two kept keys is on the new one only.
+        let mut caps = KeyCaps::default();
+        caps.learn(KeyCode::KeyL, 'n');
+        caps.learn(KeyCode::KeyB, 'n');
+        assert_eq!(caps.key_for('N'), Some(KeyCode::KeyB));
+        assert_eq!(caps.to_text(), "KeyB=N");
+    }
+
     /// Digits, the numpad, and anything outside printable ASCII are not
     /// caps to learn.
     #[test]
@@ -764,6 +926,33 @@ mod tests {
         assert!(!caps.learn(KeyCode::KeyE, '€'));
         assert!(!caps.learn(KeyCode::Space, ' '));
         assert_eq!(caps, KeyCaps::default());
+    }
+
+    /// The numpad's signs are the main block's again, so a press of one
+    /// leaves the main-block key that carries the same sign alone: on
+    /// QWERTZ the editor's dial reads "-" and "+" off Slash and
+    /// BracketRight whatever the numpad is used for.
+    #[test]
+    fn a_numpad_press_leaves_the_main_blocks_caps_alone() {
+        let mut qwertz = KeyCaps::default();
+        qwertz.learn(KeyCode::KeyZ, 'y');
+        assert!(!qwertz.learn(KeyCode::NumpadSubtract, '-'));
+        assert!(!qwertz.learn(KeyCode::NumpadAdd, '+'));
+        assert_eq!(qwertz.label(KeyCode::Slash), "-");
+        assert_eq!(qwertz.label(KeyCode::BracketRight), "+");
+
+        let mut azerty = KeyCaps::default();
+        azerty.learn(KeyCode::KeyW, 'z');
+        assert!(!azerty.learn(KeyCode::NumpadMultiply, '*'));
+        assert!(!azerty.learn(KeyCode::NumpadDivide, '/'));
+        assert_eq!(azerty.label(KeyCode::Backslash), "*");
+
+        // The digit row still moves a sign: AZERTY's "-" on the 6 is the
+        // only "-" once the board is switched away from QWERTZ.
+        let mut switched = KeyCaps::default();
+        switched.learn(KeyCode::KeyZ, 'y');
+        assert!(switched.learn(KeyCode::Digit6, '-'));
+        assert_eq!(switched.label(KeyCode::Slash), "/");
     }
 
     /// [`KeyCaps::legend`] respells the literal block names, so every
@@ -781,7 +970,8 @@ mod tests {
                 tr.prompt_versus_short,
                 tr.prompt_versus_local,
                 tr.ed_prompt,
-                lang.level_hint(crate::app::hud::KEY_LESSON_LEVEL).unwrap(),
+                lang.level_hint(crate::app::campaign::KEY_LESSON_LEVEL)
+                    .unwrap(),
             ] {
                 assert!(legend.contains("WASD"), "{lang:?}: {legend:?}");
                 let respelled = azerty.legend(legend);
@@ -881,15 +1071,16 @@ mod tests {
         );
         assert_eq!(
             caps.key_for('M'),
-            KeyCode::Semicolon,
+            Some(KeyCode::Semicolon),
             "mute moves to its cap"
         );
         assert!(caps.is_global(KeyCode::Semicolon));
         assert_eq!(caps.label(KeyCode::Slash), "!");
         // `Equal` says "=" on both boards, so it is not worth writing
-        // down, and `KeyM` is a global key the caps table will not take.
+        // down. `KeyM` is, though no seat may bind it: it is not M here.
         assert!(!caps.to_text().contains("Equal"), "{}", caps.to_text());
-        assert!(!caps.to_text().contains("KeyM="), "{}", caps.to_text());
+        assert!(caps.to_text().contains("KeyM=,"), "{}", caps.to_text());
+        assert!(!caps.is_global(KeyCode::KeyM));
 
         // Plugged into a QWERTY board next: the same call takes it all
         // back, rather than leaving half a French keyboard behind.
@@ -902,7 +1093,7 @@ mod tests {
             caps.legend("WASD move | W/S: choose"),
             "WASD move | W/S: choose"
         );
-        assert_eq!(caps.key_for('M'), KeyCode::KeyM);
+        assert_eq!(caps.key_for('M'), Some(KeyCode::KeyM));
     }
 
     /// The row on the card outranks everything the game worked out, and
@@ -921,7 +1112,7 @@ mod tests {
         caps.force(Some(Layout::Qwerty));
         assert_eq!(caps.legend("WASD | W/S"), "WASD | W/S");
         assert_eq!(caps.label(KeyCode::Semicolon), ";");
-        assert_eq!(caps.key_for('M'), KeyCode::KeyM);
+        assert_eq!(caps.key_for('M'), Some(KeyCode::KeyM));
         assert!(!caps.is_global(KeyCode::Semicolon));
 
         // Naming a layout works the other way just as well, on a board
@@ -935,20 +1126,21 @@ mod tests {
         // so nothing has to be learned twice.
         caps.force(None);
         assert_eq!(caps.legend("WASD | W/S"), "ZQSD | Z/S");
-        assert_eq!(caps.key_for('M'), KeyCode::Semicolon);
+        assert_eq!(caps.key_for('M'), Some(KeyCode::Semicolon));
     }
 
     #[test]
     fn text_round_trips_and_parses_leniently() {
         let mut caps = KeyCaps::default();
         caps.learn(KeyCode::KeyW, 'z');
+        // Taking ":" off Period, which the AZERTY fill gave it.
         caps.learn(KeyCode::Slash, ':');
         let text = caps.to_text();
         assert_eq!(KeyCaps::parse(&text), caps);
         assert_eq!(
             text,
             "Backslash=* BracketLeft=^ BracketRight=$ Comma=; KeyA=Q \
-             KeyQ=A KeyW=Z KeyZ=W Minus=) Period=: Semicolon=M Slash=:"
+             KeyM=, KeyQ=A KeyW=Z KeyZ=W Minus=) Semicolon=M Slash=:"
         );
         let lenient = KeyCaps::parse("nonsense KeyW=Z NoSuchKey=Q KeyA=QQ Digit1=& KeyE=");
         let mut expected = KeyCaps::default();

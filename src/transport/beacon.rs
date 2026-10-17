@@ -208,6 +208,19 @@ pub(super) fn wide_ports(round: u32, farewell: bool) -> &'static [u16] {
     }
 }
 
+/// How many of a beach's announcements a listener bound to `port` hears
+/// one of, from a beach on another machine: every one on the first lobby
+/// port, which every beacon reaches, and one in [`WIDE_EVERY`] past it,
+/// where only the wide ones go (`wide_ports`). Loopback copies reach every
+/// port every time, so a beach on the same machine is heard more often
+/// than this, never less.
+pub fn beacons_heard_one_in(port: u16) -> u32 {
+    match wide_ports(1, false).contains(&port) {
+        true => 1,
+        false => WIDE_EVERY,
+    }
+}
+
 /// A name a beacon carries at `at`, the beach's or its host's, and empty
 /// from a build that sent none or a host that never typed one. Sanitized
 /// like any other name off the wire, because that is what it is: bytes a
@@ -336,6 +349,12 @@ impl Discovery {
             }
         }
         Err(last_err)
+    }
+
+    /// The lobby port this listener holds, which says how often it hears a
+    /// beach ([`beacons_heard_one_in`]).
+    pub fn port(&self) -> Option<u16> {
+        self.socket.local_addr().ok().map(|addr| addr.port())
     }
 
     /// Drain beacons: `(host address for joining, what it said)`.

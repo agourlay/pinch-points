@@ -98,8 +98,133 @@ pub struct KeyMap {
     pub clear_all: KeyCode,
 }
 
+impl KeyMap {
+    /// The four movement keys, in the map's order.
+    pub fn move_keys(&self) -> [KeyCode; 4] {
+        self.moves.map(|(key, ..)| key)
+    }
+
+    /// Every key this map reads: its moves, its placements, its removal
+    /// and its clear-all. The keys are copied out, so the iterator does
+    /// not borrow the map.
+    pub fn keys(&self) -> impl Iterator<Item = KeyCode> + use<> {
+        let Self {
+            moves: _,
+            places,
+            remove,
+            clear_all,
+        } = self;
+        self.move_keys()
+            .into_iter()
+            .chain(places.map(|(key, _)| key))
+            .chain([*remove, *clear_all])
+    }
+}
+
 /// How long a denied placement tints the cursor red.
 pub(super) const FLASH_SECS: f32 = 0.25;
+
+/// Whether a co-op partner has a cursor on the keyboard's second seat,
+/// which sets the one-hand preset aside (see
+/// [`GameSettings::commit_in_play`]).
+pub fn has_partner<'a>(cursors: impl IntoIterator<Item = &'a Cursor>) -> bool {
+    cursors.into_iter().any(|c| c.player == 1)
+}
+
+/// The keymap the cursor of `player` answers to, if any. Online the one
+/// local cursor is on the primary keys whatever its seat; locally the
+/// keyboard seats two, and seats 3 and up are driven by pads alone.
+pub fn seat_keymap(
+    settings: &GameSettings,
+    player: u8,
+    online: bool,
+    commit: CommitScheme,
+) -> Option<KeyMap> {
+    if online {
+        Some(keymap(settings, 0, commit))
+    } else if player < 2 {
+        Some(keymap(settings, player, commit))
+    } else {
+        None
+    }
+}
+
+/// The keys the seats playing on this screen are bound to, which a
+/// global letter yields to (see
+/// [`crate::app::keycaps::KeyCaps::global_pressed`]). Kept by
+/// [`track_live_seat_keys`] from the bindings, the screen, whether the
+/// round is online and whether a co-op partner is at the keyboard; empty
+/// on the menus, where no seat is read.
+#[derive(Resource, Default, Debug, PartialEq, Eq)]
+pub struct LiveSeatKeys(Vec<KeyCode>);
+
+impl LiveSeatKeys {
+    /// The keys read for the seats playing on `screen`, as the seats'
+    /// input reads them ([`keymap`]), under the commit scheme that input
+    /// uses ([`GameSettings::commit_in_play`]).
+    /// `cursors` are the cursors on the board: a co-op partner's is on the
+    /// second seat's keys.
+    pub fn of<'a>(
+        settings: &GameSettings,
+        screen: Screen,
+        online: bool,
+        cursors: impl IntoIterator<Item = &'a Cursor>,
+    ) -> Self {
+        let versus = screen == Screen::Versus;
+        let partner = has_partner(cursors);
+        let commit = settings.commit_in_play(versus || partner);
+        let keys = live_seats(screen, online, partner)
+            .iter()
+            .flat_map(|&seat| keymap(settings, seat as u8, commit).keys());
+        Self(keys.collect())
+    }
+
+    pub fn holds(&self, key: KeyCode) -> bool {
+        self.0.contains(&key)
+    }
+}
+
+/// The seats whose bound keys are being read on `screen`: P1 on a puzzle
+/// and in the editor, with P2's keys too when a co-op `partner` is on
+/// them, both keyboard seats in a local versus round, and P1's layout
+/// alone online, where every player's hands are on it (see
+/// `play_input::versus_input`). None on the menus, where a global letter
+/// owes a seat nothing.
+pub fn live_seats(screen: Screen, online: bool, partner: bool) -> &'static [usize] {
+    match screen {
+        Screen::Puzzle | Screen::Editor if partner => &[0, 1],
+        Screen::Puzzle | Screen::Editor => &[0],
+        Screen::Versus if online => &[0],
+        Screen::Versus => &[0, 1],
+        Screen::Menu
+        | Screen::Lobby
+        | Screen::Settings
+        | Screen::Controls
+        | Screen::MatchSetup
+        | Screen::Achievements
+        | Screen::StageSelect
+        | Screen::Replays
+        | Screen::Interlude
+        | Screen::Language
+        | Screen::NewVersion => &[],
+    }
+}
+
+/// Keep [`LiveSeatKeys`] to this frame's screen, bindings and cursors.
+pub fn track_live_seat_keys(
+    settings: Res<GameSettings>,
+    screen: Res<State<Screen>>,
+    online: Res<crate::app::net::Online>,
+    cursors: Query<&Cursor>,
+    mut live: ResMut<LiveSeatKeys>,
+) {
+    live.set_if_neq(LiveSeatKeys::of(
+        &settings,
+        *screen.get(),
+        online.0.is_some(),
+        cursors,
+    ));
+}
 
 /// Keyboard layout for a seat, as bound in settings (spec §8.2 defaults:
 /// seat 1 on WASD + arrows, seat 2 on IJKL + numpad).
@@ -107,7 +232,8 @@ pub(super) const FLASH_SECS: f32 = 0.25;
 /// `commit` is the §8.2 scheme in force: the one-hand preset overrides
 /// seat 1's four commit keys with IJKL whatever they are bound to. It
 /// exists for solo play, where the second seat's keys are free, so a
-/// caller in versus passes [`CommitScheme::Arrows`] whatever is set.
+/// caller with the keyboard shared asks [`GameSettings::commit_in_play`],
+/// which sets it aside.
 pub fn keymap(settings: &GameSettings, player: u8, commit: CommitScheme) -> KeyMap {
     use crate::app::binds::Action;
     let seat = usize::from(player).min(crate::app::binds::BOUND_SEATS - 1);
@@ -445,7 +571,7 @@ pub fn spawn_versus_cursors(
     }
     if online.0.is_none() && config.armed {
         // Configured match: one cursor per human seat.
-        spawn_cursors(&mut commands, &art, config.seats - config.bots);
+        spawn_cursors(&mut commands, &art, config.humans());
         return;
     }
     if let Some(session) = &online.0 {
@@ -453,7 +579,7 @@ pub fn spawn_versus_cursors(
         // Nor does a seat a bot drives from this machine: the keys here are
         // not what plays it.
         if let Some(seat) = session.session.seat()
-            && !session.bot
+            && session.bot.is_none()
         {
             cursor_sprite(&mut commands, &art, seat);
         }
@@ -493,23 +619,10 @@ pub fn move_cursor(
     mut cursors: Query<&mut Cursor>,
 ) {
     let board = &sim.0;
-    // Versus shares the keyboard, so IJKL belongs to the second seat there
-    // whatever the one-hand preset says, and so does a co-op puzzle, whose
-    // second cursor is on it.
-    let shared = *screen.get() == Screen::Versus || cursors.iter().any(|c| c.player == 1);
-    let commit = if shared {
-        CommitScheme::Arrows
-    } else {
-        settings.commit
-    };
+    let versus = *screen.get() == Screen::Versus;
+    let commit = settings.commit_in_play(versus || has_partner(cursors.iter()));
     for mut cursor in &mut cursors {
-        // Online: the one local cursor always answers to the primary keys.
-        // Local: the keyboard has two seats; 3 and up are gamepad-only.
-        let map = if online.0.is_some() {
-            keymap(&settings, 0, commit)
-        } else if cursor.player < 2 {
-            keymap(&settings, cursor.player, commit)
-        } else {
+        let Some(map) = seat_keymap(&settings, cursor.player, online.0.is_some(), commit) else {
             continue;
         };
         let any_just = map.moves.iter().any(|(k, ..)| keys.just_pressed(*k));
@@ -577,13 +690,12 @@ mod tests {
     /// A Tide Pool stage granting one arrow, in setup, with `hands`
     /// cursors on it: co-op when there are two.
     fn stage(hands: u8) -> App {
-        use crate::app::{Campaign, CampaignKind, LoadLevel, Phase};
+        use crate::app::{Campaign, LoadLevel, Phase};
         let levels = crate::sim::campaign_levels();
         let index = levels
             .iter()
             .position(|level| level.posts == 1)
             .expect("a one-arrow stage");
-        let builtins = levels.len();
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.init_state::<Screen>();
@@ -591,10 +703,8 @@ mod tests {
         app.init_state::<Phase>();
         app.insert_resource(Sim(levels[index].board()));
         app.insert_resource(Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
             index,
-            builtins,
+            ..Campaign::tide_pool_of(levels)
         });
         app.insert_resource(GameSettings::default());
         app.init_resource::<crate::app::keycaps::KeyCaps>();

@@ -233,14 +233,26 @@ pub(crate) const WALK_FPS: f32 = 12.0;
 
 /// Where in its gait a crab is when the clock reads zero, in frames:
 /// fractional, so neighbours change frame and bob at different instants.
-/// A whole number of frames, as it was, cancelled out of the bob, and a
-/// crowd throbbed in unison twelve times a second.
+/// A whole number of frames cancels out of the bob, and a crowd throbs in
+/// unison twelve times a second.
 fn gait_phase(id: u32) -> f32 {
     (id % 64) as f32 * 0.618_034 * 4.0
 }
 
 /// How much a walking crab grows at the top of each step.
-pub(crate) const BOB: f32 = 0.035;
+const BOB: f32 = 0.035;
+
+/// How big a walking crab is drawn `step` frames into its gait: it rides
+/// up a touch with each pair of steps. On the board and on the menu's
+/// postcard alike, and held level under reduced motion, where the legs
+/// still change frame but the body stays put.
+pub(crate) fn walk_bob(step: f32, reduced_motion: bool) -> f32 {
+    if reduced_motion {
+        1.0
+    } else {
+        1.0 + (step * std::f32::consts::PI).sin().abs() * BOB
+    }
+}
 
 /// Spawn sprites for new crabs, despawn sprites for banked ones.
 pub fn sync_crab_sprites(
@@ -335,6 +347,7 @@ pub fn interpolate_crabs(
         fixed_time,
         mut watch,
         round,
+        round_clock,
     } = tween;
     let CrabSprites {
         bodies: mut sprites,
@@ -347,9 +360,9 @@ pub fn interpolate_crabs(
     by_id.extend(board.crabs().iter().map(|c| (c.id, *c)));
     // Precious crabs glint on one clock: they twinkle together, and the
     // scatter `glint` puts on each star's position keeps that from reading
-    // as a metronome.
-    *glint_clock += time.delta_secs();
-    let glint_now = *glint_clock >= 0.22;
+    // as a metronome. The clock runs with the round, so nothing sparkles
+    // under a pause card or the results.
+    let glint_now = round.run_clock(board, &mut glint_clock, time.delta_secs()) >= 0.22;
     if glint_now {
         *glint_clock = 0.0;
     }
@@ -360,6 +373,8 @@ pub fn interpolate_crabs(
     // The same easing whatever the frame rate: about a third of a second
     // to settle into, or out of, a crowd.
     let ease = 1.0 - (-time.delta_secs() * 8.0).exp();
+    // The molting pulse breathes with the round, like the walk.
+    let pulse_at = round_clock.0;
     for (sprite, mut crowding, mut transform, mut body, children) in &mut sprites {
         let Some(crab) = by_id.get(&sprite.id) else {
             continue; // despawns this frame
@@ -382,9 +397,10 @@ pub fn interpolate_crabs(
         crowding.shrink = was_shrink + (shrink - was_shrink) * ease;
         transform.translation = (pos + crowding.spread).extend(layout::z::CREATURE);
         // Scuttle: a small heading wiggle while actually moving, phased per
-        // crab so a crowd shimmers instead of marching.
+        // crab so a crowd shimmers instead of marching. None under
+        // reduced motion.
         let moving = prev != curr && !stopped;
-        let wobble = if moving {
+        let wobble = if moving && !settings.reduced_motion {
             (time.elapsed_secs() * 11.0 + f32::from(sprite.id as u16 % 32)).sin() * 0.06
         } else {
             0.0
@@ -401,16 +417,15 @@ pub fn interpolate_crabs(
         if body.image != *wanted {
             body.image = wanted.clone();
         }
-        // The body rides up and down a touch with each pair of steps.
         let bob = if moving {
-            1.0 + (step * std::f32::consts::PI).sin().abs() * BOB
+            walk_bob(step, settings.reduced_motion)
         } else {
             1.0
         };
         // Drawn a little smaller in a crowd, and molting crabs pulse
         // gently on top of that: they are worth chasing.
         let pulse = if sprite.kind == CrabKind::Molting {
-            1.0 + (time.elapsed_secs() * 5.0).sin() * 0.06
+            1.0 + (pulse_at * 5.0).sin() * 0.06
         } else {
             1.0
         };

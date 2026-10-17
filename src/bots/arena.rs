@@ -263,7 +263,7 @@ fn play(plan: Plan, feed: Option<Sender<Feed>>) -> Result<(), String> {
         "Beach: {}, seed {seed}{}, {}, fair cursor {}, deadline {deadline} ms{}",
         beach.name(),
         if games > 1 {
-            format!(" to {}", seed + u64::from(games) - 1)
+            format!(" to {}", cli::nth_seed(seed, u64::from(games - 1)))
         } else {
             String::new()
         },
@@ -301,7 +301,7 @@ fn play(plan: Plan, feed: Option<Sender<Feed>>) -> Result<(), String> {
         }
     };
     for g in 0..games {
-        let seed = seed + u64::from(g);
+        let seed = cli::nth_seed(seed, u64::from(g));
         if games > 1 {
             print!("Game {}/{games}, seed {seed}... ", g + 1);
         } else {
@@ -376,10 +376,9 @@ fn standings(
     let sum = |f: &dyn Fn(&game::SeatResult) -> f64, seat: usize| {
         results.iter().map(|r| f(&r.seats[seat])).sum::<f64>()
     };
-    let mut order: Vec<usize> = (0..n).collect();
     let avg_score = |seat: usize| sum(&|s| f64::from(s.score), seat) / games;
     let avg_place = |seat: usize| sum(&|s| f64::from(s.placing), seat) / games;
-    order.sort_by(|&a, &b| {
+    let order = cli::ranked(n, |a, b| {
         avg_place(a)
             .total_cmp(&avg_place(b))
             .then(avg_score(b).total_cmp(&avg_score(a)))
@@ -405,7 +404,7 @@ fn standings(
     if !one {
         rows[0].insert(4, "Firsts".into());
     }
-    for (rank, &seat) in order.iter().enumerate() {
+    for &(place, seat) in &order {
         let fmt = |v: f64| {
             if one {
                 format!("{v:.0}")
@@ -424,7 +423,7 @@ fn standings(
         };
         let late = sum(&|s| f64::from(s.late), seat);
         let mut row = vec![
-            (rank + 1).to_string(),
+            place.to_string(),
             format!("P{}", seat + 1),
             names[seat].clone(),
             table[seat].kind().token().to_string(),
@@ -468,6 +467,18 @@ mod tests {
         assert_eq!(p.table.listen.to_string(), "127.0.0.1:47710");
         assert_eq!(p.table.deadline, 33);
         assert!(!p.table.fair && !p.watch);
+    }
+
+    /// Any u64 is a seed: the games after the last there is wrap round.
+    #[test]
+    fn a_seed_at_the_top_wraps_round_for_the_games_after_it() {
+        let top = u64::MAX.to_string();
+        let p = plan(args(&format!(
+            "--seat ai:easy --open 1 --seed {top} --games 3"
+        )))
+        .expect("plan");
+        assert_eq!(cli::nth_seed(p.seed, 0), u64::MAX);
+        assert_eq!(cli::nth_seed(p.seed, u64::from(p.games - 1)), 1);
     }
 
     #[test]

@@ -353,13 +353,8 @@ impl Match<'_, '_> {
         for seat in 0..self.n() {
             let player = seat as PlayerId;
             let act = match (&mut self.bots[seat], self.spec.seats[seat]) {
-                // A seat whose bot has gone (or never got going) idles:
-                // its hand lets go of any walk still under way, which
-                // would otherwise land the order on arrival with nobody
-                // there to have meant it.
                 (Some(bot), _) if !bot.playing() => {
-                    bot.idle();
-                    self.cursors[seat].let_go();
+                    bot.stand_down(&mut self.cursors[seat]);
                     Act::None
                 }
                 (Some(bot), _) => bot.order(&mut self.sinks.journal(self.spec.game)),
@@ -569,6 +564,7 @@ fn table_of<'a>(spec: &'a GameSpec, kinds: &'a [SeatKind]) -> Table<'a> {
         kinds,
         clock: spec.clock,
         cursor: spec.fair_cursor,
+        teams: None,
     }
 }
 

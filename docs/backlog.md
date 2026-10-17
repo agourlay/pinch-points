@@ -171,10 +171,11 @@ would change that.
   replace it, since every other seat, the keyboard included, keeps the two
   stages.
 
-- **The round-end spectacle, half of it.** The wave shipped
-  (`board_render::wash`): at zero the sea comes in over the whole beach,
-  holds, and drains, with everything the round built underneath it. What did
-  not ship is the other half of the original's ending, the sheltered crabs
+- **The round-end spectacle.** A wave that came in over the whole beach at
+  zero shipped and was taken out again (2026-10-16): drawn as a tinted sheet
+  over the board, it looked bad, and the results card hid most of it. The
+  round now ends on the horn and the card. The other half of the original's
+  ending did not ship either, the sheltered crabs
   scuttling home to sea. The sim is frozen at the wave (spec §3.7) and the
   crabs it holds are the *scored* ones, so sending them anywhere is a
   render-side fiction that has to invent both a count and a route. Not worth

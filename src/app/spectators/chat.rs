@@ -59,7 +59,12 @@ pub fn spectator_chat_input(
     if said.trim().is_empty() {
         return;
     }
-    let me = settings.names[0].clone();
+    let Some(session) = &mut online.0 else {
+        return;
+    };
+    // The name the host vouches this peer's lines under, which for a bot's
+    // seat (route 1) is not the player's own.
+    let me = crate::app::lobby::speaking_as(session.bot.as_deref(), &settings.names[0]).to_string();
     if me.is_empty() {
         // The hub refuses a line that resolves to no name, because an
         // empty name is the beach's own voice. Echoing it here anyway
@@ -68,14 +73,12 @@ pub fn spectator_chat_input(
         // the player who went and cleared it again.
         return;
     }
-    if let Some(session) = &mut online.0 {
-        session.transport.send(NetMsg::chat(&me, &said));
-        // Said to the table, and shown here too: the sender is a peer like
-        // any other and its own datagram never comes back to it. Shown as
-        // the wire carries it, which is how everyone else reads it.
-        session.heard.push((
-            crate::transport::name_as_sent(&me),
-            crate::transport::chat_as_sent(&said),
-        ));
-    }
+    session.transport.send(NetMsg::chat(&me, &said));
+    // Said to the table, and shown here too: the sender is a peer like any
+    // other and its own datagram never comes back to it. Shown as the wire
+    // carries it, which is how everyone else reads it.
+    session.heard.push((
+        crate::transport::name_as_sent(&me),
+        crate::transport::chat_as_sent(&said),
+    ));
 }

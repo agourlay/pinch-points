@@ -11,8 +11,8 @@ mod nav;
 
 pub use frame::{FOAM_DEPTH, FRAME_PX, Framed, ShoreCard, dress_cards, tide_line};
 pub use nav::{
-    Buttons, CLOSERS, NUMBER_KEYS, Nav, enter, left_right, nav, nav_live, number_pressed, spend,
-    step,
+    Buttons, CLOSERS, NUMBER_KEYS, Nav, enter, left_right, nav, nav_live, number_pressed,
+    screen_chosen, spend, step,
 };
 
 use crate::app::palette;

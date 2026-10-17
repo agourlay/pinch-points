@@ -242,12 +242,18 @@ pub(in crate::app) fn advance_sim(
 /// One tick of a round, however its actions arrived: the board steps, the
 /// round's tally sees the step, and a round being recorded keeps the
 /// actions.
+///
+/// An action aimed off the board is no action (`Board::on_board`), here
+/// where every way into a round meets: a peer's input off the wire, a
+/// bot's reply, a key. Every peer holds the same board, so every peer
+/// empties the same ones, and the board plays as it would have anyway.
 fn play_tick(
     board: &mut Board,
     actions: &[PlayerAction; MAX_PLAYERS],
     tally: &mut awards::RoundTally,
     recording: Option<&mut Replay>,
 ) {
+    let actions = &actions.map(|action| board.on_board(action));
     let before = awards::Reading::of(board);
     board.tick(actions);
     tally.observe(before, board, actions);

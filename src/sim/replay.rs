@@ -29,6 +29,13 @@ pub struct Replay {
     /// protocol. `watch` draws it beside the name, so nobody watching is
     /// surprised by what was playing.
     pub kinds: [SeatKind; MAX_PLAYERS],
+    /// How the round was scored: the scoring mode's index
+    /// (`app::teams::TeamMode::index`), 0 for every seat for itself.
+    ///
+    /// The sim never knows about teams, but who won does: watched with
+    /// the watcher's own setting, a round played in pairs was crowned to
+    /// its top single seat, and filed under one.
+    pub teams: u8,
 }
 
 /// What kind of thing holds a seat, as the bot protocol, the replay and the
@@ -82,6 +89,9 @@ const NAMES_MARK: &str = "names:";
 /// half-reading it. Written only when some seat was not a person, so a
 /// plain couch round is byte for byte what it always was.
 const KINDS_MARK: &str = "kinds:";
+/// The scoring mode, one number, after the kinds: written, by the same
+/// rule as the kinds, only for a round played in teams.
+const TEAMS_MARK: &str = "teams:";
 
 /// The most ticks a recording may hold: twenty minutes, four times the
 /// longest round the setup screen offers (five). A recording is played
@@ -98,6 +108,7 @@ impl Replay {
             inputs: Vec::new(),
             names: Default::default(),
             kinds: Default::default(),
+            teams: 0,
         }
     }
 
@@ -143,6 +154,9 @@ impl Replay {
         if self.kinds.iter().any(|k| *k != SeatKind::Human) {
             let kinds: Vec<&str> = self.kinds.iter().map(|k| k.token()).collect();
             let _ = writeln!(out, "{KINDS_MARK} {}", kinds.join("|"));
+        }
+        if self.teams != 0 {
+            let _ = writeln!(out, "{TEAMS_MARK} {}", self.teams);
         }
         out.push_str(&self.level.to_text());
         let _ = writeln!(out, "{INPUTS_MARK}");
@@ -190,6 +204,17 @@ impl Replay {
             }
             None => (Default::default(), rest),
         };
+        let (teams, rest) = match rest.strip_prefix(TEAMS_MARK) {
+            Some(after) => {
+                let (line, rest) = after.split_once('\n').unwrap_or((after, ""));
+                let teams = line
+                    .trim()
+                    .parse::<u8>()
+                    .map_err(|_| format!("no scoring mode {:?}", line.trim()))?;
+                (teams, rest)
+            }
+            None => (0, rest),
+        };
         let (level_text, input_text) = rest
             .split_once(INPUTS_MARK)
             .ok_or("missing inputs: section")?;
@@ -230,6 +255,7 @@ impl Replay {
             inputs,
             names,
             kinds,
+            teams,
         })
     }
 }
@@ -237,6 +263,21 @@ impl Replay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The scoring mode survives the trip, and a free-for-all writes no
+    /// line for it, so such a file is what it always was.
+    #[test]
+    fn a_replay_remembers_how_it_was_scored() {
+        let level = Level::parse("name: T\nposts: 1\nmap:\n+-+-+\n|0 1|\n+-+-+\n").expect("level");
+        let mut replay = Replay::new(level);
+        replay.record([PlayerAction::None; MAX_PLAYERS]);
+        assert!(!replay.to_text().contains(TEAMS_MARK));
+        replay.kinds[1] = SeatKind::Bot;
+        replay.teams = 2;
+        let back = Replay::parse(&replay.to_text()).expect("round trip");
+        assert_eq!((back.teams, back.kinds[1]), (2, SeatKind::Bot));
+        assert!(Replay::parse(&replay.to_text().replace("teams: 2", "teams: x")).is_err());
+    }
 
     /// Who was playing survives the trip, and a file written before names
     /// were kept still reads.

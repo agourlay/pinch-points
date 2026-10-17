@@ -339,7 +339,7 @@ pub fn library_input(
     mut playback: ResMut<Playback>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
-    let crate::app::keycaps::Keyboard { keys, caps, live } = keyboard;
+    let keys = &keyboard.keys;
     let tr = settings.tr();
     if keys.just_pressed(KeyCode::Escape) {
         next_screen.set(Screen::Menu);
@@ -349,13 +349,13 @@ pub fn library_input(
     // window follows it.
     let shown = library.kept.len();
     if shown > 0 {
-        library.selected = menu_ui::nav(&keys, library.selected, shown);
+        library.selected = menu_ui::nav(keys, library.selected, shown);
         library.settle();
     }
-    if caps.global_pressed(&keys, 'C', &live) {
+    if keyboard.global('C') {
         library.feedback = copy_selected(&mut clipboard, tr, &library);
     }
-    if caps.just_pressed(&keys, 'V') {
+    if keyboard.just('V') {
         library.feedback = keep_pasted(&mut clipboard, tr, &library_dir(), settings.replay_cap);
         // Whatever happened, the shelf may have grown; re-read it so the new
         // round is there to pick rather than waiting for the screen to be
@@ -363,7 +363,7 @@ pub fn library_input(
         library.kept = shelf();
         library.settle();
     }
-    if !menu_ui::enter(&keys) {
+    if !menu_ui::enter(keys) {
         return;
     }
     let Some(kept) = library.kept.get(library.selected) else {
@@ -426,21 +426,16 @@ fn round_from(
 
 /// Who took a pasted round, for the shelf to file it under like every
 /// other round, or `None` for a draw. The file carries the inputs and not
-/// the result, so the round is played through to its last tick; it carries
-/// no team mode either, so it is read as a free-for-all. Named as the
-/// recording named the seat, or by its number.
+/// the result, so the round is played through to its last tick, and
+/// crowned under the scoring mode it records, a team as the card names it
+/// ([`crate::app::teams::winner_label`]). Named as the recording named the
+/// seat, or by its number.
 fn winner_of(replay: &Replay, tr: &crate::app::i18n::Tr) -> Option<String> {
     let board = replay.playback();
-    let leaders = crate::app::seating::leading_seats(
-        board.scores(),
-        board.castle_seats(),
-        crate::app::teams::TeamMode::Solo,
-    );
-    let seat = leaders.iter().position(|&led| led)?;
-    Some(if replay.names[seat].is_empty() {
-        crate::app::seat_label(tr, seat as u8)
-    } else {
-        replay.names[seat].clone()
+    let seats = crate::app::session::replay_seats(&board);
+    let mode = crate::app::teams::recorded(replay).played_by(seats);
+    crate::app::teams::winner_label(board.scores(), seats, mode, |seat| {
+        crate::app::name_or_label(&replay.names, tr, seat)
     })
 }
 
@@ -571,14 +566,6 @@ mod tests {
         }
     }
 
-    /// A scratch folder of its own, gone before and after.
-    fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pinch-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("a scratch folder");
-        dir
-    }
-
     /// Two codes for rounds the same seat won, pasted within one second,
     /// are two rounds on the shelf: they used to share a file name and the
     /// second replaced the first. And pasting keeps the shelf to its cap,
@@ -586,7 +573,7 @@ mod tests {
     #[test]
     fn pasted_rounds_keep_their_own_files_and_the_cap() {
         let tr = &crate::app::i18n::EN;
-        let dir = scratch("pasted-rounds");
+        let dir = crate::app::paths::test_dir("pasted-rounds");
         let code = || {
             let text = banked_round().to_text();
             crate::share::decode(&crate::share::encode(
@@ -697,6 +684,26 @@ mod tests {
     fn a_pasted_round_with_no_names_is_filed_under_the_seat() {
         let tr = &crate::app::i18n::EN;
         assert_eq!(winner_of(&banked_round(), tr).as_deref(), Some("P1"));
+    }
+
+    /// A round played in pairs is filed under the pair, as its card named
+    /// it, read off the mode the recording carries through its text.
+    #[test]
+    fn a_pasted_round_in_pairs_is_filed_under_the_pair() {
+        let tr = &crate::app::i18n::EN;
+        let level = crate::sim::Level::parse(
+            "name: T\nposts: 1\ncrab: 0,0 R R common\nmap:\n\
+             +-+-+-+-+-+\n|. 0 1 2 3|\n+ + + + + +\n|. . . . .|\n+-+-+-+-+-+\n",
+        )
+        .expect("level");
+        let mut replay = Replay::new(level);
+        for _ in 0..60 {
+            replay.record([crate::sim::PlayerAction::None; crate::sim::MAX_PLAYERS]);
+        }
+        assert_eq!(winner_of(&replay, tr).as_deref(), Some("P1"));
+        replay.teams = crate::app::teams::TeamMode::Pairs.index() as u8;
+        let back = Replay::parse(&replay.to_text()).expect("reads back");
+        assert_eq!(winner_of(&back, tr).as_deref(), Some("P1+P2"));
     }
 
     /// The three ways a paste is not a round, each with its own answer. One

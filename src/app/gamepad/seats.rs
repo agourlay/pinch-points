@@ -32,8 +32,8 @@ enum Chair {
     Ai,
     /// A seat added to the table, which goes again.
     Added,
-    /// A human seat already at a full table: nothing was taken, so
-    /// nothing is given back.
+    /// Nothing taken, so nothing given back: a human seat already at a
+    /// full table, or the pad a seated player named for themselves.
     Taken,
 }
 
@@ -45,7 +45,10 @@ impl Chair {
         beaches: &crate::app::match_setup::CustomBeaches,
     ) {
         match self {
-            Chair::Ai => config.bots = (config.bots + 1).min(config.seats - 1),
+            Chair::Ai => {
+                config.bots += 1;
+                config.clamp_bots();
+            }
             Chair::Added => crate::app::match_setup::reseat(config, config.seats - 1, beaches),
             Chair::Taken => {}
         }
@@ -252,6 +255,33 @@ fn pad_index_of(settings: &GameSettings, players: &[u8], player: u8) -> Option<u
     (0..).filter(|index| !named(settings, *index)).nth(rank)
 }
 
+/// The seat pad claim `claim` drives at a configured table of `humans`
+/// people (seats `0..humans`, where a configured match puts its cursors),
+/// by [`pad_index_of`]: claims come first in the pad order, so claim `i`
+/// is pad index `i`. `None` when no seat there plays on it.
+///
+/// What the setup screen's footer names a claim by, and what
+/// [`pad_claim_seats`] asks before it gives a claim a chair, so the line
+/// that says who joined and the seat the pad then drives are one answer.
+pub fn seat_of_claim(settings: &GameSettings, humans: u8, claim: usize) -> Option<u8> {
+    let players: Vec<u8> = (0..humans).collect();
+    players
+        .iter()
+        .copied()
+        .find(|&player| pad_index_of(settings, &players, player) == Some(claim))
+}
+
+/// Whether pad claim `claim` is the pad a seat already at the table named
+/// in settings ("P1 plays with: controller 1"): that person was already
+/// counted, and the Start was them picking their own pad up, not a friend
+/// sitting down. Read through [`seat_of_claim`], so it is the seat the pad
+/// will in fact drive.
+fn claim_is_a_seated_players_own(settings: &GameSettings, humans: u8, claim: usize) -> bool {
+    seat_of_claim(settings, humans, claim).is_some_and(|seat| {
+        matches!(seat_choice(settings, seat), Some(SeatInput::Pad(n)) if usize::from(n) == claim)
+    })
+}
+
 /// What a seat asked for, or `None` for the seats past the bound two,
 /// which have no keyboard of their own and so nothing to choose between.
 fn seat_choice(settings: &GameSettings, player: u8) -> Option<SeatInput> {
@@ -284,14 +314,31 @@ pub fn pad_claim_seats(
     mut seats: ResMut<PadSeats>,
     mut config: ResMut<crate::app::match_setup::MatchConfig>,
     beaches: Res<crate::app::match_setup::CustomBeaches>,
+    settings: Res<GameSettings>,
+    bots: Res<crate::app::bot_seats::BotSeats>,
 ) {
+    // A doorway card is up, waiting for the bots the table was dialled
+    // with: the table is settled until it comes down. A claim taken then
+    // gave a couch bot's chair to the pad, and the card went on waiting
+    // for a bot whose seat was now a person's.
+    if bots.door_for.card_up() {
+        return;
+    }
     let PadSeats(claims, _, Chairs(chairs)) = &mut *seats;
     for (entity, pad) in &pads {
         if pad.just_pressed(GamepadButton::Start)
             && !claims.contains(&entity)
             && claims.len() < PAD_SEATS
         {
+            let claim = claims.len();
             claims.push(entity);
+            // A seated player picking up the pad they named takes no chair:
+            // the AI's went to a human seat no pad then drove.
+            let humans = config.humans();
+            if claim_is_a_seated_players_own(&settings, humans, claim) {
+                chairs.push((entity, Chair::Taken));
+                continue;
+            }
             // One person more, and only one: the AI gives up a chair if it
             // holds one, or the table grows. Counting a seat for every
             // claim above the keyboard's two instead took the AI away from
@@ -391,6 +438,8 @@ mod tests {
         use crate::app::match_setup::MatchConfig;
         let mut app = App::new();
         app.init_resource::<PadSeats>();
+        app.init_resource::<GameSettings>();
+        app.init_resource::<crate::app::bot_seats::BotSeats>();
         app.insert_resource(MatchConfig {
             seats: 4,
             bots: 2,
@@ -452,6 +501,8 @@ mod tests {
         app.init_state::<Screen>();
         app.insert_resource(State::new(Screen::MatchSetup));
         app.init_resource::<PadSeats>();
+        app.init_resource::<GameSettings>();
+        app.init_resource::<crate::app::bot_seats::BotSeats>();
         app.init_resource::<crate::app::match_setup::CustomBeaches>();
         app.insert_resource(config);
         let plugged = (0..pads)
@@ -468,6 +519,54 @@ mod tests {
         let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
         gamepad.digital_mut().release(GamepadButton::Start);
         gamepad.digital_mut().clear();
+    }
+
+    /// P1 set to play on controller 1, alone against the AI, picks that
+    /// controller up and presses Start: the pad is P1's, so the footer's
+    /// seat for it is P1 and the AI keeps its chair. Read top-down, the
+    /// footer said "P2 joined" and the AI's chair went to a P2 no pad drove.
+    #[test]
+    fn a_seated_players_named_pad_takes_no_chair() {
+        use crate::app::match_setup::MatchConfig;
+        let (mut app, pads) = setup_table(
+            MatchConfig {
+                seats: 2,
+                bots: 1,
+                ..MatchConfig::default()
+            },
+            1,
+        );
+        app.insert_resource(with([SeatInput::Pad(0), SeatInput::Auto]));
+        press_start(&mut app, pads[0]);
+        let config = app.world().resource::<MatchConfig>();
+        assert_eq!((config.seats, config.bots), (2, 1), "the AI still plays");
+        let settings = app.world().resource::<GameSettings>();
+        assert_eq!(seat_of_claim(settings, 1, 0), Some(0), "the pad is P1's");
+        // Left on auto, the same Start is a friend in the AI's chair.
+        let auto = with([SeatInput::Auto; 2]);
+        assert_eq!(seat_of_claim(&auto, 2, 0), Some(1), "the pad is P2's");
+    }
+
+    /// A pad's Start while the bot doorway card is up takes nothing: the
+    /// card is waiting for a bot in the AI's chair, and a claim that took
+    /// that chair left it waiting for a seat a person now had.
+    #[test]
+    fn no_claim_while_the_bot_card_is_up() {
+        use crate::app::bot_seats::{BotSeats, DoorFor};
+        use crate::app::match_setup::MatchConfig;
+        let (mut app, pads) = setup_table(
+            MatchConfig {
+                seats: 2,
+                bots: 1,
+                ..MatchConfig::default()
+            },
+            1,
+        );
+        app.world_mut().resource_mut::<BotSeats>().door_for = DoorFor::Couch;
+        press_start(&mut app, pads[0]);
+        let config = app.world().resource::<MatchConfig>();
+        assert_eq!((config.seats, config.bots), (2, 1), "the bot's chair kept");
+        assert!(app.world().resource::<PadSeats>().0.is_empty(), "no claim");
     }
 
     /// Pads joining a table on the four-castle arena move it to a beach

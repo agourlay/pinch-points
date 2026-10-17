@@ -144,14 +144,12 @@ fn next_step(campaign: &Campaign, sim: &Sim) -> Option<Placement> {
 
 /// H, once the player has failed enough, reveals one signpost.
 pub fn hint_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
-    live: Res<crate::app::keycaps::LiveSeatKeys>,
+    keyboard: crate::app::keycaps::Keyboard,
     campaign: Res<Campaign>,
     sim: Res<Sim>,
     mut hints: ResMut<Hints>,
 ) {
-    if !caps.global_pressed(&keys, 'H', &live) || !hints.offered() {
+    if !keyboard.global('H') || !hints.offered() {
         return;
     }
     hints.shown = next_step(&campaign, &sim);
@@ -241,16 +239,12 @@ pub fn hint_line(
 mod tests {
     use super::*;
     use crate::app::CampaignKind;
-    use crate::sim::{Level, campaign_levels};
+    use crate::sim::Level;
 
     fn campaign_at(index: usize) -> Campaign {
-        let levels = campaign_levels();
-        let builtins = levels.len();
         Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
             index,
-            builtins,
+            ..Campaign::tide_pool()
         }
     }
 
@@ -293,7 +287,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.init_resource::<Hints>();
         app.insert_resource(campaign_at(27));
         let level = campaign_at(27).current().clone();

@@ -119,6 +119,7 @@ pub(super) fn save_level(
                 }
                 let named = state.name.clone();
                 state.mine.insert(named);
+                state.filed = Some(level.to_text());
                 let filed = fill(tr.ed_saved_to, &[("path", &path.display().to_string())]);
                 let orphans = orphan_warning(state, &level, tr);
                 let notes = [stranger.then_some(tr.ed_saved_over), orphans.as_deref()];
@@ -154,9 +155,7 @@ mod tests {
     /// presses on a single level took all three of them.
     #[test]
     fn saving_the_same_level_again_does_not_build_a_second_one() {
-        let dir = std::env::temp_dir().join(format!("pinch-built-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("a directory to save into");
+        let dir = crate::app::paths::test_dir("built");
         let path = dir.join("my-beach.txt");
 
         assert!(write_level(&path, "one").expect("wrote"), "a new level");

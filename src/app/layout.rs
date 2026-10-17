@@ -60,6 +60,9 @@ pub mod z {
     pub const SIGNPOST: f32 = 2.0;
     pub const CREATURE: f32 = 3.0;
     pub const WALL: f32 = 4.0;
+    /// The leader's crown, floating in the row above its castle where
+    /// posts, creatures and fences stand: over them, under the tide.
+    pub const CROWN: f32 = 4.2;
     /// The tide water bars.
     pub const WATER: f32 = 4.5;
     /// The foam lip riding the water's inner edge.

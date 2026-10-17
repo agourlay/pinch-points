@@ -316,7 +316,7 @@ pub(super) fn drive_typing(
                 // of the table never saw.
                 let me = state.joined().map_or_else(
                     || settings.names[0].clone(),
-                    |joined| joined.speaking_as(&settings.names[0]).to_string(),
+                    |joined| speaking_as(joined.bot.as_deref(), &settings.names[0]).to_string(),
                 );
                 if let Some(transport) = state.transport() {
                     transport.send(NetMsg::chat(&me, &line));
@@ -660,7 +660,7 @@ mod door_tests {
         app.init_resource::<crate::app::match_setup::CustomBeaches>();
         app.insert_resource(GameSettings::default());
         app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.add_message::<KeyboardInput>();
         app.add_systems(Update, lobby_input);
 
@@ -679,6 +679,7 @@ mod door_tests {
                 bots: false,
                 full: false,
                 age: 0.0,
+                heard: 1,
             }];
             state.selected = Some(there);
         }
@@ -755,7 +756,7 @@ mod door_tests {
         settings.names[0] = "あ".repeat(12);
         app.insert_resource(settings);
         app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.add_message::<KeyboardInput>();
         app.add_systems(Update, lobby_input);
         app.world_mut().resource_mut::<LobbyState>().typing = Some(Typing::chat());
@@ -830,7 +831,7 @@ mod door_tests {
         app.init_resource::<crate::app::match_setup::CustomBeaches>();
         app.insert_resource(GameSettings::default());
         app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.add_message::<bevy::input::keyboard::KeyboardInput>();
         app.world_mut().spawn(Gamepad::default());
         app.add_systems(Update, lobby_input);

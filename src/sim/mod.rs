@@ -16,11 +16,12 @@ mod rng;
 mod solve;
 
 pub use board::{
-    Board, CRAB_CAP_TILES_PER_CRAB, CapPolicy, EVENT_COOLDOWN, EVENT_TICKS, GOLDEN_CALLED_VALUE,
-    GOLDEN_NOTICE, GULL_CAP, Grid, LURE_TICKS, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER, Mania,
-    PlayerAction, PlayerId, Refusal, Rules, SIGNPOST_LIFETIME, SPILL_CAP, SUBUNITS_PER_TILE,
-    SURGE_TICKS, SWEEP_FLIGHT, SWEEP_HOLD, SWEEP_STAGGER, Signpost, SignpostHealth, Spawner,
-    Sweeping, TICKS_PER_SECOND, TIER_FLOORS, Tempo, TideEvent, TileKind, castle_tier,
+    ArenaProblem, Board, CRAB_CAP_TILES_PER_CRAB, CapPolicy, EVENT_COOLDOWN, EVENT_TICKS,
+    GOLDEN_CALLED_VALUE, GOLDEN_NOTICE, GULL_CAP, Grid, LURE_TICKS, MAX_PLAYERS,
+    MAX_SIGNPOSTS_PER_PLAYER, Mania, PlayerAction, PlayerId, Refusal, Rules, SIGNPOST_LIFETIME,
+    SPILL_CAP, SUBUNITS_PER_TILE, SURGE_TICKS, SWEEP_FLIGHT, SWEEP_HOLD, SWEEP_MEMORY,
+    SWEEP_STAGGER, Signpost, SignpostHealth, Spawner, Sweeping, TICKS_PER_SECOND, TIER_FLOORS,
+    Tempo, TideEvent, TileKind, castle_tier,
 };
 pub(crate) use board::{bits_to_hex, tile_token};
 pub use bot::{
@@ -31,7 +32,7 @@ pub use campaign::{campaign_levels, challenge_levels};
 pub use crab::{Crab, CrabKind, Handedness};
 pub use direction::Direction;
 pub use gull::{Gull, GullState};
-pub use level::{Goal, Level, LevelKind, PUZZLE_TICK_LIMIT, PuzzleOutcome};
+pub use level::{Filing, Goal, Level, LevelKind, PUZZLE_TICK_LIMIT, PuzzleOutcome};
 pub use map_gen::{
     castle_spots, classic_arena, classic_arena_seeded, generate_arena, set_versus_rules,
 };

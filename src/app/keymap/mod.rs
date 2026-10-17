@@ -32,7 +32,7 @@ use crate::app::settings::GameSettings;
 /// Saved only once a language has been taken: on a first run this lands
 /// while the language picker is still up, and the picker is chosen on the
 /// settings file not existing yet. See
-/// [`crate::app::language::may_save`].
+/// [`crate::app::language::LanguageUnasked::may_save`].
 ///
 /// An exclusive system for one reason: macOS asks for the keyboard type
 /// through a Carbon call that belongs on the main thread, and an
@@ -42,11 +42,11 @@ pub fn read_keymap(world: &mut World) {
     if caps.is_empty() {
         return;
     }
-    // Read before the caps are borrowed, and false when there is no
-    // screen at all: not writing is always the safe answer.
+    // Read before the caps are borrowed, and false when the question was
+    // never set up: not writing is always the safe answer.
     let may_save = world
-        .get_resource::<State<crate::app::Screen>>()
-        .is_some_and(|screen| crate::app::language::may_save(screen.get()));
+        .get_resource::<crate::app::language::LanguageUnasked>()
+        .is_some_and(crate::app::language::LanguageUnasked::may_save);
     // Adopted into a copy first, so the resource is only marked changed
     // when the platform actually moved a cap.
     let mut adopted = world.resource::<crate::app::keycaps::KeyCaps>().clone();
@@ -65,7 +65,7 @@ fn ask() -> Vec<(KeyCode, char)> {
     os::query()
         .into_iter()
         .filter_map(|(name, cap)| {
-            let key = binds::key_from_name(name).or_else(|| binds::global_key_from_name(name))?;
+            let key = binds::any_key_from_name(name)?;
             Some((key, cap))
         })
         .collect()
@@ -84,7 +84,7 @@ mod tests {
         let named = os::query();
         for (name, _) in &named {
             assert!(
-                binds::key_from_name(name).is_some() || binds::global_key_from_name(name).is_some(),
+                binds::any_key_from_name(name).is_some(),
                 "{name} is not a key this game can name"
             );
         }

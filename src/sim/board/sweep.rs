@@ -39,8 +39,18 @@ pub(super) struct Swept {
 
 /// How many ticks a [`Swept`] record is kept before it is pruned: long
 /// enough that a frame running several ticks behind still finds it, short
-/// enough that the list is a handful of entries and never a round's worth.
-pub(super) const SWEEP_MEMORY: u64 = 8;
+/// enough that the list is a sweep or two and never a round's worth.
+///
+/// A frame covers more ticks than it looks. The fixed clock runs up to a
+/// quarter second's worth of steps in one frame after a hitch, eight at
+/// thirty a second; a replay at 4x feeds four ticks a step, and an online
+/// peer catching up two frames a step. Kept for eight, a crab banked on a
+/// replay's busiest frame was gone from here by the time it was read, and
+/// drawn as eaten. The worst case is 36 ticks, nine steps (the eight and
+/// the overstep the clock carries into the frame) of four, and this keeps
+/// half as many again and more: a test in the shell holds it to that
+/// margin against the shell's own numbers.
+pub const SWEEP_MEMORY: u64 = 64;
 
 /// Crab Monopoly's crabs, those in the air and those just landed. Two
 /// lists with one subject, kept together so a copy or a reset cannot take

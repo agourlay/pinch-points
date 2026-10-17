@@ -180,9 +180,22 @@ fn dial(
 /// The host answers a greeting the moment it hears one, and sends the
 /// table round every [`ANNOUNCE_EVERY`] besides, so silence this long is
 /// not a lost packet: there is nothing at that address. Longer than
-/// [`HOST_TTL`], so a beach that is merely being slow about its beacon is
-/// never given up on before the list would give up on it.
+/// [`HOST_TTL`], so on the first lobby port a beach that is merely being
+/// slow about its beacon is never given up on before the list would give
+/// up on it.
+///
+/// Not longer than [`host_ttl`] up the port ladder, and not meant to be:
+/// the list waits that long there because beacons reach it one in four,
+/// while a beach answers its joiner directly at the full rate whatever
+/// port the joiner listens on. So a joiner up the ladder can give up on a
+/// beach the list still shows, and [`answer_the_silence`] takes that row
+/// off the list as it does, rather than leave a crashed beach there for
+/// another fourteen seconds to be picked again.
 pub(super) const NO_ANSWER_AFTER: f32 = 6.0;
+const _: () = {
+    assert!(NO_ANSWER_AFTER > HOST_TTL);
+    assert!(NO_ANSWER_AFTER > 3.0 * ANNOUNCE_EVERY);
+};
 /// Whether anybody is actually there, said out loud.
 ///
 /// A dialled socket is not a connection, since UDP tells nobody anything,
@@ -229,6 +242,13 @@ fn answer_the_silence(
         .peer_addr()
         .map(|addr| addr.to_string())
         .unwrap_or_default();
+    // And its row goes from the list with it: nothing answers there, and
+    // up the port ladder the list would otherwise keep it long after this
+    // (see `NO_ANSWER_AFTER`). A beach whose beacon is still on the air is
+    // listed again by the next one.
+    if let Some(gone) = state.joined_entry().map(|host| host.addr) {
+        state.hosts.retain(|host| host.addr != gone);
+    }
     state.let_go();
     state.feedback = fill(tr.lobby_no_answer, &[("a", &called)]);
     true
@@ -277,7 +297,11 @@ pub(super) fn dial_as(
 /// with the finished round's `Start`, which is right for a latecomer who
 /// missed the launch and wrong for a table that came back here from that
 /// very round. The seed is what tells them apart: a fresh round is struck
-/// on a fresh seed, the same mark `OnlineSession::is_next_round` reads.
+/// on a fresh seed. Not the deal number a round in progress goes by
+/// (`OnlineSession::is_next_round`): the seed is all a joiner carries back to
+/// the lobby from the round it left (`Joined::played_seed`), and all the
+/// question needs, which is "the round just played, or not", not which of
+/// two rounds came later.
 pub(super) fn a_fresh_invitation(played: Option<u64>, invitation: &Invitation) -> bool {
     played != Some(invitation.terms.seed)
 }
@@ -350,7 +374,7 @@ fn walk_into_the_arena(
     // table back to.
     session.home.from_lobby = true;
     session.home.wants_to_watch = joined.watching;
-    session.bot = joined.bot.is_some();
+    session.bot = joined.bot;
     online.0 = Some(session);
     next_vphase.set(VersusPhase::Countdown);
     next_screen.set(Screen::Versus);
@@ -377,42 +401,6 @@ fn queued_feedback(tr: &'static crate::app::i18n::Tr, watching: bool, ahead: u8)
     }
 }
 
-/// Why a joiner was put out of the beach it greeted, each of them the
-/// end of the greeting: the socket let go, and a line saying why.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum PutOut {
-    /// That beach is running a different build, which answered with the
-    /// protocol version it speaks. Greeting it again would only be ignored
-    /// again, and a joiner left saying hello forever looks exactly like a
-    /// network fault.
-    Mismatch(u8),
-    /// The host asked us to go: back to the list.
-    Kicked,
-    /// We came as a bot, and the host is not taking bots.
-    NoBots,
-    /// The host closed its socket: the beach is gone, whether or not its
-    /// beacon's farewell reached this listener.
-    Closed,
-}
-
-impl PutOut {
-    /// The line the status bar says it with.
-    fn feedback(self, tr: &'static crate::app::i18n::Tr) -> String {
-        match self {
-            PutOut::Mismatch(version) => fill(
-                tr.lobby_version_clash,
-                &[
-                    ("t", &version.to_string()),
-                    ("o", &crate::transport::PROTOCOL_VERSION.to_string()),
-                ],
-            ),
-            PutOut::Kicked => tr.lobby_kicked_you.to_string(),
-            PutOut::NoBots => tr.lobby_no_bots.to_string(),
-            PutOut::Closed => tr.lobby_host_closed.to_string(),
-        }
-    }
-}
-
 /// Everything the host said to a joiner in one frame, gathered off the
 /// socket before any of it is acted on.
 #[derive(Default)]
@@ -423,41 +411,20 @@ struct HostWord {
     heard: bool,
     started: Option<Invitation>,
     caught: Option<crate::app::net::catch_up::CaughtUp>,
-    mismatch: Option<u8>,
-    kicked: bool,
-    no_bots: bool,
-    closed: bool,
+    /// Why the host put this joiner out, the most telling reason when
+    /// several arrived together (`PutOut::hear`).
+    put_out: Option<PutOut>,
     queued: Option<u8>,
     said: Vec<(crate::transport::WireName, crate::transport::WireChat)>,
     table: Option<(Vec<String>, [u8; MAX_PLAYERS])>,
     host_terms: Option<(MatchTerms, crate::transport::WireName)>,
 }
 
-impl HostWord {
-    /// Whether the host put this joiner out, and why. A clash of builds
-    /// outranks being asked to go, which outranks the beach closing,
-    /// whatever order they arrived in.
-    fn put_out(&self) -> Option<PutOut> {
-        if let Some(version) = self.mismatch {
-            return Some(PutOut::Mismatch(version));
-        }
-        // Not taking bots is being asked to go, with the reason.
-        match (self.no_bots, self.kicked, self.closed) {
-            (true, _, _) => Some(PutOut::NoBots),
-            (false, true, _) => Some(PutOut::Kicked),
-            (false, false, true) => Some(PutOut::Closed),
-            (false, false, false) => None,
-        }
-    }
-}
-
 /// Greet the host if it is time, and gather what it said this frame,
 /// `delta` seconds after the last.
 fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>, delta: f32) -> HostWord {
     let mut word = HostWord::default();
-    if let Some(since) = &mut joined.host_goodbye {
-        *since += delta;
-    }
+    joined.host_goodbye.age(delta);
     let transport = &mut joined.transport;
     if let Some(hello) = hello {
         transport.send(hello);
@@ -466,15 +433,15 @@ fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>, delta: f32) -> Host
         // A goodbye starts its clock at the first copy, and any other word
         // from the host takes it back (`Joined::host_goodbye`).
         if msg == NetMsg::Leaving {
-            joined.host_goodbye.get_or_insert(0.0);
+            joined.host_goodbye.spoke();
         } else {
             word.heard = true;
-            joined.host_goodbye = None;
+            joined.host_goodbye.heard();
         }
         match msg {
             NetMsg::Start(start) => word.started = Some(start),
-            NetMsg::Kicked => word.kicked = true,
-            NetMsg::NoBots => word.no_bots = true,
+            NetMsg::Kicked => PutOut::hear(&mut word.put_out, PutOut::Kicked),
+            NetMsg::NoBots => PutOut::hear(&mut word.put_out, PutOut::NoBots),
             NetMsg::Leaving => {}
             // A watcher at a beach mid-round: the round as it stands,
             // part by part, until there is a whole of it to walk into.
@@ -495,7 +462,9 @@ fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>, delta: f32) -> Host
                     word.caught = Some(whole);
                 }
             }
-            NetMsg::Incompatible { version } => word.mismatch = Some(version),
+            NetMsg::Incompatible { version } => {
+                PutOut::hear(&mut word.put_out, PutOut::Mismatch(version));
+            }
             // That beach is mid-round. The greeting already repeats
             // every second, so it doubles as the place in line: stay
             // here, keep saying hello, and the host answers with a
@@ -510,18 +479,21 @@ fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>, delta: f32) -> Host
             // Who else is here. A joiner has spoken to nobody but the
             // host and would otherwise sit at an apparently empty beach.
             NetMsg::Roster {
+                seats,
                 names,
                 terms,
                 kinds,
                 beach,
-                ..
             } => {
-                // The table is the leading run of named seats: the
-                // host sends it in seat order and pads the rest.
+                // The table is as many places as the host says, in seat
+                // order. Not the leading run of named ones: a nameless
+                // player, or a bot, mid-round, is a place all the same,
+                // and stopping at it cut the table short and dealt the
+                // terms card the wrong teams.
                 word.table = Some((
                     crate::transport::table_from_wire(&names)
                         .into_iter()
-                        .take_while(|name| !name.is_empty())
+                        .take(usize::from(seats))
                         .collect(),
                     kinds,
                 ));
@@ -536,9 +508,9 @@ fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>, delta: f32) -> Host
             | NetMsg::Resume { .. } => {}
         }
     }
-    word.closed = joined
-        .host_goodbye
-        .is_some_and(|since| since >= LOBBY_GOODBYE_GRACE);
+    if joined.host_goodbye.stood(LOBBY_GOODBYE_GRACE) {
+        PutOut::hear(&mut word.put_out, PutOut::Closed);
+    }
     word
 }
 
@@ -567,7 +539,7 @@ pub fn join_tick(
     if answer_the_silence(&mut state, settings.tr(), word.heard, time.delta_secs()) {
         return;
     }
-    if let Some(why) = word.put_out() {
+    if let Some(why) = word.put_out {
         state.let_go();
         state.feedback = why.feedback(settings.tr());
         return;
@@ -576,10 +548,7 @@ pub fn join_tick(
         heard: _,
         started,
         caught,
-        mismatch: _,
-        kicked: _,
-        no_bots: _,
-        closed: _,
+        put_out: _,
         queued,
         said,
         table,
@@ -591,7 +560,11 @@ pub fn join_tick(
             .take(table.len())
             .map(|&byte| crate::transport::kind_from_byte(byte))
             .collect();
-        state.table = table;
+        // A place the host sent no name for reads as its seat, as on
+        // every other screen.
+        state.table = (0..table.len() as u8)
+            .map(|seat| crate::app::name_or_label(&table, settings.tr(), seat))
+            .collect();
     }
     if let Some((terms, beach)) = host_terms
         && let Some(joined) = state.joined_mut()
@@ -647,21 +620,53 @@ mod tests {
     #[test]
     fn a_bot_turned_away_hears_the_beach_is_not_taking_bots() {
         let tr = &crate::app::i18n::EN;
-        let word = HostWord {
-            no_bots: true,
-            kicked: true,
-            ..HostWord::default()
-        };
-        assert_eq!(word.put_out(), Some(PutOut::NoBots));
+        for order in [
+            [PutOut::NoBots, PutOut::Kicked],
+            [PutOut::Kicked, PutOut::NoBots],
+        ] {
+            let mut put_out = None;
+            for why in order {
+                PutOut::hear(&mut put_out, why);
+            }
+            assert_eq!(put_out, Some(PutOut::NoBots));
+        }
         assert_eq!(PutOut::NoBots.feedback(tr), tr.lobby_no_bots);
-        let word = HostWord {
-            kicked: true,
-            ..HostWord::default()
-        };
+        let mut put_out = None;
+        PutOut::hear(&mut put_out, PutOut::Kicked);
         assert_eq!(
-            word.put_out().map(|why| why.feedback(tr)),
+            put_out.map(|why| why.feedback(tr)),
             Some(tr.lobby_kicked_you.to_string())
         );
+    }
+
+    /// The roster's table is as many places as it says, a nameless one
+    /// among them: a seat mid-round whose player greeted with no name, or
+    /// a bot's. Read as the leading run of named places, a table of three
+    /// was one, and the terms card dealt the wrong teams from it.
+    #[test]
+    fn a_nameless_place_does_not_cut_the_roster_short() {
+        let mut host = UdpTransport::host(0).expect("bind");
+        let port = host.local_addr().expect("addr").port();
+        let mut joined = Joined::dialled(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            false,
+        );
+        let settle = || std::thread::sleep(std::time::Duration::from_millis(20));
+        joined.transport.send(NetMsg::hello("Cy"));
+        settle();
+        let _ = host.recv_all();
+        let table = ["Anna".to_string(), String::new(), "Cy".to_string()];
+        host.send(NetMsg::Roster {
+            seats: 3,
+            names: crate::transport::wire_table(&table),
+            terms: MatchTerms::default(),
+            kinds: [0; MAX_PLAYERS],
+            beach: [0; crate::transport::WIRE_NAME],
+        });
+        settle();
+        let word = hear_the_host(&mut joined, None, 0.0);
+        let (heard, _) = word.table.expect("a table");
+        assert_eq!(heard, table, "three places, the nameless one included");
     }
 
     /// A host's goodbye in the lobby is believed only once it has stood
@@ -685,17 +690,17 @@ mod tests {
         // Forged, and then the host's roster comes round.
         host.send(NetMsg::Leaving);
         settle();
-        assert!(hear_the_host(&mut joined, None, 0.0).put_out().is_none());
+        assert!(hear_the_host(&mut joined, None, 0.0).put_out.is_none());
         assert!(
-            hear_the_host(&mut joined, None, 1.0).put_out().is_none(),
+            hear_the_host(&mut joined, None, 1.0).put_out.is_none(),
             "inside the grace"
         );
         host.send(NetMsg::chat("Sam", "hi"));
         settle();
-        assert!(hear_the_host(&mut joined, None, 0.1).put_out().is_none());
+        assert!(hear_the_host(&mut joined, None, 0.1).put_out.is_none());
         assert!(
             hear_the_host(&mut joined, None, LOBBY_GOODBYE_GRACE)
-                .put_out()
+                .put_out
                 .is_none(),
             "taken back by the host's next word"
         );
@@ -703,9 +708,9 @@ mod tests {
         // Real: nothing after it.
         host.send(NetMsg::Leaving);
         settle();
-        assert!(hear_the_host(&mut joined, None, 0.0).put_out().is_none());
+        assert!(hear_the_host(&mut joined, None, 0.0).put_out.is_none());
         assert_eq!(
-            hear_the_host(&mut joined, None, LOBBY_GOODBYE_GRACE).put_out(),
+            hear_the_host(&mut joined, None, LOBBY_GOODBYE_GRACE).put_out,
             Some(PutOut::Closed),
             "and then the beach has closed"
         );
@@ -740,6 +745,7 @@ mod tests {
                 bots: false,
                 full: false,
                 age: 0.0,
+                heard: 1,
             })
             .collect()
     }
@@ -1014,6 +1020,11 @@ mod tests {
             )),
             ..LobbyState::default()
         };
+        // Listed, as a crashed beach still is for a while up the port
+        // ladder, next to one that is fine.
+        let mut listed = beaches(&[(1, 6), (1, 6)]);
+        listed[0].addr = "127.0.0.1:47999".parse().expect("addr");
+        state.hosts = listed;
 
         let quiet = answer_the_silence(&mut state, &crate::app::i18n::EN, false, 1.0);
         assert!(!quiet, "one second is a lost packet, not an empty address");
@@ -1030,6 +1041,12 @@ mod tests {
         assert!(
             !state.standing().at_a_beach(),
             "and the lobby is back to browsing"
+        );
+        let left: Vec<&str> = state.hosts.iter().map(|host| host.name.as_str()).collect();
+        assert_eq!(
+            left,
+            ["beach1"],
+            "the beach that never answered is not offered again"
         );
     }
 
@@ -1145,10 +1162,7 @@ mod tests {
                 seed,
                 ..MatchTerms::default()
             },
-            names: [[0u8; crate::transport::WIRE_NAME]; MAX_PLAYERS],
-            kinds: [0; MAX_PLAYERS],
-            standing: None,
-            beach: Vec::new(),
+            ..Invitation::blank()
         };
         assert!(
             !a_fresh_invitation(Some(42), &invitation(42)),

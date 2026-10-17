@@ -11,11 +11,11 @@ mod crabs;
 mod gulls;
 mod sweeps;
 
-pub(crate) use crabs::{
-    BOB, WALK_FPS, body_color, claw_color, crab_body, crab_claw, mirrored, shade_of, shell_color,
-    sprite_side,
-};
 pub use crabs::{CrabSprite, interpolate_crabs, sync_crab_sprites};
+pub(crate) use crabs::{
+    WALK_FPS, body_color, claw_color, crab_body, crab_claw, mirrored, shade_of, shell_color,
+    sprite_side, walk_bob,
+};
 pub use gulls::{GullSprite, interpolate_gulls, sync_gull_sprites};
 pub use sweeps::{SweepSprite, draw_sweeps};
 
@@ -65,6 +65,10 @@ pub struct Tween<'w, 's> {
     /// above, which also trips on a late lockstep input, the ordinary
     /// rhythm online, and twitched every crab into its rest pose.
     round: crate::app::round_state::RoundState<'w>,
+    /// The round's own seconds ([`crate::app::round_state::RoundClock`]):
+    /// what a creature's idle motion (a molting pulse, a wing beat) is
+    /// drawn at, so it holds still under a pause card and on the results.
+    round_clock: Res<'w, crate::app::round_state::RoundClock>,
 }
 
 /// Where a creature is drawn `alpha` of the way from its last tick's place

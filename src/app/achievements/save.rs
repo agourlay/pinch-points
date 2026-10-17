@@ -4,7 +4,19 @@
 use super::{ACHIEVEMENTS, Stats, Unlocked, save_path};
 use bevy::prelude::*;
 
-pub fn to_text(stats: &Stats, unlocked: &Unlocked) -> String {
+/// What a save file said that this build cannot read, kept so the next
+/// save writes it back: a stat a newer build counts, and trophies it has
+/// that this one does not. Read and dropped, one game in an older build
+/// cost the player them for good.
+#[derive(Default, Debug, PartialEq, Eq)]
+pub(super) struct Unknown {
+    /// Whole `key: value` lines under a key this build does not know.
+    lines: crate::app::paths::ForeignLines,
+    /// Trophy ids on the `unlocked:` line that name no trophy here.
+    ids: crate::app::paths::ForeignLines,
+}
+
+pub(super) fn to_text(stats: &Stats, unlocked: &Unlocked, unknown: &Unknown) -> String {
     // Destructured with no rest pattern: a new stat refuses to build here
     // until somebody decides whether it is saved or, like the round-scoped
     // scratch, deliberately left behind. The lenient `parse` below would
@@ -41,9 +53,14 @@ pub fn to_text(stats: &Stats, unlocked: &Unlocked) -> String {
         codes_shared,
         codes_taken,
     } = stats;
+    let Unknown {
+        lines: unknown_lines,
+        ids: unknown_ids,
+    } = unknown;
     let mut ids: Vec<&str> = unlocked.0.iter().copied().collect();
     ids.sort_unstable();
-    format!(
+    ids.extend(unknown_ids.iter());
+    let mut text = format!(
         "banked: {}\ngolden: {}\nlures: {}\nevents: {}\ngulls_fed: {}\n\
          raids_taken: {}\nrounds: {}\nwins: {}\npuzzles: {}\ndry_wins: {}\n\
          daily_day: {}\ndaily_best: {}\ngiants: {}\nevents_seen: {}\n\
@@ -83,14 +100,24 @@ pub fn to_text(stats: &Stats, unlocked: &Unlocked) -> String {
         codes_shared,
         codes_taken,
         ids.join(","),
-    )
+    );
+    unknown_lines.append_to(&mut text);
+    text
 }
 
-/// Lenient parse: unknown keys and bad values fall back to zero, unknown
-/// achievement ids are dropped.
+/// Lenient parse: bad values fall back to zero, and what this build does
+/// not know (a key, a trophy id) is left out of the stats and the shelf.
 pub fn parse(text: &str) -> (Stats, Unlocked) {
+    let (stats, unlocked, _) = read(text);
+    (stats, unlocked)
+}
+
+/// [`parse`], and what it left out kept aside ([`Unknown`]) for a save to
+/// write back.
+pub(super) fn read(text: &str) -> (Stats, Unlocked, Unknown) {
     let mut stats = Stats::default();
     let mut unlocked = Unlocked::default();
+    let mut unknown = Unknown::default();
     for line in text.lines() {
         let Some((key, value)) = line.split_once(':') else {
             continue;
@@ -131,13 +158,17 @@ pub fn parse(text: &str) -> (Stats, Unlocked) {
             "codes_shared" => stats.codes_shared = num,
             "codes_taken" => stats.codes_taken = num,
             "unlocked" => {
-                for id in value.split(',') {
-                    if let Some(known) = ACHIEVEMENTS.iter().find(|a| a.id == id.trim()) {
-                        unlocked.0.insert(known.id);
+                for id in value.split(',').map(str::trim).filter(|id| !id.is_empty()) {
+                    match ACHIEVEMENTS.iter().find(|a| a.id == id) {
+                        Some(known) => {
+                            unlocked.0.insert(known.id);
+                        }
+                        None => unknown.ids.keep(id),
                     }
                 }
             }
-            _ => {}
+            "" => {}
+            _ => unknown.lines.keep(line),
         }
     }
     // Today's best is by definition part of the all-time record, and a file
@@ -149,12 +180,8 @@ pub fn parse(text: &str) -> (Stats, Unlocked) {
     // not the file remembers it. A trophy added after a player passed its
     // threshold would otherwise sit on the shelf reading "25/25" and
     // locked. No toast for these; they are not news.
-    for achievement in &ACHIEVEMENTS {
-        if achievement.met(&stats) {
-            unlocked.0.insert(achievement.id);
-        }
-    }
-    (stats, unlocked)
+    backfill(&stats, &mut unlocked);
+    (stats, unlocked, unknown)
 }
 
 pub fn load(mut commands: Commands) {
@@ -167,8 +194,125 @@ pub fn load(mut commands: Commands) {
     commands.insert_resource(unlocked);
 }
 
-pub(super) fn save(stats: &Stats, unlocked: &Unlocked) {
-    let _ = crate::app::paths::write_atomic(&save_path(), to_text(stats, unlocked));
+/// Write the record out, with whatever the file on disk holds that this
+/// build cannot read carried over (see [`Unknown`]).
+pub(super) fn save(stats: &mut Stats, unlocked: &mut Unlocked) {
+    let _ = save_in(&save_path(), stats, unlocked);
+}
+
+/// [`save`] to a file named outright, with the error kept for a test.
+///
+/// The record is read once at startup and written back whole, so with two
+/// copies of the game open each save wrote over the other's progress with
+/// its own. The file as it stands is read back in first and merged into
+/// the record in hand ([`merge`]): a trophy earned anywhere stays earned,
+/// and a count never goes back down.
+pub(super) fn save_in(
+    path: &std::path::Path,
+    stats: &mut Stats,
+    unlocked: &mut Unlocked,
+) -> std::io::Result<()> {
+    let on_disk = std::fs::read_to_string(path).unwrap_or_default();
+    let (disk_stats, disk_unlocked, unknown) = read(&on_disk);
+    merge(stats, &disk_stats);
+    unlocked.0.extend(disk_unlocked.0);
+    backfill(stats, unlocked);
+    crate::app::paths::write_atomic(path, to_text(stats, unlocked, &unknown))
+}
+
+/// Take in another record's stats: the larger of each count, since every
+/// count only climbs, and both sets of bits in a bitmask. The daily best
+/// belongs to its day, so the later day's stands, and the better of the
+/// two on the same day.
+///
+/// Two copies counting at once each count from where they started, so the
+/// larger is not the sum of both; it is what neither copy can be said to
+/// have taken back.
+fn merge(stats: &mut Stats, other: &Stats) {
+    // Destructured with no rest pattern, as in `to_text`: a new stat has
+    // to say how it merges.
+    let Stats {
+        banked,
+        golden,
+        lures,
+        events,
+        gulls_fed,
+        raids_taken,
+        rounds,
+        wins,
+        puzzles,
+        dry_wins,
+        daily_day,
+        daily_best,
+        giants,
+        events_seen,
+        best_round,
+        series_wins,
+        online_wins,
+        daily_days,
+        levels_built,
+        campaign_done,
+        beach_done,
+        hosted,
+        crowd,
+        seats_won,
+        under_par,
+        clean_solves,
+        deep_solves,
+        daily_record,
+        codes_shared,
+        codes_taken,
+    } = other;
+    for (mine, theirs) in [
+        (&mut stats.banked, banked),
+        (&mut stats.golden, golden),
+        (&mut stats.lures, lures),
+        (&mut stats.events, events),
+        (&mut stats.gulls_fed, gulls_fed),
+        (&mut stats.raids_taken, raids_taken),
+        (&mut stats.rounds, rounds),
+        (&mut stats.wins, wins),
+        (&mut stats.puzzles, puzzles),
+        (&mut stats.dry_wins, dry_wins),
+        (&mut stats.giants, giants),
+        (&mut stats.best_round, best_round),
+        (&mut stats.series_wins, series_wins),
+        (&mut stats.online_wins, online_wins),
+        (&mut stats.daily_days, daily_days),
+        (&mut stats.levels_built, levels_built),
+        (&mut stats.campaign_done, campaign_done),
+        (&mut stats.beach_done, beach_done),
+        (&mut stats.hosted, hosted),
+        (&mut stats.crowd, crowd),
+        (&mut stats.under_par, under_par),
+        (&mut stats.clean_solves, clean_solves),
+        (&mut stats.deep_solves, deep_solves),
+        (&mut stats.daily_record, daily_record),
+        (&mut stats.codes_shared, codes_shared),
+        (&mut stats.codes_taken, codes_taken),
+    ] {
+        *mine = (*mine).max(*theirs);
+    }
+    stats.events_seen |= events_seen;
+    stats.seats_won |= seats_won;
+    match (*daily_day).cmp(&stats.daily_day) {
+        std::cmp::Ordering::Greater => {
+            stats.daily_day = *daily_day;
+            stats.daily_best = *daily_best;
+        }
+        std::cmp::Ordering::Equal => stats.daily_best = stats.daily_best.max(*daily_best),
+        std::cmp::Ordering::Less => {}
+    }
+}
+
+/// Light every trophy the stats already meet, without a toast: see the
+/// end of [`read`].
+fn backfill(stats: &Stats, unlocked: &mut Unlocked) {
+    for achievement in &ACHIEVEMENTS {
+        if achievement.met(stats) {
+            unlocked.0.insert(achievement.id);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -217,7 +361,7 @@ mod tests {
             unlocked.0.insert(trophy.id);
         }
 
-        let (back, earned) = parse(&to_text(&stats, &unlocked));
+        let (back, earned) = parse(&to_text(&stats, &unlocked, &Unknown::default()));
         assert_eq!(back, stats, "a stat went out and did not come back");
         // Nothing *lost*, rather than nothing gained: the shelf is derived
         // from the stats as well as read from the file, so a lifetime this
@@ -243,7 +387,7 @@ mod tests {
             banked: 12,
             ..Stats::default()
         };
-        let mut text = to_text(&stats, &Unlocked::default());
+        let mut text = to_text(&stats, &Unlocked::default(), &Unknown::default());
         text.push_str("unlocked: a_trophy_from_a_later_version\n");
         text.push_str("some_stat_nobody_here_knows: 9\n");
 
@@ -257,5 +401,68 @@ mod tests {
             "a trophy this build has never heard of was lit: {:?}",
             earned.0
         );
+    }
+
+    /// And not lit is not lost: a save from this build writes back the
+    /// trophy and the stat it could not read, so the newer build finds
+    /// its shelf as it left it.
+    #[test]
+    fn a_trophy_from_the_future_is_kept_for_the_future() {
+        let dir = crate::app::paths::test_dir("trophies");
+        let path = dir.join("achievements.txt");
+        let stats = Stats {
+            banked: 12,
+            ..Stats::default()
+        };
+        let mut text = to_text(&stats, &Unlocked::default(), &Unknown::default());
+        text.push_str("unlocked: a_trophy_from_a_later_version\n");
+        text.push_str("some_stat_nobody_here_knows: 9\n");
+        crate::app::paths::write_atomic(&path, &text).expect("written");
+
+        let (mut stats, mut unlocked) = parse(&text);
+        stats.banked += 1;
+        save_in(&path, &mut stats, &mut unlocked).expect("saved");
+        let back = std::fs::read_to_string(&path).expect("read back");
+        let (_, _, unknown) = read(&back);
+        let ids: Vec<&str> = unknown.ids.iter().collect();
+        assert_eq!(ids, ["a_trophy_from_a_later_version"], "{back}");
+        let lines: Vec<&str> = unknown.lines.iter().collect();
+        assert_eq!(lines, ["some_stat_nobody_here_knows: 9"], "{back}");
+        assert_eq!(parse(&back).0.banked, 13, "and this build's own news");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Two copies of the game open at once: a save from one keeps what the
+    /// other has written since, a trophy and a count alike, and learns of
+    /// them itself.
+    #[test]
+    fn a_save_keeps_what_another_copy_wrote() {
+        let dir = crate::app::paths::test_dir("trophies-two");
+        let path = dir.join("achievements.txt");
+        let (mut first, mut first_shelf) = (Stats::default(), Unlocked::default());
+        let (mut second, mut second_shelf) = (Stats::default(), Unlocked::default());
+        second.banked = 40;
+        second.events_seen = 0b01;
+        second.daily_day = 9;
+        second.daily_best = 30;
+        let trophy = ACHIEVEMENTS[0].id;
+        second_shelf.0.insert(trophy);
+        save_in(&path, &mut second, &mut second_shelf).expect("saved");
+
+        first.golden = 3;
+        first.banked = 5;
+        first.events_seen = 0b10;
+        first.daily_day = 8;
+        first.daily_best = 99;
+        save_in(&path, &mut first, &mut first_shelf).expect("saved");
+
+        let (back, shelf) = parse(&std::fs::read_to_string(&path).expect("read"));
+        assert_eq!((back.banked, back.golden), (40, 3), "neither taken back");
+        assert_eq!(back.events_seen, 0b11, "both events seen");
+        assert_eq!((back.daily_day, back.daily_best), (9, 30), "the later day");
+        assert!(shelf.0.contains(trophy), "the other copy's trophy");
+        assert_eq!(first.banked, 40, "and the saver knows it now");
+        assert!(first_shelf.0.contains(trophy));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

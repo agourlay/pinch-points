@@ -4,14 +4,36 @@
 use super::*;
 
 /// What a joiner says to a host, every second until it is answered: a
-/// `Watch` if it came to look, else a `Hello` carrying its name. The same
-/// greeting from the lobby and from a results card, so the host reads the
+/// bot's seat (route 1) greets under its seat name with the flag that says
+/// a bot drives it, else a `Watch` if it came to look, else a `Hello`
+/// carrying its name. The same greeting from the lobby, from a results
+/// card and from a round whose host has gone quiet, so the host reads the
 /// wish to watch the same way wherever it was greeted from.
-pub(crate) fn greeting(watching: bool, name: &str) -> NetMsg {
-    match watching {
-        true => NetMsg::watch(name),
-        false => NetMsg::hello(name),
+pub(crate) fn greeting(bot: Option<&str>, watching: bool, name: &str) -> NetMsg {
+    match (bot, watching) {
+        (Some(seat), _) => NetMsg::hello_bot(seat),
+        (None, true) => NetMsg::watch(name),
+        (None, false) => NetMsg::hello(name),
     }
+}
+
+/// The name a peer goes by at the table, `me` being the player's own: the
+/// seat name a bot (route 1) greeted with, when it joined as one, since
+/// that is the name the host wrote down and vouches its chat under. The
+/// lobby and the round both read it here, so a line is echoed on the
+/// sender's own screen under the name everyone else reads it under.
+pub(crate) fn speaking_as<'a>(bot: Option<&'a str>, me: &'a str) -> &'a str {
+    bot.unwrap_or(me)
+}
+
+/// A lobby on the air on a fresh socket, with nobody at its table yet:
+/// where most tests of hosting start.
+#[cfg(test)]
+pub(super) fn hosting_lobby() -> Standing {
+    Standing::hosting(
+        Announcer::new(0xB0A7).expect("announcer"),
+        UdpTransport::host(0).expect("game socket"),
+    )
 }
 
 /// Where the player stands in the lobby, and everything that goes with
@@ -54,6 +76,8 @@ impl Standing {
             announce_in: 0.0,
             kicking: false,
             bot_string: None,
+            tail: RoundTail::default(),
+            rounds_dealt: 0,
         })
     }
 }
@@ -77,6 +101,64 @@ pub struct Hosted {
     /// The string a bot connects straight to this beach with (route 2),
     /// while the host says bots are welcome and there is a chair for one.
     pub bot_string: Option<String>,
+    /// The last frames of the match the table walked back from, repeated
+    /// for a while to anyone still a frame short of its end.
+    pub(super) tail: RoundTail,
+    /// How many rounds this socket has dealt, over every match played on
+    /// it: the next match numbers its first `Start` on from the last
+    /// round of the one before, so a joiner still on that round's results
+    /// card reads it as a round it has not been dealt (`is_next_round`).
+    /// Begun again at one, the joiner sits the new match out.
+    pub(super) rounds_dealt: u32,
+}
+
+/// How long a host back in the lobby keeps repeating the last frames of
+/// the round it played, in seconds: a peer short of them is at most a
+/// commit lead behind, and finishes on the first copy that arrives.
+const TAIL_KEPT: f32 = 10.0;
+
+/// The last frames of a round the host has finished and walked away from
+/// ([`crate::sim::Lockstep::played_tail`]).
+///
+/// The host relays an input once, as it arrives, and stops the moment its
+/// round is over: the relay of the input that completed the last frame,
+/// lost, left a joiner a frame short of the end for good, on "waiting
+/// for" a player who had long stopped sending, while the lobby's roster
+/// kept it from ever calling the host gone. So the lobby repeats them,
+/// once a second to everybody (a watcher sends nothing to answer), and at
+/// once to a player still resending its own commits.
+#[derive(Default)]
+pub struct RoundTail {
+    inputs: Vec<crate::sim::InputMsg>,
+    left: f32,
+}
+
+impl RoundTail {
+    /// The tail of a round just walked away from, kept for `TAIL_KEPT`.
+    pub(super) fn kept(inputs: Vec<crate::sim::InputMsg>) -> RoundTail {
+        RoundTail {
+            inputs,
+            left: TAIL_KEPT,
+        }
+    }
+
+    /// One tick of the lobby: the inputs to repeat now, if any, to
+    /// everybody when `announced` and to `asked` (peers that sent inputs
+    /// this tick) whatever the clock.
+    pub(super) fn repeat(
+        &mut self,
+        transport: &UdpTransport,
+        delta: f32,
+        announced: bool,
+        asked: &[usize],
+    ) {
+        self.left -= delta;
+        if self.left <= 0.0 {
+            self.inputs.clear();
+            return;
+        }
+        transport.send_inputs(&self.inputs, |peer| announced || asked.contains(&peer));
+    }
 }
 
 impl Hosted {
@@ -99,12 +181,7 @@ impl Hosted {
     /// `PeerBook::seat_plan` turns the surplus into onlookers, so a table of eight
     /// would-be rivals reads as "5 aboard".
     pub fn players_aboard(&self) -> usize {
-        let seatable = MAX_PLAYERS - 1;
-        self.peers
-            .iter()
-            .filter(|peer| !peer.watch)
-            .count()
-            .min(seatable)
+        self.peers.at_the_table().count()
     }
 
     /// Peers here to look rather than play.
@@ -132,14 +209,10 @@ pub struct Joined {
     /// round yet. These two are how the difference gets onto the screen.
     pub(super) host_silence: f32,
     pub(super) host_answered: bool,
-    /// Seconds since the host said it was going (`NetMsg::Leaving`), or
-    /// `None` if it never did or has said anything since.
-    ///
-    /// A goodbye is a claim nothing checks, and believed on arrival one
-    /// forged datagram emptied a lobby table. So it is believed only once
+    /// Whether the host said it was going, and how long ago: believed once
     /// it has stood for [`super::joining::LOBBY_GOODBYE_GRACE`], longer than
     /// the host's once-a-second roster, which takes it back.
-    pub(super) host_goodbye: Option<f32>,
+    pub(super) host_goodbye: crate::app::net::Goodbye,
     /// The seed of the round just played, set when a finished match walks
     /// back into this lobby still connected. The host may still be on its
     /// results card, where it re-answers every greeting with that round's
@@ -187,7 +260,7 @@ impl Joined {
             hello_in: ANNOUNCE_EVERY,
             host_silence: 0.0,
             host_answered: false,
-            host_goodbye: None,
+            host_goodbye: Default::default(),
             played_seed: None,
             host_terms: None,
             catching_up: Default::default(),
@@ -212,7 +285,7 @@ impl Joined {
             hello_in: 0.0,
             host_silence: 0.0,
             host_answered: true,
-            host_goodbye: None,
+            host_goodbye: Default::default(),
             played_seed: Some(played_seed),
             host_terms: None,
             catching_up: Default::default(),
@@ -221,20 +294,9 @@ impl Joined {
         }
     }
 
-    /// What this peer greets the host with: a bot's seat says so.
+    /// What this peer greets the host with ([`greeting`]).
     pub fn greeting(&self, name: &str) -> NetMsg {
-        match self.bot.is_some() {
-            true => NetMsg::hello_bot(self.speaking_as(name)),
-            false => greeting(self.watching, name),
-        }
-    }
-
-    /// The name this peer goes by at the table, `me` being the player's
-    /// own: a bot's seat name when it joined as one, which is what its
-    /// greeting gave the host and so what the host vouches its chat
-    /// under.
-    pub fn speaking_as<'a>(&'a self, me: &'a str) -> &'a str {
-        self.bot.as_deref().unwrap_or(me)
+        greeting(self.bot.as_deref(), self.watching, name)
     }
 
     /// The seed of the round this table walked out of, if it did.
@@ -255,13 +317,13 @@ mod tests {
     #[test]
     fn a_spectator_greets_by_name_like_everybody_else() {
         assert_eq!(
-            greeting(true, "Dee"),
+            greeting(None, true, "Dee"),
             NetMsg::Watch {
                 name: crate::transport::wire_name("Dee")
             },
         );
         assert_eq!(
-            greeting(false, "Bo"),
+            greeting(None, false, "Bo"),
             NetMsg::Hello {
                 name: crate::transport::wire_name("Bo"),
                 bot: false,
@@ -286,7 +348,7 @@ mod tests {
         let vouched = peers.vouch(0, crate::transport::wire_name("Bo"));
         assert_eq!(
             crate::transport::name_from_wire(&vouched),
-            crate::transport::name_as_sent(joined.speaking_as("Bo")),
+            crate::transport::name_as_sent(speaking_as(joined.bot.as_deref(), "Bo")),
             "the echo and the table read one name"
         );
     }

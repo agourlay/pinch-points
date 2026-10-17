@@ -6,8 +6,8 @@
 //! leave the results card. None of it moves a cursor, and two of the
 //! systems never read one.
 
-use crate::app::cursor::{Cursor, FLASH_SECS, keymap};
-use crate::app::settings::{CommitScheme, GameSettings};
+use crate::app::cursor::{Cursor, FLASH_SECS, keymap, seat_keymap};
+use crate::app::settings::GameSettings;
 use crate::app::{Campaign, LoadLevel, PendingActions, Phase, PlacementDenied, Screen, Sim};
 use crate::sim::{Board, Direction, PlayerAction};
 use bevy::prelude::*;
@@ -114,12 +114,7 @@ pub fn setup_input(
     mut cursors: Query<&mut Cursor>,
 ) {
     // Esc is the pause card's key; it handles leaving.
-    let hands = cursors.iter().filter(|c| c.player < 2).count();
-    let commit = if hands > 1 {
-        CommitScheme::Arrows
-    } else {
-        settings.commit
-    };
+    let commit = settings.commit_in_play(crate::app::cursor::has_partner(cursors.iter()));
     for mut hand in cursors.iter_mut().filter(|c| c.player < 2) {
         let map = keymap(&settings, hand.player, commit);
         let places = map
@@ -185,15 +180,9 @@ pub fn browse_levels(
     // way past a stage you have not cleared. Backward from the first
     // shipped stage wraps onto the last, which is as locked as anything
     // ahead: the same ladder, the same refusal.
-    let asked = if keyboard
-        .caps
-        .global_pressed(&keyboard.keys, 'N', &keyboard.live)
-    {
+    let asked = if keyboard.global('N') {
         start + (at - start + 1) % len
-    } else if keyboard
-        .caps
-        .global_pressed(&keyboard.keys, 'P', &keyboard.live)
-    {
+    } else if keyboard.global('P') {
         start + (at - start + len - 1) % len
     } else {
         return;
@@ -219,13 +208,20 @@ pub fn browse_levels(
 /// Esc is the pause card's key, as it is in setup and in versus. Toggling
 /// `Paused` on it as well, the card read that as the state to hand back on
 /// closing, so Continue left the round frozen with no card up.
+///
+/// Not once the sim has settled the run: `check_outcome` reads the same
+/// [`crate::sim::Level::outcome`] later this frame and calls it won or
+/// lost, and an R let through as well had the clear recorded on the won
+/// card's way in and then the beach reloaded from under it. The board did
+/// finish, so the outcome stands and the R is the card's to answer.
 pub fn running_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
-    live: Res<crate::app::keycaps::LiveSeatKeys>,
+    keyboard: crate::app::keycaps::Keyboard,
+    sim: Res<Sim>,
+    campaign: Res<Campaign>,
     mut load: MessageWriter<LoadLevel>,
 ) {
-    if caps.global_pressed(&keys, 'R', &live) {
+    let settled = campaign.current().outcome(&sim.0) != crate::sim::PuzzleOutcome::Running;
+    if keyboard.global('R') && !settled {
         load.write(LoadLevel { keep_posts: true });
     }
 }
@@ -233,21 +229,19 @@ pub fn running_input(
 /// Puzzle won/lost phase: Enter advances (or retries after a loss), R resets to
 /// setup with the arrows the run began with.
 pub fn done_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
-    live: Res<crate::app::keycaps::LiveSeatKeys>,
+    keyboard: crate::app::keycaps::Keyboard,
     phase: Res<State<Phase>>,
     mut campaign: ResMut<Campaign>,
     mut next_screen: ResMut<NextState<Screen>>,
     mut load: MessageWriter<LoadLevel>,
 ) {
-    if keys.just_pressed(KeyCode::Escape) {
+    if keyboard.keys.just_pressed(KeyCode::Escape) {
         // Back to the stage list, which is the door every puzzle is entered
         // through; Esc again from there reaches the menu.
         next_screen.set(Screen::StageSelect);
         return;
     }
-    if crate::app::menu_ui::enter(&keys) {
+    if crate::app::menu_ui::enter(&keyboard.keys) {
         if *phase.get() != Phase::Won {
             load.write(LoadLevel { keep_posts: true });
             return;
@@ -267,7 +261,7 @@ pub fn done_input(
         // carried onto the next one.
         return;
     }
-    if caps.global_pressed(&keys, 'R', &live) {
+    if keyboard.global('R') {
         load.write(LoadLevel { keep_posts: true });
     }
 }
@@ -288,14 +282,9 @@ pub fn versus_input(
     // Esc is the pause card's key; it handles leaving (including a dead
     // online session or truncated replay).
     let board = &sim.0;
+    let commit = settings.commit_in_play(true);
     for mut cursor in &mut cursors {
-        // Online: whatever your seat, your hands are on the primary layout.
-        // Local: the keyboard seats two; pads drive seats 3 and up.
-        let map = if online.0.is_some() {
-            keymap(&settings, 0, CommitScheme::Arrows)
-        } else if cursor.player < 2 {
-            keymap(&settings, cursor.player, CommitScheme::Arrows)
-        } else {
+        let Some(map) = seat_keymap(&settings, cursor.player, online.0.is_some(), commit) else {
             continue;
         };
         // Clear-all is read held, not pressed: it queues one removal a
@@ -441,7 +430,7 @@ mod tests {
     use super::*;
     use crate::app::campaign::CampaignKind;
     use crate::app::progress::Progress;
-    use crate::sim::{Level, campaign_levels};
+    use crate::sim::{Goal, Level, campaign_levels};
 
     /// The prompt line and the key have to name the same door. At a local
     /// table Enter carries a series on into the next round, and the prompt
@@ -482,10 +471,9 @@ mod tests {
             levels.push(mine);
         }
         Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
             index,
             builtins: 3,
+            ..Campaign::tide_pool_of(levels)
         }
     }
 
@@ -513,7 +501,7 @@ mod tests {
         app.insert_resource(State::new(Phase::Won));
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.insert_resource(campaign(index));
         app.add_message::<LoadLevel>();
         app.add_systems(Update, done_input);
@@ -525,6 +513,27 @@ mod tests {
             .resource::<Messages<LoadLevel>>()
             .iter_current_update_messages()
             .count()
+    }
+
+    /// R on the frame the sim settles a run is not also a reload: the win
+    /// is recorded as the won card comes up, and a reload behind it put
+    /// the beach back in setup under that card. Mid-run R still resets.
+    #[test]
+    fn r_on_the_frame_a_puzzle_is_won_does_not_reload_it() {
+        for (goal, reloads) in [(Goal::Bank(0), 0), (Goal::AllCrabs, 1)] {
+            let mut app = App::new();
+            app.init_resource::<ButtonInput<KeyCode>>();
+            app.init_resource::<crate::app::keycaps::KeyCaps>();
+            app.init_resource::<crate::app::cursor::LiveSeatKeys>();
+            let mut campaign = campaign(0);
+            campaign.levels[0].goal = goal;
+            app.insert_resource(Sim(campaign.current().board()));
+            app.insert_resource(campaign);
+            app.add_message::<LoadLevel>();
+            app.add_systems(Update, running_input);
+            tap(&mut app, KeyCode::KeyR);
+            assert_eq!(loads(&app), reloads, "{goal:?}");
+        }
     }
 
     /// The shipped campaign ends with its last shipped stage: Enter there
@@ -624,7 +633,7 @@ mod tests {
         app.insert_resource(State::new(Phase::Setup));
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.insert_resource(GameSettings::default());
         app.init_resource::<Progress>();
         app.insert_resource(Sim(campaign.current().board()));

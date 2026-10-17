@@ -23,59 +23,76 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// Bump it for a change in **what the sim does**, too. Lockstep sends
 /// inputs, not outcomes, so two builds that tick the same inputs to
 /// different boards are the worst version of this: every datagram decodes,
-/// and the game quietly stops being the same game on both machines. Version
-/// 6 is where gulls started catching crabs they walked head-on into, 7 is
-/// where a `Start` grew a tail (the host's handmade beach), 8 is where
-/// `Resume` and `Abandoned` each grew a frame number and gulls started
-/// catching crabs across the seam of a wrapping board, 10 is where a
-/// handmade beach that cannot seat the table gave way to the generated
-/// arena the terms name, 11 is where a tick's inputs became one
-/// datagram, 12 is where a spectator's greeting started carrying its
-/// name, 13 is where a spectator arriving mid-round started being sent
-/// the round as it stands (`CatchUp`) instead of a place in line, and 14
-/// is where spectators started calling the winner (`SpectatorPick`,
-/// `CrowdPicks`), 15 is where the terms started carrying how many
-/// arrows each player may have standing, and 16 is where the game's AI
-/// started walking under the fair cursor, every seat started saying what
-/// holds it (a person, the AI, or a bot: the greeting's flag, the roster's
-/// and the start's kinds), and a host could ask a peer to leave. 17 is
-/// another version 10: the beaches bigger than the classic one started
-/// generating more walls and rocks and taking more gulls, from the same
-/// `Start` as before, and a five- or six-seat table outgrowing its map
-/// started landing on the 16x11 rather than the 20x13. 18 is where a
-/// versus flock started turning over, the oldest gull clear of the castles
-/// flying off to make room, with the final rush raising the cap. 19 is
-/// where versus stopped rolling golden crabs and started calling one every
-/// three minutes (worth 25 then, 30 since 21), with the call on the board.
-/// 20 is where the versus event wheel stopped locking after an event that
-/// is over in the tick it fires (`timed_lock` in the rules). 21 is where
-/// versus Crab Monopoly started flying its crabs home, each banking as it lands
-/// (`sweep_flight`, and the crabs in the air in every snapshot), and the
-/// called golden crab went from 25 to 30. 22 is where a versus flock
-/// stopped losing a gull to a turnover whose new tile was rock
-/// (`whole_flock`), a swept crab started banking for what it was worth
-/// when Crab Monopoly fired (`sweep_keeps_worth`), a peer started saying
-/// goodbye (`Leaving`), the roster started naming the host's
-/// handmade map, and a handmade map started being played only under
-/// terms that name it (`beach_in_play`), the terms moving off it once
-/// the table outgrows its castles. 23 is where the round-length dial
-/// gained a one-minute stop in front of the others, so the byte the terms
-/// carry for it names a different length than it did, and a table of four
-/// or more started getting a spawner hole for all but one player (the
-/// classic beach adding its corner holes, a generated one never dealing
-/// four players the side pair alone): another version 10. 24 is where
-/// the versus holes that open on the same tick started drawing which of
-/// them the crab cap leaves out (`fair_spawns`), where they had been
-/// tried top-left first. 25 is where the AI's moment to think in each
-/// window started taking the board's seed, so a peer on 24 seats the same
-/// AI on a different schedule. 26 is where a handmade beach started being
-/// built on the round's seed rather than the one its file names
-/// (`Level::board_seeded`): another version 10. 27 is where a mania's
-/// flood started coming out of two holes at a time, the holes taking
-/// turns, where every hole had flooded at once. 28 is where an AI seat's
-/// hand started walking from where it last placed, whether or not that
-/// post still stands, where a hand with no post up had placed anywhere at
-/// once: the board carries it, and hashes it.
+/// and the game quietly stops being the same game on both machines.
+///
+/// - 6: gulls started catching crabs they walked head-on into.
+/// - 7: a `Start` grew a tail (the host's handmade beach).
+/// - 8: `Resume` and `Abandoned` each grew a frame number, and gulls
+///   started catching crabs across the seam of a wrapping board.
+/// - 10: a handmade beach that cannot seat the table gave way to the
+///   generated arena the terms name.
+/// - 11: a tick's inputs became one datagram.
+/// - 12: a spectator's greeting started carrying its name.
+/// - 13: a spectator arriving mid-round started being sent the round as
+///   it stands (`CatchUp`) instead of a place in line.
+/// - 14: spectators started calling the winner (`SpectatorPick`,
+///   `CrowdPicks`).
+/// - 15: the terms started carrying how many arrows each player may have
+///   standing.
+/// - 16: the game's AI started walking under the fair cursor, every seat
+///   started saying what holds it (a person, the AI, or a bot: the
+///   greeting's flag, the roster's and the start's kinds), and a host
+///   could ask a peer to leave.
+/// - 17: another version 10. The beaches bigger than the classic one
+///   started generating more walls and rocks and taking more gulls, from
+///   the same `Start` as before, and a five- or six-seat table outgrowing
+///   its map started landing on the 16x11 rather than the 20x13.
+/// - 18: a versus flock started turning over, the oldest gull clear of the
+///   castles flying off to make room, with the final rush raising the cap.
+/// - 19: versus stopped rolling golden crabs and started calling one every
+///   three minutes (worth 25 then, 30 since 21), with the call on the
+///   board.
+/// - 20: the versus event wheel stopped locking after an event that is
+///   over in the tick it fires (`timed_lock` in the rules).
+/// - 21: versus Crab Monopoly started flying its crabs home, each banking
+///   as it lands (`sweep_flight`, and the crabs in the air in every
+///   snapshot), and the called golden crab went from 25 to 30.
+/// - 22: a versus flock stopped losing a gull to a turnover whose new tile
+///   was rock (`whole_flock`), a swept crab started banking for what it
+///   was worth when Crab Monopoly fired (`sweep_keeps_worth`), a peer
+///   started saying goodbye (`Leaving`), the roster started naming the
+///   host's handmade map, and a handmade map started being played only
+///   under terms that name it (`beach_in_play`), the terms moving off it
+///   once the table outgrows its castles.
+/// - 23: the round-length dial gained a one-minute stop in front of the
+///   others, so the byte the terms carry for it names a different length
+///   than it did, and a table of four or more started getting a spawner
+///   hole for all but one player (the classic beach adding its corner
+///   holes, a generated one never dealing four players the side pair
+///   alone): another version 10.
+/// - 24: the versus holes that open on the same tick started drawing which
+///   of them the crab cap leaves out (`fair_spawns`), where they had been
+///   tried top-left first.
+/// - 25: the AI's moment to think in each window started taking the
+///   board's seed, so a peer on 24 seats the same AI on a different
+///   schedule.
+/// - 26: a handmade beach started being built on the round's seed rather
+///   than the one its file names (`Level::board_seeded`): another
+///   version 10.
+/// - 27: a mania's flood started coming out of two holes at a time, the
+///   holes taking turns, where every hole had flooded at once.
+/// - 28: an AI seat's hand started walking from where it last placed,
+///   whether or not that post still stands, where a hand with no post up
+///   had placed anywhere at once: the board carries it, and hashes it.
+/// - 29: every `Start` started counting the rounds a host has dealt.
+/// - 30: a spectators' call stopped firing on a beach whose event wheel is
+///   off, a handmade one among them: a peer on 29 still fires it there.
+/// - 31: a handmade beach with more castles than the table started being
+///   built with the spare ones put away (`Level::table_board`), and one
+///   whose castles skip a player stopped being played at all: another
+///   version 10.
+/// - 32: every `Start` started carrying the seats the results card before
+///   it crowned (`Start::crowned`).
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in
@@ -85,7 +102,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// frozen for all time**: it is how a build tells "I cannot read this"
 /// apart from "I disagree with this", however the rest of the format
 /// moves.
-pub const PROTOCOL_VERSION: u8 = 28;
+pub const PROTOCOL_VERSION: u8 = 32;
 
 /// Connections a host accepts: five rivals (a six-seat table) and everyone
 /// else who turned up. How many of them get a seat is the lobby's
@@ -97,7 +114,7 @@ pub const PROTOCOL_VERSION: u8 = 28;
 /// beach as full.
 ///
 /// Sixteen is affordable because a peer in line is no longer sent the round
-/// it is not watching (see `PeerBook::follows_the_round`): someone waiting
+/// it is not watching (see `PeerBook::follows_by_plan`): someone waiting
 /// costs a roster line and a beacon, where before it cost the host about
 /// 180 datagrams a second. A *watcher* still costs that, being in the
 /// round like everybody else.

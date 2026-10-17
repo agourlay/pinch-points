@@ -46,10 +46,41 @@ impl HudText {
     }
 }
 
+/// The prompt while a box has the keyboard. Every key the screen's own line
+/// names is a letter until the box closes, so that line would be promising
+/// keys that type instead: on the lobby's Enter, a line sent and not a round
+/// started. `esc_cancels` says whether Esc throws the line away or, like
+/// every other way out, keeps it.
+fn typing_prompt(tr: &Tr, esc_cancels: bool) -> String {
+    match esc_cancels {
+        true => tr.prompt_typing.to_string(),
+        false => tr.prompt_typing_keep.to_string(),
+    }
+}
+
+/// The match setup's keys: a name row's Tab, or the dials'.
+fn match_setup_prompt(tr: &Tr, menu: &crate::app::match_setup::MatchMenu) -> String {
+    use crate::app::match_setup::Row;
+    // A name being typed: W and S are letters, and Enter, Esc and Tab all
+    // keep it and put the box away (`type_a_name`).
+    if menu.naming.is_some() {
+        typing_prompt(tr, false)
+    } else if matches!(Row::ALL[menu.selected], Row::Name(_)) {
+        tr.prompt_match_name.to_string()
+    } else {
+        tr.prompt_match_setup.to_string()
+    }
+}
+
 pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
     let title = tr.title_lobby.to_string();
     let status = lobby.feedback.clone();
     use crate::app::lobby::Standing;
+    // A line being typed takes every key (`drive_typing`), and Esc closes
+    // the box without sending it.
+    if lobby.typing.is_some() {
+        return HudText::new(title, status, typing_prompt(tr, true));
+    }
     let prompt = match lobby.standing() {
         // W armed is the one bit of lobby state a player has to be told
         // about, since it changes what picking a beach does.
@@ -69,7 +100,9 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
         Standing::Joining(joined) if joined.watching => tr.lobby_watching_prompt.to_string(),
         Standing::Joining(_) => tr.lobby_aboard_prompt.to_string(),
         // Picking whom to ask to leave: the prompt says how.
-        Standing::Hosting(hosted) if hosted.kicking => tr.lobby_kick_ask.to_string(),
+        Standing::Hosting(hosted) if hosted.kicking => {
+            crate::app::lobby::kick_prompt(tr, &hosted.peers)
+        }
         Standing::Hosting(_) => tr.lobby_broadcasting.to_string(),
         Standing::Choosing { watching: false } if lobby.hosts.is_empty() => {
             tr.lobby_none_yet.to_string()
@@ -87,38 +120,10 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
     HudText::new(title, status, prompt)
 }
 
-/// Where the editor's rebound move keys go in its prompt until the
-/// legend has been spelled: nothing [`KeyCaps::legend`] reads.
-///
-/// [`KeyCaps::legend`]: crate::app::keycaps::KeyCaps::legend
-const MOVES_SLOT: &str = "{moves}";
-
-/// P1's move keys as the editor's prompt names them, in the order "WASD"
-/// spells them (up, left, down, right), or `None` while they are WASD. The
-/// editor's cursor moves on P1's bindings, and the line said "WASD move"
-/// over rebound keys with WASD doing nothing.
-fn editor_moves(r: &Readout) -> Option<String> {
-    use crate::app::binds::Action;
-    let binds = &r.settings.binds[0];
-    let keys = [
-        Action::MoveUp,
-        Action::MoveLeft,
-        Action::MoveDown,
-        Action::MoveRight,
-    ]
-    .map(|action| binds.key(action));
-    if keys == [KeyCode::KeyW, KeyCode::KeyA, KeyCode::KeyS, KeyCode::KeyD] {
-        return None;
-    }
-    Some(crate::app::editor::spell_block(r.keycaps, keys))
-}
-
-pub(super) fn editor_text(
-    tr: &Tr,
-    editor: &EditorState,
-    sim: &Sim,
-    moves: Option<&str>,
-) -> HudText {
+/// The editor's lines. Its prompt names the move keys as `{moves}` in
+/// place of the language's "WASD": the cursor walks on P1's bindings,
+/// which `editor::spell_editor_keys` spells once the legend has run.
+pub(super) fn editor_text(tr: &Tr, editor: &EditorState, sim: &Sim) -> HudText {
     let testing = editor.is_testing();
     // The title carries the level's name, which is the file it saves to
     // and the caption the stage list shows, so it has to be visible before
@@ -143,18 +148,23 @@ pub(super) fn editor_text(
     };
     // A beach is not played with a granted inventory, so the number beside
     // the feedback is the one that decides whether it can be played at all:
-    // how many seats it has castles for.
+    // how big a table it seats.
     let counted = match editor.kind {
         crate::sim::LevelKind::Puzzle => fill(tr.ed_posts, &[("n", &editor.posts.to_string())]),
         crate::sim::LevelKind::Arena => {
-            fill(tr.ed_seats, &[("n", &sim.0.castle_seats().to_string())])
+            // The table it seats, which is none while a player is skipped:
+            // the same count the map dial offers it at.
+            let seats = sim.0.table_seats().unwrap_or(0);
+            fill(tr.ed_seats, &[("n", &seats.to_string())])
         }
     };
     let status = fill(&counted, &[("msg", &editor.feedback)]);
-    let prompt = match (testing, moves) {
-        (true, _) => tr.ed_playtest_prompt.to_string(),
-        (false, Some(moves)) => tr.ed_prompt.replacen("WASD", moves, 1),
-        (false, None) => tr.ed_prompt.to_string(),
+    let prompt = match testing {
+        // F1's box has the keyboard: Enter keeps the name, Esc puts the
+        // old one back (`type_a_name`).
+        _ if editor.is_naming() => typing_prompt(tr, true),
+        true => tr.ed_playtest_prompt.to_string(),
+        false => tr.ed_prompt.replacen("WASD", "{moves}", 1),
     };
     HudText::new(title, status, prompt)
 }
@@ -178,13 +188,13 @@ pub(super) fn puzzle_text(
     // three. In place of, and not as well as: the header bar runs from the
     // window's edge to the clock in its middle, and the longest shipped
     // level name already reaches most of the way there.
-    let (place, of, custom) = campaign.place();
+    let crate::app::campaign::Place { at, of, custom } = campaign.place();
     let section = match custom {
         true => tr.stage_custom,
         false => campaign_title,
     };
     let title = format!(
-        "{section} {place}/{of} - {}",
+        "{section} {at}/{of} - {}",
         campaign.shown_name(campaign.index, lang)
     );
     let used = sim.0.signpost_count(0);
@@ -232,7 +242,7 @@ pub(super) fn puzzle_text(
         Phase::Setup if level.posts == 0 => tr.prompt_setup_no_posts.to_string(),
         Phase::Setup if custom_keys => tr.prompt_setup_custom.to_string(),
         // Two sets of hands, so both sets of keys: the solo line names one.
-        Phase::Setup if coop => tr.prompt_setup_coop.to_string(),
+        Phase::Setup if coop => crate::app::name_the_pair(tr, tr.prompt_setup_coop),
         // Full is only full under a fixed inventory. A Beach Day stage
         // evicts: its fourth arrow replaces the oldest, as its own hint
         // says, so "remove one first" would be wrong there. After the two
@@ -252,7 +262,9 @@ pub(super) fn puzzle_text(
         Phase::Won if campaign.is_last() => tr.last_level.to_string(),
         Phase::Won if level.goal.saves_every_crab() => tr.prompt_won.to_string(),
         Phase::Won => tr.prompt_won_goal.to_string(),
-        Phase::Lost => tr.prompt_lost.to_string(),
+        Phase::Lost => crate::app::results::loss_words(tr, level.goal)
+            .1
+            .to_string(),
     };
     HudText::new(title, status, prompt)
 }
@@ -283,6 +295,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         settings,
         names,
         playback,
+        daily,
         online,
         controllers,
         vphase,
@@ -291,7 +304,13 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         ..
     } = *r;
     let scores = sim.0.scores();
-    let team_mode = crate::app::teams::in_play(settings, online, seats.0);
+    let replay = playback.0.as_ref().map(|(replay, _)| replay);
+    let team_mode = crate::app::teams::in_play(
+        crate::app::teams::local(settings, daily),
+        online,
+        replay,
+        seats.0,
+    );
     let viewer = header_viewer(online, playback);
     let mut mode = match viewer {
         Viewer::Replay => tr.title_replay.to_string(),
@@ -325,7 +344,11 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
     // The clock itself lives in the big top-centre element; the
     // status slot carries only banners.
     let mut status = if viewer == Viewer::Replay && speed > 1 {
-        fill(tr.replay_speed, &[("n", &speed.to_string())])
+        let next = crate::app::replays::PlaybackSpeed(speed).stepped().0;
+        fill(
+            tr.replay_speed,
+            &[("n", &speed.to_string()), ("next", &next.to_string())],
+        )
     } else if sim.0.in_surge() && !sim.0.round_over() {
         tr.the_gulls.to_string()
     } else {
@@ -393,11 +416,19 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
                 // What the key does right now, in the crowd's own terms: a
                 // vote open to join, a wait to sit out, or the offer. A
                 // spectator pressing into silence could not tell which.
+                //
+                // None of the three on a beach whose wheel is off: the key
+                // opens nothing there, and naming it would be a promise.
                 None => {
-                    let call = match (r.crowd.open, r.crowd.wait) {
-                        (0, 0) => tr.spectator_call_hint.to_string(),
-                        (0, wait) => fill(tr.spectator_wait, &[("n", &wait.to_string())]),
-                        (open, _) => fill(tr.spectator_vote_open, &[("n", &open.to_string())]),
+                    let call = match (sim.0.events_enabled(), r.crowd.open, r.crowd.wait) {
+                        (false, ..) => None,
+                        (true, 0, 0) => Some(tr.spectator_call_hint.to_string()),
+                        (true, 0, wait) => {
+                            Some(fill(tr.spectator_wait, &[("n", &wait.to_string())]))
+                        }
+                        (true, open, _) => {
+                            Some(fill(tr.spectator_vote_open, &[("n", &open.to_string())]))
+                        }
                     };
                     // While the winner can still be called, that is the
                     // offer instead: the round's first half minute, and the
@@ -407,13 +438,17 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
                     let open = session.map_or(0, |s| s.stands.winner.picks.open);
                     let call = match (open, session.and_then(|s| s.stands.winner.my_pick)) {
                         (0, _) => call,
-                        (n, None) => fill(tr.spectator_pick_hint, &[("n", &n.to_string())]),
-                        (n, Some(seat)) => fill(
+                        (n, None) => Some(fill(tr.spectator_pick_hint, &[("n", &n.to_string())])),
+                        (n, Some(seat)) => Some(fill(
                             tr.spectator_picked,
                             &[("p", &names.label(tr, seat)), ("n", &n.to_string())],
-                        ),
+                        )),
                     };
-                    format!("{call} | {} | {}", tr.lobby_chat_hint, tr.prompt_esc_menu)
+                    let rest = format!("{} | {}", tr.lobby_chat_hint, tr.prompt_esc_menu);
+                    match call {
+                        Some(call) => format!("{call} | {rest}"),
+                        None => rest,
+                    }
                 }
             }
         }
@@ -481,6 +516,9 @@ pub(super) struct Readout<'a> {
     pub editor: &'a EditorState,
     pub online: &'a Online,
     pub playback: &'a Playback,
+    /// Whether the round is the daily, which is scored every seat for
+    /// itself whatever the setting says.
+    pub daily: &'a crate::app::Daily,
     pub lobby: &'a LobbyState,
     /// Whether a series is mid-flight, which changes what the results
     /// card's Enter does and so what the prompt may promise.
@@ -529,15 +567,9 @@ pub(super) fn screen_text(screen: Screen, r: &Readout) -> HudText {
     // Spelled in this keyboard's caps here, once, rather than in each of
     // the legends that name the move keys.
     said.prompt = r.keycaps.legend(&said.prompt);
-    // The editor's rebound move keys, already in this keyboard's caps, go
-    // in after: put in before, caps that happen to read WASD were spelled
-    // over again as the QWERTY keys the legend means by it.
+    // The editor's keys follow P1's bindings and are spelled after the
+    // legend: see `spell_editor_keys`.
     if screen == Screen::Editor {
-        if let Some(moves) = editor_moves(r) {
-            said.prompt = said.prompt.replacen(MOVES_SLOT, &moves, 1);
-        }
-        // The walls and a playtest's keys, after the legend for the same
-        // reason.
         said.prompt =
             crate::app::editor::spell_editor_keys(&said.prompt, r.tr, r.keycaps, r.settings);
     }
@@ -566,14 +598,7 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
         Screen::MatchSetup => HudText::new(
             r.tr.title_match_setup.to_string(),
             String::new(),
-            if matches!(
-                crate::app::match_setup::Row::ALL[r.match_menu.selected],
-                crate::app::match_setup::Row::Name(_)
-            ) {
-                r.tr.prompt_match_name.to_string()
-            } else {
-                r.tr.prompt_match_setup.to_string()
-            },
+            match_setup_prompt(r.tr, r.match_menu),
         ),
         Screen::Achievements => HudText::new(
             r.tr.title_achievements.to_string(),
@@ -611,12 +636,7 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
             String::new(),
         ),
         Screen::Lobby => lobby_text(r.tr, r.lobby),
-        Screen::Editor => editor_text(
-            r.tr,
-            r.editor,
-            r.sim,
-            editor_moves(r).is_some().then_some(MOVES_SLOT),
-        ),
+        Screen::Editor => editor_text(r.tr, r.editor, r.sim),
         Screen::Puzzle => puzzle_text(
             r.tr,
             r.lang,
@@ -626,10 +646,7 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
             r.phase,
             // Co-op sets the one-hand preset aside (the partner has IJKL),
             // so there only a rebinding makes the keys the player's own.
-            match r.coop {
-                true => r.settings.custom_binds(),
-                false => !r.settings.stock_legend(),
-            },
+            !r.settings.stock_legend(r.coop),
         ),
         // Both lines are already in the language under the cursor: moving
         // it sets the language, so the header and the prompt preview
@@ -655,49 +672,114 @@ mod tests {
     use crate::app::i18n::{EN, Lang};
     use crate::sim::{Board, Level, campaign_levels};
 
+    /// Everything a [`Readout`] borrows, at its plainest: the shipped Tide
+    /// Pool, a blank two-seat versus beach in its round, offline, with the
+    /// stock settings. A test names only what it is about:
+    /// `Readout { field: .., ..fx.readout() }`.
+    struct Fixture {
+        sim: Sim,
+        campaign: Campaign,
+        phase: State<Phase>,
+        vphase: State<VersusPhase>,
+        editor: EditorState,
+        online: Online,
+        playback: Playback,
+        daily: crate::app::Daily,
+        lobby: LobbyState,
+        tournament: crate::app::tournament::Tournament,
+        seats: Seats,
+        settings: GameSettings,
+        keycaps: crate::app::keycaps::KeyCaps,
+        names: crate::app::SeatNames,
+        controllers: Controllers,
+        library: crate::app::replays::Library,
+        notice: crate::app::RoundNotice,
+        match_menu: crate::app::match_setup::MatchMenu,
+    }
+
+    impl Default for Fixture {
+        fn default() -> Self {
+            Fixture {
+                sim: Sim(Board::new(9, 7, 1)),
+                campaign: Campaign::tide_pool(),
+                phase: State::new(Phase::Setup),
+                vphase: State::new(VersusPhase::Running),
+                editor: EditorState::default(),
+                online: Online::default(),
+                playback: Playback::default(),
+                daily: crate::app::Daily::default(),
+                lobby: LobbyState::default(),
+                tournament: crate::app::tournament::Tournament::default(),
+                seats: Seats(2),
+                settings: GameSettings::default(),
+                keycaps: crate::app::keycaps::KeyCaps::default(),
+                names: crate::app::SeatNames::default(),
+                controllers: Controllers::default(),
+                library: crate::app::replays::Library::default(),
+                notice: crate::app::RoundNotice::default(),
+                match_menu: crate::app::match_setup::MatchMenu::default(),
+            }
+        }
+    }
+
+    impl Fixture {
+        fn readout(&self) -> Readout<'_> {
+            let Self {
+                sim,
+                campaign,
+                phase,
+                vphase,
+                editor,
+                online,
+                playback,
+                daily,
+                lobby,
+                tournament,
+                seats,
+                settings,
+                keycaps,
+                names,
+                controllers,
+                library,
+                notice,
+                match_menu,
+            } = self;
+            Readout {
+                tr: settings.tr(),
+                lang: settings.language,
+                sim,
+                campaign,
+                coop: false,
+                phase,
+                vphase,
+                editor,
+                online,
+                playback,
+                daily,
+                lobby,
+                tournament,
+                seats,
+                settings,
+                keycaps,
+                names,
+                controllers,
+                library,
+                notice,
+                match_menu,
+                paused: false,
+                spectator_typing: None,
+                crowd: Default::default(),
+                speed: 1,
+            }
+        }
+    }
+
     /// Every screen has to say what it is and what the keys do: one added
     /// without a HUD arm shows the last screen's header.
     #[test]
     fn every_screen_names_itself_and_its_keys() {
-        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
-        use crate::sim::{Board, campaign_levels};
-
-        let levels = campaign_levels();
-        let builtins = levels.len();
-        let campaign = Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        };
-        let settings = GameSettings::default();
-        let keycaps = crate::app::keycaps::KeyCaps::default();
-        let readout = Readout {
-            tr: &EN,
-            lang: Lang::En,
-            sim: &Sim(Board::new(9, 7, 1)),
-            campaign: &campaign,
-            coop: false,
-            phase: &State::new(Phase::Setup),
-            vphase: &State::new(VersusPhase::Running),
-            editor: &EditorState::default(),
-            online: &Online::default(),
-            playback: &Playback::default(),
-            lobby: &LobbyState::default(),
-            tournament: &crate::app::tournament::Tournament::default(),
-            seats: &Seats(2),
-            settings: &settings,
-            keycaps: &keycaps,
-            names: &crate::app::SeatNames::default(),
-            controllers: &Controllers::default(),
-            library: &crate::app::replays::Library::default(),
-            notice: &crate::app::RoundNotice::default(),
-            match_menu: &crate::app::match_setup::MatchMenu::default(),
-            paused: false,
-            spectator_typing: None,
-            crowd: Default::default(),
-            speed: 1,
-        };
+        let fx = Fixture::default();
+        let readout = fx.readout();
         for screen in Screen::ALL {
             let said = screen_text(screen, &readout);
             let (title, prompt) = (&said.title, &said.prompt);
@@ -724,51 +806,27 @@ mod tests {
     /// `Playback::default()`, so the transport prompt never ran there.
     #[test]
     fn no_prompt_names_the_mute_key_twice() {
-        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
+        use crate::app::{Playback, Seats};
         use crate::sim::{Replay, campaign_levels};
 
-        let levels = campaign_levels();
-        let builtins = levels.len();
         let watching = Playback(Some((
-            Replay::new(levels.first().expect("a campaign level").clone()),
+            Replay::new(campaign_levels().first().expect("a campaign level").clone()),
             0,
         )));
         for lang in crate::app::i18n::ALL_LANGS {
-            let settings = GameSettings {
-                language: lang,
-                ..GameSettings::default()
-            };
-            let tr = settings.tr();
-            let readout = Readout {
-                tr,
-                lang,
-                sim: &Sim(Board::new(9, 7, 1)),
-                campaign: &Campaign {
-                    kind: CampaignKind::TidePool,
-                    levels: campaign_levels(),
-                    index: 0,
-                    builtins,
+            let fx = Fixture {
+                settings: GameSettings {
+                    language: lang,
+                    ..GameSettings::default()
                 },
-                coop: false,
+                ..Fixture::default()
+            };
+            let tr = fx.settings.tr();
+            let readout = Readout {
                 phase: &State::new(Phase::Running),
-                vphase: &State::new(VersusPhase::Running),
-                editor: &EditorState::default(),
-                online: &Online::default(),
                 playback: &watching,
-                lobby: &LobbyState::default(),
-                tournament: &crate::app::tournament::Tournament::default(),
                 seats: &Seats::default(),
-                settings: &settings,
-                keycaps: &crate::app::keycaps::KeyCaps::default(),
-                names: &crate::app::SeatNames::default(),
-                controllers: &Controllers::default(),
-                library: &crate::app::replays::Library::default(),
-                notice: &crate::app::RoundNotice::default(),
-                match_menu: &crate::app::match_setup::MatchMenu::default(),
-                paused: false,
-                spectator_typing: None,
-                crowd: Default::default(),
-                speed: 1,
+                ..fx.readout()
             };
             let prompt = screen_text(Screen::Versus, &readout).prompt;
             let mute = tr.prompt_mute;
@@ -782,6 +840,31 @@ mod tests {
 
     /// The editor header names the mode it is in and carries the solver's
     /// last word; playtesting swaps both the title and the key legend.
+    /// The speed line names where S goes next, from the same step the key
+    /// takes: at the top speed that is back to x1, not "faster".
+    #[test]
+    fn the_replay_speed_line_names_the_speed_s_goes_to() {
+        use crate::app::{Playback, Seats};
+        use crate::sim::{Replay, campaign_levels};
+
+        let watching = Playback(Some((
+            Replay::new(campaign_levels().first().expect("a campaign level").clone()),
+            0,
+        )));
+        let fx = Fixture::default();
+        for (speed, want) in [(2, "x2  (S: x4)"), (4, "x4  (S: x1)")] {
+            let readout = Readout {
+                phase: &State::new(Phase::Running),
+                playback: &watching,
+                seats: &Seats::default(),
+                speed,
+                ..fx.readout()
+            };
+            let status = screen_text(Screen::Versus, &readout).status;
+            assert!(status.starts_with(want), "x{speed}: {status}");
+        }
+    }
+
     #[test]
     fn the_editor_header_follows_the_playtest_toggle() {
         let mut editor = EditorState::default();
@@ -798,34 +881,34 @@ mod tests {
             title,
             status,
             prompt,
-        } = editor_text(&EN, &editor, &sim, None);
+        } = editor_text(&EN, &editor, &sim);
         assert!(title.starts_with(EN.title_editor), "{title}");
         assert!(title.contains("Gull Alley"), "the name is on the header");
         // And what is being built, which decides which list it saves to.
         assert!(title.contains(EN.ed_kind_puzzle), "{title}");
         assert!(status.contains('3') && status.contains("solvable: 2"));
-        assert_eq!(prompt, EN.ed_prompt);
-        // Rebound, the line names the keys that move the cursor.
-        let rebound = editor_text(&EN, &editor, &sim, Some("ESDF")).prompt;
-        assert!(rebound.starts_with("ESDF "), "{rebound}");
+        assert_eq!(prompt, EN.ed_prompt.replacen("WASD", "{moves}", 1));
 
         // As a beach the status counts seats instead of an inventory the
         // match will never read.
         editor.kind = crate::sim::LevelKind::Arena;
-        let beach = editor_text(&EN, &editor, &sim, None);
+        let beach = editor_text(&EN, &editor, &sim);
         assert!(beach.title.contains(EN.ed_kind_arena), "{}", beach.title);
         assert_eq!(beach.status, "seats: 2 | solvable: 2", "{}", beach.status);
         editor.kind = crate::sim::LevelKind::Puzzle;
 
         // Typing shows a caret, so it is obvious the keyboard is spelling a
         // name rather than picking brushes.
-        editor.mode = crate::app::editor::Mode::Naming;
-        let typing = editor_text(&EN, &editor, &sim, None).title;
-        assert!(typing.ends_with('_'), "{typing}");
+        editor.mode = crate::app::editor::Mode::Naming { was: String::new() };
+        let typing = editor_text(&EN, &editor, &sim);
+        assert!(typing.title.ends_with('_'), "{}", typing.title);
+        // And the prompt names the box's keys, not the brushes': every one
+        // of those is a letter until Enter or Esc.
+        assert_eq!(typing.prompt, EN.prompt_typing);
         editor.mode = crate::app::editor::Mode::Painting;
 
         editor.mode = crate::app::editor::Mode::Testing(Box::new(Board::new(4, 4, 0)));
-        let HudText { title, prompt, .. } = editor_text(&EN, &editor, &sim, None);
+        let HudText { title, prompt, .. } = editor_text(&EN, &editor, &sim);
         assert_eq!(title, EN.title_playtest);
         assert_eq!(prompt, EN.ed_playtest_prompt);
     }
@@ -850,6 +933,7 @@ mod tests {
                 bots: false,
                 full: false,
                 age: 0.0,
+                heard: 1,
             });
         }
         // The count is the part that matters: a hall with more games than
@@ -859,6 +943,31 @@ mod tests {
 
         lobby.feedback = "hosting on port 47777".into();
         assert_eq!(lobby_text(&EN, &lobby).status, "hosting on port 47777");
+
+        // A line being typed has every key: the host's Enter sends it and
+        // starts nothing, so the line does not offer a start.
+        lobby.typing = Some(crate::app::lobby::Typing::chat());
+        assert_eq!(lobby_text(&EN, &lobby).prompt, EN.prompt_typing);
+    }
+
+    /// While a seat's name is being typed, the setup's W/S and Enter are
+    /// letters and a way out of the box, not the dials and a start.
+    #[test]
+    fn the_match_setup_prompt_follows_the_name_box() {
+        use crate::app::match_setup::{MatchMenu, Row};
+        let name_row = Row::ALL
+            .iter()
+            .position(|row| matches!(row, Row::Name(0)))
+            .expect("a name row");
+        let mut menu = MatchMenu {
+            selected: name_row,
+            ..MatchMenu::default()
+        };
+        assert_eq!(match_setup_prompt(&EN, &menu), EN.prompt_match_name);
+        menu.naming = Some(0);
+        assert_eq!(match_setup_prompt(&EN, &menu), EN.prompt_typing_keep);
+        menu = MatchMenu::default();
+        assert_eq!(match_setup_prompt(&EN, &menu), EN.prompt_match_setup);
     }
 
     /// Three ways to be at somebody else's beach, and three lines.
@@ -956,17 +1065,8 @@ mod tests {
     #[test]
     fn a_spectators_prompt_says_what_the_tide_key_will_do() {
         use crate::app::spectators::Crowd;
-        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
 
-        let levels = campaign_levels();
-        let builtins = levels.len();
-        let campaign = Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        };
-        let settings = GameSettings::default();
+        let fx = Fixture::default();
         // A watching session: no seat, so the spectator's arm is the one
         // the prompt takes.
         let watching = Online(Some(crate::app::net::OnlineSession::new(
@@ -975,35 +1075,29 @@ mod tests {
             2,
             crate::transport::MatchTerms::default(),
         )));
-        let said = |crowd: Crowd| {
+        // A versus beach, whose wheel turns.
+        let mut board = Board::new(9, 7, 1);
+        board.set_events_enabled(true);
+        let beach = Sim(board);
+        let handmade = Sim(Board::new(9, 7, 1));
+        let said_on = |sim: &Sim, crowd: Crowd| {
             versus_text(&Readout {
-                tr: &EN,
-                lang: Lang::En,
-                sim: &Sim(Board::new(9, 7, 1)),
-                campaign: &campaign,
-                coop: false,
-                phase: &State::new(Phase::Setup),
-                vphase: &State::new(VersusPhase::Running),
-                editor: &EditorState::default(),
+                sim,
                 online: &watching,
-                playback: &Playback::default(),
-                lobby: &LobbyState::default(),
-                tournament: &crate::app::tournament::Tournament::default(),
-                seats: &Seats(2),
-                settings: &settings,
-                keycaps: &crate::app::keycaps::KeyCaps::default(),
-                names: &crate::app::SeatNames::default(),
-                controllers: &Controllers::default(),
-                library: &crate::app::replays::Library::default(),
-                notice: &crate::app::RoundNotice::default(),
-                match_menu: &crate::app::match_setup::MatchMenu::default(),
-                paused: false,
-                spectator_typing: None,
                 crowd,
-                speed: 1,
+                ..fx.readout()
             })
             .prompt
         };
+        let said = |crowd: Crowd| said_on(&beach, crowd);
+
+        // A beach whose wheel is off offers no call at all, whatever the
+        // crowd's numbers say, and still names T.
+        let off = said_on(&handmade, Crowd::default());
+        assert!(
+            !off.contains(EN.spectator_call_hint) && off.starts_with(EN.lobby_chat_hint),
+            "no call offered: {off}"
+        );
 
         let idle = said(Crowd::default());
         assert!(
@@ -1057,17 +1151,7 @@ mod tests {
     /// `after_round` exists to keep every reader agreeing on.
     #[test]
     fn a_spectator_is_told_the_key_that_actually_lets_it_out() {
-        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
-
-        let levels = campaign_levels();
-        let builtins = levels.len();
-        let campaign = Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        };
-        let settings = GameSettings::default();
+        let fx = Fixture::default();
         let mut session = crate::app::net::OnlineSession::new(
             crate::transport::UdpTransport::host(0).expect("socket"),
             crate::sim::Lockstep::observer(vec![0, 1], crate::sim::DEFAULT_DELAY),
@@ -1079,30 +1163,9 @@ mod tests {
         let watching = Online(Some(session));
         let said = |phase| {
             versus_text(&Readout {
-                tr: &EN,
-                lang: Lang::En,
-                sim: &Sim(Board::new(9, 7, 1)),
-                campaign: &campaign,
-                coop: false,
-                phase: &State::new(Phase::Setup),
                 vphase: &State::new(phase),
-                editor: &EditorState::default(),
                 online: &watching,
-                playback: &Playback::default(),
-                lobby: &LobbyState::default(),
-                tournament: &crate::app::tournament::Tournament::default(),
-                seats: &Seats(2),
-                settings: &settings,
-                keycaps: &crate::app::keycaps::KeyCaps::default(),
-                names: &crate::app::SeatNames::default(),
-                controllers: &Controllers::default(),
-                library: &crate::app::replays::Library::default(),
-                notice: &crate::app::RoundNotice::default(),
-                match_menu: &crate::app::match_setup::MatchMenu::default(),
-                paused: false,
-                spectator_typing: None,
-                crowd: Default::default(),
-                speed: 1,
+                ..fx.readout()
             })
             .prompt
         };
@@ -1135,50 +1198,19 @@ mod tests {
     /// its own consequences.
     #[test]
     fn the_table_is_told_it_has_an_audience_when_nothing_louder_is_saying_anything() {
-        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
-
-        let levels = campaign_levels();
-        let builtins = levels.len();
-        let campaign = Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        };
-        let settings = GameSettings::default();
+        let fx = Fixture::default();
         let status = |watching: u8, surging: bool| {
             let mut board = Board::new(9, 7, 1);
             if surging {
                 board.rules_mut().round_length = Some(crate::sim::SURGE_TICKS);
             }
             versus_text(&Readout {
-                tr: &EN,
-                lang: Lang::En,
                 sim: &Sim(board),
-                campaign: &campaign,
-                coop: false,
-                phase: &State::new(Phase::Setup),
-                vphase: &State::new(VersusPhase::Running),
-                editor: &EditorState::default(),
-                online: &Online::default(),
-                playback: &Playback::default(),
-                lobby: &LobbyState::default(),
-                tournament: &crate::app::tournament::Tournament::default(),
-                seats: &Seats(2),
-                settings: &settings,
-                keycaps: &crate::app::keycaps::KeyCaps::default(),
-                names: &crate::app::SeatNames::default(),
-                controllers: &Controllers::default(),
-                library: &crate::app::replays::Library::default(),
-                notice: &crate::app::RoundNotice::default(),
-                match_menu: &crate::app::match_setup::MatchMenu::default(),
-                paused: false,
-                spectator_typing: None,
                 crowd: crate::app::spectators::Crowd {
                     watching,
                     ..Default::default()
                 },
-                speed: 1,
+                ..fx.readout()
             })
             .status
         };
@@ -1202,45 +1234,13 @@ mod tests {
     /// rows in front of them.
     #[test]
     fn the_prompt_names_the_pause_cards_keys_while_it_is_up() {
-        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
-
-        let levels = campaign_levels();
-        let builtins = levels.len();
-        let campaign = Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        };
-        let settings = GameSettings::default();
+        let fx = Fixture::default();
         let said = |screen, paused| {
             screen_text(
                 screen,
                 &Readout {
-                    tr: &EN,
-                    lang: Lang::En,
-                    sim: &Sim(Board::new(9, 7, 1)),
-                    campaign: &campaign,
-                    coop: false,
-                    phase: &State::new(Phase::Setup),
-                    vphase: &State::new(VersusPhase::Running),
-                    editor: &EditorState::default(),
-                    online: &Online::default(),
-                    playback: &Playback::default(),
-                    lobby: &LobbyState::default(),
-                    tournament: &crate::app::tournament::Tournament::default(),
-                    seats: &Seats(2),
-                    settings: &settings,
-                    keycaps: &crate::app::keycaps::KeyCaps::default(),
-                    names: &crate::app::SeatNames::default(),
-                    controllers: &Controllers::default(),
-                    library: &crate::app::replays::Library::default(),
-                    notice: &crate::app::RoundNotice::default(),
-                    match_menu: &crate::app::match_setup::MatchMenu::default(),
                     paused,
-                    spectator_typing: None,
-                    crowd: Default::default(),
-                    speed: 1,
+                    ..fx.readout()
                 },
             )
             .prompt
@@ -1260,43 +1260,13 @@ mod tests {
     /// prompt names P1's keys alone, not a P2 whose keys drive nothing.
     #[test]
     fn a_match_against_a_bot_prompts_for_one_player() {
-        use crate::app::{Campaign, CampaignKind, Controllers, Playback, SeatController, Seats};
+        use crate::app::{Controllers, SeatController};
 
-        let levels = campaign_levels();
-        let builtins = levels.len();
-        let campaign = Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        };
-        let settings = GameSettings::default();
+        let fx = Fixture::default();
         let said = |controllers: &Controllers| {
             versus_text(&Readout {
-                tr: &EN,
-                lang: Lang::En,
-                sim: &Sim(Board::new(9, 7, 1)),
-                campaign: &campaign,
-                coop: false,
-                phase: &State::new(Phase::Setup),
-                vphase: &State::new(VersusPhase::Running),
-                editor: &EditorState::default(),
-                online: &Online::default(),
-                playback: &Playback::default(),
-                lobby: &LobbyState::default(),
-                tournament: &crate::app::tournament::Tournament::default(),
-                seats: &Seats(2),
-                settings: &settings,
-                keycaps: &crate::app::keycaps::KeyCaps::default(),
-                names: &crate::app::SeatNames::default(),
                 controllers,
-                library: &crate::app::replays::Library::default(),
-                notice: &crate::app::RoundNotice::default(),
-                match_menu: &crate::app::match_setup::MatchMenu::default(),
-                paused: false,
-                spectator_typing: None,
-                crowd: Default::default(),
-                speed: 1,
+                ..fx.readout()
             })
             .prompt
         };
@@ -1314,43 +1284,14 @@ mod tests {
     /// the AI without telling one "you" which seat is theirs.
     #[test]
     fn two_humans_against_an_ai_see_both_players_keys() {
-        use crate::app::{Campaign, CampaignKind, Controllers, Playback, SeatController, Seats};
+        use crate::app::{Controllers, SeatController, Seats};
 
-        let levels = campaign_levels();
-        let builtins = levels.len();
-        let campaign = Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        };
-        let settings = GameSettings::default();
+        let fx = Fixture::default();
         let said = |controllers: &Controllers| {
             versus_text(&Readout {
-                tr: &EN,
-                lang: Lang::En,
-                sim: &Sim(Board::new(9, 7, 1)),
-                campaign: &campaign,
-                coop: false,
-                phase: &State::new(Phase::Setup),
-                vphase: &State::new(VersusPhase::Running),
-                editor: &EditorState::default(),
-                online: &Online::default(),
-                playback: &Playback::default(),
-                lobby: &LobbyState::default(),
-                tournament: &crate::app::tournament::Tournament::default(),
                 seats: &Seats(3),
-                settings: &settings,
-                keycaps: &crate::app::keycaps::KeyCaps::default(),
-                names: &crate::app::SeatNames::default(),
                 controllers,
-                library: &crate::app::replays::Library::default(),
-                notice: &crate::app::RoundNotice::default(),
-                match_menu: &crate::app::match_setup::MatchMenu::default(),
-                paused: false,
-                spectator_typing: None,
-                crowd: Default::default(),
-                speed: 1,
+                ..fx.readout()
             })
         };
         let mut couch = Controllers::default();
@@ -1371,43 +1312,13 @@ mod tests {
     #[test]
     fn the_prompt_carries_a_local_series_on_rather_than_offering_the_menu() {
         use crate::app::tournament::{SeriesLength, Tournament};
-        use crate::app::{Campaign, CampaignKind, Controllers, Playback, Seats};
 
-        let levels = campaign_levels();
-        let builtins = levels.len();
-        let campaign = Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        };
-        let settings = GameSettings::default();
+        let fx = Fixture::default();
         let said = |tournament: &Tournament| {
             versus_text(&Readout {
-                tr: &EN,
-                lang: Lang::En,
-                sim: &Sim(Board::new(9, 7, 1)),
-                campaign: &campaign,
-                coop: false,
-                phase: &State::new(Phase::Setup),
                 vphase: &State::new(VersusPhase::Over),
-                editor: &EditorState::default(),
-                online: &Online::default(),
-                playback: &Playback::default(),
-                lobby: &LobbyState::default(),
                 tournament,
-                seats: &Seats(2),
-                settings: &settings,
-                keycaps: &crate::app::keycaps::KeyCaps::default(),
-                names: &crate::app::SeatNames::default(),
-                controllers: &Controllers::default(),
-                library: &crate::app::replays::Library::default(),
-                notice: &crate::app::RoundNotice::default(),
-                match_menu: &crate::app::match_setup::MatchMenu::default(),
-                paused: false,
-                spectator_typing: None,
-                crowd: Default::default(),
-                speed: 1,
+                ..fx.readout()
             })
             .prompt
         };
@@ -1438,10 +1349,8 @@ mod tests {
         let mut levels = shipped.clone();
         levels.extend([shipped[0].clone(), shipped[1].clone()]);
         let mut campaign = Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
             builtins,
+            ..Campaign::tide_pool_of(levels)
         };
         let said = |campaign: &Campaign, phase| {
             let sim = Sim(campaign.current().board());
@@ -1487,14 +1396,7 @@ mod tests {
     /// your signposts" and "you have none left, press Enter".
     #[test]
     fn the_puzzle_prompt_reacts_to_a_spent_inventory() {
-        let levels = campaign_levels();
-        let builtins = levels.len();
-        let campaign = Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        };
+        let campaign = Campaign::tide_pool();
         let level: &Level = campaign.current();
         let posts = level.posts;
         let mut sim = Sim(level.board());
@@ -1560,7 +1462,10 @@ mod tests {
             .prompt
         };
         if posts > 0 {
-            assert_eq!(coop(false), EN.prompt_setup_coop);
+            assert_eq!(
+                coop(false),
+                crate::app::name_the_pair(&EN, EN.prompt_setup_coop)
+            );
         }
         assert_eq!(coop(true), EN.prompt_setup_custom);
         // And so does the one-hand preset: placement is on IJKL then, not
@@ -1569,8 +1474,10 @@ mod tests {
             commit: crate::app::settings::CommitScheme::Ijkl,
             ..GameSettings::default()
         };
-        assert!(!one_hand.stock_legend());
-        assert!(GameSettings::default().stock_legend());
+        assert!(!one_hand.stock_legend(false));
+        assert!(GameSettings::default().stock_legend(false));
+        // Unless a partner has IJKL, which puts the pair on the arrows.
+        assert!(one_hand.stock_legend(true));
     }
 
     /// Every tide event maps to a distinct, non-empty localized name; an

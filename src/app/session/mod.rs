@@ -84,6 +84,11 @@ pub(super) struct BoardSprites<'w, 's> {
     /// down otherwise, and it runs on the board screens alone: a round
     /// quit inside a sweep left them glowing over the menu.
     sweeps: Query<'w, 's, Entity, With<creatures::SweepSprite>>,
+    /// The old beach's dust, splashes, footprints and crabs hopping into
+    /// its castles: drawn where things stood on it, and on a reload or
+    /// an editor swap on the same screen they went on over the new one.
+    particles: Query<'w, 's, Entity, With<crate::app::effects::Particle>>,
+    hops: Query<'w, 's, Entity, With<crate::app::effects::Hop>>,
 }
 
 impl BoardSprites<'_, '_> {
@@ -97,6 +102,8 @@ impl BoardSprites<'_, '_> {
             .chain(self.crabs.iter())
             .chain(self.gulls.iter())
             .chain(self.sweeps.iter())
+            .chain(self.particles.iter())
+            .chain(self.hops.iter())
         {
             commands.entity(entity).despawn();
         }
@@ -153,7 +160,8 @@ mod tests {
             }
             // Couch rounds resolve seat names from the settings table.
             let names = SeatNames(settings.names.clone());
-            winner_name(&Sim(board), &seats, settings, &online, &names)
+            let mode = teams::in_play(settings.team_mode, &online, None, seats.0);
+            winner_name(&Sim(board), &seats, mode, &names, settings.tr())
         };
 
         let plain = settings::GameSettings::default();
@@ -168,6 +176,29 @@ mod tests {
         let mut settings = settings::GameSettings::default();
         settings.names[1] = "Bo".to_string();
         assert_eq!(named([0, 7, 0, 0, 0, 0], &settings).as_deref(), Some("Bo"));
+
+        // A round won in pairs is filed under the pair, as the card names
+        // it, and a replay of one under the mode it was played in, not
+        // the setting it is watched with.
+        let four = Seats(4);
+        let mut board = Board::new(5, 5, 0);
+        for seat in 0..4 {
+            board.set_tile(seat, 0, crate::sim::TileKind::Castle(seat));
+            board.set_score(seat, [5, 5, 4, 5][usize::from(seat)]);
+        }
+        let pairs = settings::GameSettings {
+            team_mode: teams::TeamMode::Pairs,
+            ..settings::GameSettings::default()
+        };
+        let names = SeatNames(pairs.names.clone());
+        let live_mode = teams::in_play(pairs.team_mode, &online, None, four.0);
+        let live = winner_name(&Sim(board.clone()), &four, live_mode, &names, pairs.tr());
+        assert_eq!(live.as_deref(), Some("P1+P2"));
+        let mut replay = Replay::new(Level::from_board("T", 3, board.clone()));
+        replay.teams = teams::TeamMode::Pairs.index() as u8;
+        let watched_mode = teams::in_play(plain.team_mode, &online, Some(&replay), four.0);
+        let watched = winner_name(&Sim(board), &four, watched_mode, &names, plain.tr());
+        assert_eq!(watched.as_deref(), Some("P1+P2"));
     }
 
     fn armed(seats: u8, bots: u8) -> match_setup::MatchConfig {
@@ -230,7 +261,7 @@ mod tests {
                 3,
                 crate::transport::MatchTerms::default(),
             );
-            session.bot = bot;
+            session.bot = bot.then(|| "Greedy (Ana)".to_string());
             session.bots_here = bots_here
                 .into_iter()
                 .map(|seat| net::HostedBot {
@@ -570,6 +601,9 @@ mod tests {
         app.world_mut().spawn(creatures::GullSprite(1));
         app.world_mut()
             .spawn(creatures::SweepSprite::new(2, Vec2::ZERO));
+        // A footprint: on a reload it was left pressed into the new beach.
+        app.world_mut()
+            .spawn(crate::app::effects::Particle::default());
         let before = app.world().entities().len();
         assert!(before > 5, "the fixture did not spawn");
 
@@ -595,6 +629,10 @@ mod tests {
                 .count(),
             app.world_mut()
                 .query_filtered::<Entity, With<creatures::SweepSprite>>()
+                .iter(app.world())
+                .count(),
+            app.world_mut()
+                .query_filtered::<Entity, With<crate::app::effects::Particle>>()
                 .iter(app.world())
                 .count(),
         ] {

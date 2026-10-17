@@ -35,46 +35,72 @@ impl Dial {
         Dial::Welcome,
     ];
 
-    /// The row as it reads: what it sets, and what it is set to. A host
-    /// passes the table its dials would deal now (`dealt`), a joiner the
-    /// one its roster describes, and the map, AI and teams rows read that
-    /// rather than the dials themselves. `turns` says the card is the
-    /// host's own, whose teams row also says what it is dialled to.
+    /// The row as it reads: what it sets, and what it is set to, on
+    /// `card`. The map, AI and teams rows read the table the card deals
+    /// rather than the dials themselves; a joiner still waiting for the
+    /// host's terms has no values to show.
     pub fn label(
         self,
         tr: &crate::app::i18n::Tr,
-        config: &MatchConfig,
-        teams: crate::app::teams::TeamMode,
+        card: &TermsCard,
         beaches: &crate::app::match_setup::CustomBeaches,
-        dealt: Option<Dealt>,
-        turns: bool,
     ) -> (&'static str, String) {
-        use crate::app::cycle::Cycle;
+        (
+            self.name(tr),
+            self.value(tr, card, beaches).unwrap_or_default(),
+        )
+    }
+
+    /// What the row sets.
+    fn name(self, tr: &crate::app::i18n::Tr) -> &'static str {
         match self {
+            Dial::Map => tr.match_map,
+            Dial::Gulls => tr.match_gulls,
+            Dial::Round => tr.match_round,
+            Dial::Posts => tr.match_posts,
+            Dial::Bots => tr.match_ai,
+            Dial::Teams => tr.set_versus_mode,
+            Dial::Series => tr.match_mode,
+            Dial::Welcome => tr.lobby_bots_dial,
+        }
+    }
+
+    /// What the row is set to on `card`, or `None` while there are no
+    /// terms to read.
+    fn value(
+        self,
+        tr: &crate::app::i18n::Tr,
+        card: &TermsCard,
+        beaches: &crate::app::match_setup::CustomBeaches,
+    ) -> Option<String> {
+        use crate::app::cycle::Cycle;
+        let (config, teams, dealt) = card.terms()?;
+        // Only the host's own card says what its teams row is dialled to.
+        let turns = matches!(card, TermsCard::Hosting { .. });
+        Some(match self {
             // The note about beaches this table is too big for is not
             // appended here: this value cell clips, so a sentence on the
             // end would push the map's own name out of sight. It gets a
             // line of its own under the dials.
-            Dial::Map => (
-                tr.match_map,
-                match dealt {
-                    Some(dealt) => dealt_map_label(tr, config, dealt, beaches),
-                    None => crate::app::match_setup::map_label(config, tr, beaches),
-                },
-            ),
-            Dial::Gulls => (
-                tr.match_gulls,
-                tr.gull_names[config.gulls.index()].to_string(),
-            ),
-            Dial::Round => (
-                tr.match_round,
-                tr.round_names[config.round.index()].to_string(),
-            ),
-            Dial::Posts => (tr.match_posts, config.posts.to_string()),
+            Dial::Map => match card {
+                // The host's beach by the name the roster gave it, never
+                // looked up on this machine's own shelf.
+                TermsCard::Joined { config, beach, .. } => hosts_map_label(tr, config.map, beach),
+                TermsCard::Hosting { config, dealt, .. } => {
+                    dealt_map_label(tr, config, *dealt, beaches)
+                }
+                TermsCard::Choosing { config, .. } => {
+                    crate::app::match_setup::map_label(config, tr, beaches)
+                }
+                TermsCard::Waiting => return None,
+            },
+            Dial::Gulls => tr.gull_names[config.gulls.index()].to_string(),
+            Dial::Round => tr.round_names[config.round.index()].to_string(),
+            Dial::Posts => config.posts.to_string(),
             // With the level they play at, which no other row sets: it is
             // the couch's top AI seat's, and played unannounced it could
             // be one set there long ago.
-            Dial::Bots => (tr.match_ai, {
+            Dial::Bots => {
                 let bots = dealt.map_or(config.bots, |dealt| dealt.bots);
                 match bots {
                     0 => bots.to_string(),
@@ -83,12 +109,12 @@ impl Dial {
                         tr.bot_levels[crate::app::match_setup::online_ai_level(config).index()]
                     ),
                 }
-            }),
+            }
             // What will be scored, which a mode the table does not fit
             // is not: the round falls back to free-for-all. The host, who
             // can dial a mode before the table fits it, is also told what
             // it dialled and when that starts.
-            Dial::Teams => (tr.set_versus_mode, {
+            Dial::Teams => {
                 let played = dealt.map_or(teams, |dealt| teams.played_by(dealt.seats));
                 let from = dealt.and_then(|dealt| teams.fits_from(dealt.seats));
                 match from.filter(|_| turns && played != teams) {
@@ -101,16 +127,10 @@ impl Dial {
                     ),
                     None => tr.team_modes[played.index()].to_string(),
                 }
-            }),
-            Dial::Series => (
-                tr.match_mode,
-                tr.mode_names[config.series.index()].to_string(),
-            ),
-            Dial::Welcome => (
-                tr.lobby_bots_dial,
-                tr.lobby_bots_values[usize::from(!config.bots_welcome)].to_string(),
-            ),
-        }
+            }
+            Dial::Series => tr.mode_names[config.series.index()].to_string(),
+            Dial::Welcome => tr.lobby_bots_values[usize::from(!config.bots_welcome)].to_string(),
+        })
     }
 
     /// Turn it. `humans` is how many are at the table, people and the bots
@@ -181,6 +201,94 @@ impl Dial {
     }
 }
 
+/// What the terms card shows, one of four things.
+pub enum TermsCard<'a> {
+    /// Not at any beach yet: this machine's own setup, as a guide to what
+    /// hosting would put on the air.
+    Choosing {
+        config: &'a MatchConfig,
+        mode: crate::app::teams::TeamMode,
+    },
+    /// The host's own dials, read as the table they would deal now.
+    Hosting {
+        config: &'a MatchConfig,
+        mode: crate::app::teams::TeamMode,
+        dealt: Dealt,
+    },
+    /// A joiner the host has not sent its terms yet (the second or so
+    /// before the first roster): there is no match to show, and its own
+    /// setup painted in the meantime read as the host's.
+    Waiting,
+    /// A joiner's card: the host's dials off the roster, not its own setup
+    /// screen's, since the card is meant to show the match being joined,
+    /// and the host's beach by the name the roster gave it.
+    Joined {
+        config: MatchConfig,
+        mode: crate::app::teams::TeamMode,
+        dealt: Dealt,
+        beach: &'a str,
+    },
+}
+
+impl TermsCard<'_> {
+    /// The dials the card reads, the team mode, and the table they deal
+    /// when there is one; `None` while waiting.
+    fn terms(&self) -> Option<(&MatchConfig, crate::app::teams::TeamMode, Option<Dealt>)> {
+        match self {
+            TermsCard::Choosing { config, mode } => Some((config, *mode, None)),
+            TermsCard::Hosting {
+                config,
+                mode,
+                dealt,
+            } => Some((config, *mode, Some(*dealt))),
+            TermsCard::Waiting => None,
+            TermsCard::Joined {
+                config,
+                mode,
+                dealt,
+                beach: _,
+            } => Some((config, *mode, Some(*dealt))),
+        }
+    }
+}
+
+/// The terms card this lobby shows: the host's dials and the table they
+/// deal, a joiner's host's terms off the roster, or this machine's own
+/// setup (`config`, `teams`) while choosing.
+pub(super) fn card_of<'a>(
+    state: &'a LobbyState,
+    config: &'a MatchConfig,
+    teams: crate::app::teams::TeamMode,
+) -> TermsCard<'a> {
+    if let Some(dealt) = hosts_dealt(state, config) {
+        return TermsCard::Hosting {
+            config,
+            mode: teams,
+            dealt,
+        };
+    }
+    let Some(joined) = state.joined() else {
+        return TermsCard::Choosing {
+            config,
+            mode: teams,
+        };
+    };
+    let Some(host) = joined.host_terms.as_ref() else {
+        return TermsCard::Waiting;
+    };
+    let (mut config, mode) = crate::app::match_setup::config_from_terms(&host.terms);
+    // Whether the beach takes bots is not one of the terms; a joiner reads
+    // it off the beacon that listed the beach.
+    config.bots_welcome = state.joined_entry().is_some_and(|entry| entry.bots);
+    TermsCard::Joined {
+        config,
+        mode,
+        // The table the round would be dealt as it sits now, off the roster.
+        dealt: roster_dealt(state.table.len(), &host.terms),
+        beach: host.beach_name.as_str(),
+    }
+}
+
 /// Everyone already at the host's table, as the card counts them: the
 /// host, the players aboard, the bots that came to the door. What the AI
 /// has to fit behind, and the one count the host's card, its dials and
@@ -202,10 +310,8 @@ pub(super) fn hosts_dealt(state: &LobbyState, config: &MatchConfig) -> Option<De
 /// beaches. Only the host's: a joiner's card is the host's match, and
 /// neither line is anything to do with it.
 ///
-/// The beach note reads the table the launch deals. It read the couch's
-/// seat count, for joiners too, and ahead of the bot string, so a host
-/// whose couch was set for six lost the string to "none of your maps fits
-/// 6 players" at a table of two.
+/// The beach note reads the table the launch deals ([`hosts_dealt`]), not
+/// the couch's seat count, and never outranks the bot string.
 pub(super) fn dials_note(
     state: &LobbyState,
     config: &MatchConfig,
@@ -396,18 +502,44 @@ mod dial_tests {
         let config = MatchConfig::default();
         for lang in crate::app::i18n::ALL_LANGS {
             for dial in Dial::ALL {
-                let (name, value) = dial.label(
-                    lang.tr(),
-                    &config,
-                    TeamMode::Solo,
-                    &Default::default(),
-                    None,
-                    true,
-                );
+                let card = TermsCard::Choosing {
+                    config: &config,
+                    mode: TeamMode::Solo,
+                };
+                let (name, value) = dial.label(lang.tr(), &card, &Default::default());
                 assert!(!name.is_empty(), "{dial:?} in {lang:?} has no name");
                 assert!(!value.is_empty(), "{dial:?} in {lang:?} has no value");
             }
         }
+    }
+
+    /// A joiner waiting for the host's first roster reads every row's
+    /// name and no value, and once the terms come its map row names the
+    /// host's beach as the roster gave it, whatever this machine's shelf
+    /// holds.
+    #[test]
+    fn a_joiners_card_reads_the_hosts_terms_or_nothing() {
+        let tr = &crate::app::i18n::EN;
+        let shelf = Default::default();
+        for dial in Dial::ALL {
+            let (name, value) = dial.label(tr, &TermsCard::Waiting, &shelf);
+            assert!(!name.is_empty(), "{dial:?}");
+            assert!(
+                value.is_empty(),
+                "{dial:?} reads {value:?} before any terms"
+            );
+        }
+        let config = MatchConfig {
+            map: MapChoice::Custom,
+            ..MatchConfig::default()
+        };
+        let card = TermsCard::Joined {
+            dealt: dealt(&config, 2),
+            config,
+            mode: TeamMode::Solo,
+            beach: "Crab Cove",
+        };
+        assert_eq!(Dial::Map.label(tr, &card, &shelf).1, "Crab Cove");
     }
 
     /// Every dial turns, both ways, and turning one leaves the others
@@ -578,8 +710,12 @@ mod dial_tests {
         let dealt = dealt(&config, 5);
         assert_eq!((dealt.bots, dealt.seats), (1, 6));
         let row = |dial: Dial, config: &MatchConfig| {
-            dial.label(&EN, config, TeamMode::Solo, &shelf, Some(dealt), true)
-                .1
+            let card = TermsCard::Hosting {
+                config,
+                mode: TeamMode::Solo,
+                dealt,
+            };
+            dial.label(&EN, &card, &shelf).1
         };
         assert_eq!(row(Dial::Bots, &config), "1 (normal)");
         assert_eq!(
@@ -625,10 +761,7 @@ mod dial_tests {
         };
         // Not hosting: nothing to say, whatever the couch is set to.
         assert_eq!(dials_note(&state, &config, &EN, &shelf), "");
-        state.standing = Standing::hosting(
-            crate::transport::Announcer::new(0xD1A1).expect("announcer"),
-            crate::transport::UdpTransport::host(0).expect("socket"),
-        );
+        state.standing = hosting_lobby();
         // Two at the table, and the beach seats two.
         assert_eq!(dials_note(&state, &config, &EN, &shelf), "");
         // Four at the table, and it does not.
@@ -656,10 +789,21 @@ mod dial_tests {
         let three = dealt(&config, 3);
         assert_eq!(three.seats, 3);
         let card = MatchConfig::default();
-        let row = |teams: TeamMode, dealt: Dealt, turns: bool| {
-            Dial::Teams
-                .label(&EN, &card, teams, &shelf, Some(dealt), turns)
-                .1
+        let row = |mode: TeamMode, dealt: Dealt, turns: bool| {
+            let card = match turns {
+                true => TermsCard::Hosting {
+                    config: &card,
+                    mode,
+                    dealt,
+                },
+                false => TermsCard::Joined {
+                    config: MatchConfig::default(),
+                    mode,
+                    dealt,
+                    beach: "",
+                },
+            };
+            Dial::Teams.label(&EN, &card, &shelf).1
         };
         assert_eq!(
             row(TeamMode::Pairs, three, false),
@@ -746,16 +890,12 @@ mod dial_tests {
         let three = dealt(&MatchConfig::default(), 3);
         for lang in crate::app::i18n::ALL_LANGS {
             let tr = lang.tr();
-            let row = Dial::Teams
-                .label(
-                    tr,
-                    &MatchConfig::default(),
-                    TeamMode::Pairs,
-                    &Default::default(),
-                    Some(three),
-                    true,
-                )
-                .1;
+            let card = TermsCard::Hosting {
+                config: &MatchConfig::default(),
+                mode: TeamMode::Pairs,
+                dealt: three,
+            };
+            let row = Dial::Teams.label(tr, &card, &Default::default()).1;
             assert!(!row.contains('{'), "{lang:?}: {row}");
             assert!(row.contains('4'), "{lang:?}: {row}");
             assert!(

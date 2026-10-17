@@ -278,6 +278,59 @@ impl CurrentBoard<'_> {
     }
 }
 
+/// Which board (by [`BoardGeneration`]) a drawing last read, so it can
+/// tell a new board from the old one ticking on. Empty until the first
+/// read, which is always of a new board.
+#[derive(Default)]
+pub struct BoardStamp(Option<u64>);
+
+impl BoardStamp {
+    /// Whether the board on the table is another than the one last read,
+    /// stamping it as read either way.
+    pub fn is_new(&mut self, current: &CurrentBoard) -> bool {
+        let generation = Some(current.generation());
+        let new = self.0 != generation;
+        self.0 = generation;
+        new
+    }
+}
+
+/// A memory kept per creature id, and the board it was filled on.
+///
+/// Crab and gull ids start again at zero on every board, so a memory
+/// pruned by id alone hands a new board's crab the last board's entry: a
+/// crab that was on dry sand there and starts in a pool here splashes on
+/// its first frame, and one that starts across the beach from where its
+/// namesake stood presses a footprint halfway between.
+pub struct BoardMemory<K, V> {
+    filled_on: BoardStamp,
+    by_id: bevy::platform::collections::HashMap<K, V>,
+}
+
+impl<K, V> Default for BoardMemory<K, V> {
+    fn default() -> Self {
+        BoardMemory {
+            filled_on: BoardStamp::default(),
+            by_id: Default::default(),
+        }
+    }
+}
+
+impl<K, V> BoardMemory<K, V> {
+    /// The memory for the board on the table: emptied first if it was
+    /// filled on another one.
+    pub fn of(
+        &mut self,
+        current: &CurrentBoard,
+    ) -> &mut bevy::platform::collections::HashMap<K, V> {
+        let Self { filled_on, by_id } = self;
+        if filled_on.is_new(current) {
+            by_id.clear();
+        }
+        by_id
+    }
+}
+
 /// Keep [`BoardGeneration`] up with the board on the table.
 pub fn track_board(sim: Res<Sim>, mut generation: ResMut<BoardGeneration>) {
     // An untouched sim is the board last read, and reading one at tick 0
@@ -788,6 +841,29 @@ mod tests {
         let mut watch = Watch::default();
         diff(board, &mut watch);
         watch
+    }
+
+    /// A sweep's landing records outlast the most ticks one drawn frame can
+    /// cover, or a bank read on the frame after a hitch, in a replay at its
+    /// fastest, is drawn as a crab eaten. The worst frame: the fixed clock's
+    /// most steps after a stall, each feeding the most ticks a step can.
+    #[test]
+    fn a_swept_crab_is_remembered_past_the_longest_frame() {
+        use bevy::time::{Time, Virtual};
+        let max_delta = Time::<Virtual>::default().max_delta().as_secs_f64();
+        // One more for the overstep the clock carries into the frame.
+        let steps = (max_delta * f64::from(crate::sim::TICKS_PER_SECOND)).ceil() as u64 + 1;
+        let fastest = crate::app::replays::PlaybackSpeed::STEPS
+            .iter()
+            .copied()
+            .max()
+            .map_or(1, u64::from);
+        let per_step = fastest.max(crate::app::net::CATCH_UP_FRAMES as u64);
+        // With the margin `SWEEP_MEMORY` promises: half as many again.
+        assert!(
+            steps * per_step * 3 / 2 <= crate::sim::SWEEP_MEMORY,
+            "{steps} steps of {per_step} ticks, and half again, outrun the landing records"
+        );
     }
 
     /// What a bank is worth is what it did to the score: under a Right

@@ -105,17 +105,14 @@ const GOODBYE_GRACE: f32 = 0.3;
 /// that has stood for [`GOODBYE_GRACE`] with no word since, or else a
 /// silence of `patience`.
 ///
-/// One rule for a seat and for the host. A goodbye is unauthenticated (any
-/// machine on the LAN can send one with the peer's address on it), so it
-/// earns a short grace whose clock any word from the peer stops
-/// (`Peer::goodbye`), not belief on arrival. The joiner read the host's
-/// goodbye at once, through the infinite silence it sets: one forged
-/// datagram walked a whole table out of a round its host was still
-/// running.
+/// One rule for a seat and for the host. A goodbye is unauthenticated, so
+/// it earns a short grace whose clock any word from the peer stops
+/// ([`Goodbye`]), not belief on arrival through the infinite silence it
+/// sets.
 fn has_gone(peer: &Peer, patience: f32) -> bool {
-    match peer.goodbye {
-        Some(since) => since >= GOODBYE_GRACE,
-        None => peer.silence >= patience,
+    match peer.goodbye.said() {
+        true => peer.goodbye.stood(GOODBYE_GRACE),
+        false => peer.silence >= patience,
     }
 }
 
@@ -224,6 +221,20 @@ impl OnlineSession {
                 .is_some_and(|host| has_gone(host, HOST_GONE_AFTER))
     }
 
+    /// Keep track of who is still here, `delta` seconds after the last
+    /// look: age every silence and goodbye, greet a host gone quiet, and
+    /// on the host forget whoever holds no chair and has gone. Paused or
+    /// not: nobody who holds no chair holds the round up, and a pause is
+    /// no reason to go on counting somebody who has left. Before
+    /// [`Self::abandon_stalled`], which reads the silences this ages.
+    pub fn keep_in_touch(&mut self, delta: f32) {
+        self.age_the_silence(delta);
+        self.greet_a_quiet_host(delta);
+        if self.is_host() {
+            self.forget_gone_bystanders();
+        }
+    }
+
     /// Watch for a player who has stopped sending, and give up on them.
     ///
     /// The host alone decides, and says so; a peer that ran its own timer
@@ -242,13 +253,6 @@ impl OnlineSession {
     /// lasting record is `abandoned`, because a joiner is *told* rather
     /// than deciding and its seats never pass through here.
     pub fn abandon_stalled(&mut self, delta: f32, paused: bool) -> Vec<u8> {
-        self.age_the_silence(delta);
-        self.greet_a_quiet_host(delta);
-        // Paused or not: nobody who holds no chair holds the round up, and
-        // a pause is no reason to go on counting somebody who has left.
-        if self.is_host() {
-            self.forget_gone_bystanders();
-        }
         // A paused round is stalled on purpose, and the pause is agreed:
         // holding still is what every peer was asked to do.
         //
@@ -503,6 +507,7 @@ pub(crate) fn abandon_the_departed(
     let Some(session) = &mut online.0 else {
         return;
     };
+    session.keep_in_touch(time.delta_secs());
     session.abandon_stalled(time.delta_secs(), paused.0);
     let level = session.terms.bot_level();
     let tr = settings.tr();
@@ -589,12 +594,12 @@ pub(crate) fn leave_a_hostless_round(
         return;
     };
     let tr = settings.tr();
-    let why = if session.kicked {
-        tr.lobby_kicked_you
+    let why = if let Some(why) = session.put_out {
+        why.feedback(tr)
     } else if session.dropped() {
-        tr.online_dropped
+        tr.online_dropped.to_string()
     } else if session.host_gone() {
-        tr.online_host_gone
+        tr.online_host_gone.to_string()
     } else {
         return;
     };
@@ -602,7 +607,7 @@ pub(crate) fn leave_a_hostless_round(
     // left to linger. The session itself needs no dropping here: nothing
     // armed it for another round, so `end_versus` lets it go on the way
     // out of the arena.
-    notice.0 = why.to_string();
+    notice.0 = why;
     next_screen.set(match session.home.from_lobby {
         true => Screen::Lobby,
         false => Screen::Menu,
@@ -615,6 +620,13 @@ mod tests {
     use crate::app::session::fill_bot_actions;
     use crate::sim::{DEFAULT_DELAY, PlayerAction, classic_arena};
     use crate::transport::UdpTransport;
+
+    /// One look at the round `delta` seconds after the last, as
+    /// [`abandon_the_departed`] takes it every frame: what was given up on.
+    fn tick(session: &mut OnlineSession, delta: f32, paused: bool) -> Vec<u8> {
+        session.keep_in_touch(delta);
+        session.abandon_stalled(delta, paused)
+    }
 
     /// A paused round is a stalled round on purpose, and the host must not
     /// give up on the table for holding still.
@@ -641,16 +653,16 @@ mod tests {
         // Somebody hit Escape. Every peer stops on one frame, and stays
         // there for as long as the card is up.
         session.request_pause();
-        let gone = session.abandon_stalled(ABANDON_AFTER * 3.0, false);
+        let gone = tick(&mut session, ABANDON_AFTER * 3.0, false);
         assert!(gone.is_empty(), "gave up on {gone:?} for pausing");
         assert!(session.abandoned.is_empty());
 
         // Play on, and the patience starts again from zero rather than
         // firing on the first tick after the resume.
         session.session.resume();
-        let gone = session.abandon_stalled(ABANDON_AFTER - 0.1, false);
+        let gone = tick(&mut session, ABANDON_AFTER - 0.1, false);
         assert!(gone.is_empty(), "the timer restarts with the round");
-        let gone = session.abandon_stalled(0.2, false);
+        let gone = tick(&mut session, 0.2, false);
         assert_eq!(gone, vec![1], "and a seat that really is silent still goes");
     }
 
@@ -672,13 +684,13 @@ mod tests {
         session.peers.said_goodbye(0);
         assert!(session.peers.get(0).is_some_and(Peer::left));
         // The first look at the held-up frame starts the clock.
-        assert!(session.abandon_stalled(0.1, false).is_empty());
+        assert!(tick(&mut session, 0.1, false).is_empty());
         assert!(
-            session.abandon_stalled(0.1, false).is_empty(),
+            tick(&mut session, 0.1, false).is_empty(),
             "a moment for an input that crossed the goodbye"
         );
         assert_eq!(
-            session.abandon_stalled(GOODBYE_GRACE, false),
+            tick(&mut session, GOODBYE_GRACE, false),
             vec![1],
             "and not the five seconds a silent seat gets"
         );
@@ -709,7 +721,7 @@ mod tests {
         for _ in 0..(ABANDON_AFTER * 4.0 / frame) as usize {
             session.mark_heard(0);
             assert!(
-                session.abandon_stalled(frame, false).is_empty(),
+                tick(&mut session, frame, false).is_empty(),
                 "gave up on somebody who is right there"
             );
         }
@@ -720,7 +732,7 @@ mod tests {
         // soon as the silence adds up.
         let mut gone = Vec::new();
         for _ in 0..(ABANDON_AFTER * 2.0 / frame) as usize {
-            gone = session.abandon_stalled(frame, false);
+            gone = tick(&mut session, frame, false);
             if !gone.is_empty() {
                 break;
             }
@@ -750,11 +762,11 @@ mod tests {
         // while.
         for _ in 0..12 {
             session.mark_heard(0);
-            assert!(session.abandon_stalled(0.1, false).is_empty());
+            assert!(tick(&mut session, 0.1, false).is_empty());
         }
         session.peers.said_goodbye(0);
         assert!(
-            session.abandon_stalled(0.1, false).is_empty(),
+            tick(&mut session, 0.1, false).is_empty(),
             "a moment from the goodbye, whatever the stall"
         );
         // And then the player speaks again, every tick, as one still at
@@ -764,7 +776,7 @@ mod tests {
         for _ in 0..30 {
             session.mark_heard(0);
             assert!(
-                session.abandon_stalled(0.1, false).is_empty(),
+                tick(&mut session, 0.1, false).is_empty(),
                 "a forged goodbye cost a castle"
             );
         }
@@ -897,7 +909,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         bo.send(NetMsg::Hash { frame: 0, hash: 0 });
         host.pump(PlayerAction::None, |_| {});
-        host.abandon_stalled(0.0, false);
+        host.keep_in_touch(0.0);
         assert_eq!(host.transport.peer_count(), 1, "Cy is forgotten");
         assert_eq!(host.players_spoken_for(), 2, "and no chair is held for it");
         assert_eq!(host.peers.seat_of(0), Some(1), "Bo keeps the seat");
@@ -921,9 +933,9 @@ mod tests {
         assert!(!joiner.host_gone(), "nothing has had time to go wrong");
 
         joiner.mark_heard(0);
-        joiner.abandon_stalled(HOST_GONE_AFTER - 1.0, false);
+        joiner.keep_in_touch(HOST_GONE_AFTER - 1.0);
         assert!(!joiner.host_gone(), "still within a fair stumble");
-        joiner.abandon_stalled(2.0, false);
+        joiner.keep_in_touch(2.0);
         assert!(joiner.host_gone(), "and then the host is gone");
 
         // A host never decides this about itself, however quiet the table.
@@ -934,7 +946,7 @@ mod tests {
             MatchTerms::default(),
         );
         host.peers.deal(&[Some(1)]);
-        host.abandon_stalled(HOST_GONE_AFTER * 2.0, false);
+        host.keep_in_touch(HOST_GONE_AFTER * 2.0);
         assert!(!host.host_gone(), "the host is the host");
     }
 
@@ -955,15 +967,15 @@ mod tests {
         // Forged: the host is still talking.
         joiner.peers.said_goodbye(0);
         assert!(!joiner.host_gone(), "believed on arrival");
-        joiner.abandon_stalled(GOODBYE_GRACE / 2.0, false);
+        joiner.keep_in_touch(GOODBYE_GRACE / 2.0);
         joiner.mark_heard(0);
-        joiner.abandon_stalled(GOODBYE_GRACE * 2.0, false);
+        joiner.keep_in_touch(GOODBYE_GRACE * 2.0);
         assert!(!joiner.host_gone(), "a host still talking is not gone");
         // Real: nothing more from the host.
         joiner.peers.said_goodbye(0);
-        joiner.abandon_stalled(GOODBYE_GRACE / 2.0, false);
+        joiner.keep_in_touch(GOODBYE_GRACE / 2.0);
         assert!(!joiner.host_gone(), "still within the grace");
-        joiner.abandon_stalled(GOODBYE_GRACE, false);
+        joiner.keep_in_touch(GOODBYE_GRACE);
         assert!(joiner.host_gone(), "and then the host is gone");
     }
 
@@ -993,7 +1005,7 @@ mod tests {
             );
             joiner.home.from_lobby = from_lobby;
             joiner.mark_heard(0);
-            joiner.abandon_stalled(HOST_GONE_AFTER + 1.0, false);
+            joiner.keep_in_touch(HOST_GONE_AFTER + 1.0);
             assert!(joiner.host_gone(), "the host really is gone");
             app.insert_resource(Online(Some(joiner)));
 
@@ -1042,11 +1054,11 @@ mod tests {
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(5));
             joiner.poll_between_rounds(0.0);
-            if joiner.kicked {
+            if joiner.put_out.is_some() {
                 break;
             }
         }
-        assert!(joiner.kicked, "the joiner heard it");
+        assert_eq!(joiner.put_out, Some(PutOut::Kicked), "the joiner heard it");
 
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin);
@@ -1152,7 +1164,7 @@ mod tests {
             });
             assert!(session.session.advance().is_some(), "the frame ran");
             session.mark_heard(0);
-            let gone = session.abandon_stalled(frame, false);
+            let gone = tick(&mut session, frame, false);
             assert!(gone.is_empty(), "gave {gone:?} away mid-round");
             assert_eq!(
                 session.waiting_on(),
@@ -1201,14 +1213,14 @@ mod tests {
                 "a healthy round looks stalled from here, every single time"
             );
             session.mark_heard(0);
-            session.abandon_stalled(delta, false);
+            tick(session, delta, false);
         }
 
         /// A frame of a round that is not: seat 1's input has not arrived,
         /// so nothing runs.
         fn stalling(session: &mut OnlineSession, delta: f32) {
             session.mark_heard(0);
-            session.abandon_stalled(delta, false);
+            tick(session, delta, false);
         }
 
         // Seat 1 is late. Nothing is said at first: a moment's wait is the
@@ -1274,7 +1286,7 @@ mod tests {
         // knows which frame it stopped on. The real caller looks sixty times
         // a second; a test that leaps five seconds in a single call would
         // otherwise be timing a frame the round had only just arrived at.
-        session.abandon_stalled(0.0, false);
+        tick(session, 0.0, false);
     }
 
     fn hosting(players: Vec<u8>) -> OnlineSession {
@@ -1312,14 +1324,10 @@ mod tests {
 
         // Patience runs out only after the wait, not before: a burst of
         // lost packets must not be mistaken for somebody leaving.
-        assert!(
-            session
-                .abandon_stalled(ABANDON_AFTER / 2.0, false)
-                .is_empty()
-        );
+        assert!(tick(&mut session, ABANDON_AFTER / 2.0, false).is_empty());
         assert_eq!(frames, stuck_at, "and nothing has moved yet");
 
-        let given_up = session.abandon_stalled(ABANDON_AFTER, false);
+        let given_up = tick(&mut session, ABANDON_AFTER, false);
         assert_eq!(given_up, vec![1], "the seat that went quiet");
         for _ in 0..40 {
             step(&mut session, &mut frames);
@@ -1337,7 +1345,7 @@ mod tests {
         let mut session = hosting(vec![0, 1]);
         run_into_the_stall(&mut session);
         for _ in 0..20 {
-            assert!(session.abandon_stalled(ABANDON_AFTER, true).is_empty());
+            assert!(tick(&mut session, ABANDON_AFTER, true).is_empty());
         }
     }
 
@@ -1355,7 +1363,7 @@ mod tests {
         assert!(!joiner.is_host());
         run_into_the_stall(&mut joiner);
         for _ in 0..20 {
-            assert!(joiner.abandon_stalled(ABANDON_AFTER, false).is_empty());
+            assert!(tick(&mut joiner, ABANDON_AFTER, false).is_empty());
         }
         assert!(joiner.abandoned.is_empty(), "and nothing was given up");
     }
@@ -1381,7 +1389,7 @@ mod tests {
         drop(joiner);
 
         run_into_the_stall(&mut host);
-        assert_eq!(host.abandon_stalled(ABANDON_AFTER * 2.0, false), vec![1]);
+        assert_eq!(tick(&mut host, ABANDON_AFTER * 2.0, false), vec![1]);
         assert_eq!(host.transport.peer_count(), 0, "and gone from the socket");
         assert!(host.peers.is_empty(), "and from the launch plan");
 
@@ -1427,9 +1435,7 @@ mod tests {
                 ..MatchTerms::default()
             },
             names: Default::default(),
-            kinds: [0; MAX_PLAYERS],
-            standing: None,
-            beach: Vec::new(),
+            ..Invitation::blank()
         });
         assert!(joiner.abandoned.is_empty());
         assert!(!joiner.dropped(), "its new seat was never given up on");
@@ -1450,11 +1456,7 @@ mod tests {
             );
         }
         for _ in 0..20 {
-            assert!(
-                session
-                    .abandon_stalled(ABANDON_AFTER * 2.0, false)
-                    .is_empty()
-            );
+            assert!(tick(&mut session, ABANDON_AFTER * 2.0, false).is_empty());
         }
         assert!(session.abandoned.is_empty());
     }
@@ -1465,16 +1467,12 @@ mod tests {
     fn a_seat_is_given_up_once() {
         let mut session = hosting(vec![0, 1]);
         run_into_the_stall(&mut session);
-        assert_eq!(session.abandon_stalled(ABANDON_AFTER * 2.0, false), vec![1]);
+        assert_eq!(tick(&mut session, ABANDON_AFTER * 2.0, false), vec![1]);
         assert_eq!(session.abandoned.len(), 1);
         assert_eq!(session.abandoned[0].0, 1);
         // The round moves now, so there is nothing left to be waited on.
         for _ in 0..10 {
-            assert!(
-                session
-                    .abandon_stalled(ABANDON_AFTER * 2.0, false)
-                    .is_empty()
-            );
+            assert!(tick(&mut session, ABANDON_AFTER * 2.0, false).is_empty());
         }
         assert_eq!(session.abandoned.len(), 1, "still just the one");
     }
@@ -1586,13 +1584,13 @@ mod tests {
                 .count()
         };
 
-        joiner.abandon_stalled(0.5, false);
+        joiner.keep_in_touch(0.5);
         assert_eq!(greetings(&mut host), 0, "half a second is nothing yet");
-        joiner.abandon_stalled(0.6, false);
+        joiner.keep_in_touch(0.6);
         assert_eq!(greetings(&mut host), 1, "a quiet host is greeted");
-        joiner.abandon_stalled(0.5, false);
+        joiner.keep_in_touch(0.5);
         assert_eq!(greetings(&mut host), 0, "about once a second");
-        joiner.abandon_stalled(0.6, false);
+        joiner.keep_in_touch(0.6);
         assert_eq!(greetings(&mut host), 1, "and again");
 
         // The host speaks, as it does on every tick of a round.
@@ -1600,7 +1598,7 @@ mod tests {
         settle();
         joiner.pump(PlayerAction::None, |_| {});
         for _ in 0..4 {
-            joiner.abandon_stalled(0.2, false);
+            joiner.keep_in_touch(0.2);
             host.send(NetMsg::Hash { frame: 0, hash: 0 });
             settle();
             joiner.pump(PlayerAction::None, |_| {});
@@ -1635,7 +1633,7 @@ mod tests {
         host.peers.deal(&[Some(1)]);
 
         // Still at the table, and greeting anyway: harmless.
-        joiner.abandon_stalled(QUIET_HOST + 0.1, false);
+        joiner.keep_in_touch(QUIET_HOST + 0.1);
         settle();
         host.pump(PlayerAction::None, |_| {});
         settle();
@@ -1658,7 +1656,7 @@ mod tests {
 
         // Back, it hears nothing, greets, and is told on the host's next
         // tick, which repeats every abandonment to everyone it has.
-        joiner.abandon_stalled(QUIET_HOST + 0.1, false);
+        joiner.keep_in_touch(QUIET_HOST + 0.1);
         settle();
         host.pump(PlayerAction::None, |_| {});
         host.pump(PlayerAction::None, |_| {});
@@ -1715,7 +1713,7 @@ mod tests {
         let _ = dee.transport.recv_all();
         assert!(!dee.lost_the_thread(dee.session.frame() + 2), "a hiccup");
 
-        dee.abandon_stalled(QUIET_HOST + 0.1, false);
+        dee.keep_in_touch(QUIET_HOST + 0.1);
         settle();
         host.pump(PlayerAction::None, |_| {});
         host.send_catch_ups(&board);

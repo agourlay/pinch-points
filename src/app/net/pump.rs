@@ -27,6 +27,11 @@ pub(super) struct HashCheck {
     peers: Vec<VecDeque<(u32, u64)>>,
 }
 
+/// The most lockstep frames one fixed tick plays: a lagging peer catches
+/// up this many at a time. Read as well by whatever has to outlast the
+/// ticks a single drawn frame can cover (`crate::sim::SWEEP_MEMORY`).
+pub(crate) const CATCH_UP_FRAMES: usize = 2;
+
 impl HashCheck {
     /// Our own hash for `frame`. A short window: the peers are at most a
     /// commit lead behind.
@@ -176,7 +181,7 @@ impl OnlineSession {
         }
         // At most a couple of frames per fixed tick: a lagging peer catches
         // up gradually instead of spiralling.
-        for _ in 0..2 {
+        for _ in 0..CATCH_UP_FRAMES {
             tick(self);
         }
         self.hashes.compare();
@@ -301,7 +306,9 @@ impl OnlineSession {
             NetMsg::Incompatible { .. } => {}
             // The host asked us to leave. It turns this address away
             // from now on, so there is no round left here for us.
-            NetMsg::Kicked | NetMsg::NoBots => self.kicked |= !host,
+            NetMsg::Kicked if !host => PutOut::hear(&mut self.put_out, PutOut::Kicked),
+            NetMsg::NoBots if !host => PutOut::hear(&mut self.put_out, PutOut::NoBots),
+            NetMsg::Kicked | NetMsg::NoBots => {}
             // Somebody closed their socket. On the host, a seat it
             // held goes to the AI the moment the round waits on it,
             // and anyone else is forgotten at the next sweep. On a
@@ -596,6 +603,45 @@ mod tests {
         host.hear_mid_round(true, 0, NetMsg::Hash { frame: 30, hash: 1 });
         host.hashes.compare();
         assert_eq!(host.desync_at(), Some(30), "and a player's still does");
+    }
+
+    /// A bot turned away mid-round for being a bot walks out told the
+    /// beach is not taking bots, the line the lobby gives it too, and not
+    /// that the host asked it to leave: the host never singled it out.
+    #[test]
+    fn a_bot_turned_away_mid_round_hears_the_beach_is_not_taking_bots() {
+        use crate::app::{RoundNotice, Screen, settings::GameSettings};
+        let host = crate::transport::UdpTransport::host(0).expect("host socket");
+        let port = host.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            crate::transport::UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            crate::sim::Lockstep::new(1, vec![0, 1], crate::sim::DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        joiner.home.from_lobby = true;
+        joiner.hear_mid_round(false, 0, NetMsg::NoBots);
+        joiner.hear_mid_round(false, 0, NetMsg::Kicked);
+        assert_eq!(joiner.put_out, Some(PutOut::NoBots));
+
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<RoundNotice>();
+        app.insert_resource(Online(Some(joiner)));
+        app.add_systems(Update, leave_a_hostless_round);
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Lobby
+        );
+        assert_eq!(
+            app.world().resource::<RoundNotice>().0,
+            crate::app::i18n::EN.lobby_no_bots,
+        );
     }
 
     /// A host whose table is Bo at seat 1 (peer 0), Dee watching (peer 1)

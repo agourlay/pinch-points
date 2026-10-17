@@ -4,10 +4,10 @@
 //!
 //! Progress is keyed by campaign kind and level *name*, not by index, so
 //! inserting a level into the middle of the campaign does not silently
-//! re-lock everything after it. Names are therefore unique on the list:
-//! a player's level that shares a shipped one's name on its list is
-//! renamed as it is loaded (see [`crate::app::campaign::disambiguate`]), or the two would
-//! share one tick.
+//! re-lock everything after it. A player's own level off the shelf is
+//! keyed by its file instead ([`crate::sim::Filing`]): two files may carry
+//! one name, and the name the list shows each of them depends on which
+//! sorts first (see [`crate::app::campaign::disambiguate`]).
 
 use crate::app::{Campaign, CampaignKind};
 use bevy::prelude::*;
@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 
 /// The cleared-stage record, under the XDG data directory.
 fn save_path() -> std::path::PathBuf {
-    crate::app::paths::data_dir().join("progress.txt")
+    crate::app::paths::merged_record("progress.txt")
 }
 
 /// A campaign and how far up it the player has climbed: which stage is
@@ -44,6 +44,11 @@ impl Ladder<'_> {
 #[derive(Resource, Default)]
 pub struct Progress {
     cleared: HashMap<CampaignKind, HashSet<String>>,
+    /// Lines this build cannot read, kept word for word and written back:
+    /// a newer build's clears on a list this one lacks, or a line of a
+    /// kind it has not heard of. Read and dropped, a player who opened an
+    /// older build once lost them on its next save.
+    foreign: crate::app::paths::ForeignLines,
 }
 
 impl Progress {
@@ -51,6 +56,40 @@ impl Progress {
         self.cleared
             .get(&kind)
             .is_some_and(|names| names.contains(name))
+    }
+
+    /// Whether `level` is cleared on `kind`'s list, asked by the key it is
+    /// filed under ([`crate::sim::Level::progress_key`]): a player's level
+    /// by its file, a shipped one by its name. Every reader of a stage's
+    /// tick asks here, so none can ask by the name the list shows.
+    pub fn level_cleared(&self, kind: CampaignKind, level: &crate::sim::Level) -> bool {
+        self.is_cleared(kind, level.progress_key())
+    }
+
+    /// Records a clear of `level`, under the key [`Progress::level_cleared`]
+    /// reads; true when this was the first time.
+    pub fn mark_level(&mut self, kind: CampaignKind, level: &crate::sim::Level) -> bool {
+        self.mark(kind, level.progress_key())
+    }
+
+    /// File the ticks an older build kept under a player level's shown
+    /// name under its file instead, where the name can only have meant
+    /// that level (see [`crate::app::campaign::disambiguate`]). True when
+    /// anything moved, which is worth a save. The name's own line stays:
+    /// it is what an older build still reads.
+    pub fn adopt_legacy(&mut self, campaign: &Campaign) -> bool {
+        let mut moved = false;
+        for level in &campaign.levels {
+            let Some(filing) = &level.filing else {
+                continue;
+            };
+            if let Some(name) = &filing.legacy
+                && self.is_cleared(campaign.kind, name)
+            {
+                moved |= self.mark(campaign.kind, &filing.key);
+            }
+        }
+        moved
     }
 
     /// Records a clear; true when this was the first time.
@@ -61,6 +100,17 @@ impl Progress {
             .insert(name.to_string())
     }
 
+    /// Take in another record's clears, and the lines it kept that this
+    /// build cannot read: a union, since a stage once cleared stays
+    /// cleared whichever copy of the game cleared it.
+    fn merge(&mut self, other: Progress) {
+        let Progress { cleared, foreign } = other;
+        for (kind, names) in cleared {
+            self.cleared.entry(kind).or_default().extend(names);
+        }
+        self.foreign.extend(foreign);
+    }
+
     /// How many stages are cleared, over both lists.
     pub fn cleared_count(&self) -> usize {
         self.cleared.values().map(HashSet::len).sum()
@@ -69,8 +119,12 @@ impl Progress {
     /// Forget every cleared stage, both lists at once: they share this one
     /// record, and half a reset would leave Beach Day open on a beach the
     /// player just asked to start over.
+    ///
+    /// The lines this build cannot read go too: they are clears from a
+    /// newer build's lists, and the player asked to start over.
     pub fn clear_all(&mut self) {
         self.cleared.clear();
+        self.foreign.clear();
     }
 
     /// The classic rule: the first stage is always open, so is any stage
@@ -85,7 +139,7 @@ impl Progress {
             campaign
                 .levels
                 .get(at)
-                .is_some_and(|level| self.is_cleared(campaign.kind, &level.name))
+                .is_some_and(|level| self.level_cleared(campaign.kind, level))
         };
         cleared(index) || cleared(index - 1)
     }
@@ -99,7 +153,7 @@ impl Progress {
             .get(range)
             .unwrap_or_default()
             .iter()
-            .filter(|level| self.is_cleared(campaign.kind, &level.name))
+            .filter(|level| self.level_cleared(campaign.kind, level))
             .count()
     }
 
@@ -116,7 +170,7 @@ impl Progress {
         // Destructured with no rest pattern: a new field refuses to build
         // here until it is written out. `parse` is lenient and would never
         // notice one going unsaved.
-        let Self { cleared } = self;
+        let Self { cleared, foreign } = self;
         let mut keys: Vec<String> = cleared
             .iter()
             .flat_map(|(kind, names)| {
@@ -126,27 +180,43 @@ impl Progress {
             })
             .collect();
         keys.sort_unstable();
-        keys.iter().fold(String::new(), |mut out, key| {
+        let mut out = keys.iter().fold(String::new(), |mut out, key| {
             out.push_str("cleared: ");
             out.push_str(key);
             out.push('\n');
             out
-        })
+        });
+        foreign.append_to(&mut out);
+        out
     }
 
-    /// Lenient parse, in the style of the other save files: anything that is
-    /// not a `cleared:` line naming a list this build has is ignored rather
-    /// than fatal.
+    /// Lenient parse, in the style of the other save files: nothing in the
+    /// file is fatal. A `cleared:` line naming a list this build has is a
+    /// clear; any other `key: value` line, a list from a newer build
+    /// included, is kept as it stands for the next save to write back
+    /// (see [`Progress::foreign`]). Only what is not a line of the file's
+    /// shape at all, or a `cleared:` line naming nothing, is dropped.
     pub fn parse(text: &str) -> Progress {
         let mut progress = Progress::default();
         for line in text.lines() {
-            if let Some((key, value)) = line.split_once(':')
-                && key.trim() == "cleared"
-                && let Some((kind, name)) = value.trim().split_once(':')
-                && let Some(kind) = CampaignKind::from_key(kind)
-                && !name.is_empty()
-            {
-                progress.mark(kind, name);
+            let Some((key, value)) = line.split_once(':') else {
+                continue;
+            };
+            let (key, value) = (key.trim(), value.trim());
+            if key == "cleared" {
+                // A `cleared:` line naming nothing is junk, not news.
+                let Some((kind, name)) = value.split_once(':').filter(|(_, n)| !n.is_empty())
+                else {
+                    continue;
+                };
+                match CampaignKind::from_key(kind) {
+                    Some(kind) => {
+                        progress.mark(kind, name);
+                    }
+                    None => progress.foreign.keep(line),
+                }
+            } else if !key.is_empty() {
+                progress.foreign.keep(line);
             }
         }
         progress
@@ -167,22 +237,37 @@ pub fn load_in(path: &std::path::Path) -> Progress {
 
 /// Write the record out. Best-effort, like the other save files: a disk that
 /// will not take it is not worth interrupting play over.
-pub fn save(progress: &Progress) {
+///
+/// What is on disk now is read back in first (see [`save_in`]), and the
+/// record in hand takes it in as well, so the stage list shows a clear
+/// made by another copy of the game too.
+pub fn save(progress: &mut Progress) {
     let _ = save_in(&save_path(), progress);
 }
 
 /// [`save`] to a file named outright, and with the error kept: the game
 /// shrugs it off, a test wants to see it.
-pub fn save_in(path: &std::path::Path, progress: &Progress) -> std::io::Result<()> {
+///
+/// The record is read once at startup and written back whole, so with two
+/// copies of the game open, each save wrote over the other's clears with
+/// its own startup view. Merged with the file as it stands at the moment
+/// of writing, a clear made anywhere stays made.
+pub fn save_in(path: &std::path::Path, progress: &mut Progress) -> std::io::Result<()> {
+    progress.merge(load_in(path));
     crate::app::paths::write_atomic(path, progress.to_text())
+}
+
+/// Write the record as it stands, over whatever is on disk: the reset,
+/// which is the one change a merge would undo.
+pub fn save_reset(progress: &Progress) {
+    let _ = crate::app::paths::write_atomic(&save_path(), progress.to_text());
 }
 
 /// A cleared stage, saved the moment it is cleared: the stage list is the
 /// player's record of the campaign, and a crash should not cost it.
 pub fn record_cleared(campaign: Res<Campaign>, mut progress: ResMut<Progress>) {
-    let name = campaign.current().name.clone();
-    if progress.mark(campaign.kind, &name) {
-        save(&progress);
+    if progress.mark_level(campaign.kind, campaign.current()) {
+        save(&mut progress);
     }
 }
 
@@ -197,10 +282,8 @@ mod tests {
         let builtins = levels.len();
         levels.extend(extra);
         Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
             builtins,
+            ..Campaign::tide_pool_of(levels)
         }
     }
 
@@ -248,18 +331,24 @@ mod tests {
     }
 
     /// A record from a build with a list this one lacks keeps what it can
-    /// read: the unknown list is dropped rather than fatal, and the known
-    /// one is not lost with it.
+    /// read, and keeps what it cannot as well: the unknown list's clears
+    /// are not this build's to show, but they are written back, so going
+    /// back to the newer build finds them where it left them.
     #[test]
-    fn a_list_this_build_lacks_is_ignored() {
-        let mixed = Progress::parse("cleared: reef:Far Shoal\ncleared: tide:Welcome Ashore\n");
+    fn a_list_this_build_lacks_is_kept_for_the_build_that_has_it() {
+        let text = "cleared: reef:Far Shoal\ncleared: tide:Welcome Ashore\nstreak: 4\n";
+        let mixed = Progress::parse(text);
         assert!(mixed.is_cleared(CampaignKind::TidePool, "Welcome Ashore"));
-        assert_eq!(mixed.cleared_count(), 1);
+        assert_eq!(mixed.cleared_count(), 1, "the reef is not ours to count");
         assert_eq!(CampaignKind::from_key("reef"), None);
         assert_eq!(
             CampaignKind::from_key("beach"),
             Some(CampaignKind::BeachDay)
         );
+        let back = mixed.to_text();
+        assert!(back.contains("cleared: reef:Far Shoal\n"), "{back}");
+        assert!(back.contains("streak: 4\n"), "{back}");
+        assert_eq!(Progress::parse(&back).to_text(), back, "and stays put");
     }
 
     /// The file is written in one order whatever order the stages were
@@ -301,15 +390,35 @@ mod tests {
     /// not there is a fresh start rather than a failure.
     #[test]
     fn the_record_survives_the_disk() {
-        let dir = std::env::temp_dir().join(format!("pinch-progress-{}", std::process::id()));
+        let dir = crate::app::paths::test_dir("progress");
         let path = dir.join("progress.txt");
         assert_eq!(load_in(&path).cleared_count(), 0, "nothing saved yet");
         let mut progress = Progress::default();
         progress.mark(CampaignKind::TidePool, "Welcome Ashore");
-        save_in(&path, &progress).expect("saved");
+        save_in(&path, &mut progress).expect("saved");
         let back = load_in(&path);
         assert!(back.is_cleared(CampaignKind::TidePool, "Welcome Ashore"));
         assert_eq!(back.to_text(), progress.to_text());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Two copies of the game open at once each read the record at
+    /// startup; a save from one does not take back a clear the other has
+    /// written since, and the saver learns of it.
+    #[test]
+    fn a_save_keeps_a_clear_another_copy_wrote() {
+        let dir = crate::app::paths::test_dir("progress-two");
+        let path = dir.join("progress.txt");
+        let mut first = load_in(&path);
+        let mut second = load_in(&path);
+        second.mark(CampaignKind::TidePool, "Undertow");
+        save_in(&path, &mut second).expect("saved");
+        first.mark(CampaignKind::BeachDay, "First Flood");
+        save_in(&path, &mut first).expect("saved");
+        let back = load_in(&path);
+        assert!(back.is_cleared(CampaignKind::TidePool, "Undertow"), "kept");
+        assert!(back.is_cleared(CampaignKind::BeachDay, "First Flood"));
+        assert!(first.is_cleared(CampaignKind::TidePool, "Undertow"), "seen");
         let _ = std::fs::remove_dir_all(dir);
     }
 

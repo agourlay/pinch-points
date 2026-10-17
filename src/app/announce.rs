@@ -200,19 +200,34 @@ type BannerColors<'w> = (
     Option<&'w mut BackgroundColor>,
 );
 
+/// What a banner is timed by: the frame's time, while the round moves on.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct BannerClock<'w> {
+    time: Res<'w, Time>,
+    round: crate::app::round_state::RoundState<'w>,
+}
+
 /// Show the queue one at a time: age the banner that is up, fade it, retire
 /// it, then raise the next one.
+///
+/// All of it holds while a pause holds the round, as the round's own
+/// effects do: the news is the round's, and a banner that went on fading
+/// under the pause card, or the next one raised behind it, was gone, read
+/// by nobody, by the time the round came back.
 pub fn drive_announcements(
     mut commands: Commands,
-    time: Res<Time>,
+    clock: BannerClock,
     settings: Res<GameSettings>,
     names: Res<crate::app::SeatNames>,
     mut announcer: ResMut<Announcer>,
     banners: Query<Entity, With<Banner>>,
     mut parts: Query<BannerColors>,
 ) {
+    if clock.round.held() {
+        return;
+    }
     if let Ok(banner) = banners.single() {
-        announcer.age += time.delta_secs();
+        announcer.age += clock.time.delta_secs();
         if announcer.age >= LIFE {
             commands.entity(banner).despawn();
             announcer.age = 0.0;
@@ -355,6 +370,59 @@ mod tests {
         assert_eq!(announcer.pending(), MAX_QUEUED, "the pile-up is capped");
     }
 
+    /// A headless App the banners run in, on a versus round under way.
+    fn banner_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.add_message::<crate::app::sim_events::SimEvent>();
+        app.init_resource::<Announcer>();
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::SeatNames>();
+        app.insert_resource(State::new(crate::app::Screen::Versus));
+        app.init_resource::<crate::app::Paused>();
+        app.init_resource::<crate::app::pause::PauseMenu>();
+        app.init_resource::<crate::app::net::Online>();
+        app.add_systems(Update, (collect_announcements, drive_announcements).chain());
+        app
+    }
+
+    /// A pause holds the banner that is up where it stands, and the one
+    /// waiting behind it: under the pause card they went on fading and
+    /// were gone, unread, by the time the round came back.
+    #[test]
+    fn a_pause_holds_the_banners() {
+        use crate::app::sim_events::SimEvent;
+        use std::time::Duration;
+
+        let mut app = banner_app();
+        app.world_mut().write_message(SimEvent::SurgeStarted);
+        app.world_mut()
+            .write_message(SimEvent::LureStarted { owner: 1 });
+        app.update();
+        let step = Duration::from_millis(200);
+        app.world_mut().resource_mut::<Time>().advance_by(step);
+        app.update();
+        let age = app.world().resource::<Announcer>().age;
+        assert!(age > 0.0, "the banner is up and ageing");
+
+        app.world_mut().resource_mut::<crate::app::Paused>().0 = true;
+        let frames = (LIFE / step.as_secs_f32()).ceil() as u32 * 2;
+        for _ in 0..frames {
+            app.world_mut().resource_mut::<Time>().advance_by(step);
+            app.update();
+        }
+        let announcer = app.world().resource::<Announcer>();
+        assert_eq!(announcer.age, age, "held where it stood");
+        assert_eq!(announcer.pending(), 1, "and the next one held back");
+
+        app.world_mut().resource_mut::<crate::app::Paused>().0 = false;
+        for _ in 0..frames {
+            app.world_mut().resource_mut::<Time>().advance_by(step);
+            app.update();
+        }
+        assert_eq!(app.world().resource::<Announcer>().pending(), 0, "and on");
+    }
+
     /// The wiring, end to end in a headless App: a tide event raises a
     /// banner that says what happened, one at a time, and it retires itself.
     #[test]
@@ -362,13 +430,7 @@ mod tests {
         use crate::app::sim_events::SimEvent;
         use std::time::Duration;
 
-        let mut app = App::new();
-        app.init_resource::<Time>();
-        app.add_message::<SimEvent>();
-        app.init_resource::<Announcer>();
-        app.insert_resource(GameSettings::default());
-        app.init_resource::<crate::app::SeatNames>();
-        app.add_systems(Update, (collect_announcements, drive_announcements).chain());
+        let mut app = banner_app();
 
         app.world_mut().write_message(SimEvent::TideEventFired {
             event: TideEvent::CastleSwap,
@@ -424,13 +486,7 @@ mod tests {
         use crate::app::sim_events::SimEvent;
         use std::time::Duration;
 
-        let mut app = App::new();
-        app.init_resource::<Time>();
-        app.add_message::<SimEvent>();
-        app.init_resource::<Announcer>();
-        app.insert_resource(GameSettings::default());
-        app.init_resource::<crate::app::SeatNames>();
-        app.add_systems(Update, (collect_announcements, drive_announcements).chain());
+        let mut app = banner_app();
         let held = |app: &App| app.world().resource::<Announcer>().holds_the_board();
         assert!(!held(&app), "nothing to hold for");
 

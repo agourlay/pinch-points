@@ -482,6 +482,27 @@ fn an_event_fired_by_hand_holds_the_wheel_as_well() {
     assert_eq!(board.last_event(), Some(first), "the wheel was still held");
 }
 
+/// A spectators' call fires only where the wheel turns. A handmade beach
+/// played online has it off, and a call carried onto one used to fire all
+/// the same.
+#[test]
+fn a_call_fires_nothing_on_a_beach_whose_wheel_is_off() {
+    let mut calls = [PlayerAction::None; MAX_PLAYERS];
+    calls[0] = PlayerAction::CallEvent(TideEvent::FreshSand);
+
+    let mut off = Board::new(9, 7, 2);
+    let mut idle = off.clone();
+    off.tick(&calls);
+    idle.tick_idle();
+    assert_eq!(off.last_event(), None, "nothing fired");
+    assert_eq!(off.state_hash(), idle.state_hash(), "nor moved anything");
+
+    let mut on = Board::new(9, 7, 2);
+    on.set_events_enabled(true);
+    on.tick(&calls);
+    assert!(on.last_event().is_some(), "where the wheel turns, it fires");
+}
+
 /// A refused spin must not touch the PRNG.
 ///
 /// The draw that picks the face comes *after* the cooldown check, and it

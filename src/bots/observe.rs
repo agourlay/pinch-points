@@ -427,6 +427,7 @@ mod tests {
                 input_delay: 0,
             },
             cursor: false,
+            teams: None,
         };
         for _ in 0..warmup {
             let mut actions = [PlayerAction::None; MAX_PLAYERS];
@@ -474,6 +475,7 @@ mod tests {
                 input_delay: 0,
             },
             cursor: false,
+            teams: None,
         };
         let hello = protocol::hello(board, &table, 0, false);
         let you = You {
@@ -658,6 +660,7 @@ mod tests {
                 input_delay: 0,
             },
             cursor: false,
+            teams: None,
         };
         let hello = protocol::hello(&board, &table, 0, false);
         let tick = protocol::tick(

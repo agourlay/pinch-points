@@ -120,6 +120,21 @@ impl GameSettings {
     /// file come back together: the preferences, and the learned caps
     /// table that rides in it as the `keycaps:` line.
     pub fn parse(text: &str) -> (GameSettings, crate::app::keycaps::KeyCaps) {
+        let (settings, caps, _) = GameSettings::read(text);
+        (settings, caps)
+    }
+
+    /// [`GameSettings::parse`], and the lines under a key this build does
+    /// not know, word for word: a setting a newer build added, which a
+    /// save from this one writes back rather than dropping.
+    fn read(
+        text: &str,
+    ) -> (
+        GameSettings,
+        crate::app::keycaps::KeyCaps,
+        crate::app::paths::ForeignLines,
+    ) {
+        let mut unknown = crate::app::paths::ForeignLines::default();
         let mut settings = GameSettings::default();
         let mut caps = crate::app::keycaps::KeyCaps::default();
         // Slots whose saved key was retired and moved (see `binds::rehome`).
@@ -205,7 +220,8 @@ impl GameSettings {
                         settings.puzzle_speed = PuzzleSpeed::from_percent(v);
                     }
                 }
-                _ => {}
+                "" => {}
+                _ => unknown.keep(line),
             }
         }
         // The two keyboard seats share one keyboard: a file that binds the
@@ -223,7 +239,7 @@ impl GameSettings {
         let (language, keyboard) = (settings.language, settings.keyboard);
         settings.set_language(language, &mut caps);
         settings.set_keyboard(keyboard, &mut caps);
-        (settings, caps)
+        (settings, caps, unknown)
     }
 
     /// The saved settings and caps, or `None` when there is no file to read.
@@ -246,8 +262,28 @@ impl GameSettings {
 
     /// Write the file, caps and all: one file on disk, so one write, and
     /// a caller without the caps table has no way to call it.
+    ///
+    /// Whole, last writer wins: these are preferences, and two copies of
+    /// the game open at once each save the ones they were set to. What the
+    /// file on disk holds under a key this build does not know is carried
+    /// over, though, so an older build opened once does not take a newer
+    /// one's settings away.
     pub fn save(&self, caps: &crate::app::keycaps::KeyCaps) {
-        let _ = crate::app::paths::write_atomic(&settings_path(), self.to_text(caps));
+        let _ = self.save_in(&settings_path(), caps);
+    }
+
+    /// [`GameSettings::save`] to a file named outright, with the error
+    /// kept for a test.
+    fn save_in(
+        &self,
+        path: &std::path::Path,
+        caps: &crate::app::keycaps::KeyCaps,
+    ) -> std::io::Result<()> {
+        let on_disk = std::fs::read_to_string(path).unwrap_or_default();
+        let (_, _, unknown) = GameSettings::read(&on_disk);
+        let mut text = self.to_text(caps);
+        unknown.append_to(&mut text);
+        crate::app::paths::write_atomic(path, text)
     }
 }
 
@@ -255,6 +291,26 @@ impl GameSettings {
 mod tests {
     use super::*;
     use bevy::prelude::KeyCode;
+
+    /// A setting a newer build added survives a save from this one: the
+    /// line is not this build's to read, but it is not its to delete.
+    #[test]
+    fn a_setting_from_a_newer_build_is_written_back() {
+        let dir = crate::app::paths::test_dir("settings");
+        let path = dir.join("settings.txt");
+        let caps = crate::app::keycaps::KeyCaps::default();
+        let mut text = GameSettings::default().to_text(&caps);
+        text.push_str("hover_glow: amber\n");
+        crate::app::paths::write_atomic(&path, &text).expect("written");
+        let (mut settings, caps) = GameSettings::parse(&text);
+        settings.music_volume = 15;
+        settings.save_in(&path, &caps).expect("saved");
+        let back = std::fs::read_to_string(&path).expect("read back");
+        assert!(back.contains("hover_glow: amber\n"), "{back}");
+        assert_eq!(GameSettings::parse(&back).0.music_volume, 15, "{back}");
+        assert_eq!(back.matches("hover_glow").count(), 1, "kept once");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn settings_round_trip_through_text() {

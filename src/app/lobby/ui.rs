@@ -479,42 +479,9 @@ pub fn update_lobby_terms(
     mut values: Query<(&DialValue, &mut Text, &mut TextColor), Without<DialName>>,
 ) {
     let tr = settings.tr();
-    let host = state.hosting();
-    // A joiner reads the host's dials, off the roster, not its own setup
-    // screen's: the card is meant to show the match being joined. The host,
-    // and a chooser not yet at any beach, read their own config.
-    let host_terms = (!host)
-        .then(|| state.joined().and_then(|joined| joined.host_terms.as_ref()))
-        .flatten();
-    let joined = host_terms.map(|host| {
-        let (mut cfg, mode) = crate::app::match_setup::config_from_terms(&host.terms);
-        // Whether the beach takes bots is not one of the terms; a joiner
-        // reads it off the beacon that listed the beach.
-        cfg.bots_welcome = state.joined_entry().is_some_and(|entry| entry.bots);
-        (cfg, mode)
-    });
-    let (config, team_mode): (&MatchConfig, _) = match &joined {
-        Some((cfg, mode)) => (cfg, *mode),
-        None => (&config, settings.team_mode),
-    };
-    // The host's beach by the name the roster gave it, never looked up on
-    // this machine's own shelf.
-    let hosts_beach = host_terms.map(|host| host.beach_name.as_str());
-    // The table the round would be dealt as it sits now: the host works it
-    // out from its dials, a joiner reads it off the roster.
-    let dealt = match host_terms {
-        Some(host) => Some(super::terms::roster_dealt(state.table.len(), &host.terms)),
-        None => super::terms::hosts_dealt(&state, config),
-    };
-    let label = |dial: &Dial| {
-        let (name, value) = dial.label(tr, config, team_mode, &beaches, dealt, host);
-        match (dial, hosts_beach) {
-            (Dial::Map, Some(beach)) => {
-                (name, super::terms::hosts_map_label(tr, config.map, beach))
-            }
-            _ => (name, value),
-        }
-    };
+    let card = super::terms::card_of(&state, &config, settings.team_mode);
+    // Only the host can turn them, so only the host's read as live.
+    let host = matches!(card, super::terms::TermsCard::Hosting { .. });
     for (row, mut fill) in &mut rows {
         let want = crate::app::menu_ui::band(host && row.0 == state.dial);
         crate::app::menu_ui::set_bg(&mut fill, want);
@@ -522,22 +489,16 @@ pub fn update_lobby_terms(
     for (row, mut text, mut color) in &mut names {
         let line = Dial::ALL
             .get(row.0)
-            .map(|dial| label(dial).0)
+            .map(|dial| dial.label(tr, &card, &beaches).0)
             .unwrap_or_default();
         crate::app::menu_ui::set_text(&mut text, line);
         crate::app::menu_ui::set_color(&mut color, palette::IDLE_ROW);
     }
-    // A joiner the host has not sent its terms yet (the second or so
-    // before the first roster) has no match to show, and its own setup
-    // painted in the meantime read as the host's.
-    let waiting = state.joined().is_some() && host_terms.is_none();
     for (row, mut text, mut color) in &mut values {
         let line = Dial::ALL
             .get(row.0)
-            .filter(|_| !waiting)
-            .map(|dial| label(dial).1)
+            .map(|dial| dial.label(tr, &card, &beaches).1)
             .unwrap_or_default();
-        // Only the host can turn them, so only the host's read as live.
         let tone = match host {
             true => palette::PARCHMENT,
             false => palette::IDLE_ROW,
@@ -1013,6 +974,7 @@ mod list_row_tests {
             bots: false,
             full: false,
             age: 0.0,
+            heard: 1,
         }
     }
 

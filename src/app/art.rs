@@ -81,8 +81,9 @@ pub struct Art {
     /// One flag chip per language, in [`ALL_LANGS`] order. Read through
     /// [`Art::flag`] rather than indexed directly.
     pub flags: [Handle<Image>; ALL_LANGS.len()],
-    /// The quad and shared materials the water shader draws with.
-    pub water: crate::app::materials::Waters,
+    /// The quad and the shared materials the water and sand shaders draw
+    /// with.
+    pub shaded: crate::app::materials::Shaders,
 }
 
 impl Art {
@@ -136,7 +137,7 @@ impl Art {
             vignette: Default::default(),
             ring: Default::default(),
             flags: Default::default(),
-            water: Default::default(),
+            shaded: Default::default(),
         }
     }
 
@@ -194,7 +195,7 @@ impl Art {
             flags,
             // Meshes and materials, no picture of its own: its pools are
             // cut to `puddle`, counted above.
-            water: _,
+            shaded: _,
         } = self;
         [
             sign_board,
@@ -403,7 +404,7 @@ impl FromWorld for Art {
     /// transition (the menu's OnEnter needs it immediately).
     fn from_world(world: &mut World) -> Self {
         let puddle = world.resource::<AssetServer>().load("sprites/puddle.png");
-        let water = crate::app::materials::Waters::new(world, &puddle);
+        let shaded = crate::app::materials::Shaders::new(world, &puddle);
         let assets = world.resource::<AssetServer>();
         Art {
             sign_board: assets.load("sprites/sign_board.png"),
@@ -453,7 +454,7 @@ impl FromWorld for Art {
             // Named by the language's settings key, so the set follows
             // ALL_LANGS without a second table to keep in step.
             flags: ALL_LANGS.map(|lang| assets.load(format!("sprites/flag_{}.png", lang.key()))),
-            water,
+            shaded,
         }
     }
 }

@@ -276,20 +276,20 @@ impl Beach {
                 Err(format!("the {} beach seats 2 to 4", self.name()))
             }
             Beach::File(_, level) => {
-                // Seat `n` plays castle `n`, and the table's scores run to
-                // the highest castle: a castle short is a seat with nothing
-                // to bank in, and one past the seats is somebody's bank
-                // nobody plays.
+                // Seat `n` plays castle `n`: a castle short, or an owner
+                // skipped, is a seat with nothing to bank in. Castles past
+                // the seats are put away when the board is built
+                // (`Level::table_board`), as the game does.
+                if level.fits(seats) {
+                    return Ok(());
+                }
                 let mut owners: Vec<PlayerId> = level.board().castle_owners().collect();
                 owners.sort_unstable();
                 owners.dedup();
-                if owners.iter().copied().eq(0..seats) {
-                    return Ok(());
-                }
                 let marked: Vec<String> = owners.iter().map(PlayerId::to_string).collect();
                 Err(format!(
                     "{} has castles marked {}; a table of {seats} needs castles marked 0 to {} \
-                     and no others",
+                     at least, with none skipped",
                     self.name(),
                     if marked.is_empty() {
                         "nowhere".to_string()
@@ -308,7 +308,7 @@ impl Beach {
     /// arrows a seat.
     pub fn board(&self, seed: u64, seats: u8, round: RoundLength) -> Board {
         let mut board = match self {
-            Beach::File(_, level) => level.board_seeded(seed),
+            Beach::File(_, level) => level.table_board(seed, seats),
             Beach::Map(MapChoice::Classic) => crate::sim::classic_arena_seeded(seed, false, seats),
             Beach::Generated | Beach::Map(_) => {
                 // Past the seats a classic-sized beach holds, the game
@@ -339,6 +339,13 @@ impl Beach {
 /// A seed nobody chose: the clock's nanoseconds, cut short enough to type.
 pub fn fresh_seed() -> u64 {
     crate::app::clock::fresh_seed() % 100_000
+}
+
+/// The seed of a run's `n`th beach (from 0): `first` counted on from,
+/// wrapping past the last there is, as `--seed` may be any u64. What a run
+/// prints and what it plays are both read here, so the two cannot part.
+pub fn nth_seed(first: u64, n: u64) -> u64 {
+    first.wrapping_add(n)
 }
 
 /// `2026-09-29-1402`, the local wall clock, for naming a run's files.
@@ -409,6 +416,22 @@ pub fn table(rows: &[Vec<String>]) -> String {
     out
 }
 
+/// Rank `n` entries best first by `cmp`, each with the place it prints
+/// under, by the rule a round's placings follow ([`seat::ranks_by`]): two
+/// entries level at the top are both 1 and the one after them is 3.
+/// Printed 1 and 2 by registration order, an exact tie read as a win.
+///
+/// [`seat::ranks_by`]: crate::bots::seat::ranks_by
+pub fn ranked(n: usize, cmp: impl Fn(usize, usize) -> std::cmp::Ordering) -> Vec<(u32, usize)> {
+    let places = crate::bots::seat::ranks_by(n, &cmp);
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| cmp(a, b));
+    order
+        .into_iter()
+        .map(|entry| (places[entry], entry))
+        .collect()
+}
+
 /// The `p`-th percentile of some reply times, in milliseconds.
 pub fn percentile(times: &[f64], p: f64) -> Option<f64> {
     if times.is_empty() {
@@ -433,12 +456,12 @@ pub fn ms(value: f64) -> String {
 mod tests {
     use super::*;
 
-    /// A beach file seats a table only with castles marked exactly 0 to
-    /// one less than the seats: counting the owners passed {0, 2} for two
-    /// seats, and a castle past the seats sent scores nobody was seated
-    /// for.
+    /// A beach file seats a table only with castles marked 0 to one less
+    /// than the seats, none skipped: counting the owners passed {0, 2} for
+    /// two seats. A castle past the seats is put away on the board the
+    /// game is played on, so it sends no scores nobody was seated for.
     #[test]
-    fn a_beach_file_needs_a_castle_for_each_seat_and_no_more() {
+    fn a_beach_file_needs_a_castle_for_each_seat_and_none_skipped() {
         let beach = |row: &str| {
             let text =
                 format!("name: T\nposts: 0\ngoal: survive\nmap:\n+-+-+-+\n|{row}|\n+-+-+-+\n");
@@ -448,8 +471,23 @@ mod tests {
         assert_eq!(beach("0 . 1").check(2), Ok(()));
         let err = beach("0 . 2").check(2).expect_err("no castle 1");
         assert!(err.contains("marked 0, 2"), "{err}");
-        assert!(beach("0 1 2").check(2).is_err(), "a castle past the seats");
+        assert!(beach("0 1 2").check(2).is_ok(), "a castle past the seats");
         assert!(beach("0 1 2").check(3).is_ok());
+        assert!(beach("0 1 2").check(4).is_err());
+        let board = beach("0 1 2").board(1, 2, RoundLength::Short);
+        assert_eq!(board.seats_in_play(), 2, "the spare castle put away");
+    }
+
+    /// Standings level on every number share a place, and the next row
+    /// down skips the places they took.
+    #[test]
+    fn exact_ties_share_a_place_in_the_standings() {
+        let points = [3.0_f64, 5.0, 3.0, 1.0];
+        let ranked = ranked(points.len(), |a, b| points[b].total_cmp(&points[a]));
+        let places: Vec<u32> = ranked.iter().map(|&(place, _)| place).collect();
+        assert_eq!(places, vec![1, 2, 2, 4]);
+        assert_eq!(ranked[0].1, 1);
+        assert_eq!(ranked[3].1, 3);
     }
 
     /// Every level's word reads back as that level.

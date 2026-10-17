@@ -203,6 +203,7 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.init_resource::<hint::DeniedNote>();
     app.init_resource::<replays::Library>();
     app.init_resource::<replays::PlaybackSpeed>();
+    app.init_resource::<round_state::RoundClock>();
     app.init_resource::<gamepad::PadSeats>();
     app.init_resource::<gamepad::Bridged>();
     app.init_resource::<effects::VisualRng>();
@@ -226,12 +227,15 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     // were any. A dev hook still wins - `dev::kickoff` sets NextState in
     // Startup, which lands before the first state transition.
     let opens_on = language::opening_screen(saved.is_some());
+    // The same answer kept as its own fact: a `watch` boot skips the
+    // picker, and must not write the file that would answer it.
+    app.insert_resource(language::LanguageUnasked(saved.is_none()));
     // Two resources off one read: the preferences, and the learned caps
     // table that shares their file (see [`keycaps::KeyCaps`]).
     let (settings, caps) = saved.unwrap_or_default();
     app.insert_resource(settings);
     app.insert_resource(caps);
-    app.init_resource::<keycaps::LiveSeatKeys>();
+    app.init_resource::<cursor::LiveSeatKeys>();
     app.init_resource::<settings::screen::SettingsMenu>();
     app.init_resource::<controls::ControlsMenu>();
     app.insert_state(opens_on);
@@ -244,6 +248,7 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.add_message::<CodeTaken>();
     app.add_message::<sim_events::SimEvent>();
     app.init_resource::<achievements::PuzzleAttempt>();
+    app.init_resource::<achievements::StagesRun>();
 }
 
 /// One-time setup: camera, font, HUD, sounds, saved stats, dev hooks.
@@ -325,6 +330,7 @@ fn add_screen_transitions(app: &mut App) {
             bot_seats::begin_round,
             side_panels::spawn_side_panels,
             achievements::reset_round_scratch,
+            awards::RoundTally::forget,
         )
             .chain(),
     );
@@ -398,8 +404,6 @@ fn add_screen_transitions(app: &mut App) {
         (
             menu_ui::despawn_marked::<cursor::Cursor>,
             menu_ui::despawn_marked::<cursor::PostGhost>,
-            menu_ui::despawn_marked::<effects::Particle>,
-            menu_ui::despawn_marked::<effects::Hop>,
             menu_ui::despawn_marked::<editor::EditorUi>,
             despawn_board_sprites,
             editor::exit_editor,
@@ -412,8 +416,6 @@ fn add_screen_transitions(app: &mut App) {
             menu_ui::despawn_marked::<cursor::PostGhost>,
             despawn_board_sprites,
             menu_ui::despawn_marked::<results::ResultsPanel>,
-            menu_ui::despawn_marked::<effects::Particle>,
-            menu_ui::despawn_marked::<effects::Hop>,
             announce::clear_announcements,
             hint::clear_hint_ghosts,
             pause::reset_pause,
@@ -431,8 +433,6 @@ fn add_screen_transitions(app: &mut App) {
             bot_seats::end_round,
             menu_ui::despawn_marked::<results::ResultsPanel>,
             menu_ui::despawn_marked::<side_panels::SidePanelRoot>,
-            menu_ui::despawn_marked::<effects::Particle>,
-            menu_ui::despawn_marked::<effects::Hop>,
             menu_ui::despawn_marked::<countdown::CountdownText>,
             announce::clear_announcements,
             pause::reset_pause,
@@ -478,15 +478,13 @@ fn add_phase_transitions(app: &mut App) {
         OnExit(Phase::Lost),
         menu_ui::despawn_marked::<results::ResultsPanel>,
     );
-    // A banner raised in the last second of a round would otherwise sit on
-    // top of the results card; the round is over, the news can go.
-    app.add_systems(OnEnter(Phase::Won), announce::clear_announcements);
-    app.add_systems(OnEnter(Phase::Lost), announce::clear_announcements);
-    app.add_systems(OnEnter(VersusPhase::Over), announce::clear_announcements);
+    clear_banners_between_runs(app);
     app.add_systems(
         OnEnter(VersusPhase::Over),
         (
             tournament::record_series_round.run_if(in_state(Screen::Versus)),
+            // For the host's call for the next round to carry.
+            note_the_crowned.run_if(in_state(Screen::Versus)),
             // The stats before the card: the card quotes today's daily
             // best, and it should be the best with this round counted.
             // A replay being watched counts for nothing.
@@ -526,14 +524,51 @@ enum Frame {
     Finish,
 }
 
+/// When the banners go before the board does.
+fn clear_banners_between_runs(app: &mut App) {
+    // A banner raised in the last second of a round would otherwise sit on
+    // top of the results card; the round is over, the news can go.
+    app.add_systems(OnEnter(Phase::Won), announce::clear_announcements);
+    app.add_systems(OnEnter(Phase::Lost), announce::clear_announcements);
+    app.add_systems(OnEnter(VersusPhase::Over), announce::clear_announcements);
+    // And a stage reloaded mid-run (R, N or P, `handle_load_level`) is
+    // back at its setup on a fresh beach: news of the old run went on
+    // fading in over the new one.
+    app.add_systems(OnEnter(Phase::Setup), announce::clear_announcements);
+}
+
+/// The fixed-timestep sim driver: a tick while the game is playing, and
+/// none past the one that decides a puzzle (`puzzle_undecided`).
+fn add_sim_driver(app: &mut App) {
+    app.add_systems(
+        FixedUpdate,
+        advance_sim.run_if(sim_should_run.and_then(puzzle_undecided)),
+    );
+}
+
+/// What was asked of a round never entered is forgotten in the transition
+/// that enters something else: see `forget_a_round_not_entered`.
+fn add_round_forgetting(app: &mut App) {
+    app.add_systems(
+        StateTransition,
+        forget_a_round_not_entered
+            .after(bevy::state::state::StateTransitionSystems::EnterSchedules),
+    );
+}
+
 /// The per-frame schedule: the fixed-timestep sim driver, and the `Update`
 /// systems grouped into the [`Frame`] sets.
 fn add_frame_systems(app: &mut App) {
-    app.add_systems(FixedUpdate, advance_sim.run_if(sim_should_run));
+    add_sim_driver(app);
+    add_round_forgetting(app);
     app.add_systems(Update, watch::pump);
     app.add_systems(
         Update,
-        watch::dropped_replays.run_if(in_state(Screen::Menu).or_else(in_state(Screen::Replays))),
+        watch::dropped_replays
+            .run_if(in_state(Screen::Menu).or_else(in_state(Screen::Replays)))
+            // After the screens' own input, which it gives way to.
+            .after(menu_scene::paste_round)
+            .after(replays::library_input),
     );
     // A hosted beach keeps its beacon up for the whole match, not just the
     // lobby, so a player arriving late sees a game in progress with a chair
@@ -554,13 +589,14 @@ fn add_frame_systems(app: &mut App) {
     // this frame's Shift, not last frame's.
     app.add_systems(
         PreUpdate,
-        (
-            keycaps::learn_keycaps,
-            // Before any global letter is read: which seat keys it yields to.
-            keycaps::track_live_seat_keys,
-        )
-            .after(bevy::input::InputSystems),
+        keycaps::learn_keycaps.after(bevy::input::InputSystems),
     );
+    // Before any global letter is read: which seat keys it yields to. In
+    // `Update`, after the frame's state transition, so it answers for the
+    // screen and the cursors the readers see: from `PreUpdate` it was a
+    // frame behind a screen change, and the first frame of a puzzle read a
+    // seat key whose cap is a global letter as the global.
+    app.add_systems(Update, cursor::track_live_seat_keys.before(Frame::Ui));
     // Asked once, before the first frame draws a legend: the platform
     // knows the whole board, including the punctuation nobody will press.
     // What it will not answer, the presses above go on answering.
@@ -622,8 +658,9 @@ fn add_ui_systems(app: &mut App) {
             // the two never both set the screen from one keypress.
             (
                 update::poll_check,
-                menu_scene::paste_round,
                 menu_scene::menu_input,
+                // After the menu's own choice, which it gives way to.
+                menu_scene::paste_round,
                 menu_scene::update_menu_rows,
             )
                 .chain()
@@ -786,7 +823,8 @@ fn add_play_systems(app: &mut App) {
             // is at Bevy's limit.
             (
                 check_versus_over,
-                follow_the_called_round,
+                // The round left behind counted before it is left.
+                (achievements::record_called_round, follow_the_called_round).chain(),
                 net::abandon_the_departed,
                 net::leave_a_hostless_round,
                 net::catch_up_again,
@@ -861,7 +899,12 @@ fn add_render_systems(app: &mut App) {
             // First, and paired for the twenty-element limit: every drawing
             // below that remembers last frame's board asks this which
             // board it is now.
-            (sim_events::track_board, board_render::sync_signposts).chain(),
+            (
+                sim_events::track_board,
+                round_state::tick_round_clock,
+                board_render::sync_signposts,
+            )
+                .chain(),
             board_render::dress_signposts,
             board_render::sync_turnstiles,
             board_render::sync_castles,
@@ -886,11 +929,6 @@ fn add_render_systems(app: &mut App) {
             // the terrain that moves.
             (board_render::animate_turnstiles, board_render::ripple_pools),
             board_render::drift_cloud_shadows,
-            (
-                board_render::start_tide_wash,
-                board_render::advance_tide_wash,
-            )
-                .chain(),
             (cursor::glide_cursors, cursor::ghost_pending_posts).chain(),
             effects::moment_effects,
             // Paired for the twenty-element limit: both are the beach
@@ -1022,3 +1060,127 @@ fn add_finish_systems(app: &mut App) {
 
 use conditions::*;
 use session::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pasted code, a replay to watch and the daily wait for the arena
+    /// beside the request for it. When another screen is entered instead,
+    /// they go: left behind, the next way into the arena of any kind (an
+    /// online launch among them) played the pasted board.
+    #[test]
+    fn a_round_asked_for_and_not_entered_is_forgotten() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_resource::<Resuming>();
+        app.init_resource::<Playback>();
+        app.init_resource::<Daily>();
+        add_round_forgetting(&mut app);
+        app.update();
+        let ask = |app: &mut App, screen: Screen| {
+            let world = app.world_mut();
+            world.resource_mut::<Resuming>().0 = Some(crate::app::suspend::Suspended {
+                seats: 2,
+                bots: [None; crate::sim::MAX_PLAYERS],
+                board: crate::sim::classic_arena(false, 2),
+            });
+            let replay = crate::sim::Replay::new(crate::sim::Level::from_board(
+                "T",
+                3,
+                crate::sim::classic_arena(false, 2),
+            ));
+            world.resource_mut::<Playback>().0 = Some((replay, 0));
+            world.resource_mut::<Daily>().active = true;
+            world.resource_mut::<NextState<Screen>>().set(screen);
+            app.update();
+            let world = app.world();
+            (
+                world.resource::<Resuming>().0.is_some(),
+                world.resource::<Playback>().0.is_some(),
+                world.resource::<Daily>().active,
+            )
+        };
+        // The menu's own choice won the frame: the paste is dropped.
+        assert_eq!(ask(&mut app, Screen::MatchSetup), (false, false, false));
+        // Into the arena, they are kept for `load_versus` to take.
+        assert_eq!(ask(&mut app, Screen::Versus), (true, true, true));
+    }
+
+    /// The sim driver stops on the tick that decides an untimed stage,
+    /// whatever the frame covers: run as the fixed clock runs it, a step
+    /// on a decided board plays no tick, and one on a board still open
+    /// plays its tick. `a_decided_puzzle_takes_no_more_ticks` asks the
+    /// condition; this asks the schedule that is meant to read it.
+    #[test]
+    fn the_sim_driver_plays_no_tick_past_a_decided_puzzle() {
+        use crate::sim::{Level, PUZZLE_TICK_LIMIT};
+        let level = Level::parse(
+            "name: T\nposts: 0\ngoal: survive\nmap:\n+-+-+\n|. .|\n+ + +\n|. .|\n+-+-+\n",
+        )
+        .expect("level");
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_state(Screen::Puzzle);
+        app.insert_state(Phase::Running);
+        app.init_state::<VersusPhase>();
+        app.init_resource::<editor::EditorState>();
+        app.insert_resource(Campaign {
+            kind: campaign::CampaignKind::TidePool,
+            levels: vec![level.clone()],
+            index: 0,
+            builtins: 1,
+        });
+        app.init_resource::<PendingActions>();
+        app.init_resource::<Paused>();
+        app.init_resource::<net::Online>();
+        app.init_resource::<Recorder>();
+        app.init_resource::<Playback>();
+        app.init_resource::<replays::PlaybackSpeed>();
+        app.init_resource::<Controllers>();
+        app.init_resource::<bot_seats::BotSeats>();
+        app.init_resource::<awards::RoundTally>();
+        add_sim_driver(&mut app);
+        app.update();
+        let mut board = level.board();
+        for _ in 1..PUZZLE_TICK_LIMIT {
+            board.tick_idle();
+        }
+        let ticks = |app: &App| app.world().resource::<Sim>().0.ticks();
+        app.insert_resource(Sim(board));
+        app.world_mut().run_schedule(FixedUpdate);
+        assert_eq!(
+            ticks(&app),
+            PUZZLE_TICK_LIMIT,
+            "the deciding tick is played"
+        );
+        app.world_mut().run_schedule(FixedUpdate);
+        assert_eq!(ticks(&app), PUZZLE_TICK_LIMIT, "and nothing past it");
+    }
+
+    /// A stage reloaded mid-run is back at its setup, on a fresh beach,
+    /// and the old run's news goes with the old beach.
+    #[test]
+    fn a_reload_mid_run_takes_the_banners_down() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Phase>();
+        app.init_state::<VersusPhase>();
+        app.init_resource::<announce::Announcer>();
+        clear_banners_between_runs(&mut app);
+        app.world_mut()
+            .resource_mut::<NextState<Phase>>()
+            .set(Phase::Running);
+        app.update();
+        app.world_mut()
+            .resource_mut::<announce::Announcer>()
+            .push(announce::Announcement::Surge);
+        // `handle_load_level`'s way back to the setup.
+        app.world_mut()
+            .resource_mut::<NextState<Phase>>()
+            .set(Phase::Setup);
+        app.update();
+        assert_eq!(app.world().resource::<announce::Announcer>().pending(), 0);
+    }
+}

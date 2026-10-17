@@ -56,7 +56,7 @@ impl CustomBeaches {
     pub fn fitting(&self, seats: u8) -> Vec<&Beach> {
         self.0
             .iter()
-            .filter(|beach| beach.level.seats() >= seats)
+            .filter(|beach| beach.level.fits(seats))
             .collect()
     }
 
@@ -65,7 +65,7 @@ impl CustomBeaches {
         self.0
             .iter()
             .enumerate()
-            .filter(|(_, beach)| beach.level.seats() >= seats)
+            .filter(|(_, beach)| beach.level.fits(seats))
             .nth(custom)
             .map(|(shelf, _)| shelf)
     }
@@ -74,10 +74,10 @@ impl CustomBeaches {
     /// at `shelf` is, if it fits at all.
     pub fn among_fitting(&self, seats: u8, shelf: usize) -> Option<usize> {
         let beach = self.0.get(shelf)?;
-        (beach.level.seats() >= seats).then(|| {
+        (beach.level.fits(seats)).then(|| {
             self.0[..shelf]
                 .iter()
-                .filter(|beach| beach.level.seats() >= seats)
+                .filter(|beach| beach.level.fits(seats))
                 .count()
         })
     }
@@ -99,8 +99,21 @@ pub fn beaches_note(
     tr: &crate::app::i18n::Tr,
     beaches: &CustomBeaches,
 ) -> Option<String> {
-    let all_too_small = !beaches.0.is_empty() && beaches.fitting(seats).is_empty();
-    all_too_small.then(|| fill(tr.map_none_seats, &[("n", &seats.to_string())]))
+    if beaches.0.is_empty() || !beaches.fitting(seats).is_empty() {
+        return None;
+    }
+    // A beach whose castles skip a number fits no table at all (see
+    // `Level::fits`), so when that is every beach on the shelf, "none fits
+    // four" sent the player looking for a smaller table that would not
+    // have helped either.
+    let all_skip = beaches
+        .0
+        .iter()
+        .all(|beach| beach.level.table_seats().is_none());
+    Some(match all_skip {
+        true => tr.map_skips_castle.to_string(),
+        false => fill(tr.map_none_seats, &[("n", &seats.to_string())]),
+    })
 }
 
 /// Turn the map dial one step, walking the built-in beaches and then the
@@ -177,13 +190,17 @@ pub fn map_label(
 ///
 /// A beach with fewer castles than seats is no use: `castle_of` answers
 /// `None` for a seat with no castle, so that player banks nothing all
-/// round, with every peer agreeing because every peer built it.
+/// round, with every peer agreeing because every peer built it. Nor is one
+/// whose castles skip an owner, which leaves a seat in the middle of the
+/// table with nothing to bank in ([`crate::sim::Level::fits`]). One with
+/// more castles than seats plays, the spare ones put away when the board
+/// is built ([`crate::sim::Level::table_board`]).
 pub fn beach_in_play<L: std::borrow::Borrow<crate::sim::Level>>(
     map: MapChoice,
     level: Option<L>,
     seats: u8,
 ) -> Option<L> {
-    level.filter(|level| map == MapChoice::Custom && level.borrow().seats() >= seats)
+    level.filter(|level| map == MapChoice::Custom && level.borrow().fits(seats))
 }
 
 /// The shelf beach the host's dials put on the air for a table of

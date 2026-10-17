@@ -71,6 +71,7 @@ pub fn draw_sweeps(
     sim: Res<Sim>,
     art: Res<Art>,
     settings: Res<crate::app::settings::GameSettings>,
+    clock: Res<crate::app::round_state::RoundClock>,
     mut tween: Tween,
     mut sprites: Query<(Entity, &mut SweepSprite, &mut Transform, &mut Sprite)>,
 ) {
@@ -93,7 +94,8 @@ pub fn draw_sweeps(
     let glow = if settings.reduced_motion {
         0.6
     } else {
-        0.5 + 0.3 * (time.elapsed_secs() * 9.0).sin()
+        // On the round's clock, so it holds under the pause card.
+        0.5 + 0.3 * (clock.0 * 9.0).sin()
     };
     let mut drawn: Vec<u32> = Vec::with_capacity(flights.len());
     for (entity, mut sweep, mut transform, mut sprite) in &mut sprites {

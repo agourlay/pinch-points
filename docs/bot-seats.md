@@ -733,7 +733,8 @@ exactly what the `simulate` request knows.
 The bot, or its author with a small script, fetches any game it played
 in with `{"type": "replay", "id": "t1-g17"}` and gets the replay text back.
 An author who was not at the venue can still watch every one of their
-bot's games.
+bot's games. At a table with people, which plays on for as long as they
+stay, the replays of the last 16 rounds are kept.
 
 ## The fair cursor
 

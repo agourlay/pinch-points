@@ -45,30 +45,33 @@ pub(crate) fn spawn_layer(
         PoolLayer::Shore(tint) => {
             commands.spawn((marker, image_sprite(&art.puddle, tint, extent), place));
         }
-        PoolLayer::Shallow | PoolLayer::Deep => {
-            let material = if matches!(layer, PoolLayer::Shallow) {
-                &art.water.pool_shallow
-            } else {
-                &art.water.pool_deep
-            };
-            commands.spawn((
-                marker,
-                Mesh2d(art.water.quad.clone()),
-                MeshMaterial2d(material.clone()),
-                place.with_scale(extent.extend(1.0)),
-            ));
+        PoolLayer::Shallow => {
+            let water = &art.shaded.pool_shallow;
+            commands.spawn((marker, art.shaded.quad(water, place, extent)));
+        }
+        PoolLayer::Deep => {
+            let water = &art.shaded.pool_deep;
+            commands.spawn((marker, art.shaded.quad(water, place, extent)));
         }
     }
 }
 
-/// Where the sun's glint sits on a pond `across` wide centred at `at`: up
-/// toward the light, the opposite side to the ground shadows, whichever
-/// way the puddle is turned.
-pub(crate) fn glint_place(at: Vec3, across: Vec2) -> Transform {
+/// The sun's glint on a pond `across` wide centred at `at`, with `marker`
+/// on it: up toward the light, the opposite side to the ground shadows,
+/// whichever way the puddle is turned. The board's pools and the
+/// postcard's both draw theirs here.
+pub(crate) fn spawn_glint(
+    commands: &mut Commands,
+    art: &Art,
+    at: Vec3,
+    across: Vec2,
+    marker: impl Bundle,
+) {
     let sun = -layout::SUN.normalize() * across * 0.13;
-    Transform::from_translation(at + sun.extend(0.0))
-        .with_rotation(Quat::from_rotation_z(0.35))
-        .with_scale(Vec3::new(across.x * 0.26, across.y * 0.1, 1.0))
+    let place = Transform::from_translation(at + sun.extend(0.0))
+        .with_rotation(Quat::from_rotation_z(0.35));
+    let size = Vec2::new(across.x * 0.26, across.y * 0.1);
+    commands.spawn((marker, art.shaded.quad(&art.shaded.glint, place, size)));
 }
 
 /// A pool's slow swell: a ripple rising out of the water and fading.
@@ -92,8 +95,7 @@ fn tile_hash(x: u8, y: u8) -> u32 {
 
 /// Every pool on the board, as ponds rather than squares.
 ///
-/// It was one tile-sized rounded square per pool tile, which read as a
-/// button lying on the sand. Now each tile is an irregular puddle in three
+/// Each tile is an irregular puddle in three
 /// flat layers, turned a different way per tile, and every pair of
 /// neighbouring pool tiles gets a stretched puddle between them, in the
 /// same three layers. Layers of one flat colour merge where they overlap,
@@ -143,15 +145,8 @@ pub(super) fn spawn_pools(commands: &mut Commands, board: &Board, art: &Art) {
             )
             .with_rotation(Quat::from_rotation_z(pool_turn(hash))),
         ));
-        commands.spawn((
-            BoardStatic,
-            Mesh2d(art.water.quad.clone()),
-            MeshMaterial2d(art.water.glint.clone()),
-            glint_place(
-                (layout::tile_center(board, x, y) + wander).extend(z::POOL + 0.004),
-                Vec2::splat(TILE),
-            ),
-        ));
+        let at = (layout::tile_center(board, x, y) + wander).extend(z::POOL + 0.004);
+        spawn_glint(commands, art, at, Vec2::splat(TILE), BoardStatic);
     }
 }
 
@@ -210,10 +205,23 @@ fn pond_pieces(board: &Board) -> Vec<PondPiece> {
 ///
 /// On the wall clock rather than the sim's: it is weather, and it keeps
 /// breathing through a pause the way the clouds keep drifting.
+///
+/// Not at all for a player who asked for less motion: a ripple is nothing
+/// but motion, so it stays the clear water it is spawned as, and one
+/// caught mid-swell when the setting is turned on fades out with it.
 pub fn ripple_pools(
     time: Res<Time>,
+    settings: Res<crate::app::settings::GameSettings>,
     mut ripples: Query<(&PoolRipple, &mut Transform, &mut Sprite)>,
 ) {
+    if settings.reduced_motion {
+        for (_, _, mut sprite) in &mut ripples {
+            if sprite.color != Color::NONE {
+                sprite.color = Color::NONE;
+            }
+        }
+        return;
+    }
     let now = time.elapsed_secs();
     for (ripple, mut transform, mut sprite) in &mut ripples {
         let t = (now / RIPPLE_PERIOD + ripple.phase).fract();
@@ -245,6 +253,30 @@ mod tests {
                 assert_ne!(tile_hash(x, y), tile_hash(x, y + 1), "({x}, {y}) and below");
             }
         }
+    }
+
+    /// With less motion asked for, a pool's ripple stays the clear water
+    /// it is spawned as, and one already showing fades out.
+    #[test]
+    fn pools_hold_still_for_less_motion() {
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.insert_resource(crate::app::settings::GameSettings {
+            reduced_motion: true,
+            ..Default::default()
+        });
+        app.add_systems(Update, ripple_pools);
+        let ripple = app
+            .world_mut()
+            .spawn((
+                PoolRipple { phase: 0.5 },
+                Sprite::from_color(Color::WHITE, Vec2::ONE),
+                Transform::default(),
+            ))
+            .id();
+        app.update();
+        let sprite = app.world().get::<Sprite>(ripple).expect("a ripple");
+        assert_eq!(sprite.color, Color::NONE);
     }
 
     fn pond(width: u8, height: u8, pools: &[(u8, u8)]) -> Vec<PondPiece> {

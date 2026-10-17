@@ -185,7 +185,7 @@ fn standings_rows(
         let totals: Vec<u32> = standing.iter().map(|&(_, total, _)| total).collect();
         return standing
             .iter()
-            .zip(places(&totals))
+            .zip(crate::bots::seat::ranks(&totals))
             .map(|((name, total, seat), place)| {
                 (
                     format!("{place}  {name:<13} {total:>4}"),
@@ -207,7 +207,7 @@ fn standings_rows(
     let sorted: Vec<u32> = order.iter().map(|&seat| scores[seat as usize]).collect();
     order
         .iter()
-        .zip(places(&sorted))
+        .zip(crate::bots::seat::ranks(&sorted))
         .map(|(&seat, place)| {
             (
                 format!(
@@ -218,17 +218,6 @@ fn standings_rows(
                 palette::player_color(seat),
             )
         })
-        .collect()
-}
-
-/// The place each of `sorted` (best first) finishes in, ranked the way a
-/// leaderboard is: equal scores share a place and the next one down skips
-/// past them (1, 1, 3). A tie is a dead heat on the card, so its rows must
-/// not read as first and second.
-fn places(sorted: &[u32]) -> Vec<usize> {
-    sorted
-        .iter()
-        .map(|score| 1 + sorted.iter().filter(|other| *other > score).count())
         .collect()
 }
 
@@ -317,7 +306,6 @@ fn crowd_rows(
 /// the reel being cut from it, the series it belongs to, and the awards.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct RoundExtras<'w> {
-    daily: Res<'w, crate::app::Daily>,
     highlight: Res<'w, crate::app::Highlight>,
     stats: Res<'w, crate::app::achievements::Stats>,
     tournament: Res<'w, crate::app::tournament::Tournament>,
@@ -330,7 +318,7 @@ pub struct RoundExtras<'w> {
 pub fn spawn_versus_results(
     mut commands: Commands,
     sim: Res<Sim>,
-    settings: Res<GameSettings>,
+    scoring: crate::app::teams::Scoring,
     art: Res<crate::app::art::Art>,
     mut rng: ResMut<crate::app::effects::VisualRng>,
     seating: crate::app::seating::Seating,
@@ -342,10 +330,9 @@ pub fn spawn_versus_results(
         controllers,
         names,
         online,
-        ..
+        playback: _,
     } = seating;
     let RoundExtras {
-        daily,
         highlight,
         stats,
         tournament,
@@ -355,9 +342,10 @@ pub fn spawn_versus_results(
     let board = &sim.0;
     let scores = board.scores();
     let count = seats.0.max(2);
-    let mode = crate::app::teams::in_play(&settings, &online, count);
+    let mode = scoring.mode(count);
+    let crate::app::teams::LocalScoring { settings, daily } = &scoring.local;
     let tr = settings.tr();
-    let (headline, headline_color) = winner_line(&settings, &names, scores, count, mode);
+    let (headline, headline_color) = winner_line(settings, &names, scores, count, mode);
     // Confetti for a decided round, in the winners' colours, unless the
     // player asked for less motion, in which case the card speaks for itself.
     let winners = leading_seats(scores, count, mode);
@@ -372,11 +360,11 @@ pub fn spawn_versus_results(
         }
     }
 
-    let rows = standings_rows(&settings, &names, scores, count, mode, |seat| {
+    let rows = standings_rows(settings, &names, scores, count, mode, |seat| {
         crate::app::seating::seat_tag(tr, &controllers, viewer, seat)
     });
     let haul = board.crabs_banked();
-    let awards = award_rows(&settings, &names, &tally, board, seats.0, mode);
+    let awards = award_rows(settings, &names, &tally, board, seats.0, mode);
 
     // Whose castle the card shows off: the winner's, at the tier the round
     // left it on. A dead heat has no one to crown, and keeps the card's gold.
@@ -456,7 +444,7 @@ pub fn spawn_versus_results(
             for (line, color) in awards {
                 card.spawn(card_line(line, 17.0, color));
             }
-            for (line, color) in crowd_rows(&settings, &names, &online) {
+            for (line, color) in crowd_rows(settings, &names, &online) {
                 card.spawn(card_line(line, 17.0, color));
             }
             card.spawn(menu_ui::spacer(6.0));
@@ -488,7 +476,7 @@ pub fn spawn_versus_results(
                 ));
             }
             if tournament.in_series() {
-                series_rows(card, &settings, &names, &tournament, &online, mode, count);
+                series_rows(card, settings, &names, &tournament, &online, mode, count);
             }
         });
     });
@@ -608,7 +596,7 @@ pub fn spawn_puzzle_won(
     // last of those ends only the list. So the card counts this level
     // within whichever of the two it belongs to, and only the shipped
     // section's end is the campaign's end.
-    let (_, _, custom) = campaign.place();
+    let custom = campaign.place().custom;
     let last = campaign.is_last();
     let last_shipped = last && !custom;
     let board = &sim.0;
@@ -655,12 +643,12 @@ pub fn spawn_puzzle_won(
 /// player's own levels read as a shelf of their own on either, the way the
 /// header bar counts them.
 fn level_line(tr: &crate::app::i18n::Tr, campaign: &Campaign, name: &str) -> String {
-    let (place, of, custom) = campaign.place();
+    let crate::app::campaign::Place { at, of, custom } = campaign.place();
     let shelf = match custom {
         true => format!("{}  ", tr.stage_custom),
         false => String::new(),
     };
-    format!("{shelf}{place} / {of}  -  {name}")
+    format!("{shelf}{at} / {of}  -  {name}")
 }
 
 /// How big a crab is in the row of them on a puzzle's card.
@@ -739,6 +727,20 @@ fn saved_row(
     });
 }
 
+/// What a lost stage is called, as the card's heading and the prompt line
+/// under it. A stage that saves every crab is lost to a crab that was not,
+/// but one asking for a number of crabs or the golden one is lost only on
+/// the clock (`Level::outcome`), maybe with every crab still safe.
+pub(crate) fn loss_words(
+    tr: &crate::app::i18n::Tr,
+    goal: crate::sim::Goal,
+) -> (&'static str, &'static str) {
+    match goal.saves_every_crab() {
+        true => (tr.crabs_lost, tr.prompt_lost),
+        false => (tr.goal_missed, tr.prompt_lost_goal),
+    }
+}
+
 /// The puzzle loss card: which level, and Enter to try again.
 ///
 /// A loss stops the sim on the tick the crab was lost, and the board holds
@@ -758,6 +760,7 @@ pub fn spawn_puzzle_lost(
     let name = campaign
         .shown_name(campaign.index, settings.language)
         .to_string();
+    let (heading, prompt) = loss_words(tr, campaign.current().goal);
     let card = results_card(&mut commands);
     commands.entity(card).with_children(|wrap| {
         let mut frame = wrap.spawn(menu_ui::screen_card());
@@ -767,7 +770,7 @@ pub fn spawn_puzzle_lost(
         ));
         frame.with_children(|card| {
             card.spawn((
-                Text::new(tr.crabs_lost),
+                Text::new(heading),
                 menu_ui::display_font(34.0),
                 TextColor(palette::INK_RAID),
             ));
@@ -775,7 +778,7 @@ pub fn spawn_puzzle_lost(
                 saved_row(card, art, &campaign, &sim.0);
             }
             card.spawn(card_line(level_line(tr, &campaign, &name), 21.0, CARD_TEXT));
-            card.spawn(card_line(tr.prompt_lost, 17.0, CARD_TEXT.darker(0.15)));
+            card.spawn(card_line(prompt, 17.0, CARD_TEXT.darker(0.15)));
         });
     });
 }
@@ -789,17 +792,13 @@ mod tests {
     /// phase takes it down again: the stop is said, not left to be guessed.
     #[test]
     fn a_lost_puzzle_says_so_on_a_card() {
-        use crate::app::{CampaignKind, Phase, Screen};
-        use crate::sim::campaign_levels;
+        use crate::app::{Phase, Screen};
+
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin);
-        let levels = campaign_levels();
-        let builtins = levels.len();
         app.insert_resource(Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
             index: 3,
-            builtins,
+            ..Campaign::tide_pool()
         });
         app.insert_resource(GameSettings::default());
         app.insert_state(Screen::Puzzle);
@@ -838,21 +837,31 @@ mod tests {
         assert_eq!(cards(&mut app), 0, "and gone again on retry");
     }
 
+    /// A stage asking for a number of crabs or the golden one is lost on
+    /// the clock, so its card says that rather than blaming crabs that may
+    /// all be safe.
+    #[test]
+    fn a_goal_lost_on_the_clock_is_not_blamed_on_the_crabs() {
+        use crate::sim::Goal;
+        assert_eq!(loss_words(&EN, Goal::AllCrabs).0, EN.crabs_lost);
+        assert_eq!(loss_words(&EN, Goal::Survive).1, EN.prompt_lost);
+        assert_eq!(loss_words(&EN, Goal::Golden).0, EN.goal_missed);
+        assert_eq!(loss_words(&EN, Goal::Bank(5)).1, EN.prompt_lost_goal);
+    }
+
     /// A player's own level is counted on its own shelf on the Lost card
     /// just as on the Won card and the header: driftwood one, not stage a
     /// hundred and one.
     #[test]
     fn a_lost_custom_level_counts_on_its_own_shelf() {
-        use crate::app::CampaignKind;
         use crate::sim::campaign_levels;
         let mut levels = campaign_levels();
         let builtins = levels.len();
         levels.push(levels[0].clone());
         let campaign = Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
             index: builtins,
             builtins,
+            ..Campaign::tide_pool_of(levels)
         };
         let line = level_line(&EN, &campaign, "Mine");
         assert_eq!(line, format!("{}  1 / 1  -  Mine", EN.stage_custom));
@@ -919,8 +928,8 @@ mod tests {
     /// a dead heat is not drawn as a first and a second.
     #[test]
     fn tied_scores_share_a_place() {
-        assert_eq!(places(&[9, 5, 5, 0]), vec![1, 2, 2, 4]);
-        assert_eq!(places(&[4, 4]), vec![1, 1]);
+        assert_eq!(crate::bots::seat::ranks(&[9, 5, 5, 0]), vec![1, 2, 2, 4]);
+        assert_eq!(crate::bots::seat::ranks(&[4, 4]), vec![1, 1]);
         let rows = standings_rows(
             &GameSettings::default(),
             &crate::app::SeatNames::default(),

@@ -3,7 +3,7 @@
 
 use super::save::save;
 use super::ui::spawn_toast;
-use super::{ACHIEVEMENTS, PuzzleAttempt, RoundScratch, Stats, Unlocked, Unsaved};
+use super::{ACHIEVEMENTS, PuzzleAttempt, RoundScratch, StagesRun, Stats, Unlocked, Unsaved};
 use crate::app::audio::{Muted, Sounds, play_chime, sfx_gain};
 use crate::app::net::Online;
 use crate::app::settings::GameSettings;
@@ -12,15 +12,22 @@ use crate::app::{Controllers, SeatController};
 use crate::sim::CrabKind;
 use bevy::prelude::*;
 
-/// The seat whose deeds count: the online session seat, else seat 0, and
+/// The seat whose deeds count: this peer's own online, else seat 0, and
 /// only when a person here is playing it, never the AI or a bot.
+///
+/// Online it is read off the round's controllers, which hold this peer's
+/// seat as its only `Local` one (`online_controllers`), rather than off
+/// the session: the controllers are this round's until the next board is
+/// built, and the session can be the next round's already, taken up off
+/// the wire with the seats re-dealt (`take_the_next_round`).
 fn local_seat(online: &Online, controllers: &Controllers) -> Option<u8> {
-    // Watching someone else's match earns nothing.
+    let local = |seat: usize| controllers.0[seat] == SeatController::Local;
+    // Watching someone else's match earns nothing: no seat is this peer's.
     let seat = match &online.0 {
-        Some(session) => session.session.seat()?,
+        Some(_) => (0..controllers.0.len()).find(|&seat| local(seat))?,
         None => 0,
     };
-    (controllers.0[usize::from(seat)] == SeatController::Local).then_some(seat)
+    local(seat).then_some(seat as u8)
 }
 
 /// What every system that can earn a trophy needs: the record it adds to,
@@ -68,8 +75,45 @@ impl Trophies<'_> {
     }
 
     fn save(&mut self) {
-        save(&self.stats, &self.unlocked);
+        save(&mut self.stats, &mut self.unlocked);
         self.unsaved.0 = false;
+    }
+}
+
+/// The round on the board and what this machine saw of it.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct RoundSeen<'w> {
+    sim: Res<'w, crate::app::Sim>,
+    tally: Res<'w, crate::app::awards::RoundTally>,
+}
+
+impl RoundSeen<'_> {
+    /// Whether the round's deeds are this player's to be credited for: it
+    /// was played here from its first tick, by the rule the results card's
+    /// awards go by ([`RoundTally::covers`](crate::app::awards::RoundTally::covers)).
+    /// A round resumed from a pasted code began somewhere else, and its
+    /// first half (the raids on this castle among it) was never counted
+    /// here: counted, it was a dry win on every paste, and a round counted
+    /// as often as it was pasted.
+    fn whole(&self) -> bool {
+        self.tally.covers(&self.sim.0)
+    }
+}
+
+/// Whether the deeds on the board are this player's to count as they
+/// happen: a puzzle's always, a versus round's by [`RoundSeen::whole`],
+/// the rule its end goes by. A round resumed from a pasted code counts
+/// none: the same code pasted again was the same golden crab banked
+/// again, for every trophy that counts them.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct DeedsCount<'w> {
+    screen: Res<'w, State<crate::app::Screen>>,
+    round: RoundSeen<'w>,
+}
+
+impl DeedsCount<'_> {
+    fn here(&self) -> bool {
+        *self.screen.get() != crate::app::Screen::Versus || self.round.whole()
     }
 }
 
@@ -79,10 +123,12 @@ pub fn track_events(
     mut events: MessageReader<SimEvent>,
     online: Res<Online>,
     controllers: Res<Controllers>,
+    counted: DeedsCount,
     mut trophies: Trophies,
     mut scratch: ResMut<RoundScratch>,
 ) {
-    let Some(seat) = local_seat(&online, &controllers) else {
+    let seat = local_seat(&online, &controllers).filter(|_| counted.here());
+    let Some(seat) = seat else {
         for _ in events.read() {}
         return;
     };
@@ -166,6 +212,9 @@ pub(super) struct RoundOutcome {
     /// Which chair the local player sat in, for the trophy that wants the
     /// whole table rather than four wins from the same seat.
     pub seat: u8,
+    /// This board played the round to its last tick, so the round scratch
+    /// holds all of it: a dry win is claimed on nothing less.
+    pub saw_the_end: bool,
 }
 
 /// Count a daily round played on `day`'s beach, scoring `score`.
@@ -198,7 +247,7 @@ fn credit_round(stats: &mut Stats, scratch: &mut RoundScratch, outcome: RoundOut
     stats.best_round = stats.best_round.max(scratch.banked);
     if outcome.won {
         stats.wins += 1;
-        if scratch.raids == 0 {
+        if scratch.raids == 0 && outcome.saw_the_end {
             stats.dry_wins += 1;
         }
         if outcome.online {
@@ -215,12 +264,28 @@ fn credit_round(stats: &mut Stats, scratch: &mut RoundScratch, outcome: RoundOut
     *scratch = RoundScratch::default();
 }
 
+/// Count a round played, at a table of `seats`: the round itself, the
+/// busiest table, and a hosted one.
+fn credit_table(stats: &mut Stats, seats: u8, online: &Online) {
+    stats.rounds += 1;
+    // The busiest table this seat has ever sat at. Seats, not peers: an AI
+    // seat still fills a chair and still has a castle to raid.
+    stats.crowd = stats.crowd.max(u32::from(seats));
+    if online
+        .0
+        .as_ref()
+        .is_some_and(crate::app::net::OnlineSession::is_host)
+    {
+        stats.hosted += 1;
+    }
+}
+
 /// A versus round just ended: count it, the win, and the dry-castle win.
 pub fn record_round(
     mut commands: Commands,
-    sim: Res<crate::app::Sim>,
+    round: RoundSeen,
     seating: crate::app::seating::Seating,
-    daily: Res<crate::app::Daily>,
+    scoring: crate::app::teams::Scoring,
     tournament: Res<crate::app::tournament::Tournament>,
     mut trophies: Trophies,
     mut scratch: ResMut<RoundScratch>,
@@ -231,35 +296,31 @@ pub fn record_round(
         controllers,
         ..
     } = seating;
+    if !round.whole() {
+        *scratch = RoundScratch::default();
+        return;
+    }
     let Some(seat) = local_seat(&online, &controllers) else {
         return;
     };
-    trophies.stats.rounds += 1;
-    // The busiest table this seat has ever sat at. Seats, not peers: an AI
-    // seat still fills a chair and still has a castle to raid.
-    trophies.stats.crowd = trophies.stats.crowd.max(u32::from(seats.0));
-    if online
-        .0
-        .as_ref()
-        .is_some_and(crate::app::net::OnlineSession::is_host)
-    {
-        trophies.stats.hosted += 1;
-    }
-    if daily.active {
+    let scores = round.sim.0.scores();
+    if scoring.local.daily.active {
         // The day the round was seeded for, not the day it ended on: a
         // round that crosses midnight is yesterday's beach.
         credit_daily(
             &mut trophies.stats,
-            daily.day,
-            sim.0.scores()[seat as usize],
+            scoring.local.daily.day,
+            scores[usize::from(seat)],
         );
     }
-    let mode = crate::app::teams::in_play(&trophies.settings, &online, seats.0);
-    let winners = crate::app::seating::leading_seats(sim.0.scores(), seats.0, mode);
-    let won = winners[seat as usize];
-    credit_round(
-        &mut trophies.stats,
+    let mode = scoring.mode(seats.0);
+    let won = scoring.leaders(scores, seats.0)[usize::from(seat)];
+    credit_played(
+        &mut commands,
+        &mut trophies,
         &mut scratch,
+        seats.0,
+        &online,
         RoundOutcome {
             won,
             online: online.0.is_some(),
@@ -271,14 +332,79 @@ pub fn record_round(
                     .winner(mode, seats.0)
                     .is_some_and(|champion| champion.claims(seat, mode)),
             seat,
+            saw_the_end: true,
         },
     );
-    trophies.credit(&mut commands);
+}
+
+/// Credit a round this machine's seat played at a table of `seats`: the
+/// table ([`credit_table`]), the round's `outcome`, and whatever the two
+/// unlock.
+fn credit_played(
+    commands: &mut Commands,
+    trophies: &mut Trophies,
+    scratch: &mut RoundScratch,
+    seats: u8,
+    online: &Online,
+    outcome: RoundOutcome,
+) {
+    credit_table(&mut trophies.stats, seats, online);
+    credit_round(&mut trophies.stats, scratch, outcome);
+    trophies.credit(commands);
+}
+
+/// A joiner walked on to the next round before its own board had
+/// finished (`follow_the_called_round`): count the round it played, which
+/// never reaches the results card [`record_round`] runs on.
+///
+/// Who won is the host's word, carried in its call
+/// ([`Invitation::crowned`](crate::app::net::Invitation::crowned)): the
+/// frames this board was missing were never coming, and a bank or a raid
+/// in them could still have decided the round. A dry win is not claimed
+/// for the same reason, since a raid in those frames went uncounted. Not
+/// part of a series' last round, which no call follows.
+pub fn record_called_round(
+    mut commands: Commands,
+    round: RoundSeen,
+    seating: crate::app::seating::Seating,
+    mut trophies: Trophies,
+    mut scratch: ResMut<RoundScratch>,
+) {
+    let crate::app::seating::Seating {
+        seats,
+        online,
+        controllers,
+        ..
+    } = seating;
+    if !crate::app::session::walked_on(&round.sim.0, &online) || !round.whole() {
+        return;
+    }
+    let (Some(seat), Some(session)) = (local_seat(&online, &controllers), online.0.as_ref()) else {
+        return;
+    };
+    credit_played(
+        &mut commands,
+        &mut trophies,
+        &mut scratch,
+        seats.0,
+        &online,
+        RoundOutcome {
+            won: crate::transport::is_crowned(session.crowned, seat),
+            online: true,
+            series: false,
+            seat,
+            saw_the_end: false,
+        },
+    );
 }
 
 /// Persist on leaving a play screen so a mid-round quit loses nothing.
-pub fn save_now(stats: Res<Stats>, unlocked: Res<Unlocked>, mut unsaved: ResMut<Unsaved>) {
-    save(&stats, &unlocked);
+pub fn save_now(
+    mut stats: ResMut<Stats>,
+    mut unlocked: ResMut<Unlocked>,
+    mut unsaved: ResMut<Unsaved>,
+) {
+    save(&mut stats, &mut unlocked);
     unsaved.0 = false;
 }
 
@@ -287,12 +413,12 @@ pub fn save_now(stats: Res<Stats>, unlocked: Res<Unlocked>, mut unsaved: ResMut<
 /// screen is never left then, so [`save_now`] does not run.
 pub fn save_on_exit(
     mut exits: MessageReader<AppExit>,
-    stats: Res<Stats>,
-    unlocked: Res<Unlocked>,
+    mut stats: ResMut<Stats>,
+    mut unlocked: ResMut<Unlocked>,
     mut unsaved: ResMut<Unsaved>,
 ) {
     if exits.read().count() > 0 && unsaved.0 {
-        save(&stats, &unlocked);
+        save(&mut stats, &mut unlocked);
         unsaved.0 = false;
     }
 }
@@ -341,7 +467,7 @@ pub fn record_puzzle(
     if !builtins.is_empty()
         && builtins
             .iter()
-            .all(|level| progress.is_cleared(campaign.kind, &level.name))
+            .all(|level| progress.level_cleared(campaign.kind, level))
     {
         match campaign.kind {
             crate::app::CampaignKind::TidePool => trophies.stats.campaign_done = 1,
@@ -356,9 +482,8 @@ pub fn record_puzzle(
 /// "stages", and a stage already in the book is not another one.
 ///
 /// The clear puts the stage in the book, so the attempt stops being
-/// unbeaten here. A restart keeps the attempt (same stage, same name), and
-/// it used to keep the flag too: win, R, win again credited the same
-/// stage twice, and "clear 10 stages with one to spare" fell to one stage.
+/// unbeaten here, and a restart, which keeps the attempt (same stage, same
+/// name), must not set it again: win, R, win again is one stage, not two.
 fn credit_stage(stats: &mut Stats, attempt: &mut PuzzleAttempt, posts: u8) {
     if !std::mem::replace(&mut attempt.unbeaten, false) {
         return;
@@ -399,7 +524,7 @@ pub fn track_puzzle_attempt(
         // Read here rather than at the clear, which is the moment it stops
         // being true: the stage trophies ask what this attempt walked up
         // to, not what it left behind.
-        attempt.unbeaten = !progress.is_cleared(campaign.kind, name);
+        attempt.unbeaten = !progress.level_cleared(campaign.kind, campaign.current());
         attempt.stage = name.clone();
         attempt.retries = 0;
         attempt.layout.clear();
@@ -414,9 +539,10 @@ pub fn note_posts_spent(
     sim: Res<crate::app::Sim>,
     campaign: Res<crate::app::Campaign>,
     mut attempt: ResMut<PuzzleAttempt>,
+    mut ran: ResMut<StagesRun>,
 ) {
     let stage = (campaign.kind, campaign.current().name.clone());
-    attempt.first_run = attempt.ran.insert(stage);
+    attempt.first_run = ran.0.insert(stage);
     attempt.layout = sim
         .0
         .tiles()
@@ -430,10 +556,7 @@ pub fn note_posts_spent(
 /// Entering the puzzle screen starts a fresh attempt: coming back to a
 /// stage later is a new go at it, not a continuation of the last one.
 pub fn reset_puzzle_attempt(mut attempt: ResMut<PuzzleAttempt>) {
-    *attempt = PuzzleAttempt {
-        ran: std::mem::take(&mut attempt.ran),
-        ..PuzzleAttempt::default()
-    };
+    *attempt = PuzzleAttempt::default();
 }
 
 /// A level went out as a share code, or came in as one. Its own system for
@@ -492,6 +615,7 @@ mod tests {
     fn win() -> RoundOutcome {
         RoundOutcome {
             won: true,
+            saw_the_end: true,
             ..RoundOutcome::default()
         }
     }
@@ -502,7 +626,12 @@ mod tests {
 
     /// A world `track_events` and `save_on_exit` can run in, with every
     /// trophy already earned or none of them.
+    ///
+    /// The record on disk starts empty too: a save merges with it, and a
+    /// test that builds a second world would have counted the first's
+    /// round as well.
     fn tracking(all_unlocked: bool) -> App {
+        let _ = std::fs::remove_file(crate::app::achievements::save_path());
         let mut app = App::new();
         app.add_message::<SimEvent>();
         app.add_message::<AppExit>();
@@ -513,6 +642,9 @@ mod tests {
         app.init_resource::<Muted>();
         app.init_resource::<Online>();
         app.init_resource::<Controllers>();
+        app.insert_resource(State::new(crate::app::Screen::Puzzle));
+        app.insert_resource(crate::app::Sim(crate::sim::Board::new(5, 5, 0)));
+        app.init_resource::<crate::app::awards::RoundTally>();
         let mut unlocked = Unlocked::default();
         if all_unlocked {
             unlocked.0.extend(ACHIEVEMENTS.iter().map(|a| a.id));
@@ -613,18 +745,12 @@ mod tests {
         use crate::app::{Campaign, CampaignKind, LoadLevel};
         let mut levels = crate::sim::campaign_levels();
         levels.truncate(2);
-        let builtins = levels.len();
         let first = levels[0].name.clone();
         let mut app = App::new();
         app.add_message::<LoadLevel>();
         app.init_resource::<PuzzleAttempt>();
         app.init_resource::<Progress>();
-        app.insert_resource(Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        });
+        app.insert_resource(Campaign::tide_pool_of(levels));
         app.add_systems(Update, track_puzzle_attempt);
         let load = |app: &mut App| {
             app.world_mut()
@@ -655,7 +781,7 @@ mod tests {
     /// stage for the stage trophies.
     #[test]
     fn a_stage_won_twice_through_a_restart_counts_once() {
-        use crate::app::{Campaign, CampaignKind, LoadLevel};
+        use crate::app::{Campaign, LoadLevel};
         let mut levels = crate::sim::campaign_levels();
         let deep = levels
             .iter()
@@ -663,16 +789,13 @@ mod tests {
             .expect("a deep stage");
         let posts = levels[deep].posts;
         levels.truncate(deep + 1);
-        let builtins = levels.len();
         let mut app = App::new();
         app.add_message::<LoadLevel>();
         app.init_resource::<PuzzleAttempt>();
         app.init_resource::<crate::app::progress::Progress>();
         app.insert_resource(Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
             index: deep,
-            builtins,
+            ..Campaign::tide_pool_of(levels)
         });
         app.add_systems(Update, track_puzzle_attempt);
         let load = |app: &mut App, keep_posts: bool| {
@@ -705,20 +828,14 @@ mod tests {
     /// either way it is worthless: it would go to everybody, or to nobody.
     #[test]
     fn the_first_load_of_a_stage_is_not_a_retry() {
-        use crate::app::{Campaign, CampaignKind, LoadLevel};
+        use crate::app::{Campaign, LoadLevel};
         let mut levels = crate::sim::campaign_levels();
         levels.truncate(2);
-        let builtins = levels.len();
         let mut app = App::new();
         app.add_message::<LoadLevel>();
         app.init_resource::<PuzzleAttempt>();
         app.init_resource::<crate::app::progress::Progress>();
-        app.insert_resource(Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        });
+        app.insert_resource(Campaign::tide_pool_of(levels));
         app.add_systems(Update, track_puzzle_attempt);
         let load = |app: &mut App| {
             app.world_mut()
@@ -753,19 +870,14 @@ mod tests {
     /// clear is not "first try".
     #[test]
     fn a_stage_left_and_come_back_to_is_not_a_first_try() {
-        use crate::app::{Campaign, CampaignKind};
+        use crate::app::Campaign;
         let mut levels = crate::sim::campaign_levels();
         levels.truncate(2);
-        let builtins = levels.len();
         let mut app = App::new();
         app.init_resource::<PuzzleAttempt>();
+        app.init_resource::<StagesRun>();
         app.insert_resource(crate::app::Sim(crate::sim::Board::new(3, 3, 1)));
-        app.insert_resource(Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        });
+        app.insert_resource(Campaign::tide_pool_of(levels));
         let run = |app: &mut App| {
             let _ = app.world_mut().run_system_once(note_posts_spent);
             app.world().resource::<PuzzleAttempt>().first_run
@@ -823,6 +935,7 @@ mod tests {
                 online: true,
                 series: true,
                 seat: 0,
+                saw_the_end: true,
             },
         );
         assert_eq!((stats.online_wins, stats.series_wins), (0, 0));
@@ -835,6 +948,7 @@ mod tests {
                 online: true,
                 series: true,
                 seat: 0,
+                saw_the_end: true,
             },
         );
         assert_eq!((stats.online_wins, stats.series_wins), (1, 1));
@@ -843,6 +957,122 @@ mod tests {
         credit_round(&mut stats, &mut RoundScratch::default(), win());
         assert_eq!((stats.online_wins, stats.series_wins), (1, 1));
         assert_eq!(stats.wins, 2);
+    }
+
+    /// A round played here from its first tick is counted when it ends;
+    /// one resumed from a pasted code is not, nor is its dry win: the
+    /// raids before the paste were never seen here, and the same code
+    /// pasted again was the same round counted again.
+    #[test]
+    fn a_pasted_round_earns_no_round_stats() {
+        use crate::app::awards::{Reading, RoundTally};
+        use crate::sim::{MAX_PLAYERS, PlayerAction, generate_arena};
+        let idle = [PlayerAction::None; MAX_PLAYERS];
+        let ended = |resumed: bool| {
+            let mut app = tracking(false);
+            app.init_resource::<crate::app::Daily>();
+            app.init_resource::<crate::app::tournament::Tournament>();
+            app.init_resource::<crate::app::Playback>();
+            app.init_resource::<crate::app::SeatNames>();
+            app.insert_resource(crate::app::Seats(2));
+            let mut board = generate_arena(7, 2, 12, 9);
+            let mut tally = RoundTally::default();
+            for tick in 0..40 {
+                let before = Reading::of(&board);
+                board.tick(&idle);
+                // Pasted at tick 20: everything before it was played
+                // somewhere else.
+                if !resumed || tick >= 20 {
+                    tally.observe(before, &board, &idle);
+                }
+            }
+            board.set_score(0, 9);
+            app.insert_resource(crate::app::Sim(board));
+            app.insert_resource(tally);
+            let _ = app.world_mut().run_system_once(record_round);
+            let stats = app.world().resource::<Stats>();
+            (stats.rounds, stats.wins, stats.dry_wins)
+        };
+        assert_eq!(ended(false), (1, 1, 1), "played whole, an unraided win");
+        assert_eq!(ended(true), (0, 0, 0), "pasted half way");
+    }
+
+    /// A versus round resumed from a pasted code counts no deeds as they
+    /// happen either, by the rule its end goes by: a code pasted again
+    /// was the same crabs counted again. One played whole counts them.
+    #[test]
+    fn a_pasted_round_counts_no_deeds() {
+        use crate::app::awards::{Reading, RoundTally};
+        use crate::sim::{MAX_PLAYERS, PlayerAction, generate_arena};
+        let idle = [PlayerAction::None; MAX_PLAYERS];
+        let fed = |resumed: bool| {
+            let mut app = tracking(false);
+            app.insert_resource(State::new(crate::app::Screen::Versus));
+            let mut board = generate_arena(7, 2, 12, 9);
+            let mut tally = RoundTally::default();
+            for tick in 0..40 {
+                let before = Reading::of(&board);
+                board.tick(&idle);
+                if !resumed || tick >= 20 {
+                    tally.observe(before, &board, &idle);
+                }
+            }
+            app.insert_resource(crate::app::Sim(board));
+            app.insert_resource(tally);
+            eaten(&mut app);
+            app.world().resource::<Stats>().gulls_fed
+        };
+        assert_eq!(fed(false), 1, "played whole");
+        assert_eq!(fed(true), 0, "pasted half way");
+    }
+
+    /// A joiner walked on to the next round a frame short of the tide
+    /// never sees its results card: the round it played is counted all
+    /// the same, won or lost as the host's card crowned it, without a dry
+    /// win it cannot vouch for. A board that did finish is left to the
+    /// card, which counts it once.
+    #[test]
+    fn a_round_walked_on_from_is_counted_on_the_hosts_word() {
+        use crate::app::awards::{Reading, RoundTally};
+        use crate::sim::{MAX_PLAYERS, PlayerAction, generate_arena};
+        use crate::transport::{MatchTerms, UdpTransport};
+        let idle = [PlayerAction::None; MAX_PLAYERS];
+        let walked_on = |crowned: u8, finished: bool| {
+            let mut app = tracking(false);
+            app.init_resource::<crate::app::Playback>();
+            app.init_resource::<crate::app::SeatNames>();
+            app.insert_resource(crate::app::Seats(2));
+            // This peer played seat 1; the call has re-dealt it seat 2 of
+            // the next round already, which is not the seat to count.
+            let mut controllers = Controllers([SeatController::Remote; MAX_PLAYERS]);
+            controllers.0[1] = SeatController::Local;
+            app.insert_resource(controllers);
+            let mut joiner = crate::app::net::OnlineSession::new(
+                UdpTransport::host(0).expect("socket"),
+                crate::sim::Lockstep::new(2, vec![0, 1, 2], crate::sim::DEFAULT_DELAY),
+                2,
+                MatchTerms::default(),
+            );
+            joiner.next_round = true;
+            joiner.crowned = crowned;
+            app.insert_resource(Online(Some(joiner)));
+            let mut board = generate_arena(7, 2, 12, 9);
+            let mut tally = RoundTally::default();
+            let ticks = if finished { u64::MAX } else { 40 };
+            while board.ticks() < ticks && !board.round_over() {
+                let before = Reading::of(&board);
+                board.tick(&idle);
+                tally.observe(before, &board, &idle);
+            }
+            app.insert_resource(crate::app::Sim(board));
+            app.insert_resource(tally);
+            let _ = app.world_mut().run_system_once(record_called_round);
+            let stats = app.world().resource::<Stats>();
+            (stats.rounds, stats.wins, stats.dry_wins, stats.online_wins)
+        };
+        assert_eq!(walked_on(0b10, false), (1, 1, 0, 1), "seat 1 crowned");
+        assert_eq!(walked_on(0b01, false), (1, 0, 0, 0), "seat 0 crowned");
+        assert_eq!(walked_on(0b10, true), (0, 0, 0, 0), "the card's to count");
     }
 
     /// A daily is counted under the day it was seeded for. A round begun

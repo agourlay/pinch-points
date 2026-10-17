@@ -69,6 +69,14 @@ const BRIDGE: [(GamepadButton, KeyCode, KeyCode); 6] = [
 #[derive(Resource, Default)]
 pub struct Bridged(Vec<KeyCode>);
 
+impl Bridged {
+    /// Whether `key` is down because a pad's button is, not a key. What a
+    /// reader that wants the keyboard itself (a key capture) leaves out.
+    pub fn holds(&self, key: KeyCode) -> bool {
+        self.0.contains(&key)
+    }
+}
+
 /// Let go of a bridged key once no pad is holding its button, on every
 /// screen.
 ///

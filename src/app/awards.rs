@@ -82,7 +82,7 @@ impl RoundTally {
         actions: &[PlayerAction; MAX_PLAYERS],
     ) {
         let placed = std::array::from_fn(|seat| match actions[seat] {
-            PlayerAction::Place { x, y, dir } => board.signpost_at(x, y).is_some_and(|post| {
+            PlayerAction::Place { x, y, dir } => board.try_signpost_at(x, y).is_some_and(|post| {
                 usize::from(post.owner) == seat && post.dir == dir && post.placed >= before.ticks
             }),
             PlayerAction::None | PlayerAction::Remove { .. } | PlayerAction::CallEvent(_) => false,
@@ -132,6 +132,14 @@ impl RoundTally {
             let best = &mut self.seats[usize::from(owner)].best_lure;
             *best = (*best).max(gained);
         }
+    }
+
+    /// Forget the last round on the way into the next, which a round
+    /// from its first tick would do anyway (`fold`): a round resumed from
+    /// a code never has one, and one picked up on the very tick the last
+    /// round's tally stopped at passed for that round, seen whole.
+    pub fn forget(mut tally: ResMut<RoundTally>) {
+        *tally = RoundTally::default();
     }
 
     /// Whether this tally saw `board`'s round whole, up to where it stands.
@@ -365,6 +373,29 @@ mod tests {
         tally.observe(before, &fresh, &idle);
         assert!(tally.covers(&fresh), "a new round's first tick");
         assert_eq!(tally.seats[0].placed, 0, "and nothing carried over");
+    }
+
+    /// A peer's input is three bytes off the wire, and nothing stops them
+    /// naming a tile far off the beach. Every peer at the table counts the
+    /// tick, so one such input must be a refused placement everywhere, not
+    /// a crash everywhere; and emptied or not, it leaves the board alike.
+    #[test]
+    fn an_input_off_the_board_from_the_wire_counts_nothing() {
+        let mut board = generate_arena(7, 2, 12, 9);
+        let mut emptied = board.clone();
+        let mut tally = RoundTally::default();
+        let mut actions = [PlayerAction::None; MAX_PLAYERS];
+        actions[1] = crate::sim::decode_action([200, 200, 1]);
+        assert!(matches!(actions[1], PlayerAction::Place { x: 200, .. }));
+        let before = Reading::of(&board);
+        board.tick(&actions);
+        tally.observe(before, &board, &actions);
+        assert_eq!(tally.seats[1].placed, 0);
+
+        let actions = actions.map(|action| emptied.on_board(action));
+        assert_eq!(actions[1], PlayerAction::None);
+        emptied.tick(&actions);
+        assert_eq!(board.state_hash(), emptied.state_hash());
     }
 
     /// Over a real round played by bots, the tally agrees with the board:

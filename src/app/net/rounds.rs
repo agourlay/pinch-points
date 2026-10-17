@@ -131,19 +131,24 @@ impl OnlineSession {
             kinds,
             standing,
             beach,
+            deal,
+            crowned,
         } = invitation;
         self.beach = beach;
         self.begin_round(seats, seat, terms, table_from_wire(&names));
         self.kinds = kinds.map(crate::transport::kind_from_byte);
         self.series_standing = standing;
+        self.rounds_dealt = deal;
+        self.crowned = crowned;
     }
 
     /// Whether a `Start` is the host calling the next round: heard by a
-    /// joiner, and with a fresh seed, which is what says so. Everything
-    /// else about the round may well be the same, and a stale copy of the
-    /// last one is the host repeating itself to somebody still greeting.
+    /// joiner, and dealt after the round this one is in, which is what
+    /// says so. Everything else about the round may well be the same, and
+    /// a stale copy of this one or the last is the host repeating itself
+    /// to somebody still greeting.
     pub(super) fn calls_the_next_round(&self, start: &Invitation) -> bool {
-        !self.is_host() && self.is_next_round(&start.terms)
+        !self.is_host() && self.is_next_round(start)
     }
 
     /// Take up the host's call for the next round, and arm the session to
@@ -199,8 +204,9 @@ impl OnlineSession {
     /// The results card is when people turn up wanting in, and when the
     /// host decides there will be another round, so the two messages that
     /// matter here are a greeting to queue and the invitation that answers
-    /// it. Inputs and hashes belong to the round that just ended, and are
-    /// dropped with it.
+    /// it. Hashes belong to the round that just ended, and are dropped with
+    /// it; a peer's inputs say it is still playing that round, and are
+    /// answered with its last frames (`send_the_tail`).
     ///
     /// A joiner also keeps greeting, which is not for the host's benefit:
     /// the answer is what proves the host is still there. Nothing else is
@@ -224,6 +230,7 @@ impl OnlineSession {
                         self.peers.row(from).bot = bot;
                         let answer = self.answer_greeting(from, &name_from_wire(&name), false);
                         self.transport.send_to(from, answer);
+                        self.send_the_tail(from);
                     }
                 }
                 NetMsg::Watch { name } => {
@@ -231,8 +238,12 @@ impl OnlineSession {
                         let answer =
                             self.answer_greeting(from, &name_from_wire(&name), true);
                         self.transport.send_to(from, answer);
+                        self.send_the_tail(from);
                     }
                 }
+                // A peer still in the round, resending what it committed:
+                // it has not finished, and may be missing the last frames.
+                NetMsg::Inputs(_) if host => self.send_the_tail(from),
                 NetMsg::Start(start) => {
                     if self.calls_the_next_round(&start) {
                         self.take_the_next_round(start);
@@ -269,7 +280,9 @@ impl OnlineSession {
                 | NetMsg::CrowdPicks { .. }
                 | NetMsg::Incompatible { .. } => {}
                 // The host asked us to leave while the card was up.
-                NetMsg::Kicked | NetMsg::NoBots => self.kicked |= !host,
+                NetMsg::Kicked if !host => PutOut::hear(&mut self.put_out, PutOut::Kicked),
+                NetMsg::NoBots if !host => PutOut::hear(&mut self.put_out, PutOut::NoBots),
+                NetMsg::Kicked | NetMsg::NoBots => {}
                 // Gone from the card: forgotten by the sweep just below,
                 // before the next round can deal it a chair. On a joiner
                 // it is the host, and there is no next round, unless the
@@ -284,6 +297,26 @@ impl OnlineSession {
         }
     }
 
+    /// Host: the last frames of the round just played, to a peer that
+    /// followed it and may not have finished it.
+    ///
+    /// The host relays an input once, as it arrives, and its sim stops
+    /// the moment the round is over, so the relay of the input that
+    /// completed the last frame is never repeated: lost, it left a joiner
+    /// a frame short of the end for good, "waiting for" a player who had
+    /// long stopped sending. A player still in the round keeps resending
+    /// its own commits, and a watcher greets a host gone quiet, so either
+    /// is answered with every input the host played for the frames it can
+    /// still be missing. A peer that has finished hears frames it has
+    /// played, and drops them.
+    pub(super) fn send_the_tail(&self, peer: usize) {
+        if !self.follows_the_round(peer) {
+            return;
+        }
+        self.transport
+            .send_inputs(&self.session.played_tail(), |to| to == peer);
+    }
+
     /// What this peer says to its host to be let in, or to be answered:
     /// the greeting the lobby sends, wish to watch included, so a watcher
     /// does not greet as a nameless player, and a bot's seat says a bot
@@ -294,10 +327,7 @@ impl OnlineSession {
             .session
             .seat()
             .map_or("", |seat| &self.names[usize::from(seat)]);
-        match self.bot {
-            true => NetMsg::hello_bot(me),
-            false => crate::app::lobby::greeting(self.watch_wish(), me),
-        }
+        crate::app::lobby::greeting(self.bot.as_deref(), self.watch_wish(), me)
     }
 
     /// A goodbye off the wire. On a joiner it is the host's, and a claim
@@ -360,8 +390,10 @@ impl OnlineSession {
         use crate::app::match_setup::{TermsDials, beach_from, beach_in_play};
         let beach = beach_in_play(self.terms.map(), beach_from(&self.beach), self.seats)
             .map_or_else(String::new, |level| level.name);
+        // The places at the table, as the lobby counts them (`send_roster`):
+        // the people and bots, with the AI in the terms.
         NetMsg::Roster {
-            seats: self.seats,
+            seats: self.terms.humans(self.seats),
             names: wire_table(&self.names),
             terms: self.terms,
             kinds: crate::transport::wire_kinds(&self.kinds),
@@ -528,6 +560,9 @@ impl OnlineSession {
         // re-answers a stray greeting with, and the round it hands a late
         // watcher, carry it too.
         self.series_standing = standing;
+        // A round dealt after every one before it, which is what tells it
+        // from a stale invitation still on the wire (`is_next_round`).
+        self.rounds_dealt = self.rounds_dealt.wrapping_add(1);
         let names = wire_table(&self.names);
         let kinds = crate::transport::wire_kinds(&self.kinds);
         for (peer, slot) in plan.iter().enumerate() {
@@ -541,6 +576,8 @@ impl OnlineSession {
                     kinds,
                     standing,
                     beach: self.beach.clone(),
+                    deal: self.rounds_dealt,
+                    crowned: self.crowned,
                 }),
             );
         }
@@ -548,10 +585,6 @@ impl OnlineSession {
 
     /// Take up the terms of a new round: a fresh board, a lockstep back at
     /// frame zero, and whatever the table is called now.
-    ///
-    /// The seed is what marks this a *new* round rather than the stale
-    /// `Start` a host re-answers stray greetings with, so a caller that
-    /// does not change it will find nothing happens.
     #[cfg_attr(debug_assertions, track_caller)]
     pub fn begin_round(
         &mut self,
@@ -600,10 +633,17 @@ impl OnlineSession {
         self.peers.hush();
     }
 
-    /// Whether a `Start` off the wire is the next round rather than the
-    /// stale one a host re-answers a greeting with.
-    pub fn is_next_round(&self, terms: &MatchTerms) -> bool {
-        terms.seed != self.terms.seed
+    /// Whether a `Start` off the wire is the next round rather than a
+    /// stale one a host re-answered a greeting with: dealt after the round
+    /// this session is in.
+    ///
+    /// Numbered rather than told apart by its seed: the host answers
+    /// greetings on its results card with the round just played, and an
+    /// answer overtaken on the wire by the next round's call differed
+    /// from it in seed all the same, so a joiner took it up and re-armed
+    /// onto a beach everyone else had left.
+    pub fn is_next_round(&self, start: &Invitation) -> bool {
+        start.deal > self.rounds_dealt
     }
 
     /// The `Start` the host answers a stray greeting with: the terms plus
@@ -611,7 +651,7 @@ impl OnlineSession {
     /// learns what everyone is called.
     pub(super) fn start_msg(&self, seat: Option<u8>) -> NetMsg {
         // The stale `Start` a greeting is re-answered with carries the same
-        // seed as the round in play, so a joiner reads it for the names and
+        // number as the round in play, so a joiner reads it for the names and
         // does not mistake it for a fresh round; the series standing rides
         // along all the same, in case this is the message that seats a
         // latecomer next round.
@@ -626,6 +666,8 @@ impl OnlineSession {
             // this one's to hand out.
             standing: self.series_standing.filter(|_| self.terms.is_series()),
             beach: self.beach.clone(),
+            deal: self.rounds_dealt,
+            crowned: self.crowned,
         })
     }
 
@@ -659,6 +701,36 @@ mod tests {
         session
     }
 
+    /// A bot's seat (route 1) watching a round says its lines under the
+    /// seat name it greeted with, as it does in the lobby: the host vouches
+    /// its chat under that name, and the sender's own echo said the
+    /// player's name instead.
+    #[test]
+    fn a_bot_watching_speaks_under_its_seat_name() {
+        let mut session = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
+            Lockstep::observer(vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        let me = |session: &OnlineSession| {
+            crate::app::lobby::speaking_as(session.bot.as_deref(), "Ana").to_string()
+        };
+        assert_eq!(me(&session), "Ana", "a person, by name");
+        session.bot = Some("Greedy (Ana)".to_string());
+        assert_eq!(me(&session), "Greedy (Ana)");
+        let mut joined = crate::app::lobby::Joined::dialled(
+            UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
+            true,
+        );
+        joined.bot = session.bot.clone();
+        assert_eq!(
+            joined.greeting("Ana"),
+            session.own_greeting(),
+            "one greeting in the lobby and in the round"
+        );
+    }
+
     /// A peer in line reads the beach being played off the roster by
     /// name: the host's handmade one, from the bytes every board is built
     /// from, and nothing for a built-in map.
@@ -683,6 +755,20 @@ mod tests {
             panic!("a roster");
         };
         assert_eq!(crate::transport::beach_name_from_wire(&beach), "Sent Beach");
+    }
+
+    /// A peer in line is shown the table's places, people and bots, and
+    /// not the AI's, which the terms count: the lobby's own roster says
+    /// it that way, and the two have to agree for one joiner to read both.
+    #[test]
+    fn the_roster_counts_the_places_as_the_lobby_does() {
+        let mut session = hosting(vec![Some(1)]);
+        session.seats = 4;
+        session.terms.bots = 2;
+        let NetMsg::Roster { seats, .. } = session.roster_msg() else {
+            panic!("a roster");
+        };
+        assert_eq!(seats, 2, "the host and Bo; the AI is in the terms");
     }
 
     /// The launch plan is what membership means, not the seat number: a
@@ -977,6 +1063,96 @@ mod next_round_tests {
         assert_eq!(host.session.frame(), 0);
     }
 
+    /// The input that completes a round's last frame is relayed once, as
+    /// it arrives, and the host's sim stops right after it. That relay
+    /// lost, a joiner sat a frame short of the end for good, waiting on a
+    /// player who had long stopped sending. The host on its results card
+    /// answers the joiner's resends with the round's last frames.
+    #[test]
+    fn a_lost_relay_of_the_last_frame_is_sent_again_after_the_round() {
+        use crate::sim::InputMsg;
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1, 2], DEFAULT_DELAY),
+            3,
+            terms(9),
+        );
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1, 2], DEFAULT_DELAY),
+            3,
+            terms(9),
+        );
+        joiner.transport.send(NetMsg::hello("Bo"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() == 1 {
+                break;
+            }
+        }
+        host.peers.deal(&[Some(1)]);
+        // Seat 2 is Cy's, whose inputs reach the host and are relayed to
+        // the joiner, all but the one for the last frame.
+        let last = DEFAULT_DELAY + 10;
+        for _ in DEFAULT_DELAY..=last {
+            let ours = host
+                .session
+                .commit_local(PlayerAction::None)
+                .expect("commit");
+            let bos = joiner
+                .session
+                .commit_local(PlayerAction::None)
+                .expect("commit");
+            let cys = InputMsg {
+                player: 2,
+                frame: ours.frame,
+                action: PlayerAction::None,
+            };
+            host.session.receive(bos);
+            host.session.receive(cys);
+            joiner.session.receive(ours);
+            if cys.frame != last {
+                joiner.session.receive(cys);
+            }
+        }
+        while host.session.advance().is_some() {}
+        while joiner.session.advance().is_some() {}
+        assert_eq!(
+            host.session.frame(),
+            last + 1,
+            "the host played the round out"
+        );
+        assert_eq!(
+            joiner.session.frame(),
+            last,
+            "and the joiner is a frame short"
+        );
+        assert_eq!(joiner.session.awaiting(), vec![2]);
+
+        // The host is on its results card; the joiner is still playing.
+        for _ in 0..40 {
+            joiner.pump(
+                PlayerAction::None,
+                |net| {
+                    while net.session.advance().is_some() {}
+                },
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            if joiner.session.frame() > last {
+                break;
+            }
+        }
+        assert!(
+            joiner.session.frame() > last,
+            "the joiner finished the round: {:?}",
+            joiner.session.awaiting()
+        );
+    }
+
     /// Register `joiners` on the host's socket in order, so their peer
     /// indices are known, and hand back the sockets they greeted from.
     fn gather(host: &mut OnlineSession, joiners: &[&str]) -> Vec<UdpTransport> {
@@ -1013,7 +1189,7 @@ mod next_round_tests {
         let _bo = gather(&mut host, &["Bo"]);
         let port = host.transport.local_addr().expect("addr").port();
         let dee = UdpTransport::join(("127.0.0.1", port)).expect("join");
-        dee.send(crate::app::lobby::greeting(true, "Dee"));
+        dee.send(crate::app::lobby::greeting(None, true, "Dee"));
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(5));
             host.poll_between_rounds(0.0);
@@ -1511,19 +1687,50 @@ mod next_round_tests {
 
     /// The stale `Start` a host re-answers a stray greeting with must not
     /// read as a new round, or every late hello would restart the match.
+    /// Nor may one from the round before: the host answers greetings on
+    /// its results card with the round just played, and an answer that
+    /// the next round's call overtakes on the wire had a seed of its own,
+    /// so the joiner took it up and re-armed onto the old beach while the
+    /// table played the new one.
     #[test]
-    fn the_same_seed_is_not_a_new_round() {
-        let session = OnlineSession::new(
+    fn an_invitation_already_dealt_is_not_a_new_round() {
+        let mut host = OnlineSession::new(
             UdpTransport::host(0).expect("socket"),
-            Lockstep::new(0, vec![0], DEFAULT_DELAY),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
             2,
             terms(111),
         );
-        assert!(!session.is_next_round(&terms(111)), "the round it is in");
-        assert!(
-            session.is_next_round(&terms(112)),
-            "a beach it has not seen"
+        let _bo = gather(&mut host, &["Bo"]);
+        host.peers.deal(&[Some(1)]);
+        let start = |host: &OnlineSession| {
+            let NetMsg::Start(start) = host.start_msg(Some(1)) else {
+                panic!("a Start");
+            };
+            start
+        };
+        host.call_next_round(terms(222), None);
+        let first = start(&host);
+        let mut joiner = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(111),
         );
+        assert!(joiner.is_next_round(&first), "the first round dealt");
+        joiner.take_up(first.clone());
+        assert!(!joiner.is_next_round(&first), "the round it is in");
+
+        // The results card: a greeting answered with round one, then the
+        // call for round two, which the answer arrives after.
+        host.call_next_round(terms(333), None);
+        let second = start(&host);
+        assert!(joiner.is_next_round(&second), "the next round");
+        joiner.take_up(second);
+        assert!(
+            !joiner.is_next_round(&first),
+            "a beach it has played, under a seed it is not on"
+        );
+        assert_eq!(joiner.terms.seed, 333);
     }
 
     /// A player who sat a round out because the table was full asked for

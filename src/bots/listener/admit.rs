@@ -5,6 +5,7 @@ use super::allowance::Allowance;
 use super::wire::{Wire, attach, ping, routes_of, send};
 use super::{
     Admission, Bot, BotId, BotInfo, Event, GameMsg, Registry, Shared, emit, lock, owner_key,
+    same_owner,
 };
 use crate::bots::connstr::{Key, Token};
 use crate::bots::protocol::{PROTOCOL, Register};
@@ -237,11 +238,9 @@ pub(super) fn register_bot(
     if owner_declared
         && let (Some(owner), Admission::Keys(invites)) = (&owner, &config.admission)
         && invites.iter().any(|i| {
-            i.owner.as_deref().is_some_and(|o| {
-                // The name as the invite binds it, against the name
-                // as this bot would have it bound.
-                owner_key(Some(o), false, peer.ip()) == owner_key(Some(owner), false, peer.ip())
-            })
+            i.owner
+                .as_deref()
+                .is_some_and(|bound| same_owner(bound, owner))
         })
     {
         return Err(format!(

@@ -167,11 +167,14 @@ pub fn controls_input(
     mut menu: ResMut<ControlsMenu>,
     mut settings: ResMut<GameSettings>,
     caps: Res<crate::app::keycaps::KeyCaps>,
+    bridged: Res<crate::app::gamepad::Bridged>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     let tr = settings.tr();
     // A running capture swallows everything: the next bindable key lands on
-    // the selected action, and Escape backs out.
+    // the selected action, and Escape backs out. A key the pad bridge
+    // pressed is not one: the d-pad comes through as W/S/A/D, and a pad
+    // player who touched it bound a key they never pressed.
     if let Some(action) = menu.capturing {
         if keys.just_pressed(KeyCode::Escape) {
             menu.capturing = None;
@@ -180,7 +183,7 @@ pub fn controls_input(
         }
         let Some(&key) = keys
             .get_just_pressed()
-            .find(|&&k| binds::bindable(k) && !caps.is_global(k))
+            .find(|&&k| binds::bindable(k) && !caps.is_global(k) && !bridged.holds(k))
         else {
             return;
         };
@@ -287,6 +290,39 @@ pub fn update_controls_ui(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pad player listening for a key who touches the d-pad binds
+    /// nothing: the bridge's W/S/A/D are the pad's, not a key pressed.
+    #[test]
+    fn a_capture_ignores_the_pads_bridged_keys() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Controls));
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::Bridged>();
+        app.init_resource::<GameSettings>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.insert_resource(ControlsMenu {
+            capturing: Some(Action::MoveUp),
+            ..ControlsMenu::default()
+        });
+        let pad = app.world_mut().spawn(Gamepad::default()).id();
+        app.add_systems(
+            Update,
+            (crate::app::gamepad::pad_menu_bridge, controls_input).chain(),
+        );
+        let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
+        gamepad.digital_mut().press(GamepadButton::DPadLeft);
+        app.update();
+        let menu = app.world().resource::<ControlsMenu>();
+        assert_eq!(menu.capturing, Some(Action::MoveUp), "still listening");
+        assert_eq!(
+            app.world().resource::<GameSettings>().binds,
+            binds::default_binds(),
+            "nothing bound"
+        );
+    }
 
     #[test]
     fn rows_line_up_with_the_actions() {

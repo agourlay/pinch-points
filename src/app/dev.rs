@@ -319,10 +319,9 @@ pub(super) fn kickoff(
             config.seats = seats().unwrap_or(4).clamp(2, crate::sim::MAX_PLAYERS as u8);
             config.map = map;
             config.series = series;
-            // A hand-typed PINCH_BOTS is not trusted to leave a human seat:
-            // more bots than seats underflows `seats - bots` everywhere it
-            // is used to count humans.
-            config.bots = bots().unwrap_or(config.seats - 1).min(config.seats - 1);
+            // A hand-typed PINCH_BOTS is not trusted to leave a human seat.
+            config.bots = bots().unwrap_or(config.seats - 1);
+            config.clamp_bots();
             if series.is_series() {
                 *tournament = crate::app::tournament::Tournament::start(series);
             }
@@ -335,7 +334,8 @@ pub(super) fn kickoff(
             config.seats = seats()
                 .unwrap_or(config.seats)
                 .clamp(2, crate::sim::MAX_PLAYERS as u8);
-            config.bots = bots().unwrap_or(config.bots).min(config.seats - 1);
+            config.bots = bots().unwrap_or(config.bots);
+            config.clamp_bots();
             for slot in 0..bot_seats().unwrap_or(0).min(config.bots) {
                 let seat = usize::from(config.seats - 1 - slot);
                 config.controllers[seat] = crate::app::SeatController::Bot;
@@ -520,8 +520,9 @@ pub(super) fn debug_spectator(
         // that resolves to no name, so echoing one here would show this
         // screen something nobody else was given. The hook had the bug it
         // was used to find, which is a poor thing for a hook to have.
-        let me = settings.names[0].clone();
         if let Some(session) = &mut online.0
+            && let me = crate::app::lobby::speaking_as(session.bot.as_deref(), &settings.names[0])
+                .to_string()
             && !me.is_empty()
         {
             let line = "hello from the back row";
@@ -590,9 +591,8 @@ pub(super) fn debug_banner(
 /// Whether this run exists to take a picture.
 ///
 /// The visual harness reads probe pixels off the result, and the camera
-/// shake (`boot::shake_camera`) moves every one of them: the wave that ends
-/// a round is precisely what `PINCH_NOSOLVE` exists to photograph. A shot
-/// run holds the camera still.
+/// shake (`boot::shake_camera`) moves every one of them. A shot run holds
+/// the camera still.
 pub(super) fn screenshotting() -> bool {
     std::env::var("PINCH_SCREENSHOT").is_ok()
 }
@@ -741,8 +741,7 @@ pub(super) fn debug_moments(
 /// `PINCH_NOSOLVE=1` starts the run without placing anything, so a timed
 /// level plays itself out and loses. That is the only way to reach the end
 /// of a round unattended: every other path out of a level is a win, and a
-/// win stops the clock before it can run out. It is how the wave that ends
-/// a round gets looked at (`board_render::wash`).
+/// win stops the clock before it can run out.
 pub(super) fn debug_autoplay(
     mut sim: ResMut<Sim>,
     campaign: Res<Campaign>,

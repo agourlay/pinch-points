@@ -102,6 +102,15 @@ fn first_live(from: usize, live: &[bool]) -> Option<usize> {
         .find(|&row| live[row])
 }
 
+/// Whether something earlier this frame has already said where the game
+/// goes next. A way into the arena that comes with its board (a pasted
+/// code, a dropped replay) gives way to it rather than overwriting it:
+/// the round would otherwise be asked for and another screen entered, or
+/// another round's board seated under the menu's choice.
+pub fn screen_chosen(next: &NextState<crate::app::Screen>) -> bool {
+    !matches!(next, NextState::Unchanged)
+}
+
 /// Enter, from either key that says it: the main one or the numpad's. One
 /// question rather than a per-screen pair of `just_pressed` checks, which
 /// disagreed on whether the numpad counted.

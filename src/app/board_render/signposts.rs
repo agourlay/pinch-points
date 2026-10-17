@@ -100,8 +100,8 @@ fn post_alpha(fade: f32) -> f32 {
 
 /// How much a post shrinks as it runs out.
 ///
-/// The alpha floor above costs the fade most of the range it used to speak
-/// in, so an expiring post withers as well as dimming. Campaign posts
+/// The alpha floor above leaves the fade little range to speak in, so an
+/// expiring post withers as well as dimming. Campaign posts
 /// never fade, so this never touches a puzzle.
 fn wither(fade: f32) -> f32 {
     0.86 + 0.14 * fade
@@ -216,6 +216,15 @@ pub struct PostParts<'w, 's> {
     halos: Query<'w, 's, (&'static mut Sprite, &'static mut Visibility), HaloOnly>,
 }
 
+/// The two clocks a post is drawn on: the wall's for the settle after a
+/// plant, and the round's for the next-to-go mark, which holds under the
+/// pause card and pulses with its dot on the chip.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PostClocks<'w> {
+    time: Res<'w, Time>,
+    round: Res<'w, crate::app::round_state::RoundClock>,
+}
+
 /// Write what a post looks like *now*: how far it has settled after being
 /// planted, how worn it is, how much life it has left, and whether it is
 /// the one the next placement will take.
@@ -228,7 +237,7 @@ pub struct PostParts<'w, 's> {
 /// (see [`post_alpha`]): a worn board is split and chipped
 /// ([`crate::app::art::Art::sign_board_worn`]) and its paint flaking.
 pub fn dress_signposts(
-    time: Res<Time>,
+    clocks: PostClocks,
     sim: Res<Sim>,
     art: Res<Art>,
     settings: Res<crate::app::settings::GameSettings>,
@@ -243,6 +252,7 @@ pub fn dress_signposts(
         mut halos,
     } = parts;
     let board = &sim.0;
+    let PostClocks { time, round } = clocks;
     let dt = time.delta_secs();
     let next: [Option<(u8, u8)>; crate::sim::MAX_PLAYERS] = std::array::from_fn(|seat| {
         seating
@@ -250,7 +260,9 @@ pub fn dress_signposts(
             .then(|| board.next_to_go(seat as u8))
             .flatten()
     });
-    let secs = time.elapsed_secs();
+    // The round's clock, not the wall's: the wobble and the pulse hold
+    // still under the pause card, and the chip's dot reads the same one.
+    let secs = round.0;
     let pulse = next_to_go_pulse(secs, settings.reduced_motion);
     for (mut post, mut sprite, mut transform, children) in &mut posts {
         post.age += dt;

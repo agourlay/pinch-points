@@ -620,7 +620,7 @@ fn play_fixture(
     fixture: &Fixture,
 ) -> GameResult {
     let number = index as u32 + 1;
-    let seed = plan.seed + fixture.beach as u64;
+    let seed = cli::nth_seed(plan.seed, fixture.beach as u64);
     let names: Vec<String> = fixture
         .chairs
         .iter()
@@ -683,7 +683,7 @@ fn schedule_text(plan: &Plan, entrants: &[Entrant], fixtures: &[Fixture], tables
             "g{}  beach {} (seed {})  {}\n",
             i + 1,
             f.beach + 1,
-            plan.seed + f.beach as u64,
+            cli::nth_seed(plan.seed, f.beach as u64),
             names.join(" | ")
         ));
     }
@@ -730,8 +730,7 @@ fn standings(plan: &Plan, listener: &Listener, entrants: &[Entrant], played: &[P
         }
     }
     let avg = |t: &Tally, v: f64| v / f64::from(t.games.max(1));
-    let mut order: Vec<usize> = (0..entrants.len()).collect();
-    order.sort_by(|&a, &b| {
+    let order = cli::ranked(entrants.len(), |a, b| {
         let (ta, tb) = (&tallies[a], &tallies[b]);
         avg(tb, tb.points)
             .total_cmp(&avg(ta, ta.points))
@@ -755,7 +754,7 @@ fn standings(plan: &Plan, listener: &Listener, entrants: &[Entrant], played: &[P
         .to_vec(),
     ];
     let mut declared = false;
-    for (rank, &e) in order.iter().enumerate() {
+    for &(place, e) in &order {
         let t = &tallies[e];
         let entrant = &entrants[e];
         let owner = match (&entrant.owner, entrant.owner_declared) {
@@ -778,7 +777,7 @@ fn standings(plan: &Plan, listener: &Listener, entrants: &[Entrant], played: &[P
             Seat::Ai(_) => ("-".into(), "-".into(), "-".into()),
         };
         rows.push(vec![
-            (rank + 1).to_string(),
+            place.to_string(),
             entrant.name.clone(),
             owner,
             format!("{:.2}", avg(t, t.points)),
@@ -840,9 +839,18 @@ mod tests {
         assert!(plan(args("--id ../x")).is_err());
     }
 
+    /// Any u64 is a seed: the beaches after the last there is wrap round.
+    #[test]
+    fn a_seed_at_the_top_wraps_round_for_the_beaches_after_it() {
+        let top = u64::MAX.to_string();
+        let p = plan(args(&format!("--seeds 3 --seed {top}"))).expect("plan");
+        assert_eq!(cli::nth_seed(p.seed, 0), u64::MAX);
+        assert_eq!(cli::nth_seed(p.seed, 2), 1);
+    }
+
     #[test]
     fn a_cup_of_house_bots_plays_and_ranks_by_points() {
-        let dir = std::env::temp_dir().join(format!("pinch-cup-test-{}", std::process::id()));
+        let dir = crate::app::paths::test_dir("cup-test");
         let p = Plan {
             table: TableOpts {
                 listen: SocketAddr::from(([127, 0, 0, 1], 0)),
@@ -1010,14 +1018,14 @@ mod tests {
     /// the field has waited for it.
     #[test]
     fn an_out_folder_that_cannot_be_written_is_said_up_front() {
-        let file = std::env::temp_dir().join(format!("pinch-cup-out-{}", std::process::id()));
+        let root = crate::app::paths::test_dir("cup-out");
+        let file = root.join("not-a-folder");
         std::fs::write(&file, "not a folder").expect("write");
         assert!(ready_out(&file.join("cup")).is_err());
-        let dir = std::env::temp_dir().join(format!("pinch-cup-ok-{}", std::process::id()));
+        let dir = root.join("cup");
         ready_out(&dir).expect("a folder it can write");
         assert!(dir.is_dir());
-        let _ = std::fs::remove_file(file);
-        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// A game whose thread panics is void, and the cup goes on to its

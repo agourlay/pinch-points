@@ -78,7 +78,21 @@ pub fn solve(level: &Level) -> SolveOutcome {
 /// [`solve`], with the ceiling named by the caller.
 pub fn solve_with(level: &Level, effort: Effort) -> SolveOutcome {
     let mut search = Search::new(level, effort);
-    for depth in 0..=level.posts {
+    // No deeper than the board can hold. Every post goes down before the
+    // first tick, so past the cap a placement either is refused (Reject)
+    // or evicts the oldest (Evict), and either way the beach plays out
+    // with at most `cap` posts standing. Each such beach that wins is
+    // already reached at its own size: its posts, taken in the order the
+    // run first arrives at them, are each a candidate on the board the
+    // earlier ones make, and a post nothing arrives at changes nothing.
+    //
+    // And the search deeper than that would be wrong, not just idle. The
+    // memo keys a node on its placements as a set, which holds only while
+    // order cannot matter, and under Evict past the cap the order decides
+    // which post goes; backing out of a placement that evicted one would
+    // not put the evicted one back either.
+    let (cap, _) = search.sim.signpost_rule();
+    for depth in 0..=level.posts.min(cap) {
         let mut board = level.board();
         if let Some(mut placements) = search.search_at(&mut board, depth) {
             placements.reverse();
@@ -104,7 +118,8 @@ struct Search<'a> {
     /// recognised as the same set.
     ///
     /// Signposts are a *set*: placing A then B leaves exactly the board
-    /// that placing B then A leaves. The search walks orderings, so without
+    /// that placing B then A leaves, as long as neither is placed past the
+    /// cap, which [`solve_with`] never searches. The search walks orderings, so without
     /// this it explores all `depth!` of them: six wasted subtrees out of
     /// seven at three posts, twenty-three out of twenty-four at four.
     ///
@@ -357,6 +372,52 @@ mod tests {
             outcome,
             PuzzleOutcome::Won,
             "solver's answer must actually win"
+        );
+    }
+
+    /// Under Evict an inventory larger than the cap buys nothing before the
+    /// first tick: the posts past the cap only push out the oldest. The
+    /// search stops at the cap, where its memo of placement sets is still
+    /// exact, and what it finds there replays to a win.
+    #[test]
+    fn an_inventory_past_an_evicting_cap_is_searched_only_to_the_cap() {
+        let text = "\
+name: Evicting
+posts: 3
+rule: evict 1
+crab: 0,3 R L common
+map:
++-+-+-+-+-+
+|. . . . .|
++ + + + + +
+|. . 0 . .|
++ + + + + +
+|. . . . .|
++ + + + + +
+|. . . . .|
++-+-+-+-+-+
+";
+        let level = Level::parse(text).expect("parses");
+        let SolveOutcome::Found(solution) = solve_with(&level, Effort::Exhaustive) else {
+            panic!("one post turns the crab home");
+        };
+        assert_eq!(solution.len(), 1, "{solution:?}");
+        let mut board = level.board();
+        for &(x, y, dir) in &solution {
+            assert!(board.place_signpost(0, x, y, dir));
+        }
+        assert_eq!(level.play_out(&mut board).0, PuzzleOutcome::Won);
+
+        // And a hopeless one says so without walking every ordering of
+        // three posts that a cap of one would have thinned to the last.
+        let sealed = text.replace("|. . 0 . .|", "|. .|0|. .|").replace(
+            "+ + + + + +\n|. .|0|. .|\n+ + + + + +",
+            "+ + +-+ + +\n|. .|0|. .|\n+ + +-+ + +",
+        );
+        let level = Level::parse(&sealed).expect("parses");
+        assert_eq!(
+            solve_with(&level, Effort::Exhaustive),
+            SolveOutcome::Unsolvable
         );
     }
 

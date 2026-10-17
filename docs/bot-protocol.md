@@ -142,7 +142,7 @@ rules, the clock and the table:
 ```json
 {"type": "hello", "game": 17, "seat": 2, "seats": 4,
  "names": ["Ana", "Normal AI", "Alice's crab herder", "bob"],
- "kinds": ["human", "ai", "bot", "bot"],
+ "kinds": ["human", "ai", "bot", "bot"], "teams": [0, 1, 2, 3],
  "board": {"width": 12, "height": 9, "wrap": false,
            "tiles": ["0..........1", "...", "..."],
            "walls": {"h": ["------------", "..."], "v": ["|..........|", "..."]},
@@ -159,7 +159,12 @@ rules, the clock and the table:
 ```
 
 `seat` is yours, counting from 0. `kinds` says what holds each seat:
-`human`, `ai` (the game's own AI) or `bot`.
+`human`, `ai` (the game's own AI) or `bot`. `teams` gives each seat's
+team, counting from 0: in a free-for-all every seat is its own team
+(`[0, 1, 2, 3]`), and a round played in pairs at a table of four reads
+`[0, 0, 1, 1]`, your partner the seat that shares your number. Scores
+stay per seat; a team's is the sum of its seats'. A listener older than
+the field leaves it out, which means every seat for itself.
 
 **`tiles`**, one string per row, one character per tile:
 
@@ -326,7 +331,9 @@ evicts), `no_post` (a removal or clear with nothing of yours there).
 {"type": "end", "game": 17, "scores": [12, 3, 20, 7], "placing": 1, "replay": "t1-g17"}
 ```
 
-`placing` is 1 for first; seats that tie share a place. `replay` is the
+`placing` is 1 for first; seats that tie share a place. In a round
+played in teams it is your team's place, by the teams' totals, and
+partners share it. `replay` is the
 id to fetch the game's replay with (see *Replays*), or `null` when
 nothing was recorded.
 

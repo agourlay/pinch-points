@@ -56,6 +56,13 @@ pub const TICKS_PER_SECOND: u32 = 30;
 pub const EVENT_TICKS: u32 = 300;
 /// The final-scramble threshold: with a round timer set, gull spawning
 /// doubles in rate when this many ticks remain (spec §3.6: 30 s).
+///
+/// Measured from the end, so a round no longer than this is in the surge
+/// from its first tick. Every timed level in the game is one: the Beach
+/// Day challenges run exactly 900 ticks and the timed campaign puzzles
+/// less, so for them the "final" scramble is the whole round and its
+/// doubled rate is their baseline, tuned as such. Only the versus round
+/// lengths are long enough to have a calm stretch before it.
 pub const SURGE_TICKS: u32 = 900;
 
 /// Castle tier (0–3) for a banked-crab score.
@@ -254,7 +261,10 @@ pub struct Rules {
     pub signpost_cap: u8,
     pub cap_policy: CapPolicy,
     /// Auto-spawn a gull at a PRNG edge tile every this many ticks; 0 = off.
-    /// Doubled during the final-scramble surge of a timed round.
+    /// Halved (the rate doubled) during the final-scramble surge of a
+    /// timed round, which on a round no longer than [`SURGE_TICKS`], every
+    /// Beach Day challenge among them, is the whole round: there the
+    /// period a level states is never the one it plays at.
     pub gull_period: u32,
     /// How many gulls the ambient spawner allows on the beach at once.
     /// [`GULL_CAP`] unless a versus beach bigger than the classic one asked
@@ -384,6 +394,17 @@ impl Default for Rules {
             castle_raids: true,
         }
     }
+}
+
+/// Why no table can sit at a beach ([`Board::arena_problem`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ArenaProblem {
+    /// The castles skip this seat, counted from 0, while a later one has a
+    /// castle. Seat `n` plays castle `n`, so the skipped seat would have
+    /// nothing to bank in and the later castle would bank for nobody.
+    SkippedSeat(PlayerId),
+    /// Castles for only this many seats, under the two a table needs.
+    TooFew(u8),
 }
 
 /// The entire game state. No engine types, no floats, no hash maps: every
@@ -833,7 +854,8 @@ impl Board {
     }
 
     /// The final scramble: the last 30 s of a timed round, when gulls spawn
-    /// at double rate.
+    /// at double rate. True from tick 0 on a round no longer than
+    /// [`SURGE_TICKS`], which is every timed level (see there).
     pub fn in_surge(&self) -> bool {
         self.remaining_ticks()
             .is_some_and(|left| left <= u64::from(SURGE_TICKS))
@@ -863,9 +885,15 @@ impl Board {
             // Gull Mania on top of the surge leaves fifteen gulls and
             // almost no crabs with half a minute to play. A crowd calling
             // it down is the surge's worst case, not its exception.
-            PlayerAction::CallEvent(event) => {
+            //
+            // Only on a beach whose wheel turns at all, though: never on a
+            // puzzle, a challenge or a handmade beach played online, where
+            // the wheel is off. The `enabled` flag says where events fire,
+            // and a call is an event firing.
+            PlayerAction::CallEvent(event) if self.tide.enabled => {
                 self.force_tide_event(self.surge_safe(event), player);
             }
+            PlayerAction::CallEvent(_) => {}
         }
     }
 
@@ -1064,8 +1092,8 @@ impl Board {
             .map(|(x, y, _)| (x, y))
     }
 
-    /// The highest seat number with a castle on the board: the seat count
-    /// a recorded board implies.
+    /// The owner of every castle on the board, in reading order, once per
+    /// castle: a seat with two castles is named twice.
     pub fn castle_owners(&self) -> impl Iterator<Item = PlayerId> + '_ {
         // Over the tiles themselves rather than `tiles()`, which pays a
         // divide and a remainder per tile to name coordinates this throws
@@ -1086,13 +1114,68 @@ impl Board {
     /// than by castle: a beach seats as many players as there are banks to
     /// run for. What the map dial measures a handmade beach against.
     pub fn castle_seats(&self) -> u8 {
-        let mut seen = [false; MAX_PLAYERS];
+        self.owners_held().iter().filter(|held| **held).count() as u8
+    }
+
+    /// How big a table this beach can seat: its castles' owners when they
+    /// run 0, 1, 2 and on with none skipped, `None` when one is.
+    ///
+    /// Seat `n` plays castle `n`. Castles marked 0 and 2 counted as two
+    /// seats by owner ([`Board::castle_seats`]), and a table of two sat at
+    /// them with seat 1 owning nothing to bank in all round, while the
+    /// castle marked 2 banked for a seat nobody played. Such a beach seats
+    /// no table at all.
+    pub fn table_seats(&self) -> Option<u8> {
+        let held = self.owners_held();
+        let run = held.iter().take_while(|held| **held).count();
+        held[run..].iter().all(|held| !held).then_some(run as u8)
+    }
+
+    /// Why no table can sit at this beach, `None` when one can: its
+    /// castles skip a seat ([`Board::table_seats`]), or there are castles
+    /// for fewer than the two seats a table needs. The one question the
+    /// level loader and the editor's check both ask.
+    pub fn arena_problem(&self) -> Option<ArenaProblem> {
+        let held = self.owners_held();
+        let run = held.iter().take_while(|held| **held).count();
+        match held[run..].iter().any(|held| *held) {
+            true => Some(ArenaProblem::SkippedSeat(run as PlayerId)),
+            false if run < 2 => Some(ArenaProblem::TooFew(run as u8)),
+            false => None,
+        }
+    }
+
+    /// Which seats own at least one castle, by seat number. An owner past
+    /// [`MAX_PLAYERS`] seats nobody and is left out.
+    fn owners_held(&self) -> [bool; MAX_PLAYERS] {
+        let mut held = [false; MAX_PLAYERS];
         for owner in self.castle_owners() {
-            if let Some(slot) = seen.get_mut(usize::from(owner)) {
+            if let Some(slot) = held.get_mut(usize::from(owner)) {
                 *slot = true;
             }
         }
-        seen.iter().filter(|held| **held).count() as u8
+        held
+    }
+
+    /// Put away the castles of seats a table of `seats` does not have,
+    /// leaving open sand where they stood.
+    ///
+    /// A handmade beach can have castles for more players than sit down at
+    /// it. Left standing, the castles past the table banked crabs for
+    /// seats nobody played: points on the board, a replay that counted the
+    /// phantom seats back in from the castles and could crown one of them,
+    /// and bots told scores for players who were never there. Every board a
+    /// table plays on a handmade beach is built through
+    /// [`crate::sim::Level::table_board`], which calls this, so every peer
+    /// and the recording start from the same sand.
+    pub fn retire_castles_from(&mut self, seats: u8) {
+        for tile in &mut self.grid.tiles {
+            if let TileKind::Castle(owner) = *tile
+                && owner >= seats
+            {
+                *tile = TileKind::Empty;
+            }
+        }
     }
 
     /// The first signpost owned by `player` in reading order (top-left to
@@ -1131,8 +1214,8 @@ mod tests;
 
 pub use events::{Mania, Tempo, TideEvent};
 pub use signposts::Refusal;
-pub use sweep::Sweeping;
 use sweep::Sweeps;
+pub use sweep::{SWEEP_MEMORY, Sweeping};
 
 pub use geometry::Grid;
 pub(crate) use geometry::Walker;

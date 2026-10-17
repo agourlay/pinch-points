@@ -36,25 +36,58 @@ pub(super) fn has_an_opponent(config: &MatchConfig, pads_joined: usize, p2_here:
     config.bots > 0 || pads_joined > 0 || p2_here
 }
 
+/// [`has_an_opponent`] for this table as it stands, with `claims` pads
+/// claimed: one answer for the footer that warns about an empty chair and
+/// the Enter that refuses to start against one.
+fn table_has_an_opponent(
+    settings: &GameSettings,
+    config: &MatchConfig,
+    claims: usize,
+    menu: &MatchMenu,
+) -> bool {
+    has_an_opponent(
+        config,
+        rivals_on_pads(settings, config, claims),
+        menu.p2_here,
+    )
+}
+
+/// The seats the first `claims` pad claims drive at this table, in claim
+/// order, skipping a claim that drives none. One answer, from
+/// [`crate::app::gamepad::seat_of_claim`], for the footer that names them
+/// and the check that somebody is there to play.
+pub(super) fn claimed_seats<'a>(
+    settings: &'a GameSettings,
+    config: &MatchConfig,
+    claims: usize,
+) -> impl Iterator<Item = u8> + 'a {
+    let humans = config.humans();
+    (0..claims).filter_map(move |claim| crate::app::gamepad::seat_of_claim(settings, humans, claim))
+}
+
+/// How many pad claims seat somebody other than player 1, the person
+/// working this menu: P1 picking up the controller they named is still
+/// nobody to play against.
+pub(super) fn rivals_on_pads(
+    settings: &GameSettings,
+    config: &MatchConfig,
+    claims: usize,
+) -> usize {
+    claimed_seats(settings, config, claims)
+        .filter(|&seat| seat != 0)
+        .count()
+}
+
 /// Whether this frame's keys include one of P2's own: a key bound to the
 /// second keyboard seat that neither player 1 nor the menu also uses, so
 /// the person working the menu cannot join as P2 by accident.
+///
+/// Read under the commit rule the round itself plays with
+/// ([`GameSettings::commit_in_play`], keyboard shared): a versus round puts
+/// P1's placement on the arrows whatever the preset, so IJKL is P2's here
+/// too, and the one-hand preset must not hide the keys P2 will play with.
 pub(super) fn p2_pressed(keys: &ButtonInput<KeyCode>, settings: &GameSettings) -> bool {
-    use crate::app::cursor::{KeyMap, keymap};
-    let all = |map: KeyMap| {
-        let KeyMap {
-            moves,
-            places,
-            remove,
-            clear_all,
-        } = map;
-        moves
-            .into_iter()
-            .map(|(key, ..)| key)
-            .chain(places.into_iter().map(|(key, _)| key))
-            .chain([remove, clear_all])
-            .collect::<Vec<KeyCode>>()
-    };
+    use crate::app::cursor::keymap;
     let menu = [
         KeyCode::Enter,
         KeyCode::NumpadEnter,
@@ -62,9 +95,10 @@ pub(super) fn p2_pressed(keys: &ButtonInput<KeyCode>, settings: &GameSettings) -
         KeyCode::Tab,
         KeyCode::Backspace,
     ];
-    let p1 = all(keymap(settings, 0, settings.commit));
-    all(keymap(settings, 1, settings.commit))
-        .into_iter()
+    let commit = settings.commit_in_play(true);
+    let p1: Vec<KeyCode> = keymap(settings, 0, commit).keys().collect();
+    keymap(settings, 1, commit)
+        .keys()
         .filter(|key| !p1.contains(key) && !menu.contains(key))
         .any(|key| keys.just_pressed(key))
 }
@@ -269,8 +303,7 @@ pub fn update_match_pad_info(
         let line = beaches_note(config.seats, tr, &beaches).unwrap_or_default();
         menu_ui::set_text(&mut text, &line);
     }
-    let humans = config.seats - config.bots;
-    let alone = !has_an_opponent(&config, seats.0.len(), menu.p2_here);
+    let alone = !table_has_an_opponent(&settings, &config, seats.0.len(), &menu);
     for (info, mut text, mut ink, mut pill) in &mut rows {
         let warning = !info.0 && alone;
         let (want_ink, want_pill) = if warning {
@@ -284,19 +317,18 @@ pub fn update_match_pad_info(
             if seats.0.is_empty() {
                 String::new()
             } else {
-                // Pad claim i drives the i-th human seat from the top.
-                let list: Vec<String> = (0..seats.0.len())
-                    .map(|i| {
-                        let seat = humans.saturating_sub(1 + i as u8);
-                        crate::app::seat_label(tr, seat)
-                    })
+                // Named for the seat each claim drives in the round, by
+                // the rule the round reads pads with: a seat that named a
+                // controller takes it before the top-down order does.
+                let list: Vec<String> = claimed_seats(&settings, &config, seats.0.len())
+                    .map(|seat| crate::app::seat_label(tr, seat))
                     .collect();
                 fill(tr.match_pad_joined, &[("list", &list.join(", "))])
             }
         } else if warning {
             // In the join hint's place: it is the same news, a seat
             // waiting for somebody, with the other way to fill it.
-            tr.match_needs_opponent.to_string()
+            crate::app::name_the_pair(tr, tr.match_needs_opponent)
         } else {
             tr.match_pad_hint.to_string()
         };
@@ -460,7 +492,7 @@ pub fn match_setup_input(
     let hooked = crate::app::dev::launch() && !std::mem::replace(&mut menu.launched, true);
     if menu_ui::enter(&keys) || hooked {
         // Nobody to play: the footer already says what to do about it.
-        if !has_an_opponent(&config, pads.0.len(), menu.p2_here) {
+        if !table_has_an_opponent(&settings, &config, pads.0.len(), &menu) {
             return;
         }
         // Bots first: a match never starts with a seat nothing is driving.
@@ -488,7 +520,7 @@ pub fn match_setup_input(
             // rather than starting a match six players cannot all sit at.
             if config.map.size().0 < WIDE_ENOUGH {
                 config.seats = config.seats.min(CLASSIC_SEATS);
-                config.bots = config.bots.min(config.seats - 1);
+                config.clamp_bots();
             }
         }
         Row::Gulls => config.gulls = config.gulls.cycled(turn),
@@ -560,7 +592,7 @@ pub(super) fn row_text(
             dial(&config.seats.to_string()),
         ),
         Row::Bots => {
-            let humans = config.seats - config.bots;
+            let humans = config.humans();
             let rest = if humans == 1 {
                 tr.human_one.to_string()
             } else {

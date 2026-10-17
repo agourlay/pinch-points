@@ -3,8 +3,8 @@
 //! turnstiles.
 
 use super::pools::spawn_pools;
-use super::surround::{spawn_dusk_shore, spawn_weather};
-use super::{OnTile, Side, clear_stale, image_sprite, z};
+use super::surround::{spawn_beach, spawn_weather};
+use super::{OnTile, clear_stale, image_sprite, z};
 use crate::app::Sim;
 use crate::app::art::Art;
 use crate::app::layout::{self, TILE};
@@ -51,11 +51,12 @@ fn spawn_tile_feature(
                 BoardStatic,
                 super::cast_shadow(
                     art,
-                    pos,
-                    TILE * 0.85,
-                    TILE * 0.16,
-                    0.5,
-                    z::TILE_FEATURE - 0.06,
+                    pos.extend(z::TILE_FEATURE - 0.06),
+                    super::Caster {
+                        footprint: TILE * 0.85,
+                        height: TILE * 0.16,
+                        alpha: 0.5,
+                    },
                 ),
             ));
             commands.spawn((
@@ -90,11 +91,12 @@ fn spawn_tile_feature(
                 BoardStatic,
                 super::cast_shadow(
                     art,
-                    pos + Vec2::new(0.0, -TILE * 0.12),
-                    TILE * 0.55,
-                    TILE * 0.14,
-                    0.3,
-                    z::TILE_FEATURE - 0.06,
+                    (pos + Vec2::new(0.0, -TILE * 0.12)).extend(z::TILE_FEATURE - 0.06),
+                    super::Caster {
+                        footprint: TILE * 0.55,
+                        height: TILE * 0.14,
+                        alpha: 0.3,
+                    },
                 ),
             ));
             commands.spawn((
@@ -123,17 +125,17 @@ fn spawn_tile_feature(
 /// Everything about a board that never moves: the sand, what sits on each
 /// tile, and the driftwood fence around and through it.
 pub fn spawn_static_board(commands: &mut Commands, board: &Board, art: &Art) {
-    spawn_dusk_shore(commands, board, art);
+    spawn_beach(commands, board, art);
     // The board's sand: one quad the sand shader draws as the tiles'
-    // checkerboard, rippled, damp in patches and grained in world space.
-    // It was one of two tile sprites per square, turned four ways, and a
-    // board read as the same two tiles over and over.
+    // checkerboard, rippled, damp in patches and grained in world space,
+    // so no two squares look alike.
     commands.spawn((
         BoardStatic,
-        Mesh2d(art.water.quad.clone()),
-        MeshMaterial2d(art.water.board_sand.clone()),
-        Transform::from_translation(Vec3::new(0.0, 0.0, z::SAND))
-            .with_scale(layout::board_extent(board).extend(1.0)),
+        art.shaded.quad(
+            &art.shaded.board_sand,
+            Transform::from_translation(Vec3::new(0.0, 0.0, z::SAND)),
+            layout::board_extent(board),
+        ),
     ));
     for (x, y, kind) in board.tiles() {
         let pos = layout::tile_center(board, x, y);
@@ -345,6 +347,51 @@ pub fn animate_turnstiles(time: Res<Time>, mut logs: Query<(&TurnstileSprite, &m
         let next = current + (target - current) * (time.delta_secs() * 14.0).min(1.0);
         if (next - current).abs() > 0.0005 {
             transform.rotation = Quat::from_rotation_z(next);
+        }
+    }
+}
+
+/// One side of the board, for the things drawn along all four: the wet
+/// sand fringe.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Side {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+impl Side {
+    const ALL: [Side; 4] = [Side::Top, Side::Bottom, Side::Left, Side::Right];
+
+    /// Out of the board across this side, in world space (y up).
+    fn normal(self) -> Vec2 {
+        match self {
+            Side::Top => Vec2::Y,
+            Side::Bottom => Vec2::NEG_Y,
+            Side::Left => Vec2::NEG_X,
+            Side::Right => Vec2::X,
+        }
+    }
+
+    /// The turn that points a strip's foot out of the board across this
+    /// side: a strip drawn fading downward fades out toward the water.
+    fn rotation(self) -> f32 {
+        match self {
+            Side::Top => std::f32::consts::PI,
+            Side::Bottom => 0.0,
+            Side::Left => -std::f32::consts::FRAC_PI_2,
+            Side::Right => std::f32::consts::FRAC_PI_2,
+        }
+    }
+
+    /// The board measured from this side, `extent` being its size: how long
+    /// this side's edge is, and how far it is across the board to the
+    /// opposite one.
+    fn span(self, extent: Vec2) -> (f32, f32) {
+        match self {
+            Side::Top | Side::Bottom => (extent.x, extent.y),
+            Side::Left | Side::Right => (extent.y, extent.x),
         }
     }
 }

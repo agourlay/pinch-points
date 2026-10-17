@@ -16,17 +16,18 @@
 //!   will never read; the ticks it misses that way are skipped, as if it
 //!   had waited.
 
+use super::cursor::SeatCursor;
 use super::listener::{BotId, GameMsg};
 use super::protocol::{Act, Outcome, Reply};
 use crate::sim::{Board, PlayerAction, PlayerId, Refusal};
 use serde_json::Value;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::time::{Duration, Instant};
 
 /// The least a tick that was never answered holds up the next one.
 const GIVE_UP: Duration = Duration::from_millis(250);
-/// How many recent ticks a seat remembers sending, to time replies by.
+/// How many recent ticks a seat remembers sending, to pace and log by.
 const RECENT: usize = 64;
 
 /// What one seat did, for the standings.
@@ -115,10 +116,13 @@ pub struct BotDriver {
     acted: Option<u64>,
     /// The first tick it wants to be sent after a `wait`.
     awake_at: u64,
-    /// Recent ticks sent and when, for timing replies.
+    /// Recent ticks sent and when.
     sent: VecDeque<(u64, Instant)>,
-    /// Ticks a reply has answered, among those recently sent.
-    answered: VecDeque<u64>,
+    /// Every tick sent that no reply has answered yet, and when it went:
+    /// a reply is timed and counted against this, however many ticks
+    /// later it comes. A bot slower than [`RECENT`] ticks still answered
+    /// what it answered.
+    unanswered: HashMap<u64, Instant>,
     answered_count: u32,
     /// The last tick sent, while no reply to it or a later one has come.
     outstanding: Option<u64>,
@@ -147,7 +151,7 @@ impl BotDriver {
             acted: None,
             awake_at: 0,
             sent: VecDeque::new(),
-            answered: VecDeque::new(),
+            unanswered: HashMap::new(),
             answered_count: 0,
             outstanding: None,
             result: SeatResult::default(),
@@ -226,6 +230,7 @@ impl BotDriver {
     pub fn sent(&mut self, t: u64, at: Instant) {
         self.outstanding = Some(t);
         self.sent.push_back((t, at));
+        self.unanswered.entry(t).or_insert(at);
         if self.sent.len() > RECENT {
             self.sent.pop_front();
         }
@@ -299,14 +304,8 @@ impl BotDriver {
         if unblocked {
             self.outstanding = None;
         }
-        if let Some(&(_, sent)) = self.sent.iter().find(|(tick, _)| *tick == reply.tick)
-            && !self.answered.contains(&reply.tick)
-        {
-            self.answered.push_back(reply.tick);
+        if let Some(sent) = self.unanswered.remove(&reply.tick) {
             self.answered_count += 1;
-            if self.answered.len() > RECENT {
-                self.answered.pop_front();
-            }
             let took = at.duration_since(sent);
             self.result.reply_ms.push(took.as_secs_f64() * 1000.0);
             if took > self.deadline {
@@ -333,10 +332,14 @@ impl BotDriver {
         unblocked
     }
 
-    /// The seat is out of play for now: whatever reply it held is dropped,
-    /// not acted on later when it comes back.
-    pub fn idle(&mut self) {
+    /// The bot is not playing (gone, or not ready yet), so the seat idles:
+    /// whatever reply it held is dropped, not acted on later when it comes
+    /// back, and its hand lets go of any walk under way, which would
+    /// otherwise land the order on arrival with nobody there to have meant
+    /// it.
+    pub fn stand_down(&mut self, cursor: &mut SeatCursor) {
         self.in_hand = None;
+        cursor.let_go();
     }
 
     /// What the bot asks this seat to do at the commit: its newest reply,
@@ -434,7 +437,7 @@ pub fn outcome(
     }
     if let PlayerAction::Place { x, y, .. } = action
         && after
-            .signpost_at(x, y)
+            .try_signpost_at(x, y)
             .is_some_and(|post| post.owner == seat && post.placed == tick)
     {
         return Some(Outcome::Accepted);
@@ -443,7 +446,7 @@ pub fn outcome(
         (Some(why), _) => Outcome::Refused(why),
         // Clear with nothing to clear: nothing was asked of the sim.
         (None, PlayerAction::None) => Outcome::Refused(Refusal::NoPost),
-        (None, PlayerAction::Place { x, y, .. }) => match after.signpost_at(x, y) {
+        (None, PlayerAction::Place { x, y, .. }) => match after.try_signpost_at(x, y) {
             // Lost the tile to a seat the tick's order reached first.
             Some(post) if post.owner != seat && post.placed == tick => {
                 Outcome::Refused(Refusal::RivalPost)
@@ -463,9 +466,23 @@ pub fn act_of(action: PlayerAction) -> Option<Act> {
     }
 }
 
-/// Placings, 1 for first, by score. Seats that tie share the place; a
-/// forfeit is last, whatever it banked, with the others placed among
-/// themselves.
+/// Places, 1 for first, of `n` entries that `cmp` orders best first: the
+/// one rule every ranking follows. Entries `cmp` cannot tell apart share a
+/// place, and the next one down skips the places they took (1, 1, 3): a
+/// dead heat is not a first and a second.
+pub fn ranks_by(n: usize, cmp: impl Fn(usize, usize) -> std::cmp::Ordering) -> Vec<u32> {
+    (0..n)
+        .map(|entry| 1 + (0..n).filter(|&other| cmp(other, entry).is_lt()).count() as u32)
+        .collect()
+}
+
+/// Places, 1 for first, by score, the higher the better ([`ranks_by`]).
+pub fn ranks(scores: &[u32]) -> Vec<u32> {
+    ranks_by(scores.len(), |a, b| scores[b].cmp(&scores[a]))
+}
+
+/// Placings, 1 for first, by score ([`ranks`]), but a forfeit is last,
+/// whatever it banked, with the others placed among themselves.
 ///
 /// Last means the table's last place, however many forfeited. Placed just
 /// behind the seats still playing, a table where everybody forfeited
@@ -473,22 +490,14 @@ pub fn act_of(action: PlayerAction) -> Option<Act> {
 /// and the half point the second-last is worth: a forfeit scoring better
 /// for having company.
 pub fn placings(scores: &[u32], forfeits: &[bool]) -> Vec<u32> {
-    let playing: Vec<u32> = scores
-        .iter()
+    let n = scores.len().min(forfeits.len());
+    // A forfeit sorts below every seat still playing, so it never takes a
+    // place from one; its own place is overwritten below.
+    let key = |seat: usize| (!forfeits[seat], scores[seat]);
+    ranks_by(n, |a, b| key(b).cmp(&key(a)))
+        .into_iter()
         .zip(forfeits)
-        .filter(|(_, f)| !**f)
-        .map(|(s, _)| *s)
-        .collect();
-    scores
-        .iter()
-        .zip(forfeits)
-        .map(|(&score, &forfeit)| {
-            if forfeit {
-                scores.len() as u32
-            } else {
-                1 + playing.iter().filter(|&&other| other > score).count() as u32
-            }
-        })
+        .map(|(place, &forfeit)| if forfeit { scores.len() as u32 } else { place })
         .collect()
 }
 
@@ -614,6 +623,30 @@ mod tests {
         );
         assert_eq!(seat.turn(1, now), Turn::Skip, "it asked to sleep");
         assert_eq!(seat.turn(6, now), Turn::Send, "and wakes when it said");
+    }
+
+    /// A reply that comes more ticks late than the seat remembers sending
+    /// is still an answer: what it answered is not counted as missed.
+    #[test]
+    fn a_reply_older_than_the_recent_ticks_is_not_missed() {
+        let (mut log, mut console) = quiet();
+        let mut journal = Journal {
+            log: &mut log,
+            console: &mut console,
+            echo_notes: false,
+            game: 1,
+        };
+        let mut seat = BotDriver::new(0, 0, "b".into(), true, Duration::from_millis(33));
+        seat.presence = Presence::Ready;
+        let now = Instant::now();
+        let sent = RECENT as u64 * 2;
+        for t in 0..sent {
+            seat.sent(t, now);
+        }
+        seat.take(reply(0, Act::None), sent, &mut journal);
+        seat.close();
+        assert_eq!(seat.result.missed, sent as u32 - 1);
+        assert_eq!(seat.result.reply_ms.len(), 1, "and it is timed");
     }
 
     /// A seat that forfeited plays nothing, whatever its bot goes on

@@ -16,7 +16,7 @@ mod seats;
 
 pub use bridge::{Bridged, pad_bridge_release, pad_menu_bridge};
 pub use rumble::rumble_on_raid;
-pub use seats::{PadSeats, keep_pad_order, pad_claim_seats};
+pub use seats::{PadSeats, keep_pad_order, pad_claim_seats, seat_of_claim};
 
 use crate::app::cursor::{Cursor, HoldRepeat};
 use crate::app::play_input::{SeatCommand, apply_setup, queue_versus};

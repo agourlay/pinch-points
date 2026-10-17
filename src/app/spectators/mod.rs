@@ -143,6 +143,7 @@ pub fn settle_spectator_vote(
     time: Res<Time>,
     settings: Res<crate::app::settings::GameSettings>,
     phase: Res<State<crate::app::VersusPhase>>,
+    sim: Res<crate::app::Sim>,
     mut online: ResMut<Online>,
 ) {
     let Some(session) = &mut online.0 else {
@@ -150,6 +151,13 @@ pub fn settle_spectator_vote(
     };
     if !session.is_host() {
         return;
+    }
+    // A beach whose wheel is off takes no call (`PlayerAction::CallEvent`
+    // fires nothing on it), so a vote that reached the host anyway, from
+    // a peer on an older card, is put away before it opens a window the
+    // crowd would be told about.
+    if !sim.0.events_enabled() {
+        session.stands.tide.votes.forget_open();
     }
     if *phase.get() != crate::app::VersusPhase::Running {
         // The tide is in and the board is frozen. A window still open when
@@ -291,7 +299,7 @@ mod tests {
         app.insert_resource(State::new(crate::app::VersusPhase::Running));
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.init_resource::<Time>();
         app.add_message::<KeyboardInput>();
         // Named, as the lobby leaves anyone who got this far: it asks
@@ -303,6 +311,10 @@ mod tests {
         app.init_resource::<SpectatorCard>();
         app.init_resource::<PickCard>();
         app.insert_resource(Online(Some(session(local))));
+        // A versus beach, whose wheel turns: the only kind a call lands on.
+        let mut board = crate::sim::Board::new(9, 7, 2);
+        board.set_events_enabled(true);
+        app.insert_resource(crate::app::Sim(board));
         app.add_systems(
             Update,
             (
@@ -390,6 +402,7 @@ mod tests {
             board.set_score(1, 9);
             app.insert_resource(crate::app::Sim(board));
             app.insert_resource(crate::app::settings::GameSettings::default());
+            app.init_resource::<crate::app::Daily>();
             let mut watcher = session(None);
             watcher.stands.winner.my_pick = Some(pick);
             app.insert_resource(Online(Some(watcher)));
@@ -769,6 +782,43 @@ mod tests {
 
         tap(&mut app, KeyCode::KeyE);
         assert!(!card_open(&app), "and does not come back");
+    }
+
+    /// A beach whose wheel is off, a handmade one played online, has
+    /// nothing a call could fire, so the list is not offered on it, and a
+    /// vote that reaches the host anyway never settles into a call.
+    #[test]
+    fn no_calls_on_a_beach_whose_wheel_is_off() {
+        let mut app = beach(None);
+        app.world_mut()
+            .resource_mut::<crate::app::Sim>()
+            .0
+            .set_events_enabled(false);
+        tap(&mut app, KeyCode::KeyE);
+        assert!(!card_open(&app), "no list to pick from");
+
+        let mut app = beach(Some(0));
+        app.world_mut()
+            .resource_mut::<crate::app::Sim>()
+            .0
+            .set_events_enabled(false);
+        {
+            let mut online = app.world_mut().resource_mut::<Online>();
+            let session = online.0.as_mut().expect("a session");
+            session
+                .stands
+                .tide
+                .votes
+                .cast(90, TideEvent::FreshSand.index() as u8);
+        }
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f32(WINDOW + 0.1));
+        app.update();
+        let session = app.world().resource::<Online>();
+        let session = session.0.as_ref().expect("a session");
+        assert_eq!(session.stands.tide.pending_call, None, "nothing called");
+        assert_eq!(session.stands.tide.votes.open(), None, "nor left open");
     }
 
     // --- settling, and packing up ----------------------------------

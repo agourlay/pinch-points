@@ -300,6 +300,8 @@ struct Tr {
     /// bank the golden one), where "all crabs safe" is not what happened.
     pub prompt_won_goal: &'static str,
     pub prompt_lost: &'static str,
+    /// The loss prompt under `goal_missed`.
+    pub prompt_lost_goal: &'static str,
     pub prompt_versus_short: &'static str,
     pub prompt_versus_local: &'static str,
     /// Shown instead of the key legend once the player has rebound keys.
@@ -379,9 +381,15 @@ struct Tr {
     pub update_open_failed: &'static str,
     pub prompt_settings: &'static str,
     pub prompt_match_setup: &'static str,
-    /// The same line with the cursor on a name row, where Enter types a
-    /// name rather than starting the match.
+    /// The same line with the cursor on a name row, where Tab opens the
+    /// name for typing.
     pub prompt_match_name: &'static str,
+    /// The prompt while a line is being typed and Esc throws it away: the
+    /// screen's own keys are letters until the box closes.
+    pub prompt_typing: &'static str,
+    /// The same while every way out keeps what was typed, as a seat's
+    /// name does on the match setup.
+    pub prompt_typing_keep: &'static str,
     /// Short seat label: "P1" / "J1" / "S1".
     pub player_label: &'static str,
     // Tide events
@@ -428,6 +436,10 @@ struct Tr {
     /// The heading over the puzzle loss card: the run is over, and the
     /// board held under it says where.
     pub crabs_lost: &'static str,
+    /// The same heading for a stage that asks for a number of crabs or the
+    /// golden one: those are lost only on the clock, with every crab on
+    /// the beach maybe still safe.
+    pub goal_missed: &'static str,
     pub last_level: &'static str,
     /// The heading over the last level's card: the run is finished, not
     /// merely another level won.
@@ -570,6 +582,10 @@ struct Tr {
     /// Said beside the map dial when the player has beaches saved and none
     /// of them has a castle for every seat at this table.
     pub map_none_seats: &'static str,
+    /// Said there instead when every saved beach skips a castle number
+    /// (castles 0 and 2 with no 1): no table of any size can sit at one,
+    /// so naming the table's size would point at the wrong fix.
+    pub map_skips_castle: &'static str,
     pub gull_names: [&'static str; 3],
     pub round_names: [&'static str; 4],
     // Lobby
@@ -577,6 +593,9 @@ struct Tr {
     pub lobby_hosting_noport: &'static str,
     pub lobby_rivals_one: &'static str,
     pub lobby_rivals_many: &'static str,
+    /// The host's status with only spectators aboard: Enter still starts,
+    /// against the AI, which the line's suffix counts.
+    pub lobby_rivals_none: &'static str,
     pub lobby_aboard: &'static str,
     /// Appended to the host's status when AI seats will fill the rest.
     pub lobby_ai_seats: &'static str,
@@ -722,6 +741,8 @@ struct Tr {
     pub ed_resize_confirm: &'static str,
     /// The same for F4, a level pasted from a code in place of this one.
     pub ed_paste_confirm: &'static str,
+    /// Esc pressed once over an unsaved level: a second press leaves.
+    pub ed_leave_confirm: &'static str,
     pub code_kind_beach: &'static str,
     pub code_kind_level: &'static str,
     pub code_kind_round: &'static str,
@@ -757,6 +778,9 @@ struct Tr {
     /// What checking a beach says, in place of the solver's verdict.
     pub ed_arena_ok: &'static str,
     pub ed_arena_needs_seats: &'static str,
+    /// A beach whose castles skip a player: `{n}` is the player, counted
+    /// from 1, with no castle while a later one has. No table sits there.
+    pub ed_arena_skips_seat: &'static str,
     pub ed_arena_no_crabs: &'static str,
 
     // --- bot seats (docs/bot-seats.md) ---
@@ -880,6 +904,23 @@ mod tests {
                     "{field} placeholders diverge in {lang:?}"
                 );
             }
+        }
+    }
+
+    /// The co-op lines call the two seats what the rest of the language
+    /// calls them: French said P1 and P2 beside a scoreboard of J1 and J2.
+    #[test]
+    fn the_pair_is_named_by_each_languages_own_labels() {
+        for lang in ALL_LANGS {
+            let tr = lang.tr();
+            let (one, two) = (crate::app::seat_label(tr, 0), crate::app::seat_label(tr, 1));
+            let coop = crate::app::name_the_pair(tr, tr.prompt_setup_coop);
+            assert!(
+                coop.contains(&one) && coop.contains(&two),
+                "{lang:?}: {coop}"
+            );
+            let lonely = crate::app::name_the_pair(tr, tr.match_needs_opponent);
+            assert!(lonely.contains(&two), "{lang:?}: {lonely}");
         }
     }
 

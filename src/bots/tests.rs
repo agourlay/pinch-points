@@ -1350,3 +1350,50 @@ fn a_reply_held_across_a_drop_and_a_return_is_not_acted_on() {
     assert!(bot.playing(), "it is back and ready");
     assert_eq!(bot.order(&mut journal), Act::None);
 }
+
+/// A coordinate is any byte to the protocol, so a placement can be aimed
+/// far off the beach. The sim refuses it, as it refuses a castle, and the
+/// bot hears why: nothing on the way may look for a post on a tile that is
+/// not there.
+#[test]
+fn a_placement_far_off_the_beach_is_refused_and_not_a_crash() {
+    for fair in [false, true] {
+        let (listener, events) = listen(Admission::Open);
+        let (mut bot, _) = Client::register(listener.local_addr(), "Wanderer", None);
+        let Ok(Event::Registered(id)) = events.recv_timeout(Duration::from_secs(5)) else {
+            panic!("no registration event");
+        };
+        let player = std::thread::spawn(move || {
+            let mut refused = None;
+            while let Some(msg) = bot.next() {
+                match msg["type"].as_str() {
+                    Some("hello") => bot.send(&json!({"type": "ready", "game": 7})),
+                    Some("tick") => {
+                        let t = msg["tick"].clone();
+                        if refused.is_none() && msg["you"]["last"]["accepted"] == false {
+                            refused = Some(msg["you"]["last"]["reason"].clone());
+                        }
+                        bot.send(&json!({
+                            "game": 7, "tick": t, "act": "place", "x": 200, "y": 200, "dir": "up",
+                        }));
+                    }
+                    Some("end") => return refused,
+                    _ => {}
+                }
+            }
+            panic!("the connection closed before the end");
+        });
+        let mut spec = spec(
+            little_beach(40),
+            vec![Seat::Bot(id), Seat::Ai(BotLevel::Easy)],
+            1000,
+        );
+        spec.fair_cursor = fair;
+        let (result, _) = play(&listener, spec);
+        let refused = player.join().expect("player");
+        // Under the fair cursor the hand walks to the edge and the order
+        // is refused there, as it is at once without the rule.
+        assert_eq!(refused, Some(json!("off_board")), "fair cursor: {fair}");
+        assert_eq!(result.replay.inputs.len(), 40, "the round played out");
+    }
+}

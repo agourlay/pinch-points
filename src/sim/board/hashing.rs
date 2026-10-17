@@ -63,29 +63,30 @@ impl Board {
                     tempo: _,
                     claw_call: _,
                     last: _,
-                    // Outside, with the others below.
+                    // Outside the fingerprint: filled and drained inside a
+                    // single tick, so it is always empty by the time
+                    // anyone hashes.
                     queue: _,
+                    // Outside the fingerprint: who spun the wheel is for
+                    // the trophies and never read by the sim.
                     spun_by: _,
                 },
             wrap: _,
-            // Outside the fingerprint, each for a reason of its own: the
-            // construction seed is not the sim's after the PRNG state
-            // (which *is* hashed) has been derived from it, though the AI
-            // reads it for its moments to think and its slips, and a peer
-            // on another seed shows here as soon as its AI moves
-            // otherwise; it travels in every snapshot, so a caught-up peer
-            // has the same one; the event queue is filled
-            // and drained inside a single tick, so it is always empty by
-            // the time anyone hashes; who spun the wheel is for the
-            // trophies and never read by the sim; and the swept-home record is written
-            // for the render layer and never read back by the sim, so
-            // hashing it would only make this build disagree with builds
-            // playing the same round.
+            // Outside the fingerprint: the construction seed is not the
+            // sim's after the PRNG state (which *is* hashed) has been
+            // derived from it. The AI does read it, for its moments to
+            // think and its slips, but a peer on another seed shows here as
+            // soon as its AI moves otherwise. It travels in every snapshot,
+            // so a caught-up peer has the same one.
             seed: _,
             // hash_round, at its tail
             hands: _,
             sweeps:
                 Sweeps {
+                    // Outside the fingerprint: the swept-home record is
+                    // written for the render layer and never read back by
+                    // the sim, so hashing it would only make this build
+                    // disagree with builds playing the same round.
                     landed: _,
                     // hash_round, at its tail
                     in_air: _,

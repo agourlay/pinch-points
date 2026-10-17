@@ -14,10 +14,11 @@ mod card;
 mod doorway;
 mod round;
 #[cfg(test)]
-mod test_bots;
+pub(crate) mod test_bots;
 
 pub use card::{door_card, door_input};
 pub use doorway::{BotLine, Doorway};
+use round::PartyTable;
 pub use round::{BotRound, Committed, News, STAND_IN};
 
 use crate::app::i18n::fill;
@@ -212,7 +213,7 @@ impl Drivers<'_> {
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct RoundTable<'w> {
     controllers: Res<'w, Controllers>,
-    online: Res<'w, crate::app::net::Online>,
+    scoring: crate::app::teams::Scoring<'w>,
     names: ResMut<'w, SeatNames>,
     kinds: Res<'w, SeatKinds>,
 }
@@ -274,20 +275,20 @@ impl BotRoute {
 pub fn begin_round(
     table: RoundTable,
     sim: Res<Sim>,
-    settings: Res<crate::app::settings::GameSettings>,
     mut bots: ResMut<BotSeats>,
     mut recorder: ResMut<crate::app::Recorder>,
 ) {
     let RoundTable {
         controllers,
-        online,
+        scoring,
         mut names,
         kinds,
     } = table;
+    let online = &scoring.online;
     bots.round = None;
     bots.news.clear();
     let route = match online.0.as_ref() {
-        Some(session) => match session.session.seat().filter(|_| session.bot) {
+        Some(session) => match session.session.seat().filter(|_| session.bot.is_some()) {
             Some(seat) => BotRoute::JoinedAsBot(seat),
             // A host's bots (route 2) are named and seated by the session
             // already.
@@ -321,7 +322,7 @@ pub fn begin_round(
     let Some(door) = &bots.door else {
         return;
     };
-    let tr = settings.tr();
+    let tr = scoring.local.settings.tr();
     if let BotRoute::Couch(_) = route {
         for &seat in &seats {
             if let Some(name) = door.seat_name(tr, seat) {
@@ -342,8 +343,11 @@ pub fn begin_round(
         door,
         board,
         &held,
-        (0..n).map(|seat| names.label(tr, seat as u8)).collect(),
-        kinds.0[..n].to_vec(),
+        PartyTable::new(
+            (0..n).map(|seat| names.label(tr, seat as u8)).collect(),
+            kinds.0[..n].to_vec(),
+            scoring.mode(n as u8),
+        ),
         route.online(),
         game,
     );

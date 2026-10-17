@@ -45,16 +45,15 @@ pub const FRAME_PX: f32 = 13.0;
 /// Bevy measures a slice's border in interface units: it divides the
 /// node's physical size by the display's scale factor and the interface's
 /// scale before laying the slices out, so the cap is the frame's own width
-/// over the band's, whatever the window. It was multiplied by both again,
-/// on the mistaken belief that slices were laid out in physical pixels,
-/// and above 100% every frame came out that much too thick, its corners rounder than the
-/// card's fill under them: at 1080p the fill showed as a dark crescent
-/// outside each wooden corner.
+/// over the band's, whatever the window. Not multiplied by either scale:
+/// slices are not laid out in physical pixels, and above 100% the frame
+/// would come out too thick, its corners rounder than the card's fill,
+/// which then shows as a dark crescent outside each wooden corner.
 const FRAME_CORNER: f32 = FRAME_PX / FRAME_BAND;
 
 /// A card's frame: driftwood, or driftwood stained with the card's own
 /// edge colour where a screen gave it one (the winner's, a loss's red),
-/// so the frame carries what the hairline under it used to.
+/// so the frame itself carries the card's colour.
 fn frame_bundle(art: &crate::app::art::Art, edge: Option<Color>) -> impl Bundle {
     let tint = frame_tint(edge);
     (

@@ -325,10 +325,23 @@ impl Default for MatchConfig {
 }
 
 impl MatchConfig {
+    /// How many seats are played at this machine's keys: the low ones,
+    /// under the top `bots`. Saturating, so a count of bots no clamp has
+    /// yet brought under the seats reads as nobody rather than wrapping.
+    pub fn humans(&self) -> u8 {
+        self.seats.saturating_sub(self.bots)
+    }
+
+    /// Keep at least one human seat: `bots` stays under `seats`, which
+    /// every count of humans relies on.
+    pub fn clamp_bots(&mut self) {
+        self.bots = self.bots.min(self.seats.saturating_sub(1));
+    }
+
     /// Who decides for `seat`: a person here for the low seats, and the
     /// seat's own choice for the top `bots`.
     pub fn controller(&self, seat: u8) -> SeatController {
-        if seat < self.seats.saturating_sub(self.bots) {
+        if seat < self.humans() {
             SeatController::Local
         } else {
             self.controllers[usize::from(seat).min(MAX_PLAYERS - 1)]
@@ -556,7 +569,7 @@ pub fn reseat(config: &mut MatchConfig, seats: u8, beaches: &CustomBeaches) {
         .then(|| beaches.on_shelf(config.seats, config.custom))
         .flatten();
     config.seats = seats.clamp(2, MAX_PLAYERS as u8);
-    config.bots = config.bots.min(config.seats - 1);
+    config.clamp_bots();
     if let Some(custom) = picked.and_then(|shelf| beaches.among_fitting(config.seats, shelf)) {
         config.custom = custom;
     }
@@ -574,7 +587,7 @@ pub fn reseat(config: &mut MatchConfig, seats: u8, beaches: &CustomBeaches) {
 /// there came back to a couch of two as more AI than seats, its humans
 /// counted below zero.
 pub fn settle(config: &mut MatchConfig, beaches: &CustomBeaches) {
-    config.bots = config.bots.min(config.seats - 1);
+    config.clamp_bots();
     settle_map(config, beaches);
 }
 
@@ -659,9 +672,15 @@ mod tests {
             commit: CommitScheme::Ijkl,
             ..GameSettings::default()
         };
+        // The versus round reads the keyboard as shared, so the one-hand
+        // preset stands down there and IJKL is P2's to join with.
         assert!(
-            !pressed(KeyCode::KeyI, &one_hand),
-            "P1's commit under the preset"
+            pressed(KeyCode::KeyI, &one_hand),
+            "P2's up under the preset, as the round plays it"
+        );
+        assert!(
+            !pressed(KeyCode::ArrowUp, &one_hand),
+            "P1's placement under the preset, as the round plays it"
         );
     }
 
@@ -1036,6 +1055,46 @@ mod tests {
         );
     }
 
+    /// A handmade beach with castles to spare is played by a smaller
+    /// table, with the spare castles put away on the board every peer
+    /// builds: nobody banks for a seat nobody plays. One whose castles
+    /// skip a player is offered to no table at all.
+    #[test]
+    fn spare_castles_are_put_away_and_a_skipped_one_is_never_offered() {
+        let beach = |row: &str| {
+            crate::sim::Level::parse(&format!(
+                "name: B\nposts: 1\nkind: arena\ncrab: 0,1 R R common\nmap:\n\
+                 +-+-+-+\n|{row}|\n+ + + +\n|. . .|\n+-+-+-+\n"
+            ))
+            .expect("a level")
+        };
+        let three = beach("0 1 2");
+        let packed = crate::lzw::compress(three.to_text().as_bytes(), 8);
+        let terms = MatchTerms {
+            map: MapChoice::Custom.index() as u8,
+            ..MatchTerms::default()
+        };
+        let played = board_from(&terms, 2, &packed);
+        assert_eq!((played.width(), played.height()), (3, 2), "the beach built");
+        assert_eq!(played.seats_in_play(), 2, "the third castle put away");
+        assert_eq!(played.tile_at(2, 0), crate::sim::TileKind::Empty);
+        assert_eq!(board_from(&terms, 3, &packed).seats_in_play(), 3);
+
+        let shelf = CustomBeaches(vec![
+            beaches::Beach::new(three),
+            beaches::Beach::new(beach("0 . 2")),
+        ]);
+        for seats in 2..=3 {
+            let fitting: Vec<&str> = shelf
+                .fitting(seats)
+                .iter()
+                .map(|b| b.level.name.as_str())
+                .collect();
+            assert_eq!(fitting.len(), 1, "the gapped beach offered to {seats}");
+        }
+        assert!(beach_in_play(MapChoice::Custom, Some(&shelf.0[1].level), 2).is_none());
+    }
+
     /// Which chairs the AI holds under a set of terms.
     ///
     /// Host and joiner each work this out from the same wire terms rather
@@ -1130,6 +1189,48 @@ mod tests {
         // With nothing saved there is nothing to explain: an empty shelf is
         // not a shelf whose beaches are the wrong size.
         assert_eq!(beaches_note(4, &EN, &CustomBeaches::default()), None);
+
+        // Castles 0 and 2 with no 1 seat no table at all, so the reason is
+        // the skipped castle and not the size of this one.
+        let gap = || {
+            Beach::new(
+                crate::sim::Level::parse(
+                    "name: Gap\nposts: 1\nkind: arena\ncrab: 0,1 R R common\nmap:\n\
+                     +-+-+-+\n|0 . .|\n+ + + +\n|. . 2|\n+ + + +\n|. . .|\n+-+-+-+\n",
+                )
+                .expect("a level"),
+            )
+        };
+        assert_eq!(
+            beaches_note(2, &EN, &CustomBeaches(vec![gap()])).as_deref(),
+            Some(EN.map_skips_castle)
+        );
+        // Beside one that is merely too small, the table's size is the
+        // reason, and a smaller table would fix it.
+        let mut both = shelf;
+        both.0.push(gap());
+        let note = beaches_note(4, &EN, &both).expect("four cannot sit at either");
+        assert!(note.contains('4'), "{note}");
+    }
+
+    /// The skipped-castle note sits where the seats note does, so it is no
+    /// wider than the widest seats note any language already puts there.
+    #[test]
+    fn the_skipped_castle_note_fits_where_the_seats_note_does() {
+        use crate::app::i18n::metrics::text_px;
+        let size = 18.0;
+        let widest = crate::app::i18n::ALL_LANGS
+            .iter()
+            .map(|lang| text_px(&fill(lang.tr().map_none_seats, &[("n", "6")]), size))
+            .fold(0.0, f32::max);
+        for lang in crate::app::i18n::ALL_LANGS {
+            let note = lang.tr().map_skips_castle;
+            let wide = text_px(note, size);
+            assert!(
+                wide <= widest,
+                "{lang:?}: {note:?} is {wide:.0}px of {widest:.0}px"
+            );
+        }
     }
 
     /// The dial walks the built-ins, then every handmade beach, and steps
@@ -1572,6 +1673,6 @@ mod tests {
         };
         settle(&mut config, &CustomBeaches::default());
         assert_eq!(config.bots, 1);
-        assert_eq!(config.seats - config.bots, 1, "somebody still plays");
+        assert_eq!(config.humans(), 1, "somebody still plays");
     }
 }

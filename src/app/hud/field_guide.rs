@@ -49,9 +49,14 @@ const KINDS: [crate::sim::CrabKind; 6] = [
 /// round's called golden crab is worth less than a puzzle's
 /// (`Board::crab_value`, `GOLDEN_CALLED_VALUE`), and a guide quoting the
 /// kind would promise the puzzle's price for a crab that banks the other.
+///
+/// The sparkling crab's "surprise" is the event wheel it spins, and on a
+/// beach whose wheel is off (`Board::events_enabled`, the same switch the
+/// spin reads) it is a crab worth its points and nothing more.
 fn field_guide_note(tr: &crate::app::i18n::Tr, i: usize, board: &crate::sim::Board) -> String {
     let worth = board.crab_value(KINDS[i]);
-    let note = tr.crab_notes[i];
+    let wheel_off = KINDS[i] == crate::sim::CrabKind::Sparkling && !board.events_enabled();
+    let note = if wheel_off { "" } else { tr.crab_notes[i] };
     if note.is_empty() {
         worth.to_string()
     } else {
@@ -66,25 +71,23 @@ pub fn update_field_guide(
     sim: Res<crate::app::Sim>,
     mut notes: Query<(&FieldGuideNote, &mut Text)>,
     mut golden_entries: Query<&mut Node, With<GoldenEntry>>,
-    mut golden_shown: Local<Option<(u32, bool)>>,
+    mut board_shown: Local<Option<(u32, bool, bool)>>,
 ) {
-    // The worths move only with the board's rules, which change when a
-    // round of another kind is loaded; the golden crab's is the one that
-    // differs between them, and whether it comes at all.
-    let golden = (
+    // The notes move only with the board's rules, which change when a
+    // round of another kind is loaded: the golden crab's worth is the one
+    // that differs between them, and whether it comes at all, and the
+    // sparkling crab's surprise whether the wheel turns.
+    let read = (
         sim.0.crab_value(crate::sim::CrabKind::Golden),
         sim.0.golden_crab_can_come(),
+        sim.0.events_enabled(),
     );
-    if !settings.is_changed() && Some(golden) == *golden_shown {
+    if !settings.is_changed() && Some(read) == *board_shown {
         return;
     }
-    *golden_shown = Some(golden);
-    let display = match golden.1 {
-        true => Display::Flex,
-        false => Display::None,
-    };
+    *board_shown = Some(read);
     for mut node in &mut golden_entries {
-        node.display = display;
+        menu_ui::set_shown(&mut node, read.1);
     }
     let tr = settings.tr();
     for (note, mut text) in &mut notes {
@@ -238,5 +241,22 @@ mod tests {
             note.starts_with(&format!("{} ", crate::sim::GOLDEN_CALLED_VALUE)),
             "{note}"
         );
+    }
+
+    /// The sparkling crab promises a surprise only where its wheel turns.
+    #[test]
+    fn the_sparkling_crab_promises_nothing_where_the_wheel_is_off() {
+        let sparkling = KINDS
+            .iter()
+            .position(|&k| k == crate::sim::CrabKind::Sparkling)
+            .expect("the sparkling crab is in the guide");
+        let tr = Lang::En.tr();
+        let mut board = crate::sim::Board::new(9, 7, 1);
+        board.set_events_enabled(false);
+        let worth = board.crab_value(crate::sim::CrabKind::Sparkling);
+        assert_eq!(field_guide_note(tr, sparkling, &board), worth.to_string());
+        board.set_events_enabled(true);
+        let note = field_guide_note(tr, sparkling, &board);
+        assert!(note.ends_with(tr.crab_notes[sparkling]), "{note}");
     }
 }

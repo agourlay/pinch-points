@@ -306,13 +306,8 @@ pub fn fade_music(
 /// is noisier than the theme is. Works while the pause card is up, the two
 /// no longer touching the same sink, and is held off only while a name or
 /// a chat line is being typed, where M is a letter.
-pub fn toggle_mute(
-    keys: Res<ButtonInput<KeyCode>>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
-    live: Res<crate::app::keycaps::LiveSeatKeys>,
-    mut muted: ResMut<Muted>,
-) {
-    if caps.global_pressed(&keys, 'M', &live) {
+pub fn toggle_mute(keyboard: crate::app::keycaps::Keyboard, mut muted: ResMut<Muted>) {
+    if keyboard.global('M') {
         muted.0 = !muted.0;
     }
 }

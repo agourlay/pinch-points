@@ -78,14 +78,15 @@ impl RoundOrigin<'_> {
                 // A beach somebody built. Locally there is nobody to send
                 // it to, so it is read off the shelf, and built on this
                 // round's seed. Anything else is the map dial's own beach:
-                // the handcrafted classic gets a fresh random stream too, so one seed's luck (gull entry
-                // points, spawn kinds) does not colour every round, where
-                // online keeps the canonical seed so peers agree.
+                // the handcrafted classic gets a fresh random stream too, so
+                // one seed's luck (gull entry points, spawn kinds) does not
+                // colour every round, where online keeps the canonical seed
+                // so peers agree.
                 let shelved = (map == match_setup::MapChoice::Custom)
                     .then(|| beaches.fitting(config.seats).into_iter().nth(config.custom))
                     .flatten();
                 let mut board = match shelved {
-                    Some(beach) => beach.level.board_seeded(seed),
+                    Some(beach) => beach.level.table_board(seed, config.seats),
                     None => match_setup::versus_board(map, seed, config.seats),
                 };
                 match_setup::apply_terms(&mut board, config.gulls, config.round, config.posts);
@@ -125,9 +126,7 @@ impl RoundOrigin<'_> {
     pub(super) fn asked_seats(&self, board: &Board, pads: u8) -> u8 {
         match self {
             RoundOrigin::Resumed(round) => round.seats,
-            // A replay carries no seat count; the castles on the recorded
-            // board are the record of who played.
-            RoundOrigin::Replay(_) => board.castle_owners().max().unwrap_or(1).saturating_add(1),
+            RoundOrigin::Replay(_) => replay_seats(board),
             RoundOrigin::Online(session) => session.seats,
             RoundOrigin::Configured(config) => config.seats,
             RoundOrigin::Unconfigured => pads.max(2),
@@ -167,7 +166,7 @@ pub(super) fn online_controllers(session: &net::OnlineSession) -> Controllers {
     let ai = match_setup::bot_seats_from(&session.terms, session.seats);
     let mine = session.session.seat().map(usize::from);
     let driven = |seat: usize| {
-        (Some(seat) == mine && session.bot)
+        (Some(seat) == mine && session.bot.is_some())
             || session
                 .bots_here
                 .iter()
@@ -179,6 +178,15 @@ pub(super) fn online_controllers(session: &net::OnlineSession) -> Controllers {
         None if Some(seat) == mine => SeatController::Local,
         None => SeatController::Remote,
     }))
+}
+
+/// The seats a recorded round had, read off its board: a replay carries
+/// no seat count, and the castles are the record of who played. A
+/// handmade beach's spare castles were put away before it was recorded
+/// ([`crate::sim::Level::table_board`]), so they count only the seats the
+/// round had. Watching a replay and filing a pasted one both ask this.
+pub(in crate::app) fn replay_seats(board: &Board) -> u8 {
+    clamp_seats(board.seats_in_play())
 }
 
 /// A seat count the per-seat arrays can hold. Two of the sources are not
@@ -276,6 +284,34 @@ pub(in crate::app) fn load_versus(
     opening.open(origin.counts_in());
 }
 
+/// Forget what was asked of a round that was never entered.
+///
+/// A pasted code ([`Resuming`]), a replay to watch ([`Playback`]) and the
+/// daily are each set beside a request for the arena, and read by
+/// [`load_versus`] when it is entered. When another screen was entered
+/// instead (the request overwritten that frame, by the menu or a key the
+/// same frame), they stayed behind, and the next way into the arena of
+/// any kind took them up: an online launch played the pasted board
+/// (a desync at the first hash), and a daily was credited on a stale day.
+/// So any screen but the arena entered clears them. Runs in the
+/// transition itself, after every `OnEnter`, so a code pasted on the
+/// frame a screen is reached is the next frame's, and kept.
+pub(in crate::app) fn forget_a_round_not_entered(
+    mut transitions: MessageReader<StateTransitionEvent<Screen>>,
+    mut resuming: ResMut<Resuming>,
+    mut playback: ResMut<Playback>,
+    mut daily: ResMut<Daily>,
+) {
+    let Some(entered) = transitions.read().last().map(|t| t.entered) else {
+        return;
+    };
+    if entered != Some(Screen::Versus) {
+        resuming.0 = None;
+        playback.0 = None;
+        daily.active = false;
+    }
+}
+
 /// What a round leaves behind: its recording, and the highlight reel
 /// being cut from it.
 #[derive(bevy::ecs::system::SystemParam)]
@@ -322,14 +358,19 @@ pub(in crate::app) fn end_versus(
 /// the local couch names must never label a rival; offline they are just
 /// what the player typed for their table.
 pub(in crate::app) fn resolve_seat_names(
-    online: Res<net::Online>,
-    playback: Res<Playback>,
-    settings: Res<settings::GameSettings>,
+    scoring: teams::Scoring,
     controllers: Res<Controllers>,
+    seats: Res<Seats>,
     mut recorder: ResMut<Recorder>,
     mut names: ResMut<SeatNames>,
     mut kinds: ResMut<SeatKinds>,
 ) {
+    let teams::Scoring {
+        local,
+        online,
+        playback,
+    } = &scoring;
+    let settings = &local.settings;
     names.0 = match (&playback.0, &online.0) {
         // A replay is watched, not played: the names belong to the round on
         // screen, not to whoever is sitting here now.
@@ -351,6 +392,9 @@ pub(in crate::app) fn resolve_seat_names(
     if let Some(replay) = &mut recorder.0 {
         replay.names = names.0.clone();
         replay.kinds = kinds.0;
+        // And how it is scored, so the round is crowned the same when it
+        // is watched again, whatever the watcher's own setting by then.
+        replay.teams = scoring.mode(seats.0).index() as u8;
     }
 }
 
@@ -375,25 +419,23 @@ pub(in crate::app) fn poll_reel(
     }
 }
 
-/// Who to file a finished round under: the leading seat's name, or `None`
-/// for a draw (see `replays::file_name`).
+/// Who to file a finished round under, as the results card names them
+/// ([`teams::winner_label`]), or `None` for a draw (see
+/// `replays::file_name`).
 pub(super) fn winner_name(
     sim: &Sim,
     seats: &Seats,
-    settings: &settings::GameSettings,
-    online: &net::Online,
+    mode: teams::TeamMode,
     names: &SeatNames,
+    tr: &crate::app::i18n::Tr,
 ) -> Option<String> {
-    let mode = teams::in_play(settings, online, seats.0);
-    let leaders = seating::leading_seats(sim.0.scores(), seats.0, mode);
-    let seat = leaders.iter().position(|&led| led)?;
-    Some(names.label(settings.tr(), seat as u8))
+    teams::winner_label(sim.0.scores(), seats.0, mode, |seat| names.label(tr, seat))
 }
 
 pub(in crate::app) fn check_versus_over(
     sim: Res<Sim>,
     seating: seating::Seating,
-    settings: Res<settings::GameSettings>,
+    scoring: teams::Scoring,
     log: RoundLog,
     mut highlight: ResMut<Highlight>,
     mut next_vphase: ResMut<NextState<VersusPhase>>,
@@ -401,9 +443,9 @@ pub(in crate::app) fn check_versus_over(
     let seating::Seating {
         seats,
         names: seat_names,
-        online,
         ..
     } = seating;
+    let settings = &scoring.local.settings;
     let RoundLog {
         mut recorder,
         mut reel_thread,
@@ -424,7 +466,13 @@ pub(in crate::app) fn check_versus_over(
                 Err(e) => warn!("could not save replay: {e}"),
             }
             let stamp = clock::now_secs();
-            let winner = winner_name(&sim, &seats, &settings, &online, &seat_names);
+            let winner = winner_name(
+                &sim,
+                &seats,
+                scoring.mode(seats.0),
+                &seat_names,
+                settings.tr(),
+            );
             let kept = replays::free_path(&library, stamp, winner.as_deref());
             if let Err(e) = paths::write_atomic(&kept, &text) {
                 warn!("could not file the replay: {e}");
@@ -478,16 +526,47 @@ pub(in crate::app) fn check_versus_over(
 ///
 /// A board that did finish shows its results card first, as ever:
 /// `versus_over_input` follows the call from there.
+///
+/// The round it leaves never reaches its results card here, and with it
+/// the trophies' count of it: `record_called_round` counts it instead,
+/// on the host's word for who won ([`walked_on`] is the one question both
+/// ask).
 pub(in crate::app) fn follow_the_called_round(
     sim: Res<Sim>,
     online: Res<net::Online>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
+    if walked_on(&sim.0, &online) {
+        next_screen.set(Screen::Interlude);
+    }
+}
+
+/// Whether this joiner is being walked on to the next round before its
+/// own board has finished: see [`follow_the_called_round`].
+pub(in crate::app) fn walked_on(board: &Board, online: &net::Online) -> bool {
     let called = online
         .0
         .as_ref()
         .is_some_and(|session| session.next_round && !session.is_host());
-    if called && !sim.0.round_over() {
-        next_screen.set(Screen::Interlude);
-    }
+    called && !board.round_over()
+}
+
+/// Host, as the tide comes in: write down whom the results card crowns,
+/// for the call for the next round to carry (`Invitation::crowned`). A
+/// joiner walked on to that round before its own board had finished never
+/// sees the card, and learns from this whether it won the round it played.
+pub(in crate::app) fn note_the_crowned(
+    sim: Res<Sim>,
+    seats: Res<Seats>,
+    local: teams::LocalScoring,
+    mut online: ResMut<net::Online>,
+) {
+    // The pure rule rather than `Scoring`, which reads the session this
+    // writes; never a replay's, which crowns nobody's next call.
+    let mode = teams::in_play(local.mode(), &online, None, seats.0);
+    let Some(session) = online.0.as_mut().filter(|session| session.is_host()) else {
+        return;
+    };
+    let winners = seating::leading_seats(sim.0.scores(), seats.0, mode);
+    session.crowned = crate::transport::crowned_bits(&winners);
 }

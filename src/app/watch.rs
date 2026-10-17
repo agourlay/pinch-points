@@ -124,6 +124,9 @@ pub fn dropped_replays(
     mut notice: ResMut<crate::app::RoundNotice>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
+    if crate::app::menu_ui::screen_chosen(&next_screen) {
+        return;
+    }
     for drop in drops.read() {
         let FileDragAndDrop::DroppedFile { path_buf, .. } = drop else {
             continue;

@@ -40,6 +40,7 @@ impl Level {
             kind: LevelKind::Puzzle,
             crab_count: header.crabs.len() as u32,
             explicit_rule: header.explicit_rule,
+            filing: None,
             board,
         };
         let kind = header.kind.unwrap_or_else(|| inferred_kind(&level));
@@ -60,6 +61,7 @@ impl Level {
             crab_count: board.crabs().len() as u32,
             // The board's live rule is authoritative and serialized as-is.
             explicit_rule: true,
+            filing: None,
             board,
         };
         let kind = inferred_kind(&level);
@@ -578,6 +580,23 @@ fn place_entities(board: &mut Board, header: &Header) -> Result<(), String> {
         if period == 0 {
             return Err(format!("spawner at ({x},{y}): period must be at least 1"));
         }
+        // A spawner is a tile, so it would take the place of whatever the
+        // map drew there: a castle under a `spawner:` line was erased
+        // without a word, and with it a seat or a puzzle's only bank.
+        // Refused like a crab on a rock, and so is a second spawner on
+        // the same tile, which would quietly overrule the first.
+        let under = match board.tile_at(x, y) {
+            TileKind::Empty => None,
+            TileKind::Rock => Some("a rock"),
+            TileKind::Castle(_) => Some("a castle"),
+            TileKind::Turnstile { .. } => Some("a log"),
+            TileKind::Kelp => Some("kelp"),
+            TileKind::Pool => Some("a pool"),
+            TileKind::Spawner(_) => Some("another spawner"),
+        };
+        if let Some(under) = under {
+            return Err(format!("spawner at ({x},{y}) is on {under}"));
+        }
         board.set_tile(x, y, TileKind::Spawner(Spawner { dir, period }));
     }
     for &(x, y, dir, handed, kind) in &header.crabs {
@@ -742,6 +761,32 @@ mod tests {
             let err = level_with(line).unwrap_err();
             assert!(err.contains(why), "{line}: {err}");
         }
+    }
+
+    /// A spawner is a tile, so one placed over anything but sand would
+    /// erase what the map drew: a castle under it took a seat, or a
+    /// puzzle's only bank, with nothing said. Each is refused by name.
+    #[test]
+    fn a_spawner_over_a_drawn_tile_is_refused() {
+        let map = |line: &str| {
+            Level::parse(&format!(
+                "name: T\nposts: 1\n{line}\nmap:\n+-+-+-+\n|0|#|T|\n+-+-+-+\n|K|~|.|\n+-+-+-+\n"
+            ))
+        };
+        for (x, y, what) in [
+            (0, 0, "a castle"),
+            (1, 0, "a rock"),
+            (2, 0, "a log"),
+            (0, 1, "kelp"),
+            (1, 1, "a pool"),
+        ] {
+            let err = map(&format!("spawner: {x},{y} R 4")).unwrap_err();
+            assert!(err.contains(&format!("is on {what}")), "{err}");
+        }
+        let err = map("spawner: 2,1 R 4\nspawner: 2,1 L 8").unwrap_err();
+        assert!(err.contains("is on another spawner"), "{err}");
+        let level = map("spawner: 2,1 R 4").expect("sand takes a spawner");
+        assert_eq!(level.board.tile_at(0, 0), TileKind::Castle(0));
     }
 
     /// Placement is the last thing `parse` checks, and each refusal names

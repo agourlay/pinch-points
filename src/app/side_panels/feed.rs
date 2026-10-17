@@ -249,8 +249,8 @@ const LOG_GAP: f32 = 6.0;
 
 /// The feed card's height: its rows, the frame's room at the top and the
 /// foot, and the card's own border at each, which Bevy counts inside the
-/// height. Left out, the lines' box came out 4 px short and the eighth
-/// entry never fitted.
+/// height: without it the lines' box is 4 px short and the eighth entry
+/// never fits.
 const LOG_H: f32 = LOG_ROWS * menu_ui::type_scale::BODY * menu_ui::LINE_HEIGHT
     + (LOG_ROWS - 1.0) * LOG_GAP
     + 2.0 * menu_ui::CARD_PAD

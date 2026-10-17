@@ -373,7 +373,7 @@ pub fn settings_input(
                 menu.reset = next_reset_prompt(menu.reset);
                 if menu.reset == ResetPrompt::Done {
                     progress.clear_all();
-                    crate::app::progress::save(&progress);
+                    crate::app::progress::save_reset(&progress);
                 }
             }
             Row::InputP1

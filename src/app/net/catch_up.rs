@@ -45,12 +45,7 @@ impl CatchUp {
     /// behind it move down one with their rows, so a part is never sent
     /// to whoever moved up into its index, or past the end of the socket.
     pub(super) fn forget(&mut self, peer: usize) {
-        self.owed.retain(|&owed| owed != peer);
-        for owed in &mut self.owed {
-            if *owed > peer {
-                *owed -= 1;
-            }
-        }
+        self.owed.retain_mut(|owed| super::renumber(owed, peer));
     }
 }
 
@@ -106,7 +101,7 @@ impl OnlineSession {
         let Some(caught) = self.catch_up.assembly.take(frame, part, parts, bytes) else {
             return;
         };
-        if !self.is_next_round(&caught.invitation.terms) && !self.lost_the_thread(caught.frame) {
+        if !self.is_next_round(&caught.invitation) && !self.lost_the_thread(caught.frame) {
             return;
         }
         let CaughtUp {
@@ -348,17 +343,13 @@ fn unpack(packed: &[u8], frame: u32) -> Option<CaughtUp> {
 mod tests {
     use super::*;
     use crate::sim::{BotLevel, MAX_PLAYERS, PlayerAction, bot_action, generate_arena};
-    use crate::transport::{MatchTerms, wire_name};
+    use crate::transport::wire_name;
 
     fn start() -> NetMsg {
         NetMsg::Start(Invitation {
             seats: 6,
-            seat: None,
-            terms: MatchTerms::default(),
             names: [wire_name("WWWWWWWWWWWWWWWWWWWWWWWW"); MAX_PLAYERS],
-            kinds: [0; MAX_PLAYERS],
-            standing: None,
-            beach: Vec::new(),
+            ..Invitation::blank()
         })
     }
 
@@ -490,11 +481,8 @@ mod tests {
         let seated = NetMsg::Start(Invitation {
             seats: 6,
             seat: Some(1),
-            terms: MatchTerms::default(),
             names: [wire_name(""); MAX_PLAYERS],
-            kinds: [0; MAX_PLAYERS],
-            standing: None,
-            beach: Vec::new(),
+            ..Invitation::blank()
         });
         for (msg, at) in [(seated, frame), (start(), frame + 1)] {
             let mut assembly = Assembly::default();
@@ -573,11 +561,11 @@ mod session_tests {
             Some(Place::LateWatching)
         );
         assert!(
-            host.peers.follows_the_round(1),
+            host.peers.follows_by_plan(1),
             "Dee is sent the round from now on"
         );
         assert!(host.watching_this_round(1), "and counts in the crowd");
-        assert!(!host.peers.follows_the_round(2), "Cy, in line, is not");
+        assert!(!host.peers.follows_by_plan(2), "Cy, in line, is not");
 
         let mut assembly = Assembly::default();
         let caught = drain(&mut dee)
@@ -712,6 +700,9 @@ mod session_tests {
             2,
             last_round,
         );
+        // Dealt the round before; the host has dealt this one since.
+        cy.rounds_dealt = 1;
+        host.rounds_dealt = 2;
         cy.poll_between_rounds(1.0);
         std::thread::sleep(std::time::Duration::from_millis(20));
         drain(&mut host.transport);

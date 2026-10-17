@@ -28,9 +28,19 @@ pub(super) fn type_a_name(
             Keystroke::Char(_) | Keystroke::Done(_) => {}
         }
     }
-    if crate::app::menu_ui::enter(keys) || keys.just_pressed(KeyCode::Escape) {
-        state.name = tidy_name(&state.name, tr);
-        state.mode = Mode::JustNamed;
+    // Enter commits the name and Escape abandons it, back to the one F1
+    // found; either way the commands sit the next frame out, so the same
+    // Escape is not also read as leaving the editor.
+    let abandoned = keys.just_pressed(KeyCode::Escape);
+    if abandoned || crate::app::menu_ui::enter(keys) {
+        let Mode::Naming { was } = std::mem::replace(&mut state.mode, Mode::JustNamed) else {
+            return;
+        };
+        state.name = if abandoned {
+            was
+        } else {
+            tidy_name(&state.name, tr)
+        };
         state.feedback.clear();
     }
 }

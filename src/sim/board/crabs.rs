@@ -94,16 +94,16 @@ impl Board {
         self.golden_call = in_round.then_some((at, hole));
     }
 
-    pub(super) fn run_spawners(&mut self) {
-        // The holes that open this tick, in reading order. A mania
-        // overrides each hole's cadence with a flood: every 8 ticks, the
-        // holes taking turns two at a time. Every hole every 8 ticks made
-        // the flood as big as the beach had holes, and a four-player
-        // table, with a hole for all but one of them, flooded three times
-        // as fast as the two-hole beaches the mania was sized on.
+    /// The holes that open this tick, in reading order. A mania overrides
+    /// each hole's cadence with a flood: every 8 ticks, the holes taking
+    /// turns two at a time. Every hole every 8 ticks made the flood as big
+    /// as the beach had holes, and a four-player table, with a hole for all
+    /// but one of them, flooded three times as fast as the two-hole beaches
+    /// the mania was sized on.
+    fn holes_opening(&self) -> Vec<usize> {
         let holes = (0..self.grid.tiles.len())
             .filter(|&t| matches!(self.grid.tiles[t], TileKind::Spawner(_)));
-        let mut open: Vec<usize> = match self.tide.mania {
+        match self.tide.mania {
             Some((Mania::Crab | Mania::Gull, _)) => {
                 let count = holes.clone().count();
                 let turns = count.div_ceil(MANIA_HOLES).max(1);
@@ -123,15 +123,26 @@ impl Board {
                         if self.tick.is_multiple_of(u64::from(s.period)))
                 })
                 .collect(),
-        };
-        // The beach fills to the cap and then waits for it to clear.
-        // Crab Mania floods past it, which is the event, but only to twice
-        // the cap, the same way Gull Mania stops at three flocks: unbounded,
-        // it buried the board under two crabs a tile.
-        let ceiling = match self.tide.mania {
+        }
+    }
+
+    /// How many live crabs the holes fill the beach to this tick. The beach
+    /// fills to the cap and then waits for it to clear. Crab Mania floods
+    /// past it, which is the event, but only to twice the cap, the same way
+    /// Gull Mania stops at three flocks: unbounded, it buried the board
+    /// under two crabs a tile.
+    fn crab_ceiling(&self) -> usize {
+        match self.tide.mania {
             Some((Mania::Crab, _)) => self.crab_cap() * 2,
             _ => self.crab_cap(),
-        };
+        }
+    }
+
+    /// Send a crab, or under Gull Mania a gull, out of each hole opening
+    /// this tick, while the beach is under its ceiling.
+    pub(super) fn run_spawners(&mut self) {
+        let mut open = self.holes_opening();
+        let ceiling = self.crab_ceiling();
         // When the room left under the cap is less than the holes opening,
         // which holes get it is drawn ([`Rules::fair_spawns`]). Only a tick
         // that leaves a hole out draws, so a beach that never fills plays

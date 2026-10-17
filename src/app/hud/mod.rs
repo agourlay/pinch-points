@@ -230,8 +230,7 @@ pub fn spawn_hud(
         },))
         .with_children(|wrap| {
             // On a pill, as the prompt is: pale text straight on the sand
-            // is unreadable, and the hint used to have the dark sea behind
-            // it before the sea moved to the bottom of the view.
+            // is unreadable.
             wrap.spawn((
                 HintLabel,
                 Text::new(""),
@@ -324,10 +323,6 @@ fn title_width(screen: Screen) -> Val {
 #[derive(Component)]
 pub struct HintLabel;
 
-/// The one shipped level whose lesson is the keys themselves (see
-/// `LEVEL_HINTS`); a test checks the table still says so.
-pub(crate) const KEY_LESSON_LEVEL: &str = "Welcome Ashore";
-
 /// What the player has run into on this level: how stuck they are, and
 /// the last placement refused.
 #[derive(bevy::ecs::system::SystemParam)]
@@ -336,13 +331,33 @@ pub struct HintNotes<'w> {
     denied: Res<'w, crate::app::hint::DeniedNote>,
 }
 
+/// The level's own lesson and what decides how it reads: the list it is
+/// on, whether two play it (see `Coop::in_play`), the settings, and this
+/// keyboard's caps.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct HintLesson<'w> {
+    campaign: Res<'w, Campaign>,
+    coop: Res<'w, crate::app::Coop>,
+    settings: Res<'w, GameSettings>,
+    caps: Res<'w, crate::app::keycaps::KeyCaps>,
+}
+
+impl HintLesson<'_> {
+    /// The current level's lesson as this player may be shown it, in this
+    /// keyboard's key names. The key lesson is kept back under keys it
+    /// does not describe, and the prompt line already points at Settings.
+    fn shown(&self) -> Option<String> {
+        let campaign = &self.campaign;
+        let hint = campaign.shown_hint(campaign.index, &self.settings, *self.coop)?;
+        Some(self.caps.legend(hint))
+    }
+}
+
 /// Show a level's teaching hint while its signposts are being placed.
 pub fn update_hint(
-    campaign: Res<Campaign>,
     screen: Res<State<Screen>>,
     phase: Res<State<Phase>>,
-    settings: Res<GameSettings>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
+    lesson: HintLesson,
     notes: HintNotes,
     mut hints: Query<(&mut Text, &mut Node), With<HintLabel>>,
 ) {
@@ -352,24 +367,11 @@ pub fn update_hint(
     } else {
         // A stuck player is told about the hint instead of being told the
         // lesson again; the lesson is what they have already tried.
-        crate::app::hint::hint_line(settings.tr(), &stuck, &denied, phase.get()).unwrap_or_else(
-            || {
-                let name = &campaign.current().name;
-                // The first level's lesson names the stock keys; with the keys
-                // rebound or the one-hand preset on it would teach the wrong
-                // ones, and the prompt line already points at Settings.
-                let honest = name != KEY_LESSON_LEVEL || settings.stock_legend();
-                if *phase.get() == Phase::Setup && honest {
-                    caps.legend(
-                        campaign
-                            .hint(campaign.index, settings.language)
-                            .unwrap_or(""),
-                    )
-                } else {
-                    String::new()
-                }
-            },
-        )
+        let tr = lesson.settings.tr();
+        let setup = *phase.get() == Phase::Setup;
+        crate::app::hint::hint_line(tr, &stuck, &denied, phase.get())
+            .or_else(|| setup.then(|| lesson.shown()).flatten())
+            .unwrap_or_default()
     };
     for (mut text, mut node) in &mut hints {
         menu_ui::set_text(&mut text, &line);
@@ -407,6 +409,7 @@ pub struct HudSources<'w> {
     speed: Res<'w, crate::app::replays::PlaybackSpeed>,
     tournament: Res<'w, crate::app::tournament::Tournament>,
     spectators: Res<'w, crate::app::spectators::SpectatorChat>,
+    daily: Res<'w, crate::app::Daily>,
 }
 
 impl HudSources<'_> {
@@ -423,6 +426,7 @@ impl HudSources<'_> {
             speed,
             tournament,
             spectators,
+            daily,
         } = self;
         text::Readout {
             tr: settings.tr(),
@@ -435,6 +439,7 @@ impl HudSources<'_> {
             editor: &modes.editor,
             online: &seating.online,
             playback: &seating.playback,
+            daily,
             lobby: &modes.lobby,
             tournament,
             seats: &seating.seats,
@@ -542,12 +547,11 @@ const PROMPT_LINGER: f32 = 6.0;
 const PROMPT_FADE: f32 = 0.8;
 
 /// What decides whether the controls line may fade: a versus round under
-/// way, unpaused, for somebody holding a seat in it.
+/// way, not held by any pause (an online one included), with no card up,
+/// for somebody holding a seat in it.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct PromptRound<'w> {
-    screen: Res<'w, State<Screen>>,
-    phase: Option<Res<'w, State<crate::app::VersusPhase>>>,
-    paused: Res<'w, crate::app::Paused>,
+    round: crate::app::round_state::RoundState<'w>,
     pause_menu: Res<'w, crate::app::pause::PauseMenu>,
     online: Res<'w, crate::app::net::Online>,
     playback: Res<'w, crate::app::Playback>,
@@ -562,14 +566,9 @@ impl PromptRound<'_> {
             text::header_viewer(&self.online, &self.playback),
             crate::app::seating::Viewer::Peer(_) | crate::app::seating::Viewer::Table
         );
-        *self.screen.get() == Screen::Versus
-            && self
-                .phase
-                .as_ref()
-                .is_some_and(|phase| *phase.get() == crate::app::VersusPhase::Running)
-            && !self.paused.0
-            && !self.pause_menu.is_open()
-            && seated
+        // Any card, not only one that stops the round: a spectator's own
+        // card holds the keyboard all the same.
+        self.round.versus_running() && !self.round.held() && !self.pause_menu.is_open() && seated
     }
 }
 
@@ -616,7 +615,6 @@ fn prompt_shown(secs: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::i18n::Lang;
 
     /// The controls line stays whole while it lingers, then fades to
     /// nothing and stays gone, and never goes past either end.
@@ -628,6 +626,44 @@ mod tests {
         assert!((0.1..0.9).contains(&midway), "midway through: {midway}");
         assert_eq!(prompt_shown(PROMPT_LINGER + PROMPT_FADE), 0.0);
         assert_eq!(prompt_shown(600.0), 0.0);
+    }
+
+    /// A peer's pause holds the round without setting `Paused` or raising
+    /// a card here, and the controls line stops fading under it all the
+    /// same: the line reads the one pause rule, online pauses included.
+    #[test]
+    fn the_controls_line_holds_under_a_peers_pause() {
+        use crate::app::net::{Online, OnlineSession};
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_state(Screen::Versus);
+        app.insert_state(crate::app::VersusPhase::Running);
+        app.init_resource::<crate::app::Paused>();
+        app.init_resource::<crate::app::pause::PauseMenu>();
+        app.init_resource::<crate::app::Playback>();
+        let session = OnlineSession::new(
+            crate::transport::UdpTransport::host(0).expect("ephemeral port"),
+            crate::sim::Lockstep::new(0, vec![0, 1], crate::sim::DEFAULT_DELAY),
+            2,
+            crate::transport::MatchTerms::default(),
+        );
+        app.insert_resource(Online(Some(session)));
+        app.update();
+        let running = |app: &mut App| {
+            app.world_mut()
+                .run_system_once(|round: PromptRound| round.running())
+                .expect("runs")
+        };
+        assert!(running(&mut app), "a seat's running round fades the line");
+        app.world_mut()
+            .resource_mut::<Online>()
+            .0
+            .as_mut()
+            .expect("a session")
+            .session
+            .receive_pause(5);
+        assert!(!running(&mut app), "a peer's pause holds it");
     }
 
     /// A prompt that fits keeps its size; one that does not shrinks by
@@ -722,24 +758,5 @@ mod tests {
         // the longest in the game and has no clock to share it with.
         assert_eq!(title_width(Screen::Editor), Val::Auto);
         assert_eq!(title_width(Screen::Versus), Val::Auto);
-    }
-
-    /// The level whose hint is withheld under rebound keys is the one that
-    /// names keys, and the only one: the others teach the beach, and stay
-    /// up whatever the keyboard says.
-    #[test]
-    fn only_the_key_lesson_names_keys() {
-        // "arrow key", not "arrow": the signposts are called arrows now, so
-        // the bare word is the *object* and appears in several hints. Only
-        // the keys are withheld under a rebound keyboard.
-        let names_keys = |hint: &str| hint.contains("WASD") || hint.contains("arrow key");
-        assert!(names_keys(Lang::En.level_hint(KEY_LESSON_LEVEL).unwrap()));
-        for level in crate::sim::campaign_levels() {
-            if level.name != KEY_LESSON_LEVEL
-                && let Some(hint) = Lang::En.level_hint(&level.name)
-            {
-                assert!(!names_keys(hint), "{:?} names keys too", level.name);
-            }
-        }
     }
 }

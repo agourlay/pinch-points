@@ -8,8 +8,7 @@ mod feed;
 pub use clock::update_side_clock;
 pub use feed::{EventLog, collect_chat, collect_log, update_log};
 
-use crate::app::net::Online;
-use crate::app::seating::{Seating, beside_the_robot, leading_seats, robot_inline};
+use crate::app::seating::{Seating, beside_the_robot, robot_inline};
 use crate::app::settings::GameSettings;
 use crate::app::{Seats, Sim};
 use crate::app::{menu_ui, palette};
@@ -410,10 +409,9 @@ pub struct Chips<'w, 's> {
 /// Keep the chips sorted and sized by rank, the numbers current, and the
 /// crown on the leader (all writes guarded).
 pub fn update_side_panels(
-    online: Res<Online>,
+    scoring: crate::app::teams::Scoring,
     sim: Res<Sim>,
     seats: Res<Seats>,
-    settings: Res<GameSettings>,
     time: Res<Time>,
     mut chips: Chips,
     mut value: Local<String>,
@@ -426,8 +424,7 @@ pub fn update_side_panels(
         digits,
     } = &mut chips;
     let board_scores = sim.0.scores();
-    let mode = crate::app::teams::in_play(&settings, &online, seats.0);
-    let leaders = leading_seats(board_scores, seats.0, mode);
+    let leaders = scoring.leaders(board_scores, seats.0);
     let rank = ranks(board_scores, seats.0);
     for (panel, mut node, mut bg, mut border) in panels {
         let seat = panel.0 as usize;
@@ -468,7 +465,11 @@ pub fn update_side_panels(
             text.0.push_str(&value);
             // Pop on change, unless the player asked for less motion, in
             // which case the number simply changes.
-            chip.bump = if settings.reduced_motion { 0.0 } else { 1.0 };
+            chip.bump = if scoring.local.settings.reduced_motion {
+                0.0
+            } else {
+                1.0
+            };
         }
         chip.bump = (chip.bump - time.delta_secs() * 4.0).max(0.0);
         // The size follows the seat's rank, and only that: six fixed values,
@@ -504,7 +505,7 @@ pub fn update_arrow_dots(
     sim: Res<Sim>,
     seating: Seating,
     settings: Res<GameSettings>,
-    time: Res<Time>,
+    clock: Res<crate::app::round_state::RoundClock>,
     mut dots: Query<(&ArrowDot, &mut BorderColor)>,
     mut fills: Query<(&ArrowFill, &mut Node, &mut BackgroundColor)>,
     mut lives: Local<[Vec<f32>; MAX_PLAYERS]>,
@@ -515,7 +516,8 @@ pub fn update_arrow_dots(
         board.signpost_lives(seat as u8, out);
         marked[seat] = seating.played_here(seat as u8) && board.next_to_go(seat as u8).is_some();
     }
-    let pulse = next_to_go_pulse(time.elapsed_secs(), settings.reduced_motion);
+    // On the clock its post on the beach pulses to (`dress_signposts`).
+    let pulse = next_to_go_pulse(clock.0, settings.reduced_motion);
     // The next to go is the oldest by definition, so the first slot.
     let is_next = |seat: u8, index: u8| index == 0 && marked[usize::from(seat)];
     for (dot, mut border) in &mut dots {
@@ -561,9 +563,11 @@ mod tests {
     fn the_score_pop_is_scale_and_never_a_new_font_size() {
         let mut app = App::new();
         app.init_resource::<Time>();
-        app.init_resource::<Online>();
+        app.init_resource::<crate::app::net::Online>();
+        app.init_resource::<crate::app::Playback>();
         app.init_resource::<Seats>();
         app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::Daily>();
         app.insert_resource(Sim(crate::sim::Board::new(4, 4, 0)));
         app.world_mut().resource_mut::<Seats>().0 = 2;
         app.add_systems(Update, update_side_panels);

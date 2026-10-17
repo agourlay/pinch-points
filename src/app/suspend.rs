@@ -123,8 +123,7 @@ pub fn copy_round_code(
     mut clipboard: ResMut<Clipboard>,
     mut feed: ResMut<crate::app::side_panels::EventLog>,
 ) {
-    let crate::app::keycaps::Keyboard { keys, caps, live } = keyboard;
-    if !caps.global_pressed(&keys, 'C', &live) {
+    if !keyboard.global('C') {
         return;
     }
     let round = Suspended {

@@ -139,46 +139,54 @@ fn spawn_shore(commands: &mut Commands, art: &art::Art, rng: &mut VisualRng, siz
     // The beach and the open sea, drawn by the same two shaders as the
     // beach round a board, so the postcard is the place the rounds are
     // played: dry rippled sand, and the sea from its waterline, where the
-    // waves run up and back, out to the horizon. It was flat bands under
-    // seven rows of stepped crest segments, which read as pixel art beside
-    // the drawn sprites.
+    // waves run up and back, out to the horizon.
     let sand_top = bottom + SHORE_H + 40.0;
     commands.spawn((
         MenuShore,
-        Mesh2d(art.water.quad.clone()),
-        MeshMaterial2d(art.water.sand.clone()),
-        Transform::from_translation(Vec3::new(0.0, (bottom - 20.0 + sand_top) / 2.0, 0.0))
-            .with_scale(Vec3::new(w + 40.0, sand_top - bottom + 20.0, 1.0)),
+        art.shaded.quad(
+            &art.shaded.sand,
+            Transform::from_translation(Vec3::new(0.0, (bottom - 20.0 + sand_top) / 2.0, 0.0)),
+            Vec2::new(w + 40.0, sand_top - bottom + 20.0),
+        ),
     ));
     // Its foot a little below the old waterline: the shader's first stretch
     // up from there is the wet sand the waves run up.
     let sea_foot = bottom + SHORE_H - 10.0;
     commands.spawn((
         MenuShore,
-        Mesh2d(art.water.quad.clone()),
-        MeshMaterial2d(art.water.ocean.clone()),
-        Transform::from_translation(Vec3::new(0.0, (sea_foot + horizon) / 2.0, 0.02))
-            .with_scale(Vec3::new(w + 40.0, horizon - sea_foot, 1.0)),
+        art.shaded.quad(
+            &art.shaded.ocean,
+            Transform::from_translation(Vec3::new(0.0, (sea_foot + horizon) / 2.0, 0.02)),
+            Vec2::new(w + 40.0, horizon - sea_foot),
+        ),
     ));
     commands.spawn(band(horizon, 3.0, Color::srgb(0.72, 0.84, 0.92), 0.1));
     seed_travellers(commands, art, rng, w, h);
     spawn_beach_props(commands, art, rng, w, bottom);
 }
 
-/// What a beach prop is made of: one sprite, sometimes a shadow under it.
+/// What a beach prop is made of: how it looks, sometimes a shadow under
+/// it.
 struct Prop {
-    image: Handle<Image>,
-    tint: Color,
+    look: PropLook,
     size: Vec2,
     /// Ground shadow width, or zero for flat things like shells.
     shadow: f32,
+    /// How far a sprite is turned; a pond is drawn unturned.
     rotation: f32,
-    /// A second layer over the first, tinted: a signpost's paint on its
-    /// board.
-    paint: Option<(Handle<Image>, Color)>,
-    /// A tide pool: drawn as the board draws one (see `spawn_pond`), not
-    /// as `image`.
-    pond: bool,
+}
+
+/// How a beach prop is drawn.
+enum PropLook {
+    /// One sprite, with sometimes a second layer over it, tinted: a
+    /// signpost's paint on its board.
+    Sprite {
+        image: Handle<Image>,
+        tint: Color,
+        paint: Option<(Handle<Image>, Color)>,
+    },
+    /// A tide pool, drawn as the board draws one (see `spawn_pond`).
+    Pond,
 }
 
 /// Pre-seed the sky and sea so the postcard never starts empty: the ambient
@@ -202,22 +210,26 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
     match rng.next() % 12 {
         0 | 1 => Prop {
             // A castle from some earlier game, still standing.
-            image: art.castle.clone(),
-            tint: crate::app::board_render::castle_body(palette::player_color(
-                (rng.next() % 4) as u8,
-            )),
+            look: PropLook::Sprite {
+                image: art.castle.clone(),
+                tint: crate::app::board_render::castle_body(palette::player_color(
+                    (rng.next() % 4) as u8,
+                )),
+                paint: None,
+            },
             size: Vec2::splat(52.0 * scale),
             shadow: 44.0 * scale,
             rotation: 0.0,
-            paint: None,
-            pond: false,
         },
         2 => Prop {
             // Driftwood: the turnstile log, washed up. Not tinted past
             // white: under the HDR camera a tint over 1 is light, and the
             // log haloed in the bloom brighter than the foam.
-            image: art.log.clone(),
-            tint: Color::srgb(1.0, 0.98, 0.93),
+            look: PropLook::Sprite {
+                image: art.log.clone(),
+                tint: Color::srgb(1.0, 0.98, 0.93),
+                paint: None,
+            },
             size: Vec2::splat(50.0 * scale),
             shadow: 40.0 * scale,
             rotation: if rng.next().is_multiple_of(2) {
@@ -225,70 +237,70 @@ fn roll_prop(art: &art::Art, rng: &mut VisualRng, scale: f32) -> Prop {
             } else {
                 std::f32::consts::FRAC_PI_2
             },
-            paint: None,
-            pond: false,
         },
         3 | 4 => Prop {
-            image: art.kelp.clone(),
-            tint: Color::srgba(1.0, 1.0, 1.0, 0.92),
+            look: PropLook::Sprite {
+                image: art.kelp.clone(),
+                tint: Color::srgba(1.0, 1.0, 1.0, 0.92),
+                paint: None,
+            },
             size: Vec2::splat(rng.range(26.0, 38.0) * scale),
             shadow: 0.0,
             rotation: rng.range(-0.25, 0.25),
-            paint: None,
-            pond: false,
         },
         5 => Prop {
             // A tide pool left behind by the water, in the board's layers:
             // no picture of its own.
-            image: Handle::default(),
-            tint: Color::WHITE,
+            look: PropLook::Pond,
             size: Vec2::splat(rng.range(46.0, 62.0) * scale),
             shadow: 0.0,
             rotation: 0.0,
-            paint: None,
-            pond: true,
         },
         6 => Prop {
             // A crab burrow.
-            image: art.hole.clone(),
-            tint: Color::WHITE,
+            look: PropLook::Sprite {
+                image: art.hole.clone(),
+                tint: Color::WHITE,
+                paint: None,
+            },
             size: Vec2::splat(rng.range(26.0, 34.0) * scale),
             shadow: 0.0,
             rotation: 0.0,
-            paint: None,
-            pond: false,
         },
         7 => Prop {
             // A signpost nobody picked up, still pointing somewhere.
-            image: art.sign_board.clone(),
-            tint: Color::WHITE,
-            paint: Some((
-                art.sign_paint.clone(),
-                palette::seat_paint((rng.next() % 4) as u8),
-            )),
+            look: PropLook::Sprite {
+                image: art.sign_board.clone(),
+                tint: Color::WHITE,
+                paint: Some((
+                    art.sign_paint.clone(),
+                    palette::seat_paint((rng.next() % 4) as u8),
+                )),
+            },
             size: Vec2::splat(rng.range(30.0, 38.0) * scale),
             shadow: 24.0 * scale,
             rotation: (rng.next() % 4) as f32 * std::f32::consts::FRAC_PI_2,
-            pond: false,
         },
         8..=10 => Prop {
-            image: art.rock.clone(),
-            tint: Color::WHITE,
+            look: PropLook::Sprite {
+                image: art.rock.clone(),
+                tint: Color::WHITE,
+                paint: None,
+            },
             size: Vec2::splat(rng.range(22.0, 38.0) * scale),
             shadow: 22.0 * scale,
             rotation: rng.range(0.0, std::f32::consts::TAU),
-            paint: None,
-            pond: false,
         },
         _ => Prop {
             // A shell in the sand.
-            image: art.star.clone(),
-            tint: Color::srgba(0.95, 0.78, 0.6, 0.85),
+            look: PropLook::Sprite {
+                image: art.star.clone(),
+                tint: Color::srgba(0.95, 0.78, 0.6, 0.85),
+                paint: None,
+            },
             size: Vec2::splat(rng.range(9.0, 15.0) * scale),
             shadow: 0.0,
             rotation: rng.range(0.0, std::f32::consts::TAU),
-            paint: None,
-            pond: false,
         },
     }
 }
@@ -341,22 +353,22 @@ fn spawn_beach_props(
         // lip of wet sand under the water shader's shallows and deep, and
         // the sun's glint. The baked pool sprite read as a soap bubble
         // beside the board's pools.
-        if prop.pond {
+        let PropLook::Sprite { image, tint, paint } = prop.look else {
             spawn_pond(commands, art, Vec3::new(x, y, z), prop.size);
             continue;
-        }
+        };
         let mut piece = commands.spawn((
             MenuShore,
             Sprite {
-                image: prop.image,
-                color: prop.tint,
+                image,
+                color: tint,
                 custom_size: Some(prop.size),
                 ..default()
             },
             Transform::from_translation(Vec3::new(x, y, z))
                 .with_rotation(Quat::from_rotation_z(prop.rotation)),
         ));
-        if let Some((image, color)) = prop.paint {
+        if let Some((image, color)) = paint {
             piece.with_child((
                 Sprite {
                     image,
@@ -375,19 +387,20 @@ fn spawn_beach_props(
 /// board's layers and glint, from the board's own table and helpers, at
 /// the size of the prop rather than of a tile.
 fn spawn_pond(commands: &mut Commands, art: &art::Art, at: Vec3, size: Vec2) {
-    use crate::app::board_render::{POOL_LAYERS, glint_place, spawn_layer};
+    use crate::app::board_render::{POOL_LAYERS, spawn_glint, spawn_layer};
     // Squashed a little: the postcard's beach is seen at a slant.
     let size = size * Vec2::new(1.0, 0.7);
     for (layer, (kind, share, _)) in POOL_LAYERS.into_iter().enumerate() {
         let place = Transform::from_translation(at + Vec3::new(0.0, 0.0, 0.001 * layer as f32));
         spawn_layer(commands, art, kind, place, size * share, MenuShore);
     }
-    commands.spawn((
+    spawn_glint(
+        commands,
+        art,
+        at + Vec3::new(0.0, 0.0, 0.003),
+        size,
         MenuShore,
-        Mesh2d(art.water.quad.clone()),
-        MeshMaterial2d(art.water.glint.clone()),
-        glint_place(at + Vec3::new(0.0, 0.0, 0.003), size),
-    ));
+    );
 }
 
 /// Everything a rebuild of the postcard sweeps away: the shore and the
@@ -549,14 +562,18 @@ type Critter = (
 /// sand, gulls glide the sky, clouds drift high, and little sailboats
 /// cross the sea with a gentle bob. The sea itself moves in its shader.
 pub fn menu_ambience(
-    mut commands: Commands,
+    fx: crate::app::effects::Fx,
     time: Res<Time>,
-    art: Res<art::Art>,
-    mut rng: ResMut<VisualRng>,
     mut countdown: Local<f32>,
     viewport: crate::app::menu_ui::Viewport,
     mut critters: Query<Critter>,
 ) {
+    let crate::app::effects::Fx {
+        mut commands,
+        art,
+        mut rng,
+        settings,
+    } = fx;
     let Some(size) = viewport.size() else {
         return;
     };
@@ -584,19 +601,23 @@ pub fn menu_ambience(
         critter.frame_clock += dt;
         match critter.kind {
             CritterKind::Crab => {
-                use crate::app::creatures::{BOB, WALK_FPS};
+                use crate::app::creatures::{WALK_FPS, walk_bob};
                 let step = critter.frame_clock * WALK_FPS;
                 let want = &art.crab_walk[step as usize % art.crab_walk.len()];
                 // The same bob as on the board.
-                let bob = 1.0 + (step * std::f32::consts::PI).sin().abs() * BOB;
-                transform.scale = Vec3::splat(bob);
+                transform.scale = Vec3::splat(walk_bob(step, settings.reduced_motion));
                 if sprite.image != *want {
                     sprite.image = want.clone();
                 }
             }
-            // Boats ride a slow swell.
+            // Boats ride a slow swell, or a flat sea for less motion.
             CritterKind::Boat => {
-                transform.translation.y = critter.base_y + (critter.frame_clock * 1.6).sin() * 2.5;
+                let swell = if settings.reduced_motion {
+                    0.0
+                } else {
+                    (critter.frame_clock * 1.6).sin() * 2.5
+                };
+                transform.translation.y = critter.base_y + swell;
             }
             CritterKind::Gull | CritterKind::Cloud => {}
         }

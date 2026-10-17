@@ -24,8 +24,9 @@ pub(super) const CLOCK_TOP: f32 = 10.0;
 const CLOCK_PX: f32 = 44.0;
 
 /// Drive the sidebar clock: mm:ss, red for the closing stretch of the
-/// round and pulsing for the last of it. Versus rounds are two minutes and
-/// up, so that stretch is the flat 30 s it has always been.
+/// round and pulsing for the last of it. Versus rounds are one minute and
+/// up, so that stretch is the flat 30 s it has always been
+/// ([`crate::app::hud::urgency_band`]).
 pub fn update_side_clock(
     sim: Res<Sim>,
     blink: crate::app::hud::Blink,

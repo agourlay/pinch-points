@@ -610,6 +610,8 @@ fn a_launched_round_seats_every_peer_on_the_same_beach() {
         kinds: [0; MAX_PLAYERS],
         standing: None,
         beach: packed.clone(),
+        deal: 1,
+        crowned: 0,
     });
     let Some(NetMsg::Start(Start {
         terms: heard,

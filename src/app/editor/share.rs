@@ -37,7 +37,12 @@ fn is_from_elsewhere(pasted: &Level, bench: &Level, shelf: &[Level]) -> bool {
 }
 
 /// Take on what a pasted level says about itself: its signpost grant, its
-/// kind and its name.
+/// kind, its goal and its name.
+///
+/// The goal, because [`level_here`] rebuilds the level from the board and
+/// a board does not carry one: a "bank 5" stage came back from F2 and F3 as
+/// an every-crab stage, checked on the way in under the goal it no longer
+/// had.
 ///
 /// The kind, because opening somebody's beach and saving it back as a
 /// stage is not what either of you meant. The name, because the one on the
@@ -49,6 +54,7 @@ fn is_from_elsewhere(pasted: &Level, bench: &Level, shelf: &[Level]) -> bool {
 fn take_level(state: &mut EditorState, level: &Level, tr: &crate::app::i18n::Tr) {
     state.posts = level.posts;
     state.kind = level.kind;
+    state.goal = level.goal;
     state.name = tidy_name(&level.name, tr);
     state.mine.remove(&state.name);
 }
@@ -194,6 +200,28 @@ mod tests {
         assert_eq!((state.posts, state.kind), (5, LevelKind::Arena));
         assert!(!state.mine.contains("Gull Alley"), "a save over it is said");
         assert!(state.mine.contains("My Beach"), "the rest are left alone");
+    }
+
+    /// A pasted Beach Day stage keeps its goal through the bench: what F2
+    /// saves, F3 shares, the playtest plays and the check certifies is the
+    /// "bank 2" stage that was pasted, not an every-crab one.
+    #[test]
+    fn a_pasted_goal_survives_the_bench() {
+        let mut board = sand();
+        board.set_tile(4, 3, TileKind::Castle(0));
+        let mut pasted = Level::from_board("Bank Two", 2, board.clone());
+        pasted.goal = crate::sim::Goal::Bank(2);
+        let pasted = Level::parse(&pasted.to_text()).expect("reads back");
+        assert_eq!(pasted.goal, crate::sim::Goal::Bank(2));
+        let mut state = EditorState::default();
+        take_level(&mut state, &pasted, &crate::app::i18n::EN);
+        let here = level_here(&state, &pasted.board(), &state.name);
+        assert_eq!(here.goal, crate::sim::Goal::Bank(2));
+        assert!(
+            here.to_text().contains("goal: bank 2"),
+            "{}",
+            here.to_text()
+        );
     }
 
     /// A level authored here survives being carried as a share code: out

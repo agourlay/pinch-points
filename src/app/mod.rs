@@ -450,6 +450,17 @@ pub fn seat_label(tr: &i18n::Tr, seat: u8) -> String {
     fill(tr.player_label, &[("p", &(seat + 1).to_string())])
 }
 
+/// A line that names the first two seats as `{p1}` and `{p2}`, under this
+/// language's own labels for them. Spelled into each translation, the
+/// label drifted: six languages called their seats J1 or S1 and then said
+/// P1 and P2 in the co-op lines.
+pub fn name_the_pair(tr: &i18n::Tr, template: &str) -> String {
+    fill(
+        template,
+        &[("p1", &seat_label(tr, 0)), ("p2", &seat_label(tr, 1))],
+    )
+}
+
 /// What to call a seat: its name, or the "P{n}" label when it has none.
 /// One rule for every table of names, the couch's, a round's and an
 /// online session's, so an unnamed seat reads the same on every screen.
@@ -463,6 +474,8 @@ pub fn name_or_label(names: &[String], tr: &i18n::Tr, seat: u8) -> String {
 /// A round from a pasted code, waiting for [`Screen::Versus`] to seat it.
 /// Taken by `load_versus`, which is the one place that decides what board a
 /// round starts from.
+/// Dropped when another screen is entered instead
+/// (`forget_a_round_not_entered`).
 #[derive(Resource, Default)]
 pub struct Resuming(pub Option<suspend::Suspended>);
 

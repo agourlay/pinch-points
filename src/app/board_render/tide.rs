@@ -2,10 +2,8 @@
 //! sea along the bottom of the view climbing the beach as the round runs
 //! out, heaving in the closing stretch, and taking a mania's colour while
 //! one runs.
-//!
-//! It was a ring of water widening round the board. The ring is gone; the
-//! sea carries what it said.
 
+use crate::app::round_state::Countdown;
 use crate::sim::{Board, TideEvent};
 use bevy::prelude::*;
 
@@ -29,25 +27,29 @@ pub(super) const SWELL: f32 = 5.0;
 /// with the round (see [`climb`]), so the sea holds where the last wave
 /// left it rather than dropping flat in one frame.
 fn heaving(board: &Board, remaining: u64) -> bool {
-    board.rules().round_length.is_some()
-        && remaining
-            <= crate::app::hud::urgency_band(board.rules().round_length, crate::sim::SURGE_TICKS)
+    remaining <= crate::app::hud::urgency_band(board.rules().round_length, crate::sim::SURGE_TICKS)
 }
 
 /// How far through its climb the sea is, 0 at the start of a round and 1
 /// at its end, and the swell on top in the closing stretch, in interface
-/// pixels, `swell_clock` seconds into the swell's own clock, which the
-/// caller only runs while the round is moving: a paused or finished round's
-/// sea holds where it was, and takes up again from there. None if the
-/// player has asked for things to hold still. A board with no clock has no
-/// tide to come in.
-pub(super) fn climb(board: &Board, swell_clock: f32, still: bool) -> (f32, f32) {
-    let Some(remaining) = board.remaining_ticks() else {
+/// pixels, `swell_clock` seconds into the round's own clock
+/// ([`crate::app::round_state::RoundClock`]), which runs only while the
+/// round moves: a paused or finished round's sea holds where it was, and
+/// takes up again from there. `countdown` is
+/// the round's clock, the one the HUD shows; a round with none has no tide
+/// to come in. No swell if `still`, the player having asked for things to
+/// hold still.
+pub(super) fn climb(
+    board: &Board,
+    countdown: Option<Countdown>,
+    swell_clock: f32,
+    still: bool,
+) -> (f32, f32) {
+    let Some(countdown) = countdown else {
         return (0.0, 0.0);
     };
-    let total = board.ticks() + remaining;
-    let elapsed = 1.0 - remaining as f32 / total.max(1) as f32;
-    let swell = if heaving(board, remaining) && !still {
+    let elapsed = countdown.elapsed();
+    let swell = if heaving(board, countdown.remaining) && !still {
         (swell_clock * 6.0).sin() * SWELL
     } else {
         0.0
@@ -84,6 +86,7 @@ pub(super) fn mania_tint(board: &Board) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::round_state::countdown;
 
     /// The water stays tinted for as long as the mania runs, a call landing
     /// on top of it included.
@@ -119,11 +122,33 @@ mod tests {
         board
     }
 
-    /// A board with no clock has no tide: every untimed puzzle is one.
+    /// The sea as it is laid off the puzzle screen, by the board's own
+    /// round.
+    fn sea(board: &Board, swell_clock: f32, still: bool) -> (f32, f32) {
+        climb(board, countdown(board, false), swell_clock, still)
+    }
+
+    /// A board with no clock has no tide, off the puzzle screen.
     #[test]
     fn a_board_with_no_clock_has_no_tide() {
         let board = Board::new(9, 7, 1);
-        assert_eq!(climb(&board, 3.0, false), (0.0, 0.0));
+        assert_eq!(sea(&board, 3.0, false), (0.0, 0.0));
+    }
+
+    /// An untimed puzzle runs down the campaign tick limit, and its HUD
+    /// clock says so and turns red at the end: the sea climbs and heaves
+    /// with that clock rather than lying flat under it.
+    #[test]
+    fn an_untimed_puzzle_tide_climbs_with_its_clock() {
+        let mut board = Board::new(9, 7, 1);
+        for _ in 0..crate::sim::PUZZLE_TICK_LIMIT - 30 {
+            board.tick_idle();
+        }
+        let clock = countdown(&board, true);
+        assert_eq!(clock.map(|c| c.remaining), Some(30), "the HUD's figure");
+        let (rise, swell) = climb(&board, clock, 0.3, false);
+        assert!(rise > 0.95, "nearly all the way at the end: {rise}");
+        assert!(swell != 0.0, "and heaving");
     }
 
     /// The sea climbs as the round runs down, from nothing to its full
@@ -131,18 +156,18 @@ mod tests {
     #[test]
     fn the_sea_climbs_over_the_round_and_heaves_at_the_end() {
         let early = timed(3600, 30);
-        let (rise, swell) = climb(&early, 0.3, false);
+        let (rise, swell) = sea(&early, 0.3, false);
         assert!(rise < 0.05, "barely up at the start: {rise}");
         assert_eq!(swell, 0.0, "calm early on");
         let late = timed(3600, 3590);
-        let (rise, swell) = climb(&late, 0.3, false);
+        let (rise, swell) = sea(&late, 0.3, false);
         assert!(rise > 0.95, "nearly all the way at the end: {rise}");
         assert!(swell != 0.0, "and heaving");
-        assert_eq!(climb(&late, 0.3, true).1, 0.0, "but still when asked");
+        assert_eq!(sea(&late, 0.3, true).1, 0.0, "but still when asked");
         // A stopped round stops the swell's clock, and the swell holds
         // where that clock left it rather than dropping flat.
         assert_eq!(
-            climb(&late, 0.3, false),
+            sea(&late, 0.3, false),
             (rise, swell),
             "held where it got to"
         );

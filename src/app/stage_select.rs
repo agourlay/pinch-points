@@ -147,7 +147,7 @@ pub const KEY_POSTS: std::ops::RangeInclusive<u8> = 1..=5;
 
 impl TileState {
     fn of(progress: &Progress, campaign: &Campaign, index: usize) -> TileState {
-        if progress.is_cleared(campaign.kind, &campaign.levels[index].name) {
+        if progress.level_cleared(campaign.kind, &campaign.levels[index]) {
             TileState::Cleared
         } else if progress.unlocked(campaign, index) {
             TileState::Open
@@ -256,10 +256,16 @@ pub fn caption(
 pub fn enter_stage_select(
     mut commands: Commands,
     campaign: Res<Campaign>,
-    progress: Res<Progress>,
+    mut progress: ResMut<Progress>,
     settings: Res<GameSettings>,
     mut list: ResMut<StageList>,
 ) {
+    // A tick an older build filed under a level's name is filed under its
+    // file before the list is drawn, and kept there: a later file of the
+    // same name would leave the name meaning neither.
+    if progress.adopt_legacy(&campaign) {
+        crate::app::progress::save(&mut progress);
+    }
     // Land the cursor where the player left off, not back at stage one.
     list.selected = progress.furthest_open(&campaign);
     list.rows = rows(campaign.builtins, campaign.levels.len());
@@ -607,6 +613,7 @@ pub fn update_stage_tiles(
     campaign: Res<Campaign>,
     progress: Res<Progress>,
     settings: Res<GameSettings>,
+    coop: Res<crate::app::Coop>,
     caps: Res<crate::app::keycaps::KeyCaps>,
     ui: StageUi,
 ) {
@@ -666,9 +673,11 @@ pub fn update_stage_tiles(
     if let Ok((mut text, mut node)) = hints.single_mut() {
         let hint = match state {
             TileState::Locked => String::new(),
+            // Asked as the puzzle's own line asks it: the key lesson is
+            // kept back under keys it does not describe.
             TileState::Cleared | TileState::Open => caps.legend(
                 campaign
-                    .hint(list.selected, settings.language)
+                    .shown_hint(list.selected, &settings, *coop)
                     .unwrap_or(""),
             ),
         };
@@ -688,12 +697,12 @@ pub fn stage_select_input(
     mut denied: MessageWriter<PlacementDenied>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
-    let crate::app::keycaps::Keyboard { keys, caps, live } = keyboard;
+    let keys = &keyboard.keys;
     // Read the layout, then move: the rows are settled and the cursor is
     // the only thing this system changes.
-    let at = step(list.selected, &list.rows, &keys);
+    let at = step(list.selected, &list.rows, keys);
     list.selected = at;
-    let toggled = caps.global_pressed(&keys, 'C', &live)
+    let toggled = keyboard.global('C')
         || pads
             .iter()
             .any(|pad| pad.just_pressed(GamepadButton::North));
@@ -704,7 +713,7 @@ pub fn stage_select_input(
         next_screen.set(Screen::Menu);
         return;
     }
-    if !menu_ui::enter(&keys) {
+    if !menu_ui::enter(keys) {
         return;
     }
     if ladder.climb_to(list.selected) {
@@ -722,17 +731,9 @@ mod tests {
     use super::*;
     use crate::app::CampaignKind;
     use crate::app::i18n::EN;
-    use crate::sim::campaign_levels;
 
     fn campaign() -> Campaign {
-        let levels = campaign_levels();
-        let builtins = levels.len();
-        Campaign {
-            kind: CampaignKind::TidePool,
-            levels,
-            index: 0,
-            builtins,
-        }
+        Campaign::tide_pool()
     }
 
     fn press(key: KeyCode) -> ButtonInput<KeyCode> {
@@ -860,7 +861,7 @@ mod tests {
             app.init_resource::<StageList>();
             app.init_resource::<ButtonInput<KeyCode>>();
             app.init_resource::<crate::app::keycaps::KeyCaps>();
-            app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+            app.init_resource::<crate::app::cursor::LiveSeatKeys>();
             app.init_resource::<crate::app::Coop>();
             app.add_message::<PlacementDenied>();
             app.add_systems(Update, stage_select_input);
@@ -887,7 +888,7 @@ mod tests {
         app.init_resource::<StageList>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.init_resource::<crate::app::Coop>();
         app.add_systems(Update, stage_select_input);
 

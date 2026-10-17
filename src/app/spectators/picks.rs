@@ -90,18 +90,13 @@ pub struct PickCard(pub bool);
 /// are open, since a pick is one datagram and UDP owes nobody that.
 pub fn spectator_pick_input(
     mut card: ListCard<PickCardUi, PickCard>,
-    keyboard: crate::app::keycaps::KeyboardMut,
+    mut keyboard: crate::app::keycaps::KeyboardMut,
     time: Res<Time>,
     settings: Res<crate::app::settings::GameSettings>,
     watching: Watching<SpectatorCard>,
     mut online: ResMut<Online>,
     mut resend: Local<f32>,
 ) {
-    let crate::app::keycaps::KeyboardMut {
-        mut keys,
-        caps,
-        live,
-    } = keyboard;
     let open = online
         .0
         .as_ref()
@@ -121,18 +116,20 @@ pub fn spectator_pick_input(
         session.transport.send(NetMsg::SpectatorPick { seat });
     }
     if !card.is_up() {
-        if caps.global_pressed(&keys, 'P', &live) {
+        if keyboard.global('P') {
             spawn_pick_card(card.raise(), &settings, session);
         }
         return;
     }
-    if keys.just_pressed(KeyCode::Escape) || caps.global_pressed(&keys, 'P', &live) {
+    if keyboard.keys.just_pressed(KeyCode::Escape) || keyboard.global('P') {
         card.shut();
         // Or the pause card, behind it in the frame, opens on the same Esc.
-        crate::app::menu_ui::spend(&mut keys, &[KeyCode::Escape]);
+        crate::app::menu_ui::spend(&mut keyboard.keys, &[KeyCode::Escape]);
         return;
     }
-    if let Some(seat) = crate::app::menu_ui::number_pressed(&keys, usize::from(session.seats)) {
+    if let Some(seat) =
+        crate::app::menu_ui::number_pressed(&keyboard.keys, usize::from(session.seats))
+    {
         let seat = seat as u8;
         session.stands.winner.my_pick = Some(seat);
         session.transport.send(NetMsg::SpectatorPick { seat });
@@ -159,14 +156,16 @@ fn spawn_pick_card(
 /// Score a spectator's call as the tide comes in, for the card to say.
 pub fn score_the_call(
     sim: Res<crate::app::Sim>,
-    settings: Res<crate::app::settings::GameSettings>,
+    local: crate::app::teams::LocalScoring,
     mut online: ResMut<Online>,
 ) {
     let Some(seats) = online.0.as_ref().map(|s| s.seats) else {
         return;
     };
     // The same winners the standings crown, teams and all.
-    let mode = crate::app::teams::in_play(&settings, &online, seats);
+    // The pure rule rather than `Scoring`, which reads the session this
+    // writes; a call is only ever made on a live round.
+    let mode = crate::app::teams::in_play(local.mode(), &online, None, seats);
     let winners = crate::app::seating::leading_seats(sim.0.scores(), seats, mode);
     let Some(session) = &mut online.0 else {
         return;

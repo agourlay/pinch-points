@@ -39,7 +39,9 @@ use crate::app::cycle::{Cycle, Turn};
 use crate::app::i18n::fill;
 use crate::app::match_setup::MatchConfig;
 use crate::app::menu_ui::Nav;
-use crate::app::net::{HostedBot, Invitation, LobbyReturn, Online, OnlineSession, PeerBook};
+use crate::app::net::{
+    HostedBot, Invitation, LobbyReturn, Online, OnlineSession, PeerBook, PutOut,
+};
 use crate::app::palette;
 use crate::app::settings::GameSettings;
 use crate::app::{Screen, VersusPhase};
@@ -302,20 +304,17 @@ impl LobbyState {
     }
 
     /// What holds each place in [`Self::roster`]: the host a person, every
-    /// peer that came to play whatever its greeting said.
+    /// peer at the table whatever its greeting said. Read off the same
+    /// list as the roster ([`PeerBook::at_the_table`]), so a place and what
+    /// holds it never count past each other.
     pub fn roster_kinds(&self) -> Vec<crate::sim::SeatKind> {
         let nobody = PeerBook::default();
         let peers = self.hosted().map_or(&nobody, |hosted| &hosted.peers);
         std::iter::once(crate::sim::SeatKind::Human)
-            .chain(
-                peers
-                    .iter()
-                    .filter(|peer| !peer.watch)
-                    .map(|peer| match peer.bot {
-                        true => crate::sim::SeatKind::Bot,
-                        false => crate::sim::SeatKind::Human,
-                    }),
-            )
+            .chain(peers.at_the_table().map(|(_, peer)| match peer.bot {
+                true => crate::sim::SeatKind::Bot,
+                false => crate::sim::SeatKind::Human,
+            }))
             .collect()
     }
 
@@ -366,16 +365,17 @@ impl LobbyState {
 }
 
 /// The table as a host knows it: the host first, then every peer that
-/// came to play, by the name its greeting carried. Onlookers are not at
-/// it, and a peer that has not said what to call it yet still holds its
-/// chair, under a seat label rather than a blank.
+/// came to play, by the name its greeting carried, as far as there are
+/// chairs ([`PeerBook::at_the_table`]). Onlookers are not at it, and a
+/// peer that has not said what to call it yet still holds its chair,
+/// under a seat label rather than a blank.
 pub(super) fn table_of(peers: &PeerBook, tr: &crate::app::i18n::Tr, me: &str) -> Vec<String> {
     let mine = match me.trim().is_empty() {
         true => crate::app::seat_label(tr, 0),
         false => me.to_string(),
     };
     let mut table = vec![mine];
-    for peer in peers.iter().filter(|peer| !peer.watch) {
+    for (_, peer) in peers.at_the_table() {
         table.push(match peer.name.is_empty() {
             true => crate::app::seat_label(tr, table.len() as u8),
             false => peer.name.clone(),
@@ -405,6 +405,8 @@ fn settle_back_in(
             transport,
             game_name,
             mut peers,
+            tail,
+            rounds_dealt,
         } => {
             // A host that never announced (the direct pair) has no beach to
             // stand back up, and `from_lobby` keeps it from coming this way.
@@ -423,6 +425,8 @@ fn settle_back_in(
                 announce_in: 0.0,
                 kicking: false,
                 bot_string: None,
+                tail: RoundTail::kept(tail),
+                rounds_dealt,
             });
         }
         LobbyReturn::Joiner {
@@ -532,20 +536,20 @@ mod tests {
     #[test]
     fn hosts_expire_when_they_stop_announcing() {
         let mut hosts = Vec::new();
-        refresh_hosts(&mut hosts, &[open(7)], 0.0);
+        refresh_open(&mut hosts, &[open(7)], 0.0);
         assert_eq!(hosts.len(), 1, "a new beach joins the list");
 
         // Heard again: still fresh, and not duplicated.
-        refresh_hosts(&mut hosts, &[open(7)], 1.0);
+        refresh_open(&mut hosts, &[open(7)], 1.0);
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].age, 0.0);
 
         // Silence, but not yet long enough.
-        refresh_hosts(&mut hosts, &[], HOST_TTL - 0.5);
+        refresh_open(&mut hosts, &[], HOST_TTL - 0.5);
         assert_eq!(hosts.len(), 1, "given a moment's grace");
 
         // Silence past the deadline.
-        refresh_hosts(&mut hosts, &[], 1.0);
+        refresh_open(&mut hosts, &[], 1.0);
         assert!(hosts.is_empty(), "a host that quit leaves the list");
     }
 
@@ -555,21 +559,21 @@ mod tests {
     #[test]
     fn a_farewell_clears_a_host_without_waiting_out_the_timeout() {
         let mut hosts = Vec::new();
-        refresh_hosts(&mut hosts, &[open(1), open(2)], 0.0);
+        refresh_open(&mut hosts, &[open(1), open(2)], 0.0);
         assert_eq!(hosts.len(), 2);
 
         // No time passes at all, and it is still gone.
-        refresh_hosts(&mut hosts, &[(addr(1), Beacon::Closing { id: 1 })], 0.0);
+        refresh_open(&mut hosts, &[(addr(1), Beacon::Closing { id: 1 })], 0.0);
         assert_eq!(hosts.len(), 1, "the one that said goodbye left");
         assert_eq!(hosts[0].addr, addr(2), "and only that one");
 
         // A farewell for a beach nobody had listed is simply nothing.
-        refresh_hosts(&mut hosts, &[(addr(9), Beacon::Closing { id: 9 })], 0.0);
+        refresh_open(&mut hosts, &[(addr(9), Beacon::Closing { id: 9 })], 0.0);
         assert_eq!(hosts.len(), 1);
 
         // Opened and closed inside one frame: the order it arrived in wins,
         // so a beach that is already gone is never briefly offered.
-        refresh_hosts(
+        refresh_open(
             &mut hosts,
             &[open(5), (addr(5), Beacon::Closing { id: 5 })],
             0.0,
@@ -579,7 +583,7 @@ mod tests {
             "a beach that opened and shut in one frame is not listed"
         );
         // And the same two the other way round is a beach that came back.
-        refresh_hosts(
+        refresh_open(
             &mut hosts,
             &[(addr(5), Beacon::Closing { id: 5 }), open(5)],
             0.0,
@@ -597,12 +601,27 @@ mod tests {
             bots: 0,
             ..MatchConfig::default()
         };
-        assert_eq!(gathering_feedback(&EN, &none, 1, 0), EN.lobby_rivals_one);
-        assert!(gathering_feedback(&EN, &none, 3, 0).contains('3'));
+        // The AI the launch deals behind the host and `aboard`.
+        let ai = |config: &MatchConfig, aboard: usize| {
+            crate::app::lobby::terms::dealt(config, 1 + aboard as u8).bots
+        };
+        let line = |config: &MatchConfig, aboard: usize, watching: usize| {
+            gathering_feedback(&EN, aboard, watching, ai(config, aboard))
+        };
+        assert_eq!(line(&none, 1, 0), EN.lobby_rivals_one);
+        // Only watchers aboard: Enter starts against the AI, and the line
+        // says no player came rather than counting zero of them.
+        let onlookers = line(&none, 0, 1);
+        assert!(onlookers.starts_with(EN.lobby_rivals_none), "{onlookers}");
+        assert!(
+            onlookers.contains(&fill(EN.lobby_ai_seats, &[("n", "1")])),
+            "{onlookers}"
+        );
+        assert!(line(&none, 3, 0).contains('3'));
 
         // Onlookers are counted, and counted apart from the players.
-        let watched = gathering_feedback(&EN, &none, 2, 2);
-        assert!(watched.len() > gathering_feedback(&EN, &none, 2, 0).len());
+        let watched = line(&none, 2, 2);
+        assert!(watched.len() > line(&none, 2, 0).len());
 
         // The AI takes what the table leaves and no more, however many the
         // host asked for. Five aboard plus the host is a full beach.
@@ -610,10 +629,10 @@ mod tests {
             bots: 5,
             ..MatchConfig::default()
         };
-        let full = gathering_feedback(&EN, &greedy, MAX_PLAYERS - 1, 0);
+        let full = line(&greedy, MAX_PLAYERS - 1, 0);
         assert_eq!(
             full,
-            gathering_feedback(&EN, &none, MAX_PLAYERS - 1, 0),
+            line(&none, MAX_PLAYERS - 1, 0),
             "no room for a bot, so no promise of one"
         );
     }
@@ -664,12 +683,12 @@ mod tests {
     #[test]
     fn hosts_age_independently() {
         let mut hosts = Vec::new();
-        refresh_hosts(&mut hosts, &[open(1), open(2)], 0.0);
+        refresh_open(&mut hosts, &[open(1), open(2)], 0.0);
         assert_eq!(hosts.len(), 2);
         // Only the first keeps talking.
-        refresh_hosts(&mut hosts, &[open(1)], HOST_TTL - 0.1);
+        refresh_open(&mut hosts, &[open(1)], HOST_TTL - 0.1);
         assert_eq!(hosts.len(), 2, "the quiet one is on its last legs");
-        refresh_hosts(&mut hosts, &[open(1)], 0.2);
+        refresh_open(&mut hosts, &[open(1)], 0.2);
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].addr, addr(1));
     }
@@ -740,10 +759,13 @@ mod homecoming_tests {
                 transport,
                 game_name: "Room 3".into(),
                 peers: peers_named(&["Bo", "Cy"], &[1]),
+                tail: Vec::new(),
+                rounds_dealt: 3,
             },
             &EN,
         );
         assert!(state.hosting());
+        assert_eq!(state.hosted().map(|hosted| hosted.rounds_dealt), Some(3));
         assert_eq!(state.game_name, "Room 3");
         let hosted = state.hosted().expect("hosting");
         assert_eq!(
@@ -757,6 +779,35 @@ mod homecoming_tests {
             ["Anna", "Bo"],
             "the table as it stood, minus the one watching"
         );
+    }
+
+    /// A host back in the lobby keeps repeating the last frames of the
+    /// round it walked away from, for a while: at once to a peer still
+    /// resending its commits, to everybody on the beacon's tick, and to
+    /// nobody once the while is up.
+    #[test]
+    fn the_lobby_repeats_the_last_frames_for_a_while() {
+        let (transport, mut joiners) = with_peers(2);
+        let input = crate::sim::InputMsg {
+            player: 2,
+            frame: 40,
+            action: crate::sim::PlayerAction::None,
+        };
+        let heard = |joiner: &mut UdpTransport| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            joiner
+                .recv_all()
+                .into_iter()
+                .any(|(msg, _)| msg == NetMsg::Inputs(vec![input]))
+        };
+        let mut tail = RoundTail::kept(vec![input]);
+        tail.repeat(&transport, 0.1, false, &[1]);
+        assert!(!heard(&mut joiners[0]), "only the peer that asked");
+        assert!(heard(&mut joiners[1]), "is answered at once");
+        tail.repeat(&transport, 0.1, true, &[]);
+        assert!(heard(&mut joiners[0]) && heard(&mut joiners[1]), "the tick");
+        tail.repeat(&transport, 60.0, true, &[0, 1]);
+        assert!(!heard(&mut joiners[0]) && !heard(&mut joiners[1]), "over");
     }
 
     /// The rows a host is handed back have to be one per peer the socket
@@ -774,6 +825,8 @@ mod homecoming_tests {
                 game_name: String::new(),
                 // Fewer names than the socket knows peers.
                 peers: peers_named(&["Bo"], &[0]),
+                tail: Vec::new(),
+                rounds_dealt: 0,
             },
             &EN,
         );
@@ -850,10 +903,7 @@ mod chat_tests {
     fn there_is_nobody_to_talk_to_until_there_is() {
         let mut state = LobbyState::default();
         assert!(!state.can_chat(), "browsing the list is not a conversation");
-        state.standing = Standing::hosting(
-            Announcer::new(0xB0A7).expect("announcer"),
-            UdpTransport::host(0).expect("socket"),
-        );
+        state.standing = hosting_lobby();
         assert!(state.can_chat(), "a host has a table to address");
         state.standing = Standing::Joining(Joined::dialled(
             UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
@@ -872,10 +922,7 @@ mod table_tests {
     /// A hosting lobby with these peers on it, as greeted.
     fn seated(names: &[&str], watchers: &[usize]) -> LobbyState {
         let mut state = LobbyState {
-            standing: Standing::hosting(
-                Announcer::new(0xB0A7).expect("announcer"),
-                UdpTransport::host(0).expect("socket"),
-            ),
+            standing: hosting_lobby(),
             ..LobbyState::default()
         };
         state.hosted_mut().expect("hosting").peers = peers_named(names, watchers);
@@ -972,10 +1019,7 @@ mod standing_tests {
         assert!(state.joined().is_none());
         assert!(state.watching());
 
-        state.standing = Standing::hosting(
-            Announcer::new(1).expect("announcer"),
-            UdpTransport::host(0).expect("socket"),
-        );
+        state.standing = hosting_lobby();
         assert!(state.hosting());
         assert!(!state.watching(), "a host plays");
         assert!(state.standing().at_a_beach());

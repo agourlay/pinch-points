@@ -182,7 +182,8 @@ fn draw(board: &Board, origin: (u8, u8)) -> Frame {
                 continue;
             }
             let (px, py) = (u32::from(col) * TILE, u32::from(row) * TILE);
-            let checker = if (x + y) % 2 == 0 {
+            // Widened first: two coordinates past 127 overflow a u8.
+            let checker = if (u16::from(x) + u16::from(y)).is_multiple_of(2) {
                 ink::SAND
             } else {
                 ink::SAND_DARK
@@ -452,6 +453,18 @@ mod tests {
         let mut wide = Board::new(20, 13, 1);
         wide.set_tile(10, 6, TileKind::Castle(0));
         assert_eq!(window_origin(&wide, (10, 6)), (6, 3));
+    }
+
+    /// The far corner of the biggest board a byte can name draws: its
+    /// checkerboard sum is past what a byte holds.
+    #[test]
+    fn a_window_far_out_on_a_huge_board_draws() {
+        let mut huge = Board::new(255, 255, 1);
+        huge.set_tile(250, 250, TileKind::Castle(0));
+        let origin = window_origin(&huge, (250, 250));
+        assert!(origin.0 > 128 && origin.1 > 128, "{origin:?}");
+        let frame = draw(&huge, origin);
+        assert!(!frame.pixels.is_empty());
     }
 
     #[test]

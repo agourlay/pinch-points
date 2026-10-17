@@ -5,7 +5,7 @@ use super::{CreatureShadow, Tween, smoothing_alpha, tweened_pos, unturned};
 use crate::app::art::Art;
 use crate::app::effects;
 use crate::app::layout::{self, TILE};
-use crate::app::sim_events::CurrentBoard;
+use crate::app::sim_events::{BoardMemory, BoardStamp, CurrentBoard};
 use crate::sim::{Gull, GullState};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -22,7 +22,7 @@ pub fn sync_gull_sprites(
     // was. A *sprite* being new is not a gull arriving: a level with gulls
     // written into it, a retry, a resumed round and an editor test run all
     // wipe the sprites and rebuild them.
-    mut before: Local<(Option<u64>, Vec<u32>)>,
+    mut before: Local<(BoardStamp, Vec<u32>)>,
     existing: Query<(Entity, &GullSprite)>,
 ) {
     let effects::Fx {
@@ -40,12 +40,11 @@ pub fn sync_gull_sprites(
     // there. So the memory is reseeded from those birds rather than
     // emptied, which otherwise puffs sand under every gull on the beach.
     let (last_board, seen) = &mut *before;
-    let fresh = board.ticks() == 0 || *last_board != Some(current.generation());
-    if fresh {
+    let new_board = last_board.is_new(&current);
+    if new_board || board.ticks() == 0 {
         seen.clear();
         seen.extend(board.gulls().iter().map(|g| g.id));
     }
-    *last_board = Some(current.generation());
     live.clear();
     live.extend(board.gulls().iter().map(|g| (g.id, *g)));
     for (entity, sprite) in &existing {
@@ -55,8 +54,8 @@ pub fn sync_gull_sprites(
     }
     for (&id, gull) in live.iter() {
         let pos = layout::creature_pos(board, gull.tile, gull.dir, gull.progress);
-        // A gull arriving is the worst news on the beach and used to
-        // appear in silence at the edge of the sand.
+        // A gull arriving is the worst news on the beach: it lands in a
+        // puff of sand, never in silence at the edge.
         if !settings.reduced_motion && !seen.contains(&id) {
             kick_up(&mut commands, &mut rng, &art, pos);
         }
@@ -120,12 +119,10 @@ pub fn interpolate_gulls(
     fx: effects::Fx,
     tween: Tween,
     mut by_id: Local<HashMap<u32, Gull>>,
-    // The board `aloft` was filled on.
-    mut aloft_on: Local<Option<u64>>,
     // Gulls currently in the air. Presence is the flight: a gull that
     // turns up here without an entry has just taken off, and one whose
     // entry outlives its flight has just landed.
-    mut aloft: Local<HashMap<u32, Flight>>,
+    mut aloft: Local<BoardMemory<u32, Flight>>,
     gulls: GullSprites,
 ) {
     let effects::Fx {
@@ -139,28 +136,29 @@ pub fn interpolate_gulls(
         fixed_time,
         mut watch,
         round,
+        round_clock,
     } = tween;
     let GullSprites {
         bodies: mut sprites,
         mut shadows,
     } = gulls;
     let board = &current.sim.0;
-    let fresh = board.ticks() == 0 || *aloft_on != Some(current.generation());
-    *aloft_on = Some(current.generation());
     let alpha = smoothing_alpha(board.ticks(), &mut watch, time.delta_secs(), &fixed_time);
     let stopped = !round.moving(board);
     by_id.clear();
     by_id.extend(board.gulls().iter().map(|g| (g.id, *g)));
-    // A different board (by `BoardGeneration`, which also knows a round
-    // pasted in mid-clock), and gull ids start again at zero on every one
-    // of them. Pruned by id alone, a recycled id inherits a latched descent
-    // and a frozen altitude, and the bird slides flat over the sand with
-    // its shadow pinned under it.
-    if fresh {
+    // Kept per board: gull ids start again at zero on every one, and
+    // pruned by id alone a recycled id inherits a latched descent and a
+    // frozen altitude, so the bird slides flat over the sand with its
+    // shadow pinned under it. Nothing is aloft on a board at tick zero.
+    let aloft = aloft.of(&current);
+    if board.ticks() == 0 {
         aloft.clear();
     }
     aloft.retain(|id, _| by_id.contains_key(id));
-    let t = time.elapsed_secs();
+    // The wing beat and the circling shadow run with the round, so a gull
+    // caught aloft by a pause or the results holds its pose.
+    let t = round_clock.0;
     for (sprite, mut transform, mut image, children) in &mut sprites {
         let Some(gull) = by_id.get(&sprite.0) else {
             continue;

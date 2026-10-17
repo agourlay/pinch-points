@@ -121,6 +121,15 @@ pub enum LobbyReturn {
         /// next round would have seated it. Nobody holds a chair any more:
         /// the lobby deals them again at the launch.
         peers: PeerBook,
+        /// The last frames of the round just played
+        /// ([`crate::sim::Lockstep::played_tail`]), for a peer still a
+        /// frame short of its end: the host has stopped relaying, and the
+        /// lobby repeats them for a while instead.
+        tail: Vec<crate::sim::InputMsg>,
+        /// How many rounds this socket has dealt, the match just played
+        /// included, for the next match to count on from
+        /// ([`OnlineSession::rounds_dealt`]).
+        rounds_dealt: u32,
     },
     Joiner {
         transport: UdpTransport,
@@ -208,7 +217,6 @@ impl OnlineSession {
     pub fn back_to_the_lobby(mut self) -> LobbyReturn {
         let host = self.is_host();
         let watching = self.watch_wish();
-        let seat = self.session.seat();
         // Each peer under the name its chair carried, which is the one
         // every screen showed, and the plan's chairs given up: back in the
         // lobby the plan is dealt again, and only who watches survives it.
@@ -219,6 +227,7 @@ impl OnlineSession {
             }
         }
         self.peers.unseat();
+        let tail = self.session.played_tail();
         let Self {
             transport,
             session: _,
@@ -227,9 +236,9 @@ impl OnlineSession {
             beach: _,
             peers,
             bot,
-            kicked: _,
+            put_out: _,
             bots_here: _,
-            names,
+            names: _,
             kinds: _,
             hashes: _,
             stall: _,
@@ -240,6 +249,8 @@ impl OnlineSession {
             next_round: _,
             series_standing: _,
             resume_echo: _,
+            rounds_dealt,
+            crowned: _,
             catch_up: _,
         } = self;
         let Home {
@@ -257,14 +268,14 @@ impl OnlineSession {
                 transport,
                 game_name,
                 peers,
+                tail,
+                rounds_dealt,
             },
             false => LobbyReturn::Joiner {
                 transport,
                 watching,
                 played_seed: terms.seed,
-                bot: seat
-                    .filter(|_| bot)
-                    .map(|seat| names[usize::from(seat)].clone()),
+                bot,
             },
         }
     }
@@ -323,16 +334,23 @@ mod tests {
         session.stay_on_air(Announcer::new(0xB0A7).expect("announcer"));
         session.home.game_name = "Room 3".into();
         session.home.from_lobby = true;
+        session.rounds_dealt = 4;
         let LobbyReturn::Host {
             announcer,
             transport,
             game_name,
             peers: _,
+            tail: _,
+            rounds_dealt,
         } = session.back_to_the_lobby()
         else {
             panic!("the host comes home as the host");
         };
         assert_eq!(game_name, "Room 3");
+        assert_eq!(
+            rounds_dealt, 4,
+            "the next match counts its rounds on from these"
+        );
         assert_eq!(
             transport.local_addr().expect("addr").port(),
             port,
@@ -441,5 +459,41 @@ mod tests {
         };
         assert!(watching, "the watcher is remembered");
         assert_eq!(played_seed, 7);
+    }
+
+    /// A bot's seat (route 1) the full table dealt no chair still goes
+    /// home a bot, under the seat name it greeted with: read off its chair,
+    /// it had none, and walked back greeting as a person under the
+    /// player's own name, which the host wrote down as a person.
+    #[test]
+    fn a_bot_dealt_no_chair_comes_home_a_bot() {
+        let mut session = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
+            Lockstep::observer(vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        session.bot = Some("Greedy (Ana)".to_string());
+        assert_eq!(
+            session.own_greeting(),
+            NetMsg::hello_bot("Greedy (Ana)"),
+            "between rounds"
+        );
+        let LobbyReturn::Joiner {
+            transport,
+            watching,
+            played_seed,
+            bot,
+        } = session.back_to_the_lobby()
+        else {
+            panic!("a joiner comes home as a joiner");
+        };
+        assert_eq!(bot.as_deref(), Some("Greedy (Ana)"));
+        let joined = crate::app::lobby::Joined::returned(transport, watching, played_seed, bot);
+        assert_eq!(
+            joined.greeting("Ana"),
+            NetMsg::hello_bot("Greedy (Ana)"),
+            "and back in the lobby"
+        );
     }
 }

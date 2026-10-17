@@ -103,6 +103,29 @@ pub(super) fn sim_should_run(
     }
 }
 
+/// A running puzzle's board has not been decided yet: the tick that wins
+/// or loses the stage is the last one played.
+///
+/// Read before every fixed tick, not once a frame. `check_outcome` judges
+/// the board in `Update`, after however many ticks the frame covered, and
+/// an untimed stage does not freeze at its deadline the way a round's
+/// clock freezes a timed one: a frame covering ticks 1800 and 1801 judged
+/// the board a tick past the limit, which turned a Survive won on 1800
+/// into one lost to a gull on 1801. The solver's `play_out` stops at the
+/// first tick that decides the stage, and so does the game.
+pub(super) fn puzzle_undecided(
+    screen: Res<State<Screen>>,
+    campaign: Option<Res<super::Campaign>>,
+    sim: Option<Res<super::Sim>>,
+) -> bool {
+    match (screen.get(), campaign, sim) {
+        (Screen::Puzzle, Some(campaign), Some(sim)) => {
+            campaign.current().outcome(&sim.0) == crate::sim::PuzzleOutcome::Running
+        }
+        _ => true,
+    }
+}
+
 /// A versus round in play, as against one already over.
 pub(super) fn versus_running(screen: Res<State<Screen>>, phase: Res<State<VersusPhase>>) -> bool {
     *screen.get() == Screen::Versus && *phase.get() == VersusPhase::Running
@@ -113,7 +136,14 @@ pub(super) fn versus_over(screen: Res<State<Screen>>, phase: Res<State<VersusPha
 }
 
 pub(super) fn puzzle_setup(screen: Res<State<Screen>>, phase: Res<State<Phase>>) -> bool {
-    *screen.get() == Screen::Puzzle && *phase.get() == Phase::Setup
+    in_puzzle_setup(screen.get(), phase.get())
+}
+
+/// Whether a puzzle is being laid out, its run not begun: what
+/// [`puzzle_setup`] runs under, and what the pause card asks before
+/// taking a pad's Start, which means "begin the run" there.
+pub(in crate::app) fn in_puzzle_setup(screen: &Screen, phase: &Phase) -> bool {
+    *screen == Screen::Puzzle && *phase == Phase::Setup
 }
 
 pub(super) fn puzzle_running(screen: Res<State<Screen>>, phase: Res<State<Phase>>) -> bool {
@@ -121,7 +151,16 @@ pub(super) fn puzzle_running(screen: Res<State<Screen>>, phase: Res<State<Phase>
 }
 
 pub(super) fn puzzle_done(screen: Res<State<Screen>>, phase: Res<State<Phase>>) -> bool {
-    *screen.get() == Screen::Puzzle && matches!(*phase.get(), Phase::Won | Phase::Lost)
+    puzzle_settled(screen.get(), phase.get())
+}
+
+/// Whether a puzzle is won or lost and its card up: what [`puzzle_done`]
+/// runs under, what the pause card stays shut on, and a puzzle's half of
+/// a round having ended ([`RoundState::ended`]).
+///
+/// [`RoundState::ended`]: crate::app::round_state::RoundState::ended
+pub(in crate::app) fn puzzle_settled(screen: &Screen, phase: &Phase) -> bool {
+    *screen == Screen::Puzzle && matches!(phase, Phase::Won | Phase::Lost)
 }
 
 #[cfg(test)]
@@ -147,6 +186,38 @@ mod tests {
         world.insert_resource(Playback::default());
         world.insert_resource(crate::app::spectators::SpectatorChat::default());
         world
+    }
+
+    /// An untimed stage stops stepping on the tick that decides it, the
+    /// one the solver's `play_out` stops on, rather than on whatever tick
+    /// the frame that covers it ends at.
+    #[test]
+    fn a_decided_puzzle_takes_no_more_ticks() {
+        use crate::sim::{Level, PUZZLE_TICK_LIMIT};
+        let level = Level::parse(
+            "name: T\nposts: 0\ngoal: survive\nmap:\n+-+-+\n|. .|\n+ + +\n|. .|\n+-+-+\n",
+        )
+        .expect("level");
+        let mut board = level.board();
+        for _ in 1..PUZZLE_TICK_LIMIT {
+            board.tick_idle();
+        }
+        let mut w = world(Screen::Puzzle, Phase::Running, VersusPhase::Running);
+        w.insert_resource(crate::app::Campaign {
+            builtins: 1,
+            ..crate::app::Campaign::tide_pool_of(vec![level.clone()])
+        });
+        w.insert_resource(crate::app::Sim(board.clone()));
+        assert!(w.run_system_once(puzzle_undecided).expect("ran"));
+        board.tick_idle();
+        w.insert_resource(crate::app::Sim(board));
+        assert!(
+            !w.run_system_once(puzzle_undecided).expect("ran"),
+            "decided"
+        );
+        // Anywhere else the sim's own conditions decide.
+        let mut w = world(Screen::Versus, Phase::Running, VersusPhase::Running);
+        assert!(w.run_system_once(puzzle_undecided).expect("ran"));
     }
 
     /// Every screen the game has, so the sweeps below are exhaustive by
@@ -373,7 +444,8 @@ mod tests {
         );
         world.resource_mut::<match_setup::MatchMenu>().naming = None;
 
-        world.resource_mut::<editor::EditorState>().mode = editor::Mode::Naming;
+        world.resource_mut::<editor::EditorState>().mode =
+            editor::Mode::Naming { was: String::new() };
         assert!(
             world.run_system_once(text_entry_open).expect("ran"),
             "a beach being named holds the keyboard"

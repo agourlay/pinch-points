@@ -174,11 +174,11 @@ pub fn pause_input(
     } = leaving;
     // Pads: Start toggles the card, but never during puzzle setup where
     // Start means "begin the run".
-    let start_ok = !(*screen.get() == Screen::Puzzle && *phase.get() == Phase::Setup);
+    let start_ok = !crate::app::conditions::in_puzzle_setup(screen.get(), phase.get());
     let pad_start = start_ok && buttons.pad(GamepadButton::Start);
     // Nor on a puzzle's won or lost card, where Esc is the way back to
     // the stage list and a pause card would open under it for a frame.
-    let done = *screen.get() == Screen::Puzzle && matches!(*phase.get(), Phase::Won | Phase::Lost);
+    let done = crate::app::conditions::puzzle_settled(screen.get(), phase.get());
     let escape = !done && keys.just_pressed(KeyCode::Escape);
     let pad_up = buttons.pad(GamepadButton::DPadUp);
     let pad_down = buttons.pad(GamepadButton::DPadDown);
@@ -575,10 +575,13 @@ mod tests {
         app.init_resource::<Paused>();
         app.init_resource::<Online>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.insert_resource(GameSettings::default());
         app.add_message::<AppExit>();
         app.add_message::<crate::app::LoadLevel>();
+        let levels = crate::sim::campaign_levels();
+        app.insert_resource(crate::app::Sim(levels[0].board()));
+        app.insert_resource(crate::app::Campaign::tide_pool_of(levels));
         app.add_systems(
             Update,
             (crate::app::play_input::running_input, pause_input).chain(),

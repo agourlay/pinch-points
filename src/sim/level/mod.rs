@@ -33,7 +33,7 @@
 
 mod format;
 
-use crate::sim::board::{Board, CapPolicy};
+use crate::sim::board::{ArenaProblem, Board, CapPolicy};
 use crate::sim::solve::Placement;
 
 /// Sim ticks a puzzle may run before it counts as failed (60 s at 30 Hz).
@@ -57,6 +57,26 @@ pub struct Level {
     /// True when the level text carried an explicit `rule:` line (versus
     /// replays); otherwise `board()` applies puzzle rules from `posts`.
     explicit_rule: bool,
+    /// Where a player's own level keeps its cleared tick, set by whoever
+    /// read it off the shelf. `None` for a shipped level, and for one from
+    /// a code or the editor's bench: those are filed by name.
+    pub filing: Option<Filing>,
+}
+
+/// What a player's level from the shelf files its cleared tick under.
+///
+/// Not its name: two files may carry the same one, and the stage list
+/// tells them apart by renaming all but the first "X (2)" in file order,
+/// so a new file sorting first took the tick of the one that had it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Filing {
+    /// The key the tick is kept under, made from the file the level was
+    /// read from.
+    pub key: String,
+    /// The name its tick was kept under before files had keys, where that
+    /// name could only have meant this level; `None` where it could have
+    /// meant another of the same name.
+    pub legacy: Option<String>,
 }
 
 /// What a level was built to be.
@@ -96,9 +116,10 @@ impl LevelKind {
 /// What a stage asks of the player. `AllCrabs` is classic puzzle mode; the
 /// rest are Beach Day challenge goals (the original's Stage Challenge,
 /// re-themed).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Goal {
     /// Every crab that ever exists must bank (spec §5.1).
+    #[default]
     AllCrabs,
     /// Bank at least this many crabs before the tide.
     Bank(u32),
@@ -170,8 +191,46 @@ impl Level {
         }
     }
 
+    /// The board a table of `seats` plays this beach on, on the round's
+    /// `seed`: castles for seats past the table put away
+    /// ([`Board::retire_castles_from`]). The one way a handmade beach
+    /// becomes a round's board, on the couch, online and in the bot
+    /// tools alike, so every peer builds the same one and the replay
+    /// records it.
+    pub fn table_board(&self, seed: u64, seats: u8) -> Board {
+        let mut board = self.board_seeded(seed);
+        board.retire_castles_from(seats);
+        board
+    }
+
+    /// Whether a table of `seats` can play this beach: a castle for every
+    /// seat, and no owner skipped ([`Board::table_seats`]). Castles for
+    /// more players than sit down are fine, and put away when the board is
+    /// built ([`Level::table_board`]).
+    pub fn fits(&self, seats: u8) -> bool {
+        self.table_seats().is_some_and(|castles| castles >= seats)
+    }
+
+    /// See [`Board::table_seats`].
+    pub fn table_seats(&self) -> Option<u8> {
+        self.board.table_seats()
+    }
+
+    /// See [`Board::arena_problem`].
+    pub fn arena_problem(&self) -> Option<ArenaProblem> {
+        self.board.arena_problem()
+    }
+
     pub fn crab_count(&self) -> u32 {
         self.crab_count
+    }
+
+    /// What the level's cleared tick is kept under: its [`Filing`] key for
+    /// a player's level off the shelf, else its name.
+    pub fn progress_key(&self) -> &str {
+        self.filing
+            .as_ref()
+            .map_or(self.name.as_str(), |filing| filing.key.as_str())
     }
 
     /// Say what the level is for. The editor's toggle is authoritative: a
@@ -239,7 +298,9 @@ impl Level {
     /// crab a gull ate is a loss for AllCrabs/Survive, never a quiet
     /// disappearance). [`Level::deadline`] is the clock it is judged on.
     pub fn outcome(&self, board: &Board) -> PuzzleOutcome {
-        let alive = board.crabs().len() as u32;
+        // A crab Crab Monopoly is carrying home is off the beach but not
+        // eaten: it banks when it lands.
+        let alive = (board.crabs().len() + board.sweeping().len()) as u32;
         let eaten = board.crabs_banked() + alive < board.crabs_spawned();
         let timed_out = board.ticks() >= Self::deadline(board);
         // What each goal counts as already lost, and as already won. Losing
@@ -667,6 +728,25 @@ map:
         );
     }
 
+    /// A crab Crab Monopoly is flying home is neither on the beach nor
+    /// banked yet, and used to be judged eaten for the length of its
+    /// flight, losing a Survive or AllCrabs stage that nobody lost.
+    #[test]
+    fn a_crab_in_the_air_is_not_eaten() {
+        let level = Level::parse(
+            "name: S\nposts: 0\nrule: evict 3\nround: 900\ngoal: survive\n\
+             crab: 1,0 R L common\ncrab: 2,0 R L common\nmap:\n+-+-+-+-+-+-+\n\
+             |. . . . . 0|\n+-+-+-+-+-+-+\n",
+        )
+        .expect("parses");
+        let mut board = level.board();
+        board.set_events_enabled(true);
+        board.rules_mut().sweep_flight = true;
+        board.force_tide_event(crate::sim::TideEvent::Monopoly, 0);
+        assert!(!board.sweeping().is_empty(), "one is in the air");
+        assert_eq!(level.outcome(&board), PuzzleOutcome::Running);
+    }
+
     /// The kind survives the format both ways round, and is the author's
     /// answer rather than the board's: a puzzle with four castles saved as
     /// a puzzle comes back a puzzle.
@@ -693,6 +773,35 @@ map:
         assert_eq!(level.seats(), 4);
         assert_eq!(level.kind, LevelKind::Puzzle, "the line beats the board");
         assert!(Level::parse(&four.replace("kind: puzzle", "kind: mud")).is_err());
+    }
+
+    /// A table seats a beach whose castles run from 0 with none skipped,
+    /// and at most as many players as it has castles; the board it plays
+    /// has the castles past the table put away, the same on every seed.
+    #[test]
+    fn a_table_plays_the_castles_it_has_seats_for() {
+        let beach = |row: &str| {
+            Level::parse(&format!(
+                "name: B\nposts: 1\nkind: arena\nmap:\n+-+-+-+-+\n|{row}|\n+-+-+-+-+\n"
+            ))
+            .expect("parses")
+        };
+        let four = beach("0 1 2 3");
+        assert_eq!(four.table_seats(), Some(4));
+        assert!(four.fits(2) && four.fits(4) && !four.fits(5));
+        let board = four.table_board(9, 2);
+        assert_eq!(board.castle_owners().collect::<Vec<_>>(), vec![0, 1]);
+        assert_eq!(board.seats_in_play(), 2);
+        assert_eq!(board.tile_at(2, 0), TileKind::Empty);
+        assert_eq!(
+            board.state_hash(),
+            four.table_board(9, 2).state_hash(),
+            "built alike"
+        );
+        let gapped = beach("0 . 2 .");
+        assert_eq!(gapped.seats(), 2, "two owners, counted");
+        assert_eq!(gapped.table_seats(), None, "but seat 1 has no castle");
+        assert!(!gapped.fits(2) && !gapped.fits(1));
     }
 
     /// A file written before the editor had a toggle says nothing about

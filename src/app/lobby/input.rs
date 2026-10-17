@@ -54,7 +54,7 @@ pub fn lobby_input(
     exits: LobbyExits,
     pads: Query<&Gamepad>,
 ) {
-    let crate::app::keycaps::Keyboard { keys, caps, live } = keyboard;
+    let (keys, caps) = (&keyboard.keys, &keyboard.caps);
     let LobbyExits {
         mut next_screen,
         mut bots,
@@ -94,15 +94,7 @@ pub fn lobby_input(
     // While anything is being typed the keyboard is text and nothing else:
     // H would host, W would arm watching, and a digit would join a beach,
     // none of which anyone means halfway through "wait for me".
-    match drive_typing(
-        &keys,
-        &mut typed,
-        quick,
-        &mut settings,
-        &caps,
-        &mut state,
-        tr,
-    ) {
+    match drive_typing(keys, &mut typed, quick, &mut settings, caps, &mut state, tr) {
         // The keyboard is busy: every other key in this lobby is text.
         Typed::Taken => return,
         // An answer finished and freed something to happen this frame.
@@ -113,7 +105,7 @@ pub fn lobby_input(
     // first line composed picks up every keystroke since the lobby opened.
     typed.clear();
     // T for talk, once there is anyone to talk to.
-    if intent.is_none() && caps.just_pressed(&keys, 'T') && state.can_chat() {
+    if intent.is_none() && keyboard.just('T') && state.can_chat() {
         state.typing = Some(Typing::chat());
         return;
     }
@@ -128,7 +120,7 @@ pub fn lobby_input(
     // over a question already on screen, which a finished answer may have
     // opened earlier in this same frame.
     if intent.is_none()
-        && caps.just_pressed(&keys, 'J')
+        && keyboard.just('J')
         && !state.standing().at_a_beach()
         && state.typing.is_none()
     {
@@ -163,7 +155,7 @@ pub fn lobby_input(
             at
         }
         _ if intent.is_none()
-            && caps.just_pressed(&keys, 'B')
+            && keyboard.just('B')
             && !state.standing().at_a_beach()
             && state.typing.is_none() =>
         {
@@ -184,7 +176,7 @@ pub fn lobby_input(
     }
     let step = host_step(HostAsk {
         answered: intent == Some(Intent::Host),
-        pressed_h: caps.global_pressed(&keys, 'H', &live),
+        pressed_h: keyboard.global('H'),
         busy: state.standing().at_a_beach(),
         auto: auto_host,
     });
@@ -234,7 +226,7 @@ pub fn lobby_input(
     let typing = state.typing.is_some();
     if let Some(hosted) = state.hosted_mut()
         && !typing
-        && caps.just_pressed(&keys, 'K')
+        && keyboard.just('K')
     {
         hosted.kicking = true;
         return;
@@ -247,7 +239,7 @@ pub fn lobby_input(
             return;
         }
         if let Some(at) =
-            crate::app::menu_ui::number_pressed(&keys, crate::app::menu_ui::NUMBER_KEYS.len())
+            crate::app::menu_ui::number_pressed(keys, crate::app::menu_ui::NUMBER_KEYS.len())
         {
             hosted.kicking = false;
             ask_to_leave(&mut state, &mut bots, tr, at + 1)
@@ -255,22 +247,15 @@ pub fn lobby_input(
         return;
     }
     if state.hosting() {
-        turn_the_dials(
-            &keys,
-            &mut settings,
-            &caps,
-            &mut config,
-            &mut state,
-            &beaches,
-        );
+        turn_the_dials(keys, &mut settings, caps, &mut config, &mut state, &beaches);
     }
     if !state.standing.at_a_beach() {
-        walk_the_list(&keys, &mut state);
+        walk_the_list(keys, &mut state);
     }
-    take_a_beach(&keys, &settings, &mut state, tr, intent, auto_join);
+    take_a_beach(keys, &settings, &mut state, tr, intent, auto_join);
     // By the cap, like H, B, T and K on the same prompt: on AZERTY the
     // key QWERTY calls W says Z, and the one that says W is elsewhere.
-    if caps.just_pressed(&keys, 'W')
+    if keyboard.just('W')
         && let Standing::Choosing { watching } = &mut state.standing
     {
         *watching = !*watching;
@@ -301,7 +286,7 @@ mod tests {
         app.insert_resource(GameSettings::default());
         let mut azerty = crate::app::keycaps::KeyCaps::default();
         azerty.learn(KeyCode::KeyW, 'z');
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.insert_resource(azerty);
         app.add_message::<bevy::input::keyboard::KeyboardInput>();
         app.add_systems(Update, lobby_input);

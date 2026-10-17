@@ -15,14 +15,9 @@ use crate::app::{Campaign, CampaignKind, Screen};
 use crate::sim::challenge_levels;
 use bevy::prelude::*;
 
-/// The wordmark, spaced out by hand.
-///
-/// Set in the game's own face rather than a drawn pixel-font, letter-spaced
-/// with figure spaces (U+2007, as wide as a digit) so it reads as a sign
-/// rather than a sentence. The gap between the two words is three of them,
-/// so "PINCH" and "POINTS" still read as two words at that spacing.
-/// Plain letters in the display face. It was letter-spaced with figure
-/// spaces, which only spaces evenly in a monospace face.
+/// The wordmark, in plain letters in the game's display face. Not
+/// letter-spaced with figure spaces: those space evenly only in a
+/// monospace face.
 const TITLE: &str = "PINCH POINTS";
 
 /// One landing-menu entry, in display order (digit 1 launches the
@@ -151,9 +146,9 @@ fn spawn_mode_list(commands: &mut Commands) {
             MenuArt,
             Node {
                 position_type: PositionType::Absolute,
-                // Under the title sign, with the sea behind it: the crab
-                // legend that used to sit below has moved to the screens
-                // where there are crabs to compare it against.
+                // Under the title sign, with the sea behind it. The crab
+                // legend belongs on the screens with crabs to compare it
+                // against, not here.
                 top: Val::Px(196.0),
                 width: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
@@ -323,7 +318,7 @@ pub fn paste_round(
     mut resuming: ResMut<crate::app::Resuming>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
-    if !keyboard.caps.just_pressed(&keyboard.keys, 'V') {
+    if !keyboard.just('V') || menu_ui::screen_chosen(&next_screen) {
         return;
     }
     match crate::app::suspend::round_from(crate::app::codes::paste(&mut clipboard), settings.tr()) {

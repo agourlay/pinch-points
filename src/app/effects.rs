@@ -6,7 +6,7 @@
 use crate::app::art::Art;
 use crate::app::layout::{self, TILE};
 use crate::app::palette;
-use crate::app::sim_events::{CurrentBoard, SimEvent};
+use crate::app::sim_events::{BoardMemory, CurrentBoard, SimEvent};
 use crate::sim::TileKind;
 use bevy::color::Mix;
 use bevy::prelude::*;
@@ -701,14 +701,22 @@ pub(crate) fn arc(from: Vec2, to: Vec2, lift: f32, progress: f32) -> (Vec2, f32)
 }
 
 /// Carry the hopping crabs over the wall and puff them out of sight.
+///
+/// Held, not run, under a pause card: a crab does not go on over the wall
+/// of a frozen beach. The round's end does not hold them: the crab banked
+/// on the last tick still lands under the card.
 pub fn advance_hops(
     time: Res<Time>,
     mut commands: Commands,
     art: Res<Art>,
     mut rng: ResMut<VisualRng>,
     announcer: Res<crate::app::announce::Announcer>,
+    round: crate::app::round_state::RoundState,
     mut hops: Query<(Entity, &mut Hop, &mut Transform, &mut Sprite)>,
 ) {
+    if round.held() {
+        return;
+    }
     let dt = time.delta_secs();
     for (entity, mut hop, mut transform, mut sprite) in &mut hops {
         let hop = &mut *hop;
@@ -818,44 +826,6 @@ fn splash(commands: &mut Commands, rng: &mut VisualRng, art: &Art, pos: Vec2, si
     );
 }
 
-/// A memory kept per creature id, and the board (by [`BoardGeneration`])
-/// it was filled on.
-///
-/// Crab and gull ids start again at zero on every board, so a memory
-/// pruned by id alone hands a new board's crab the last board's entry: a
-/// crab that was on dry sand there and starts in a pool here splashes on
-/// its first frame, and one that starts across the beach from where its
-/// namesake stood presses a footprint halfway between.
-///
-/// [`BoardGeneration`]: crate::app::sim_events::BoardGeneration
-pub struct BoardMemory<K, V> {
-    filled_on: Option<u64>,
-    by_id: bevy::platform::collections::HashMap<K, V>,
-}
-
-impl<K, V> Default for BoardMemory<K, V> {
-    fn default() -> Self {
-        BoardMemory {
-            filled_on: None,
-            by_id: Default::default(),
-        }
-    }
-}
-
-impl<K, V> BoardMemory<K, V> {
-    /// The memory for the board on the table: emptied first if it was
-    /// filled on another one.
-    fn of(&mut self, current: &CurrentBoard) -> &mut bevy::platform::collections::HashMap<K, V> {
-        let Self { filled_on, by_id } = self;
-        let generation = current.generation();
-        if *filled_on != Some(generation) {
-            by_id.clear();
-            *filled_on = Some(generation);
-        }
-        by_id
-    }
-}
-
 /// Whether the tile at `index` is a pool.
 fn in_pool(board: &crate::sim::Board, index: u16) -> bool {
     let (x, y) = board.coords_u8(index);
@@ -929,13 +899,15 @@ pub fn golden_call_rings(
     art: Res<Art>,
     time: Res<Time>,
     settings: Res<crate::app::settings::GameSettings>,
+    round: crate::app::round_state::RoundState,
     mut since: Local<f32>,
 ) {
     let Some((_, x, y)) = sim.0.golden_call() else {
         *since = GOLDEN_RING_EVERY;
         return;
     };
-    *since += time.delta_secs();
+    // The round's time, so no rings go out over a frozen beach.
+    round.run_clock(&sim.0, &mut since, time.delta_secs());
     if settings.reduced_motion || *since < GOLDEN_RING_EVERY {
         return;
     }
@@ -1000,12 +972,10 @@ pub fn crab_trails(
                 ..default()
             },
             Sprite::from_color(
-                // Near-opaque, not the 0.38 this was written with. The
-                // spawn alpha used to be discarded, so a print rendered at
-                // full strength whatever it asked for; now that the alpha
-                // is honoured (see `Particle::shade`) asking for 0.38
-                // would quietly dim every print in the game against the
-                // beach it shipped with.
+                // Near-opaque: the prints are tuned to read at this
+                // strength against the beach, and the spawn alpha is
+                // honoured (see `Particle::shade`), so a lighter one dims
+                // every print in the game.
                 Color::srgba(0.45, 0.36, 0.24, 0.9),
                 Vec2::splat(rng.range(3.0, 4.2)),
             ),

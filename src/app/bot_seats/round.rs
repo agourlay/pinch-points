@@ -3,11 +3,12 @@
 //! the acts handed to the lockstep followed to the frames they land on.
 
 use super::doorway::Doorway;
+use crate::app::teams::TeamMode;
 use crate::bots::cursor::SeatCursor;
 use crate::bots::listener::{BotId, GameLink, View};
 use crate::bots::lookahead;
 use crate::bots::protocol::{self, Act, Clock, Outcome, SeatKind, Table, You};
-use crate::bots::seat::{BotDriver, Journal, Turn, act_of, outcome, placings, refusal};
+use crate::bots::seat::{BotDriver, Journal, Turn, act_of, outcome, refusal};
 use crate::sim::{Board, BotLevel, MAX_PLAYERS, PlayerAction, Refusal, Replay, bot_action};
 use bevy::prelude::*;
 use std::time::{Duration, Instant};
@@ -46,8 +47,7 @@ pub struct BotRound {
     grace: Duration,
     /// Every bot has been told the round is over.
     finished: bool,
-    names: Vec<String>,
-    kinds: Vec<SeatKind>,
+    party: PartyTable,
     clock: Clock,
     log: Box<dyn std::io::Write + Send + Sync>,
 }
@@ -77,23 +77,70 @@ struct Lockstep {
     /// The act each seat handed the lockstep that it has not yet taken: a
     /// paused or stalled commit hands it back, and it goes out again on
     /// the next, rather than being walked past and lost.
+    ///
+    /// A tick of nothing is held as well. The hand took a step to come up
+    /// with it, and maybe the bot's order besides: commits made while the
+    /// lockstep stalls take no frame, and stepping on each of them walked
+    /// the fair cursor across the beach in frames nobody played.
     unconfirmed: [Option<(PlayerAction, Option<Act>)>; MAX_PLAYERS],
 }
 
-/// What a bot at a table with people is told of the game: the fair cursor
-/// always, since a person is at it.
-fn live_table<'a>(
-    game: u32,
-    names: &'a [String],
-    kinds: &'a [SeatKind],
-    clock: Clock,
-) -> Table<'a> {
-    Table {
-        game,
-        names,
-        kinds,
-        clock,
-        cursor: true,
+/// How many of a party's last rounds a bot can still fetch the replay of.
+const PARTY_REPLAYS: u32 = 16;
+
+/// What a party round's replay is fetched by.
+fn party_replay_id(game: u32) -> String {
+    format!("p-g{game}")
+}
+
+/// Who sits at a round's table, and how it is scored: the whole table,
+/// people and bots, as every bot at it is told.
+pub(super) struct PartyTable {
+    names: Vec<String>,
+    kinds: Vec<SeatKind>,
+    /// How the round is scored, which `hello` tells as each seat's team
+    /// and `end` places by.
+    mode: TeamMode,
+    /// Each seat's team under `mode`, as `hello` sends it.
+    teams: Vec<u8>,
+}
+
+impl PartyTable {
+    /// A table of `names` and `kinds`, one per seat, scored under `mode`.
+    pub(super) fn new(names: Vec<String>, kinds: Vec<SeatKind>, mode: TeamMode) -> PartyTable {
+        let teams = (0..names.len() as u8)
+            .map(|seat| mode.team_of(seat))
+            .collect();
+        PartyTable {
+            names,
+            kinds,
+            mode,
+            teams,
+        }
+    }
+
+    /// How many seats the table has.
+    fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    /// What a bot at a table with people is told of the game: the fair
+    /// cursor always, since a person is at it.
+    fn table(&self, game: u32, clock: Clock) -> Table<'_> {
+        let PartyTable {
+            names,
+            kinds,
+            mode: _,
+            teams,
+        } = self;
+        Table {
+            game,
+            names,
+            kinds,
+            clock,
+            cursor: true,
+            teams: Some(teams),
+        }
     }
 }
 
@@ -134,13 +181,12 @@ pub struct Committed {
 impl BotRound {
     /// Open a round for the bots in `seats`: a driver and a hand for each,
     /// their game routed to this round, and `hello` to every one that is
-    /// connected. `names` and `kinds` are the whole table's.
+    /// connected. `party` is the whole table.
     pub(super) fn open(
         door: &Doorway,
         board: &Board,
         seats: &[(u8, BotId)],
-        names: Vec<String>,
-        kinds: Vec<SeatKind>,
+        party: PartyTable,
         online: bool,
         game: u32,
     ) -> BotRound {
@@ -154,7 +200,11 @@ impl BotRound {
         let seats: Vec<SeatHand> = seats
             .iter()
             .map(|&(seat, id)| {
-                let name = names.get(usize::from(seat)).cloned().unwrap_or_default();
+                let name = party
+                    .names
+                    .get(usize::from(seat))
+                    .cloned()
+                    .unwrap_or_default();
                 SeatHand {
                     driver: BotDriver::new(id, seat, name, door.listener().connected(id), deadline),
                     cursor: SeatCursor::home(board, seat),
@@ -184,8 +234,7 @@ impl BotRound {
             seats,
             grace: GRACE,
             finished: false,
-            names,
-            kinds,
+            party,
             log: Box::new(std::io::sink()),
         };
         for hand in &round.seats {
@@ -199,7 +248,7 @@ impl BotRound {
     }
 
     fn table(&self) -> Table<'_> {
-        live_table(self.game, &self.names, &self.kinds, self.clock)
+        self.party.table(self.game, self.clock)
     }
 
     /// The bot seat `seat`, if a bot holds it.
@@ -216,9 +265,13 @@ impl BotRound {
         while let Some(msg) = self.link.try_recv() {
             let seat = msg.seat();
             if let Some(hand) = self.seats.iter_mut().find(|h| h.driver.seat == seat) {
-                // Anything at all from it: it is not hung.
-                hand.quiet_since = None;
                 hand.driver.take(msg, t, &mut journal);
+                // Anything at all from it, once it is playing: it is not
+                // hung. Before its `ready` it is waited on still, whatever
+                // else it says, and the seat is not given back to it.
+                if hand.driver.playing() {
+                    hand.quiet_since = None;
+                }
             }
         }
         // A bot comes back by resuming (`hello` again before its next
@@ -269,20 +322,25 @@ impl BotRound {
                 .and_then(|lockstep| lockstep.unconfirmed[slot]);
             let (action, act) = if let Some(held) = held {
                 // Online, what the lockstep has not taken yet goes again,
-                // with the hand and the bot's order held where they are.
+                // nothing included, with the hand and the bot's order held
+                // where they are.
                 held
             } else if hand.standing_in {
-                // The AI walks by the same rule, read off the board.
+                // The AI walks by the same rule, read off the board. The
+                // bot's own order is let go: back from a hang, it does not
+                // pick up a walk it asked for before the AI sat down.
+                hand.cursor.let_go();
                 let action = bot_action(board, seat, STAND_IN);
                 (action, act_of(action))
+            } else if !hand.driver.playing() {
+                hand.driver.stand_down(&mut hand.cursor);
+                hand.cursor.step(board, seat, Act::None, true)
             } else {
                 let order = hand.driver.order(&mut journal);
                 hand.cursor.step(board, seat, order, true)
             };
             actions[slot] = action;
-            if let Some(lockstep) = &mut self.lockstep
-                && action != PlayerAction::None
-            {
+            if let Some(lockstep) = &mut self.lockstep {
                 lockstep.unconfirmed[slot] = Some((action, act));
             }
             committed.push(Committed {
@@ -297,6 +355,11 @@ impl BotRound {
 
     /// After the tick: what became of each act, then the next tick out.
     pub fn after(&mut self, board: &Board, committed: Vec<Committed>) {
+        // Told `end`: there is no next tick to send, and a bot that never
+        // answered the last one is not offered it again.
+        if self.finished {
+            return;
+        }
         let t = board.ticks();
         for c in committed {
             let Some(act) = c.act else {
@@ -309,7 +372,7 @@ impl BotRound {
                 hand.last = Some((act.token(), result));
             }
         }
-        let cursors: Vec<Option<(u8, u8)>> = (0..self.names.len())
+        let cursors: Vec<Option<(u8, u8)>> = (0..self.party.len())
             .map(|seat| self.hand(seat).map(|hand| hand.cursor.at))
             .collect();
         *self
@@ -319,19 +382,18 @@ impl BotRound {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(View {
             board: board.clone(),
             cursors: cursors.clone(),
-            budget: vec![lookahead::CAP_LIVE; self.names.len()],
+            budget: vec![lookahead::CAP_LIVE; self.party.len()],
         });
         let now = Instant::now();
         let BotRound {
             link,
             game,
             seats,
-            names,
-            kinds,
+            party,
             clock,
             ..
         } = self;
-        let table = live_table(*game, names, kinds, *clock);
+        let table = party.table(*game, *clock);
         let mut send = |id: BotId, msg: &serde_json::Value| link.send(id, msg);
         for hand in seats {
             let seat = hand.driver.seat;
@@ -465,15 +527,23 @@ impl BotRound {
         if std::mem::replace(&mut self.finished, true) {
             return;
         }
-        let n = self.names.len();
+        let n = self.party.len();
         let scores: Vec<u32> = board.scores()[..n].to_vec();
-        let places = placings(&scores, &vec![false; n]);
+        // Placed as the results card places the table: under a team mode,
+        // every seat at its team's place by the team's total.
+        let places = crate::app::teams::placings(board.scores(), n as u8, self.party.mode);
         let kept = match (door, replay) {
             (Some(door), Some(replay)) => {
-                let id = format!("p-g{}", self.game);
+                let id = party_replay_id(self.game);
                 let players = self.seats.iter().map(|hand| hand.driver.id).collect();
-                door.listener()
-                    .keep_replay(id.clone(), players, replay.to_text());
+                let listener = door.listener();
+                listener.keep_replay(id.clone(), players, replay.to_text());
+                // A party plays on for as long as people stay, and every
+                // replay is a few hundred kilobytes: the oldest kept goes
+                // as a new one comes.
+                if let Some(old) = self.game.checked_sub(PARTY_REPLAYS) {
+                    listener.forget_replay(&party_replay_id(old));
+                }
                 Some(id)
             }
             _ => None,
@@ -508,21 +578,29 @@ mod tests {
 
     /// A round with a bot registered in seat 1, against a person in seat 0.
     fn a_round_with_a_bot(online: bool) -> (BotSeats, TestBot, Board) {
+        a_table_with_a_bot(
+            online,
+            vec!["Ana".into(), "Greedy".into()],
+            vec![SeatKind::Human, SeatKind::Bot],
+            TeamMode::Solo,
+        )
+    }
+
+    /// The same at a table of `names`, scored under `mode`.
+    fn a_table_with_a_bot(
+        online: bool,
+        names: Vec<String>,
+        kinds: Vec<SeatKind>,
+        mode: TeamMode,
+    ) -> (BotSeats, TestBot, Board) {
         let mut door = Doorway::open().expect("a port on this machine");
         door.seat_bots(&[1]);
         let bot = TestBot::register(&door.string(&door.chairs[0]));
         assert!(poll_until(&mut door, |d| d.ready()), "the bot sat down");
         let id = door.chairs[0].bot.expect("seated");
         let board = beach();
-        let round = BotRound::open(
-            &door,
-            &board,
-            &[(1, id)],
-            vec!["Ana".into(), "Greedy".into()],
-            vec![SeatKind::Human, SeatKind::Bot],
-            online,
-            1,
-        );
+        let party = PartyTable::new(names, kinds, mode);
+        let round = BotRound::open(&door, &board, &[(1, id)], party, online, 1);
         let bots = BotSeats {
             door: Some(door),
             round: Some(round),
@@ -537,6 +615,27 @@ mod tests {
         board.tick_idle();
         assert!(board.round_over());
         (board, replay)
+    }
+
+    /// A bot playing in pairs is told which seat is on which team, and
+    /// placed by its team's total as the results card places it: second
+    /// on its own score, first with its partner's.
+    #[test]
+    fn a_bot_in_pairs_is_told_its_team_and_placed_with_it() {
+        let names: Vec<String> = ["Ana", "Greedy", "Cy", "Di"].map(String::from).to_vec();
+        let kinds = vec![SeatKind::Human; 4];
+        let (mut bots, mut bot, mut board) =
+            a_table_with_a_bot(false, names, kinds, TeamMode::Pairs);
+        let hello = bot.next("hello", Duration::from_secs(5)).expect("hello");
+        assert_eq!(hello["teams"], serde_json::json!([0, 0, 1, 1]));
+        for (seat, score) in [(0, 9), (1, 2), (2, 6), (3, 4)] {
+            board.set_score(seat, score);
+        }
+        let (board, replay) = over(board);
+        bots.after(&board, Some(Vec::new()), Some(&replay));
+        let end = bot.next("end", Duration::from_secs(5)).expect("end");
+        assert_eq!(end["placing"], 1, "{end}");
+        assert_eq!(end["scores"], serde_json::json!([9, 2, 6, 4]));
     }
 
     /// The `end` a couch bot is sent names a replay it can fetch, and it is
@@ -565,6 +664,41 @@ mod tests {
             bot.next("end", Duration::from_millis(300)).is_none(),
             "told twice"
         );
+    }
+
+    /// A party keeps the replays of its last rounds, not of every round
+    /// it ever played: the oldest goes as a new one is kept.
+    #[test]
+    fn a_party_lets_its_oldest_replay_go() {
+        let (mut bots, mut bot, board) = a_round_with_a_bot(false);
+        let round = bots.round.as_mut().expect("a round");
+        round.game = PARTY_REPLAYS + 1;
+        let id = round.seats[0].driver.id;
+        let listener = bots.door.as_ref().expect("a door").listener();
+        listener.keep_replay(party_replay_id(1), vec![id], "old".into());
+        listener.keep_replay(party_replay_id(2), vec![id], "newer".into());
+        let (board, replay) = over(board);
+        bots.after(&board, Some(Vec::new()), Some(&replay));
+        bot.next("end", Duration::from_secs(5))
+            .expect("told the round is over");
+        let mut fetch = |game: u32| {
+            bot.send(&serde_json::json!({"type": "replay", "id": party_replay_id(game)}));
+            bot.stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("timeout");
+            // The answer, past any ping on the way.
+            loop {
+                let mut line = String::new();
+                bot.reader.read_line(&mut line).expect("an answer");
+                let answer: serde_json::Value = serde_json::from_str(&line).expect("json");
+                if let Some(kind @ ("replay" | "error")) = answer["type"].as_str() {
+                    return kind.to_string();
+                }
+            }
+        };
+        assert_eq!(fetch(1), "error", "the oldest is let go");
+        assert_eq!(fetch(2), "replay");
+        assert_eq!(fetch(PARTY_REPLAYS + 1), "replay");
     }
 
     /// Online, a bot seat is told the round is over like a couch one.
@@ -597,13 +731,15 @@ mod tests {
             dir: crate::sim::Direction::Left,
         };
         let mut landed = None;
-        for _ in 0..400 {
+        for frame in 0..400 {
             let driven = bots.commit_online(&board);
-            if let Some(&(1, action, act)) = driven.first()
-                && action == place
-            {
-                landed = Some(act);
-                break;
+            if let Some(&(1, action, act)) = driven.first() {
+                if action == place {
+                    landed = Some(act);
+                    break;
+                }
+                // A tick of nothing is taken, and the hand walks on.
+                bots.committed(frame, 1, act, action);
             }
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -615,6 +751,41 @@ mod tests {
         bots.committed(5, 1, act, place);
         let after = bots.commit_online(&board);
         assert_eq!(after.first().map(|d| d.1), Some(PlayerAction::None));
+    }
+
+    /// Online, a commit the lockstep stalls on takes no frame, and the
+    /// hand does not walk on it: only frames played move a fair cursor.
+    #[test]
+    fn a_stalled_lockstep_does_not_walk_the_hand() {
+        let (mut bots, mut bot, board) = a_round_with_a_bot(true);
+        bot.next("hello", Duration::from_secs(5)).expect("hello");
+        bot.send(&serde_json::json!({"type": "ready", "game": 1}));
+        bot.send(&serde_json::json!({
+            "game": 1, "tick": 0, "act": "place", "x": 0, "y": 0, "dir": "right",
+        }));
+        let hand = |bots: &BotSeats| bots.round.as_ref().expect("a round").seats[0].cursor;
+        for frame in 0..400 {
+            let driven = bots.commit_online(&board);
+            let (seat, action, act) = driven[0];
+            bots.committed(frame, seat, act, action);
+            if hand(&bots).order().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(hand(&bots).order().is_some(), "the walk began");
+        // The frame after is committed and then stalls on.
+        bots.commit_online(&board);
+        let walking = hand(&bots);
+        for _ in 0..50 {
+            let driven = bots.commit_online(&board);
+            assert_eq!(driven[0].1, PlayerAction::None);
+        }
+        assert_eq!(
+            hand(&bots),
+            walking,
+            "the hand walked on frames nobody took"
+        );
     }
 
     /// A placement the board refused before the tick, on a tile an earlier
@@ -639,6 +810,116 @@ mod tests {
         assert_eq!(
             round.hand(1).expect("seat 1").last,
             Some(("place", Outcome::Accepted))
+        );
+    }
+
+    /// Commit until the bot in seat 1 is playing: its `ready` is heard at
+    /// a commit.
+    fn until_playing(bots: &mut BotSeats, board: &Board) {
+        let mut actions = [PlayerAction::None; MAX_PLAYERS];
+        for _ in 0..400 {
+            bots.commit(board, &mut actions);
+            let round = bots.round.as_ref().expect("a round");
+            if round.hand(1).expect("seat 1").driver.playing() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("the bot never got to play");
+    }
+
+    /// A bot that drops with its hand still walking to an order leaves an
+    /// idle seat: the order does not land after it has gone.
+    #[test]
+    fn a_dropped_bots_walk_does_not_land() {
+        let (mut bots, mut bot, board) = a_round_with_a_bot(false);
+        bots.round.as_mut().expect("a round").grace = Duration::from_secs(60);
+        bot.next("hello", Duration::from_secs(5)).expect("hello");
+        bot.send(&serde_json::json!({"type": "ready", "game": 1}));
+        until_playing(&mut bots, &board);
+        // Across the beach from its castle: a walk of several tiles.
+        bot.send(&serde_json::json!({
+            "game": 1, "tick": 0, "act": "place", "x": 2, "y": CASTLE.1, "dir": "left",
+        }));
+        let mut actions = [PlayerAction::None; MAX_PLAYERS];
+        let mut walking = false;
+        for _ in 0..400 {
+            bots.commit(&board, &mut actions);
+            let round = bots.round.as_ref().expect("a round");
+            if round.hand(1).expect("seat 1").cursor.order().is_some() {
+                walking = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(walking, "the order was never taken");
+        let id = bots.round.as_ref().expect("a round").seats[0].driver.id;
+        drop(bot);
+        let door = bots.door.as_ref().expect("a door");
+        for _ in 0..400 {
+            if !door.listener().connected(id) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!door.listener().connected(id), "the drop was never seen");
+        for _ in 0..100 {
+            let committed = bots.commit(&board, &mut actions).expect("a round");
+            assert_eq!(actions[1], PlayerAction::None, "the walk landed");
+            assert!(committed.iter().all(|c| c.act.is_none()));
+        }
+    }
+
+    /// Once told `end`, a bot that never answered its last tick is not
+    /// sent it again, however long the tide stays in.
+    #[test]
+    fn a_silent_bot_is_sent_no_tick_after_the_end() {
+        let (mut bots, mut bot, board) = a_round_with_a_bot(false);
+        bot.next("hello", Duration::from_secs(5)).expect("hello");
+        bot.send(&serde_json::json!({"type": "ready", "game": 1}));
+        until_playing(&mut bots, &board);
+        let (board, replay) = over(board);
+        bots.after(&board, Some(Vec::new()), Some(&replay));
+        bot.next("end", Duration::from_secs(5))
+            .expect("told the round is over");
+        let until = Instant::now() + Duration::from_millis(700);
+        while Instant::now() < until {
+            bots.after(&board, Some(Vec::new()), Some(&replay));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            bot.next("tick", Duration::from_millis(200)).is_none(),
+            "a tick after the end"
+        );
+    }
+
+    /// A bot not yet ready is waited on whatever else it says: a reply
+    /// before its `ready` does not give it back the seat the AI holds.
+    #[test]
+    fn a_bot_that_never_said_ready_is_not_given_its_seat_back() {
+        let (mut bots, mut bot, board) = a_round_with_a_bot(false);
+        bots.round.as_mut().expect("a round").grace = Duration::from_millis(50);
+        bot.next("hello", Duration::from_secs(5)).expect("hello");
+        let mut actions = [PlayerAction::None; MAX_PLAYERS];
+        let mut stood_in = false;
+        for _ in 0..100 {
+            bots.commit(&board, &mut actions);
+            if bots.news.contains(&(1, News::StandIn)) {
+                stood_in = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(stood_in, "nobody stood in for a bot that never came");
+        bots.news.clear();
+        bot.send(&serde_json::json!({"game": 1, "tick": 0, "act": "none"}));
+        for _ in 0..100 {
+            bots.commit(&board, &mut actions);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            !bots.news.contains(&(1, News::Back)),
+            "back without a ready"
         );
     }
 

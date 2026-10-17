@@ -328,13 +328,32 @@ impl GameSettings {
         self.binds != default_binds()
     }
 
+    /// The commit scheme the keyboard is read with: the one set, unless
+    /// the keyboard is `shared`. Versus seats a rival on the second seat's
+    /// keys, and a co-op puzzle a partner (a cursor for player 1), so
+    /// either way IJKL is somebody else's and the one-hand preset stands
+    /// down.
+    ///
+    /// One rule for every reader of those keys: the cursor, a puzzle's
+    /// setup, the seat keys a global letter yields to
+    /// ([`crate::app::cursor::LiveSeatKeys`]), and the legends that
+    /// teach them ([`Self::stock_legend`]).
+    pub fn commit_in_play(&self, shared: bool) -> CommitScheme {
+        if shared {
+            CommitScheme::Arrows
+        } else {
+            self.commit
+        }
+    }
+
     /// Whether the stock key legends ("WASD move, arrows place") describe
-    /// what the keys do right now: they do not once a key is rebound, and
-    /// not with the one-hand preset either, which puts placement on IJKL
+    /// what the keys do right now, with the keyboard `shared` or not (see
+    /// [`Self::commit_in_play`]): they do not once a key is rebound, and
+    /// not under the one-hand preset either, which puts placement on IJKL
     /// whatever the bindings say. Anything that teaches keys asks this
     /// rather than [`Self::custom_binds`] alone.
-    pub fn stock_legend(&self) -> bool {
-        !self.custom_binds() && self.commit == CommitScheme::Arrows
+    pub fn stock_legend(&self, shared: bool) -> bool {
+        !self.custom_binds() && self.commit_in_play(shared) == CommitScheme::Arrows
     }
 
     /// Sound-effect gain, 0.0 to [`SFX_TRIM`], with the on/off switch folded in. Zero
@@ -550,17 +569,17 @@ pub fn apply_window_mode(settings: Res<GameSettings>, mut windows: Query<&mut Wi
 /// F11 flips fullscreen on every screen, and keeps the answer: a player who
 /// wanted the window once will want it next launch too.
 ///
-/// Except on the first-run language picker, which is shown because there is
-/// no settings file yet: written there, the file made the picker a screen
-/// nobody would see again. The flag still flips, and is kept with the rest
+/// Except before the first-run language picker is answered, which is
+/// shown because there is no settings file yet: written then, the file
+/// made the picker a screen nobody would see again. The flag still flips, and is kept with the rest
 /// when the language is taken.
 pub fn toggle_fullscreen(
     keys: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<GameSettings>,
     caps: Res<crate::app::keycaps::KeyCaps>,
-    screen: Res<State<Screen>>,
+    unasked: Res<crate::app::language::LanguageUnasked>,
 ) {
-    if flip_fullscreen(&keys, &mut settings, screen.get()) {
+    if flip_fullscreen(&keys, &mut settings, &unasked) {
         settings.save(&caps);
     }
 }
@@ -570,13 +589,13 @@ pub fn toggle_fullscreen(
 fn flip_fullscreen(
     keys: &ButtonInput<KeyCode>,
     settings: &mut GameSettings,
-    screen: &Screen,
+    unasked: &crate::app::language::LanguageUnasked,
 ) -> bool {
     if !keys.just_pressed(KeyCode::F11) {
         return false;
     }
     settings.fullscreen = !settings.fullscreen;
-    crate::app::language::may_save(screen)
+    unasked.may_save()
 }
 
 /// Push the music volume to the sink whenever settings change.
@@ -594,12 +613,34 @@ pub fn apply_music_volume(
 
 /// The §8.4 speed assist: puzzles tick slower when asked; every other mode
 /// (and online determinism) stays at the canonical 30 Hz.
+///
+/// A puzzle playtested in the editor is a puzzle too: an author who needs
+/// the assist to follow a stage needs it to test one, and a stage tested
+/// at a pace its player will never see is not the stage that ships. A
+/// beach under test plays at the versus rate, as it will in a match.
 pub fn apply_sim_speed(
     settings: Res<GameSettings>,
     screen: Res<State<Screen>>,
+    editor: Res<crate::app::editor::EditorState>,
     mut fixed_time: ResMut<Time<Fixed>>,
 ) {
-    let hz = if *screen.get() == Screen::Puzzle {
+    let puzzle = match screen.get() {
+        Screen::Puzzle => true,
+        Screen::Editor => editor.is_testing() && editor.kind == crate::sim::LevelKind::Puzzle,
+        Screen::Menu
+        | Screen::Versus
+        | Screen::Lobby
+        | Screen::Settings
+        | Screen::Controls
+        | Screen::MatchSetup
+        | Screen::Achievements
+        | Screen::StageSelect
+        | Screen::Replays
+        | Screen::Interlude
+        | Screen::Language
+        | Screen::NewVersion => false,
+    };
+    let hz = if puzzle {
         f64::from(crate::sim::TICKS_PER_SECOND) * f64::from(settings.puzzle_speed.percent()) / 100.0
     } else {
         f64::from(crate::sim::TICKS_PER_SECOND)
@@ -613,20 +654,26 @@ pub fn apply_sim_speed(
 mod tests {
     use super::*;
 
-    /// F11 on the first-run language picker flips the window but writes
-    /// nothing: a settings file is what tells the next launch the picker
-    /// has been seen. Anywhere else it is kept at once.
+    /// F11 before the first-run language question is answered flips the
+    /// window but writes nothing: a settings file is what tells the next
+    /// launch the picker has been seen. Once answered it is kept at once.
     #[test]
-    fn fullscreen_on_the_language_picker_is_not_written_yet() {
+    fn fullscreen_before_a_language_is_taken_is_not_written_yet() {
+        use crate::app::language::LanguageUnasked;
         let mut keys = ButtonInput::<KeyCode>::default();
         let mut settings = GameSettings::default();
         let was = settings.fullscreen;
-        assert!(!flip_fullscreen(&keys, &mut settings, &Screen::Language));
+        let unasked = LanguageUnasked(true);
+        assert!(!flip_fullscreen(&keys, &mut settings, &unasked));
         assert_eq!(settings.fullscreen, was, "no F11, no flip");
         keys.press(KeyCode::F11);
-        assert!(!flip_fullscreen(&keys, &mut settings, &Screen::Language));
+        assert!(!flip_fullscreen(&keys, &mut settings, &unasked));
         assert_ne!(settings.fullscreen, was, "the window still flips");
-        assert!(flip_fullscreen(&keys, &mut settings, &Screen::Menu));
+        assert!(flip_fullscreen(
+            &keys,
+            &mut settings,
+            &LanguageUnasked(false)
+        ));
         assert_eq!(settings.fullscreen, was);
     }
 
@@ -644,6 +691,7 @@ mod tests {
         app.insert_resource(Time::<Fixed>::from_hz(f64::from(
             crate::sim::TICKS_PER_SECOND,
         )));
+        app.init_resource::<crate::app::editor::EditorState>();
         app.add_systems(Update, apply_sim_speed);
         app
     }
@@ -684,6 +732,22 @@ mod tests {
         let mut app = clocked(Screen::Puzzle, PuzzleSpeed::Half);
         app.update();
         assert!((hz(&app) - 15.0).abs() < 1e-6, "{} Hz", hz(&app));
+    }
+
+    /// A stage playtested in the editor is slowed the same, and a beach
+    /// under test is not: it is a versus map, played at the versus rate.
+    #[test]
+    fn an_editor_playtest_of_a_stage_runs_at_the_speed_asked_for() {
+        use crate::app::editor::{EditorState, Mode};
+        use crate::sim::LevelKind;
+        for (kind, want) in [(LevelKind::Puzzle, 15.0), (LevelKind::Arena, 30.0)] {
+            let mut app = clocked(Screen::Editor, PuzzleSpeed::Half);
+            let mut editor = app.world_mut().resource_mut::<EditorState>();
+            editor.kind = kind;
+            editor.mode = Mode::Testing(Box::new(crate::sim::Board::new(9, 9, 1)));
+            app.update();
+            assert!((hz(&app) - want).abs() < 1e-6, "{kind:?}: {} Hz", hz(&app));
+        }
     }
 
     /// And nothing else ever leaves the canonical rate, whatever the dial

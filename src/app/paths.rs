@@ -19,6 +19,29 @@ pub fn data_dir() -> PathBuf {
     resolve(std::env::var_os("XDG_DATA_HOME"), &[".local", "share"])
 }
 
+/// A record in the data directory that a save merges with what is on disk
+/// (progress, trophies), rather than writing over it.
+///
+/// Under test, one folder per test thread, which libtest names after the
+/// test: tests run side by side in one process, and a save that reads the
+/// file back in picked up the counts another test had just written,
+/// so a test of "this round counts nothing" saw another's round.
+pub fn merged_record(name: &str) -> PathBuf {
+    #[cfg(test)]
+    {
+        let thread = std::thread::current();
+        let folder: String = thread
+            .name()
+            .unwrap_or("unnamed")
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect();
+        data_dir().join(folder).join(name)
+    }
+    #[cfg(not(test))]
+    data_dir().join(name)
+}
+
 /// The game's configuration directory.
 pub fn config_dir() -> PathBuf {
     #[cfg(test)]
@@ -37,6 +60,17 @@ pub fn config_dir() -> PathBuf {
 #[cfg(test)]
 fn test_home() -> PathBuf {
     std::env::temp_dir().join(format!("pinch-points-test-{}", std::process::id()))
+}
+
+/// A test's own scratch folder in the temp directory, named for `name`
+/// and this process, and empty: gone and made again, so nothing an
+/// earlier run left in it is read as this one's.
+#[cfg(test)]
+pub fn test_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("pinch-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch folder");
+    dir
 }
 
 /// A player's own words made safe to use as a file name: the name of a
@@ -124,9 +158,7 @@ pub fn ensure_parent(path: &Path) {
 /// half-finished `.tmp` with it.
 pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
     ensure_parent(path);
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
+    let tmp = tmp_sibling(path);
     let landed = spill(&tmp, contents.as_ref()).and_then(|()| std::fs::rename(&tmp, path));
     if landed.is_err() {
         // Nothing half-written is left to be found later, whichever step
@@ -136,11 +168,64 @@ pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<
     landed
 }
 
+/// Where [`write_atomic`] stages a file: beside it, named for this
+/// process. Two copies of the game saving the same file at once each
+/// stage their own, where one shared `.tmp` let the second truncate the
+/// first's between its flush and its rename, publishing half a file.
+fn tmp_sibling(path: &Path) -> PathBuf {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(format!(".{}.tmp", std::process::id()));
+    PathBuf::from(tmp)
+}
+
 /// The bytes onto the disk itself, not merely into the page cache.
 fn spill(tmp: &Path, contents: &[u8]) -> std::io::Result<()> {
     let mut file = std::fs::File::create(tmp)?;
     file.write_all(contents)?;
     file.sync_all()
+}
+
+/// What a save file said that this build cannot read, kept word for word
+/// so the next save writes it back: a line a newer build added. Read and
+/// dropped, one game in an older build cost the player it for good.
+///
+/// In the order first met, each once: a file that had picked up a line
+/// twice is not made to grow it again on every save.
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct ForeignLines(Vec<String>);
+
+impl ForeignLines {
+    /// Keep `line` (its trailing blanks trimmed) unless it is kept already.
+    pub fn keep(&mut self, line: &str) {
+        let line = line.trim_end();
+        if !self.0.iter().any(|kept| kept == line) {
+            self.0.push(line.to_string());
+        }
+    }
+
+    /// Keep every line `other` kept.
+    pub fn extend(&mut self, other: ForeignLines) {
+        for line in other.0 {
+            self.keep(&line);
+        }
+    }
+
+    /// Forget them all.
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(String::as_str)
+    }
+
+    /// Write each kept line onto the end of `text`, a line apiece.
+    pub fn append_to(&self, text: &mut String) {
+        for line in &self.0 {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
 }
 
 /// The XDG rule, injected values so it can be tested without touching the
@@ -225,14 +310,12 @@ mod tests {
     /// and no `.tmp` sibling is left lying around.
     #[test]
     fn atomic_writes_replace_whole_files_and_leave_no_droppings() {
-        let dir = std::env::temp_dir().join(format!("pinch-paths-test-{}", std::process::id()));
+        let dir = crate::app::paths::test_dir("paths-test");
         let path = dir.join("nested").join("save.txt");
         write_atomic(&path, "first").expect("writes");
         write_atomic(&path, "second").expect("rewrites");
         assert_eq!(std::fs::read_to_string(&path).expect("reads"), "second");
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        assert!(!Path::new(&tmp).exists());
+        assert!(!tmp_sibling(&path).exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -251,12 +334,10 @@ mod tests {
     /// because a *directory* already sits on it.
     #[test]
     fn a_failed_write_leaves_the_old_file_and_no_droppings() {
-        let dir = std::env::temp_dir().join(format!("pinch-paths-fail-{}", std::process::id()));
+        let dir = crate::app::paths::test_dir("paths-fail");
         let path = dir.join("save.txt");
         write_atomic(&path, "the good one").expect("writes");
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        let tmp = PathBuf::from(&tmp);
+        let tmp = tmp_sibling(&path);
         std::fs::create_dir_all(&tmp).expect("a directory in the temp file's way");
         assert!(write_atomic(&path, "the doomed one").is_err());
         assert_eq!(

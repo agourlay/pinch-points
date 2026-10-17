@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::time::{Duration, Instant};
 
 /// Register with a chair's string, the way a bot does.
-pub(super) fn register(string: &str, name: &str, owner: &str) -> std::net::TcpStream {
+pub(crate) fn register(string: &str, name: &str, owner: &str) -> std::net::TcpStream {
     let parsed = ConnString::parse(string).expect("a string the card printed");
     let mut stream =
         std::net::TcpStream::connect((parsed.host.as_str(), parsed.port)).expect("connect");
@@ -25,7 +25,7 @@ pub(super) fn register(string: &str, name: &str, owner: &str) -> std::net::TcpSt
 }
 
 /// Wait for the doorway to seat a bot in chair `at`.
-pub(super) fn seated(door: &mut Doorway, at: usize) {
+pub(crate) fn seated(door: &mut Doorway, at: usize) {
     for _ in 0..200 {
         door.poll();
         if door.chairs.get(at).is_some_and(|chair| chair.bot.is_some()) {
@@ -64,7 +64,7 @@ pub(super) struct TestBot {
 }
 
 impl TestBot {
-    pub(super) fn register(string: &str) -> TestBot {
+    pub(crate) fn register(string: &str) -> TestBot {
         let parsed = ConnString::parse(string).expect("a string the card printed");
         let stream =
             std::net::TcpStream::connect((parsed.host.as_str(), parsed.port)).expect("connect");

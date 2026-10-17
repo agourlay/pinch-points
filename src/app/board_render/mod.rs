@@ -9,8 +9,6 @@
 //!   and the cloud shadows over it.
 //! - [`castles`]: the keeps, their pennants, and the shudder a bank sets
 //!   off.
-//! - [`wash`]: the wave that comes in over the whole beach when the round
-//!   is over.
 //!
 //! The shared bits, the sprite helper and the wall colour, live here, and
 //! every module's public items are re-exported so the schedule and the
@@ -22,7 +20,6 @@ mod signposts;
 mod statics;
 mod surround;
 mod tide;
-mod wash;
 
 pub(crate) use castles::castle_parts;
 pub use castles::{
@@ -30,86 +27,51 @@ pub use castles::{
     kick_castles, steady_castle_shadows, sync_castles, wave_pennants,
 };
 pub use pools::ripple_pools;
-pub(crate) use pools::{POOL_LAYERS, glint_place, spawn_layer};
+pub(crate) use pools::{POOL_LAYERS, spawn_glint, spawn_layer};
 pub use signposts::{SignpostSprite, dress_signposts, sync_signposts};
 pub use statics::{
     BoardStatic, TurnstileSprite, animate_turnstiles, pulse_spawners, spawn_static_board,
     sync_turnstiles,
 };
 pub use surround::{drift_cloud_shadows, lay_the_sea, sea_uniform};
-pub use wash::{advance_tide_wash, start_tide_wash};
 
 use crate::app::layout::image_sprite;
 use bevy::prelude::*;
 
-/// The shadow a thing standing `height` tall throws along the sun, from a
-/// footprint `footprint` across centred on `at`: an ellipse stretched the
-/// way the light falls and pushed out by the height. A blob straight under
-/// a tall thing hides behind it, and only its soft, nearly clear edge
-/// peeked out: a rock and its shadow read as one grey shape.
+/// A thing that throws a shadow along the sun: how wide it stands on the
+/// sand, how tall it is, and how dark its shadow falls.
+pub(super) struct Caster {
+    pub footprint: f32,
+    pub height: f32,
+    pub alpha: f32,
+}
+
+/// The shadow `caster` throws along the sun from its footprint centred on
+/// `at` (its depth in `at.z`): an ellipse stretched the way the light falls
+/// and pushed out by the height. A blob straight under a tall thing hides
+/// behind it, and only its soft, nearly clear edge peeks out: a rock and
+/// its shadow read as one grey shape.
 pub(super) fn cast_shadow(
     art: &crate::app::art::Art,
-    at: Vec2,
-    footprint: f32,
-    height: f32,
-    alpha: f32,
-    z: f32,
+    at: Vec3,
+    caster: Caster,
 ) -> (Sprite, Transform) {
+    let Caster {
+        footprint,
+        height,
+        alpha,
+    } = caster;
     let sun = crate::app::layout::SUN.normalize();
+    let ground = at.truncate() + crate::app::layout::SUN + sun * height;
     (
         image_sprite(
             &art.shadow,
             Color::srgba(1.0, 1.0, 1.0, alpha),
             Vec2::new(footprint * 1.15, footprint * 0.55),
         ),
-        Transform::from_translation((at + crate::app::layout::SUN + sun * height).extend(z))
+        Transform::from_translation(ground.extend(at.z))
             .with_rotation(Quat::from_rotation_z(sun.y.atan2(sun.x))),
     )
-}
-
-/// One side of the board, for the things drawn along all four: the wet
-/// sand fringe.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Side {
-    Top,
-    Bottom,
-    Left,
-    Right,
-}
-
-impl Side {
-    pub const ALL: [Side; 4] = [Side::Top, Side::Bottom, Side::Left, Side::Right];
-
-    /// Out of the board across this side, in world space (y up).
-    fn normal(self) -> Vec2 {
-        match self {
-            Side::Top => Vec2::Y,
-            Side::Bottom => Vec2::NEG_Y,
-            Side::Left => Vec2::NEG_X,
-            Side::Right => Vec2::X,
-        }
-    }
-
-    /// The turn that points a strip's foot out of the board across this
-    /// side: a strip drawn fading downward fades out toward the water.
-    fn rotation(self) -> f32 {
-        match self {
-            Side::Top => std::f32::consts::PI,
-            Side::Bottom => 0.0,
-            Side::Left => -std::f32::consts::FRAC_PI_2,
-            Side::Right => std::f32::consts::FRAC_PI_2,
-        }
-    }
-
-    /// The board measured from this side, `extent` being its size: how long
-    /// this side's edge is, and how far it is across the board to the
-    /// opposite one.
-    fn span(self, extent: Vec2) -> (f32, f32) {
-        match self {
-            Side::Top | Side::Bottom => (extent.x, extent.y),
-            Side::Left | Side::Right => (extent.y, extent.x),
-        }
-    }
 }
 
 /// Whether a sprite's remembered tile exists on this board.
@@ -167,10 +129,8 @@ const WALL_COLOR: Color = Color::srgb(0.35, 0.28, 0.22);
 /// has at 1:1, so a zoomed-in board does not push its edge under the
 /// interface.
 ///
-/// It was the tide's widest reach, when a ring of water widened round the
-/// board over a round. The ring is gone (the sea along the bottom of the
-/// view is the water now) and the band keeps its width, so no board is
-/// drawn at a different size for it.
+/// Its width sets the size every board is drawn at: changing it redraws
+/// every board larger or smaller.
 pub(crate) const RIM: f32 = 51.0;
 
 pub(super) use crate::app::layout::z;

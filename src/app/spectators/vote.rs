@@ -121,12 +121,8 @@ impl SpectatorVotes {
     /// alone, the next voter to move into its index would replace its
     /// ballot rather than cast its own.
     pub fn voter_left(&mut self, peer: usize) {
-        self.ballots.retain(|(who, _)| *who != peer);
-        for (who, _) in &mut self.ballots {
-            if *who > peer {
-                *who -= 1;
-            }
-        }
+        self.ballots
+            .retain_mut(|(who, _)| crate::app::net::renumber(who, peer));
     }
 
     /// Run the window down; the event the spectators settled on, once it closes.
@@ -201,15 +197,17 @@ pub struct SpectatorCard(pub bool);
 /// menu already numbers its modes with.
 pub fn spectator_vote_input(
     mut card: ListCard<SpectatorCardUi, SpectatorCard>,
-    keyboard: crate::app::keycaps::KeyboardMut,
+    mut keyboard: crate::app::keycaps::KeyboardMut,
     settings: Res<crate::app::settings::GameSettings>,
     watching: Watching<PickCard>,
+    sim: Res<crate::app::Sim>,
     mut online: ResMut<Online>,
 ) {
-    let crate::app::keycaps::KeyboardMut { mut keys, caps, .. } = keyboard;
     // Typing takes the keyboard, losing a seat takes the job, and a round
-    // that is over has no beach to call anything onto.
-    if !is_spectating(&online) || !watching.free() {
+    // that is over has no beach to call anything onto. Nor has a beach
+    // whose wheel is off: the call would be counted, announced, and then
+    // fire nothing.
+    if !is_spectating(&online) || !watching.free() || !sim.0.events_enabled() {
         if card.is_up() {
             card.shut();
         }
@@ -217,18 +215,18 @@ pub fn spectator_vote_input(
     }
     if !card.is_up() {
         // Not over the other list: one card at a time, and both are numbers.
-        if caps.just_pressed(&keys, 'E') && !watching.other_up() {
+        if keyboard.just('E') && !watching.other_up() {
             spawn_card(card.raise(), &settings);
         }
         return;
     }
-    if keys.just_pressed(KeyCode::Escape) || caps.just_pressed(&keys, 'E') {
+    if keyboard.keys.just_pressed(KeyCode::Escape) || keyboard.just('E') {
         card.shut();
         // Or the pause card, behind it in the frame, opens on the same Esc.
-        crate::app::menu_ui::spend(&mut keys, &[KeyCode::Escape]);
+        crate::app::menu_ui::spend(&mut keyboard.keys, &[KeyCode::Escape]);
         return;
     }
-    if let Some(at) = crate::app::menu_ui::number_pressed(&keys, SPECTATOR_EVENTS.len()) {
+    if let Some(at) = crate::app::menu_ui::number_pressed(&keyboard.keys, SPECTATOR_EVENTS.len()) {
         if let Some(session) = &mut online.0 {
             // Straight to the host, which is the only peer that counts.
             // Never counted here on the way past: the host holds seat 0

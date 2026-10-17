@@ -83,9 +83,9 @@ const SAND: Color = Color::srgb(0.925, 0.84, 0.66);
 
 /// A castle's walls: sand, dyed well toward its owner's colour.
 ///
-/// It was the owner's colour outright, a flat coloured square on the
-/// beach. Dyed sand still says whose it is from across the board, and
-/// leaves the owner's full colour for the flags and the banner, which
+/// Not the owner's colour outright, which reads as a flat coloured square
+/// on the beach. Dyed sand still says whose it is from across the board,
+/// and leaves the owner's full colour for the flags and the banner, which
 /// is what they are for.
 pub fn castle_body(owner: Color) -> Color {
     SAND.mix(&owner, 0.62)
@@ -190,11 +190,12 @@ fn build_castle(parent: &mut ChildSpawnerCommands, art: &Art, tier: u8, color: C
     // the tallest thing on the beach, and grows taller with each tier.
     let (sprite, place) = super::cast_shadow(
         art,
-        Vec2::ZERO,
-        TILE * footprint,
-        TILE * (0.14 + 0.05 * f32::from(tier)),
-        0.45,
-        -0.41,
+        Vec3::new(0.0, 0.0, -0.41),
+        super::Caster {
+            footprint: TILE * footprint,
+            height: TILE * (0.14 + 0.05 * f32::from(tier)),
+            alpha: 0.45,
+        },
     );
     parent.spawn((
         CastleShadow {
@@ -246,9 +247,9 @@ pub(crate) struct CastlePart {
 /// | 3 | 50+ | two back towers, a taller keep, a moat |
 ///
 /// Each tier adds pieces and none replaces one, so a castle only ever
-/// gets bigger. Before, the keep itself grew until at tier 3 it covered
-/// the wall it was meant to stand inside, and the tiers were hard to
-/// tell apart at a glance. Everything but the sand shadow under it, which
+/// gets bigger: a keep that grew instead would cover the wall it stands
+/// inside by tier 3, and the tiers would be hard to tell apart at a
+/// glance. Everything but the sand shadow under it, which
 /// belongs to the beach rather than to the castle.
 pub(crate) fn castle_parts(art: &Art, tier: u8, color: Color) -> Vec<CastlePart> {
     let body = castle_body(color);
@@ -370,21 +371,23 @@ pub struct CastleCrown {
 pub struct Table<'w> {
     screen: Res<'w, State<crate::app::Screen>>,
     seats: Res<'w, crate::app::Seats>,
-    online: Res<'w, crate::app::net::Online>,
-    settings: Res<'w, crate::app::settings::GameSettings>,
+    scoring: crate::app::teams::Scoring<'w>,
     time: Res<'w, Time>,
+    clock: Res<'w, crate::app::round_state::RoundClock>,
 }
 
 /// Float a crown over the castle of whoever leads, so the board itself
 /// says who is winning: a judge watching the beach could not tell without
 /// looking across at the scores.
 ///
-/// The leader is the score panel's own (`seating::leading_seats`): the one
+/// The leader is the score panel's own ([`Scoring::leaders`]): the one
 /// top scorer, or every castle of the leading team, and nobody at zero or
 /// in a tie, so the board's crown and the panel's never disagree. Versus
 /// only: a puzzle has no one to lead. A new leader's crown drops in with a
 /// little bounce, held still under reduced motion; it follows its castle
 /// through a swap's flight.
+///
+/// [`Scoring::leaders`]: crate::app::teams::Scoring::leaders
 pub fn crown_the_leader(
     mut commands: Commands,
     sim: Res<Sim>,
@@ -395,8 +398,7 @@ pub fn crown_the_leader(
 ) {
     let board = &sim.0;
     let versus = *table.screen.get() == crate::app::Screen::Versus;
-    let mode = crate::app::teams::in_play(&table.settings, &table.online, table.seats.0);
-    let leaders = crate::app::seating::leading_seats(board.scores(), table.seats.0, mode);
+    let leaders = table.scoring.leaders(board.scores(), table.seats.0);
     let leading = |c: &CastleSprite| versus && leaders[usize::from(c.owner)];
     // A crown whose castle no longer leads, or is gone, goes.
     for (entity, crown, _) in &crowns {
@@ -407,9 +409,11 @@ pub fn crown_the_leader(
             commands.entity(entity).despawn();
         }
     }
-    let calm = table.settings.reduced_motion;
+    let calm = table.scoring.local.settings.reduced_motion;
     let dt = table.time.delta_secs();
-    let now = table.time.elapsed_secs();
+    // The bob breathes with the round: still under a pause card and on
+    // the results.
+    let now = table.clock.0;
     for (castle, place) in &castles {
         if !leading(castle) {
             continue;
@@ -428,7 +432,7 @@ pub fn crown_the_leader(
                     age: 0.0,
                 },
                 image_sprite(&art.crown, Color::WHITE, Vec2::splat(CROWN_SIZE * TILE)),
-                Transform::from_translation(over.extend(z::TILE_FEATURE + 0.6))
+                Transform::from_translation(over.extend(z::CROWN))
                     .with_scale(Vec3::splat(if calm { 1.0 } else { 0.0 })),
             ));
             continue;
@@ -437,7 +441,7 @@ pub fn crown_the_leader(
         let (drop, grow) = if calm { (0.0, 1.0) } else { arrival(crown.age) };
         // A slow breath once it has landed, so it reads as floating.
         let bob = if calm { 0.0 } else { (now * 2.2).sin() * 1.5 };
-        at.translation = (over + Vec2::new(0.0, drop * TILE + bob)).extend(z::TILE_FEATURE + 0.6);
+        at.translation = (over + Vec2::new(0.0, drop * TILE + bob)).extend(z::CROWN);
         at.scale = Vec3::splat(grow);
     }
 }
@@ -501,7 +505,7 @@ pub struct Detector {
     /// The [`BoardGeneration`] the castles in `held` were read off.
     ///
     /// [`BoardGeneration`]: crate::app::sim_events::BoardGeneration
-    board: u64,
+    board: crate::app::sim_events::BoardStamp,
     held: Vec<Held>,
 }
 
@@ -567,12 +571,11 @@ pub fn fly_castles(
     mut castles: Query<(&CastleSprite, &mut Transform)>,
 ) {
     let board = &current.sim.0;
-    if before.board != current.generation() {
+    if before.board.is_new(&current) {
         before.held.clear();
         flight.from.clear();
         flight.left = 0.0;
     }
-    before.board = current.generation();
     now.clear();
     now.extend(board.tiles().filter_map(|(x, y, kind)| match kind {
         TileKind::Castle(owner) => Some(Held { x, y, owner }),
@@ -841,13 +844,26 @@ pub fn cheer_tier_ups(
 }
 
 /// Flutter every pennant: a small shear-like x-scale ripple plus a slight
-/// tilt, phased per entity so flags do not wave in lockstep.
-pub fn wave_pennants(time: Res<Time>, mut flags: Query<(Entity, &mut Transform), With<Pennant>>) {
+/// tilt, phased per entity so flags do not wave in lockstep. With less
+/// motion asked for, every flag hangs at rest, as it is spawned.
+pub fn wave_pennants(
+    time: Res<Time>,
+    settings: Res<crate::app::settings::GameSettings>,
+    mut flags: Query<(Entity, &mut Transform), With<Pennant>>,
+) {
     let t = time.elapsed_secs();
     for (entity, mut transform) in &mut flags {
-        let phase = f32::from(entity.to_bits() as u16 % 17);
-        transform.scale.x = 1.0 + (t * 5.0 + phase).sin() * 0.12;
-        transform.rotation = Quat::from_rotation_z((t * 3.0 + phase).sin() * 0.08);
+        let (stretch, tilt) = if settings.reduced_motion {
+            (1.0, 0.0)
+        } else {
+            let phase = f32::from(entity.to_bits() as u16 % 17);
+            (
+                1.0 + (t * 5.0 + phase).sin() * 0.12,
+                (t * 3.0 + phase).sin() * 0.08,
+            )
+        };
+        transform.scale.x = stretch;
+        transform.rotation = Quat::from_rotation_z(tilt);
     }
 }
 
@@ -879,6 +895,28 @@ mod tests {
                 crown_foot > pole_top - 0.02,
                 "tier {tier}: crown on the flag"
             );
+        }
+    }
+
+    /// With less motion asked for, the castles' flags hang still.
+    #[test]
+    fn pennants_hang_still_for_less_motion() {
+        use super::{Pennant, wave_pennants};
+        use bevy::prelude::*;
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.insert_resource(crate::app::settings::GameSettings {
+            reduced_motion: true,
+            ..Default::default()
+        });
+        app.add_systems(Update, wave_pennants);
+        let flags: Vec<Entity> = (0..5)
+            .map(|_| app.world_mut().spawn((Pennant, Transform::default())).id())
+            .collect();
+        app.update();
+        for flag in flags {
+            let at = app.world().get::<Transform>(flag).expect("a flag");
+            assert_eq!(*at, Transform::default(), "{flag:?} waved");
         }
     }
 

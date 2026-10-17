@@ -7,7 +7,35 @@
 
 use super::*;
 
+/// How long a beach may go unheard before the list gives up on it, on a
+/// listener that hears every one of its beacons: five of them lost in a
+/// row. See [`host_ttl`] for a listener that hears fewer.
 pub(super) const HOST_TTL: f32 = 5.0;
+
+/// How long a beach may go unheard on a listener that hears one of its
+/// beacons in `one_in` ([`crate::transport::beacons_heard_one_in`]): the
+/// same five beacons lost in a row, counted in the ones that reach it.
+///
+/// A listener past the first lobby port hears a beach on another machine
+/// only every fourth second, and given the first port's five it dropped
+/// the beach at the first wide beacon lost and listed it again on the
+/// next: a row that came and went under the player's cursor. A beach that
+/// leaves properly is gone at once all the same, since its farewell goes
+/// to every port; this is only how long a crashed one lingers.
+pub(super) fn host_ttl(one_in: u32) -> f32 {
+    HOST_TTL * one_in as f32
+}
+
+/// The most beaches the list holds at once.
+///
+/// A row is made for every beacon id heard, and an id is whatever the
+/// datagram says: one sender making up a fresh one per packet grew the
+/// list without end, and with it the sort the list is put through every
+/// frame. Sixty-four is more beaches than any hall puts up, and far more
+/// than the screen shows; past it a new id takes the place of the least
+/// established row ([`the_row_to_give_up`]), never the one being played at
+/// or pointed at.
+pub(super) const MAX_BEACHES: usize = 64;
 
 /// How long a peer may go unheard before the lobby gives up on it. Four
 /// greetings' worth: long enough to ride out a loss burst, short enough
@@ -48,6 +76,11 @@ pub struct HostEntry {
     /// Its socket has no room for anyone, watchers included.
     pub full: bool,
     pub age: f32,
+    /// How many of its beacons this listener has heard. A real beach
+    /// speaks every second for as long as it is up, and an id made up for
+    /// one packet speaks once, which is what a full list goes by when it
+    /// has to give a row up.
+    pub heard: u32,
 }
 
 impl HostEntry {
@@ -103,18 +136,24 @@ impl HostEntry {
 
 /// Fold freshly heard beacons into the host list: a host we can still hear
 /// has its age reset, a new one joins the list, one that said goodbye goes
-/// at once, and one that has gone quiet for [`HOST_TTL`] drops off: a host
-/// that quit should not sit in the join list forever.
+/// at once, and one that has gone quiet for `ttl` ([`host_ttl`]) drops
+/// off: a host that quit should not sit in the join list forever.
 ///
 /// The timeout is the backstop, not the mechanism: a host that leaves
 /// properly says so and is gone within the frame, and the ageing is for a
 /// killed process, a pulled cable, a laptop lid.
+///
+/// `held` are the rows a full list never gives up to a new id: the beach
+/// this lobby is at, and the one under the cursor, by the address their
+/// rows go by.
 ///
 /// Pure, so both rules are testable without sockets.
 pub(super) fn refresh_hosts(
     hosts: &mut Vec<HostEntry>,
     heard: &[(SocketAddr, Beacon)],
     delta: f32,
+    ttl: f32,
+    held: &[SocketAddr],
 ) {
     for entry in hosts.iter_mut() {
         entry.age += delta;
@@ -149,7 +188,9 @@ pub(super) fn refresh_hosts(
                     bots: *bots,
                     full: *full,
                     age: 0.0,
+                    heard: 1,
                 };
+                let room = hosts.len() < MAX_BEACHES;
                 match hosts.iter_mut().find(|host| same_beach(host, *id, addr)) {
                     Some(entry) => {
                         // Keep the address it was first heard from. The same
@@ -157,14 +198,20 @@ pub(super) fn refresh_hosts(
                         // the loopback copy, and swapping between them every
                         // second would be churn for no gain: either reaches it.
                         fresh.addr = entry.addr;
+                        fresh.heard = entry.heard.saturating_add(1);
                         *entry = fresh;
                     }
-                    None => hosts.push(fresh),
+                    None if room => hosts.push(fresh),
+                    None => {
+                        if let Some(at) = the_row_to_give_up(hosts, held) {
+                            hosts[at] = fresh;
+                        }
+                    }
                 }
             }
         }
     }
-    hosts.retain(|host| host.age < HOST_TTL);
+    hosts.retain(|host| host.age < ttl);
     // A stable order, so the list does not reshuffle under a player's
     // finger as beaches come and go. By name first, because that is what
     // the list shows; by address to break ties, because two children will
@@ -174,6 +221,23 @@ pub(super) fn refresh_hosts(
             .cmp(fold_case(&b.name))
             .then_with(|| (a.addr.ip(), a.addr.port()).cmp(&(b.addr.ip(), b.addr.port())))
     });
+}
+
+/// Which row a full list gives up to a new id, if any may go: the one
+/// heard fewest times, and of those the one heard from longest ago. Never
+/// one in `held`.
+///
+/// Not simply the stalest. One sender making up a fresh id per packet has
+/// every one of its rows at age zero, while a real beach is heard once a
+/// second, or once every few up the port ladder, so the stalest is always
+/// a real beach. A made-up id is heard once.
+pub(super) fn the_row_to_give_up(hosts: &[HostEntry], held: &[SocketAddr]) -> Option<usize> {
+    hosts
+        .iter()
+        .enumerate()
+        .filter(|(_, host)| !held.contains(&host.addr))
+        .min_by(|(_, a), (_, b)| a.heard.cmp(&b.heard).then(b.age.total_cmp(&a.age)))
+        .map(|(at, _)| at)
 }
 
 /// Whether a beacon names a beach already in the list.
@@ -211,7 +275,20 @@ pub fn discover(time: Res<Time>, settings: Res<GameSettings>, mut state: ResMut<
         .map(Discovery::poll)
         .unwrap_or_default();
     let closed = host_closed(&state, &heard);
-    refresh_hosts(&mut state.hosts, &heard, delta);
+    let ttl = state
+        .discovery
+        .as_ref()
+        .and_then(Discovery::port)
+        .map_or(HOST_TTL, |port| {
+            host_ttl(crate::transport::beacons_heard_one_in(port))
+        });
+    let held: Vec<SocketAddr> = state
+        .joined_entry()
+        .map(|host| host.addr)
+        .into_iter()
+        .chain(state.selected)
+        .collect();
+    refresh_hosts(&mut state.hosts, &heard, delta, ttl, &held);
     learn_the_beach(&mut state);
     if closed {
         state.let_go();
@@ -267,6 +344,13 @@ fn out_of_the_queue(state: &mut LobbyState, tr: &'static crate::app::i18n::Tr) {
         true => tr.lobby_watching.to_string(),
         false => tr.lobby_aboard.to_string(),
     };
+}
+
+/// [`refresh_hosts`] for a lobby holding no row, at the usual
+/// [`HOST_TTL`]: what most tests of the list ask.
+#[cfg(test)]
+pub(super) fn refresh_open(hosts: &mut Vec<HostEntry>, heard: &[(SocketAddr, Beacon)], delta: f32) {
+    refresh_hosts(hosts, heard, delta, HOST_TTL, &[]);
 }
 
 /// Whether the beach this joiner is waiting at just said goodbye on the
@@ -346,6 +430,7 @@ mod list_tests {
             bots: false,
             full: false,
             age: 0.0,
+            heard: 1,
         }
     }
 
@@ -431,6 +516,80 @@ mod list_tests {
         assert_eq!(state.selected_index(), None);
     }
 
+    /// However many made-up beacon ids one sender sprays, the list stops at
+    /// [`MAX_BEACHES`], and what makes way is a row heard once, never a
+    /// beach that has been speaking all along, the one this lobby is at, or
+    /// the one under the cursor. Every made-up id is younger than any real
+    /// beach, so giving up the stalest row gave up exactly those.
+    #[test]
+    fn the_list_is_bounded_however_many_ids_arrive() {
+        let mut next = 1000u64;
+        let mut spray = |count: u64| -> Vec<(SocketAddr, Beacon)> {
+            (0..count)
+                .map(|_| {
+                    let (addr, mut beacon) = beach(9, "spam", 1, 6, false);
+                    if let Beacon::Here { id, .. } = &mut beacon {
+                        *id = next;
+                    }
+                    next += 1;
+                    (addr, beacon)
+                })
+                .collect()
+        };
+        // Names that sort last, so no row survives by being first in line.
+        let established = || beach(3, "Zed", 1, 6, false);
+        let joined = beach(2, "Yan", 1, 6, false);
+        let pointed = beach(4, "Xu", 1, 6, false);
+        let held = [joined.0, pointed.0];
+        let ttl = host_ttl(4);
+        let mut hosts = Vec::new();
+        for _ in 0..3 {
+            refresh_hosts(&mut hosts, &[established()], 1.0, ttl, &held);
+        }
+        refresh_hosts(&mut hosts, &[joined, pointed], 0.0, ttl, &held);
+        refresh_hosts(&mut hosts, &spray(MAX_BEACHES as u64), 0.0, ttl, &held);
+        assert_eq!(hosts.len(), MAX_BEACHES);
+
+        // Ten seconds of steady spray, with the real beach heard once a
+        // second as it really is, and the joined and pointed-at beaches
+        // not heard again at all, as up the port ladder between wide
+        // beacons.
+        for frame in 0..40 {
+            let mut heard = spray(50);
+            if frame % 4 == 0 {
+                heard.push(established());
+            }
+            refresh_hosts(&mut hosts, &heard, 0.25, ttl, &held);
+            assert_eq!(hosts.len(), MAX_BEACHES, "and the list stops there");
+            for name in ["Zed", "Yan", "Xu"] {
+                assert!(
+                    hosts.iter().any(|host| host.name == name),
+                    "{name} lost its row to a made-up id at frame {frame}"
+                );
+            }
+        }
+    }
+
+    /// A listener past the first lobby port hears a beach on another
+    /// machine one beacon in four, and keeps it listed through a lost one:
+    /// it gave up after the first port's five seconds, so a single lost
+    /// wide beacon dropped the row and the next listed it again.
+    #[test]
+    fn a_listener_up_the_ladder_rides_out_a_lost_wide_beacon() {
+        use crate::transport::{LOBBY_PORTS, beacons_heard_one_in};
+        assert_eq!(beacons_heard_one_in(LOBBY_PORTS[0]), 1);
+        let up_the_ladder = beacons_heard_one_in(LOBBY_PORTS[1]);
+        assert!(up_the_ladder > 1, "only the wide beacons go past the first");
+        let ttl = host_ttl(up_the_ladder);
+        let mut hosts = Vec::new();
+        refresh_hosts(&mut hosts, &[beach(1, "Anna", 1, 6, false)], 0.0, ttl, &[]);
+        // One wide beacon lost: two gaps' worth of silence, and a little.
+        let silence = 2.0 * up_the_ladder as f32 * ANNOUNCE_EVERY + 0.5;
+        refresh_hosts(&mut hosts, &[], silence, ttl, &[]);
+        assert_eq!(hosts.len(), 1, "still listed after {silence} s");
+        assert_eq!(host_ttl(1), HOST_TTL, "the first port is as it was");
+    }
+
     /// Beaches are listed in a stable order, so the numbers a child reads
     /// out loud still mean the same games a moment later.
     #[test]
@@ -441,7 +600,7 @@ mod list_tests {
             beach(1, "Anna", 1, 6, false),
             beach(2, "Bo", 1, 6, false),
         ];
-        refresh_hosts(&mut hosts, &heard, 0.0);
+        refresh_open(&mut hosts, &heard, 0.0);
         let order: Vec<&str> = hosts.iter().map(|h| h.name.as_str()).collect();
         assert_eq!(
             order,
@@ -450,7 +609,7 @@ mod list_tests {
         );
 
         // Heard again in yet another order, and the list does not budge.
-        refresh_hosts(&mut hosts, &[heard[0].clone(), heard[2].clone()], 0.1);
+        refresh_open(&mut hosts, &[heard[0].clone(), heard[2].clone()], 0.1);
         let order: Vec<&str> = hosts.iter().map(|h| h.name.as_str()).collect();
         assert_eq!(order, ["Anna", "Bo", "Cy"]);
     }
@@ -467,7 +626,7 @@ mod list_tests {
             beach(3, "bob", 1, 6, false),
             beach(4, "ÉLODIE", 1, 6, false),
         ];
-        refresh_hosts(&mut hosts, &heard, 0.0);
+        refresh_open(&mut hosts, &heard, 0.0);
         let order: Vec<&str> = hosts.iter().map(|h| h.name.as_str()).collect();
         let mut expected: Vec<&str> = heard
             .iter()
@@ -492,7 +651,7 @@ mod list_tests {
         let heard: Vec<_> = (1..=60u8)
             .map(|n| beach(n, &format!("beach{n:02}"), n % 7, 6, n % 3 == 0))
             .collect();
-        refresh_hosts(&mut state.hosts, &heard, 0.0);
+        refresh_open(&mut state.hosts, &heard, 0.0);
         assert_eq!(state.hosts.len(), 60, "every beach on the wire is listed");
 
         // Walk to the far end; the window follows and never runs past it.
@@ -544,18 +703,18 @@ mod list_tests {
         };
         // The same game port, reached two ways, as a listener really sees it.
         let heard = [named("127.0.0.1:49213"), named("192.168.1.8:49213")];
-        refresh_hosts(&mut hosts, &heard, 0.0);
+        refresh_open(&mut hosts, &heard, 0.0);
         assert_eq!(hosts.len(), 1, "one game, one row: {:?}", hosts.len());
         let kept = hosts[0].addr;
 
         // And it does not flip between the two addresses every beacon.
-        refresh_hosts(&mut hosts, &heard, 0.1);
+        refresh_open(&mut hosts, &heard, 0.1);
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].addr, kept, "the row does not churn its address");
 
         // Its farewell takes the one row with it, whichever address it
         // happens to arrive from.
-        refresh_hosts(
+        refresh_open(
             &mut hosts,
             &[(
                 "127.0.0.1:49213".parse().expect("addr"),
@@ -599,7 +758,7 @@ mod list_tests {
                 },
             ),
         ];
-        refresh_hosts(&mut hosts, &heard, 0.0);
+        refresh_open(&mut hosts, &heard, 0.0);
         assert_eq!(hosts.len(), 2);
     }
 
@@ -609,10 +768,10 @@ mod list_tests {
     fn two_beaches_of_the_same_name_keep_their_own_rows() {
         let mut hosts = Vec::new();
         let heard = [beach(9, "Sam", 1, 6, false), beach(4, "Sam", 1, 6, false)];
-        refresh_hosts(&mut hosts, &heard, 0.0);
+        refresh_open(&mut hosts, &heard, 0.0);
         assert_eq!(hosts.len(), 2, "one row each");
         let first = hosts[0].addr;
-        refresh_hosts(&mut hosts, &heard, 0.1);
+        refresh_open(&mut hosts, &heard, 0.1);
         assert_eq!(hosts[0].addr, first, "and the same one each, every time");
     }
 
@@ -638,6 +797,7 @@ mod list_tests {
             bots: false,
             full: false,
             age: 0.0,
+            heard: 1,
         });
 
         out_of_the_queue(&mut state, &EN);

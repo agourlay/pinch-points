@@ -221,8 +221,7 @@ impl Tournament {
 pub fn record_series_round(
     sim: Res<Sim>,
     seats: Res<Seats>,
-    settings: Res<GameSettings>,
-    online: Res<crate::app::net::Online>,
+    scoring: crate::app::teams::Scoring,
     mut tournament: ResMut<Tournament>,
 ) {
     if !tournament.is_running() {
@@ -233,7 +232,7 @@ pub fn record_series_round(
     // Online, the host's next invitation carries the authoritative wins
     // moved onto the re-dealt seats and `enter_interlude` overwrites this
     // with them, so a mid-series seat change corrects itself.
-    let mode = crate::app::teams::in_play(&settings, &online, seats.0);
+    let mode = scoring.live_mode(seats.0);
     let leaders = leading_seats(sim.0.scores(), seats.0, mode);
     for (seat, led) in leaders.iter().enumerate() {
         if *led {
@@ -333,7 +332,7 @@ pub struct InterludeTimer(pub Timer);
 /// rotated map, config re-armed) and shows the standings for a beat.
 pub fn enter_interlude(
     mut commands: Commands,
-    settings: Res<GameSettings>,
+    local: crate::app::teams::LocalScoring,
     names: Res<crate::app::SeatNames>,
     seats: Res<Seats>,
     mut online: ResMut<crate::app::net::Online>,
@@ -353,7 +352,10 @@ pub fn enter_interlude(
         Some(session) => (crate::app::SeatNames(session.names.clone()), session.seats),
         None => (crate::app::SeatNames(names.0.clone()), seats.0),
     };
-    let mode = crate::app::teams::in_play(&settings, &online, seats.max(2));
+    // The pure rule rather than `Scoring`, which reads the session this
+    // system writes; a series is never a replay's.
+    let mode = crate::app::teams::in_play(local.mode(), &online, None, seats.max(2));
+    let settings = &local.settings;
     // The session is through the doorway; the flag has done its work of
     // carrying it past `end_versus`. Online, the map and the seed are the
     // host's to say and arrive in the terms; the config steps below are
@@ -442,7 +444,7 @@ pub fn enter_interlude(
                     ..default()
                 })
                 .with_children(|table| {
-                    let standings = standings(&settings, &names, &tournament, mode, seats.max(2));
+                    let standings = standings(settings, &names, &tournament, mode, seats.max(2));
                     for Standing { who, stars, color } in standings {
                         for cell in [who, stars] {
                             table.spawn((
@@ -550,7 +552,9 @@ mod tests {
         app.insert_resource(Sim(classic_arena(false, 4)));
         app.insert_resource(Seats(4));
         app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::Daily>();
         app.init_resource::<crate::app::net::Online>();
+        app.init_resource::<crate::app::Playback>();
         app.insert_resource(Tournament::start(SeriesLength::BestOfFive));
         app.add_systems(Update, record_series_round);
 
@@ -668,6 +672,7 @@ mod tests {
         let interlude = |was: Tournament, series: u8, standing: Option<SeriesStanding>| {
             let mut app = App::new();
             app.insert_resource(GameSettings::default());
+            app.init_resource::<crate::app::Daily>();
             app.init_resource::<crate::app::SeatNames>();
             app.insert_resource(Seats(2));
             app.init_resource::<crate::app::match_setup::MatchConfig>();
@@ -729,6 +734,7 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::Daily>();
         let mut was = crate::app::SeatNames::default();
         was.0[0] = "Ann".into();
         was.0[1] = "Robo".into();
@@ -782,6 +788,7 @@ mod tests {
 
         let mut app = App::new();
         app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::Daily>();
         app.init_resource::<crate::app::SeatNames>();
         app.insert_resource(Seats(2));
         app.init_resource::<crate::app::match_setup::MatchConfig>();

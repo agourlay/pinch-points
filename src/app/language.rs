@@ -112,18 +112,34 @@ pub fn opening_screen(saved: bool) -> Screen {
     }
 }
 
-/// Whether the settings file may be written yet.
+/// Whether the first-run language question is still open: there was no
+/// settings file at boot, and nobody has taken a language on the picker
+/// since.
 ///
-/// [`opening_screen`] reads "first run" off the absence of that file and
-/// nothing else, so any write before a language has been taken answers the
-/// picker's question on the player's behalf. Two things would otherwise do
-/// that (a keyboard that learns a cap from a press in the picker, and the
-/// start-up keymap read), so both ask here first.
-///
-/// Nothing is lost by waiting: the caps stay in the resource, and the Enter
-/// that takes the language writes them out with it.
-pub fn may_save(screen: &Screen) -> bool {
-    !matches!(screen, Screen::Language)
+/// Its own resource rather than "the picker is on screen", because a boot
+/// can skip the picker without anybody answering it: `watch` and
+/// `arena --watch` open straight on the match. Read off the screen, the
+/// first cap learned while watching wrote the file, and the picker never
+/// showed again on a normal launch.
+#[derive(Resource, Default)]
+pub struct LanguageUnasked(pub bool);
+
+impl LanguageUnasked {
+    /// Whether the settings file may be written yet.
+    ///
+    /// [`opening_screen`] reads "first run" off the absence of that file
+    /// and nothing else, so any write before a language has been taken
+    /// answers the picker's question on the player's behalf. The writes
+    /// nobody asked for (a keyboard that learns a cap from a press, the
+    /// start-up keymap read, F11's window flag) ask here first. Visiting
+    /// the settings to change something is somebody choosing, and writes
+    /// as it always has.
+    ///
+    /// Nothing is lost by waiting: the caps stay in the resource, and the
+    /// Enter that takes the language writes them out with it.
+    pub fn may_save(&self) -> bool {
+        !self.0
+    }
 }
 
 /// What a keypress does to the picker: where the cursor lands, and
@@ -151,6 +167,7 @@ pub fn language_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut settings: ResMut<GameSettings>,
     mut caps: ResMut<crate::app::keycaps::KeyCaps>,
+    mut unasked: ResMut<LanguageUnasked>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     let (lang, taken) = step(&keys, settings.language);
@@ -158,6 +175,7 @@ pub fn language_input(
         settings.set_language(lang, &mut caps);
     }
     if taken {
+        unasked.0 = false;
         settings.save(&caps);
         next_screen.set(Screen::Menu);
     }

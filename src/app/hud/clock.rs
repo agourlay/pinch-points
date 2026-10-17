@@ -9,7 +9,8 @@ use crate::app::{Phase, Screen, Sim, menu_ui};
 use crate::sim::TICKS_PER_SECOND;
 use bevy::prelude::*;
 
-/// The big versus tide clock (top-centre).
+/// The big tide clock over a puzzle (top-centre). A versus round's clock
+/// is the sidebar's.
 #[derive(Component)]
 pub struct TideClock;
 
@@ -82,9 +83,6 @@ pub(crate) fn clock_color(ticks: u64, round: Option<u32>, elapsed: f32, blink: b
     }
 }
 
-/// Drive the big clock: mm:ss during a versus round, red inside the last
-/// 30 seconds, pulsing for the final 10. Colour-only pulsing: it never
-/// re-shapes the text.
 /// What a clock's closing-stretch blink reads: the frame's time, and
 /// whether it should blink at all, which it does only while the round is
 /// moving and the player has not asked for things to hold still. Under a
@@ -104,6 +102,11 @@ impl Blink<'_> {
     }
 }
 
+/// Drive the big clock over a puzzle: mm:ss of the round's countdown
+/// ([`crate::app::round_state::countdown`]), red for its closing stretch
+/// and pulsing for the last of it ([`clock_color`]). Colour-only pulsing:
+/// it never re-shapes the text. Blank on every other screen, versus
+/// included, whose clock is the sidebar's.
 pub fn update_tide_clock(
     sim: Res<Sim>,
     screen: Res<State<Screen>>,
@@ -118,9 +121,9 @@ pub fn update_tide_clock(
         // Every running puzzle counts down: its own round if it has one,
         // otherwise the campaign-wide tick limit that would otherwise fail
         // the level invisibly.
-        Screen::Puzzle if *phase.get() == Phase::Running => sim.0.remaining_ticks().or(Some(
-            crate::sim::PUZZLE_TICK_LIMIT.saturating_sub(sim.0.ticks()),
-        )),
+        Screen::Puzzle if *phase.get() == Phase::Running => {
+            crate::app::round_state::countdown(&sim.0, true).map(|c| c.remaining)
+        }
         // A timed level shows its deadline while the signposts are still
         // going down: Dry Feet is decided in eight seconds, with the player
         // choosing where to spend their one post. Only levels that carry a

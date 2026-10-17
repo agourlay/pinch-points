@@ -50,15 +50,12 @@ pub struct Peer {
     /// Its greeting said a bot drives its seat. The game behind the
     /// greeting sets this, never the name, so the seat wears the robot.
     pub bot: bool,
-    /// Seconds since it said it was going (`NetMsg::Leaving`), or `None`
-    /// once it is heard from again, or if it never said.
+    /// Whether it said it was going, and how long ago.
     ///
-    /// Its own clock, because the goodbye is a claim nothing checks: any
-    /// machine on the LAN can send one with the peer's address on it. The
-    /// real peer is still sending on every tick it runs, and the first
-    /// word from it after the goodbye takes the goodbye back, well inside
-    /// the grace a seat gets before it is handed to the AI.
-    pub goodbye: Option<f32>,
+    /// The real peer is still sending on every tick it runs, so the first
+    /// word from it after a forged goodbye takes it back well inside the
+    /// grace a seat gets before it is handed to the AI.
+    pub goodbye: Goodbye,
     /// Host: the frame of the last pause it announced. It holds the
     /// table's pause while that one is in flight (see
     /// `OnlineSession::release_a_departed_pause`).
@@ -97,7 +94,66 @@ impl Peer {
     /// Whether it said it was going (`NetMsg::Leaving`), and has said
     /// nothing since.
     pub fn left(&self) -> bool {
-        self.goodbye.is_some()
+        self.goodbye.said()
+    }
+}
+
+/// A goodbye (`NetMsg::Leaving`) and the seconds it has stood, from its
+/// first copy, with no other word from whoever said it.
+///
+/// Its own clock, because a goodbye is a claim nothing checks: any machine
+/// on the LAN can send one with the peer's address on it. Believed on
+/// arrival, one forged datagram emptied a table. So it is believed only
+/// once it has stood for a grace (`stood`), and any other word from the
+/// same peer takes it back (`heard`).
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct Goodbye(Option<f32>);
+
+impl Goodbye {
+    /// Something other than a goodbye was heard: the goodbye, if any, is
+    /// taken back.
+    pub fn heard(&mut self) {
+        self.0 = None;
+    }
+
+    /// A goodbye was heard. The clock starts at the first copy and is not
+    /// restarted by the repeats ([`crate::transport::UdpTransport`] says
+    /// it more than once).
+    pub fn spoke(&mut self) {
+        self.0.get_or_insert(0.0);
+    }
+
+    /// `delta` seconds more for a goodbye to have stood.
+    pub fn age(&mut self, delta: f32) {
+        if let Some(since) = &mut self.0 {
+            *since += delta;
+        }
+    }
+
+    /// Whether a goodbye was said and not taken back since.
+    pub fn said(&self) -> bool {
+        self.0.is_some()
+    }
+
+    /// Whether a goodbye has stood for `grace` with no other word since:
+    /// the moment it is believed.
+    pub fn stood(&self, grace: f32) -> bool {
+        self.0.is_some_and(|since| since >= grace)
+    }
+}
+
+/// Follow a peer index across `gone` being forgotten: everyone behind it
+/// moves down one, as the transport's own list closes the gap. `false`
+/// when `index` was the forgotten peer itself, which has nothing left to
+/// name, so a `retain_mut` drops it.
+pub fn renumber(index: &mut usize, gone: usize) -> bool {
+    match (*index).cmp(&gone) {
+        std::cmp::Ordering::Less => true,
+        std::cmp::Ordering::Equal => false,
+        std::cmp::Ordering::Greater => {
+            *index -= 1;
+            true
+        }
     }
 }
 
@@ -120,6 +176,41 @@ impl PeerBook {
 
     pub fn iter(&self) -> impl Iterator<Item = &Peer> {
         self.0.iter()
+    }
+
+    /// The peers who would sit at the table, each with its index in the
+    /// book: those that came to play, in order, as far as the chairs past
+    /// the host's go, which is who [`Self::seat_plan`] seats. The lobby's
+    /// card lists these, its count is these, and the host's K numbers
+    /// these first, so a would-be player past the last chair is on none
+    /// of the card's rows.
+    pub fn at_the_table(&self) -> impl Iterator<Item = (usize, &Peer)> {
+        self.by_place()
+            .filter(|&(_, _, sits)| sits)
+            .map(|(at, peer, _)| (at, peer))
+    }
+
+    /// Everyone else on the socket, each with its index in the book: the
+    /// onlookers, and the would-be players past the last chair, in the
+    /// order they came. On no row of the card, but still somebody the
+    /// host may have to ask to leave, which its K numbers on past the
+    /// table for.
+    pub fn off_the_table(&self) -> impl Iterator<Item = (usize, &Peer)> {
+        self.by_place()
+            .filter(|&(_, _, sits)| !sits)
+            .map(|(at, peer, _)| (at, peer))
+    }
+
+    /// Every peer, with whether it would sit at the table: the one rule
+    /// both [`Self::at_the_table`] and [`Self::off_the_table`] read, so
+    /// the two always split the book between them.
+    fn by_place(&self) -> impl Iterator<Item = (usize, &Peer, bool)> {
+        let mut chairs = crate::sim::MAX_PLAYERS - 1;
+        self.0.iter().enumerate().map(move |(at, peer)| {
+            let sits = !peer.watches() && chairs > 0;
+            chairs -= usize::from(sits);
+            (at, peer, sits)
+        })
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Peer> {
@@ -160,7 +251,7 @@ impl PeerBook {
     pub fn heard(&mut self, peer: usize) {
         let row = self.row(peer);
         row.silence = 0.0;
-        row.goodbye = None;
+        row.goodbye.heard();
     }
 
     /// The peer said it is going (`NetMsg::Leaving`): its silence is
@@ -169,22 +260,19 @@ impl PeerBook {
     /// at its next look rather than seconds later, and a seat it holds is
     /// given up on the moment the round waits on it.
     ///
-    /// The goodbye's clock starts at the first copy and is not restarted
-    /// by the repeats ([`crate::transport::UdpTransport`] says it more than
-    /// once), which is why a goodbye is not also a word that is heard.
+    /// A goodbye is not also a word that is heard: it would take itself
+    /// back ([`Goodbye`]).
     pub fn said_goodbye(&mut self, peer: usize) {
         let row = self.row(peer);
         row.silence = f32::INFINITY;
-        row.goodbye.get_or_insert(0.0);
+        row.goodbye.spoke();
     }
 
     /// Age every silence by a frame, and every goodbye.
     pub fn age(&mut self, delta: f32) {
         for peer in &mut self.0 {
             peer.silence += delta;
-            if let Some(since) = &mut peer.goodbye {
-                *since += delta;
-            }
+            peer.goodbye.age(delta);
         }
     }
 
@@ -192,7 +280,7 @@ impl PeerBook {
     pub fn hush(&mut self) {
         for peer in &mut self.0 {
             peer.silence = 0.0;
-            peer.goodbye = None;
+            peer.goodbye.heard();
         }
     }
 
@@ -298,7 +386,7 @@ impl PeerBook {
     /// is. An empty plan is not enough to say so: a table formed in the
     /// lobby and launched against the AI has one too, and everybody on its
     /// socket is in line.
-    pub fn follows_the_round(&self, peer: usize) -> bool {
+    pub fn follows_by_plan(&self, peer: usize) -> bool {
         peer < self.planned()
             || self
                 .get(peer)
@@ -328,6 +416,18 @@ impl PeerBook {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Forgetting peers 1 and 3, highest first as every caller does,
+    /// leaves the indices behind each where the transport's list puts
+    /// them, and drops the forgotten ones.
+    #[test]
+    fn indices_follow_their_peers_down() {
+        let mut said = vec![0, 1, 2, 3, 4];
+        for gone in [3, 1] {
+            said.retain_mut(|at| renumber(at, gone));
+        }
+        assert_eq!(said, [0, 1, 2], "peers 0, 2 and 4, renumbered");
+    }
 
     /// Forgetting a peer moves every row behind it down one, and the row
     /// keeps its name, its wish and its silence together: the failure this
@@ -399,10 +499,10 @@ mod tests {
         peers.deal(&[Some(1), None]);
         peers.reach(4);
         assert_eq!(peers.planned(), 2, "a seat and a watching place");
-        assert!(peers.follows_the_round(0), "the seated peer");
-        assert!(peers.follows_the_round(1), "the watcher, in step from zero");
-        assert!(!peers.follows_the_round(2), "the one in line");
-        assert!(!peers.follows_the_round(3), "and the one behind it");
+        assert!(peers.follows_by_plan(0), "the seated peer");
+        assert!(peers.follows_by_plan(1), "the watcher, in step from zero");
+        assert!(!peers.follows_by_plan(2), "the one in line");
+        assert!(!peers.follows_by_plan(3), "and the one behind it");
     }
 
     /// A watcher that arrived late follows the round without joining the
@@ -418,10 +518,10 @@ mod tests {
         peers.row(2).place = Place::LateWatching;
         assert_eq!(peers.planned(), 2, "the plan is still the launch's");
         assert!(
-            peers.follows_the_round(2),
+            peers.follows_by_plan(2),
             "the late watcher is sent the round"
         );
-        assert!(!peers.follows_the_round(3), "the one in line is not");
+        assert!(!peers.follows_by_plan(3), "the one in line is not");
         assert!(peers.get(2).is_some_and(Peer::watches));
         assert_eq!(peers.seat_of(2), None);
         // First in line, straight after the plan, it still does not extend it.
@@ -440,9 +540,9 @@ mod tests {
         let mut peers = PeerBook::default();
         peers.reach(2);
         assert_eq!(peers.planned(), 0, "nothing was ever dealt");
-        assert!(!peers.follows_the_round(0));
-        assert!(!peers.follows_the_round(1));
+        assert!(!peers.follows_by_plan(0));
+        assert!(!peers.follows_by_plan(1));
         peers.row(1).place = Place::LateWatching;
-        assert!(peers.follows_the_round(1), "but a late watcher does");
+        assert!(peers.follows_by_plan(1), "but a late watcher does");
     }
 }

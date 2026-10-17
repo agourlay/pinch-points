@@ -110,10 +110,21 @@ impl BotInfo {
 /// removed, so neither reads as the other or as an address's key.
 pub fn owner_key(owner: Option<&str>, declared: bool, addr: IpAddr) -> String {
     match (owner, declared) {
-        (Some(owner), false) => owner.to_lowercase(),
-        (Some(owner), true) => format!("\u{2}{}", owner.to_lowercase()),
+        (Some(owner), false) => folded(owner),
+        (Some(owner), true) => format!("\u{2}{}", folded(owner)),
         (None, _) => format!("\u{1}{addr}"),
     }
+}
+
+/// Whether two owner names are the same owner: whatever the case, as
+/// [`owner_key`] keys them.
+pub fn same_owner(a: &str, b: &str) -> bool {
+    folded(a) == folded(b)
+}
+
+/// An owner name with its case let go, which is all the two above compare.
+fn folded(owner: &str) -> String {
+    owner.to_lowercase()
 }
 
 /// What the console hears about.
@@ -574,6 +585,11 @@ impl Listener {
         lock(&self.shared.registry)
             .replays
             .insert(id, (players, text.into()));
+    }
+
+    /// Let a kept replay go: nobody fetches it after this.
+    pub fn forget_replay(&self, id: &str) {
+        lock(&self.shared.registry).replays.remove(id);
     }
 }
 

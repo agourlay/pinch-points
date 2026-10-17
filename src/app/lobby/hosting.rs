@@ -137,7 +137,14 @@ pub fn host_tick(
     // Bots straight to this beach (route 2) come in by a doorway on the
     // LAN while the host says they are welcome, one single-use key at a
     // time, and are let go the moment it says they are not.
-    let arrived = host_the_bots(&mut arena.bots, &config, tr, hosted.players_aboard());
+    let mut sent_away = Vec::new();
+    let arrived = host_the_bots(
+        &mut arena.bots,
+        &config,
+        tr,
+        hosted.players_aboard(),
+        &mut sent_away,
+    );
     let taken = chairs_taken(1 + hosted.players_aboard() as u8, arrived.len());
     let on_air = crate::transport::OnAir {
         name: &game_name,
@@ -156,8 +163,11 @@ pub fn host_tick(
     for (_, name, text) in picked.said {
         state.hear(&name, &text);
     }
-    for who in &picked.sent_away {
-        tell_the_room(&mut state, &fill(tr.lobby_kicked_feed, &[("p", who)]));
+    // The bots the dial turned away, by either road: those that came
+    // through the doorway and those that joined the table.
+    sent_away.extend(picked.sent_away);
+    for who in &sent_away {
+        tell_sent_away(&mut state, tr, who);
     }
     note_arrivals_and_departures(&mut state, tr, picked.greeted);
     // Counted after the departures, so a table that just lost somebody is
@@ -168,13 +178,7 @@ pub fn host_tick(
     // that stays wrong until somebody joins or leaves.
     state.table = state.roster(tr, &crate::transport::name_as_sent(&settings.names[0]));
     state.table_kinds = state.roster_kinds();
-    // The bots that came straight here sit after the people.
-    for (_, name) in &arrived {
-        if state.table.len() < MAX_PLAYERS {
-            state.table.push(name.clone());
-            state.table_kinds.push(crate::sim::SeatKind::Bot);
-        }
-    }
+    seat_door_bots(&mut state, &arrived);
     if let Some(hosted) = state.hosted_mut() {
         hosted.bot_string = arena
             .bots
@@ -182,30 +186,8 @@ pub fn host_tick(
             .as_ref()
             .and_then(crate::app::bot_seats::Doorway::open_string);
     }
-    if do_announce && let Some(hosted) = state.hosted() {
-        let names = crate::transport::wire_table(&state.table);
-        // The dials travel with the roster so a joiner's terms card shows
-        // the match it is joining. The seed is not one of them yet - it is
-        // struck fresh at launch - so a placeholder rides along and the
-        // card ignores it.
-        let humans = state.table.len().min(MAX_PLAYERS) as u8;
-        let dealt = super::terms::dealt(&config, humans);
-        // The AI and the map as the launch would deal this table, which the
-        // joiner's card reads, not the dials they come from.
-        let terms = MatchTerms {
-            bots: dealt.bots,
-            map: dealt.map.index() as u8,
-            ..crate::app::match_setup::terms(&config, settings.team_mode, 0)
-        };
-        let seats = dealt.seats;
-        hosted.transport.send(NetMsg::Roster {
-            seats: humans,
-            names,
-            terms,
-            kinds: crate::transport::wire_kinds(&state.table_kinds),
-            // Named only if the table as it now sits would play it.
-            beach: super::terms::roster_beach(&config, seats, &beaches),
-        });
+    if do_announce {
+        send_roster(&state, &config, settings.team_mode, &beaches);
     }
     let (players_aboard, watchers_aboard, port) = state.hosted().map_or((0, 0, None), |hosted| {
         (
@@ -214,11 +196,14 @@ pub fn host_tick(
             hosted.transport.local_addr().ok().map(|addr| addr.port()),
         )
     });
-    // A bot that came straight here is a rival aboard like any other.
+    // A bot that came straight here is a rival aboard like any other. A
+    // watcher counts here too, since Enter starts a table it is on (see
+    // `should_launch`), though not as a player in the line it is shown.
     let rivals = joined + arrived.len();
     if rivals > 0 {
         let aboard = players_aboard + arrived.len();
-        state.feedback = gathering_feedback(tr, &config, aboard, watchers_aboard);
+        let ai = super::terms::hosts_dealt(&state, &config).map_or(0, |dealt| dealt.bots);
+        state.feedback = gathering_feedback(tr, aboard, watchers_aboard, ai);
     } else {
         // The last peer timed out: without this the line kept saying "1
         // rival aboard" over an empty table until somebody else turned up,
@@ -243,29 +228,79 @@ pub fn host_tick(
     }
 }
 
+/// Seat the bots that came straight to this beach (route 2) after the
+/// people on the host's table, as far as there are chairs.
+fn seat_door_bots(state: &mut LobbyState, arrived: &[(crate::bots::listener::BotId, String)]) {
+    for (_, name) in arrived {
+        if state.table.len() < MAX_PLAYERS {
+            state.table.push(name.clone());
+            state.table_kinds.push(crate::sim::SeatKind::Bot);
+        }
+    }
+}
+
+/// Send the host's table to every peer: who sits where, and the dials as
+/// the launch would deal this table, so a joiner's terms card shows the
+/// match it is joining. The lobby's half of
+/// [`crate::app::net::OnlineSession`]'s own roster, which a round sends
+/// from its copy of both.
+fn send_roster(
+    state: &LobbyState,
+    config: &MatchConfig,
+    teams: crate::app::teams::TeamMode,
+    beaches: &crate::app::match_setup::CustomBeaches,
+) {
+    let (Some(hosted), Some(dealt)) = (state.hosted(), super::terms::hosts_dealt(state, config))
+    else {
+        return;
+    };
+    // The AI and the map as the launch would deal this table, which the
+    // joiner's card reads, not the dials they come from. The seed is not
+    // one of them yet, it is struck fresh at launch, so a placeholder
+    // rides along and the card ignores it.
+    let terms = MatchTerms {
+        bots: dealt.bots,
+        map: dealt.map.index() as u8,
+        ..crate::app::match_setup::terms(config, teams, 0)
+    };
+    hosted.transport.send(NetMsg::Roster {
+        seats: super::terms::humans_here(state),
+        names: crate::transport::wire_table(&state.table),
+        terms,
+        kinds: crate::transport::wire_kinds(&state.table_kinds),
+        // Named only if the table as it now sits would play it.
+        beach: super::terms::roster_beach(config, dealt.seats, beaches),
+    });
+}
+
 /// The chairs a beacon says are taken, with `people` seated (the host
 /// among them) and `bots` come straight here (route 2).
 ///
 /// A person who turns up is seated ahead of the bots, which give way
 /// ([`crate::app::net::seat_the_hosts_bots`]), so the bots count only as
 /// far as the launch would still seat them with one more person aboard.
-/// Counted whole, a table of people and bots was listed full and a person
-/// the launch would have seated was refused at the list.
+/// Counted whole, a table of people and bots would be listed full to a
+/// person the launch would seat.
 pub(crate) fn chairs_taken(people: u8, bots: usize) -> u8 {
     let held = bots.min(crate::app::net::chairs_for_bots(people.saturating_add(1)));
     people.saturating_add(held as u8).min(MAX_PLAYERS as u8)
 }
 
 /// Keep the doorway for bots straight to this beach (route 2) as the host
-/// wants it, and say who has come in by it.
+/// wants it, and say who has come in by it. The bots seated there when the
+/// host stops welcoming them go with the door, named into `sent_away` for
+/// the room to be told, as a bot that joined the table is.
 fn host_the_bots(
     bots: &mut crate::app::bot_seats::BotSeats,
     config: &MatchConfig,
     tr: &'static crate::app::i18n::Tr,
     people: usize,
+    sent_away: &mut Vec<String>,
 ) -> Vec<(crate::bots::listener::BotId, String)> {
     if !config.bots_welcome {
-        bots.door = None;
+        if let Some(door) = bots.door.take() {
+            sent_away.extend(door.arrived(tr).into_iter().map(|(_, who)| who));
+        }
         return Vec::new();
     }
     if bots.door.is_none() {
@@ -321,6 +356,8 @@ fn launch_the_match(
         announce_in: _,
         kicking: _,
         bot_string: _,
+        tail: _,
+        rounds_dealt,
     }) = std::mem::take(&mut state.standing)
     else {
         unreachable!("launching a match from a lobby that is not hosting");
@@ -381,6 +418,9 @@ fn launch_the_match(
     session.beach = beach;
     session.peers = peers;
     session.names = names;
+    // Counted on from the match before on this socket, so its first round
+    // is dealt after every round a joiner may still be sitting over.
+    session.rounds_dealt = rounds_dealt;
     session.deal(&plan, kinds, bots_here, standing);
     session.stay_on_air(announcer);
     session.home.from_lobby = true;
@@ -509,6 +549,8 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
         announce_in,
         kicking: _,
         bot_string: _,
+        tail,
+        rounds_dealt: _,
     } = hosted;
     let mut picked = Picked {
         announced: once_a_second(announce_in, delta),
@@ -520,6 +562,8 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
     {
         announcer.announce(addr.port(), on_air);
     }
+    // Peers still playing the round this table walked back from.
+    let mut still_playing = Vec::new();
     // recv_all registers joiners from their greetings; a Watch tells us
     // that peer is here to look, not to play, and a Hello says what to
     // call whoever sent it.
@@ -578,8 +622,10 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
                     picked.said.push((from, who, text));
                 }
             }
-            NetMsg::Inputs(_)
-            | NetMsg::Hash { .. }
+            // A peer still in the round the table walked back from,
+            // resending its commits: it may be short of the last frames.
+            NetMsg::Inputs(_) => still_playing.push(from),
+            NetMsg::Hash { .. }
             | NetMsg::Start(_)
             | NetMsg::Pause { .. }
             | NetMsg::Resume { .. }
@@ -599,6 +645,9 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             NetMsg::Leaving => peers.said_goodbye(from),
         }
     }
+    // Before anyone is forgotten below, while the indices still name the
+    // peers they were read from.
+    tail.repeat(transport, delta, picked.announced, &still_playing);
     // Highest first, so each index still names the peer it was read from.
     picked.unwelcome.sort_unstable();
     for &peer in picked.unwelcome.iter().rev() {
@@ -611,17 +660,10 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
         }
         transport.turn_away_saying(peer, NetMsg::NoBots);
         peers.forget(peer);
-    }
-    // And everyone after a forgotten peer moved up one place per peer.
-    let unwelcome = &picked.unwelcome;
-    let moved = |from: usize| from - unwelcome.iter().filter(|&&gone| gone < from).count();
-    picked.greeted.retain(|(from, _)| !unwelcome.contains(from));
-    picked.said.retain(|(from, ..)| !unwelcome.contains(from));
-    for (from, _) in &mut picked.greeted {
-        *from = moved(*from);
-    }
-    for (from, ..) in &mut picked.said {
-        *from = moved(*from);
+        // And what the others said this frame follows them down.
+        let renumber = crate::app::net::renumber;
+        picked.greeted.retain_mut(|(from, _)| renumber(from, peer));
+        picked.said.retain_mut(|(from, ..)| renumber(from, peer));
     }
     for (from, name, text) in picked.said.iter() {
         crate::app::net::relay(
@@ -637,16 +679,22 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
 }
 
 /// The line under the title while gathering: who is aboard, who is only
-/// watching, and how many chairs the AI will take in behind them.
+/// watching, and the `ai` seats the launch deals in behind them
+/// ([`super::terms::hosts_dealt`]).
 ///
 /// Pure, so what a host reads while waiting is checkable without a socket.
 pub(super) fn gathering_feedback(
     tr: &'static crate::app::i18n::Tr,
-    config: &MatchConfig,
     players_aboard: usize,
     watching: usize,
+    ai: u8,
 ) -> String {
     let mut line = match players_aboard {
+        // Only watchers aboard, which is a table Enter starts all the same:
+        // the AI takes the chairs (`terms::dealt` raises it to two seats),
+        // and its count follows below. "0 players joined" read as though
+        // the watchers had been counted as players and then lost.
+        0 => tr.lobby_rivals_none.to_string(),
         1 => tr.lobby_rivals_one.to_string(),
         n => fill(tr.lobby_rivals_many, &[("n", &n.to_string())]),
     };
@@ -655,10 +703,8 @@ pub(super) fn gathering_feedback(
     }
     // The AI seats come from the host's dials, not from this count, so say
     // how many are coming rather than surprising the table with them.
-    let humans = (1 + players_aboard).min(MAX_PLAYERS) as u8;
-    let bots = super::terms::dealt(config, humans).bots;
-    if bots > 0 {
-        line += &fill(tr.lobby_ai_seats, &[("n", &bots.to_string())]);
+    if ai > 0 {
+        line += &fill(tr.lobby_ai_seats, &[("n", &ai.to_string())]);
     }
     line
 }
@@ -708,38 +754,78 @@ fn catch_up_on_the_feed(state: &LobbyState, peer: usize) {
     }
 }
 
-/// The host asks the peer at place `at` of the table (1 is the host's own)
-/// to leave: it is told, and forgotten, and everyone else hears why the
-/// chair is empty. The table is the host and the peers who came to play,
-/// in order, which is how the AT THIS BEACH card numbers them.
+/// The peers off the table ([`PeerBook::off_the_table`]) by the K number
+/// each is asked to leave with: on from the card's last row, as far as the
+/// number keys go. The prompt lists these and [`ask_to_leave`] reads them,
+/// so the number shown beside a name is the number that sends it away.
+pub(crate) fn numbered_off_the_table(
+    peers: &PeerBook,
+) -> impl Iterator<Item = (usize, usize, &crate::app::net::Peer)> {
+    let numbers = MAX_PLAYERS + 1..=crate::app::menu_ui::NUMBER_KEYS.len();
+    peers
+        .off_the_table()
+        .zip(numbers)
+        .map(|((peer, row), at)| (at, peer, row))
+}
+
+/// What the host is shown while picking whom to ask to leave: how, and
+/// past the card's rows, the onlookers and would-be players the card has
+/// no row for, each by the number that asks it. A watcher spamming the
+/// chat, or a sixth player who dialled a full beach by its address, sat
+/// on no row, and no number reached them.
+pub fn kick_prompt(tr: &crate::app::i18n::Tr, peers: &PeerBook) -> String {
+    let mut prompt = tr.lobby_kick_ask.to_string();
+    for (at, _, peer) in numbered_off_the_table(peers) {
+        // A peer that has not said what to call it yet is still somebody
+        // to send away; its number alone has to do.
+        let who = match peer.name.is_empty() {
+            true => "?",
+            false => peer.name.as_str(),
+        };
+        let sep = match at == MAX_PLAYERS + 1 {
+            true => " | ",
+            false => "  ",
+        };
+        prompt.push_str(&format!("{sep}{at}. {who}"));
+    }
+    prompt
+}
+
+/// The host asks the peer K number `at` to leave: it is told, and
+/// forgotten, and everyone else hears why the chair is empty. The first
+/// numbers are the table, the host (1) and the peers who came to play, in
+/// order, which is how the AT THIS BEACH card numbers them; past its last
+/// row, the peers it has no row for, as the prompt numbers them
+/// ([`kick_prompt`]).
 pub(super) fn ask_to_leave(
     state: &mut LobbyState,
     bots: &mut crate::app::bot_seats::BotSeats,
     tr: &'static crate::app::i18n::Tr,
     at: usize,
 ) {
-    // The card has a row a seat and no more: a number past them names
-    // nobody the host can see, though the table may hold more would-be
-    // players than chairs.
-    if at > MAX_PLAYERS {
-        return;
-    }
     let Some(hosted) = state.hosted_mut() else {
         return;
     };
-    let people: Vec<usize> = (0..hosted.peers.len())
-        .filter(|&peer| hosted.peers.get(peer).is_some_and(|p| !p.watch))
-        .collect();
-    // Past the people sit the bots that came straight here.
-    if let Some(bot) = at.checked_sub(2 + people.len())
+    // The same people the card lists, numbered as it numbers them.
+    let people: Vec<usize> = hosted.peers.at_the_table().map(|(peer, _)| peer).collect();
+    // Past the people sit the bots that came straight here, as far as the
+    // card has rows for them.
+    if at <= MAX_PLAYERS
+        && let Some(bot) = at.checked_sub(2 + people.len())
         && let Some(door) = &mut bots.door
         && let Some((id, who)) = door.arrived(tr).get(bot).cloned()
     {
         door.let_go(id);
-        tell_the_room(state, &fill(tr.lobby_kicked_feed, &[("p", &who)]));
+        tell_sent_away(state, tr, &who);
         return;
     }
-    let Some(&peer) = people.get(at.wrapping_sub(2)) else {
+    let peer = match at > MAX_PLAYERS {
+        true => numbered_off_the_table(&hosted.peers)
+            .find(|&(number, _, _)| number == at)
+            .map(|(_, peer, _)| peer),
+        false => people.get(at.wrapping_sub(2)).copied(),
+    };
+    let Some(peer) = peer else {
         return;
     };
     let who = hosted
@@ -749,7 +835,14 @@ pub(super) fn ask_to_leave(
     // Told, forgotten, and kept out: a greeting already on its way would
     // otherwise seat it again as a ghost row (`UdpTransport::turn_away`).
     hosted.turn_away(peer);
-    tell_the_room(state, &fill(tr.lobby_kicked_feed, &[("p", &who)]));
+    tell_sent_away(state, tr, &who);
+}
+
+/// Tell the room the host's word sent `who` away: a peer or a bot asked to
+/// leave, or a bot the "Bots welcome" dial turned away, by either road.
+/// One line for all of them, so none goes without it.
+fn tell_sent_away(state: &mut LobbyState, tr: &crate::app::i18n::Tr, who: &str) {
+    tell_the_room(state, &fill(tr.lobby_kicked_feed, &[("p", who)]));
 }
 
 /// Say a notice to the room as the lobby itself: in this host's own feed,
@@ -779,28 +872,93 @@ pub(super) fn say_goodbye(state: &LobbyState) {
 mod tests {
     use super::*;
 
-    /// K and a number asks the peer on that row to leave, and only rows
-    /// the card shows: with more would-be players than chairs, a seventh
-    /// was on no row and K+7 asked them to go.
+    /// K and a number asks the peer on that row to leave, and past the
+    /// card's rows the K numbers go on, through the peers it has no row
+    /// for, as the prompt lists them. Capped at the card, a would-be player
+    /// who dialled a full beach by its address and a watcher spamming the
+    /// chat could not be sent away at all.
     #[test]
-    fn only_a_row_on_the_card_can_be_asked_to_leave() {
+    fn the_prompt_numbers_whom_the_card_has_no_row_for() {
         let mut state = LobbyState {
-            standing: Standing::hosting(
-                Announcer::new(0xC0DE).expect("announcer"),
-                UdpTransport::host(0).expect("game socket"),
-            ),
+            standing: hosting_lobby(),
+            ..LobbyState::default()
+        };
+        if let Standing::Hosting(hosted) = &mut state.standing {
+            hosted.peers = peers_named(&["A", "Gil", "B", "C", "D", "E", "F"], &[1]);
+        }
+        let mut bots = crate::app::bot_seats::BotSeats::default();
+        let tr = &crate::app::i18n::EN;
+        let names = |state: &LobbyState| {
+            state.hosted().map_or_else(Vec::new, |hosted| {
+                hosted
+                    .peers
+                    .iter()
+                    .map(|peer| peer.name.clone())
+                    .collect::<Vec<_>>()
+            })
+        };
+        let prompt = |state: &LobbyState| {
+            state
+                .hosted()
+                .map(|hosted| kick_prompt(tr, &hosted.peers))
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            prompt(&state),
+            format!("{} | 7. Gil  8. F", tr.lobby_kick_ask),
+            "the watcher and the sixth would-be player, in the order they came"
+        );
+        ask_to_leave(&mut state, &mut bots, tr, MAX_PLAYERS + 3);
+        assert_eq!(names(&state).len(), 7, "nobody is nine");
+        ask_to_leave(&mut state, &mut bots, tr, MAX_PLAYERS + 2);
+        assert_eq!(names(&state), ["A", "Gil", "B", "C", "D", "E"], "8 was F");
+        ask_to_leave(&mut state, &mut bots, tr, MAX_PLAYERS + 1);
+        assert_eq!(names(&state), ["A", "B", "C", "D", "E"], "7 was Gil");
+        assert_eq!(
+            prompt(&state),
+            tr.lobby_kick_ask,
+            "and nobody left off the card"
+        );
+    }
+
+    /// The card, the count and the K numbers are one list. With more
+    /// would-be players than chairs, the table used to list all of them
+    /// while the count stopped at five, and the bots that came straight
+    /// here had no row left to sit in.
+    #[test]
+    fn the_table_lists_whom_k_numbers() {
+        let mut state = LobbyState {
+            standing: hosting_lobby(),
             ..LobbyState::default()
         };
         if let Standing::Hosting(hosted) = &mut state.standing {
             hosted.peers = peers_named(&["A", "B", "C", "D", "E", "F"], &[]);
         }
-        let mut bots = crate::app::bot_seats::BotSeats::default();
         let tr = &crate::app::i18n::EN;
-        let count = |state: &LobbyState| state.hosted().map_or(0, |hosted| hosted.peers.len());
-        ask_to_leave(&mut state, &mut bots, tr, MAX_PLAYERS + 1);
-        assert_eq!(count(&state), 6, "the seventh row is not on the card");
-        ask_to_leave(&mut state, &mut bots, tr, MAX_PLAYERS);
-        assert_eq!(count(&state), 5, "the sixth is");
+        let table = state.roster(tr, "Host");
+        assert_eq!(table, ["Host", "A", "B", "C", "D", "E"], "a row a chair");
+        let aboard = state.hosted().map_or(0, Hosted::players_aboard);
+        assert_eq!(aboard + 1, table.len(), "and the count is the rows");
+        assert_eq!(
+            state.roster_kinds().len(),
+            table.len(),
+            "and so are the kinds"
+        );
+
+        // K and the last row's number asks that row to go, by name.
+        let mut bots = crate::app::bot_seats::BotSeats::default();
+        ask_to_leave(&mut state, &mut bots, tr, table.len());
+        let left = state.hosted().map(|hosted| {
+            hosted
+                .peers
+                .iter()
+                .map(|peer| peer.name.clone())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            left.as_deref(),
+            Some(&["A", "B", "C", "D", "F"].map(String::from)[..])
+        );
     }
 
     /// The beacon lists a beach full only when the launch could not seat
@@ -1001,10 +1159,7 @@ mod tests {
     #[test]
     fn a_peer_asked_to_leave_is_told_and_forgotten() {
         let mut state = LobbyState {
-            standing: Standing::hosting(
-                Announcer::new(0xC0FFEE).expect("announcer"),
-                UdpTransport::host(0).expect("game socket"),
-            ),
+            standing: hosting_lobby(),
             ..LobbyState::default()
         };
         let port = state
@@ -1083,10 +1238,7 @@ mod tests {
     #[test]
     fn a_joiner_that_says_goodbye_is_let_go_at_once() {
         let mut state = LobbyState {
-            standing: Standing::hosting(
-                Announcer::new(0x60B).expect("announcer"),
-                UdpTransport::host(0).expect("game socket"),
-            ),
+            standing: hosting_lobby(),
             ..LobbyState::default()
         };
         let port = state
@@ -1134,10 +1286,7 @@ mod tests {
     #[test]
     fn a_bot_is_not_seated_where_bots_are_not_welcome() {
         let mut state = LobbyState {
-            standing: Standing::hosting(
-                Announcer::new(0xB07).expect("announcer"),
-                UdpTransport::host(0).expect("game socket"),
-            ),
+            standing: hosting_lobby(),
             ..LobbyState::default()
         };
         let port = state
@@ -1191,16 +1340,35 @@ mod tests {
         assert!(told, "the bot was told to go, and why");
     }
 
+    /// A bot that came straight to the beach (route 2) and is turned away
+    /// when the host stops welcoming bots is named to the room too, as one
+    /// that joined the table is: it used to go with the door, unsaid.
+    #[test]
+    fn a_bot_at_the_door_sent_away_by_the_dial_is_named_too() {
+        use crate::app::bot_seats::test_bots::{register, seated};
+        let tr = &crate::app::i18n::EN;
+        let mut bots = crate::app::bot_seats::BotSeats::default();
+        let mut config = MatchConfig::default();
+        let mut sent_away = Vec::new();
+        host_the_bots(&mut bots, &config, tr, 0, &mut sent_away);
+        let door = bots.door.as_mut().expect("the door opened");
+        let string = door.open_string().expect("a chair waits");
+        let _bot = register(&string, "Greedy", "Ana");
+        seated(door, 0);
+
+        config.bots_welcome = false;
+        host_the_bots(&mut bots, &config, tr, 0, &mut sent_away);
+        assert!(bots.door.is_none(), "the door shut");
+        assert_eq!(sent_away, ["Greedy (Ana)"], "and the bot was named");
+    }
+
     /// A bot already at the table when the host says bots are no longer
     /// welcome is sent away by name, for the room to be told: it used to
     /// vanish without a word.
     #[test]
     fn a_bot_sent_away_by_the_dial_is_named_to_the_room() {
         let mut state = LobbyState {
-            standing: Standing::hosting(
-                Announcer::new(0xB08).expect("announcer"),
-                UdpTransport::host(0).expect("game socket"),
-            ),
+            standing: hosting_lobby(),
             ..LobbyState::default()
         };
         let port = state
@@ -1259,10 +1427,7 @@ mod tests {
     #[test]
     fn a_peer_speaks_under_the_name_it_greeted_with() {
         let mut state = LobbyState {
-            standing: Standing::hosting(
-                Announcer::new(0xC0FFEE).expect("announcer"),
-                UdpTransport::host(0).expect("game socket"),
-            ),
+            standing: hosting_lobby(),
             ..LobbyState::default()
         };
         let port = state
@@ -1353,10 +1518,7 @@ mod tests {
     #[test]
     fn a_late_arrival_is_shown_what_the_room_already_said() {
         let mut state = LobbyState {
-            standing: Standing::hosting(
-                Announcer::new(0xC0FFEE).expect("announcer"),
-                UdpTransport::host(0).expect("game socket"),
-            ),
+            standing: hosting_lobby(),
             ..LobbyState::default()
         };
         // What the room said before anybody new was listening.
@@ -1424,10 +1586,7 @@ mod tests {
     #[test]
     fn a_spectator_is_announced_by_name_and_then_held_to_it() {
         let mut state = LobbyState {
-            standing: Standing::hosting(
-                Announcer::new(0xDECAF).expect("announcer"),
-                UdpTransport::host(0).expect("game socket"),
-            ),
+            standing: hosting_lobby(),
             ..LobbyState::default()
         };
         let port = state
@@ -1496,5 +1655,97 @@ mod tests {
              which it was for as long as a spectator had no name to give \
              back"
         );
+    }
+
+    /// A match launched from a lobby the table walked back to calls in a
+    /// joiner still on the last match's results card: its first `Start` is
+    /// dealt after every round of the match before. Numbered from one
+    /// again, it read as a round that joiner had already been dealt, and
+    /// the joiner sat out the new match while the host's table waited on
+    /// it for good.
+    #[test]
+    fn a_new_match_calls_in_a_joiner_still_on_the_last_card() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let mut state = LobbyState {
+            standing: hosting_lobby(),
+            ..LobbyState::default()
+        };
+        let hosted = state.hosted_mut().expect("hosting");
+        let port = hosted.transport.local_addr().expect("addr").port();
+        let joiner = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        joiner.send(NetMsg::hello("Bo"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            let _ = hosted.transport.recv_all();
+            if hosted.transport.peer_count() == 1 {
+                break;
+            }
+        }
+        hosted.peers = peers_named(&["Bo"], &[]);
+        // Three rounds of a best of five played on this socket, as the
+        // match walking home hands them back (`back_to_the_lobby`).
+        hosted.rounds_dealt = 3;
+        // The joiner, still reading the scores of the third.
+        let mut on_the_card = OnlineSession::new(
+            joiner,
+            crate::app::net::lockstep_for(Some(1), 2),
+            2,
+            MatchTerms::default(),
+        );
+        on_the_card.rounds_dealt = 3;
+
+        let mut app = App::new();
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<MatchConfig>();
+        app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.init_resource::<Online>();
+        app.init_resource::<crate::app::tournament::Tournament>();
+        app.init_resource::<crate::app::bot_seats::BotSeats>();
+        app.init_resource::<NextState<Screen>>();
+        app.init_resource::<NextState<VersusPhase>>();
+        app.insert_resource(state);
+        app.world_mut()
+            .run_system_once(
+                |mut state: ResMut<LobbyState>,
+                 settings: Res<GameSettings>,
+                 config: Res<MatchConfig>,
+                 beaches: Res<crate::app::match_setup::CustomBeaches>,
+                 mut arena: IntoArena| {
+                    launch_the_match(&mut state, &settings, &config, &beaches, 1, &mut arena);
+                },
+            )
+            .expect("the launch ran");
+
+        let mut start = None;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            start = on_the_card
+                .transport
+                .recv_all()
+                .into_iter()
+                .find_map(|(msg, _)| {
+                    let NetMsg::Start(start) = msg else {
+                        return None;
+                    };
+                    Some(start)
+                });
+            if start.is_some() {
+                break;
+            }
+        }
+        let start = start.expect("the launch sent the joiner its place");
+        assert!(
+            on_the_card.is_next_round(&start),
+            "the new match's first round, dealt {}, is after the card's {}",
+            start.deal,
+            on_the_card.rounds_dealt
+        );
+        // And a stale answer from the match before is still refused.
+        let stale = crate::app::net::Invitation {
+            deal: 3,
+            ..start.clone()
+        };
+        assert!(!on_the_card.is_next_round(&stale));
     }
 }

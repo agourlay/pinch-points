@@ -12,7 +12,7 @@ use crate::transport::{
     table_from_wire, wire_table,
 };
 use bevy::prelude::*;
-pub use peers::{Peer, PeerBook, Place};
+pub use peers::{Goodbye, Peer, PeerBook, Place, renumber};
 use std::collections::VecDeque;
 
 /// A bot connected straight to this host (route 2): the seat it holds
@@ -25,6 +25,53 @@ pub struct HostedBot {
     pub seat: u8,
     pub id: crate::bots::listener::BotId,
     pub name: String,
+}
+
+/// Why a joiner was put out of the beach it greeted, each of them the
+/// end of the greeting: the socket let go, and a line saying why. Heard in
+/// the lobby and mid-round alike, and said with the same line in both.
+///
+/// Ordered from least to most telling: when several arrive together, the
+/// greatest is the one said (`PutOut::hear`), whatever order they came in.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum PutOut {
+    /// The host closed its socket: the beach is gone, whether or not its
+    /// beacon's farewell reached this listener.
+    Closed,
+    /// The host asked us to go: back to the list.
+    Kicked,
+    /// We came as a bot, and the host is not taking bots. Being asked to
+    /// go, with the reason: the host never singled this peer out.
+    NoBots,
+    /// That beach is running a different build, which answered with the
+    /// protocol version it speaks. Greeting it again would only be ignored
+    /// again, and a joiner left saying hello forever looks exactly like a
+    /// network fault.
+    Mismatch(u8),
+}
+
+impl PutOut {
+    /// Note `why` as a reason this peer was put out, keeping whichever of
+    /// it and the reason already heard is the more telling.
+    pub fn hear(put_out: &mut Option<PutOut>, why: PutOut) {
+        *put_out = (*put_out).max(Some(why));
+    }
+
+    /// The line the status bar says it with.
+    pub fn feedback(self, tr: &'static crate::app::i18n::Tr) -> String {
+        match self {
+            PutOut::Mismatch(version) => crate::app::i18n::fill(
+                tr.lobby_version_clash,
+                &[
+                    ("t", &version.to_string()),
+                    ("o", &crate::transport::PROTOCOL_VERSION.to_string()),
+                ],
+            ),
+            PutOut::Kicked => tr.lobby_kicked_you.to_string(),
+            PutOut::NoBots => tr.lobby_no_bots.to_string(),
+            PutOut::Closed => tr.lobby_host_closed.to_string(),
+        }
+    }
 }
 
 pub struct OnlineSession {
@@ -54,14 +101,18 @@ pub struct OnlineSession {
     /// the one row it has, the host, and calls the round off when that goes
     /// quiet.
     pub(crate) peers: PeerBook,
-    /// This peer's seat is driven by a bot connected to this machine
-    /// (route 1): it greets with the flag that says so, between rounds too.
-    pub bot: bool,
-    /// Joiner side: the host asked this peer to leave. Said with `Kicked`,
-    /// which can arrive mid-round or on the results card as well as in the
-    /// lobby, and walks the joiner out with the reason rather than leaving
-    /// it greeting a host that has forgotten it.
-    pub kicked: bool,
+    /// This peer joined as a bot connected to this machine (route 1), and
+    /// the seat name it greeted with, "Greedy (Ana)": it greets with the
+    /// flag that says so and under that name, between rounds and back in
+    /// the lobby too. Kept whole rather than read off its chair, since a
+    /// bot the full table dealt no chair has none to read it from, and
+    /// went home greeting as a person under the player's own name.
+    pub bot: Option<String>,
+    /// Joiner side: the host asked this peer to leave, and why. Said with
+    /// `Kicked` or `NoBots`, which can arrive mid-round or on the results
+    /// card as well as in the lobby, and walks the joiner out with the
+    /// reason rather than leaving it greeting a host that has forgotten it.
+    pub put_out: Option<PutOut>,
     /// Host side, route 2: the bots connected straight to this host, each
     /// with the seat it holds this round and what it is called. The host
     /// commits their inputs as well as its own.
@@ -105,6 +156,20 @@ pub struct OnlineSession {
     pub series_standing: Option<SeriesStanding>,
     /// Ticks of `Resume` still to repeat (see [`pump::RESUME_ECHOES`]).
     resume_echo: u8,
+    /// How many rounds the host has dealt on this socket, the one being
+    /// played included: what a `Start` is numbered with, so a joiner can
+    /// tell the next round from any it has already been dealt
+    /// ([`Self::is_next_round`]). Counted across matches, not from each
+    /// launch: a joiner still on the results card of the last match is
+    /// called into the next one by its first `Start`, which has to come
+    /// after every round that joiner was dealt.
+    pub rounds_dealt: u32,
+    /// Who won the last round to finish: the seats its results card
+    /// crowned, a bit each by its chairs. Written by the host when the
+    /// tide comes in, sent with its call for the next round, and taken
+    /// from that call by a joiner, for one walked on before its own board
+    /// had finished (see [`Invitation::crowned`]).
+    pub crowned: u8,
     /// A round joined late, or owed to someone who came late to it.
     pub catch_up: catch_up::CatchUp,
 }
@@ -143,6 +208,8 @@ mod rounds;
 pub use home::{Home, LobbyReturn};
 use presence::StallWatch;
 pub(crate) use presence::{abandon_the_departed, catch_up_again, leave_a_hostless_round};
+#[cfg(test)]
+pub(crate) use pump::CATCH_UP_FRAMES;
 use pump::HashCheck;
 pub use rounds::Invitation;
 pub(crate) use rounds::{
@@ -163,8 +230,8 @@ impl OnlineSession {
             terms,
             beach: Vec::new(),
             peers: PeerBook::default(),
-            bot: false,
-            kicked: false,
+            bot: None,
+            put_out: None,
             bots_here: Vec::new(),
             names: Default::default(),
             kinds: Default::default(),
@@ -177,6 +244,8 @@ impl OnlineSession {
             next_round: false,
             series_standing: None,
             resume_echo: 0,
+            rounds_dealt: 0,
+            crowned: 0,
             catch_up: Default::default(),
         }
     }
@@ -208,11 +277,11 @@ impl OnlineSession {
     /// Whether `peer` is sent the round's inputs. A joiner sends its own
     /// to the one peer it has, the host, and the direct pair's host to its
     /// one peer. Everyone else goes by the plan
-    /// ([`PeerBook::follows_the_round`]): a lobby table launched against
+    /// ([`PeerBook::follows_by_plan`]): a lobby table launched against
     /// the AI, or one whose planned peers have all been forgotten, has an
     /// empty plan and everybody on its socket in line.
     pub(super) fn follows_the_round(&self, peer: usize) -> bool {
-        !self.is_host() || self.keeps_no_plan() || self.peers.follows_the_round(peer)
+        !self.is_host() || self.keeps_no_plan() || self.peers.follows_by_plan(peer)
     }
 
     /// Whether `peer` plays this round, as far as this session can tell.
@@ -230,9 +299,8 @@ impl OnlineSession {
     ///
     /// Counted the way the lobby's beacon counts them
     /// ([`crate::app::lobby::chairs_taken`]): the next deal seats a person
-    /// ahead of a bot (`seat_the_hosts_bots`), so counting the bots whole
-    /// listed four people and two bots as full while the next round would
-    /// have seated a fifth person.
+    /// ahead of a bot (`seat_the_hosts_bots`), so four people and two bots
+    /// still have a chair for a fifth person.
     pub(crate) fn players_spoken_for(&self) -> u8 {
         let queued = self
             .peers

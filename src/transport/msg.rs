@@ -47,6 +47,55 @@ pub struct Start {
     /// to be: a 20x13 beach is fifteen hundred characters of text and
     /// the datagram is a kilobyte.
     pub beach: Vec<u8>,
+    /// How many rounds the host has dealt this match, this one included:
+    /// a call for the next round is numbered past every invitation before
+    /// it, so one still on the wire from the last round is never taken
+    /// for the next (`OnlineSession::is_next_round`).
+    pub deal: u32,
+    /// The seats the host's results card crowned for the round before
+    /// this one, a bit each by that round's chairs, or none when no round
+    /// came before. A joiner a frame or two short of that round's end
+    /// when this call lands is walked on to it without ever seeing the
+    /// tide come in (`follow_the_called_round`), and counts the round it
+    /// played, won or lost, on the host's word. Packed by
+    /// [`crowned_bits`], read by [`is_crowned`].
+    pub crowned: u8,
+}
+
+#[cfg(test)]
+impl Start {
+    /// A two-seat call to a watcher, on the default terms, with nobody
+    /// named, no series, no beach of the host's own, and nothing dealt or
+    /// crowned before it: what a test changes the rest of.
+    pub fn blank() -> Start {
+        Start {
+            seats: 2,
+            seat: None,
+            terms: MatchTerms::default(),
+            names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
+            kinds: [0; crate::sim::MAX_PLAYERS],
+            standing: None,
+            beach: Vec::new(),
+            deal: 0,
+            crowned: 0,
+        }
+    }
+}
+
+/// The seats a results card crowned, packed for [`Start::crowned`]: a bit
+/// per seat, seat 0 the lowest.
+pub fn crowned_bits(crowned: &[bool; crate::sim::MAX_PLAYERS]) -> u8 {
+    crowned
+        .iter()
+        .enumerate()
+        .filter(|(_, won)| **won)
+        .fold(0, |bits, (seat, _)| bits | 1 << seat)
+}
+
+/// Whether `seat` is one of the seats [`crowned_bits`] packed into `bits`.
+/// A seat past the byte's eight was never crowned.
+pub fn is_crowned(bits: u8, seat: u8) -> bool {
+    bits & 1u8.checked_shl(u32::from(seat)).unwrap_or(0) != 0
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -111,6 +160,9 @@ pub enum NetMsg {
     /// the table changes and on a timer besides, since a roster that went
     /// missing would leave a screen wrong for good rather than briefly.
     Roster {
+        /// How many places the table has, people and bots, in seat order:
+        /// the leading `seats` of `names` and `kinds`. The AI is counted
+        /// in the terms, and a place may well have no name.
         seats: u8,
         names: [WireName; crate::sim::MAX_PLAYERS],
         /// The host's dials as they stand, so a joiner's card shows the
@@ -392,8 +444,8 @@ pub struct MatchTerms {
     /// trios).
     pub teams: u8,
     /// The board's PRNG seed, so every peer builds the same beach. Also
-    /// what tells a fresh `Start` from the stale one a host re-answers a
-    /// stray greeting with: a new seed is a new round.
+    /// what tells a lobby that has just walked back from a round the
+    /// stale `Start` of that very round (`a_fresh_invitation`).
     pub seed: u64,
     /// How long the series runs, as a `SeriesLength` index: one round,
     /// best of three, best of five. Every peer keeps its own tally, and
@@ -586,6 +638,8 @@ impl NetMsg {
                 kinds,
                 standing,
                 beach,
+                deal,
+                crowned,
             }) => {
                 bytes.push(seats);
                 bytes.push(seat.unwrap_or(SPECTATOR_SEAT));
@@ -602,6 +656,8 @@ impl NetMsg {
                 });
                 bytes.push(round);
                 bytes.extend_from_slice(&wins);
+                bytes.extend_from_slice(&deal.to_le_bytes());
+                bytes.push(crowned);
                 // Length-prefixed and last, so the fixed part above stays
                 // where it was and a beach of any size is one read.
                 let len = u16::try_from(beach.len()).unwrap_or(0);
@@ -734,7 +790,10 @@ impl NetMsg {
                     .try_into()
                     .ok()?;
                 let standing = (round != 0).then_some(SeriesStanding { round, wins });
-                let after = series_at + 1 + crate::sim::MAX_PLAYERS;
+                let deal_at = series_at + 1 + crate::sim::MAX_PLAYERS;
+                let deal = u32::from_le_bytes(body.get(deal_at..deal_at + 4)?.try_into().ok()?);
+                let crowned = *body.get(deal_at + 4)?;
+                let after = deal_at + 5;
                 // Every encoder of this version writes the length, so a
                 // datagram that ends before it is not one of ours.
                 let len = usize::from(u16::from_le_bytes(
@@ -749,6 +808,8 @@ impl NetMsg {
                     kinds,
                     standing,
                     beach,
+                    deal,
+                    crowned,
                 }))
             }
             TAG_PAUSE => Some(NetMsg::Pause {
@@ -872,13 +933,11 @@ mod tests {
             NetMsg::Start(Start {
                 seats: 6,
                 seat: Some(5),
-                terms: MatchTerms::default(),
                 names: [widest; crate::sim::MAX_PLAYERS],
-                kinds: [0; crate::sim::MAX_PLAYERS],
                 // The widest a Start gets: a full table of longest names
                 // and the largest beach the sender will hand it.
-                standing: None,
                 beach: vec![0xAB; MAX_BEACH_BYTES],
+                ..Start::blank()
             }),
             NetMsg::Hash {
                 frame: u32::MAX,
@@ -1015,11 +1074,10 @@ mod tests {
         let start = NetMsg::Start(Start {
             seats: 3,
             seat: Some(1),
-            terms: MatchTerms::default(),
             names: [wire_name("x"); crate::sim::MAX_PLAYERS],
             kinds,
-            standing: None,
             beach: vec![1, 2, 3],
+            ..Start::blank()
         });
         assert_eq!(NetMsg::decode(&start.clone().encode()), Some(start));
         assert_eq!(
@@ -1048,11 +1106,9 @@ mod tests {
         let len = NetMsg::Start(Start {
             seats: 6,
             seat: Some(5),
-            terms: MatchTerms::default(),
             names: [widest; crate::sim::MAX_PLAYERS],
-            kinds: [0; crate::sim::MAX_PLAYERS],
-            standing: None,
             beach: vec![0xAB; MAX_BEACH_BYTES],
+            ..Start::blank()
         })
         .encode()
         .len();
@@ -1206,9 +1262,10 @@ mod tests {
                     ..MatchTerms::default()
                 },
                 names: std::array::from_fn(|i| wire_name(&format!("Seat {i}"))),
-                kinds: [0; crate::sim::MAX_PLAYERS],
-                standing: None,
                 beach: b"a handmade beach".to_vec(),
+                deal: 0x0102_0304,
+                crowned: 0b0000_0101,
+                ..Start::blank()
             }),
             // Mid-series: the round and the tally come back as they went,
             // and as a presence rather than as the zero that means none.
@@ -1219,13 +1276,11 @@ mod tests {
                     series: 2,
                     ..MatchTerms::default()
                 },
-                names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
-                kinds: [0; crate::sim::MAX_PLAYERS],
                 standing: Some(SeriesStanding {
                     round: 3,
                     wins: [1, 0, 1, 0, 0, 0],
                 }),
-                beach: Vec::new(),
+                ..Start::blank()
             }),
             NetMsg::Incompatible { version: 9 },
             NetMsg::Queued { ahead: 0 },
@@ -1265,11 +1320,7 @@ mod tests {
         let good = NetMsg::Start(Start {
             seats: 6,
             seat: Some(5),
-            terms: MatchTerms::default(),
-            names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
-            kinds: [0; crate::sim::MAX_PLAYERS],
-            standing: None,
-            beach: Vec::new(),
+            ..Start::blank()
         });
         assert_eq!(NetMsg::decode(&good.clone().encode()), Some(good.clone()));
         // Byte 2 is `seats` and byte 3 is `seat`, just past the tag and
@@ -1301,10 +1352,7 @@ mod tests {
                         bots,
                         ..MatchTerms::default()
                     },
-                    names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
-                    kinds: [0; crate::sim::MAX_PLAYERS],
-                    standing: None,
-                    beach: Vec::new(),
+                    ..Start::blank()
                 })
                 .encode(),
             )
@@ -1366,11 +1414,7 @@ mod wire_fuzz_probe {
             NetMsg::Start(Start {
                 seats: 6,
                 seat: Some(2),
-                terms: MatchTerms::default(),
-                names: [[0u8; WIRE_NAME]; crate::sim::MAX_PLAYERS],
-                kinds: [0; crate::sim::MAX_PLAYERS],
-                standing: None,
-                beach: Vec::new(),
+                ..Start::blank()
             })
             .encode(),
             NetMsg::Hash { frame: 7, hash: 9 }.encode(),

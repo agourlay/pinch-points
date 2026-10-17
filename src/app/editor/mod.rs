@@ -25,7 +25,7 @@ use crate::app::i18n::fill;
 use crate::app::session::BoardSprites;
 use crate::app::settings::GameSettings;
 use crate::app::{Screen, Sim};
-use crate::sim::{Board, Direction, Level, LevelKind};
+use crate::sim::{Board, Direction, Goal, Level, LevelKind};
 use bevy::prelude::*;
 
 /// The arrow keys and the edge each names: a wall toggled on that side of
@@ -56,7 +56,7 @@ pub(crate) struct EditorKeys {
 impl EditorKeys {
     pub(crate) fn of(settings: &GameSettings) -> Self {
         let map = crate::app::cursor::keymap(settings, 0, settings.commit);
-        let moves = map.moves.map(|(key, ..)| key);
+        let moves = map.move_keys();
         let walls = match ARROWS.iter().any(|(key, _)| moves.contains(key)) {
             true => map.places,
             false => ARROWS,
@@ -68,26 +68,26 @@ impl EditorKeys {
             remove: map.remove,
         }
     }
-}
 
-/// A press the editor's own keys may answer: just pressed, and neither one
-/// of P1's movement keys nor a wall key.
-///
-/// The cursor walks on P1's bindings, and the brushes and commands are
-/// keys of their own, so a binding moved onto one did two things at once:
-/// rebound to ESDF, E walked the cursor up and painted kelp on every step.
-/// Movement wins, being the binding the player chose and the one the
-/// prompt names, and so do the walls when they have moved onto P1's place
-/// keys; a brush they shadow is still reached with Tab and Space.
-fn command_press<'a>(
-    keys: &'a ButtonInput<KeyCode>,
-    settings: &GameSettings,
-) -> impl Fn(KeyCode) -> bool + 'a {
-    let EditorKeys { moves, walls, .. } = EditorKeys::of(settings);
-    move |key| {
-        keys.just_pressed(key)
-            && !moves.contains(&key)
-            && !walls.iter().any(|(wall, _)| *wall == key)
+    /// A press the editor's own keys may answer: just pressed, and neither one
+    /// of P1's movement keys nor a wall key.
+    ///
+    /// The cursor walks on P1's bindings, and the brushes and commands are
+    /// keys of their own, so a binding moved onto one did two things at once:
+    /// rebound to ESDF, E walked the cursor up and painted kelp on every step.
+    /// Movement wins, being the binding the player chose and the one the
+    /// prompt names, and so do the walls when they have moved onto P1's place
+    /// keys; a brush they shadow is still reached with Tab and Space.
+    fn command_press<'a>(
+        &'a self,
+        keys: &'a ButtonInput<KeyCode>,
+    ) -> impl Fn(KeyCode) -> bool + 'a {
+        let Self { moves, walls, .. } = self;
+        move |key| {
+            keys.just_pressed(key)
+                && !moves.contains(&key)
+                && !walls.iter().any(|(wall, _)| *wall == key)
+        }
     }
 }
 
@@ -102,9 +102,32 @@ pub(crate) fn spell_block(caps: &crate::app::keycaps::KeyCaps, keys: [KeyCode; 4
     }
 }
 
-/// `text` with the editor's `{walls}`, `{place}` and `{remove}` keys
-/// filled in: the language's own words while they are the stock arrow
-/// keys and Space, else the caps of the keys [`EditorKeys`] reads.
+/// A group of four keys in the order "WASD" spells a block (up, left,
+/// down, right), as [`spell_block`] takes them.
+fn block_order(group: [(KeyCode, Direction); 4]) -> [KeyCode; 4] {
+    [
+        Direction::Up,
+        Direction::Left,
+        Direction::Down,
+        Direction::Right,
+    ]
+    .map(|dir| {
+        group
+            .iter()
+            .find(|(_, d)| *d == dir)
+            .map(|(key, _)| *key)
+            .expect("a key for every way")
+    })
+}
+
+/// `text` with the editor's `{moves}`, `{walls}`, `{place}` and
+/// `{remove}` keys filled in: the caps of the keys [`EditorKeys`] reads,
+/// or the language's own words while the walls and the playtest's keys
+/// are the stock arrow keys and Space.
+///
+/// Run after [`crate::app::keycaps::KeyCaps::legend`]: the keys are
+/// already in this keyboard's caps, and caps that happen to read "WASD"
+/// would be respelled again as the QWERTY keys the legend means by it.
 pub(crate) fn spell_editor_keys(
     text: &str,
     tr: &crate::app::i18n::Tr,
@@ -113,26 +136,13 @@ pub(crate) fn spell_editor_keys(
 ) -> String {
     let keys = EditorKeys::of(settings);
     let block = |group: [(KeyCode, Direction); 4]| -> String {
-        if group == ARROWS {
-            return tr.ed_arrow_keys.to_string();
+        match group == ARROWS {
+            true => tr.ed_arrow_keys.to_string(),
+            false => spell_block(caps, block_order(group)),
         }
-        let key = |dir| {
-            group
-                .iter()
-                .find(|(_, d)| *d == dir)
-                .map(|(key, _)| *key)
-                .expect("a key for every way")
-        };
-        spell_block(
-            caps,
-            [
-                key(Direction::Up),
-                key(Direction::Left),
-                key(Direction::Down),
-                key(Direction::Right),
-            ],
-        )
     };
+    let [up, down, left, right] = keys.moves;
+    let moves = spell_block(caps, [up, left, down, right]);
     let remove = if keys.remove == KeyCode::Space {
         tr.ed_space_key.to_string()
     } else {
@@ -141,6 +151,7 @@ pub(crate) fn spell_editor_keys(
     fill(
         text,
         &[
+            ("moves", &moves),
             ("walls", &block(keys.walls)),
             ("place", &block(keys.place)),
             ("remove", &remove),
@@ -196,6 +207,8 @@ enum Offer {
     Paste,
     /// F2: this level saved over the file of a different one.
     Overwrite,
+    /// Esc: back to the menu, with what has not been saved left behind.
+    Leave,
 }
 
 impl Offer {
@@ -204,6 +217,7 @@ impl Offer {
             Offer::Resize => KeyCode::F5,
             Offer::Paste => KeyCode::F4,
             Offer::Overwrite => KeyCode::F2,
+            Offer::Leave => KeyCode::Escape,
         }
     }
 }
@@ -239,6 +253,14 @@ fn has_work(state: &EditorState, board: &Board) -> bool {
     level_here(state, board, "x").to_text() != level_here(state, &blank, "x").to_text()
 }
 
+/// Whether leaving now would lose work: something is built here, and it
+/// is not the level F2 last wrote. Esc asks first on it, as F5 and F4 do
+/// on [`has_work`], but a level just saved is not lost by leaving.
+fn unsaved_work(state: &EditorState, board: &Board) -> bool {
+    let here = level_here(state, board, &state.name).to_text();
+    has_work(state, board) && state.filed.as_deref() != Some(here.as_str())
+}
+
 #[derive(Resource, Default)]
 pub struct EditorState {
     pub posts: u8,
@@ -246,6 +268,11 @@ pub struct EditorState {
     /// the versus map dial. The author says which rather than the game
     /// counting castles and deciding for them.
     pub kind: LevelKind,
+    /// What the stage asks of the player. The editor has no key to change
+    /// it, but a pasted code can bring a Beach Day goal, and the bench
+    /// keeps it so that saving, sharing, playtesting and the check all hand
+    /// on the level that was pasted rather than an every-crab stage.
+    pub goal: Goal,
     /// What the level is called. It is the file name, and it is what the
     /// stage list shows and what progress is filed under, so two levels
     /// wanting their own gold star need two names.
@@ -267,6 +294,9 @@ pub struct EditorState {
     mine: std::collections::HashSet<String>,
     /// A board-replacing key pressed once and waiting to be taken up.
     offer: Option<Offer>,
+    /// The level's text as F2 last wrote it, so Esc can tell work already
+    /// on the shelf from work that would be lost (see [`unsaved_work`]).
+    filed: Option<String>,
     /// Statics need a rebuild after a tile/wall edit.
     dirty: bool,
 }
@@ -280,7 +310,8 @@ pub enum Mode {
     #[default]
     Painting,
     /// The name is being typed; every letter is a letter, not a brush.
-    Naming,
+    /// `was` is the name F1 found, which Escape puts back.
+    Naming { was: String },
     /// The one frame after the name is committed. The Enter or Escape that
     /// ended it is still just-pressed when [`editor_commands`] runs later
     /// that frame, where it reads as "playtest" or "leave"; the schedule's
@@ -294,11 +325,24 @@ pub enum Mode {
 
 impl EditorState {
     pub fn is_naming(&self) -> bool {
-        matches!(self.mode, Mode::Naming)
+        matches!(self.mode, Mode::Naming { .. })
     }
 
     pub fn is_testing(&self) -> bool {
         matches!(self.mode, Mode::Testing(_))
+    }
+
+    /// The level changed under the author's hand: the statics are redrawn,
+    /// and a check still running is dropped, because it was handed the
+    /// board as it stood and would answer "solvable" or not over this one
+    /// (and V would say it is still checking until it ran out). Its
+    /// "checking..." goes with it. Every author edit goes through here, so
+    /// none can forget the search.
+    fn edited(&mut self) {
+        self.dirty = true;
+        if self.solver.take().is_some() {
+            self.feedback.clear();
+        }
     }
 }
 
@@ -356,12 +400,12 @@ pub struct EditorNews<'w> {
 ///
 /// The cursor comes back to the middle, for the reason the sprites go (see
 /// [`swap_board`]): movement only clamps on a step, so on a smaller beach
-/// it would stand off the board until it was moved. And a check still
-/// running is dropped, because it was handed the board that went and would
-/// answer "solvable" or not over this one.
+/// it would stand off the board until it was moved. And it is an edit
+/// (see [`EditorState::edited`]): a check still running was handed the
+/// board that went.
 fn replace_board(board: Board, sim: &mut Sim, state: &mut EditorState, swap: &mut BoardSwap) {
     swap_board(board, sim, state, &mut swap.commands, &swap.sprites);
-    state.solver = None;
+    state.edited();
     crate::app::cursor::center_on(&sim.0, &mut swap.cursors);
 }
 
@@ -407,7 +451,8 @@ pub fn editor_input(
         return;
     }
     typed.clear();
-    let pressed = command_press(&keys, &settings);
+    let editor_keys = EditorKeys::of(&settings);
+    let pressed = editor_keys.command_press(&keys);
     // Beach size, on a function key. On `[` and `]`, which are *physical*
     // keys, the prompt named keys a non-US keyboard does not have; F5 is F5
     // everywhere, and one key that wraps is enough for four sizes.
@@ -448,7 +493,9 @@ pub fn editor_input(
         return;
     }
     if pressed(KeyCode::F1) {
-        state.mode = Mode::Naming;
+        state.mode = Mode::Naming {
+            was: state.name.clone(),
+        };
         state.feedback = settings.tr().ed_naming.to_string();
         return;
     }
@@ -461,7 +508,7 @@ pub fn editor_input(
     // Walls on the cursor tile's edges. The rim of an open-ocean beach is
     // the seam creatures cross and takes no wall (see `Board::set_wall`),
     // which is said rather than the key quietly doing nothing.
-    for (key, dir) in EditorKeys::of(&settings).walls {
+    for (key, dir) in editor_keys.walls {
         if keys.just_pressed(key) {
             if board.on_open_rim(x, y, dir) {
                 state.feedback = settings.tr().ed_wrap_on.to_string();
@@ -469,7 +516,7 @@ pub fn editor_input(
             }
             let present = board.wall_at(x, y, dir);
             board.set_wall(x, y, dir, !present);
-            state.dirty = true;
+            state.edited();
         }
     }
 
@@ -480,7 +527,7 @@ pub fn editor_input(
         if pressed(brush.key()) {
             state.brush = brush;
             paint(board, x, y, brush);
-            state.dirty = true;
+            state.edited();
         }
     }
     if pressed(KeyCode::Tab) {
@@ -497,7 +544,7 @@ pub fn editor_input(
     }
     if pressed(KeyCode::Space) {
         paint(board, x, y, state.brush);
-        state.dirty = true;
+        state.edited();
     }
 }
 
@@ -535,7 +582,8 @@ pub(super) fn level_here(state: &EditorState, board: &Board, name: &str) -> Leve
         snapshot.set_signpost_rule(stock.signpost_cap, stock.cap_policy);
         snapshot.rules_mut().castle_raids = stock.castle_raids;
     }
-    let level = Level::from_board(name, state.posts, snapshot).with_kind(state.kind);
+    let mut level = Level::from_board(name, state.posts, snapshot).with_kind(state.kind);
+    level.goal = state.goal;
     Level::parse(&level.to_text()).unwrap_or(level)
 }
 
@@ -567,7 +615,8 @@ pub fn editor_commands(
         return;
     }
     let tr = settings.tr();
-    let pressed = command_press(&keys, &settings);
+    let editor_keys = EditorKeys::of(&settings);
+    let pressed = editor_keys.command_press(&keys);
     if pressed(KeyCode::F3) {
         share::copy_level(&mut state, &sim.0, &mut clipboard, tr, &mut shared);
     }
@@ -589,17 +638,23 @@ pub fn editor_commands(
     if state.kind == LevelKind::Puzzle {
         // Up to nine by the dial; a pasted level may carry more, which
         // "+" leaves alone rather than lowering (or, at 255, overflowing).
+        // A turn that moves the count is an edit like any other: a check
+        // running on the old count is dropped, not left to answer for it.
+        let was = state.posts;
         if dial_press(&pressed, &keys, &caps, true) && state.posts < 9 {
             state.posts += 1;
         }
         if dial_press(&pressed, &keys, &caps, false) {
             state.posts = state.posts.saturating_sub(1);
         }
+        if state.posts != was {
+            state.edited();
+        }
     }
     if pressed(KeyCode::KeyO) {
         let wrap = !board.wrap();
         board.set_wrap(wrap);
-        state.dirty = true;
+        state.edited();
         state.feedback = if wrap {
             tr.ed_wrap_on.into()
         } else {
@@ -609,6 +664,7 @@ pub fn editor_commands(
     if pressed(KeyCode::KeyK) {
         let period = next_gull_period(board.rules().gull_period);
         board.rules_mut().gull_period = period;
+        state.edited();
         state.feedback = if period == 0 {
             tr.ed_gulls_off.into()
         } else {
@@ -634,6 +690,9 @@ pub fn editor_commands(
         }
     }
     if pressed(KeyCode::F6) {
+        // A puzzle's verdict over a beach, or a search a beach never asked
+        // for, would land on the other kind.
+        state.edited();
         state.kind = match state.kind {
             LevelKind::Puzzle => LevelKind::Arena,
             LevelKind::Arena => LevelKind::Puzzle,
@@ -665,8 +724,18 @@ pub fn editor_commands(
         state.mode = Mode::Testing(Box::new(snapshot));
         state.feedback = spell_editor_keys(tr.ed_playtest_prompt, tr, &caps, &settings);
     }
+    // Leaving resets the bench, and the editor has no load: the level goes
+    // with it unless it is on the shelf, so Esc asks first, as F5 does.
     if pressed(KeyCode::Escape) {
-        next_screen.set(Screen::Menu);
+        let at_stake = unsaved_work(&state, &sim.0);
+        if ask_first(
+            &mut state,
+            Offer::Leave,
+            at_stake,
+            tr.ed_leave_confirm.into(),
+        ) {
+            next_screen.set(Screen::Menu);
+        }
     }
 }
 
@@ -745,8 +814,7 @@ pub(super) fn recover(
     // Whatever was mid-way (an offer, a check on another thread) was asked
     // of the moment that failed, and is let go with it.
     state.offer = None;
-    state.solver = None;
-    state.dirty = true;
+    state.edited();
     state.feedback = tr.ed_failed.into();
 }
 
@@ -776,6 +844,45 @@ mod tests {
 
     fn sand() -> Board {
         Board::new(6, 5, 3)
+    }
+
+    /// An app with what the editor's systems read, on a blank beach and
+    /// the default settings; a test inserts its own over these and adds
+    /// the systems it drives.
+    fn bench_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.add_message::<crate::app::LevelSaved>();
+        app.add_message::<crate::app::CodeShared>();
+        app.add_message::<crate::app::CodeTaken>();
+        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        app.insert_resource(Sim(sand()));
+        app.init_resource::<EditorState>();
+        app.init_resource::<GameSettings>();
+        app.init_resource::<Clipboard>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app
+    }
+
+    /// `key` alone pressed for one frame.
+    fn tap(app: &mut App, key: KeyCode) {
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.reset_all();
+        keys.press(key);
+        app.update();
+    }
+
+    /// [`tap`], then a frame with nothing pressed, on which a screen
+    /// change it asked for lands.
+    fn tap_and_settle(app: &mut App, key: KeyCode) {
+        tap(app, key);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        app.update();
     }
 
     /// The editor used to name every level "Custom", so two of them shared
@@ -919,30 +1026,11 @@ mod tests {
     /// level with it, and the editor has no undo and no load.
     #[test]
     fn resizing_a_beach_with_a_level_on_it_asks_twice() {
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.add_message::<crate::app::LevelSaved>();
-        app.add_message::<crate::app::CodeShared>();
-        app.add_message::<crate::app::CodeTaken>();
-        app.insert_resource(Sim(sand()));
-        app.init_resource::<EditorState>();
-        app.init_resource::<GameSettings>();
-        app.init_resource::<Clipboard>();
-        app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
-        app.init_resource::<ButtonInput<KeyCode>>();
-        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        let mut app = bench_app();
         // F5 is read by the painting system, beside the cursor it moves,
         // not by the command keys.
         app.add_systems(Update, editor_input);
 
-        let tap = |app: &mut App, key: KeyCode| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            keys.press(key);
-            app.update();
-        };
         let size = |app: &mut App| {
             let board = &app.world().resource::<Sim>().0;
             (board.width(), board.height())
@@ -983,26 +1071,57 @@ mod tests {
         assert_eq!(size(&mut app), built, "so this press only offers again");
     }
 
+    /// Esc resets the bench on the way out, so over unsaved work it asks
+    /// first, as F5 and F4 do; over a blank beach or a level just saved
+    /// it leaves at once.
+    #[test]
+    fn leaving_with_an_unsaved_level_asks_twice() {
+        let mut app = bench_app();
+        app.insert_state(Screen::Editor);
+        app.add_systems(Update, (editor_input, editor_commands).chain());
+        app.add_systems(OnExit(Screen::Editor), exit_editor);
+        let name = "Leave Probe";
+        app.world_mut().resource_mut::<EditorState>().name = name.to_string();
+
+        let screen = |app: &App| *app.world().resource::<State<Screen>>().get();
+
+        app.world_mut().resource_mut::<Sim>().0.set_wrap(true);
+        tap_and_settle(&mut app, KeyCode::Escape);
+        assert_eq!(screen(&app), Screen::Editor, "the first press only asks");
+        assert_eq!(
+            app.world().resource::<EditorState>().feedback,
+            crate::app::i18n::EN.ed_leave_confirm
+        );
+        assert!(app.world().resource::<Sim>().0.wrap(), "the level stays");
+        // Another key takes the offer back, so Esc asks again.
+        tap_and_settle(&mut app, KeyCode::F6);
+        tap_and_settle(&mut app, KeyCode::Escape);
+        assert_eq!(screen(&app), Screen::Editor, "asked again");
+        tap_and_settle(&mut app, KeyCode::Escape);
+        assert_eq!(screen(&app), Screen::Menu, "the second press leaves");
+
+        // Saved as it stands, the level is not lost: one press leaves.
+        app.insert_state(Screen::Editor);
+        app.update();
+        let mut state = app.world_mut().resource_mut::<EditorState>();
+        state.name = name.to_string();
+        app.world_mut().resource_mut::<Sim>().0.set_wrap(true);
+        let path = save_path(name);
+        let _ = std::fs::remove_file(&path);
+        tap_and_settle(&mut app, KeyCode::F2);
+        assert!(std::fs::read_to_string(&path).is_ok_and(|text| text.contains(name)));
+        tap_and_settle(&mut app, KeyCode::Escape);
+        assert_eq!(screen(&app), Screen::Menu, "nothing unsaved to ask about");
+        let _ = std::fs::remove_file(&path);
+    }
+
     /// F2 onto a file this session did not write asks first: the first
     /// press leaves the other level's file as it was and says so, and only
     /// a second press replaces it. Saved at once, the note that a level had
     /// been replaced arrived with that level already gone.
     #[test]
     fn saving_over_another_levels_file_asks_twice() {
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.add_message::<crate::app::LevelSaved>();
-        app.add_message::<crate::app::CodeShared>();
-        app.add_message::<crate::app::CodeTaken>();
-        app.insert_resource(Sim(sand()));
-        app.init_resource::<EditorState>();
-        app.init_resource::<GameSettings>();
-        app.init_resource::<Clipboard>();
-        app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
-        app.init_resource::<ButtonInput<KeyCode>>();
-        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        let mut app = bench_app();
         app.add_systems(Update, (editor_input, editor_commands));
         // A name of this test's own: the shelf is shared by every test in
         // the process.
@@ -1011,12 +1130,6 @@ mod tests {
         let path = save_path(name);
         crate::app::paths::write_atomic(&path, "somebody else's level").expect("wrote");
 
-        let tap = |app: &mut App, key: KeyCode| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            keys.press(key);
-            app.update();
-        };
         let on_disk = || std::fs::read_to_string(&path).expect("reads");
         tap(&mut app, KeyCode::F2);
         assert_eq!(on_disk(), "somebody else's level", "the first press asks");
@@ -1066,28 +1179,10 @@ mod tests {
     /// the value waits there rather than being lost on the way through.
     #[test]
     fn the_posts_dial_is_inert_on_a_beach() {
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.add_message::<crate::app::LevelSaved>();
-        app.add_message::<crate::app::CodeShared>();
-        app.add_message::<crate::app::CodeTaken>();
-        app.insert_resource(Sim(sand()));
-        app.init_resource::<EditorState>();
-        app.init_resource::<GameSettings>();
-        app.init_resource::<Clipboard>();
-        app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
-        app.init_resource::<ButtonInput<KeyCode>>();
+        let mut app = bench_app();
         app.add_systems(Update, editor_commands);
         app.world_mut().resource_mut::<EditorState>().posts = 3;
 
-        let tap = |app: &mut App, key: KeyCode| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            keys.press(key);
-            app.update();
-        };
         tap(&mut app, KeyCode::Equal);
         assert_eq!(app.world().resource::<EditorState>().posts, 4, "a stage");
         tap(&mut app, KeyCode::F6); // now a beach
@@ -1113,23 +1208,13 @@ mod tests {
         board.spawn_gull(1, 3, Direction::Right);
         let editing = board.state_hash();
 
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.add_message::<crate::app::LevelSaved>();
-        app.add_message::<crate::app::CodeShared>();
-        app.add_message::<crate::app::CodeTaken>();
+        let mut app = bench_app();
         app.insert_resource(Sim(board.clone()));
         app.insert_resource(EditorState {
             posts: 3,
             name: "Stage".into(),
             ..EditorState::default()
         });
-        app.init_resource::<GameSettings>();
-        app.init_resource::<Clipboard>();
-        app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
-        app.init_resource::<ButtonInput<KeyCode>>();
         // The test's own keys need a cursor to stand on, as in the editor.
         app.world_mut()
             .spawn((Cursor::seated(0), Transform::default()));
@@ -1141,12 +1226,6 @@ mod tests {
             )
                 .chain(),
         );
-        let tap = |app: &mut App, key: KeyCode| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            keys.press(key);
-            app.update();
-        };
 
         tap(&mut app, KeyCode::Enter);
         let state = app.world().resource::<EditorState>();
@@ -1176,23 +1255,13 @@ mod tests {
         board.set_tile(0, 0, TileKind::Castle(0));
         board.spawn_crab(2, 2, Direction::Right, Handedness::Left, CrabKind::Giant);
         board.spawn_crab(3, 2, Direction::Right, Handedness::Right, CrabKind::Common);
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.add_message::<crate::app::LevelSaved>();
-        app.add_message::<crate::app::CodeShared>();
-        app.add_message::<crate::app::CodeTaken>();
+        let mut app = bench_app();
         app.insert_resource(Sim(board));
         app.insert_resource(EditorState {
             posts: 3,
             name: "Stage".into(),
             ..EditorState::default()
         });
-        app.init_resource::<GameSettings>();
-        app.init_resource::<Clipboard>();
-        app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
-        app.init_resource::<ButtonInput<KeyCode>>();
         app.world_mut()
             .spawn((Cursor::seated(0), Transform::default()));
         app.add_systems(
@@ -1203,12 +1272,6 @@ mod tests {
             )
                 .chain(),
         );
-        let tap = |app: &mut App, key: KeyCode| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            keys.press(key);
-            app.update();
-        };
         let draw = |app: &mut App| {
             let world = app.world_mut();
             let crab = crate::app::creatures::CrabSprite {
@@ -1247,25 +1310,15 @@ mod tests {
     /// the resize drops it rather than let it answer for the fresh beach.
     #[test]
     fn a_resize_drops_the_check_on_the_old_beach() {
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.insert_resource(Sim(sand()));
+        let mut app = bench_app();
         app.insert_resource(EditorState {
             solver: Some(Validation {
                 slot: std::sync::Arc::new(std::sync::Mutex::new(None)),
-                posts: 3,
             }),
             ..EditorState::default()
         });
-        app.init_resource::<GameSettings>();
-        app.init_resource::<ButtonInput<KeyCode>>();
-        app.add_message::<bevy::input::keyboard::KeyboardInput>();
         app.add_systems(Update, editor_input);
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::F5);
-        app.update();
+        tap(&mut app, KeyCode::F5);
         let width = app.world().resource::<Sim>().0.width();
         assert_ne!(width, sand().width(), "the blank beach was resized");
         assert!(app.world().resource::<EditorState>().solver.is_none());
@@ -1287,28 +1340,11 @@ mod tests {
     /// key normally from the next frame.
     #[test]
     fn committing_a_name_does_not_start_a_playtest() {
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.add_message::<crate::app::LevelSaved>();
-        app.add_message::<crate::app::CodeShared>();
-        app.add_message::<crate::app::CodeTaken>();
-        app.insert_resource(Sim(sand()));
-        app.init_resource::<EditorState>();
-        app.init_resource::<GameSettings>();
-        app.init_resource::<Clipboard>();
-        app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
-        app.init_resource::<ButtonInput<KeyCode>>();
+        let mut app = bench_app();
         app.add_systems(Update, editor_commands);
         app.world_mut().resource_mut::<EditorState>().mode = Mode::JustNamed;
 
-        let press = |app: &mut App| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            keys.press(KeyCode::Enter);
-            app.update();
-        };
+        let press = |app: &mut App| tap(app, KeyCode::Enter);
         press(&mut app);
         let state = app.world().resource::<EditorState>();
         assert!(!state.is_testing(), "the naming Enter began a playtest");
@@ -1323,62 +1359,136 @@ mod tests {
         );
     }
 
+    /// Escape in the name box abandons the name, back to the one F1
+    /// found, where Enter commits; and that Escape is the name box's, not
+    /// a press of Esc to leave the editor or to start asking about it.
+    #[test]
+    fn escape_in_the_name_box_puts_the_old_name_back() {
+        let mut app = bench_app();
+        app.insert_state(Screen::Editor);
+        // As the schedule runs them.
+        app.add_systems(
+            Update,
+            (editor_input, editor_commands.run_if(not(editor_naming))).chain(),
+        );
+        app.world_mut().resource_mut::<EditorState>().name = "Rock Pool".into();
+        // Work on the bench, so a leaking Esc would at least raise the offer.
+        app.world_mut().resource_mut::<Sim>().0.set_wrap(true);
+
+        tap_and_settle(&mut app, KeyCode::F1);
+        assert!(app.world().resource::<EditorState>().is_naming());
+        app.world_mut().resource_mut::<EditorState>().name = "Rock Po".into();
+        tap_and_settle(&mut app, KeyCode::Escape);
+        let state = app.world().resource::<EditorState>();
+        assert_eq!(state.name, "Rock Pool", "Escape abandons the edit");
+        assert!(matches!(state.mode, Mode::Painting));
+        assert_eq!(state.offer, None, "and is not also a press to leave");
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Editor
+        );
+
+        tap_and_settle(&mut app, KeyCode::F1);
+        app.world_mut().resource_mut::<EditorState>().name = " Tide Line ".into();
+        tap_and_settle(&mut app, KeyCode::Enter);
+        let state = app.world().resource::<EditorState>();
+        assert_eq!(state.name, "Tide Line", "Enter commits, tidied");
+        assert!(!state.is_testing(), "and is not also a playtest");
+    }
+
+    /// An edit drops a check still running: it was handed the board as it
+    /// stood, and its verdict would land on one that no longer exists,
+    /// with V answering "already checking" until it ran out.
+    #[test]
+    fn an_edit_drops_a_check_of_the_board_before_it() {
+        let mut app = bench_app();
+        app.insert_state(Screen::Editor);
+        app.add_systems(Update, editor_commands);
+        // O wraps the beach, K steps the gulls, + and - turn the signpost
+        // grant, F6 makes it the other kind: each one a different level
+        // from the one being checked.
+        let keys = [
+            KeyCode::KeyO,
+            KeyCode::KeyK,
+            KeyCode::Equal,
+            KeyCode::Minus,
+            KeyCode::F6,
+        ];
+        for key in keys {
+            {
+                let mut state = app.world_mut().resource_mut::<EditorState>();
+                // A search that never answers, so only the edit can end it.
+                state.solver = Some(validate::Validation {
+                    slot: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                });
+            }
+            tap(&mut app, key);
+            let state = app.world().resource::<EditorState>();
+            assert!(state.solver.is_none(), "{key:?} kept the stale check");
+        }
+    }
+
     /// The prompt says "+/-" in every language, so the dial answers the
     /// keys that say so: the keypad's pair, and on a QWERTZ board the
     /// caps beside P and where QWERTY has "/", besides the US pair.
     #[test]
     fn the_posts_dial_answers_the_keys_that_say_plus_and_minus() {
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.add_message::<crate::app::LevelSaved>();
-        app.add_message::<crate::app::CodeShared>();
-        app.add_message::<crate::app::CodeTaken>();
-        app.insert_resource(Sim(sand()));
-        app.init_resource::<EditorState>();
-        app.init_resource::<GameSettings>();
-        app.init_resource::<Clipboard>();
-        app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
-        app.init_resource::<ButtonInput<KeyCode>>();
+        let mut app = bench_app();
         app.add_systems(Update, editor_commands);
         app.world_mut().resource_mut::<EditorState>().posts = 3;
-        let tap = |app: &mut App, key: KeyCode| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            keys.press(key);
-            app.update();
+        let posts_after = |app: &mut App, key: KeyCode| {
+            tap(app, key);
             app.world().resource::<EditorState>().posts
         };
-        assert_eq!(tap(&mut app, KeyCode::NumpadAdd), 4);
-        assert_eq!(tap(&mut app, KeyCode::NumpadSubtract), 3);
-        assert_eq!(tap(&mut app, KeyCode::Equal), 4, "the US pair still works");
-        assert_eq!(tap(&mut app, KeyCode::Minus), 3);
-        assert_eq!(tap(&mut app, KeyCode::BracketRight), 3, "QWERTY's ]");
+        assert_eq!(posts_after(&mut app, KeyCode::NumpadAdd), 4);
+        assert_eq!(posts_after(&mut app, KeyCode::NumpadSubtract), 3);
+        assert_eq!(
+            posts_after(&mut app, KeyCode::Equal),
+            4,
+            "the US pair still works"
+        );
+        assert_eq!(posts_after(&mut app, KeyCode::Minus), 3);
+        assert_eq!(
+            posts_after(&mut app, KeyCode::BracketRight),
+            3,
+            "QWERTY's ]"
+        );
         app.world_mut()
             .resource_mut::<crate::app::keycaps::KeyCaps>()
             .force(Some(crate::app::keycaps::Layout::Qwertz));
-        assert_eq!(tap(&mut app, KeyCode::BracketRight), 4, "QWERTZ's +");
-        assert_eq!(tap(&mut app, KeyCode::Slash), 3, "QWERTZ's -");
-        assert_eq!(tap(&mut app, KeyCode::Digit6), 3, "a 6 on QWERTZ");
+        assert_eq!(
+            posts_after(&mut app, KeyCode::BracketRight),
+            4,
+            "QWERTZ's +"
+        );
+        assert_eq!(posts_after(&mut app, KeyCode::Slash), 3, "QWERTZ's -");
+        assert_eq!(posts_after(&mut app, KeyCode::Digit6), 3, "a 6 on QWERTZ");
         // AZERTY's "-" is on the 6, forced or learned from a press.
         app.world_mut()
             .resource_mut::<crate::app::keycaps::KeyCaps>()
             .force(Some(crate::app::keycaps::Layout::Azerty));
-        assert_eq!(tap(&mut app, KeyCode::Digit6), 2, "AZERTY's -");
+        assert_eq!(posts_after(&mut app, KeyCode::Digit6), 2, "AZERTY's -");
         let mut learned = crate::app::keycaps::KeyCaps::default();
         learned.learn(KeyCode::KeyW, 'z');
         app.insert_resource(learned);
-        assert_eq!(tap(&mut app, KeyCode::Digit6), 1, "AZERTY's -, learned");
-        assert_eq!(tap(&mut app, KeyCode::Digit5), 1, "the rest of the row");
+        assert_eq!(
+            posts_after(&mut app, KeyCode::Digit6),
+            1,
+            "AZERTY's -, learned"
+        );
+        assert_eq!(
+            posts_after(&mut app, KeyCode::Digit5),
+            1,
+            "the rest of the row"
+        );
         app.world_mut().resource_mut::<EditorState>().posts = 3;
         app.world_mut()
             .resource_mut::<crate::app::keycaps::KeyCaps>()
             .force(Some(crate::app::keycaps::Layout::Qwertz));
         // The cap at nine still holds on every key that says "+".
         app.world_mut().resource_mut::<EditorState>().posts = 9;
-        assert_eq!(tap(&mut app, KeyCode::BracketRight), 9);
-        assert_eq!(tap(&mut app, KeyCode::NumpadAdd), 9);
+        assert_eq!(posts_after(&mut app, KeyCode::BracketRight), 9);
+        assert_eq!(posts_after(&mut app, KeyCode::NumpadAdd), 9);
     }
 
     /// The cursor walks on P1's bindings and the brushes are keys of their
@@ -1397,23 +1507,11 @@ mod tests {
         ] {
             settings.binds[0].set(action, key);
         }
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.insert_resource(Sim(sand()));
-        app.init_resource::<EditorState>();
+        let mut app = bench_app();
         app.insert_resource(settings);
-        app.init_resource::<ButtonInput<KeyCode>>();
-        app.add_message::<bevy::input::keyboard::KeyboardInput>();
         app.world_mut()
             .spawn((Cursor::seated(0), Transform::default()));
         app.add_systems(Update, editor_input);
-        let tap = |app: &mut App, key: KeyCode| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            keys.press(key);
-            app.update();
-        };
         tap(&mut app, KeyCode::KeyE);
         assert_eq!(
             app.world().resource::<Sim>().0.tile_at(0, 0),
@@ -1461,14 +1559,19 @@ mod tests {
         assert_eq!(test, "arrow keys place | Space remove | Esc end test");
         let test = spell_editor_keys(EN.ed_playtest_prompt, &EN, &caps, &settings);
         assert_eq!(test, "WASD place | X remove | Esc end test");
+        // The move keys too, in the order "WASD" spells a block: the stock
+        // keys read as the language's own legend did, rebound keys by
+        // their caps.
+        let painting = EN.ed_prompt.replacen("WASD", "{moves}", 1);
+        let moves = spell_editor_keys(&painting, &EN, &caps, &stock);
+        assert!(
+            moves.starts_with("WASD move | arrow keys walls |"),
+            "{moves}"
+        );
+        let moves = spell_editor_keys(&painting, &EN, &caps, &settings);
+        assert!(moves.starts_with("Up/Left/Down/Right move |"), "{moves}");
 
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.add_message::<crate::app::LevelSaved>();
-        app.add_message::<crate::app::CodeShared>();
-        app.add_message::<crate::app::CodeTaken>();
-        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        let mut app = bench_app();
         let mut board = sand();
         board.set_tile(0, 0, TileKind::Castle(0));
         app.insert_resource(Sim(board));
@@ -1478,10 +1581,6 @@ mod tests {
             ..EditorState::default()
         });
         app.insert_resource(settings);
-        app.init_resource::<Clipboard>();
-        app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
-        app.init_resource::<ButtonInput<KeyCode>>();
         let mut cursor = Cursor::seated(0);
         (cursor.x, cursor.y) = (2, 2);
         app.world_mut().spawn((cursor, Transform::default()));
@@ -1494,12 +1593,6 @@ mod tests {
             )
                 .chain(),
         );
-        let tap = |app: &mut App, key: KeyCode| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            keys.press(key);
-            app.update();
-        };
         let wall = |app: &App| app.world().resource::<Sim>().0.wall_at(2, 2, Direction::Up);
         tap(&mut app, KeyCode::ArrowUp);
         assert!(!wall(&app), "the arrow is P1's move key");
@@ -1525,27 +1618,10 @@ mod tests {
     /// and says where the level now lands.
     #[test]
     fn f6_flips_the_kind() {
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.add_message::<crate::app::LevelSaved>();
-        app.add_message::<crate::app::CodeShared>();
-        app.add_message::<crate::app::CodeTaken>();
-        app.insert_resource(Sim(sand()));
-        app.init_resource::<EditorState>();
-        app.init_resource::<GameSettings>();
-        app.init_resource::<Clipboard>();
-        app.init_resource::<crate::app::keycaps::KeyCaps>();
-        app.init_resource::<crate::app::keycaps::LiveSeatKeys>();
-        app.init_resource::<ButtonInput<KeyCode>>();
+        let mut app = bench_app();
         app.add_systems(Update, editor_commands);
 
-        let press = |app: &mut App| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            keys.press(KeyCode::F6);
-            app.update();
-        };
+        let press = |app: &mut App| tap(app, KeyCode::F6);
         assert_eq!(
             app.world().resource::<EditorState>().kind,
             LevelKind::Puzzle

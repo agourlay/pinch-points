@@ -4,7 +4,7 @@
 //! (assets/shaders/sand.wgsl).
 //!
 //! A [`WaterMaterial`] is drawn on a quad. Which water it is comes from
-//! [`WaterMode`]; every board shares the few materials held in [`Waters`].
+//! [`WaterMode`]; every board shares the few materials held in [`Shaders`].
 
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
@@ -89,8 +89,8 @@ impl Material2d for WaterMaterial {
 
 /// The colours of a rock pool's water, shallow rim then deep middle: the
 /// flat layers' own, which tools/gen_sprites.py also bakes into the moat
-/// round a big castle and the editor's pool brush. Brightened, the board's
-/// pools no longer matched either, a pool beside a moat most of all.
+/// round a big castle and the editor's pool brush: change all three
+/// together, or a pool beside a moat no longer matches it.
 pub const POOL_SHALLOW: Color = Color::srgb(0.44, 0.69, 0.80);
 pub const POOL_DEEP: Color = Color::srgb(0.33, 0.57, 0.72);
 
@@ -111,9 +111,10 @@ fn ocean_uniform() -> WaterUniform {
 /// grey with the margin's scenery floating on it.
 pub const SAND: Color = Color::srgb(0.78, 0.65, 0.46);
 
-/// The quad and the shared materials every board's water is drawn with.
+/// The quad and the shared materials every board's water and sand are
+/// drawn with.
 #[derive(Clone, Default)]
-pub struct Waters {
+pub struct Shaders {
     /// A 1x1 quad, sized by its transform's scale.
     pub quad: Handle<Mesh>,
     pub pool_shallow: Handle<WaterMaterial>,
@@ -129,7 +130,22 @@ pub struct Waters {
     pub board_sand: Handle<SandMaterial>,
 }
 
-impl Waters {
+impl Shaders {
+    /// The 1x1 quad drawn in `material`, placed by `place` and stretched
+    /// to `size`: every water and sand surface is one.
+    pub fn quad<M: Material2d>(
+        &self,
+        material: &Handle<M>,
+        place: Transform,
+        size: Vec2,
+    ) -> (Mesh2d, MeshMaterial2d<M>, Transform) {
+        (
+            Mesh2d(self.quad.clone()),
+            MeshMaterial2d(material.clone()),
+            place.with_scale(size.extend(1.0)),
+        )
+    }
+
     /// Built with the rest of [`crate::app::art::Art`], cutting the pools
     /// to the puddle sprite's shape.
     pub fn new(world: &mut World, puddle: &Handle<Image>) -> Self {
@@ -144,7 +160,7 @@ impl Waters {
                 mask: puddle.clone(),
             })
         };
-        Waters {
+        Shaders {
             quad,
             pool_shallow: layer(WaterMode::Pool, POOL_SHALLOW),
             pool_deep: layer(WaterMode::Pool, POOL_DEEP),
@@ -186,7 +202,7 @@ pub(super) fn still_water(
         return;
     }
     let motion = if settings.reduced_motion { 0.0 } else { 1.0 };
-    let Waters {
+    let Shaders {
         quad: _,
         pool_shallow,
         pool_deep,
@@ -195,7 +211,7 @@ pub(super) fn still_water(
         ocean,
         sand: _,
         board_sand: _,
-    } = &art.water;
+    } = &art.shaded;
     for handle in [pool_shallow, pool_deep, glint, sea, ocean] {
         if materials
             .get(handle)
@@ -208,7 +224,7 @@ pub(super) fn still_water(
 }
 
 /// Register the material. Before `Art` is built, which makes its
-/// [`Waters`].
+/// [`Shaders`].
 pub(super) fn install(app: &mut App) {
     app.add_plugins((
         Material2dPlugin::<WaterMaterial>::default(),
@@ -240,9 +256,9 @@ pub struct SandUniform {
 }
 
 impl SandUniform {
-    /// Warmer and lighter than the dull flat colour it replaced, and still
-    /// a shade darker and more saturated than the board's own sand, so the
-    /// play stays the brightest thing on screen.
+    /// The beach round the board: warm, and a shade darker and more
+    /// saturated than the board's own sand, so the play stays the
+    /// brightest thing on screen.
     fn beach() -> SandUniform {
         SandUniform {
             low: SAND.into(),
@@ -253,14 +269,12 @@ impl SandUniform {
         }
     }
 
-    /// The board's sand: the two tiles' own colours, which the sand
-    /// sprites were drawn in, and grain that follows the sand's shade as
-    /// the sprites' specks did on each tile. The dark speck is the sand
-    /// times 0.785 in linear light, which is the sprites' "a twelfth
-    /// darker" (211/230 in sRGB); the pale one a third of the way to white,
-    /// as strong as theirs. In linear light a factor of 0.92, as it was,
-    /// darkened a speck by a third of what the tiles did, and halfway to
-    /// white made the grain read as white flecks.
+    /// The board's sand: the two tiles' colours, and grain that follows
+    /// the sand's shade. The dark speck is the sand times 0.785 in linear
+    /// light, "a twelfth darker" (211/230 in sRGB); the pale one a third of
+    /// the way to white. Both are linear-light factors: an sRGB-sized one
+    /// (0.92) barely darkens a speck, and halfway to white reads as white
+    /// flecks.
     fn board() -> SandUniform {
         SandUniform {
             low: Color::srgb(0.898, 0.808, 0.631).into(),
@@ -292,16 +306,16 @@ const NOISE_CELLS: u32 = 16;
 /// The smooth noise the sand shader reads instead of working it out at
 /// every pixel: three channels of tileable value noise, built once.
 ///
-/// The sand was two octaves of value noise and two more single ones per
-/// pixel, about twenty integer hashes, on every board pixel and every
-/// beach pixel of every frame: on the integrated graphics a LAN evening
-/// brings, a fifth of a frame or more. Sampled from here it is two reads
-/// on the beach and three on the board.
+/// Worked out per pixel it is about twenty integer hashes on every board
+/// and beach pixel of every frame, a fifth of a frame or more on the
+/// integrated graphics a LAN evening brings; sampled from here it is two
+/// reads on the beach and three on the board.
+///
 /// It tiles every `NOISE_CELLS` noise cells, a few thousand world units at
 /// the scales the shader reads it at, which is wider than any board.
 ///
 /// Red and green are one octave each (tone drift, ripple warp); blue is
-/// two (dunes, damp patches), weighted as sand.wgsl's `fbm` was.
+/// two (dunes, damp patches), the finer at half the weight.
 pub fn sand_noise() -> Image {
     use bevy::asset::RenderAssetUsages;
     use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};

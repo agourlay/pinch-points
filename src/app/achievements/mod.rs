@@ -10,7 +10,7 @@ use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 /// The trophy record, under the XDG data directory.
 pub(super) fn save_path() -> std::path::PathBuf {
-    crate::app::paths::data_dir().join("achievements.txt")
+    crate::app::paths::merged_record("achievements.txt")
 }
 
 /// Stats changed since they were last written out.
@@ -126,14 +126,17 @@ pub struct PuzzleAttempt {
     /// arrows had expired was a clear "with one to spare", and "R: watch
     /// again" or a retry handed back an empty beach.
     pub layout: Vec<crate::sim::Placement>,
-    /// Whether the run in play is the first this session on its stage.
+    /// Whether the run in play is the first this session on its stage
+    /// ([`StagesRun`]).
     pub first_run: bool,
-    /// Every stage a run has begun on this session, kept past the screen:
-    /// the attempt starts fresh on the way in, so a stage lost, left for
-    /// the stage list and come back to read as untried, and its clear as
-    /// "first try".
-    pub ran: HashSet<(crate::app::CampaignKind, String)>,
 }
+
+/// Every stage a run has begun on this session, kept past the screen that
+/// [`PuzzleAttempt`] lives and dies with: kept there, a stage lost, left
+/// for the stage list and come back to read as untried, and its clear as
+/// "first try".
+#[derive(Resource, Default)]
+pub struct StagesRun(HashSet<(crate::app::CampaignKind, String)>);
 
 impl PuzzleAttempt {
     /// The arrows the last run of `stage` began with, if it ran.
@@ -448,10 +451,10 @@ mod ui;
 
 pub use save::load;
 #[cfg(test)]
-use save::{parse, to_text};
+use save::{Unknown, parse, to_text};
 pub use track::{
-    note_posts_spent, record_codes, record_level_built, record_puzzle, record_round,
-    reset_puzzle_attempt, reset_round_scratch, save_now, save_on_exit, track_events,
+    note_posts_spent, record_called_round, record_codes, record_level_built, record_puzzle,
+    record_round, reset_puzzle_attempt, reset_round_scratch, save_now, save_on_exit, track_events,
     track_puzzle_attempt,
 };
 pub use ui::{
@@ -499,7 +502,7 @@ mod tests {
         let mut unlocked = Unlocked::default();
         unlocked.0.insert("first_bank");
         unlocked.0.insert("golden_1");
-        let (reparsed, re_unlocked) = parse(&to_text(&stats, &unlocked));
+        let (reparsed, re_unlocked) = parse(&to_text(&stats, &unlocked, &Unknown::default()));
         assert_eq!(reparsed.banked, 123);
         assert_eq!(reparsed.wins, 3);
         assert_eq!(reparsed.daily_day, 20_600);

@@ -13,9 +13,18 @@ use bevy::prelude::*;
 
 /// How far past the board a drifting cloud shadow turns round, in world
 /// units: clear of any window the camera's clamped zoom can show. Not the
-/// planes' `wash::REACH`, which is how far the world is *built*; a cloud
+/// planes' [`REACH`], which is how far the world is *built*; a cloud
 /// turning round that far out would be gone for a minute at a time.
 const CLOUD_REACH: f32 = 2400.0;
+
+/// How far past the board the beach and the sea are built, in world units.
+///
+/// Sized from the world rather than from the board: `boot::fit_camera`
+/// fits a board to the tighter of the window's two sides and clamps the
+/// zoom at `layout::MAX_ZOOM`, so a board leaves a great deal of beach
+/// visible beside it, and a plane cut to the board's size ends in hard
+/// edges with nothing beyond them.
+const REACH: f32 = 9000.0;
 
 /// A shadow of a cloud nobody can see, crossing the beach.
 #[derive(Component)]
@@ -74,13 +83,16 @@ pub(super) fn spawn_weather(commands: &mut Commands, board: &Board, art: &Art) {
 }
 
 /// Drift the cloud shadows across the sand, turning them round at the far
-/// edge so the beach never runs out of weather.
+/// edge so the beach never runs out of weather. They hold still with the
+/// round, under a pause card and on the results.
 pub fn drift_cloud_shadows(
+    sim: Res<Sim>,
     time: Res<Time>,
     settings: Res<crate::app::settings::GameSettings>,
+    round: crate::app::round_state::RoundState,
     mut clouds: Query<(&CloudShadow, &mut Transform)>,
 ) {
-    if settings.reduced_motion {
+    if settings.reduced_motion || !round.moving(&sim.0) {
         return;
     }
     let dt = time.delta_secs();
@@ -99,29 +111,28 @@ pub fn drift_cloud_shadows(
 /// [`lay_the_sea`]), so a round is played on the same beach the menu
 /// promised instead of floating in a void. Sized from the board rather than
 /// the window, because the camera zooms to fit the board and world units
-/// are the only ones that hold still while it does.
-///
-/// The sea used to lie along the top, sized from the board, and on most
-/// boards it sat off the top of the window: the margin read as a flat
-/// expanse of one colour. It now follows the view.
-pub(super) fn spawn_dusk_shore(commands: &mut Commands, board: &Board, art: &Art) {
-    // Far larger than any zoomed-out view can reach: the wave's reach.
-    const REACH: f32 = super::wash::REACH;
+/// are the only ones that hold still while it does. The sea alone follows
+/// the view: sized from the board, it sat off the window on most boards.
+pub(super) fn spawn_beach(commands: &mut Commands, board: &Board, art: &Art) {
     commands.spawn((
         BoardStatic,
-        Mesh2d(art.water.quad.clone()),
-        MeshMaterial2d(art.water.sand.clone()),
-        Transform::from_translation(Vec3::new(0.0, 0.0, z::SAND - 10.0))
-            .with_scale(Vec3::new(REACH, REACH, 1.0)),
+        art.shaded.quad(
+            &art.shaded.sand,
+            Transform::from_translation(Vec3::new(0.0, 0.0, z::SAND - 10.0)),
+            Vec2::splat(REACH),
+        ),
     ));
     commands.spawn((
         BoardStatic,
         Sea,
-        Mesh2d(art.water.quad.clone()),
-        MeshMaterial2d(art.water.sea.clone()),
         // Over the scenery, which is scattered without knowing where the
         // view's bottom edge will fall: the sea covers what lands in it.
-        Transform::from_translation(Vec3::new(0.0, 0.0, SEA_Z)),
+        // Sized by `lay_the_sea`.
+        art.shaded.quad(
+            &art.shaded.sea,
+            Transform::from_translation(Vec3::new(0.0, 0.0, SEA_Z)),
+            Vec2::ONE,
+        ),
         Visibility::Hidden,
     ));
     furnish_the_margin(commands, board, art);
@@ -216,16 +227,14 @@ pub struct SeaView<'w, 's> {
     cameras: Query<'w, 's, (&'static Projection, &'static Transform), With<Camera2d>>,
 }
 
-/// What the sea's clock reads: the round's state, the frame's time, and
+/// What the sea's climb reads: the round's state, the round's clock the
+/// swell heaves on (so a paused or finished sea holds where it was), and
 /// whether the player asked for things to hold still.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct SeaRound<'w, 's> {
-    time: Res<'w, Time>,
+pub struct SeaRound<'w> {
     settings: Res<'w, crate::app::settings::GameSettings>,
     round: crate::app::round_state::RoundState<'w>,
-    /// The swell's own clock, run only while the round moves, so a paused
-    /// or finished sea holds where it was.
-    swell_clock: Local<'s, f32>,
+    clock: Res<'w, crate::app::round_state::RoundClock>,
 }
 
 /// Keep the sea along the bottom of the view, as wide as the window, as
@@ -237,7 +246,7 @@ pub fn lay_the_sea(
     sim: Res<Sim>,
     art: Res<Art>,
     view: SeaView,
-    mut round: SeaRound,
+    round: SeaRound,
     mut materials: ResMut<Assets<WaterMaterial>>,
     mut sea: Query<SeaQuad, (With<Sea>, Without<Camera2d>)>,
 ) {
@@ -252,11 +261,12 @@ pub fn lay_the_sea(
     let (ui, scale) = (view.ui_scale.0, ortho.scale);
     let bottom = camera.translation.y - window.height() / 2.0 * scale;
     let board_bottom = -layout::board_extent(&sim.0).y / 2.0;
-    if round.round.moving(&sim.0) {
-        *round.swell_clock += round.time.delta_secs();
-    }
-    let (progress, swell) =
-        super::tide::climb(&sim.0, *round.swell_clock, round.settings.reduced_motion);
+    let (progress, swell) = super::tide::climb(
+        &sim.0,
+        round.round.countdown(&sim.0),
+        round.clock.0,
+        round.settings.reduced_motion,
+    );
     let Some((top, height)) = sea_span(bottom, scale, ui, board_bottom, progress, swell) else {
         if *visibility != Visibility::Hidden {
             *visibility = Visibility::Hidden;
@@ -281,9 +291,9 @@ pub fn lay_the_sea(
         .flatten()
         .map_or(LinearRgba::NONE, LinearRgba::from);
     let stale = materials
-        .get(&art.water.sea)
+        .get(&art.shaded.sea)
         .is_some_and(|m| m.water.tint != tint);
-    if stale && let Some(mut material) = materials.get_mut(&art.water.sea) {
+    if stale && let Some(mut material) = materials.get_mut(&art.shaded.sea) {
         material.water.tint = tint;
     }
 }
@@ -294,9 +304,9 @@ pub fn lay_the_sea(
 const MARGIN_TILES: f32 = 14.0;
 
 /// A place in the margin round a board `size` wide and high, or `None` if
-/// the draw landed where nothing may go: on the board, its frame or the
-/// tide that widens past it. The sea needs no keeping out of: it is drawn
-/// over the scenery, wherever the view puts it.
+/// the draw landed where nothing may go: on the board or inside the band
+/// the camera keeps clear round it (`RIM`). The sea needs no keeping out
+/// of: it is drawn over the scenery, wherever the view puts it.
 fn margin_spot(rng: &mut crate::app::effects::VisualRng, size: Vec2) -> Option<Vec2> {
     let clear = size / 2.0 + Vec2::splat(super::RIM + 14.0);
     let reach = size / 2.0 + Vec2::splat(MARGIN_TILES * TILE);
@@ -318,8 +328,8 @@ fn margin_seed(board: &Board) -> u32 {
 ///
 /// Only things that are not in the game: a rock, a pool or a hole out
 /// here would read as a piece of the board that had wandered off. Kept
-/// clear of the board, its frame and the tide that widens round it
-/// (`RIM`). Drawn from the board's own size and seed, so a
+/// clear of the board and the band the camera keeps clear round it, its
+/// frame included (`RIM`). Drawn from the board's own size and seed, so a
 /// level looks the same every time it is played, and a little dimmer than
 /// the same things on the board.
 fn furnish_the_margin(commands: &mut Commands, board: &Board, art: &Art) {
@@ -495,8 +505,8 @@ mod tests {
         assert_ne!(seed(12, 9, 7), seed(9, 12, 7), "the same area turned round");
     }
 
-    /// The scenery keeps off the play: nothing lands on the board, its
-    /// frame, or the tide that widens round it by the end of a round.
+    /// The scenery keeps off the play: nothing lands on the board or in
+    /// the band round it, its frame included.
     #[test]
     fn the_margin_keeps_off_the_board() {
         let size = Vec2::new(12.0, 9.0) * TILE;
@@ -509,7 +519,7 @@ mod tests {
             placed += 1;
             let off_board = at.x.abs() > size.x / 2.0 + super::super::RIM
                 || at.y.abs() > size.y / 2.0 + super::super::RIM;
-            assert!(off_board, "{at} is on the board or its tide");
+            assert!(off_board, "{at} is on the board or its rim");
         }
         assert!(placed > 1000, "only {placed} of 5000 found a place");
     }
