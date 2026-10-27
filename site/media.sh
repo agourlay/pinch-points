@@ -9,7 +9,8 @@
 #
 # The hero video (site/media/hero.webm and hero.mp4) is recorded by hand:
 # a release build with PINCH_WINDOW=1280x720 PINCH_ON_TOP=1
-# PINCH_SKIRMISH=arena PINCH_AUTOPILOT=normal, a plain round on the classic
+# PINCH_SKIRMISH=arena PINCH_AUTOPILOT=normal PINCH_AUTOPILOT_WALK=1 (the
+# cursor walks to each arrow it places), a plain round on the classic
 # beach, filmed with `ffmpeg -f x11grab` at the window's corner and cut to
 # a stretch no lure or Crab Monopoly takes over. Without PINCH_ON_TOP the
 # grab films whatever window sits in front. With ffmpeg on the PATH, its

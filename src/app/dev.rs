@@ -1138,13 +1138,29 @@ pub(super) fn autopilot_level() -> Option<crate::sim::BotLevel> {
 /// Only ever a seat this process holds: a spectator commits nothing, and a
 /// peer that reached for another's chair would be refused by the host and
 /// would be asking for the desync the seat check exists to prevent.
+///
+/// With `PINCH_AUTOPILOT_WALK=1` the seat's cursor walks to each tile the
+/// bot picks, a step every key-repeat interval, and the arrow goes down
+/// only once it is there: a filmed round shows a cursor steering, not one
+/// parked in a corner while arrows appear elsewhere. Off by default, since
+/// the walk delays every placement and the measurements want the bot as
+/// quick as it is.
 pub(super) fn debug_autopilot(
     sim: Res<Sim>,
     online: Res<net::Online>,
+    time: Res<Time>,
+    settings: Res<crate::app::settings::GameSettings>,
     mut pending: ResMut<PendingActions>,
-    mut level: Local<Option<Option<crate::sim::BotLevel>>>,
+    mut cursors: Query<&mut crate::app::cursor::Cursor>,
+    mut pilot: Local<Option<Autopilot>>,
 ) {
-    let Some(level) = *level.get_or_insert_with(autopilot_level) else {
+    let walk = pilot.get_or_insert_with(|| Autopilot {
+        level: autopilot_level(),
+        walks: std::env::var("PINCH_AUTOPILOT_WALK").is_ok(),
+        heading: None,
+        wait: 0.0,
+    });
+    let Some(level) = walk.level else {
         return;
     };
     let seat = match online.0.as_ref() {
@@ -1159,9 +1175,57 @@ pub(super) fn debug_autopilot(
     };
     // Never over a real one: a hand on the keys still beats the autopilot,
     // which is what makes this usable to watch as well as to measure.
-    if matches!(slot, PlayerAction::None) {
-        *slot = crate::sim::bot_action(&sim.0, seat, level);
+    if !matches!(slot, PlayerAction::None) {
+        return;
     }
+    if !walk.walks {
+        *slot = crate::sim::bot_action(&sim.0, seat, level);
+        return;
+    }
+    let Some(mut cursor) = cursors.iter_mut().find(|cursor| cursor.player == seat) else {
+        return;
+    };
+    let wanted = match walk.heading {
+        Some(action) => action,
+        None => crate::sim::bot_action(&sim.0, seat, level),
+    };
+    let (x, y) = match wanted {
+        PlayerAction::Place { x, y, .. } | PlayerAction::Remove { x, y } => (x, y),
+        PlayerAction::None | PlayerAction::CallEvent(_) => {
+            *slot = wanted;
+            return;
+        }
+    };
+    if (cursor.x, cursor.y) == (x, y) {
+        *slot = wanted;
+        walk.heading = None;
+        return;
+    }
+    walk.heading = Some(wanted);
+    walk.wait -= time.delta_secs();
+    if walk.wait > 0.0 {
+        return;
+    }
+    walk.wait = settings.repeat_interval;
+    // One axis at a time, the longer first, as a thumb on the keys goes.
+    let (dx, dy) = (
+        i16::from(x) - i16::from(cursor.x),
+        i16::from(y) - i16::from(cursor.y),
+    );
+    if dx.abs() >= dy.abs() {
+        cursor.x = cursor.x.saturating_add_signed(dx.signum() as i8);
+    } else {
+        cursor.y = cursor.y.saturating_add_signed(dy.signum() as i8);
+    }
+}
+
+/// The autopilot's level, read once, and where `PINCH_AUTOPILOT_WALK` is
+/// taking the cursor and when it next steps.
+pub(super) struct Autopilot {
+    level: Option<crate::sim::BotLevel>,
+    walks: bool,
+    heading: Option<PlayerAction>,
+    wait: f32,
 }
 
 /// Dev hook: with `PINCH_NET_PROBE=1`, submit one scripted signpost three
