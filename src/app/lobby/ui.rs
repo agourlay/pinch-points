@@ -682,7 +682,13 @@ pub fn update_lobby_chat(
     // type into, and a lit box with nothing in it looks like a fault.
     let box_lit = state.typing.is_some() || state.can_chat();
     for mut fill in &mut entry {
-        let want = crate::app::menu_ui::band(box_lit);
+        // The prompt's own dark pill, not a card row's band: this line
+        // stands on the open beach, where the pale band let the sand and
+        // the castles through and the hint all but vanished into them.
+        let want = match box_lit {
+            true => palette::PILL_FILL,
+            false => Color::NONE,
+        };
         crate::app::menu_ui::set_bg(&mut fill, want);
     }
     for (row, mut text, mut color) in &mut rows {
