@@ -328,7 +328,7 @@ pub fn flash_cursors(
     for (mut cursor, mut sprite) in &mut cursors {
         if cursor.flash > 0.0 {
             cursor.flash -= time.delta_secs();
-            sprite.color = Color::srgba(1.0, 0.25, 0.2, 0.95);
+            layout::tint(&mut sprite, Color::srgba(1.0, 0.25, 0.2, 0.95));
             continue;
         }
         let color = bracket_color(cursor.player);
@@ -337,22 +337,23 @@ pub fn flash_cursors(
         // their bounds check, which reads as "this tile refuses you" and
         // leaves the brackets dimmed until something recentres them.
         if cursor.x >= board.width() || cursor.y >= board.height() {
-            sprite.color = color;
+            layout::tint(&mut sprite, color);
             continue;
         }
         // Only when it is the *tile* refusing. An empty inventory refuses
         // every tile on the beach, and a cursor dimmed everywhere reads as
         // broken rather than as a message; the arrow count in the header
         // says that one, and `out_of_signposts` tells the two apart.
-        let seat = acts_for(*screen.get(), &cursor);
+        let seat = acts_for(*screen.get(), board, &cursor);
         let tile_refuses = placing
             && !board.can_place_signpost(seat, cursor.x, cursor.y)
             && !board.out_of_signposts(seat, cursor.x, cursor.y);
-        sprite.color = if tile_refuses {
+        let shown = if tile_refuses {
             color.with_alpha(0.34)
         } else {
             color
         };
+        layout::tint(&mut sprite, shown);
     }
 }
 
@@ -472,7 +473,7 @@ pub fn glide_cursors(
 
 /// One player's tile cursor: corner brackets in the owner's colour. Odd
 /// seats rotate 45 degrees (a diamond) so overlapping cursors stay distinct.
-fn cursor_sprite(commands: &mut Commands, art: &crate::app::art::Art, player: u8) {
+pub(crate) fn cursor_sprite(commands: &mut Commands, art: &crate::app::art::Art, player: u8) {
     let rotation = if player % 2 == 1 {
         Quat::from_rotation_z(std::f32::consts::FRAC_PI_4)
     } else {
@@ -505,20 +506,32 @@ pub fn spawn_stage_cursors(
     mut commands: Commands,
     art: Res<crate::app::art::Art>,
     coop: Res<crate::app::Coop>,
-    campaign: Res<crate::app::Campaign>,
 ) {
-    let hands = if coop.in_play(&campaign) { 2 } else { 1 };
+    let hands = if coop.0 { 2 } else { 1 };
     spawn_cursors(&mut commands, &art, hands);
 }
 
 /// The seat a cursor's placements belong to. A puzzle has one, whoever's
-/// hands are on the cursor: co-op's second cursor places the first seat's
-/// arrows.
-pub fn acts_for(screen: Screen, cursor: &Cursor) -> u8 {
+/// hands are on the cursor (co-op's second cursor on a Tide Pool stage
+/// places the first seat's arrows), except a co-op stage, where each
+/// cursor places its own hand ([`stage_seat`]).
+pub fn acts_for(screen: Screen, board: &crate::sim::Board, cursor: &Cursor) -> u8 {
     if screen == Screen::Puzzle {
-        0
+        stage_seat(board, cursor)
     } else {
         cursor.player
+    }
+}
+
+/// The seat a cursor places for on a stage: its own on a co-op stage, where
+/// P1's arrows turn the left claws and P2's the right
+/// ([`crate::sim::Rules::claw_hands`]), and seat 0 on every other, where a
+/// second cursor is a second pair of hands. Asked of the board, which is
+/// what the arrows act on.
+pub fn stage_seat(board: &crate::sim::Board, cursor: &Cursor) -> u8 {
+    match board.rules().claw_hands {
+        Some(_) => cursor.player,
+        None => 0,
     }
 }
 
@@ -530,6 +543,15 @@ pub fn spawn_versus_cursors(
     art: Res<crate::app::art::Art>,
     source: crate::app::session::RoundSource,
 ) {
+    for seat in seats_played_here(&source) {
+        cursor_sprite(&mut commands, &art, seat);
+    }
+}
+
+/// The seats a versus round puts a cursor on at this machine: the one
+/// answer the cursors are spawned by, and what tells a round one person
+/// plays alone here from a couch's.
+pub(crate) fn seats_played_here(source: &crate::app::session::RoundSource) -> Vec<u8> {
     let crate::app::session::RoundSource {
         online,
         playback,
@@ -549,43 +571,43 @@ pub fn spawn_versus_cursors(
     // and its code says so, so counting heads put a cursor on that seat
     // and left the human above it with none.
     if let Some(round) = &resuming.0 {
-        for (seat, bot) in round.bots[..usize::from(round.seats)].iter().enumerate() {
-            if bot.is_none() {
-                cursor_sprite(&mut commands, &art, seat as u8);
-            }
-        }
-        return;
+        return round.bots[..usize::from(round.seats)]
+            .iter()
+            .enumerate()
+            .filter(|(_, bot)| bot.is_none())
+            .map(|(seat, _)| seat as u8)
+            .collect();
     }
     let daily_config = crate::app::match_setup::MatchConfig::daily();
     let config = if daily.active {
         &daily_config
     } else {
-        &*config
+        &**config
     };
     // A replay has no cursor, for the same reason a spectator has none:
     // there is no seat here to place from. Cursor movement was never
     // recorded, so one drawn over a replay sits in the middle of the board
     // looking broken.
     if playback.0.is_some() {
-        return;
+        return Vec::new();
     }
     if online.0.is_none() && config.armed {
-        // Configured match: one cursor per human seat.
-        spawn_cursors(&mut commands, &art, config.humans());
-        return;
+        // Configured match: one cursor per person's seat, where step 3
+        // put them.
+        return config.human_seats();
     }
     if let Some(session) = &online.0 {
         // A spectator has no cursor: there is no seat for it to place from.
         // Nor does a seat a bot drives from this machine: the keys here are
         // not what plays it.
-        if let Some(seat) = session.session.seat()
-            && session.bot.is_none()
-        {
-            cursor_sprite(&mut commands, &art, seat);
-        }
-        return;
+        return session
+            .session
+            .seat()
+            .filter(|_| session.bot.is_none())
+            .into_iter()
+            .collect();
     }
-    spawn_cursors(&mut commands, &art, (pads.iter().count() as u8).max(2));
+    (0..(pads.iter().count() as u8).max(2)).collect()
 }
 
 /// Snap every cursor to the board centre (used right after a mode spawns its
@@ -835,8 +857,8 @@ mod tests {
         app.add_systems(
             Update,
             |cursors: Query<&Cursor>, mut answers: ResMut<Answers>| {
-                for seat in 0..crate::sim::MAX_PLAYERS {
-                    answers.0[seat] = seated_here(&cursors, seat as u8);
+                for (seat, answer) in answers.0.iter_mut().enumerate() {
+                    *answer = seated_here(&cursors, seat as u8);
                 }
             },
         );
@@ -863,8 +885,8 @@ mod tests {
             app.add_systems(
                 Update,
                 |cursors: Query<&Cursor>, mut answers: ResMut<Answers>| {
-                    for seat in 0..crate::sim::MAX_PLAYERS {
-                        answers.0[seat] = post_noticed_here(&cursors, seat as u8);
+                    for (seat, answer) in answers.0.iter_mut().enumerate() {
+                        *answer = post_noticed_here(&cursors, seat as u8);
                     }
                 },
             );
@@ -1076,6 +1098,57 @@ mod tests {
         }
     }
 
+    /// A finished couch round with the results card up: a table set up
+    /// at this machine, with nobody online.
+    fn couch_results_card() -> App {
+        use crate::app::tournament::Tournament;
+        let mut app = beach(2);
+        app.init_resource::<Tournament>();
+        app.init_resource::<crate::app::lobby::Homecoming>();
+        app.init_resource::<crate::app::pause::PauseMenu>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<LiveSeatKeys>();
+        app.init_resource::<crate::app::match_setup::MatchConfig>();
+        app.init_state::<crate::app::VersusPhase>();
+        let mut table = crate::app::rematch::LocalTable::default();
+        table.note_round(true, &Default::default(), &Default::default());
+        app.insert_resource(table);
+        app.init_resource::<crate::app::next_map::NextMap>();
+        app.init_resource::<crate::app::match_setup::MatchMenu>();
+        app.add_systems(Update, versus_over_input);
+        app
+    }
+
+    /// R on a couch round's card plays the same table again, through the
+    /// arena's own teardown and build; the same R at an online table,
+    /// whose next round is the lobby's to call, does nothing.
+    #[test]
+    fn r_on_a_couch_card_plays_the_table_again() {
+        let mut app = couch_results_card();
+        tap(&mut app, KeyCode::KeyR);
+        assert!(matches!(
+            *app.world().resource::<NextState<Screen>>(),
+            NextState::Pending(Screen::Versus)
+        ));
+        assert!(
+            app.world()
+                .resource::<crate::app::match_setup::MatchConfig>()
+                .armed
+        );
+
+        let mut app = results_card(0, true, false);
+        tap(&mut app, KeyCode::KeyR);
+        assert!(matches!(
+            *app.world().resource::<NextState<Screen>>(),
+            NextState::Unchanged
+        ));
+        assert!(
+            !app.world()
+                .resource::<crate::app::match_setup::MatchConfig>()
+                .armed
+        );
+    }
+
     /// A finished online match with the results card up, over a real
     /// socket: seat 0 hosts (with the beacon it carried out of the lobby),
     /// anything else joins.
@@ -1085,11 +1158,7 @@ mod tests {
         use crate::sim::{DEFAULT_DELAY, Lockstep};
         use crate::transport::{Announcer, MatchTerms, UdpTransport};
 
-        let mut app = beach(2);
-        app.init_resource::<Tournament>();
-        app.init_resource::<crate::app::lobby::Homecoming>();
-        app.init_resource::<crate::app::pause::PauseMenu>();
-        app.add_systems(Update, versus_over_input);
+        let mut app = couch_results_card();
         let host = seat == 0;
         let transport = match host {
             true => UdpTransport::host(0).expect("game socket"),
@@ -1186,13 +1255,145 @@ mod tests {
         );
         assert!(app.world().resource::<Homecoming>().0.is_none());
 
+        // The host's Enter opens its map page for the next round, and the
+        // card it picks there calls the round.
         let mut app = results_card(0, true, true);
+        assert_eq!(pressing_enter(&mut app), Screen::Versus, "the page first");
+        assert!(crate::app::next_map::page_up(
+            app.world().resource::<crate::app::match_setup::MatchMenu>()
+        ));
         assert_eq!(
             pressing_enter(&mut app),
             Screen::Interlude,
-            "the host calls the next round instead"
+            "the host calls the next round on the card picked"
         );
         assert!(app.world().resource::<Homecoming>().0.is_none());
+    }
+
+    /// Esc on the host's page between rounds puts the page away and calls
+    /// nothing: the results card as it was, the series still running, and
+    /// Enter opening the page again.
+    #[test]
+    fn esc_on_the_next_map_page_calls_nothing() {
+        use crate::app::net::Online;
+        let mut app = results_card(0, true, true);
+        let dealt = |app: &App| {
+            app.world()
+                .resource::<Online>()
+                .0
+                .as_ref()
+                .map(|session| session.rounds_dealt)
+        };
+        let before = dealt(&app);
+        assert_eq!(pressing_enter(&mut app), Screen::Versus);
+        tap(&mut app, KeyCode::KeyD);
+        tap(&mut app, KeyCode::Escape);
+        app.update();
+        let menu = app.world().resource::<crate::app::match_setup::MatchMenu>();
+        assert!(!crate::app::next_map::page_up(menu), "the page is down");
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Versus
+        );
+        assert_eq!(dealt(&app), before, "no round called");
+        assert!(
+            app.world()
+                .resource::<crate::app::tournament::Tournament>()
+                .is_running(),
+            "the series plays on"
+        );
+        assert!(
+            app.world()
+                .resource::<Online>()
+                .0
+                .as_ref()
+                .is_some_and(|session| !session.picking_map),
+            "the table is told the host stopped picking"
+        );
+        assert_eq!(pressing_enter(&mut app), Screen::Versus);
+        assert!(crate::app::next_map::page_up(
+            app.world().resource::<crate::app::match_setup::MatchMenu>()
+        ));
+    }
+
+    /// Esc on the host's page between rounds puts the page away and opens
+    /// nothing behind it: the pause card's own systems run after the
+    /// card's keys, on the condition the game runs them on. The page went
+    /// down inside the card's keys, the pause card's condition (no page
+    /// up) was true by the time it was read, and it opened on that Esc.
+    #[test]
+    fn esc_on_the_next_map_page_opens_no_pause_card() {
+        let mut app = results_card(0, true, true);
+        app.insert_state(Screen::Versus);
+        app.insert_state(crate::app::Phase::default());
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::Paused>();
+        app.add_message::<AppExit>();
+        app.add_systems(
+            Update,
+            crate::app::schedule::pause_card_systems().after(versus_over_input),
+        );
+        assert_eq!(pressing_enter(&mut app), Screen::Versus);
+        assert!(crate::app::next_map::page_up(
+            app.world().resource::<crate::app::match_setup::MatchMenu>()
+        ));
+        tap(&mut app, KeyCode::Escape);
+        app.update();
+        let menu = app.world().resource::<crate::app::match_setup::MatchMenu>();
+        assert!(!crate::app::next_map::page_up(menu), "the page is down");
+        assert!(
+            !app.world()
+                .resource::<crate::app::pause::PauseMenu>()
+                .is_open(),
+            "and no pause card came up on the same Esc"
+        );
+        // A second Esc, on the results card, is the pause card's.
+        tap(&mut app, KeyCode::Escape);
+        assert!(
+            app.world()
+                .resource::<crate::app::pause::PauseMenu>()
+                .is_open()
+        );
+    }
+
+    /// Walking the host's page between rounds walks its cards and not the
+    /// board cursor behind it: the cursor runs on the condition the game
+    /// runs it on, after the card's keys. It answered the page's WASD (and
+    /// a pad's d-pad, which the page's face sends as WASD) as well.
+    #[test]
+    fn walking_the_next_map_page_leaves_the_board_cursor_alone() {
+        let mut app = results_card(0, true, true);
+        app.insert_state(Screen::Versus);
+        app.init_resource::<crate::app::editor::EditorState>();
+        app.add_systems(
+            Update,
+            move_cursor
+                .run_if(crate::app::conditions::board_cursor_free)
+                .after(versus_over_input),
+        );
+        let home = cursor_at(&mut app, 0);
+        assert_eq!(pressing_enter(&mut app), Screen::Versus);
+        let slot = app
+            .world()
+            .resource::<crate::app::match_setup::MatchMenu>()
+            .slot;
+        for key in [KeyCode::KeyD, KeyCode::KeyS, KeyCode::ArrowRight] {
+            tap(&mut app, key);
+            app.update();
+        }
+        assert_ne!(
+            app.world()
+                .resource::<crate::app::match_setup::MatchMenu>()
+                .slot,
+            slot,
+            "the page's cursor walked"
+        );
+        assert_eq!(cursor_at(&mut app, 0), home, "the board's did not");
+        // Put away, the board has its keys back.
+        tap(&mut app, KeyCode::Escape);
+        app.update();
+        tap(&mut app, KeyCode::KeyD);
+        assert_ne!(cursor_at(&mut app, 0), home);
     }
 
     /// With the pause card up over the results card, Enter is the card's.

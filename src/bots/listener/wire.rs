@@ -2,11 +2,12 @@
 //! routing what a registered bot says to the games it sits in.
 
 use super::admit::{Pending, locked_out, register_bot};
-use super::{BotId, Conn, Event, GameMsg, Registry, Shared, View, emit, lock};
+use super::{BotId, Conn, Event, GameMsg, Registry, Sent, Shared, View, emit, lock};
 use crate::bots::lookahead;
 use crate::bots::protocol::{self, Incoming};
 use crate::sim::PlayerId;
 use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -184,20 +185,27 @@ fn serve(stream: TcpStream, shared: &Arc<Shared>) {
 pub(super) struct Wire {
     stream: TcpStream,
     writer: TcpStream,
+    /// The protocol version the bot registered with on it.
+    protocol: u64,
 }
 
 impl Wire {
-    pub(super) fn of(stream: &TcpStream) -> std::io::Result<Wire> {
+    pub(super) fn of(stream: &TcpStream, protocol: u64) -> std::io::Result<Wire> {
         Ok(Wire {
             stream: stream.try_clone()?,
             writer: stream.try_clone()?,
+            protocol,
         })
     }
 }
 
 /// Give bot `id` this connection, closing any older one it had.
 pub(super) fn attach(registry: &mut Registry, id: BotId, wire: Wire) -> u64 {
-    let Wire { stream, writer } = wire;
+    let Wire {
+        stream,
+        writer,
+        protocol,
+    } = wire;
     registry.next_serial += 1;
     let serial = registry.next_serial;
     let (tx, rx) = mpsc::sync_channel::<Arc<str>>(QUEUE);
@@ -211,6 +219,9 @@ pub(super) fn attach(registry: &mut Registry, id: BotId, wire: Wire) -> u64 {
         tx,
         stream,
         queued,
+        protocol,
+        sent: HashMap::new(),
+        resync: HashSet::new(),
     };
     // Here, whatever games went by without it.
     registry.bots[id].absent = false;
@@ -276,6 +287,74 @@ pub(super) fn send_line(registry: &mut Registry, id: BotId, line: Arc<str>, earn
             false
         }
     }
+}
+
+/// Write one of a game's own messages to bot `id`, shaped for the protocol
+/// it registered with, and say which connection it went to. Under
+/// protocol 2 a tick goes as what changed since the last tick of that game
+/// sent on this connection ([`protocol::delta`]), and whole when there is
+/// none to go from: the first of a game, the first after a `hello` (a
+/// game begun, or begun again for a bot that came back), one asked for
+/// with `resync`, and every [`protocol::FULL_EVERY`] ticks besides.
+///
+/// The diff is worked out with the registry let go, as the line is: every
+/// game's every tick goes through the registry. A `resync` heard in the
+/// meantime is not lost, since it is kept until the next tick is shaped.
+pub(super) fn send_game(shared: &Shared, id: BotId, msg: &Value) -> Option<u64> {
+    let game = msg
+        .get("game")
+        .and_then(Value::as_u64)
+        .and_then(|g| u32::try_from(g).ok());
+    let kind = msg.get("type").and_then(Value::as_str);
+    // A game's tick is shaped against the last one sent; its `hello` and
+    // `end` start and finish what there is to diff against.
+    let shaped = matches!(kind, Some("tick" | "hello" | "end"));
+    let (serial, protocol, last) = {
+        let mut registry = lock(&shared.registry);
+        let conn = registry.bots.get_mut(id)?.conn.as_mut()?;
+        let last = match game {
+            Some(game) if shaped => {
+                let last = conn.sent.remove(&game);
+                if conn.resync.remove(&game) {
+                    None
+                } else {
+                    last
+                }
+            }
+            _ => None,
+        };
+        (conn.serial, conn.protocol, last)
+    };
+    let (line, keep) = match (kind, protocol >= 2, msg.get("tick").and_then(Value::as_u64)) {
+        (Some("tick"), true, Some(tick)) => {
+            let (line, full_at) = match last {
+                Some(last) if tick > last.tick && tick - last.full_at < protocol::FULL_EVERY => {
+                    (line_of(&protocol::delta(&last.state, msg)), last.full_at)
+                }
+                _ => (line_of(msg), tick),
+            };
+            let keep = Sent {
+                state: msg.clone(),
+                tick,
+                full_at,
+            };
+            (line, Some(keep))
+        }
+        _ => (line_of(msg), None),
+    };
+    let mut registry = lock(&shared.registry);
+    let conn = registry.bots.get_mut(id)?.conn.as_mut()?;
+    // Came back on a new connection meanwhile: that one starts afresh, and
+    // this line was for the old one.
+    if conn.serial != serial {
+        return None;
+    }
+    if let (Some(game), Some(keep)) = (game, keep)
+        && !conn.resync.contains(&game)
+    {
+        conn.sent.insert(game, keep);
+    }
+    send_line(&mut registry, id, line, true).then_some(serial)
 }
 
 pub(super) fn ping(registry: &mut Registry, id: BotId) {
@@ -426,6 +505,17 @@ fn handle(shared: &Arc<Shared>, id: BotId, msg: Incoming, at: Instant) {
                     why: why.clone(),
                     at,
                 });
+            }
+        }
+        // Only for a game it sits in: the flag is kept until that game's
+        // next tick, and one for any number a bot cares to name would be
+        // kept for good.
+        Incoming::Resync { game } => {
+            if seat_in(&registry, id, game).is_some()
+                && let Some(conn) = registry.bots[id].conn.as_mut()
+            {
+                conn.sent.remove(&game);
+                conn.resync.insert(game);
             }
         }
         Incoming::Pong { id: n } => {

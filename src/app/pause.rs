@@ -1,5 +1,5 @@
 //! The pause overlay: Esc (or Start on a pad) during play opens a card with
-//! Continue / Back to menu / Quit.
+//! Continue / Back to menu / Quit, and Restart round over a couch round.
 //!
 //! Offline it simply freezes the sim. Online it runs the lockstep pause
 //! protocol (see `sim::net`): the peers agree on a frame, everyone's commits
@@ -7,6 +7,7 @@
 //! that pauses opens the card on the others too, or their beach would
 //! freeze with no explanation.
 
+use crate::app::gamepad::scheme;
 use crate::app::menu_ui;
 use crate::app::net::Online;
 use crate::app::palette;
@@ -18,19 +19,42 @@ use bevy::prelude::*;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PauseAction {
     Continue,
+    /// The round from its countdown, on the same table: a couch round
+    /// only ([`crate::app::rematch::restart_offered`]).
+    Restart,
     ToMenu,
     Quit,
 }
 
 impl PauseAction {
-    pub const ALL: [PauseAction; 3] = [
-        PauseAction::Continue,
-        PauseAction::ToMenu,
-        PauseAction::Quit,
-    ];
-}
+    /// The card's rows, top to bottom. A puzzle has no restart row: R
+    /// (Y on a pad) resets a running puzzle already, and the card is the
+    /// way out of one.
+    pub fn rows(restart: bool) -> &'static [PauseAction] {
+        match restart {
+            true => &[
+                PauseAction::Continue,
+                PauseAction::Restart,
+                PauseAction::ToMenu,
+                PauseAction::Quit,
+            ],
+            false => &[
+                PauseAction::Continue,
+                PauseAction::ToMenu,
+                PauseAction::Quit,
+            ],
+        }
+    }
 
-const OPTIONS: usize = PauseAction::ALL.len();
+    fn label(self, tr: &crate::app::i18n::Tr) -> &'static str {
+        match self {
+            PauseAction::Continue => tr.pause_continue,
+            PauseAction::Restart => tr.pause_restart,
+            PauseAction::ToMenu => tr.pause_to_menu,
+            PauseAction::Quit => tr.pause_quit,
+        }
+    }
+}
 
 /// The pause card, if it is up.
 #[derive(Resource, Default)]
@@ -53,8 +77,21 @@ struct OpenCard {
     /// match. The table's pause did not raise it, so the table playing on
     /// does not put it away either.
     own: bool,
+    /// Whether the card offers to restart the round, decided as it opens.
+    restart: bool,
     /// The row under the cursor.
     selected: usize,
+}
+
+impl OpenCard {
+    fn rows(&self) -> &'static [PauseAction] {
+        PauseAction::rows(self.restart)
+    }
+
+    /// The action under the cursor.
+    fn chosen(&self) -> PauseAction {
+        self.rows()[self.selected.min(self.rows().len() - 1)]
+    }
 }
 
 impl PauseMenu {
@@ -81,6 +118,7 @@ impl PauseMenu {
             card: Some(OpenCard {
                 held: false,
                 own: false,
+                restart: false,
                 selected: 0,
             }),
         }
@@ -95,7 +133,7 @@ pub struct PauseRow(usize);
 
 /// The card, titled for what it is: "paused" when the round stopped, and
 /// a plain menu for a spectator, whose match plays on behind it.
-fn spawn_card(commands: &mut Commands, settings: &GameSettings, own: bool) {
+fn spawn_card(commands: &mut Commands, settings: &GameSettings, own: bool, rows: usize) {
     let tr = settings.tr();
     let title = match own {
         true => tr.pause_menu_title,
@@ -115,7 +153,7 @@ fn spawn_card(commands: &mut Commands, settings: &GameSettings, own: bool) {
                     TextColor(palette::GOLD),
                 ));
                 card.spawn(menu_ui::spacer(6.0));
-                menu_ui::spawn_rows(card, OPTIONS, 24.0, PauseRow);
+                menu_ui::spawn_rows(card, rows, 24.0, PauseRow);
             });
         });
 }
@@ -144,11 +182,15 @@ pub struct PauseCard<'w, 's> {
     ui: Query<'w, 's, Entity, With<PauseUi>>,
 }
 
-/// The two ways out of a round from the card: the menu, and the desktop.
+/// The ways out of a round from the card: the menu, the desktop, and the
+/// same round again from its countdown.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Leaving<'w> {
     next_screen: ResMut<'w, NextState<Screen>>,
     exit: MessageWriter<'w, AppExit>,
+    again: crate::app::rematch::PlayAgain<'w>,
+    tournament: ResMut<'w, crate::app::tournament::Tournament>,
+    vphase: Res<'w, State<crate::app::VersusPhase>>,
 }
 
 /// Open, navigate, and act on the pause card. Runs on the play screens.
@@ -171,18 +213,27 @@ pub fn pause_input(
     let Leaving {
         mut next_screen,
         mut exit,
+        mut again,
+        mut tournament,
+        vphase,
     } = leaving;
-    // Pads: Start toggles the card, but never during puzzle setup where
-    // Start means "begin the run".
-    let start_ok = !crate::app::conditions::in_puzzle_setup(screen.get(), phase.get());
-    let pad_start = start_ok && buttons.pad(GamepadButton::Start);
+    // Pads: whatever the face's table opens the card with. Start over a
+    // round, Select in a puzzle's setup where Start begins the run, and
+    // nothing on a results card, whose A to the menu is `Does::Menu` and
+    // not the card's. Once the card is up its own table walks it, and
+    // Start or B puts it away.
+    let face = &buttons.face.0;
+    let pad = |does| scheme::pressed(face, does, buttons.pads.iter());
+    let pad_as = |control, does| scheme::pressed_as(face, control, does, buttons.pads.iter());
+    let pad_start = pad(scheme::Does::Pause) || pad(scheme::Does::OpenMenu);
     // Nor on a puzzle's won or lost card, where Esc is the way back to
     // the stage list and a pause card would open under it for a frame.
     let done = crate::app::conditions::puzzle_settled(screen.get(), phase.get());
     let escape = !done && keys.just_pressed(KeyCode::Escape);
-    let pad_up = buttons.pad(GamepadButton::DPadUp);
-    let pad_down = buttons.pad(GamepadButton::DPadDown);
-    let pad_accept = buttons.pad(GamepadButton::South);
+    let pad_up = pad_as(scheme::Pad::Up, scheme::Does::Choose);
+    let pad_down = pad_as(scheme::Pad::Down, scheme::Does::Choose);
+    let pad_accept = pad(scheme::Does::Confirm);
+    let pad_close = pad(scheme::Does::GoOn);
 
     // A peer's pause opens the card here too, so a frozen beach is never
     // unexplained. Their Escape is as good as ours.
@@ -207,17 +258,26 @@ pub fn pause_input(
                     false
                 }
             };
-            menu.card = Some(OpenCard {
+            let restart = *screen.get() == Screen::Versus
+                && crate::app::rematch::restart_offered(
+                    &again.table,
+                    &online,
+                    &tournament,
+                    *vphase.get(),
+                );
+            let card = OpenCard {
                 held,
                 own,
+                restart,
                 selected: 0,
-            });
-            spawn_card(&mut commands, &settings, own);
+            };
+            menu.card = Some(card);
+            spawn_card(&mut commands, &settings, own, card.rows().len());
         }
         return;
     };
 
-    if keys.just_pressed(KeyCode::Escape) || pad_start {
+    if keys.just_pressed(KeyCode::Escape) || pad_close {
         resume(&mut online);
         close(&mut commands, &mut menu, &mut paused, &ui);
         return;
@@ -229,8 +289,9 @@ pub fn pause_input(
         close(&mut commands, &mut menu, &mut paused, &ui);
         return;
     }
+    let options = open.rows().len();
     let before = open.selected;
-    open.selected = menu_ui::nav(keys, open.selected, OPTIONS);
+    open.selected = menu_ui::nav(keys, open.selected, options);
     // Up wins over a same-frame down, as it always has. Read only when the
     // keys did not move the cursor already, so a pad press that ever
     // arrives as W/S as well (the menu bridge once sent the d-pad over a
@@ -245,13 +306,19 @@ pub fn pause_input(
     } else {
         menu_ui::Nav::Stay
     };
-    open.selected = menu_ui::step(pad_nav, open.selected, OPTIONS);
+    open.selected = menu_ui::step(pad_nav, open.selected, options);
     menu.card = Some(open);
     if menu_ui::enter(keys) || pad_accept {
-        match PauseAction::ALL[open.selected] {
+        match open.chosen() {
             PauseAction::Continue => {
                 resume(&mut online);
                 close(&mut commands, &mut menu, &mut paused, &ui);
+            }
+            PauseAction::Restart => {
+                // Offered offline only, so there is no table to resume.
+                close(&mut commands, &mut menu, &mut paused, &ui);
+                let restart = crate::app::rematch::Again::Restart;
+                again.ask(restart, &mut tournament, &mut next_screen);
             }
             PauseAction::ToMenu => {
                 // Leaving drops the session anyway, but resume first so the
@@ -288,12 +355,16 @@ pub fn update_pause_rows(
     mut rows: Query<(&PauseRow, &mut Text, &mut TextColor)>,
 ) {
     let tr = settings.tr();
-    let labels = [tr.pause_continue, tr.pause_to_menu, tr.pause_quit];
-    let selected = menu.card.map(|card| card.selected);
+    let Some(card) = menu.card else {
+        return;
+    };
     for (row, mut text, mut color) in &mut rows {
+        let Some(action) = card.rows().get(row.0) else {
+            continue;
+        };
         menu_ui::paint_row(
-            Some(row.0) == selected,
-            labels[row.0],
+            row.0 == card.selected,
+            action.label(tr),
             &mut text,
             &mut color,
         );
@@ -315,6 +386,20 @@ mod tests {
     use super::*;
     use crate::app::Screen;
 
+    /// What the card asks to decide on a restart row, at their plainest:
+    /// no table set up here, so no row.
+    fn add_restart_sources(app: &mut App) {
+        app.init_resource::<crate::app::rematch::LocalTable>();
+        app.init_resource::<crate::app::match_setup::MatchConfig>();
+        app.init_resource::<crate::app::tournament::Tournament>();
+        if !app
+            .world()
+            .contains_resource::<State<crate::app::VersusPhase>>()
+        {
+            app.init_state::<crate::app::VersusPhase>();
+        }
+    }
+
     /// The card's own behaviour, which the pause *protocol* tests never
     /// touch: Escape opens it and freezes an offline round, the selection
     /// walks the options, and picking "back to the beach" leaves.
@@ -325,11 +410,14 @@ mod tests {
         app.init_state::<Screen>();
         app.init_state::<Phase>();
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<PauseMenu>();
         app.init_resource::<Paused>();
         app.init_resource::<Online>();
         app.insert_resource(GameSettings::default());
         app.add_message::<AppExit>();
+        add_restart_sources(&mut app);
         app.add_systems(Update, pause_input);
 
         let tap = |app: &mut App, key: KeyCode| {
@@ -356,12 +444,11 @@ mod tests {
 
         // The card is three rows: down twice reaches the last of them.
         let row = |app: &App| {
-            PauseAction::ALL[app
-                .world()
+            app.world()
                 .resource::<PauseMenu>()
                 .card
                 .expect("the card is up")
-                .selected]
+                .chosen()
         };
         tap(&mut app, KeyCode::KeyS);
         tap(&mut app, KeyCode::KeyS);
@@ -385,6 +472,91 @@ mod tests {
         assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
     }
 
+    /// A pad opens and works the card by the face's table: Start over a
+    /// round, Select in a puzzle's setup, where Start begins the run; then
+    /// the d-pad walks it, and B puts it away as Start does.
+    #[test]
+    fn a_pad_works_the_card_by_its_table() {
+        use crate::app::gamepad::{Face, PadFace};
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_state::<Phase>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<PadFace>();
+        app.init_resource::<PauseMenu>();
+        app.init_resource::<Paused>();
+        app.init_resource::<Online>();
+        app.insert_resource(GameSettings::default());
+        app.add_message::<AppExit>();
+        add_restart_sources(&mut app);
+        // The face follows the card, as `read_face` has it.
+        let face = |menu: Res<PauseMenu>, mut face: ResMut<PadFace>, mut under: Local<Face>| {
+            if !menu.is_open() {
+                *under = face.0.clone();
+            }
+            face.0 = match menu.is_open() {
+                true => Face::Paused,
+                false => under.clone(),
+            };
+        };
+        app.add_systems(Update, (face, pause_input).chain());
+        let pad = app.world_mut().spawn(Gamepad::default()).id();
+        let tap = |app: &mut App, button: GamepadButton| {
+            let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("the pad");
+            gamepad.digital_mut().clear();
+            gamepad.digital_mut().press(button);
+            app.update();
+            let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("the pad");
+            gamepad.digital_mut().release(button);
+            gamepad.digital_mut().clear();
+            app.update();
+        };
+        let open = |app: &App| app.world().resource::<PauseMenu>().is_open();
+
+        app.insert_resource(State::new(Screen::Puzzle));
+        app.insert_resource(PadFace(Face::PuzzleSetup {
+            posts: true,
+            hint: false,
+        }));
+        tap(&mut app, GamepadButton::Start);
+        assert!(!open(&app), "Start begins the run in setup");
+        tap(&mut app, GamepadButton::Select);
+        assert!(open(&app), "Select opens the card there");
+        tap(&mut app, GamepadButton::DPadDown);
+        let row = app
+            .world()
+            .resource::<PauseMenu>()
+            .card
+            .expect("up")
+            .chosen();
+        assert_eq!(row, PauseAction::ToMenu);
+        tap(&mut app, GamepadButton::East);
+        assert!(!open(&app), "B puts it away");
+
+        app.insert_resource(State::new(Screen::Versus));
+        app.insert_resource(PadFace(Face::Round));
+        tap(&mut app, GamepadButton::Start);
+        assert!(open(&app), "Start opens it over a round");
+        tap(&mut app, GamepadButton::Start);
+        assert!(!open(&app), "and puts it away");
+
+        // A results card's A takes its door, the menu included, and opens
+        // no card under it.
+        app.insert_resource(PadFace(Face::Results {
+            door: crate::app::play_input::AfterRound::Menu,
+            talk: false,
+            rematch: None,
+            keep: crate::app::replays::KeepOffer::Nothing,
+        }));
+        tap(&mut app, GamepadButton::South);
+        assert!(!open(&app), "A on the results card is not a pause");
+        // A replay's Start is the way to the menu, by the card.
+        app.insert_resource(PadFace(Face::Replay));
+        tap(&mut app, GamepadButton::Start);
+        assert!(open(&app), "Start opens it over a replay");
+    }
+
     /// A spectator's Escape opens a card of their own. The lockstep names
     /// no frame for a watcher, so the table never pauses, and the card used
     /// to read that as "a peer resumed" and shut itself the next frame:
@@ -401,10 +573,13 @@ mod tests {
         app.init_state::<Phase>();
         app.insert_resource(State::new(Screen::Versus));
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<PauseMenu>();
         app.init_resource::<Paused>();
         app.insert_resource(GameSettings::default());
         app.add_message::<AppExit>();
+        add_restart_sources(&mut app);
         let watcher = OnlineSession::new(
             UdpTransport::host(0).expect("socket"),
             Lockstep::observer(vec![0, 1], DEFAULT_DELAY),
@@ -452,6 +627,8 @@ mod tests {
         app.insert_resource(Sim(classic_arena(false, 2)));
         app.insert_resource(GameSettings::default());
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<Time>();
         app.init_resource::<PendingActions>();
         app.init_resource::<PauseMenu>();
@@ -459,6 +636,7 @@ mod tests {
         app.init_resource::<Online>();
         app.add_message::<PlacementDenied>();
         app.add_message::<AppExit>();
+        add_restart_sources(&mut app);
         app.world_mut()
             .spawn((Cursor::seated(0), Transform::default()));
         // The schedule's own conditions, so this cannot pass while the real
@@ -497,12 +675,11 @@ mod tests {
         // S walks the card's rows and nothing else.
         tap(&mut app, KeyCode::KeyS);
         assert_eq!(
-            PauseAction::ALL[app
-                .world()
+            app.world()
                 .resource::<PauseMenu>()
                 .card
                 .expect("the card is up")
-                .selected],
+                .chosen(),
             PauseAction::ToMenu
         );
         assert_eq!(cursor(&mut app), parked, "the cursor stayed put");
@@ -535,11 +712,14 @@ mod tests {
         app.init_state::<Screen>();
         app.init_state::<Phase>();
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<PauseMenu>();
         app.init_resource::<Paused>();
         app.init_resource::<Online>();
         app.insert_resource(GameSettings::default());
         app.add_message::<AppExit>();
+        add_restart_sources(&mut app);
         app.add_systems(Update, pause_input);
         app.insert_resource(State::new(Screen::Puzzle));
         for phase in [Phase::Won, Phase::Lost] {
@@ -571,6 +751,8 @@ mod tests {
         app.init_state::<Screen>();
         app.init_state::<Phase>();
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<PauseMenu>();
         app.init_resource::<Paused>();
         app.init_resource::<Online>();
@@ -578,6 +760,7 @@ mod tests {
         app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.insert_resource(GameSettings::default());
         app.add_message::<AppExit>();
+        add_restart_sources(&mut app);
         app.add_message::<crate::app::LoadLevel>();
         let levels = crate::sim::campaign_levels();
         app.insert_resource(crate::app::Sim(levels[0].board()));
@@ -622,5 +805,68 @@ mod tests {
             !app.world().resource::<Paused>().0,
             "Escape out is Continue too"
         );
+    }
+
+    /// Over a round set up at this machine the card offers to restart it,
+    /// and the row does: the arena is entered again with the match armed.
+    /// The daily's round, or any round not set up here, has no such row.
+    #[test]
+    fn a_couch_round_can_be_restarted_from_the_card() {
+        for set_here in [true, false] {
+            let mut app = App::new();
+            app.add_plugins(bevy::state::app::StatesPlugin);
+            app.init_state::<Screen>();
+            app.init_state::<Phase>();
+            app.insert_resource(State::new(Screen::Versus));
+            app.init_resource::<ButtonInput<KeyCode>>();
+            app.init_resource::<crate::app::gamepad::PadFace>();
+            app.init_resource::<crate::app::gamepad::LastDevice>();
+            app.init_resource::<PauseMenu>();
+            app.init_resource::<Paused>();
+            app.init_resource::<Online>();
+            app.insert_resource(GameSettings::default());
+            app.add_message::<AppExit>();
+            add_restart_sources(&mut app);
+            let config = crate::app::match_setup::MatchConfig::default();
+            app.world_mut()
+                .resource_mut::<crate::app::rematch::LocalTable>()
+                .note_round(set_here, &config, &Default::default());
+            app.add_systems(Update, pause_input);
+            let tap = |app: &mut App, key: KeyCode| {
+                let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+                keys.reset_all();
+                keys.press(key);
+                app.update();
+                app.world_mut()
+                    .resource_mut::<ButtonInput<KeyCode>>()
+                    .reset_all();
+            };
+            tap(&mut app, KeyCode::Escape);
+            let card = app.world().resource::<PauseMenu>().card.expect("up");
+            assert_eq!(card.rows().contains(&PauseAction::Restart), set_here);
+            if !set_here {
+                continue;
+            }
+            tap(&mut app, KeyCode::KeyS);
+            let card = app.world().resource::<PauseMenu>().card.expect("up");
+            assert_eq!(card.chosen(), PauseAction::Restart);
+            tap(&mut app, KeyCode::Enter);
+            assert!(!app.world().resource::<PauseMenu>().is_open(), "closed");
+            assert!(!app.world().resource::<Paused>().0, "and let go");
+            assert!(
+                app.world()
+                    .resource::<crate::app::match_setup::MatchConfig>()
+                    .armed
+            );
+            assert!(
+                app.world()
+                    .resource::<crate::app::rematch::LocalTable>()
+                    .keeps_the_table()
+            );
+            assert!(matches!(
+                *app.world().resource::<NextState<Screen>>(),
+                NextState::Pending(Screen::Versus)
+            ));
+        }
     }
 }

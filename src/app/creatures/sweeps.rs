@@ -1,11 +1,15 @@
 //! The crabs a Crab Monopoly sweep carries home, glowing where they were
 //! picked up and then thrown over the beach into the banker's castle.
 
-use super::{Tween, crab_body, crab_claw, shade_of, shell_color, smoothing_alpha, sprite_side};
+use super::{
+    Tween, coop_claws, crab_body, crab_claw, resting_shell, shade_of, shell_color, smoothing_alpha,
+    sprite_side,
+};
 use crate::app::art::Art;
 use crate::app::layout;
 use crate::app::palette;
 use crate::app::{Sim, effects};
+use crate::sim::CrabKind;
 use bevy::color::Mix;
 use bevy::prelude::*;
 
@@ -109,18 +113,18 @@ pub fn draw_sweeps(
         let launch = flight.launch as f32;
         let lands = flight.lands.max(flight.launch + 1) as f32;
         let keep = sweep.heading(keep_of(board, flight, from), now, launch, lands);
-        let shell = shell_color(crab.kind, shade_of(crab.id));
+        let shell = swept_shell(crab.kind, crab.id);
         if now < launch {
             transform.translation = from.extend(effects::SWEEP_WAIT_Z);
             transform.scale = Vec3::ONE;
-            sprite.color = shell.mix(&palette::GOLD, glow);
+            layout::tint(&mut sprite, shell.mix(&palette::GOLD, glow));
             continue;
         }
         let progress = ((now - launch) / (lands - launch)).clamp(0.0, 1.0);
         let (at, scale) = effects::sweep_arc(from, keep, progress);
         transform.translation = at;
         transform.scale = Vec3::splat(scale);
-        sprite.color = shell;
+        layout::tint(&mut sprite, shell);
     }
     for flight in flights {
         let crab = &flight.crab;
@@ -129,7 +133,7 @@ pub fn draw_sweeps(
         }
         let pos = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
         let side = Vec2::splat(sprite_side(crab.kind));
-        let glowing = shell_color(crab.kind, shade_of(crab.id)).mix(&palette::GOLD, glow);
+        let glowing = swept_shell(crab.kind, crab.id).mix(&palette::GOLD, glow);
         commands
             .spawn((
                 SweepSprite::new(crab.id, keep_of(board, flight, pos)),
@@ -137,8 +141,15 @@ pub fn draw_sweeps(
                 Transform::from_translation(pos.extend(effects::SWEEP_WAIT_Z))
                     .with_rotation(layout::dir_rotation(crab.dir)),
             ))
-            .with_child(crab_claw(&art, crab.handed, side));
+            .with_child(crab_claw(&art, crab.handed, coop_claws(board), side));
     }
+}
+
+/// A swept crab's shell. A molt the tide carries home banks for its
+/// points and never starts a lure, so it is drawn as resting, the way a
+/// walking molt is while [`crate::sim::Board::lure_ready`] is false.
+fn swept_shell(kind: CrabKind, id: u32) -> Color {
+    resting_shell(kind, shell_color(kind, shade_of(id)), false)
 }
 
 /// The middle of the castle a swept crab's owner holds now, or `from`
@@ -152,6 +163,22 @@ fn keep_of(board: &crate::sim::Board, flight: &crate::sim::Sweeping, from: Vec2)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A swept molt is drawn resting even while a walking one's lure is
+    /// ready, since banking it from the sweep starts none; other kinds
+    /// keep their shell.
+    #[test]
+    fn a_swept_molt_is_drawn_resting() {
+        let id = 7;
+        let plain = shell_color(CrabKind::Molting, shade_of(id));
+        assert_ne!(swept_shell(CrabKind::Molting, id), plain);
+        assert_eq!(
+            swept_shell(CrabKind::Molting, id),
+            resting_shell(CrabKind::Molting, plain, false)
+        );
+        let common = shell_color(CrabKind::Common, shade_of(id));
+        assert_eq!(swept_shell(CrabKind::Common, id), common);
+    }
 
     /// A Castle Swap in mid-sweep moves the keep a crab in the air is
     /// flying to. It turns toward the new one from where it was headed,

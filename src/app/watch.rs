@@ -141,7 +141,9 @@ pub fn dropped_replays(
                 return;
             }
             Err(e) => {
-                let why = crate::app::i18n::fill(settings.tr().replay_drop_bad, &[("e", &e)]);
+                let tr = settings.tr();
+                let e = crate::app::replays::why_not(tr, &e);
+                let why = crate::app::i18n::fill(tr.replay_drop_bad, &[("e", &e)]);
                 library.feedback.clone_from(&why);
                 notice.0 = why;
             }

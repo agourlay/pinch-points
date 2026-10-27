@@ -21,7 +21,7 @@ fn a_host_speaks_for_its_bots_and_the_table_hears_them() {
             .commit_local_with(PlayerAction::None, &[(2, place)])
             .expect("committed");
         let theirs = joiner.commit_local(PlayerAction::None).expect("committed");
-        for msg in host.recent_commits().to_vec() {
+        for msg in host.recent_commits() {
             joiner.receive(msg);
         }
         host.receive(theirs);
@@ -165,6 +165,133 @@ fn commit_lead_is_bounded_and_recovers() {
     }
     assert_eq!(advanced, DEFAULT_DELAY as usize + 5);
     assert!(session.commit_local(PlayerAction::None).is_some());
+}
+
+/// A seated peer plays a frame only once it has committed the `delay`
+/// frames after it, so the frames come one a tick in the rhythm of its own
+/// clock rather than in the bursts the network delivers the others' inputs
+/// in, each `delay` ticks after its inputs were committed. A watcher has
+/// no commits and keeps up as the frames come, and a paused peer, whose
+/// commits stop at the pause frame, plays on up to it.
+#[test]
+fn a_frame_is_due_once_the_peers_own_commits_are_a_delay_past_it() {
+    let mut session = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
+    // Seat 1's inputs are all in, far ahead of anything played.
+    for frame in DEFAULT_DELAY..DEFAULT_DELAY + 20 {
+        session.receive(InputMsg {
+            player: 1,
+            frame,
+            action: PlayerAction::None,
+        });
+    }
+    assert!(
+        !session.due(),
+        "frame 0 waits for the commit of the frame a delay past it"
+    );
+    assert!(session.commit_local(PlayerAction::None).is_some());
+    assert_eq!(session.next_commit(), DEFAULT_DELAY + 1);
+    assert!(session.due(), "and is due once it is made");
+    assert!(session.advance().is_some());
+    assert!(!session.due(), "frame 1 waits for this peer's next commit");
+    assert!(session.commit_local(PlayerAction::None).is_some());
+    assert!(session.due(), "and is due once it is made");
+
+    assert!(
+        Lockstep::observer(vec![0, 1], DEFAULT_DELAY).due(),
+        "a watcher is never held back"
+    );
+
+    // A pause stops the commits at its frame; the frames up to it play.
+    let pause = session.request_pause().expect("a player may pause");
+    for _ in 0..30 {
+        session.commit_local(PlayerAction::None);
+        while session.due() && session.advance().is_some() {}
+    }
+    assert_eq!(session.next_commit(), pause, "the commits stopped there");
+    assert_eq!(session.frame(), pause, "and the frames played up to it");
+}
+
+/// A nudge moves this peer's commits against the host's clock: ahead, it
+/// holds that many commits back (keeping the action, like any refused
+/// commit); behind, it commits an extra empty frame a tick until level.
+#[test]
+fn a_nudge_holds_commits_back_or_adds_empty_ones() {
+    let mut session = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
+    session.nudge(2);
+    let place = PlayerAction::Place {
+        x: 1,
+        y: 1,
+        dir: Direction::Up,
+    };
+    assert!(session.commit_local_with(place, &[]).is_none());
+    assert!(session.commit_local_with(place, &[]).is_none());
+    let first = session.commit_local_with(place, &[]).expect("level again");
+    assert_eq!(first.frame, DEFAULT_DELAY, "nothing was skipped");
+    assert_eq!(session.next_commit(), DEFAULT_DELAY + 1);
+
+    session.nudge(-2);
+    for tick in 1..=3u32 {
+        let msg = session.commit_local_with(place, &[]).expect("commits");
+        let extra = if tick <= 2 { 2 } else { 1 };
+        assert_eq!(session.next_commit(), msg.frame + extra, "tick {tick}");
+    }
+    let added = session.recent_commits()[2];
+    assert_eq!(added.action, PlayerAction::None, "an added frame is empty");
+}
+
+/// A nudge is a reading of clocks that are running. A pause stops every
+/// clock at the table, and one held back across it fired after the resume
+/// against clocks that had moved on; so did one that could not be taken
+/// because the commit lead refused the commits it needed.
+#[test]
+fn a_nudge_does_not_outlive_a_pause_or_a_refused_commit() {
+    let none = PlayerAction::None;
+    // Held back across a pause called before it could be taken.
+    let mut session = Lockstep::new(1, vec![0, 1], DEFAULT_DELAY);
+    session.nudge(3);
+    session.request_pause().expect("a player may pause");
+    assert!(session.commit_local_with(none, &[]).is_some(), "not held");
+    assert!(!session.nudging(), "dropped with the pause");
+    // Given while paused and lifted with it, by this peer or another.
+    for theirs in [false, true] {
+        let mut session = Lockstep::new(1, vec![0, 1], DEFAULT_DELAY);
+        let pause = session.request_pause().expect("a player may pause");
+        session.nudge(-4);
+        match theirs {
+            false => {
+                session.resume();
+            }
+            true => {
+                session.receive_resume(pause);
+            }
+        }
+        assert!(!session.nudging(), "lifted with the pause: {theirs}");
+        let before = session.next_commit();
+        session.commit_local_with(none, &[]);
+        assert_eq!(session.next_commit(), before + 1, "one frame a tick");
+    }
+    // Wanting extra commits the commit lead will not take.
+    let mut session = Lockstep::new(1, vec![0, 1], DEFAULT_DELAY);
+    while session.commit_local(none).is_some() {}
+    session.nudge(-4);
+    assert!(
+        session.commit_local_with(none, &[]).is_none(),
+        "at the lead"
+    );
+    assert!(!session.nudging(), "dropped, not kept for later");
+}
+
+/// The input delay grows with the slowest round trip the host measured,
+/// from the default on a LAN to the most a round is played with.
+#[test]
+fn the_delay_grows_with_the_round_trip() {
+    use super::{MAX_DELAY, delay_for_round_trip};
+    assert_eq!(delay_for_round_trip(0.002), DEFAULT_DELAY, "a wired LAN");
+    assert_eq!(delay_for_round_trip(0.030), DEFAULT_DELAY, "a tick's worth");
+    assert_eq!(delay_for_round_trip(0.050), 4);
+    assert_eq!(delay_for_round_trip(0.100), 5);
+    assert_eq!(delay_for_round_trip(0.120), MAX_DELAY);
+    assert_eq!(delay_for_round_trip(3.0), MAX_DELAY, "and no further");
 }
 
 /// The pause is an agreement about a frame, not a local freeze: both
@@ -427,16 +554,6 @@ fn packed_input_round_trips() {
         });
         roundtrip(PlayerAction::Remove { x, y: 12 });
     }
-    let msg = InputMsg {
-        player: 3,
-        frame: 123_456,
-        action: PlayerAction::Place {
-            x: 7,
-            y: 2,
-            dir: Direction::Left,
-        },
-    };
-    assert_eq!(InputMsg::decode(msg.encode()), msg);
 }
 
 fn test_board(seed: u64) -> Board {
@@ -535,6 +652,82 @@ fn lockstep_peers_stay_bit_identical() {
     );
 }
 
+/// Gulls on their way in are part of what two peers agree on: with an
+/// ambient flock sent for every few frames, two peers fed reordered and
+/// held-back inputs hash alike on every frame both played, and a board
+/// handed over mid-flight, through its snapshot, lands the same gulls on
+/// the same ticks as the table it came from.
+#[test]
+fn gulls_on_their_way_in_keep_two_peers_in_step() {
+    let players = vec![0u8, 1u8];
+    let mut a = Lockstep::new(0, players.clone(), DEFAULT_DELAY);
+    let mut b = Lockstep::new(1, players, DEFAULT_DELAY);
+    let flocked = || {
+        let mut board = test_board(17);
+        board.rules_mut().gull_period = 20;
+        board.rules_mut().gull_cap = 6;
+        board.rules_mut().gull_turnover = true;
+        board
+    };
+    let (mut board_a, mut board_b) = (flocked(), flocked());
+    let (mut hashes_a, mut hashes_b) = (Vec::new(), Vec::new());
+    let (mut queue_ab, mut queue_ba): (Vec<InputMsg>, Vec<InputMsg>) = (vec![], vec![]);
+    let mut handed_over: Option<Board> = None;
+    let mut seen_incoming = 0;
+    for step in 0u32..600 {
+        let act = |every: u32, at: u32| match step % every == at {
+            true => PlayerAction::Place {
+                x: (step % 12) as u8,
+                y: (step % 9) as u8,
+                dir: Direction::Up,
+            },
+            false => PlayerAction::None,
+        };
+        queue_ab.extend(a.commit_local(act(40, 3)));
+        queue_ba.extend(b.commit_local(act(55, 9)));
+        if step % 70 >= 6 {
+            while let Some(msg) = queue_ab.pop() {
+                b.receive(msg);
+            }
+            while let Some(msg) = queue_ba.pop() {
+                a.receive(msg);
+            }
+        }
+        while let Some(actions) = a.advance() {
+            board_a.tick(&actions);
+            hashes_a.push(board_a.state_hash());
+            seen_incoming += board_a.incoming_gulls().len();
+            if handed_over.is_none() && !board_a.incoming_gulls().is_empty() && step > 200 {
+                let copy = Board::parse_snapshot(&board_a.to_snapshot()).expect("parses");
+                assert_eq!(copy.state_hash(), board_a.state_hash());
+                assert_eq!(copy.incoming_gulls(), board_a.incoming_gulls());
+                handed_over = Some(copy);
+            }
+            if let Some(copy) = &mut handed_over
+                && copy.ticks() < board_a.ticks()
+            {
+                copy.tick(&actions);
+                assert_eq!(copy.state_hash(), board_a.state_hash(), "the copy fell out");
+            }
+        }
+        while let Some(actions) = b.advance() {
+            board_b.tick(&actions);
+            hashes_b.push(board_b.state_hash());
+        }
+    }
+    let both = hashes_a.len().min(hashes_b.len());
+    assert!(both > 500, "the peers made progress ({both})");
+    for frame in 0..both {
+        assert_eq!(
+            hashes_a[frame], hashes_b[frame],
+            "diverged at frame {frame}"
+        );
+    }
+    assert!(seen_incoming > 0, "no gull was ever on its way in");
+    assert!(handed_over.is_some(), "never handed over mid-flight");
+    assert!(!board_a.gulls().is_empty(), "and none landed");
+}
+
 mod abandon_tests {
     use super::*;
 
@@ -614,8 +807,8 @@ mod loss_tests {
             a.commit_local(PlayerAction::None);
             b.commit_local(PlayerAction::None);
             // Every tick resends the whole tail, as the shell does.
-            let from_a: Vec<InputMsg> = a.recent_commits().to_vec();
-            let from_b: Vec<InputMsg> = b.recent_commits().to_vec();
+            let from_a: Vec<InputMsg> = a.recent_commits();
+            let from_b: Vec<InputMsg> = b.recent_commits();
             if deliver(step, 0) {
                 for msg in from_a {
                     b.receive(msg);
@@ -642,7 +835,80 @@ mod loss_tests {
         let blackout = 20..90;
         let (a, b) = run(300, |step, from| from != 0 || !blackout.contains(&step));
         assert_eq!(a.frame(), b.frame(), "back in step");
-        assert!(a.frame() > 250, "and the round ran on ({})", a.frame());
+        // The blackout costs the round its length, less the commit lead
+        // that ran on into it: a lead kept short is input lag nobody
+        // carries out of the stall.
+        let ran = 300 - blackout.len() as u32;
+        assert!(a.frame() > ran, "and the round ran on ({})", a.frame());
+    }
+
+    /// Two peers that tell each other what they hold, over a link that
+    /// loses a datagram in five each way and goes dark one way for a while:
+    /// each resends only from what the other last said it wants, and
+    /// whatever is lost goes again until the word that it arrived does.
+    /// Returns them, and the inputs each step's datagram carried on
+    /// average once the link was steady.
+    fn run_acked(
+        steps: usize,
+        mut deliver: impl FnMut(usize, PlayerId) -> bool,
+    ) -> (Lockstep, Lockstep, f64) {
+        let players = vec![0u8, 1];
+        let mut peers = [
+            Lockstep::new(0, players.clone(), DEFAULT_DELAY),
+            Lockstep::new(1, players, DEFAULT_DELAY),
+        ];
+        // What each has last heard the other want.
+        let mut heard: [Option<[u32; MAX_PLAYERS]>; 2] = [None, None];
+        let (mut sent, mut datagrams) = (0usize, 0usize);
+        for step in 0..steps {
+            for peer in &mut peers {
+                peer.commit_local(PlayerAction::None);
+            }
+            let words: Vec<(Vec<InputMsg>, [u32; MAX_PLAYERS])> = (0..2)
+                .map(|me| {
+                    let seat = me as PlayerId;
+                    let wanted = heard[me].map(|wants| wants[me]);
+                    let mut from = [None; MAX_PLAYERS];
+                    from[me] = peers[me].resend_from(seat, wanted);
+                    (peers[me].held_between(&from, u32::MAX), peers[me].wants())
+                })
+                .collect();
+            for (me, (inputs, wants)) in words.into_iter().enumerate() {
+                if step > 100 {
+                    sent += inputs.len();
+                    datagrams += 1;
+                }
+                if deliver(step, me as PlayerId) {
+                    heard[1 - me] = Some(wants);
+                    for input in inputs {
+                        peers[1 - me].receive(input);
+                    }
+                }
+            }
+            for peer in &mut peers {
+                while peer.advance().is_some() {}
+            }
+        }
+        let [a, b] = peers;
+        (a, b, sent as f64 / datagrams.max(1) as f64)
+    }
+
+    /// Told what the other holds, a peer resends a frame or two a tick
+    /// rather than the whole second of tail, and loss, even a blackout
+    /// longer than a lead one way, still heals on its own.
+    #[test]
+    fn a_tail_cut_to_what_the_other_holds_still_rides_out_loss() {
+        let (a, b, per_datagram) = run_acked(300, |step, _| step % 5 != 2);
+        assert_eq!(a.frame(), b.frame(), "in step");
+        assert!(a.frame() > 290, "and never held up ({})", a.frame());
+        assert!(per_datagram < 2.5, "{per_datagram} inputs a datagram");
+        let blackout = 20..90;
+        let (a, b, _) = run_acked(300, |step, from| {
+            step % 5 != 2 && (from != 0 || !blackout.contains(&step))
+        });
+        assert_eq!(a.frame(), b.frame(), "back in step");
+        let ran = 300 - blackout.len() as u32;
+        assert!(a.frame() > ran, "and the round ran on ({})", a.frame());
     }
 
     /// The tail is not unbounded either: it holds what a peer could be
@@ -657,6 +923,110 @@ mod loss_tests {
             a.recent_commits().len()
         );
     }
+}
+
+/// What a peer says it wants is a frame per seat: the first it does not
+/// hold. A word that names more than a peer could hold this round (one
+/// from the last round still on the wire) is not believed, and the tail
+/// goes from where it would for a peer that said nothing.
+#[test]
+fn what_a_peer_wants_is_the_first_frame_it_lacks_and_a_wild_word_is_ignored() {
+    let mut joiner = Lockstep::new(1, vec![0, 1], DEFAULT_DELAY);
+    let mut host = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
+    // Short of the commit lead the joiner is held to while it waits.
+    for _ in 0..25 {
+        let theirs = host.commit_local(PlayerAction::None).expect("commits");
+        let mine = joiner.commit_local(PlayerAction::None).expect("commits");
+        // Frame 20 of the host's goes astray.
+        if theirs.frame != 20 {
+            joiner.receive(theirs);
+        }
+        host.receive(mine);
+        while host.due() && host.advance().is_some() {}
+        while joiner.due() && joiner.advance().is_some() {}
+    }
+    let wants = joiner.wants();
+    assert_eq!(wants[0], 20, "held up on the one that went astray");
+    assert_eq!(wants[1], joiner.next_commit(), "its own, all of them");
+    assert_eq!(host.resend_from(0, Some(wants[0])), Some(20));
+    let resent = host.held_between(&[Some(20), None, None, None, None, None], u32::MAX);
+    assert_eq!(resent.first().map(|input| input.frame), Some(20));
+    assert_eq!(resent.len() as u32, host.next_commit() - 20);
+    // A word from the last round, naming frames this one never reached.
+    let stale = host.next_commit() + 500;
+    assert_eq!(host.resend_from(0, Some(stale)), Some(host.tail_start()));
+    assert_eq!(host.resend_from(0, None), Some(host.tail_start()));
+    assert_eq!(host.resend_from(4, Some(3)), None, "a seat nobody holds");
+}
+
+/// A watcher keeps the frames it holds a delay ahead of the one it plays,
+/// so a datagram the network loses or holds back costs it nothing: played
+/// as fast as they came, every one of them stalled the picture. When the
+/// frames stop coming, as at the end of a round or at a pause, it plays
+/// out the ones it holds to the last.
+#[test]
+fn a_watcher_plays_a_frame_a_tick_through_a_lost_datagram_and_plays_out_the_end() {
+    let players = vec![0u8, 1];
+    let mut table = [
+        Lockstep::new(0, players.clone(), DEFAULT_DELAY),
+        Lockstep::new(1, players.clone(), DEFAULT_DELAY),
+    ];
+    let mut paced = Lockstep::observer(players.clone(), DEFAULT_DELAY);
+    let mut greedy = Lockstep::observer(players, DEFAULT_DELAY);
+    let mut in_flight = Vec::new();
+    let (mut paced_stalls, mut greedy_stalls) = (0, 0);
+    for tick in 0..240 {
+        // The table stops committing at tick 200: the round is over.
+        if tick < 200 {
+            let made: Vec<InputMsg> = table
+                .iter_mut()
+                .filter_map(|peer| peer.commit_local(PlayerAction::None))
+                .collect();
+            for msg in &made {
+                for peer in &mut table {
+                    peer.receive(*msg);
+                }
+            }
+            in_flight.extend(made);
+        }
+        for peer in &mut table {
+            for _ in 0..2 {
+                if !peer.due() || peer.advance().is_none() {
+                    break;
+                }
+            }
+        }
+        // One tick in five nothing reaches the watchers, and the next
+        // brings both ticks' worth.
+        if tick % 5 != 3 {
+            for msg in in_flight.drain(..) {
+                paced.receive(msg);
+                greedy.receive(msg);
+            }
+        }
+        for (watcher, most, stalls) in [
+            (&mut paced, None, &mut paced_stalls),
+            (&mut greedy, Some(2), &mut greedy_stalls),
+        ] {
+            let before = watcher.frame();
+            for _ in 0..most.unwrap_or_else(|| watcher.playout(2)) {
+                if watcher.advance().is_none() {
+                    break;
+                }
+            }
+            if (10..200).contains(&tick) && watcher.frame() == before {
+                *stalls += 1;
+            }
+        }
+    }
+    assert_eq!(paced_stalls, 0, "a lost datagram stalled the picture");
+    assert!(greedy_stalls > 30, "played as they came: {greedy_stalls}");
+    assert!(
+        paced.frame() >= table[0].frame(),
+        "and played out to the last frame: {} of {}",
+        paced.frame(),
+        table[0].frame()
+    );
 }
 
 #[cfg(test)]
@@ -889,8 +1259,21 @@ mod abandon_frame_tests {
             peer.awaiting().contains(&1),
             "and says so, for the line that names who a round waits on"
         );
-        for owed in host.owed_by(1, at) {
-            peer.receive(owed);
+        // The host goes on resending what the peer says it is missing,
+        // seat 1's last input among it.
+        let mut from = [None; MAX_PLAYERS];
+        for seat in 0..3 {
+            from[usize::from(seat)] = host.resend_from(seat, Some(peer.wants()[usize::from(seat)]));
+        }
+        let resent = host.held_between(&from, u32::MAX);
+        assert!(
+            resent
+                .iter()
+                .any(|input| input.player == 1 && input.frame == 1),
+            "{resent:?}"
+        );
+        for input in resent {
+            peer.receive(input);
         }
         let played = peer.advance().expect("the repeat fills it");
         assert_eq!(played, host_frames[1], "as the host played it");
@@ -942,5 +1325,54 @@ mod abandon_frame_tests {
             before + 1,
             "the horizon itself is in"
         );
+    }
+}
+
+/// Players in seats that are not 0..n, as a host's partner picks deal
+/// them: the AI in P2 between the host in P1 and a joiner in P3. Nobody
+/// waits on the AI's seat, each player's moves land in its own
+/// seat of the frame, the seat between stays empty for the AI to fill,
+/// and a watcher plays the same frames.
+#[test]
+fn players_in_seats_with_a_gap_play_the_same_frames() {
+    let players = vec![0, 2];
+    let mut host = Lockstep::new(0, players.clone(), DEFAULT_DELAY);
+    let mut joiner = Lockstep::new(2, players.clone(), DEFAULT_DELAY);
+    let mut watcher = Lockstep::observer(players, DEFAULT_DELAY);
+    let place = |x: u8| PlayerAction::Place {
+        x,
+        y: 1,
+        dir: Direction::Down,
+    };
+    let mut frames: [Vec<[PlayerAction; MAX_PLAYERS]>; 3] = Default::default();
+    for step in 0..60u8 {
+        let mine = host.commit_local(place(step)).expect("committed");
+        let theirs = joiner.commit_local(place(100 + step)).expect("committed");
+        assert!(!host.awaiting().contains(&1), "nobody waits on the AI");
+        for msg in [mine, theirs] {
+            watcher.receive(msg);
+        }
+        host.receive(theirs);
+        joiner.receive(mine);
+        for (at, session) in [&mut host, &mut joiner, &mut watcher]
+            .into_iter()
+            .enumerate()
+        {
+            while let Some(frame) = session.advance() {
+                frames[at].push(frame);
+            }
+        }
+    }
+    assert!(frames[0].len() > 40, "the table played");
+    assert_eq!(frames[0], frames[1], "host and joiner");
+    assert_eq!(
+        frames[0][..frames[2].len()],
+        frames[2][..],
+        "and the watcher"
+    );
+    for frame in &frames[0][usize::try_from(DEFAULT_DELAY).expect("small")..] {
+        assert!(matches!(frame[0], PlayerAction::Place { x, .. } if x < 100));
+        assert_eq!(frame[1], PlayerAction::None, "the AI's seat, left to it");
+        assert!(matches!(frame[2], PlayerAction::Place { x, .. } if x >= 100));
     }
 }

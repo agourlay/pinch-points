@@ -56,8 +56,11 @@ mod keycaps;
 mod keymap;
 mod language;
 pub mod layout;
+mod lineup;
 mod lobby;
+mod next_map;
 mod play_input;
+mod rematch;
 // Public for the integration tests: a launched round's board is built
 // here, and the wire tests have to build it the way the game does.
 pub mod match_setup;
@@ -67,6 +70,7 @@ mod menu_ui;
 pub mod net;
 mod open;
 pub mod palette;
+mod partners;
 pub(crate) mod paths;
 mod pause;
 pub mod progress;
@@ -88,9 +92,14 @@ mod typing;
 pub mod update;
 mod watch;
 
-pub use campaign::{Campaign, CampaignKind, Coop};
+pub use campaign::{Campaign, Coop};
 pub use daily::Daily;
 pub use schedule::run;
+/// How long an online round stands between the host's call and its first
+/// frame, in seconds: the interlude between two rounds of a series, and
+/// the line-up and count before every round. Read by the soak table,
+/// which stands its peers through them as the game does.
+pub use {countdown::COUNTDOWN_SECS, lineup::LINEUP_SECS, tournament::INTERLUDE_SECS};
 
 /// Open the game on one replay file (`pinch-points watch FILE`).
 pub fn watch_file(replay: Replay) {
@@ -229,9 +238,9 @@ pub enum Screen {
     Menu,
     /// Tide Pool (spec §5.1).
     Puzzle,
-    /// Turf War (spec §5.3).
+    /// Turf War (spec §5.2).
     Versus,
-    /// Driftwood (spec §5.4).
+    /// Driftwood (spec §5.3).
     Editor,
     /// LAN matchmaking for online Turf War.
     Lobby,
@@ -315,8 +324,13 @@ impl Screen {
             Screen::Menu => Chrome::of(0.0, 0.0, 0.0),
             // Versus flanks the board with the two score panels.
             Screen::Versus => Chrome::of(2.0 * side_panels::SIDEBAR_W + 60.0, ABOVE_BOARD, 104.0),
+            // The editor flanks it with its palette and its settings card.
+            Screen::Editor => Chrome::of(
+                2.0 * (editor::CARD_W + editor::CARD_MARGIN) + 40.0,
+                ABOVE_BOARD,
+                104.0,
+            ),
             Screen::Puzzle
-            | Screen::Editor
             | Screen::Lobby
             | Screen::Settings
             | Screen::Controls

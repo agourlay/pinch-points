@@ -69,9 +69,9 @@ impl OnlineSession {
     /// of that round, as a watcher, with `board` for the arena to start
     /// from.
     fn watch_from(&mut self, frame: u32, board: Board) {
-        let humans = self.terms.humans(self.seats);
-        self.session =
-            Lockstep::observer_from((0..humans).collect(), crate::sim::DEFAULT_DELAY, frame);
+        let players = self.terms.player_seats(self.seats);
+        let delay = self.session.delay();
+        self.session = Lockstep::observer_from(players, delay, frame);
         self.stall.reset(frame);
         self.catch_up.board = Some(board);
         self.catch_up.from_frame = Some(frame);
@@ -216,12 +216,12 @@ impl OnlineSession {
 
 /// How far back the players' resend tails reach: a peer this far behind
 /// the round still gets every input it is missing from the next datagram.
-const TAIL_REACH: u32 = crate::sim::DEFAULT_DELAY + crate::sim::MAX_COMMIT_LEAD;
+const TAIL_REACH: u32 = crate::sim::DEFAULT_DELAY + crate::sim::RESEND_LEAD;
 
 /// How far into a round a frame-zero `Start` still works: well inside the
-/// resend tails, which reach `DEFAULT_DELAY + MAX_COMMIT_LEAD` frames back,
+/// resend tails, which reach `DEFAULT_DELAY + RESEND_LEAD` frames back,
 /// leaving the rest for the `Start` to travel and the session to begin.
-const FRAME_ZERO_REACH: u32 = crate::sim::MAX_COMMIT_LEAD / 2;
+pub(super) const FRAME_ZERO_REACH: u32 = crate::sim::RESEND_LEAD / 2;
 
 /// Cut the round as it stands into the parts that carry it: `start`, the
 /// invitation a watcher gets, and `board` at `frame`.
@@ -500,6 +500,7 @@ mod session_tests {
     use super::super::*;
     use super::*;
     use crate::sim::{DEFAULT_DELAY, InputMsg, generate_arena};
+    use crate::transport::MatchTerms;
 
     /// Everything waiting on `socket`, after giving it a moment to arrive.
     fn drain(socket: &mut UdpTransport) -> Vec<NetMsg> {
@@ -597,6 +598,135 @@ mod session_tests {
         assert!(queued, "a player arriving mid-round waits for the next one");
     }
 
+    /// A late watcher whose machine takes three seconds to walk into the
+    /// arena after it was handed the round, hearing nothing meanwhile, is
+    /// still fed every frame from the one its board was taken at: it says
+    /// which frames it wants, and the host answers from the inputs it keeps
+    /// ([`crate::sim::RECORD_SPAN`]). It catches up with the table and
+    /// plays the round the host played.
+    ///
+    /// Fed only from the resend tails, which reach about a second back, it
+    /// would play what they still held and stop at the gap, a still beach
+    /// until it gave up and asked for the round again (`catch_up_again`).
+    #[test]
+    fn a_watcher_slow_to_walk_in_is_fed_from_the_frame_it_was_handed() {
+        use std::collections::BTreeMap;
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        host.home.from_lobby = true;
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut bo = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        bo.transport.send(NetMsg::hello("Bo"));
+        drain(&mut host.transport);
+        host.peers.deal(&[Some(1)]);
+
+        let mut boards = [generate_arena(3, 2, 12, 9), generate_arena(3, 2, 12, 9)];
+        let mut hashes = BTreeMap::new();
+        // One tick of the table, the host first, each placing now and then.
+        fn tick(
+            nets: [&mut OnlineSession; 2],
+            boards: &mut [Board; 2],
+            hashes: &mut BTreeMap<u32, u64>,
+            step: u32,
+        ) {
+            let place = PlayerAction::Place {
+                x: (step % 12) as u8,
+                y: (step % 9) as u8,
+                dir: crate::sim::Direction::Down,
+            };
+            for ((net, board), every) in nets.into_iter().zip(boards.iter_mut()).zip([7, 11]) {
+                let action = match step % every {
+                    0 => place,
+                    _ => PlayerAction::None,
+                };
+                let is_host = net.is_host();
+                net.pump(action, |net| {
+                    if let Some(actions) = net.session.advance() {
+                        board.tick(&actions);
+                        if is_host {
+                            hashes.insert(net.session.frame(), board.state_hash());
+                        }
+                    }
+                });
+            }
+        }
+        for step in 0..120 {
+            tick([&mut host, &mut bo], &mut boards, &mut hashes, step);
+        }
+
+        // Dee greets, and is handed the round as it stands.
+        let mut dee = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        dee.send(NetMsg::watch("Dee"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        tick([&mut host, &mut bo], &mut boards, &mut hashes, 120);
+        host.send_catch_ups(&boards[0]);
+        let mut assembly = Assembly::default();
+        let caught = drain(&mut dee)
+            .into_iter()
+            .find_map(|msg| {
+                let NetMsg::CatchUp {
+                    frame,
+                    part,
+                    parts,
+                    bytes,
+                } = msg
+                else {
+                    return None;
+                };
+                assembly.take(frame, part, parts, bytes)
+            })
+            .expect("the round arrived whole");
+        let from = caught.frame;
+        let mut dee = OnlineSession::caught_up(dee, caught);
+        let mut board = dee.catch_up.board.take().expect("the host's board");
+
+        // Three seconds walking into the arena, while the table plays on.
+        // Whatever the host sent meanwhile is gone by the time it looks: a
+        // lobby on its way out reads no inputs, and a socket's buffer is
+        // only so deep.
+        for step in 121..211 {
+            tick([&mut host, &mut bo], &mut boards, &mut hashes, step);
+            let _ = dee.transport.recv_all();
+        }
+        assert!(host.session.frame() > from + 85, "the table played on");
+
+        // In the arena at last: it catches up, frame by frame.
+        let mut played = BTreeMap::new();
+        for step in 211..400 {
+            tick([&mut host, &mut bo], &mut boards, &mut hashes, step);
+            dee.pump(PlayerAction::None, |net| {
+                if let Some(actions) = net.session.advance() {
+                    board.tick(&actions);
+                    played.insert(net.session.frame(), board.state_hash());
+                }
+            });
+        }
+        assert!(dee.session.frame() > from + 200, "it never caught up");
+        assert!(
+            dee.session.frame() + 10 >= host.session.frame(),
+            "{} behind the table",
+            host.session.frame() - dee.session.frame()
+        );
+        assert_eq!(
+            played.keys().next(),
+            Some(&(from + 1)),
+            "from the frame it was handed"
+        );
+        for (frame, hash) in &played {
+            assert_eq!(hashes.get(frame), Some(hash), "frame {frame}");
+        }
+        drop(bo);
+    }
+
     /// A watcher in the launch plan whose one-shot `Start` was lost greets
     /// again mid-round, and so does a player the table had no chair for,
     /// dealt a watching place. Both are handed the round as it stands
@@ -679,7 +809,7 @@ mod session_tests {
             MatchTerms::default(),
         );
         host.home.from_lobby = true;
-        host.series_standing = Some(crate::transport::SeriesStanding {
+        host.series_standing = Some(SeriesStanding {
             round: 2,
             wins: [1, 0, 0, 0, 0, 0],
         });
@@ -696,7 +826,7 @@ mod session_tests {
         };
         let mut cy = OnlineSession::new(
             UdpTransport::join(("127.0.0.1", port)).expect("join"),
-            lockstep_for(Some(1), 2),
+            lockstep_for(Some(1), (0..2).collect(), DEFAULT_DELAY),
             2,
             last_round,
         );

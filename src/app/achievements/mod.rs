@@ -60,8 +60,6 @@ pub struct Stats {
     /// solves cannot answer this: it counts re-solves, and says nothing
     /// about which stages they were.
     pub campaign_done: u32,
-    /// 1 once every Beach Day stage has been cleared.
-    pub beach_done: u32,
     /// Rounds hosted on the local network, counted per round rather than
     /// per match because that is where a round is tallied.
     pub hosted: u32,
@@ -70,7 +68,11 @@ pub struct Stats {
     /// One bit per seat the local player has won a round from, so the
     /// trophy asks for the whole table rather than four wins from seat 0.
     pub seats_won: u8,
-    /// Stages cleared with signposts still in hand.
+    /// The player's own levels, built or opened from a code, cleared with
+    /// signposts still in hand. Shipped stages are not counted: all but
+    /// the tutorial are proven to need every arrow they grant
+    /// (`examples/verify_levels.rs`), and the tutorial's post is there to
+    /// practise with, not to save.
     pub under_par: u32,
     /// Stages cleared on the first attempt, with no retry in between.
     pub clean_solves: u32,
@@ -112,19 +114,14 @@ pub struct PuzzleAttempt {
     pub retries: u32,
     /// Whether the stage was still unbeaten when this attempt began.
     ///
-    /// Two trophies count stages rather than clears: "clear 10 stages with
-    /// one to spare" and "clear 10 stages first try". Counting every clear
-    /// made ten goes at stage one into ten stages, so they ask for a stage
-    /// that had not been beaten yet when the attempt started.
+    /// The stage trophies count stages rather than clears: "clear 10
+    /// stages first try" made of every clear turned ten goes at stage one
+    /// into ten stages, so they ask for a stage that had not been beaten
+    /// yet when the attempt started.
     pub unbeaten: bool,
     /// The signposts standing when the run began: what the player spent,
-    /// and what a retry puts back.
-    ///
-    /// Arrows go down only in setup, and on a Beach Day stage they wear
-    /// out while the run plays, so what is left standing at the end is not
-    /// what was used. Read there, every Beach Day stage won after its
-    /// arrows had expired was a clear "with one to spare", and "R: watch
-    /// again" or a retry handed back an empty beach.
+    /// and what a retry puts back. Arrows go down only in setup, so this
+    /// is the whole of what the run used.
     pub layout: Vec<crate::sim::Placement>,
     /// Whether the run in play is the first this session on its stage
     /// ([`StagesRun`]).
@@ -136,7 +133,7 @@ pub struct PuzzleAttempt {
 /// for the stage list and come back to read as untried, and its clear as
 /// "first try".
 #[derive(Resource, Default)]
-pub struct StagesRun(HashSet<(crate::app::CampaignKind, String)>);
+pub struct StagesRun(HashSet<String>);
 
 impl PuzzleAttempt {
     /// The arrows the last run of `stage` began with, if it ran.
@@ -157,7 +154,7 @@ pub struct Achievement {
     threshold: u32,
 }
 
-pub const ACHIEVEMENTS: [Achievement; 50] = [
+pub const ACHIEVEMENTS: [Achievement; 48] = [
     Achievement {
         id: "first_bank",
         stat: |s| s.banked,
@@ -267,7 +264,7 @@ pub const ACHIEVEMENTS: [Achievement; 50] = [
         threshold: 100,
     },
     // The long tail: second rungs on ladders whose first rung a steady
-    // player passes in an evening, plus the two that ask for a whole
+    // player passes in an evening, plus the one that asks for the whole
     // campaign rather than a count of anything.
     Achievement {
         id: "bank_5000",
@@ -314,11 +311,6 @@ pub const ACHIEVEMENTS: [Achievement; 50] = [
     Achievement {
         id: "campaign_done",
         stat: |s| s.campaign_done,
-        threshold: 1,
-    },
-    Achievement {
-        id: "beach_done",
-        stat: |s| s.beach_done,
         threshold: 1,
     },
     Achievement {
@@ -419,18 +411,11 @@ pub const ACHIEVEMENTS: [Achievement; 50] = [
         stat: |s| s.codes_taken,
         threshold: 1,
     },
-    // Second rungs on the two of the new ladders that had somewhere left to
-    // go: the widest table the seat count allows, and thrift as a habit
-    // rather than a one-off.
+    // A second rung on the table: the widest one the seat count allows.
     Achievement {
         id: "crowd_6",
         stat: |s| s.crowd,
         threshold: crate::sim::MAX_PLAYERS as u32,
-    },
-    Achievement {
-        id: "under_par_10",
-        stat: |s| s.under_par,
-        threshold: 10,
     },
 ];
 
@@ -488,7 +473,6 @@ mod tests {
             daily_days: 7,
             levels_built: 3,
             campaign_done: 1,
-            beach_done: 0,
             hosted: 2,
             crowd: 4,
             seats_won: 0b0000_1011,
@@ -511,7 +495,6 @@ mod tests {
             reparsed.campaign_done, 1,
             "a finished campaign stays finished"
         );
-        assert_eq!(reparsed.beach_done, 0);
         // Everything a trophy reads has to survive the trip.
         assert_eq!(reparsed.giants, 26);
         assert_eq!(reparsed.events_seen, 0b1010_1010, "the roulette bitmask");

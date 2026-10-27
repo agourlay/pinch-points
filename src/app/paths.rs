@@ -310,7 +310,7 @@ mod tests {
     /// and no `.tmp` sibling is left lying around.
     #[test]
     fn atomic_writes_replace_whole_files_and_leave_no_droppings() {
-        let dir = crate::app::paths::test_dir("paths-test");
+        let dir = test_dir("paths-test");
         let path = dir.join("nested").join("save.txt");
         write_atomic(&path, "first").expect("writes");
         write_atomic(&path, "second").expect("rewrites");
@@ -334,7 +334,7 @@ mod tests {
     /// because a *directory* already sits on it.
     #[test]
     fn a_failed_write_leaves_the_old_file_and_no_droppings() {
-        let dir = crate::app::paths::test_dir("paths-fail");
+        let dir = test_dir("paths-fail");
         let path = dir.join("save.txt");
         write_atomic(&path, "the good one").expect("writes");
         let tmp = tmp_sibling(&path);

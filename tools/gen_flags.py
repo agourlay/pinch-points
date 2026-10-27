@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["pillow"]
+# ///
 """Flag chips for the settings language row, one per Lang.
 
 Two are drawn by hand - the Union Jack for its diagonals and the Hinomaru

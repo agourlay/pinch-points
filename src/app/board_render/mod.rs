@@ -21,19 +21,67 @@ mod statics;
 mod surround;
 mod tide;
 
-pub(crate) use castles::castle_parts;
 pub use castles::{
-    CastleFlight, CastleSprite, castle_body, cheer_tier_ups, crown_the_leader, fly_castles,
-    kick_castles, steady_castle_shadows, sync_castles, wave_pennants,
+    CastleFlight, CastleKick, CastleSprite, castle_body, cheer_tier_ups, crown_the_leader,
+    flinch_castles, fly_castles, kick_castles, steady_castle_shadows, sync_castles, wave_pennants,
 };
+pub(crate) use castles::{castle_parts, kick_keep};
 pub use pools::ripple_pools;
 pub(crate) use pools::{POOL_LAYERS, spawn_glint, spawn_layer};
 pub use signposts::{SignpostSprite, dress_signposts, sync_signposts};
 pub use statics::{
-    BoardStatic, TurnstileSprite, animate_turnstiles, pulse_spawners, spawn_static_board,
-    sync_turnstiles,
+    BoardStatic, TurnstileSprite, animate_turnstiles, pulse_spawners, spawn_board_grid,
+    spawn_static_board, sync_turnstiles,
 };
 pub use surround::{drift_cloud_shadows, lay_the_sea, sea_uniform};
+
+/// The parts of a board sprite the round's systems find it by and redraw
+/// it from: what a still picture of a board takes off the sprites it
+/// borrows ([`crate::app::match_setup::render_previews`]), so nothing
+/// keeps it in step with the round's own board.
+pub(crate) type LiveBoard = (
+    BoardStatic,
+    CastleSprite,
+    CastleKick,
+    castles::CastleFlinch,
+    TurnstileSprite,
+    SignpostSprite,
+    statics::SpawnerSprite,
+    pools::PoolRipple,
+);
+
+/// What sits on the board's tiles and changes in play: each castle at its
+/// tier, each turnstile log at its lean, each post planted, by the
+/// spawners the round's sync systems draw them with ([`sync_castles`],
+/// [`sync_turnstiles`], [`sync_signposts`]). Laid over
+/// [`spawn_board_grid`], it is the board as a round shows it: what a map
+/// card's preview is drawn from.
+pub fn spawn_board_pieces(
+    commands: &mut Commands,
+    board: &crate::sim::Board,
+    art: &crate::app::art::Art,
+) {
+    use crate::sim::TileKind;
+    for (x, y, kind) in board.tiles() {
+        match kind {
+            TileKind::Castle(owner) => {
+                castles::spawn_castle(commands, art, board, (x, y), owner);
+            }
+            TileKind::Turnstile { next_right } => {
+                statics::spawn_log(commands, art, board, (x, y), next_right);
+            }
+            // Drawn by the grid: none of them changes in play.
+            TileKind::Empty
+            | TileKind::Rock
+            | TileKind::Spawner(_)
+            | TileKind::Kelp
+            | TileKind::Pool => {}
+        }
+        if let Some(sp) = board.signpost_at(x, y) {
+            signposts::spawn_signpost(commands, art, board, (x, y), sp);
+        }
+    }
+}
 
 use crate::app::layout::image_sprite;
 use bevy::prelude::*;
@@ -132,5 +180,10 @@ const WALL_COLOR: Color = Color::srgb(0.35, 0.28, 0.22);
 /// Its width sets the size every board is drawn at: changing it redraws
 /// every board larger or smaller.
 pub(crate) const RIM: f32 = 51.0;
+
+/// How thick a driftwood plank of the fence is, in world units, across
+/// the edge it stands on: the fence round the board reaches half of it
+/// past the sand.
+pub(crate) const FENCE_DEPTH: f32 = 13.0;
 
 pub(super) use crate::app::layout::z;

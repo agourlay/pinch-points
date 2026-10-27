@@ -1,4 +1,4 @@
-//! The lobby's keys: hosting, joining by number, watching, the doorway
+//! The lobby's keys: hosting, joining by the cursor, watching, the doorway
 //! for a bot, and the ways out.
 
 use super::*;
@@ -44,7 +44,7 @@ fn open_door_for(
     }
 }
 
-/// Lobby input: host, join by number, leave, and say something.
+/// Lobby input: host, join, leave, and say something.
 pub fn lobby_input(
     keyboard: crate::app::keycaps::Keyboard,
     mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
@@ -52,7 +52,11 @@ pub fn lobby_input(
     dials: crate::app::match_setup::Dials,
     mut state: ResMut<LobbyState>,
     exits: LobbyExits,
-    pads: Query<&Gamepad>,
+    (pads, mut menu, mut pad_pick): (
+        crate::app::gamepad::face::PadsOnFace,
+        ResMut<crate::app::match_setup::MatchMenu>,
+        Option<ResMut<crate::app::gamepad::PadPick>>,
+    ),
 ) {
     let (keys, caps) = (&keyboard.keys, &keyboard.caps);
     let LobbyExits {
@@ -81,13 +85,26 @@ pub fn lobby_input(
         mut config,
         beaches,
     } = dials;
+    // The host's map page has the keyboard while it is up: nothing is
+    // typed, and the lobby's own keys wait.
+    if pick::pick_keys(keys, &mut state, &mut config, &mut menu, &beaches) {
+        typed.clear();
+        if !state
+            .hosted()
+            .is_some_and(|hosted| hosted.picking.is_some())
+        {
+            // Esc took the page down: the table hears at once.
+            send_roster(&state, &config, settings.team_mode, &beaches);
+        }
+        return;
+    }
     let tr = settings.tr();
     let tr: &'static crate::app::i18n::Tr = tr;
-    // A pad's North is quick chat: the one way a player with no keyboard
-    // has to say anything at all.
-    let quick = pads
-        .iter()
-        .any(|pad| pad.just_pressed(GamepadButton::North));
+    // A pad's quick chat: the one way a player with no keyboard has to say
+    // anything at all. Its button opens a line at a beach and walks the
+    // phrases on an open one, as the face's table says.
+    use crate::app::gamepad::scheme::Does;
+    let quick = pads.pressed(Does::Talk) || pads.pressed(Does::NextPhrase);
     // Set when an answer finishes and the thing it was blocking can now go
     // ahead in the same frame.
     let mut intent: Option<Intent> = None;
@@ -104,13 +121,17 @@ pub fn lobby_input(
     // The reader must be drained even when nothing is being typed, or the
     // first line composed picks up every keystroke since the lobby opened.
     typed.clear();
+    // While the host picks partners the keys are the pick's, as its
+    // prompt lists them: no chat, nobody asked to leave.
+    let partnering = state.hosted().is_some_and(|hosted| hosted.partnering);
     // T for talk, once there is anyone to talk to.
-    if intent.is_none() && keyboard.just('T') && state.can_chat() {
+    if intent.is_none() && !partnering && keyboard.just('T') && state.can_chat() {
         state.typing = Some(Typing::chat());
         return;
     }
-    // North for the same line, saying the first quick-chat phrase already.
-    if intent.is_none() && quick && state.can_chat() {
+    // The pad's button for the same line, saying the first quick-chat
+    // phrase already.
+    if intent.is_none() && !partnering && quick && state.can_chat() {
         state.typing = Some(Typing::chat_saying(tr.quick_chat[0]));
         return;
     }
@@ -222,32 +243,79 @@ pub fn lobby_input(
             }
         }
     }
-    // K: ask somebody to leave. The next number names them, Esc does not.
+    // K: ask somebody to leave. The next number names them, Tab turns
+    // the page of those past the card's rows, Esc does not.
     let typing = state.typing.is_some();
     if let Some(hosted) = state.hosted_mut()
         && !typing
+        && !hosted.partnering
         && keyboard.just('K')
     {
-        hosted.kicking = true;
+        hosted.kicking = Some(0);
         return;
     }
     if let Some(hosted) = state.hosted_mut()
-        && hosted.kicking
+        && let Some(page) = hosted.kicking
     {
         if keys.just_pressed(KeyCode::Escape) {
-            hosted.kicking = false;
+            hosted.kicking = None;
+            return;
+        }
+        if keys.just_pressed(KeyCode::Tab) {
+            hosted.kicking = Some((page + 1) % kick_pages(&hosted.peers));
             return;
         }
         if let Some(at) =
             crate::app::menu_ui::number_pressed(keys, crate::app::menu_ui::NUMBER_KEYS.len())
         {
-            hosted.kicking = false;
-            ask_to_leave(&mut state, &mut bots, tr, at + 1)
+            ask_to_leave(&mut state, &mut bots, tr, at + 1);
         }
         return;
     }
+    // P: pick partners, under a team mode. The next number names the seat
+    // whose partners change, as often as it is pressed; Esc or P again
+    // puts it away.
+    let partner_key = caps
+        .key_for(crate::app::gamepad::scheme::PARTNER_CAP)
+        .is_some_and(|key| keys.just_pressed(key));
+    let open = super::partners::partners_open(&state);
+    if let Some(hosted) = state.hosted_mut()
+        && hosted.partnering
+    {
+        if keys.just_pressed(KeyCode::Escape) || partner_key || !open {
+            hosted.partnering = false;
+            return;
+        }
+        if let Some(at) = crate::app::menu_ui::number_pressed(keys, MAX_PLAYERS) {
+            let door = bots
+                .door
+                .as_ref()
+                .map(|door| door.arrived(tr))
+                .unwrap_or_default();
+            let picker = super::partners::pick_partners(&mut state, &door, at as u8);
+            // The pad's cursor follows the person it picked for, as step
+            // 3's does on the couch.
+            if let (Some(seat), Some(pad_pick)) = (picker, pad_pick.as_deref_mut()) {
+                let picks = crate::app::gamepad::scheme::Picks {
+                    list: crate::app::gamepad::scheme::PickList::Partners,
+                    rows: super::partners::partner_rows(&state, tr),
+                };
+                pad_pick.stand_on(&picks, seat + 1);
+            }
+            send_roster(&state, &config, settings.team_mode, &beaches);
+        }
+        return;
+    }
+    if let Some(hosted) = state.hosted_mut()
+        && !typing
+        && partner_key
+        && open
+    {
+        hosted.partnering = true;
+        return;
+    }
     if state.hosting() {
-        turn_the_dials(keys, &mut settings, caps, &mut config, &mut state, &beaches);
+        turn_the_dials(keys, &mut settings, caps, &mut config, &mut state);
     }
     if !state.standing.at_a_beach() {
         walk_the_list(keys, &mut state);
@@ -278,11 +346,14 @@ mod tests {
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.init_state::<Screen>();
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<LobbyState>();
         app.init_resource::<MatchConfig>();
         app.init_resource::<crate::app::bot_seats::BotSeats>();
         app.init_resource::<Online>();
         app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.init_resource::<crate::app::match_setup::MatchMenu>();
         app.insert_resource(GameSettings::default());
         let mut azerty = crate::app::keycaps::KeyCaps::default();
         azerty.learn(KeyCode::KeyW, 'z');

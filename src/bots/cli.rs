@@ -213,7 +213,7 @@ pub fn round_length(text: &str) -> Result<RoundLength, String> {
 }
 
 pub fn round_name(round: RoundLength) -> String {
-    let secs = round.ticks() / crate::sim::TICKS_PER_SECOND;
+    let secs = round.ticks() / TICKS_PER_SECOND;
     let name = match round {
         RoundLength::Quick => "quick",
         RoundLength::Short => "short",
@@ -234,14 +234,13 @@ pub enum Beach {
 
 impl Beach {
     pub fn parse(text: &str) -> Result<Beach, String> {
-        Ok(match text {
-            "classic" => Beach::Map(MapChoice::Classic),
-            "generated" => Beach::Generated,
-            "small" => Beach::Map(MapChoice::GenSmall),
-            "large" => Beach::Map(MapChoice::GenLarge),
-            "xl" => Beach::Map(MapChoice::GenXl),
-            "ocean" => Beach::Map(MapChoice::GenOcean),
-            path => {
+        if text == "generated" {
+            return Ok(Beach::Generated);
+        }
+        let named = MapChoice::from_token(text).filter(|&map| map != MapChoice::Custom);
+        Ok(match (named, text) {
+            (Some(map), _) => Beach::Map(map),
+            (None, path) => {
                 let text =
                     std::fs::read_to_string(path).map_err(|e| format!("--map {path}: {e}"))?;
                 let level = Level::parse(&text).map_err(|e| format!("--map {path}: {e}"))?;
@@ -252,13 +251,8 @@ impl Beach {
 
     pub fn name(&self) -> String {
         match self {
-            Beach::Map(MapChoice::Classic) => "classic".into(),
-            Beach::Map(MapChoice::GenSmall) => "small".into(),
-            Beach::Generated | Beach::Map(MapChoice::GenClassic) => "generated".into(),
-            Beach::Map(MapChoice::GenLarge) => "large".into(),
-            Beach::Map(MapChoice::GenXl) => "xl".into(),
-            Beach::Map(MapChoice::GenOcean) => "ocean".into(),
-            Beach::Map(MapChoice::Custom) => "custom".into(),
+            Beach::Generated => "generated".into(),
+            Beach::Map(map) => map.token().into(),
             Beach::File(path, _) => path.display().to_string(),
         }
     }
@@ -272,8 +266,18 @@ impl Beach {
             Beach::Map(MapChoice::Classic) if seats > 4 => {
                 Err("the classic beach seats 2 to 4; use --map generated".into())
             }
-            Beach::Map(map) if seats > 4 && map.size().0 < crate::app::match_setup::WIDE_ENOUGH => {
-                Err(format!("the {} beach seats 2 to 4", self.name()))
+            Beach::Map(map) if !crate::app::match_setup::holds(*map, seats) => {
+                Err(match map.tables() {
+                    Some(tables) => {
+                        let tables: Vec<String> = tables.iter().map(u8::to_string).collect();
+                        format!(
+                            "the {} beach seats tables of {}; use --map generated",
+                            self.name(),
+                            tables.join(", ")
+                        )
+                    }
+                    None => format!("the {} beach seats 2 to 4", self.name()),
+                })
             }
             Beach::File(_, level) => {
                 // Seat `n` plays castle `n`: a castle short, or an owner
@@ -309,24 +313,18 @@ impl Beach {
     pub fn board(&self, seed: u64, seats: u8, round: RoundLength) -> Board {
         let mut board = match self {
             Beach::File(_, level) => level.table_board(seed, seats),
-            Beach::Map(MapChoice::Classic) => crate::sim::classic_arena_seeded(seed, false, seats),
-            Beach::Generated | Beach::Map(_) => {
-                // Past the seats a classic-sized beach holds, the game
-                // gives way to the one sized for the table
-                // (`match_setup::settle_map`), and so does the arena.
-                let map = match self {
-                    Beach::Map(map) => *map,
-                    Beach::Generated | Beach::File(..)
-                        if crate::app::match_setup::holds(MapChoice::GenClassic, seats) =>
-                    {
-                        MapChoice::GenClassic
-                    }
-                    Beach::Generated | Beach::File(..) => crate::app::match_setup::sized_for(seats),
+            // The game's own builder, mirror and all: a bot tuned in the
+            // arena meets the board a match set up in the game plays.
+            Beach::Map(map) => crate::app::match_setup::versus_board(*map, seed, seats),
+            // Past the seats a classic-sized beach holds, the game gives
+            // way to the one sized for the table (`match_setup::settle_map`),
+            // and so does the arena.
+            Beach::Generated => {
+                let map = match crate::app::match_setup::holds(MapChoice::GenClassic, seats) {
+                    true => MapChoice::GenClassic,
+                    false => crate::app::match_setup::sized_for(seats),
                 };
-                let (w, h) = map.size();
-                let mut board = crate::sim::generate_arena(seed, seats, w, h);
-                board.set_wrap(map.wraps());
-                board
+                crate::app::match_setup::versus_board(map, seed, seats)
             }
         };
         crate::sim::set_versus_rules(&mut board, GullPressure::Normal.period());
@@ -455,6 +453,18 @@ pub fn ms(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `--map kelp-keep`, The Gates' old name, still plays it rather than
+    /// being read as a file nobody has.
+    #[test]
+    fn the_old_kelp_keep_name_still_names_the_gates() {
+        let named = |text: &str| match Beach::parse(text) {
+            Ok(Beach::Map(map)) => Some(map),
+            Ok(Beach::Generated | Beach::File(..)) | Err(_) => None,
+        };
+        assert_eq!(named("kelp-keep"), Some(MapChoice::TheGates));
+        assert_eq!(named("gates"), Some(MapChoice::TheGates));
+    }
 
     /// A beach file seats a table only with castles marked 0 to one less
     /// than the seats, none skipped: counting the owners passed {0, 2} for

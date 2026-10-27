@@ -54,53 +54,18 @@ Nothing blocks these. They want the work and no more.
 
 ## Waiting on a machine
 
-Both of these are one-line changes whose whole difficulty is judging them,
-and neither can be judged on the machine they were written on.
+A one-line change whose whole difficulty is judging it, and it cannot be
+judged on the machine it was written on.
 
 - **Try a shorter input delay before buying rollback.** `DEFAULT_DELAY` is
-  3 (`sim/net.rs:22`), with no adaptivity and no setting; the sessions that
-  read it are built in `app/net/rounds.rs` and `app/net/mod.rs`. On a wired
+  3 (`sim/net/mod.rs`), the floor of the delay a host picks per round from
+  its players' round trips (`delay_for_round_trip`). On a wired
   LAN the round trip is about a millisecond, so most of those three frames
   are jitter margin, and delay 1 still leaves a 33 ms budget. Turning it
   down recovers two thirds of what rollback offers for the price of a
   constant; the session waits rather than desyncs, so too low trades
   latency for hitches, which wifi shows before ethernet does. Wants two
   machines and a real LAN to judge.
-
-- **Single-threaded executor for the main world.** Behind the
-  `PINCH_ST_EXEC=1` dev hook (`schedule.rs`), which swaps every main-world
-  schedule and leaves the render sub-app parallel, so any machine can A/B
-  it against the shipped binary. The hook uses
-  `SingleThreadedExecutor::new()` and never `::default()`: the derived
-  default leaves `apply_final_deferred` false, so queued commands are
-  dropped and the app dies on the first frame complaining that a resource
-  does not exist.
-
-  Measured 2026-08-12 on the release build (fat LTO), interleaved runs,
-  45 s windows, vsync held on both sides. Versus (six seats, XL beach):
-  23% less CPU (39.3 s to 30.2 s user+sys) and voluntary context switches
-  halved (1.81M to 0.87M). Menu postcard: 24% less CPU, switches 1.07M to
-  0.59M, so the win is not versus-specific. Wall time and peak RSS
-  identical throughout.
-
-  Corroborated 2026-08-16 with `perf` on the **debug** build, six seats and
-  five AI on the XL beach, 30 s at 499 Hz. The profile is flat: nothing
-  reaches 1.3%, and this game's own code is 0.51% of samples. What is left
-  is the engine coordinating itself, `bevy_ecs` at 17.9% and the task
-  executor's queues, atomics and mutexes at about 15.9% between them,
-  against 4% for wgpu and rendering. Debug numbers do not predict the
-  shipped build, but the shape matches the release measurement, and it is
-  the same conclusion from a different angle. The engine spends more
-  coordinating this game's hundred small systems than the systems spend
-  working.
-
-  What is *still* not known is how much frame budget it leaves on a slower
-  machine: serializing a hundred systems gives up the parallelism that would
-  absorb a heavy frame, and this hardware's uncapped test is not trustworthy
-  (an integrated GPU driven at several hundred fps throttles; one 22-second
-  run swung between 9 and 615 fps). Run `PINCH_ST_EXEC=1` on the slowest
-  machine available and watch for hitches before adopting it as the default;
-  the editor and puzzle screens remain unmeasured.
 
 ## Waiting on a reason
 
@@ -215,33 +180,14 @@ anti-cheat, so what follows is input and display.
   typing optional, with a pad-driven letter grid or a default name the lobby
   accepts. The second is cheaper and works off Steam too.
 
-- **Every prompt line is worded for a keyboard.** `menu_prompt`,
-  `prompt_setup`, `prompt_versus_short` and the rest spell out WASD, Enter,
-  Esc, Space and the arrow keys, in eight languages. Verified asks that
-  on-screen glyphs match the device in the player's hands. The input path
-  is already bridged; it is only the words that lie. Not only a Deck
-  problem: a pad player on a desktop reads the same lies, and the one place
-  the words and the bridge actually disagreed was a button that quietly
-  closed the game.
-
-  The seam to do it at exists and is proven. `KeyCaps::legend`
-  (`keycaps/mod.rs:166`) already rewrites key names in a prompt from a
-  table of markers, and `hud/text.rs:438` already runs every prompt through
-  it, so there is no call-site plumbing to build and no per-language prompt
-  variant to write.
-
-  What it does not reach is the hard half. `BLOCKS` matches only spellings
-  that are the same in every language: `WASD`, `IJKL`, `W/S`, `A/D`. The
-  words a pad player most needs replaced are the localized ones: French
-  alone says `Entrée`, `Échap` and `Espace`, and every language spells the
-  arrow keys its own way (`touches fléchées`, `矢印キー`,
-  `клавиши-стрелки`). Reaching those means the tables carry a
-  language-independent marker where they now carry a translated key name, a
-  mechanical edit to every prompt line in eight tables. Smaller than writing
-  a pad variant of every line, but not a one-liner.
-
-  `pad_help1` / `pad_help2` on the settings card are the only lines that
-  speak pad today.
+- **Every prompt line names the device in hand.** Done 2026-10-22: one
+  table per face of the game (`gamepad::scheme`) says what each pad control
+  does, the bridge presses the keys it names, the screens that read a pad
+  themselves ask it, and the prompt is written from it whenever a pad was
+  touched last (`LastDevice`). Every keyboard action has a pad button,
+  the editor included; quitting from the menu stays the keyboard's and the
+  pause card's, and text entry stays the keyboard's (the prompt says
+  "Steam + X: keyboard").
 
 - **Turn the update check off under Steam.** It defaults on
   (`check_updates: true`) and offers to hand a GitHub release page to the
@@ -257,7 +203,7 @@ anti-cheat, so what follows is input and display.
   the day: a Deck and a desktop then share a campaign, which is the thing
   players notice.
 
-- **Achievements are ours, not Steam's.** The game keeps fifty of its own
+- **Achievements are ours, not Steam's.** The game keeps 48 of its own
   (`ACHIEVEMENTS`), and a player who sees an achievements screen on a Steam
   game expects them on their profile. That is `steamworks-rs` and a hook in
   `achievements::track::unlock_new`, the same dependency the on-screen
@@ -312,8 +258,8 @@ Kept because the next person to have the idea deserves the measurements.
   Both cautions found earlier hold and are worth keeping: the transition
   reads the absolute tick (spawner periods, gull period), so the key needs
   `tick % lcm(periods)` rather than the tick itself; signposts under
-  `CapPolicy::Evict` age against the absolute tick, so a challenge stage
-  cannot use the shortcut at all; and a survive-goal level that cycles has
+  `CapPolicy::Evict` age against the absolute tick, so a level under that
+  rule cannot use the shortcut at all; and a survive-goal level that cycles has
   *won*, not lost. Also: the PRNG state is hashed, and it advances whenever
   a spawner or a gull consumes it, so on a busy board no two moments ever
   match and the shortcut is pure overhead.
@@ -324,3 +270,7 @@ Kept because the next person to have the idea deserves the measurements.
   whole branches rather than tail ticks, but it changes which solution is
   found first, so `every_campaign_level_is_solvable_with_its_solution` and
   `granted_signposts_are_necessary` are the guards to watch.
+
+- **Challenges (Beach Day).** Eight 30-second score-attack stages under
+  versus arrow rules, with bronze, silver and gold medals. Felt like
+  puzzles with a timer; removed 2026-10-23.

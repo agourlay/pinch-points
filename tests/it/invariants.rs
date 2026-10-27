@@ -414,31 +414,30 @@ fn lockstep_survives_any_delivery_schedule() {
 ///
 /// The fuzz above plays random arenas, which finds a tile combination
 /// nobody thought of and never a hand-authored board using a feature the
-/// generator was not taught. These are the boards a player loads.
+/// generator was not taught. These are the boards a player loads, with
+/// the format tests' fixtures for the keys no shipped stage says.
 #[test]
 fn every_shipped_board_survives_its_own_snapshot() {
-    for (list, what) in [
-        (pinch_points::sim::campaign_levels(), "campaign"),
-        (pinch_points::sim::challenge_levels(), "challenge"),
-    ] {
-        for (i, level) in list.iter().enumerate() {
-            let board = level.board();
-            let text = board.to_snapshot();
-            let back = Board::parse_snapshot(&text).unwrap_or_else(|e| {
-                panic!(
-                    "{what} {} {:?}: its own snapshot was refused: {e}",
-                    i + 1,
-                    level.name
-                )
-            });
-            assert_eq!(
-                board.state_hash(),
-                back.state_hash(),
-                "{what} {} {:?} came back a different board",
+    let levels = pinch_points::sim::campaign_levels()
+        .into_iter()
+        .chain(crate::fixtures::rule_levels());
+    for (i, level) in levels.enumerate() {
+        let board = level.board();
+        let text = board.to_snapshot();
+        let back = Board::parse_snapshot(&text).unwrap_or_else(|e| {
+            panic!(
+                "level {} {:?}: its own snapshot was refused: {e}",
                 i + 1,
                 level.name
-            );
-        }
+            )
+        });
+        assert_eq!(
+            board.state_hash(),
+            back.state_hash(),
+            "level {} {:?} came back a different board",
+            i + 1,
+            level.name
+        );
     }
 }
 

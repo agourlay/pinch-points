@@ -1,7 +1,10 @@
 # Writing a Pinch Points bot
 
-**Protocol version 1.** This is the contract a bot is written against. The
+**Protocol version 2.** This is the contract a bot is written against. The
 design behind it, and why it is shaped this way, is `bot-seats.md`.
+Version 2 is version 1 with every tick after the first sent as what
+changed (see [Diffs](#diffs)); a listener still speaks 1 to a bot that
+registers with it, and sends that bot every tick whole.
 
 A bot is a program you run yourself, in any language, on any machine that
 can reach the game. It connects over TCP, registers, and answers each tick
@@ -36,6 +39,7 @@ the game's window.
 - [Connecting](#connecting)
 - [Registration](#registration)
 - [A game](#a-game): `hello`, `ready`, `tick`, the reply, `end`
+- [Diffs](#diffs): a tick as what changed, and `resync`
 - [Clocks and deadlines](#clocks-and-deadlines)
 - [The fair cursor](#the-fair-cursor)
 - [Looking ahead: `simulate`](#looking-ahead-simulate)
@@ -82,13 +86,13 @@ sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 The first line a bot sends, on every connection:
 
 ```json
-{"type": "register", "protocol": 1, "name": "Alice's crab herder",
+{"type": "register", "protocol": 2, "name": "Alice's crab herder",
  "version": "0.3", "owner": "Alice", "parallel": 4, "key": "7F3K-9QXA"}
 ```
 
 | Field | | |
 |---|---|---|
-| `protocol` | required | `1`. A listener refuses a version it does not speak, and says which it does. |
+| `protocol` | required | `2`, or `1` for every tick sent whole. A listener refuses a version it does not speak, and says which it does: one older than 2 refuses `2`, so a bot that wants to play it too registers again with `1` (`greedy.py` does). |
 | `name` | required | How the bot appears on screen and in standings. At most 32 characters. Unique on the listener: a taken name is refused. |
 | `version` | optional | Shown beside the name, so you can tell this build from last week's. |
 | `owner` | optional | The person behind the bot. A listener that already knows the owner (a per-author cup invite, the author's own game) ignores this. A listener that caps bots per owner (a cup) counts a bot that declares none as its address's: two such bots from one machine count as one owner's. |
@@ -107,7 +111,7 @@ with it instead of the key, and you are the same bot, seat and standings
 and all:
 
 ```json
-{"type": "register", "protocol": 1, "token": "K3F9..."}
+{"type": "register", "protocol": 2, "token": "K3F9..."}
 ```
 
 A join key gets a bot in once (a cup's shared invite is the exception: it
@@ -203,7 +207,12 @@ After an event the roulette locks for 300 ticks (10 s), and a sparkling
 crab banked meanwhile spins nothing. With `timed_lock` only the events
 that last lock it (Crab Mania, Gull Mania, Speed Up, Slow Down, Right
 Claws); after Crab Monopoly, Gull Attack, Fresh Sand or Castle Swap the
-next sparkling crab spins at once. Crab Monopoly takes the front half of
+next sparkling crab spins at once. Castle Swap passes every castle to
+the next owner in a fixed rotation (owners in reading order of their
+first castle); with three owners or more, the seat whose sparkling crab
+spun it is left out and keeps its castle, while a swap the spectators
+call, which nobody spun, rotates everyone. Banks stay with their seats.
+Crab Monopoly takes the front half of
 the loose crabs (the oldest) off the beach for the banker. Without
 `sweep_flight` they bank on the spot. With it they are carried home: each
 waits 66 ticks, the next setting off 4 ticks after the one before, then
@@ -249,7 +258,8 @@ cannot:
  "sweeping": [],
  "gulls": [{"id": 4, "x": 9, "y": 2, "dir": "down", "progress": 0,
             "state": "walking", "hops_left": 0, "claw": "left"}],
- "signposts": [{"x": 5, "y": 2, "dir": "up", "owner": 2, "worn": false, "age": 41}],
+ "signposts": [{"x": 5, "y": 2, "dir": "up", "owner": 2, "worn": false, "age": 41,
+                "placed": 1193}],
  "castles": [{"x": 1, "y": 1, "owner": 0}],
  "turnstiles": [{"x": 6, "y": 4, "next": "right"}],
  "event": {"name": "gull_mania", "ticks_left": 120},
@@ -269,7 +279,7 @@ cannot:
 | `crabs` | `x`, `y` is the tile the crab is walking *out of*; `progress` is how far, in 256ths of a tile. `kind` is `common`, `juvenile`, `giant`, `molting`, `golden` or `sparkling`; `claw` is its big claw, the side it tries first at a wall. |
 | `sweeping` | Crabs a Crab Monopoly is carrying home: the same fields as `crabs` (where it was picked up), plus the `owner` it banks for, the tick it sets off (`launch`), the tick it lands and banks (`lands`), and whether Right Claws was running when it was swept (`claw_call`). |
 | `gulls` | The same, plus `state` (`walking` or `flying`) and `hops_left` while flying. How long until a gull next takes off is not shown: the screen does not show it either. |
-| `signposts` | Every post on the beach: its `owner`, whether a gull has `worn` it, and its `age` in ticks. |
+| `signposts` | Every post on the beach: its `owner`, whether a gull has `worn` it, its `age` in ticks, and the tick it was `placed` on (re-pointing a post places it afresh), so `age` is `tick - placed`. |
 | `castles` | Every castle and the seat holding it now (Castle Swap trades them). |
 | `turnstiles` | Every log and which way it deflects the next creature. |
 | `event` | The timed tide event running (`crab_mania`, `gull_mania`, `speed_up`, `slow_down`, `right_claws`) and its ticks left, or `null`. |
@@ -280,8 +290,9 @@ cannot:
 | `golden_call` | A golden crab coming: the `tick` it comes out on and the spawner hole `x`, `y` it comes out of, from 5 s before; `null` otherwise. |
 | `surge` | The last 30 seconds: gulls come twice as often. |
 
-The full board is sent every tick, never a change from the last: a bot
-that is stateless is a correct one.
+Under protocol 1 the whole board is sent every tick, and a bot that is
+stateless is a correct one. Under protocol 2 the first tick of a game is
+whole and the ones after it are [diffs](#diffs).
 
 ### The reply
 
@@ -306,7 +317,8 @@ At most one action per tick, naming the tick it answers:
 Two optional fields on any reply:
 
 - **`"wait": k`**: do not send me the next `k` ticks. They are not sent at
-  all, and nothing is lost: the next tick you get carries the full board.
+  all, and nothing is lost: the next tick you get carries the full board
+  (under protocol 2, as a diff from the last tick you were sent).
   A bot that thinks in half seconds should say so; in a fast-forward game
   a round where every bot waits runs at the sim's own speed.
 - **`"note": "..."`**: written to the decision log beside the action. Your
@@ -336,6 +348,62 @@ played in teams it is your team's place, by the teams' totals, and
 partners share it. `replay` is the
 id to fetch the game's replay with (see *Replays*), or `null` when
 nothing was recorded.
+
+## Diffs
+
+Under protocol 2 a tick is sent as what changed since the last tick of
+the same game sent to you: a diff. It carries `type`, `game` and `tick`
+as ever, plus `base`, the tick it was made from, and only the fields
+that changed:
+
+```json
+{"type": "tick", "game": 17, "tick": 1235, "base": 1234, "remaining": 4165,
+ "crabs": {"set": [{"id": 88, "progress": 108},
+                   {"id": 91, "x": 0, "y": 4, "dir": "right", "progress": 0,
+                    "kind": "common", "claw": "left"}],
+           "gone": [{"id": 85}]},
+ "signposts": {"set": [{"x": 6, "y": 2, "dir": "up", "owner": 2, "worn": false,
+                        "age": 0, "placed": 1235}], "gone": []}}
+```
+
+**Applying one.** Keep the last whole tick of each game. A message
+without `base` is a whole tick: keep it as it is. One with `base` applies
+only to the tick you hold if that tick's `tick` is `base`; then every
+field it carries replaces yours, except the six keyed lists below, and a
+field it does not carry is unchanged. Then set every post's `age` to
+`tick - placed`: a diff never carries a post's `age` (it changes every
+tick on every post), only a new post's.
+
+**Keyed lists.** `crabs`, `sweeping` and `gulls` name an entry by its
+`id`; `signposts`, `castles` and `turnstiles` by its `x` and `y`. When one
+of them changes it comes as `{"set": [...], "gone": [...]}`. `gone`
+names each entry no longer there, by its naming fields alone. `set`
+holds each entry that is new, whole, and each that changed, as its
+naming fields and the fields that changed: merge those into the entry
+you hold. Every other field, lists such as `scores`, `cursors` and
+`incoming_gulls` among them, comes whole when it changes, and so may a
+keyed list now and then: a list (`[...]`) replaces yours, an object
+patches it. The order of a list is not part of the board: after a diff,
+new entries come last.
+
+**Getting back in step.** If you hold no tick of that game, or yours is
+not the diff's `base` (a line you could not read, a bug), do not guess:
+ask for the next tick whole, and sit this one out:
+
+```json
+{"type": "resync", "game": 17}
+```
+
+Answer the tick all the same, with `none` or your best: a reply is still
+owed. The listener also sends a game's tick whole on its own: the first
+after `hello` (a game starting, or resumed after you reconnect), and at
+least every 150 ticks (5 s), so a bot that never asks still comes right.
+A diff after a `wait` is from the last tick you were sent, not the one
+before the ticks you skipped.
+
+`bots/python/greedy.py` applies diffs in its `apply`, about thirty lines;
+a Rust bot has `pinch_points::bots::protocol::apply_delta`. On a six-seat
+beach a diff is a fifth of a whole tick, under 1 KB.
 
 ## Clocks and deadlines
 
@@ -368,9 +436,11 @@ a bot that is always late is always a tick behind.
 **`input_delay`.** A reply to tick `t` takes effect `input_delay` ticks
 later. In the arena, in a cup and on a couch it is 0: your reply to `t` is
 the action the sim takes from `t` to `t + 1`, and a post placed then
-already turns a crab arriving on that tick. In an online game it is 3,
-because every seat's input is committed that far ahead for the whole
-table: aim where the crab will be, as a person online does. A bot that
+already turns a crab arriving on that tick. In an online game it is 3 to
+6, picked by the host for each round from how quickly its players answer
+it, because every seat's input is committed that far ahead for the whole
+table: aim where the crab will be, as a person online does. Read it from
+each `hello` rather than assuming one. A bot that
 ignores `input_delay` plays well in the arena and misses at a party.
 
 ## The fair cursor
@@ -434,8 +504,9 @@ counts ticks from now) and every rival idle, and answers:
 
 The copy knows exactly what a player reading the board knows, and nothing
 more. Everything already on the sand is exact. Crabs that spawners will
-emit arrive on schedule (a spawner fires on `tick % period == 0`, or on a
-running mania's flood: see *Spawners and caps* below), but
+emit arrive on schedule (a spawner fires on `tick % period == 0`, with
+the period halved under Speed Up, or on a running mania's flood: see
+*Spawners and caps* below), but
 their kind and claw are a guess, marked `"predicted": true`. Ambient gulls
 are left out (where the next one lands is the PRNG's secret), and a gull's
 takeoffs are a guess too.
@@ -457,7 +528,7 @@ lookahead is worth more to you than none.
 {"type": "replay", "id": "t1-g17"}
 ```
 
-answers `{"type": "replay", "id": "t1-g17", "text": "replay-v2\n..."}` for
+answers `{"type": "replay", "id": "t1-g17", "text": "replay-v3\n..."}` for
 any finished game your bot played in. Save the text and
 `pinch-points watch` it.
 
@@ -503,6 +574,8 @@ Every listener treats every byte it receives as hostile.
   once, from one address or in all.
 - A `simulate` the listener cannot read is answered with an `error` naming
   the game; it is not a reply, so your move for the tick still counts.
+- A `resync` is a message like any other for the flood count, and one
+  naming a game you do not sit in is ignored.
 - Names are display text: control characters are removed, and they are cut
   to 32 characters.
 - A bot that stops reading its socket is disconnected once a couple of
@@ -525,8 +598,8 @@ and carries the remainder.
 
 **Arrival**, in order, on reaching a tile's centre:
 
-1. A castle: a crab banks there and is gone; a walking gull raids it (half
-   the bank, rounded up, is lost, some of it spilling back as crabs) and
+1. A castle: a crab banks there and is gone; a walking gull raids it (a third
+   of the bank, rounded up, is lost, some of it spilling back as crabs) and
    leaves the beach.
 2. A turnstile: deflect to its `next` side, flip it, then wall-resolve.
    Steps 3 and 4 do not run: a post on a turnstile is never consulted.
@@ -549,7 +622,9 @@ them (Manhattan distance between board positions).
 **Spawners and caps.** The crab cap is one crab for every 3 tiles of the
 beach (`CRAB_CAP_TILES_PER_CRAB`), and never fewer than 8. With no mania
 running, a spawner emits a crab facing its `dir` on every tick where
-`tick % period == 0`, unless the beach already holds the cap. The holes
+`tick % period == 0`, unless the beach already holds the cap. While Speed
+Up runs, the period is halved (rounded down, never below 1), so the holes
+open twice as often; the cap holds all the same. The holes
 opening on a tick emit in reading order while there is room; with
 `fair_spawns`, a tick with room for fewer than open starts from a drawn
 hole instead (see `rules`). A mania
@@ -567,8 +642,8 @@ that tile is rock or kelp. While `rules.gull_cap` gulls are on the beach
 it lands none, unless `gull_turnover` is on: then the cap is half as big
 again in the last 30 seconds, and a full flock sends its oldest walking
 gull more than two tiles from every castle off to make room (nothing
-lands if none qualifies), as `rules` describes. Spawned kinds: 70% common, 15% juvenile, 8% giant, 3% molting, 2% golden,
-2% sparkling.
+lands if none qualifies), as `rules` describes. Spawned kinds: 68% common, 15% juvenile, 8% giant, 3% molting, 2% golden,
+4% sparkling.
 
 **Called golden crabs.** When `golden_every` is above 0, as in every
 versus round, the spawn mix rolls a common crab where it would have rolled
@@ -580,12 +655,12 @@ which is when the game announces it on screen, and is `null` otherwise.
 A called golden crab is worth `golden_value`.
 
 **Values.** Common 1, juvenile 2, molting 5, giant 10, golden 50 (30 when
-called), sparkling 1. Banking a molting crab starts a 10 s lure (300 ticks) toward
-the banker's castle, with a 20 s quiet spell after it before another; a
+called), sparkling 1. Banking a molting crab starts a 5 s lure (150 ticks) toward
+the banker's castle, with a 30 s quiet spell after it before another; a
 sparkling crab spins the tide roulette.
 
 **Checking a port.** `pinch-points arena --trace FILE` writes one line per
-tick: `{"state": <the tick message>, "actions": [<each seat's act>]}`. The
+tick: `{"state": <the tick message, whole>, "actions": [<each seat's act>]}`. The
 next line is the state those actions led to. Feed your port each state and
 its actions and compare. Expect differences only where the PRNG decides
 (what a spawner emits, where a gull lands, what the roulette spins).
@@ -605,7 +680,7 @@ bots on the rest.
 | `--listen ADDR` | `127.0.0.1:47710` | where to wait; `0.0.0.0:47710` lets a friend's bot in |
 | `--port P` | 47710 | the port, on the default address |
 | `--key KEY` | drawn fresh | a fixed key, for a script that starts the arena and the bot together |
-| `--map NAME\|FILE` | `classic` | `classic`, `generated`, `small`, `large`, `xl`, `ocean`, or a level file whose castles are marked exactly `0` to `N-1` for an `N`-seat table: one per seat, none past them |
+| `--map NAME\|FILE` | `classic` | `classic`, `generated`, `small`, `large`, `xl`, `ocean`, a handmade map (`gates`, `moat`, `log-jam`, `three-lanes`, `fountain` for 2 or 4; `round-table`, `round-the-world`, `back-to-back` for 2, 4 or 6; `duel` for 2; `four-doors` for 3; `gull-road` for 5), `surprise` (a new generated beach every seed), or a level file whose castles are marked exactly `0` to `N-1` for an `N`-seat table: one per seat, none past them. A built-in map is built as the game deals it, mirrored from the seed (so a seat's corner moves from seed to seed); a level file is played as drawn |
 | `--seats N` | seats given | a bigger table; the extra seats play `ai:normal` |
 | `--seed S` | random, printed | the same beach again, for a fair before and after |
 | `--round quick\|short\|standard\|long` | `standard` | 1, 2, 3 or 5 minutes |
@@ -638,8 +713,8 @@ itself. The game opens a doorway, a card showing the connection string,
 and the bot that registers with it takes the seat. Nothing in the
 protocol differs; what differs is in `hello`:
 
-- **On a couch.** In the Versus match setup, turn a seat's AI dial past
-  "fierce" to "bot". Starting the match shows a string per bot seat
+- **On a couch.** On the Players step of Versus match setup, turn a seat
+  with A/D past the AI's levels to "Bot". Starting the match shows a string per bot seat
   (`C` copies one, `L` opens the doorway to the LAN for a friend's
   laptop), and the match begins the moment the last bot is in. The clock
   is `live` with `input_delay` 0.
@@ -648,9 +723,10 @@ protocol differs; what differs is in `hello`:
   shows the string; start your bot with it, and your game joins the
   party as an ordinary player whose seat your bot drives, named for your
   bot and you, "Greedy (Ana)". You watch the match from your own screen,
-  with your bot's notes in the game's log. The clock is `live` with
-  `input_delay` 3: every seat's input is committed three ticks ahead for
-  the whole table, so aim where a crab will be, as a person online does.
+  with your bot's notes in the game's log. The clock is `live` with the
+  round's `input_delay` (3 on a quick network, up to 6 on a slow one):
+  every seat's input is committed that many ticks ahead for the whole
+  table, so aim where a crab will be, as a person online does.
 
 - **Straight to a host.** A host whose beach takes bots shows a string
   under its Bots dial, `pinch://192.168.1.20:47710/M2QD-7WTR`. A bot
@@ -659,8 +735,8 @@ protocol differs; what differs is in `hello`:
   everyone. The key is good once and redrawn for the next bot, so come
   back with your token, never the key: within ten seconds while the
   table is still gathering, any time once the match is under way. The seat reads with the owner you
-  declare, which the host cannot check. The clock is `live` with
-  `input_delay` 3. The string is shown only while the table has a chair
+  declare, which the host cannot check. The clock is `live` with the
+  round's `input_delay`, as above. The string is shown only while the table has a chair
   for a bot; a bot that registered but is dealt no seat when the match
   starts (people took the chairs first) gets a fatal `error` saying so.
 

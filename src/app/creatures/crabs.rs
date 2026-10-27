@@ -133,6 +133,28 @@ pub(crate) fn shell_color(kind: CrabKind, shade: f32) -> Color {
     }
 }
 
+/// How a molting crab's shell reads while banking one would start no lure
+/// (`Board::lure_ready` false): most of the way to grey and a little
+/// darker, so the beach shows that its lure is resting. Every other kind,
+/// and a molt whose lure is ready, keeps its shell.
+pub(crate) fn resting_shell(kind: CrabKind, shell: Color, lure_ready: bool) -> Color {
+    match kind {
+        CrabKind::Molting if !lure_ready => {
+            let c = shell.to_srgba();
+            let grey = 0.299 * c.red + 0.587 * c.green + 0.114 * c.blue;
+            shell
+                .mix(&Color::srgba(grey, grey, grey, c.alpha), 0.7)
+                .darker(0.08)
+        }
+        CrabKind::Molting
+        | CrabKind::Common
+        | CrabKind::Juvenile
+        | CrabKind::Giant
+        | CrabKind::Golden
+        | CrabKind::Sparkling => shell,
+    }
+}
+
 /// The shade a crab is born with. A hash of the id rather than a draw from
 /// [`effects::VisualRng`], so a crab keeps its shell for as long as it
 /// lives however many times the sprite is rebuilt around it.
@@ -144,11 +166,16 @@ pub(crate) fn shade_of(id: u32) -> f32 {
 const CLAW_LEFT: Color = Color::srgb(0.18, 0.49, 0.82); // blue = left-clawed
 const CLAW_RIGHT: Color = Color::srgb(0.97, 0.82, 0.17); // yellow = right-clawed
 
-/// The big claw's colour: the handedness tell.
-pub(crate) fn claw_color(handed: Handedness) -> Color {
-    match handed {
-        Handedness::Left => CLAW_LEFT,
-        Handedness::Right => CLAW_RIGHT,
+/// The big claw's colour: the handedness tell. On a co-op stage
+/// (`coop`, [`crate::sim::Rules::claw_hands`]) it is the paint of the
+/// seat whose arrows turn that claw ([`crate::sim::seat_of_claw`]), the
+/// paint those arrows wear, so each player steers the crabs in their own
+/// colour, in either palette. Everywhere else, blue left and yellow right.
+pub(crate) fn claw_color(handed: Handedness, coop: bool) -> Color {
+    match (coop, handed) {
+        (true, handed) => palette::seat_paint(crate::sim::seat_of_claw(handed)),
+        (false, Handedness::Left) => CLAW_LEFT,
+        (false, Handedness::Right) => CLAW_RIGHT,
     }
 }
 
@@ -215,11 +242,16 @@ const CLAW_LIFT: f32 = 0.01;
 /// crab by. A child of the body, `side` square like it, so it sits where
 /// the body's arm reaches whatever the crab's size, and tinted by hand
 /// rather than by kind.
-pub(crate) fn crab_claw(art: &Art, handed: Handedness, side: Vec2) -> (Sprite, Transform) {
+pub(crate) fn crab_claw(
+    art: &Art,
+    handed: Handedness,
+    coop: bool,
+    side: Vec2,
+) -> (Sprite, Transform) {
     (
         Sprite {
             image: art.claw.clone(),
-            color: claw_color(handed),
+            color: claw_color(handed, coop),
             custom_size: Some(side),
             flip_y: mirrored(handed),
             ..default()
@@ -274,40 +306,59 @@ pub fn sync_crab_sprites(
         }
     }
     // Remaining entries are crabs without a sprite yet.
-    for (&id, crab) in live.iter() {
-        let pos = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
-        let size = body_size(crab.kind);
-        let side = Vec2::splat(sprite_side(crab.kind));
-        commands
-            .spawn((
-                CrabSprite {
-                    id,
-                    kind: crab.kind,
-                    shade: shade_of(id),
-                },
-                Crowding::default(),
-                crab_body(
-                    &art,
-                    crab.kind,
-                    crab.handed,
-                    shell_color(crab.kind, shade_of(id)),
-                ),
-                Transform::from_translation(pos.extend(layout::z::CREATURE))
-                    .with_rotation(layout::dir_rotation(crab.dir)),
-            ))
-            .with_children(|parent| {
-                parent.spawn((
-                    CreatureShadow,
-                    layout::image_sprite(
-                        &art.shadow,
-                        Color::WHITE,
-                        Vec2::new(size.x * 1.35, size.y * 1.15),
-                    ),
-                    Transform::from_translation(Vec3::new(0.0, 0.0, -0.5)),
-                ));
-                parent.spawn(crab_claw(&art, crab.handed, side));
-            });
+    for crab in live.values() {
+        spawn_crab(&mut commands, &art, board, crab);
     }
+}
+
+/// Whether `board`'s claws wear their steering seat's colour
+/// ([`claw_color`]): on a co-op stage, under claw-keyed arrows.
+pub(crate) fn coop_claws(board: &crate::sim::Board) -> bool {
+    board.rules().claw_hands.is_some()
+}
+
+/// `crab` where the board has it, shell, claw and shadow: the one crab a
+/// round draws ([`sync_crab_sprites`]), and a map card's preview too
+/// ([`super::spawn_creatures`]).
+pub(crate) fn spawn_crab(
+    commands: &mut Commands,
+    art: &Art,
+    board: &crate::sim::Board,
+    crab: &Crab,
+) -> Entity {
+    let pos = layout::creature_pos(board, crab.tile, crab.dir, crab.progress);
+    let size = body_size(crab.kind);
+    let side = Vec2::splat(sprite_side(crab.kind));
+    commands
+        .spawn((
+            CrabSprite {
+                id: crab.id,
+                kind: crab.kind,
+                shade: shade_of(crab.id),
+            },
+            Crowding::default(),
+            crab_body(
+                art,
+                crab.kind,
+                crab.handed,
+                shell_color(crab.kind, shade_of(crab.id)),
+            ),
+            Transform::from_translation(pos.extend(layout::z::CREATURE))
+                .with_rotation(layout::dir_rotation(crab.dir)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                CreatureShadow,
+                layout::image_sprite(
+                    &art.shadow,
+                    Color::WHITE,
+                    Vec2::new(size.x * 1.35, size.y * 1.15),
+                ),
+                Transform::from_translation(Vec3::new(0.0, 0.0, -0.5)),
+            ));
+            parent.spawn(crab_claw(art, crab.handed, coop_claws(board), side));
+        })
+        .id()
 }
 
 /// A crab's sprite, as the interpolation moves and dresses it.
@@ -369,6 +420,7 @@ pub fn interpolate_crabs(
     // During a molting lure every loose crab ignores arrows; tint them all
     // toward the luring player's colour so the takeover is visible.
     let lure_tint = board.lure().map(|(owner, _)| palette::player_color(owner));
+    let lure_ready = board.lure_ready();
     count_neighbours(board, &mut crowds);
     // The same easing whatever the frame rate: about a third of a second
     // to settle into, or out of, a crowd.
@@ -379,11 +431,12 @@ pub fn interpolate_crabs(
         let Some(crab) = by_id.get(&sprite.id) else {
             continue; // despawns this frame
         };
-        let base = shell_color(crab.kind, sprite.shade);
-        body.color = match lure_tint {
+        let base = resting_shell(crab.kind, shell_color(crab.kind, sprite.shade), lure_ready);
+        let shell = match lure_tint {
             Some(tint) => base.mix(&tint, 0.55),
             None => base,
         };
+        layout::tint(&mut body, shell);
         let prev = layout::pose_pos(board, crab.prev);
         let curr = layout::pose_pos(board, crab.pose());
         let pos = tweened_pos(prev, curr, alpha);
@@ -423,8 +476,9 @@ pub fn interpolate_crabs(
             1.0
         };
         // Drawn a little smaller in a crowd, and molting crabs pulse
-        // gently on top of that: they are worth chasing.
-        let pulse = if sprite.kind == CrabKind::Molting {
+        // gently on top of that while their lure is ready: they are worth
+        // chasing. A resting molt holds still, as it holds its colour back.
+        let pulse = if sprite.kind == CrabKind::Molting && lure_ready {
             1.0 + (pulse_at * 5.0).sin() * 0.06
         } else {
             1.0
@@ -492,7 +546,31 @@ mod tests {
     fn a_left_handed_crab_is_the_other_one_mirrored() {
         assert!(mirrored(Handedness::Left));
         assert!(!mirrored(Handedness::Right));
-        assert_ne!(claw_color(Handedness::Left), claw_color(Handedness::Right));
+        assert_ne!(
+            claw_color(Handedness::Left, false),
+            claw_color(Handedness::Right, false)
+        );
+    }
+
+    /// On a co-op stage each claw wears the colour of the seat whose
+    /// arrows turn it, the arrows' own paint ([`palette::seat_paint`], so
+    /// in whichever palette is on): P1's on the left claws and P2's on the
+    /// right. Solo and versus keep blue and yellow. The palette switch is
+    /// a process-wide flag, left alone here so no other test sees it move.
+    #[test]
+    fn a_coop_claw_wears_its_steering_seats_colour() {
+        use crate::app::palette;
+        for handed in [Handedness::Left, Handedness::Right] {
+            let seat = crate::sim::seat_of_claw(handed);
+            assert_eq!(crate::sim::claw_of(seat), Some(handed));
+            assert_eq!(claw_color(handed, true), palette::seat_paint(seat));
+        }
+        assert_ne!(
+            claw_color(Handedness::Left, true),
+            claw_color(Handedness::Right, true)
+        );
+        assert_eq!(claw_color(Handedness::Left, false), CLAW_LEFT);
+        assert_eq!(claw_color(Handedness::Right, false), CLAW_RIGHT);
     }
 
     /// A crab's square is bigger than its shell, legs out to the corners,
@@ -613,6 +691,30 @@ mod tests {
                 for channel in [srgba.red, srgba.green, srgba.blue] {
                     assert!((0.0..=1.0).contains(&channel), "{kind:?} left the channel");
                 }
+            }
+        }
+    }
+
+    /// A molt whose lure is resting is drawn greyer than one whose lure is
+    /// ready, and no other kind changes with the lure.
+    #[test]
+    fn a_resting_molt_is_drawn_dimmed() {
+        let shell = body_color(CrabKind::Molting);
+        let saturation = |c: Color| {
+            let c = c.to_srgba();
+            let hi = c.red.max(c.green).max(c.blue);
+            let lo = c.red.min(c.green).min(c.blue);
+            hi - lo
+        };
+        assert_eq!(resting_shell(CrabKind::Molting, shell, true), shell);
+        let resting = resting_shell(CrabKind::Molting, shell, false);
+        assert!(saturation(resting) < saturation(shell) * 0.5, "{resting:?}");
+        for kind in CrabKind::ALL {
+            if kind != CrabKind::Molting {
+                assert_eq!(
+                    resting_shell(kind, body_color(kind), false),
+                    body_color(kind)
+                );
             }
         }
     }

@@ -4,7 +4,6 @@
 use super::save::save;
 use super::ui::spawn_toast;
 use super::{ACHIEVEMENTS, PuzzleAttempt, RoundScratch, StagesRun, Stats, Unlocked, Unsaved};
-use crate::app::audio::{Muted, Sounds, play_chime, sfx_gain};
 use crate::app::net::Online;
 use crate::app::settings::GameSettings;
 use crate::app::sim_events::SimEvent;
@@ -31,15 +30,13 @@ fn local_seat(online: &Online, controllers: &Controllers) -> Option<u8> {
 }
 
 /// What every system that can earn a trophy needs: the record it adds to,
-/// the shelf of what is already earned, and what it takes to say so (the
-/// words, the chime, and whether it may ring).
+/// the shelf of what is already earned, and the words to say so in. The
+/// toast rings its own chime as it shows (`update_toasts`).
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Trophies<'w> {
     pub stats: ResMut<'w, Stats>,
     unlocked: ResMut<'w, Unlocked>,
     pub settings: Res<'w, GameSettings>,
-    sounds: Option<Res<'w, Sounds>>,
-    muted: Res<'w, Muted>,
     unsaved: ResMut<'w, Unsaved>,
 }
 
@@ -64,14 +61,7 @@ impl Trophies<'_> {
 
     /// Whether anything new was unlocked.
     fn unlock(&mut self, commands: &mut Commands) -> bool {
-        unlock_new(
-            commands,
-            &self.stats,
-            &mut self.unlocked,
-            &self.settings,
-            &self.muted,
-            &self.sounds,
-        )
+        unlock_new(commands, &self.stats, &mut self.unlocked, &self.settings)
     }
 
     fn save(&mut self) {
@@ -180,6 +170,7 @@ pub fn track_events(
             | SimEvent::LureStarted { .. }
             | SimEvent::CastleRaided { .. }
             | SimEvent::CrabSpawned { .. }
+            | SimEvent::GullIncoming { .. }
             | SimEvent::GullArrived
             | SimEvent::GullTookOff
             | SimEvent::GullLanded { .. }
@@ -192,6 +183,7 @@ pub fn track_events(
             | SimEvent::TierUp { .. }
             | SimEvent::SurgeStarted
             | SimEvent::WheelLocked { .. }
+            | SimEvent::LureRefused { .. }
             | SimEvent::GoldenOut { .. }
             | SimEvent::RoundEnded => {}
         }
@@ -462,17 +454,18 @@ pub fn record_puzzle(
     trophies.stats.puzzles += 1;
     // Read before the campaign sweep below, which is about the whole list
     // rather than this stage.
-    credit_stage(&mut trophies.stats, &mut attempt, campaign.current().posts);
-    let builtins = &campaign.levels[..campaign.builtins.min(campaign.levels.len())];
-    if !builtins.is_empty()
-        && builtins
-            .iter()
-            .all(|level| progress.level_cleared(campaign.kind, level))
-    {
-        match campaign.kind {
-            crate::app::CampaignKind::TidePool => trophies.stats.campaign_done = 1,
-            crate::app::CampaignKind::BeachDay => trophies.stats.beach_done = 1,
-        }
+    credit_stage(
+        &mut trophies.stats,
+        &mut attempt,
+        campaign.current().posts,
+        campaign.place().section == crate::app::campaign::Section::Custom,
+    );
+    // The Tide Pool's own stages: the co-op ladder beside it is for two,
+    // and finishing the campaign alone cannot wait on a friend.
+    let shipped = campaign.section(crate::app::campaign::Section::TidePool);
+    let builtins = &campaign.levels[shipped];
+    if !builtins.is_empty() && builtins.iter().all(|level| progress.level_cleared(level)) {
+        trophies.stats.campaign_done = 1;
     }
     trophies.credit(&mut commands);
 }
@@ -484,11 +477,16 @@ pub fn record_puzzle(
 /// The clear puts the stage in the book, so the attempt stops being
 /// unbeaten here, and a restart, which keeps the attempt (same stage, same
 /// name), must not set it again: win, R, win again is one stage, not two.
-fn credit_stage(stats: &mut Stats, attempt: &mut PuzzleAttempt, posts: u8) {
+///
+/// A spare signpost counts only on a player's own level (`own`, the stage
+/// list's section of them): the trophy says "a new stage of yours", and a
+/// shipped stage that grants a post it does not need, the tutorial's, is
+/// scenery rather than a feat.
+fn credit_stage(stats: &mut Stats, attempt: &mut PuzzleAttempt, posts: u8, own: bool) {
     if !std::mem::replace(&mut attempt.unbeaten, false) {
         return;
     }
-    if attempt.layout.len() < usize::from(posts) {
+    if own && attempt.layout.len() < usize::from(posts) {
         stats.under_par += 1;
     }
     if posts >= DEEP_POSTS {
@@ -524,7 +522,7 @@ pub fn track_puzzle_attempt(
         // Read here rather than at the clear, which is the moment it stops
         // being true: the stage trophies ask what this attempt walked up
         // to, not what it left behind.
-        attempt.unbeaten = !progress.level_cleared(campaign.kind, campaign.current());
+        attempt.unbeaten = !progress.level_cleared(campaign.current());
         attempt.stage = name.clone();
         attempt.retries = 0;
         attempt.layout.clear();
@@ -541,14 +539,13 @@ pub fn note_posts_spent(
     mut attempt: ResMut<PuzzleAttempt>,
     mut ran: ResMut<StagesRun>,
 ) {
-    let stage = (campaign.kind, campaign.current().name.clone());
-    attempt.first_run = ran.0.insert(stage);
+    attempt.first_run = ran.0.insert(campaign.current().name.clone());
     attempt.layout = sim
         .0
         .tiles()
         .filter_map(|(x, y, _)| {
             let post = sim.0.signpost_at(x, y)?;
-            (post.owner == 0).then_some((x, y, post.dir))
+            Some((x, y, post.dir, post.owner))
         })
         .collect();
 }
@@ -583,8 +580,6 @@ fn unlock_new(
     stats: &Stats,
     unlocked: &mut Unlocked,
     settings: &GameSettings,
-    muted: &Muted,
-    sounds: &Option<Res<Sounds>>,
 ) -> bool {
     let tr = settings.tr();
     let mut any = false;
@@ -597,9 +592,6 @@ fn unlock_new(
         }
         any = true;
         spawn_toast(commands, tr.ach_names[index], tr.ach_descs[index]);
-        if let Some(sounds) = sounds {
-            play_chime(commands, sounds, sfx_gain(settings, muted));
-        }
     }
     // Saved by the caller, once: every one of them writes the stats it just
     // changed anyway, and a save is a sync to disk on the frame thread.
@@ -610,6 +602,7 @@ fn unlock_new(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::audio::Muted;
     use bevy::ecs::system::RunSystemOnce;
 
     fn win() -> RoundOutcome {
@@ -735,14 +728,14 @@ mod tests {
         assert_eq!(stats.best_round, 51);
     }
 
-    /// Two trophies count stages and say so: "clear 10 stages with one to
-    /// spare", "clear 10 stages first try". They used to count clears, so
-    /// ten goes at stage one were ten stages, and both fell to the easiest
-    /// stage in the campaign played over and over.
+    /// The stage trophies count stages and say so: "clear 10 stages first
+    /// try". They used to count clears, so ten goes at stage one were ten
+    /// stages, and fell to the easiest stage in the campaign played over
+    /// and over.
     #[test]
     fn a_stage_already_beaten_is_not_another_stage() {
         use crate::app::progress::Progress;
-        use crate::app::{Campaign, CampaignKind, LoadLevel};
+        use crate::app::{Campaign, LoadLevel};
         let mut levels = crate::sim::campaign_levels();
         levels.truncate(2);
         let first = levels[0].name.clone();
@@ -763,9 +756,7 @@ mod tests {
         assert!(unbeaten(&app), "nothing cleared yet");
 
         // Clear it, leave, and come back: the same stage, no longer a new one.
-        app.world_mut()
-            .resource_mut::<Progress>()
-            .mark(CampaignKind::TidePool, &first);
+        app.world_mut().resource_mut::<Progress>().mark(&first);
         let _ = app.world_mut().run_system_once(reset_puzzle_attempt);
         load(&mut app);
         assert!(!unbeaten(&app), "a stage already in the book");
@@ -806,9 +797,9 @@ mod tests {
         let mut clear = |app: &mut App| {
             let mut attempt = app.world_mut().resource_mut::<PuzzleAttempt>();
             // One signpost: well under any deep stage's grant.
-            attempt.layout = vec![(0, 0, crate::sim::Direction::Up)];
+            attempt.layout = vec![(0, 0, crate::sim::Direction::Up, 0)];
             attempt.first_run = true;
-            credit_stage(&mut stats, &mut attempt, posts);
+            credit_stage(&mut stats, &mut attempt, posts, true);
         };
 
         load(&mut app, false);
@@ -821,6 +812,40 @@ mod tests {
             (1, 1, 1),
             "one stage, counted once"
         );
+    }
+
+    /// A spare signpost counts on a player's own level and never on a
+    /// shipped stage: Welcome Ashore's crab walks home with its post still
+    /// in hand, and clearing it so is no trophy. The same level filed
+    /// behind the shipped list as the player's own is.
+    #[test]
+    fn spare_signposts_count_only_on_a_players_own_level() {
+        use crate::app::Campaign;
+        use crate::app::progress::Progress;
+        let mut levels = crate::sim::campaign_levels();
+        levels.truncate(1);
+        assert_eq!(levels[0].name, "Welcome Ashore");
+        assert!(levels[0].posts > 0, "it grants a post");
+        levels.push(levels[0].clone());
+        let mut app = tracking(true);
+        app.init_resource::<Progress>();
+        app.insert_resource(Campaign {
+            levels,
+            index: 0,
+            builtins: 1,
+            coop: 0,
+        });
+        let spare = |app: &mut App, index: usize| {
+            app.world_mut().resource_mut::<Campaign>().index = index;
+            app.insert_resource(PuzzleAttempt {
+                unbeaten: true,
+                ..PuzzleAttempt::default()
+            });
+            let _ = app.world_mut().run_system_once(record_puzzle);
+            app.world().resource::<Stats>().under_par
+        };
+        assert_eq!(spare(&mut app, 0), 0, "a shipped stage is not one of yours");
+        assert_eq!(spare(&mut app, 1), 1, "a level of the player's own is");
     }
 
     /// Entering a stage sends the same message that restarting it does, so

@@ -111,6 +111,26 @@ impl TeamMode {
     }
 }
 
+/// The scoring row as it reads at a table of `seats`, in setup's step 1
+/// and on the lobby's terms card: what will be scored, which a mode the
+/// table does not fit is not (the round falls back to free-for-all). Where
+/// the mode can be dialled (`dialled`), the row also says the mode set and
+/// the seats it starts at, so a mode set before the table fits it is not
+/// lost from sight.
+pub fn row_value(tr: &crate::app::i18n::Tr, mode: TeamMode, seats: u8, dialled: bool) -> String {
+    let played = mode.played_by(seats);
+    match mode.fits_from(seats).filter(|_| dialled && played != mode) {
+        Some(from) => crate::app::i18n::fill(
+            tr.team_mode_waits,
+            &[
+                ("m", tr.team_mode_names[mode.index()]),
+                ("n", &from.to_string()),
+            ],
+        ),
+        None => tr.team_modes[played.index()].to_string(),
+    }
+}
+
 impl Cycle for TeamMode {
     const VARIANTS: &'static [Self] = &TeamMode::ALL;
 }
@@ -228,7 +248,7 @@ pub fn winner_label(
 }
 
 /// A team's seats, each named by `label`, joined: see [`label`].
-fn team_label(mode: TeamMode, team: u8, seats: u8, label: impl Fn(u8) -> String) -> String {
+pub fn team_label(mode: TeamMode, team: u8, seats: u8, label: impl Fn(u8) -> String) -> String {
     mode.seats_of(team, seats)
         .into_iter()
         .map(label)
@@ -237,15 +257,32 @@ fn team_label(mode: TeamMode, team: u8, seats: u8, label: impl Fn(u8) -> String)
 }
 
 /// Each team's total, indexed by team.
+///
+/// Added up to the most a total can hold rather than past it: a kept
+/// round's scores are read from a file anyone can edit, and every reader
+/// of a total (the card, the banner, the shelf) goes through here.
 pub fn team_scores(scores: &[u32; MAX_PLAYERS], seats: u8, mode: TeamMode) -> Vec<u32> {
     (0..mode.teams(seats))
         .map(|team| {
             mode.seats_of(team, seats)
                 .iter()
-                .map(|&seat| scores[usize::from(seat)])
-                .sum()
+                .fold(0u32, |total, &seat| {
+                    total.saturating_add(scores[usize::from(seat)])
+                })
         })
         .collect()
+}
+
+/// What the top of the table banked: the winner's score, or under a team
+/// mode the winning team's total, and for a dead heat the score the
+/// leaders tied on. The number on the results card's first row, which
+/// ranks by [`team_scores`] too; what the replay shelf says a round was
+/// won with.
+pub fn top_total(scores: &[u32; MAX_PLAYERS], seats: u8, mode: TeamMode) -> u32 {
+    team_scores(scores, seats, mode)
+        .into_iter()
+        .max()
+        .unwrap_or(0)
 }
 
 /// Each seat's place when the tide comes in, 1 for first, ranked the way
@@ -348,6 +385,11 @@ mod tests {
             vec![1, 2, 3, 4],
             "solo teams are seats"
         );
+        // A total stops at the most it can hold: kept rounds' scores come
+        // from files anyone can edit.
+        let most = [u32::MAX; MAX_PLAYERS];
+        assert_eq!(team_scores(&most, 6, TeamMode::Trios), vec![u32::MAX; 2]);
+        assert_eq!(top_total(&most, 4, TeamMode::Pairs), u32::MAX);
     }
 
     #[test]

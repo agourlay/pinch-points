@@ -1,7 +1,13 @@
-//! Match setup: the intermediary screen between the menu and a local versus
-//! round. Pick the seat count, how many seats the AI plays, the map, gull
-//! pressure, round length, and how many arrows each player may have
-//! standing; Enter starts the match.
+//! Match setup: the three steps between the menu and a local versus
+//! round. Step 1 sets the game (players, the AI's level, round length,
+//! arrows, gulls, scoring, series), step 2 picks the map from cards that
+//! preview the very beach that will be played, and step 3 says who plays
+//! each seat and lets friends sit down with a controller's Start.
+//!
+//! The three steps edit one [`MatchConfig`], so going back and forth
+//! between them never loses a choice. This file is the model and its wire
+//! form; [`steps`] is the keys, [`ui`] the cards, [`preview`] the map
+//! pictures.
 
 use crate::app::cycle::{Cycle, Turn};
 use crate::app::i18n::fill;
@@ -14,17 +20,37 @@ use bevy::prelude::*;
 
 mod beaches;
 mod board;
+mod preview;
+mod steps;
+mod ui;
 
 pub use beaches::{
     Beach, CustomBeaches, beach_bytes, beach_from, beach_in_play, beach_on_air, beaches_note,
-    cycle_map, map_label, refresh_custom_beaches,
+    cycle_map, map_about, map_label, map_name, map_title, refresh_custom_beaches,
 };
-pub use board::{apply_terms, board_for, board_from, bot_seats_from, versus_board};
-
-mod screen;
-pub use screen::*;
+pub use board::{apply_terms, board_for, board_from, bot_seats_from, local_board, versus_board};
+pub use preview::{
+    GameCamera, MapPreviews, PREVIEW_PX, PREVIEW_TICKS, Pic, PreviewCamera, PreviewPipelines,
+    draw_board_picture, preview_board, release_previews, render_previews, retire_previews,
+    watch_preview_pipelines,
+};
+pub use steps::*;
+#[cfg(test)]
+pub(crate) use ui::card_note;
+pub use ui::{
+    MapBar, MatchUi, enter_match_setup, follow_map_bar, host_map_title, leave_match_setup,
+    moved_note, paint_game_step, paint_map_step, paint_players_step, paint_start_button,
+    paint_teams, start_button_label, update_host_map_ui, update_match_ui,
+};
+pub(crate) use ui::{cut_to, line_px};
 
 /// The playable beach for a local match.
+///
+/// The variants are in the order their index travels in (`MatchTerms.map`,
+/// a settings file), new ones appended and never slotted in: reordering
+/// would silently change which beach a host is inviting everyone to. The
+/// order the dial turns through and step 2's cards show them in is
+/// [`MapChoice::DIAL`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum MapChoice {
     #[default]
@@ -33,19 +59,38 @@ pub enum MapChoice {
     GenClassic,
     GenLarge,
     GenXl,
-    /// Open ocean: a generated beach with no edges. Appended rather than
-    /// slotted in beside its size, because the index is what a `Start`
-    /// datagram carries, and reordering would silently change which beach a
-    /// host is inviting everyone to.
+    /// Open ocean: a generated beach with no edges.
     GenOcean,
     /// A beach somebody built in the editor. Which one is not on the wire:
     /// the beach itself rides along with the invitation, because no peer
     /// but the host has the file it came from.
     Custom,
+    /// The handmade versus maps ([`crate::sim::VERSUS_MAPS`], in this
+    /// order). Every peer has them built in, so the index is all that
+    /// travels.
+    TheGates,
+    TheMoat,
+    LogJam,
+    ThreeLanes,
+    RoundTable,
+    RoundTheWorld,
+    Duel,
+    /// A freshly generated beach every round, its style and size drawn
+    /// from the round's seed ([`crate::sim::surprise_style`]), so every
+    /// peer and every replay builds the same one.
+    Surprise,
+    /// More handmade maps, after Surprise because the wire order is
+    /// appended to and never reordered: the dial lists them beside the
+    /// others ([`MapChoice::DIAL`]).
+    TheFountain,
+    FourDoors,
+    GullRoad,
+    BackToBack,
 }
 
 impl MapChoice {
-    pub const ALL: [MapChoice; 7] = [
+    /// Every map, in wire order.
+    pub const ALL: [MapChoice; 19] = [
         MapChoice::Classic,
         MapChoice::GenSmall,
         MapChoice::GenClassic,
@@ -53,17 +98,106 @@ impl MapChoice {
         MapChoice::GenXl,
         MapChoice::GenOcean,
         MapChoice::Custom,
+        MapChoice::TheGates,
+        MapChoice::TheMoat,
+        MapChoice::LogJam,
+        MapChoice::ThreeLanes,
+        MapChoice::RoundTable,
+        MapChoice::RoundTheWorld,
+        MapChoice::Duel,
+        MapChoice::Surprise,
+        MapChoice::TheFountain,
+        MapChoice::FourDoors,
+        MapChoice::GullRoad,
+        MapChoice::BackToBack,
     ];
 
-    /// A generated beach picked for its size alone, which the seat dial
-    /// may trade for the size that suits the table. The handcrafted arena,
-    /// the open ocean and a handmade beach were picked for what they are,
-    /// and stay put.
-    pub fn is_a_plain_size(self) -> bool {
-        matches!(
-            self,
-            MapChoice::GenSmall | MapChoice::GenClassic | MapChoice::GenLarge | MapChoice::GenXl
-        )
+    /// The order the map dial turns through, which is step 2's sections
+    /// in turn ([`MapSection`]): the built-in maps (the handmade ones
+    /// beside the classic arena, then the generated sizes and the open
+    /// ocean), the player's own beaches, and Surprise.
+    pub const DIAL: [MapChoice; 19] = [
+        MapChoice::Classic,
+        MapChoice::TheGates,
+        MapChoice::TheMoat,
+        MapChoice::LogJam,
+        MapChoice::ThreeLanes,
+        MapChoice::RoundTable,
+        MapChoice::RoundTheWorld,
+        MapChoice::Duel,
+        MapChoice::TheFountain,
+        MapChoice::FourDoors,
+        MapChoice::GullRoad,
+        MapChoice::BackToBack,
+        MapChoice::GenSmall,
+        MapChoice::GenClassic,
+        MapChoice::GenLarge,
+        MapChoice::GenXl,
+        MapChoice::GenOcean,
+        MapChoice::Custom,
+        MapChoice::Surprise,
+    ];
+
+    /// The map's name on a command line and in a dev hook: the bots'
+    /// `--map`, `PINCH_SKIRMISH`. `custom` names no beach in particular.
+    pub fn token(self) -> &'static str {
+        match self {
+            MapChoice::Classic => "classic",
+            MapChoice::GenSmall => "small",
+            MapChoice::GenClassic => "generated",
+            MapChoice::GenLarge => "large",
+            MapChoice::GenXl => "xl",
+            MapChoice::GenOcean => "ocean",
+            MapChoice::Custom => "custom",
+            MapChoice::TheGates => "gates",
+            MapChoice::TheMoat => "moat",
+            MapChoice::LogJam => "log-jam",
+            MapChoice::ThreeLanes => "three-lanes",
+            MapChoice::RoundTable => "round-table",
+            MapChoice::RoundTheWorld => "round-the-world",
+            MapChoice::Duel => "duel",
+            MapChoice::Surprise => "surprise",
+            MapChoice::TheFountain => "fountain",
+            MapChoice::FourDoors => "four-doors",
+            MapChoice::GullRoad => "gull-road",
+            MapChoice::BackToBack => "back-to-back",
+        }
+    }
+
+    /// The map a [`MapChoice::token`] names. `kelp-keep`, The Gates'
+    /// name before it was renamed, still names it, so a script or a
+    /// command line written for the old name plays the same beach.
+    pub fn from_token(token: &str) -> Option<MapChoice> {
+        let token = match token {
+            "kelp-keep" => MapChoice::TheGates.token(),
+            token => token,
+        };
+        MapChoice::ALL.into_iter().find(|map| map.token() == token)
+    }
+
+    /// Which of [`crate::sim::VERSUS_MAPS`] the map is, for a handmade one.
+    pub fn handmade(self) -> Option<usize> {
+        match self {
+            MapChoice::TheGates => Some(0),
+            MapChoice::TheMoat => Some(1),
+            MapChoice::LogJam => Some(2),
+            MapChoice::ThreeLanes => Some(3),
+            MapChoice::RoundTable => Some(4),
+            MapChoice::RoundTheWorld => Some(5),
+            MapChoice::Duel => Some(6),
+            MapChoice::TheFountain => Some(7),
+            MapChoice::FourDoors => Some(8),
+            MapChoice::GullRoad => Some(9),
+            MapChoice::BackToBack => Some(10),
+            MapChoice::Classic
+            | MapChoice::GenSmall
+            | MapChoice::GenClassic
+            | MapChoice::GenLarge
+            | MapChoice::GenXl
+            | MapChoice::GenOcean
+            | MapChoice::Custom
+            | MapChoice::Surprise => None,
+        }
     }
 
     pub fn size(self) -> (u8, u8) {
@@ -77,14 +211,133 @@ impl MapChoice {
             // only used to decide whether a table fits, and a handmade
             // beach is offered only when it does.
             MapChoice::Custom => (20, 13),
+            // The level files' own sizes (a test holds them to it).
+            MapChoice::TheGates | MapChoice::TheMoat | MapChoice::LogJam => (13, 9),
+            MapChoice::ThreeLanes => (15, 9),
+            MapChoice::RoundTable => (15, 11),
+            MapChoice::RoundTheWorld => (21, 12),
+            MapChoice::Duel => (11, 7),
+            MapChoice::TheFountain => (13, 11),
+            MapChoice::FourDoors => (21, 11),
+            MapChoice::GullRoad => (25, 13),
+            MapChoice::BackToBack => (21, 12),
+            // Up to four seats; five and six play at 16x11
+            // ([`crate::sim::surprise_size`]), and Surprise seats every
+            // table, so this is never what decides a fit.
+            MapChoice::Surprise => crate::sim::surprise_size(CLASSIC_SEATS),
         }
     }
 
-    /// Whether the beach has edges. Open ocean does not: a creature walking
-    /// off one side comes back on the other, the same wrap the campaign
-    /// teaches at level 26.
+    /// Whether the beach has edges. Open ocean, Round the World, Four
+    /// Doors, Gull Road and Back to Back do not: a creature walking off one
+    /// side comes back on the other, the same wrap the campaign teaches at
+    /// level 26.
     pub fn wraps(self) -> bool {
-        matches!(self, MapChoice::GenOcean)
+        match self {
+            MapChoice::GenOcean
+            | MapChoice::RoundTheWorld
+            | MapChoice::FourDoors
+            | MapChoice::GullRoad
+            | MapChoice::BackToBack => true,
+            MapChoice::Classic
+            | MapChoice::GenSmall
+            | MapChoice::GenClassic
+            | MapChoice::GenLarge
+            | MapChoice::GenXl
+            | MapChoice::Custom
+            | MapChoice::TheGates
+            | MapChoice::TheMoat
+            | MapChoice::LogJam
+            | MapChoice::ThreeLanes
+            | MapChoice::RoundTable
+            | MapChoice::Duel
+            | MapChoice::TheFountain
+            | MapChoice::Surprise => false,
+        }
+    }
+
+    /// The tables a handmade map is built for (its level's `seats:` line,
+    /// which a test holds this to), `None` for a map that seats any table
+    /// it has room for ([`holds`]). An odd table is on the list only for a
+    /// beach with no edges made of identical strips, one castle each, so
+    /// no castle is ever left empty: on a fixed layout with a castle put
+    /// away, the castle across from the gap won 45-58% at three seats.
+    pub fn tables(self) -> Option<&'static [u8]> {
+        match self {
+            MapChoice::TheGates
+            | MapChoice::TheMoat
+            | MapChoice::LogJam
+            | MapChoice::ThreeLanes
+            | MapChoice::TheFountain => Some(&[2, 4]),
+            MapChoice::RoundTable | MapChoice::RoundTheWorld | MapChoice::BackToBack => {
+                Some(&[2, 4, 6])
+            }
+            MapChoice::Duel => Some(&[2]),
+            MapChoice::FourDoors => Some(&[3]),
+            MapChoice::GullRoad => Some(&[5]),
+            MapChoice::Classic
+            | MapChoice::GenSmall
+            | MapChoice::GenClassic
+            | MapChoice::GenLarge
+            | MapChoice::GenXl
+            | MapChoice::GenOcean
+            | MapChoice::Custom
+            | MapChoice::Surprise => None,
+        }
+    }
+
+    /// The most players the beach seats: the biggest table a handmade map
+    /// is built for, four on the four-castle beaches, six on the ones wide
+    /// enough for the two extra castles ([`holds`]).
+    pub fn most_seats(self) -> u8 {
+        if let Some(tables) = self.tables() {
+            return tables.iter().copied().max().unwrap_or(CLASSIC_SEATS);
+        }
+        match holds(self, MAX_PLAYERS as u8) {
+            true => MAX_PLAYERS as u8,
+            false => CLASSIC_SEATS,
+        }
+    }
+
+    /// The next map along the dial ([`MapChoice::DIAL`]) in `turn`'s
+    /// direction, wrapping round.
+    pub fn turned(self, turn: Turn) -> MapChoice {
+        let n = MapChoice::DIAL.len();
+        let at = MapChoice::DIAL
+            .iter()
+            .position(|&map| map == self)
+            .unwrap_or(0);
+        let step = match turn {
+            Turn::Right => 1,
+            Turn::Left => n - 1,
+        };
+        MapChoice::DIAL[(at + step) % n]
+    }
+
+    /// Whether a series or a table that outgrew its map may be dealt this
+    /// one without asking. The 20x13 is chosen, never dealt (see
+    /// [`sized_for`]), Surprise is a way of playing rather than a beach to
+    /// step onto, and the player's own beaches are walked by the dial.
+    fn dealt(self) -> bool {
+        match self {
+            MapChoice::GenXl | MapChoice::Surprise | MapChoice::Custom => false,
+            MapChoice::Classic
+            | MapChoice::GenSmall
+            | MapChoice::GenClassic
+            | MapChoice::GenLarge
+            | MapChoice::GenOcean
+            | MapChoice::TheGates
+            | MapChoice::TheMoat
+            | MapChoice::LogJam
+            | MapChoice::ThreeLanes
+            | MapChoice::RoundTable
+            | MapChoice::RoundTheWorld
+            | MapChoice::Duel
+            | MapChoice::TheFountain
+            | MapChoice::FourDoors
+            | MapChoice::GullRoad
+            | MapChoice::BackToBack => true,
+        }
     }
 }
 
@@ -160,29 +413,13 @@ impl Cycle for crate::app::tournament::SeriesLength {
     const VARIANTS: &'static [Self] = &crate::app::tournament::SeriesLength::ALL;
 }
 
-/// One match-setup row; input and render both match on this. The AI-level
-/// rows are per seat, one for each seat the AI can take, and the ones
-/// beyond the current AI count are hidden.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Row {
-    Players,
-    Bots,
-    /// Difficulty for the `n`-th AI seat, counting down from the top seat.
-    BotLevel(u8),
-    Map,
-    Gulls,
-    Round,
-    /// How many arrows each player may have standing at once.
-    Posts,
-    Mode,
-    /// What to call seat `n`. One row per seat in the match; typing into it
-    /// renames that seat everywhere the game mentions it.
-    Name(u8),
-}
-
 /// The range of the arrows dial. The default is the versus rule's three;
 /// one is a knife fight, and past six a beach is more arrow than sand.
 pub const POSTS_RANGE: std::ops::RangeInclusive<u8> = 1..=6;
+
+/// The range of the players dial: a match needs two, and the beaches seat
+/// six at most.
+pub const SEATS_RANGE: std::ops::RangeInclusive<u8> = 2..=MAX_PLAYERS as u8;
 
 /// The dials a set of wire terms names, read back as the app's own types.
 ///
@@ -243,54 +480,50 @@ pub const CLASSIC_SEATS: u8 = 4;
 /// mid-edge, and they need room between the corners and the spawner holes.
 pub const WIDE_ENOUGH: u8 = 16;
 
-impl Row {
-    pub const ALL: [Row; 7 + MAX_BOTS + MAX_PLAYERS] = [
-        Row::Players,
-        Row::Bots,
-        Row::BotLevel(0),
-        Row::BotLevel(1),
-        Row::BotLevel(2),
-        Row::BotLevel(3),
-        Row::BotLevel(4),
-        Row::Map,
-        Row::Gulls,
-        Row::Round,
-        Row::Posts,
-        Row::Mode,
-        // Last on the list: the rows above are the ones every match needs,
-        // and Enter on a name row types instead of starting the match.
-        Row::Name(0),
-        Row::Name(1),
-        Row::Name(2),
-        Row::Name(3),
-        Row::Name(4),
-        Row::Name(5),
-    ];
-}
-
-const ROWS: usize = Row::ALL.len();
-
 /// The configured local match. Persists between rounds so "again!" needs no
-/// re-setup; `armed` is set when the player launches from this screen and
-/// consumed by `load_versus`.
-#[derive(Resource)]
+/// re-setup; `armed` is set when the player launches from the setup steps
+/// and consumed by `load_versus`.
+#[derive(Resource, Clone)]
 pub struct MatchConfig {
     pub seats: u8,
-    /// How many of the top seats are not played at this machine's keys.
-    /// A count rather than a flag a seat, because the people sit low and
-    /// everything else high: the keyboard and the pads deal the human
-    /// seats from P1 upward.
-    pub bots: u8,
-    /// What holds each of those top seats: the AI at its own difficulty, so
-    /// one player can spar with a fierce rival and an easy one at the same
-    /// table. Only the seats `bots` counts are read; the rest keep their
-    /// choice for when the count comes back up to them.
+    /// Who plays each seat: a person at this machine ([`SeatController::Local`]),
+    /// the AI at its own difficulty, or a bot. Seat by seat, as step 3 sets
+    /// it, so one player can spar with a fierce rival and an easy one at the
+    /// same table. Seat 0 is always a person: player 1 is whoever is working
+    /// the menu ([`MatchConfig::clamp_bots`]). Only the first `seats` are
+    /// read; the rest keep their choice for when the count comes back up.
     pub controllers: [SeatController; MAX_PLAYERS],
+    /// The AI's level: what every AI seat is set to when step 1's row
+    /// turns, what an open seat is filled with when the match starts, and
+    /// the one level an online table's AI plays at.
+    pub ai_level: BotLevel,
+    /// The open seats the AI was put in when the match started
+    /// ([`seat_the_match`]). The AI plays them for that match, its series
+    /// and its rematches, and match setup opens with them open again
+    /// ([`settle`]): the table is left as the player set it, so P2's keys
+    /// or a friend's Start can still take the seat next time.
+    pub filled_at_start: [bool; MAX_PLAYERS],
+    /// The map in force: the one the next round is played on. Set from
+    /// step 2's card and kept on one the table fits ([`settle_map`]); a
+    /// series, a rematch and the Random card move it round to round.
     pub map: MapChoice,
+    /// The card the player picked on step 2, kept while the seat count has
+    /// moved the map in force off it, and `None` while the map in force is
+    /// the pick. The map follows the pick, not the last map it was moved
+    /// to: five players move a pick of the small beach to the large one,
+    /// and three put it back ([`settle_map`]). Step 2 and step 3 say so
+    /// while it is moved ([`map_moved`]).
+    pub pick: Option<Card>,
     /// Which handmade beach, when `map` is [`MapChoice::Custom`]. An index
-    /// into [`CustomBeaches`], which is read fresh each time the dial is
-    /// turned: the editor may have saved another one since.
+    /// into [`CustomBeaches::fitting`] for the table, which is read fresh
+    /// each time the setup steps open: the editor may have saved another
+    /// one since.
     pub custom: usize,
+    /// Step 2's Random card: every round launched from this config draws
+    /// `map` (and `custom`) afresh from the maps that seat the table
+    /// ([`draw_map`]). A local choice only: the round is built, recorded
+    /// and sent as the concrete map the draw landed on.
+    pub random: bool,
     pub gulls: GullPressure,
     pub round: RoundLength,
     /// Arrows each player may have standing. Placing one more takes the
@@ -304,108 +537,162 @@ pub struct MatchConfig {
     /// host's to turn in the lobby, said in the beacon so the list shows
     /// it before anyone walks up.
     pub bots_welcome: bool,
+    /// The lobby's AI dial: how many AI a beach hosted on these dials adds
+    /// behind the people who turn up. The couch's own AI seats are the
+    /// seats `controllers` gives the AI; the two tables are not the same
+    /// size, so they are not the same count either.
+    pub lobby_bots: u8,
+    /// The seed the next round launched from the setup steps is played
+    /// on: the one its map card was drawn with, so the beach previewed is
+    /// the beach played. `None` draws a fresh one, as every round after
+    /// it does (a series' next round and a rematch clear it).
+    pub seed: Option<u64>,
+    /// Who sits in each seat as partners were picked on step 3, each
+    /// person by the settings row their name is saved on
+    /// ([`MatchConfig::seat_names`]). A pick moves people for the match,
+    /// never the names saved in settings, which stay on their own rows.
+    pub people: crate::app::partners::Who,
 }
 
 impl Default for MatchConfig {
     fn default() -> Self {
         MatchConfig {
             seats: 2,
-            bots: 0,
-            controllers: [SeatController::Ai(BotLevel::Normal); MAX_PLAYERS],
+            controllers: [SeatController::Local; MAX_PLAYERS],
+            ai_level: BotLevel::Normal,
+            filled_at_start: [false; MAX_PLAYERS],
             map: MapChoice::Classic,
+            pick: None,
             custom: 0,
+            random: false,
             gulls: GullPressure::Normal,
             round: RoundLength::Standard,
             posts: MAX_SIGNPOSTS_PER_PLAYER as u8,
             series: crate::app::tournament::SeriesLength::Single,
             armed: false,
             bots_welcome: true,
+            lobby_bots: 0,
+            seed: None,
+            people: crate::app::partners::Who::default(),
         }
     }
 }
 
 impl MatchConfig {
-    /// How many seats are played at this machine's keys: the low ones,
-    /// under the top `bots`. Saturating, so a count of bots no clamp has
-    /// yet brought under the seats reads as nobody rather than wrapping.
-    pub fn humans(&self) -> u8 {
-        self.seats.saturating_sub(self.bots)
-    }
-
-    /// Keep at least one human seat: `bots` stays under `seats`, which
-    /// every count of humans relies on.
-    pub fn clamp_bots(&mut self) {
-        self.bots = self.bots.min(self.seats.saturating_sub(1));
-    }
-
-    /// Who decides for `seat`: a person here for the low seats, and the
-    /// seat's own choice for the top `bots`.
-    pub fn controller(&self, seat: u8) -> SeatController {
-        if seat < self.humans() {
-            SeatController::Local
-        } else {
-            self.controllers[usize::from(seat).min(MAX_PLAYERS - 1)]
+    /// A table of `seats` whose top `ai` seats the AI plays at
+    /// [`MatchConfig::ai_level`], the rest people: the shape every table
+    /// had before seats were set one by one, and what the dev hooks and
+    /// the daily ask for. At least one seat stays a person.
+    pub fn with_ai(seats: u8, ai: u8) -> MatchConfig {
+        let mut config = MatchConfig {
+            seats: seats.clamp(*SEATS_RANGE.start(), *SEATS_RANGE.end()),
+            ..MatchConfig::default()
+        };
+        let ai = ai.min(config.seats - 1);
+        for seat in config.seats - ai..config.seats {
+            config.controllers[usize::from(seat)] = SeatController::Ai(config.ai_level);
         }
+        config
     }
 
-    /// The AI difficulty `seat` would play at: its own, or the default for
-    /// a seat set to something other than the AI.
-    pub fn level(&self, seat: u8) -> BotLevel {
+    /// The settings row the name of whoever sits in `seat` is saved on
+    /// ([`MatchConfig::people`]).
+    pub fn name_row(&self, seat: u8) -> u8 {
+        self.people
+            .0
+            .get(usize::from(seat))
+            .copied()
+            .unwrap_or(seat)
+    }
+
+    /// The names the seats go by at this table, from the names `saved` in
+    /// settings: each seat named after the person partner picks put there.
+    pub fn seat_names(&self, saved: &[String; MAX_PLAYERS]) -> [String; MAX_PLAYERS] {
+        std::array::from_fn(|seat| saved[usize::from(self.name_row(seat as u8))].clone())
+    }
+
+    /// The seats played at this machine's keys and pads, in seat order.
+    pub fn human_seats(&self) -> Vec<u8> {
+        (0..self.seats)
+            .filter(|&seat| self.controller(seat) == SeatController::Local)
+            .collect()
+    }
+
+    /// How many seats are played at this machine.
+    pub fn humans(&self) -> u8 {
+        self.human_seats().len() as u8
+    }
+
+    /// How many seats the AI or a bot plays.
+    pub fn ai_seats(&self) -> u8 {
+        self.seats - self.humans()
+    }
+
+    /// Keep player 1 a person: seat 0 is whoever is working the menu, and
+    /// every count of humans relies on there being one. The lobby's AI
+    /// dial is held to what an online table can seat beside its host.
+    pub fn clamp_bots(&mut self) {
+        self.controllers[0] = SeatController::Local;
+        self.lobby_bots = self.lobby_bots.min(MAX_BOTS as u8);
+    }
+
+    /// Who decides for `seat`.
+    pub fn controller(&self, seat: u8) -> SeatController {
         self.controllers[usize::from(seat).min(MAX_PLAYERS - 1)]
-            .ai()
-            .unwrap_or_default()
     }
 
     /// The daily challenge's table: today's arena, three fierce bots, a
     /// standard round. Its own value rather than a write into the player's
     /// config, which would come back from the daily showing this on the
-    /// setup screen as what they had chosen.
+    /// setup steps as what they had chosen.
     pub fn daily() -> Self {
         MatchConfig {
-            seats: 4,
-            bots: 3,
-            controllers: [SeatController::Ai(BotLevel::Hard); MAX_PLAYERS],
+            ai_level: BotLevel::Hard,
             map: MapChoice::GenClassic,
-            custom: 0,
-            gulls: GullPressure::Normal,
-            round: RoundLength::Standard,
-            posts: MAX_SIGNPOSTS_PER_PLAYER as u8,
-            series: crate::app::tournament::SeriesLength::Single,
             armed: true,
             bots_welcome: false,
+            ..MatchConfig::with_ai(4, 3).levelled(BotLevel::Hard)
         }
+    }
+
+    /// The same table with every AI seat at `level`.
+    fn levelled(mut self, level: BotLevel) -> Self {
+        self.ai_level = level;
+        for controller in &mut self.controllers {
+            if controller.ai().is_some() {
+                *controller = SeatController::Ai(level);
+            }
+        }
+        self
     }
 }
 
 pub const BOT_LEVELS: [BotLevel; 3] = [BotLevel::Easy, BotLevel::Normal, BotLevel::Hard];
 
 /// The match being set up: its dials, and the shelf of handmade beaches
-/// the map dial walks.
+/// the map cards show.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Dials<'w> {
     pub config: ResMut<'w, MatchConfig>,
     pub beaches: Res<'w, CustomBeaches>,
 }
 
-/// The one level every AI seat of an online table plays at: the top AI
-/// seat's on this screen, since the wire carries one difficulty and a lobby
-/// has no per-seat rows to fill. A seat dialled to a bot on the couch has
-/// no level to give. The lobby's AI row names it, so a level set here
-/// long ago is not played unannounced.
-pub fn online_ai_level(config: &MatchConfig) -> crate::sim::BotLevel {
-    config.controllers[..usize::from(config.seats).min(MAX_PLAYERS)]
-        .iter()
-        .rev()
-        .find_map(|controller| controller.ai())
-        .unwrap_or_default()
+/// The one level every AI seat of an online table plays at: step 1's AI
+/// level, since the wire carries one difficulty and a lobby has no seats
+/// of its own to set. The lobby's AI row names it, so a level set here
+/// is not played unannounced.
+pub fn online_ai_level(config: &MatchConfig) -> BotLevel {
+    config.ai_level
 }
 
-/// The wire form of this screen's choices, for a host to send and every peer
-/// to build the same beach from. `teams` and `seed` are not on this screen:
-/// teams is a setting, and the seed is drawn when the match launches.
+/// The wire form of these dials, for a host to send and every peer to
+/// build the same beach from. `teams` and `seed` are not on them: teams
+/// is a setting, and the seed is drawn when the match launches. The AI is
+/// the lobby's dial, not the couch's seats, and the seats in their own
+/// order: who sits where is the host's deal to say.
 pub fn terms(config: &MatchConfig, teams: crate::app::teams::TeamMode, seed: u64) -> MatchTerms {
     MatchTerms {
-        bots: config.bots,
+        bots: config.lobby_bots,
         bot_level: online_ai_level(config).index() as u8,
         map: config.map.index() as u8,
         gulls: config.gulls.index() as u8,
@@ -414,13 +701,14 @@ pub fn terms(config: &MatchConfig, teams: crate::app::teams::TeamMode, seed: u64
         seed,
         series: config.series.index() as u8,
         posts: config.posts,
+        order: crate::transport::IN_SEAT_ORDER,
     }
 }
 
 /// A [`MatchConfig`] and team mode that read back the same dials a set of
 /// wire [`MatchTerms`] carries, for painting a joiner's terms card: it is
-/// shown the match it is joining, not its own setup screen's idea of one.
-/// The seat count is the humans plus AI the terms name; `custom`/`armed`
+/// shown the match it is joining, not its own setup's idea of one. The
+/// seat count is the AI the terms name, at least two; `custom`/`armed`
 /// are display-only here. A `Custom` map cannot be named from the wire (the
 /// beach travels as bytes, not an index), so it reads as the generated size
 /// it will actually play on.
@@ -428,8 +716,8 @@ pub fn config_from_terms(terms: &MatchTerms) -> (MatchConfig, crate::app::teams:
     let bots = terms.bots.min(MAX_PLAYERS as u8);
     let config = MatchConfig {
         seats: bots.max(2),
-        bots,
-        controllers: [SeatController::Ai(terms.bot_level()); MAX_PLAYERS],
+        lobby_bots: bots,
+        ai_level: terms.bot_level(),
         map: terms.map(),
         gulls: terms.gulls(),
         round: terms.round(),
@@ -509,10 +797,16 @@ pub fn is_custom(terms: &MatchTerms) -> bool {
 /// Whether `map` has room for a table of `seats`. Five and six castles
 /// need a wide beach: the two extra sit mid-edge, and the handcrafted
 /// classic arena and the small generated one hold four, clamping a bigger
-/// table's castles down to it. A handmade beach answers by its castle
-/// count instead (see [`CustomBeaches::fitting`]).
+/// table's castles down to it. A handmade versus map seats the tables it
+/// is built for ([`MapChoice::tables`]), and a beach off the shelf answers
+/// by its castle count instead (see [`CustomBeaches::fitting`]).
 pub fn holds(map: MapChoice, seats: u8) -> bool {
-    seats <= CLASSIC_SEATS || map.size().0 >= WIDE_ENOUGH
+    match (map, map.tables()) {
+        // Built at the size the table needs ([`crate::sim::surprise_size`]).
+        (MapChoice::Surprise, _) => true,
+        (_, Some(tables)) => tables.contains(&seats),
+        (_, None) => seats <= CLASSIC_SEATS || map.size().0 >= WIDE_ENOUGH,
+    }
 }
 
 /// The generated beach sized for a table of `seats`: about thirty tiles a
@@ -531,126 +825,342 @@ pub fn sized_for(seats: u8) -> MapChoice {
 /// ([`cycle_map`], which walks the shelf and skips it when empty), and
 /// then on again past any beach the table does not fit on.
 ///
-/// The one place a series and the dial differ: the dial, turned onto a
-/// small beach by hand, drops the seats it cannot hold, because the hand
-/// on it asked for that beach. A series asked for nobody to leave the
-/// table, so it keeps the seats and skips the beach. Stepped with a plain
-/// `cycled(Turn::Right)`, a table of five landed on the classic arena with
-/// two of them castle-less.
+/// A series asked for nobody to leave the table, so it keeps the seats and
+/// skips the beach. Stepped with a plain `cycled(Turn::Right)`, a table of
+/// five landed on the classic arena with two of them castle-less.
 pub fn next_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
+    // Surprise is a new beach every round already, on the round's seed.
+    if config.map == MapChoice::Surprise {
+        return;
+    }
     // Bounded by the number of stops there are: every wide beach holds
     // every table, so this returns well before the bound, but a loop over
     // a dial should not be able to spin.
     for _ in 0..MapChoice::ALL.len() + beaches.0.len() {
         cycle_map(config, Turn::Right, beaches);
         // The 20x13 is chosen, never dealt (see [`sized_for`]): stepped
-        // onto it, a pair playing a best of five got 130 tiles each.
-        if holds(config.map, config.seats) && config.map != MapChoice::GenXl {
+        // onto it, a pair playing a best of five got 130 tiles each. Nor
+        // is Surprise, which a series stepped onto would never step off.
+        let dealt = config.map.dealt() || config.map == MapChoice::Custom;
+        if holds(config.map, config.seats) && dealt {
             return;
         }
     }
 }
 
-/// Seat a table of `seats` (the dial's range holds it to two to six), and
-/// keep the map one it can be played on. The one way the seat count
-/// changes on this screen, whether by the Players dial or by a pad's Start
-/// (or a pad giving its seat back): a pad claim that grew the table
-/// without it put five on the four-castle arena, the fifth with no castle
-/// all match.
-///
-/// A generated beach picked for its size follows the table, so two players
-/// do not rattle around a beach sized for six, except the 20x13, which is
-/// only ever there because somebody chose it. A handmade beach stays the
-/// one it was while it still seats everyone: `custom` counts along the
-/// beaches that fit, and a table of a new size fits a different list, so
-/// left alone the index named another beach than the one on the dial.
-pub fn reseat(config: &mut MatchConfig, seats: u8, beaches: &CustomBeaches) {
-    let picked = (config.map == MapChoice::Custom)
-        .then(|| beaches.on_shelf(config.seats, config.custom))
-        .flatten();
-    config.seats = seats.clamp(2, MAX_PLAYERS as u8);
-    config.clamp_bots();
-    if let Some(custom) = picked.and_then(|shelf| beaches.among_fitting(config.seats, shelf)) {
+/// Every map a table of `seats` can be dealt, as `(map, custom)`: each
+/// built-in beach that holds it but the 20x13, which is only ever chosen
+/// ([`sized_for`]), and Surprise, which is a way of playing rather than a
+/// beach, then each beach off the shelf that seats it (`custom` its place
+/// among the ones that fit). The ones the Random card draws from.
+pub fn maps_that_seat(seats: u8, beaches: &CustomBeaches) -> Vec<(MapChoice, usize)> {
+    MapChoice::DIAL
+        .into_iter()
+        .filter(|&map| map.dealt() && holds(map, seats))
+        .map(|map| (map, 0))
+        .chain((0..beaches.fitting(seats).len()).map(|custom| (MapChoice::Custom, custom)))
+        .collect()
+}
+
+/// The Random card's draw: one of the maps that seat the table
+/// ([`maps_that_seat`]), picked by `roll`, written into `map` and
+/// `custom` so the round that follows is built, recorded and sent as that
+/// concrete map. `random` stays set, so the next round draws again.
+pub fn draw_map(config: &mut MatchConfig, beaches: &CustomBeaches, roll: u64) {
+    let maps = maps_that_seat(config.seats, beaches);
+    if let Some(&(map, custom)) = maps.get((roll % maps.len().max(1) as u64) as usize) {
+        config.map = map;
         config.custom = custom;
     }
-    if config.map.is_a_plain_size() && config.map != MapChoice::GenXl {
-        config.map = sized_for(config.seats);
-    }
-    settle_map(config, beaches);
 }
 
-/// Make the config one this screen can seat, on the way in. The shelf may
-/// have changed since the last visit (a beach deleted, or resaved with
-/// fewer castles): a config still pointing at it is moved on, so the dial
-/// reads what will be played. And the lobby's AI dial writes the same
-/// `bots`, held only to the six an online table seats: three AI dialled
-/// there came back to a couch of two as more AI than seats, its humans
-/// counted below zero.
+/// The Random card's draw for an online table: as [`draw_map`], from the
+/// maps that seat the table less the beaches off the shelf too big to
+/// travel to it, which would leave the round on a generated beach the card
+/// never offered.
+pub fn draw_online_map(config: &mut MatchConfig, beaches: &CustomBeaches, roll: u64) {
+    let fitting = beaches.fitting(config.seats);
+    let maps: Vec<(MapChoice, usize)> = maps_that_seat(config.seats, beaches)
+        .into_iter()
+        .filter(|&(map, custom)| {
+            map != MapChoice::Custom
+                || fitting
+                    .get(custom)
+                    .is_some_and(|beach| !beach.too_big_to_send())
+        })
+        .collect();
+    if let Some(&(map, custom)) = maps.get((roll % maps.len().max(1) as u64) as usize) {
+        config.map = map;
+        config.custom = custom;
+    }
+}
+
+/// The map of the next round a local table plays, a series' or a
+/// rematch's: drawn again under the Random card, stepped on as a series
+/// steps it otherwise ([`next_map`]). `roll` is the draw's die, fresh
+/// for every round.
+pub fn map_for_next_round(config: &mut MatchConfig, beaches: &CustomBeaches, roll: u64) {
+    match config.random {
+        true => draw_map(config, beaches, roll),
+        false => next_map(config, beaches),
+    }
+}
+
+/// Seat a table of `seats` (held to [`SEATS_RANGE`]), and keep the map one
+/// it can be played on. The one way the seat count changes, whether by
+/// step 1's Players row or by a pad's Start (or a pad giving its seat
+/// back): a pad claim that grew the table without it put five on the
+/// four-castle arena, the fifth with no castle all match.
+///
+/// A seat added back keeps what it was set to before the count went down
+/// ([`MatchConfig::controllers`]); one never set is a person's seat with
+/// nobody in it yet, which step 3 shows open and a launch fills with the
+/// AI ([`open_seats`]).
+///
+/// The map follows the player's pick, not the last map the count moved
+/// it to ([`settle_map`]): read before the count changes, since a
+/// handmade beach is named by its place among the ones the old count fit.
+pub fn reseat(config: &mut MatchConfig, seats: u8, beaches: &CustomBeaches) {
+    let pick = current_pick(config, beaches);
+    config.seats = seats.clamp(*SEATS_RANGE.start(), *SEATS_RANGE.end());
+    config.clamp_bots();
+    place_pick(config, pick, beaches);
+}
+
+/// Make the config one the setup steps can seat, on the way in: the
+/// seats the AI filled at the last start open again, and the map back on
+/// the player's pick where the table fits it. The shelf may have changed
+/// since the last visit (a beach deleted, or resaved with fewer castles):
+/// a config still pointing at it is moved on, so the map picked is what
+/// will be played.
 pub fn settle(config: &mut MatchConfig, beaches: &CustomBeaches) {
+    open_the_seats_filled_at_start(config);
     config.clamp_bots();
     settle_map(config, beaches);
 }
 
-/// Keep the map somewhere the table can play after something other than
-/// the dial moved: the seat count, or the shelf between two visits to the
-/// screen. Off `Custom` when no beach seats everyone (onto the stop after
-/// it, as the dial itself steps), onto the beach [`sized_for`] the table
-/// when five or six are seated and the map holds four. Without it the row reads a beach the
-/// match will not be played on: `Custom` with nothing fitting launched a
-/// generated 20x13 arena under the classic arena's name.
-pub fn settle_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
-    if config.map == MapChoice::Custom {
-        match beaches.fitting(config.seats).len() {
-            0 => config.map = MapChoice::Custom.cycled(Turn::Right),
-            fitting => config.custom = config.custom.min(fitting - 1),
+/// Give the seats the AI filled at the last start back to nobody, as
+/// step 3 had them: the AI was there for that match only. Read off the
+/// mark, at whatever level the AI plays there now: matched against the
+/// AI level, a level turned since (the lobby's, or step 1's row turning
+/// every AI seat) left the seat to the AI for good. A seat set to a bot
+/// or a person since keeps it.
+pub fn open_the_seats_filled_at_start(config: &mut MatchConfig) {
+    let filled = std::mem::take(&mut config.filled_at_start);
+    for (seat, filled) in filled.into_iter().enumerate() {
+        if filled && config.controllers[seat].ai().is_some() {
+            config.controllers[seat] = SeatController::Local;
         }
     }
-    if !holds(config.map, config.seats) {
-        config.map = sized_for(config.seats);
+}
+
+/// Put the map in force where the player's pick and the seat count say
+/// ([`map_in_force`]), after something other than step 2 moved: the seat
+/// count, or the shelf or a series between two visits.
+pub fn settle_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
+    let pick = current_pick(config, beaches);
+    place_pick(config, pick, beaches);
+}
+
+/// The player's pick: the one kept while the map is moved off it, else
+/// the map in force's own card. A handmade beach no longer on the shelf
+/// for this table names nothing, and gives way to the beach dealt to it.
+fn current_pick(config: &MatchConfig, beaches: &CustomBeaches) -> Card {
+    if let Some(pick) = config.pick.filter(|pick| on_the_shelf(*pick, beaches)) {
+        return pick;
     }
+    match config.map {
+        MapChoice::Custom => beaches
+            .on_shelf(config.seats, config.custom)
+            .map_or(Card::Map(sized_for(config.seats)), Card::Shelf),
+        map @ (MapChoice::Classic
+        | MapChoice::GenSmall
+        | MapChoice::GenClassic
+        | MapChoice::GenLarge
+        | MapChoice::GenXl
+        | MapChoice::GenOcean
+        | MapChoice::TheGates
+        | MapChoice::TheMoat
+        | MapChoice::LogJam
+        | MapChoice::ThreeLanes
+        | MapChoice::RoundTable
+        | MapChoice::RoundTheWorld
+        | MapChoice::Duel
+        | MapChoice::TheFountain
+        | MapChoice::FourDoors
+        | MapChoice::GullRoad
+        | MapChoice::BackToBack
+        | MapChoice::Surprise) => Card::Map(map),
+    }
+}
+
+/// Whether `card` names a beach there is: a handmade one must still be on
+/// the shelf.
+fn on_the_shelf(card: Card, beaches: &CustomBeaches) -> bool {
+    match card {
+        Card::Shelf(shelf) => shelf < beaches.0.len(),
+        Card::Map(_) | Card::Random => true,
+    }
+}
+
+/// The map in force for `pick` at this table, with `pick` kept only while
+/// the map is moved off it.
+fn place_pick(config: &mut MatchConfig, pick: Card, beaches: &CustomBeaches) {
+    let (map, custom) = map_in_force(pick, config.seats, beaches);
+    config.map = map;
+    config.custom = custom;
+    let moved = match pick {
+        Card::Map(picked) => picked != map,
+        Card::Shelf(_) => map != MapChoice::Custom,
+        Card::Random => false,
+    };
+    config.pick = moved.then_some(pick);
+}
+
+/// The map a table of `seats` plays when the player picked `pick`, as
+/// `(map, custom)`: the pick itself while it seats the table, and only
+/// when it cannot, the closest generated map (or the classic arena) that
+/// does. Closest by area, so a four-castle beach gives way to the large
+/// one for five, and the 20x13 is never dealt ([`sized_for`]). Never a
+/// handmade versus map, which is built for whole pairs: a table it does
+/// not seat is one no other handmade map is fair at either. Random has no
+/// one map, and is dealt the beach sized for the table until it draws.
+pub fn map_in_force(pick: Card, seats: u8, beaches: &CustomBeaches) -> (MapChoice, usize) {
+    let (w, h) = match pick {
+        Card::Map(map) if holds(map, seats) => return (map, 0),
+        Card::Map(map) => map.size(),
+        Card::Shelf(shelf) => {
+            if let Some(custom) = beaches.among_fitting(seats, shelf) {
+                return (MapChoice::Custom, custom);
+            }
+            beaches
+                .0
+                .get(shelf)
+                .map_or(MapChoice::Custom.size(), |beach| {
+                    (beach.level.board().width(), beach.level.board().height())
+                })
+        }
+        Card::Random => return (sized_for(seats), 0),
+    };
+    let area = |(w, h): (u8, u8)| i32::from(w) * i32::from(h);
+    let wanted = area((w, h));
+    let closest = MapChoice::ALL
+        .into_iter()
+        .filter(|&map| map.dealt() && map.tables().is_none() && holds(map, seats))
+        .min_by_key(|&map| (area(map.size()) - wanted).abs())
+        .unwrap_or(sized_for(seats));
+    (closest, 0)
+}
+
+/// The pick and the map in force, while the seat count keeps them apart:
+/// what step 2's note and step 3's line say, naming the pick, why, and
+/// the map played instead. `None` under the Random card, which has no
+/// pick to move.
+pub fn map_moved(config: &MatchConfig, beaches: &CustomBeaches) -> Option<(Card, Card)> {
+    let pick = config
+        .pick
+        .filter(|pick| !config.random && on_the_shelf(*pick, beaches))?;
+    Some((pick, picked_card(config, beaches)))
+}
+
+/// Make the map in force the pick: a map turned to by a dial other than
+/// step 2's (the lobby's) is the player's choice as it stands.
+pub fn pick_the_map_in_force(config: &mut MatchConfig) {
+    config.pick = None;
 }
 
 #[cfg(test)]
-use screen::{
-    LABEL_W, ROW_FONT, VALUE_W, ai_seat, card_height, cycle_ai_level, has_an_opponent, live_rows,
-    p2_pressed, row_text,
-};
+mod flow_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Hosting from a couch whose top seat was dialled to a bot: the wire
-    /// carries one AI level, and it is the one an AI seat was set to, not
-    /// the default a bot's seat reads as.
+    /// The guide's line on big tables, read off [`holds`]: five players
+    /// need a generated map at least [`WIDE_ENOUGH`] tiles across (the
+    /// open ocean among them), Surprise or Gull Road, built for five, and
+    /// six may also have the handmade maps built for six, Round Table (15
+    /// across), Round the World and Back to Back. Not "16 across" for
+    /// every map: Round Table is 15.
     #[test]
-    fn a_bot_on_the_couch_does_not_set_the_lobbys_ai_level() {
-        let mut config = MatchConfig {
-            seats: 3,
-            bots: 2,
-            ..MatchConfig::default()
+    fn the_maps_that_seat_five_and_six_are_the_guides() {
+        let seating = |seats| -> Vec<MapChoice> {
+            MapChoice::ALL
+                .into_iter()
+                .filter(|&map| map != MapChoice::Custom && holds(map, seats))
+                .collect()
         };
-        config.controllers[2] = SeatController::Bot;
-        config.controllers[1] = SeatController::Ai(BotLevel::Hard);
-        let terms = terms(&config, crate::app::teams::TeamMode::Solo, 1);
-        assert_eq!(terms.bot_level, BotLevel::Hard.index() as u8);
+        let wide: Vec<MapChoice> = MapChoice::ALL
+            .into_iter()
+            .filter(|&map| map.tables().is_none() && map.size().0 >= WIDE_ENOUGH)
+            .filter(|&map| !matches!(map, MapChoice::Custom | MapChoice::Surprise))
+            .collect();
+        assert_eq!(
+            wide,
+            [MapChoice::GenLarge, MapChoice::GenXl, MapChoice::GenOcean]
+        );
+        let mut five = wide.clone();
+        five.extend([MapChoice::Surprise, MapChoice::GullRoad]);
+        assert_eq!(seating(5), five);
+        let mut six = vec![
+            MapChoice::RoundTable,
+            MapChoice::RoundTheWorld,
+            MapChoice::BackToBack,
+            MapChoice::Surprise,
+        ];
+        six.extend(wide);
+        let mut seat_six = seating(6);
+        seat_six.sort_by_key(|map| MapChoice::ALL.iter().position(|m| m == map));
+        six.sort_by_key(|map| MapChoice::ALL.iter().position(|m| m == map));
+        assert_eq!(seat_six, six);
+        assert_eq!(MapChoice::RoundTable.size().0, 15);
+        let guide = include_str!("../../../docs/guide.md").replace("\n  ", " ");
+        assert!(
+            guide.contains(&format!(
+                "five players need a generated map {WIDE_ENOUGH} tiles across or more"
+            )),
+            "the guide says the rule"
+        );
     }
 
-    /// A match needs somebody for player 1 to play: an AI, a pad that
-    /// pressed Start, or a second person at P2's keys. Two humans on the
-    /// dial with nobody else there is not a game.
+    /// The lobby's AI plays at step 1's level: the wire carries one level,
+    /// and it is the one the setup said every AI seat plays at, whatever a
+    /// single seat on the couch was turned to.
     #[test]
-    fn a_match_needs_an_opponent() {
-        let alone = MatchConfig {
-            seats: 2,
-            bots: 0,
-            ..MatchConfig::default()
+    fn the_lobbys_ai_plays_at_step_ones_level() {
+        let mut config = MatchConfig::with_ai(3, 2);
+        config.ai_level = BotLevel::Hard;
+        config.controllers[2] = SeatController::Bot;
+        config.controllers[1] = SeatController::Ai(BotLevel::Easy);
+        config.lobby_bots = 2;
+        let terms = terms(&config, crate::app::teams::TeamMode::Solo, 1);
+        assert_eq!(terms.bot_level, BotLevel::Hard.index() as u8);
+        assert_eq!(
+            terms.bots, 2,
+            "the lobby's own count, not the couch's seats"
+        );
+        let (back, _) = config_from_terms(&terms);
+        assert_eq!((back.lobby_bots, back.ai_level), (2, BotLevel::Hard));
+    }
+
+    /// Player 1 stays a person whatever asked otherwise, and the lobby's
+    /// AI dial is held to the seats an online table has beside its host.
+    #[test]
+    fn player_one_stays_a_person() {
+        let mut config = MatchConfig {
+            lobby_bots: 9,
+            ..MatchConfig::with_ai(2, 1)
         };
-        assert!(!has_an_opponent(&alone, 0, false), "an empty chair");
-        assert!(has_an_opponent(&alone, 1, false), "a pad joined");
-        assert!(has_an_opponent(&alone, 0, true), "P2 pressed a key");
-        let with_ai = MatchConfig { bots: 1, ..alone };
-        assert!(has_an_opponent(&with_ai, 0, false), "the AI plays");
+        config.controllers[0] = SeatController::Ai(BotLevel::Easy);
+        settle(&mut config, &CustomBeaches::default());
+        assert_eq!(config.controller(0), SeatController::Local);
+        assert_eq!(config.lobby_bots, MAX_BOTS as u8);
+        assert_eq!(config.humans(), 1, "somebody still plays");
+        assert_eq!(
+            MatchConfig::with_ai(4, 9).ai_seats(),
+            3,
+            "never all of them"
+        );
     }
 
     /// P2 joins by pressing one of P2's own keys, and never by a key the
@@ -681,151 +1191,6 @@ mod tests {
         assert!(
             !pressed(KeyCode::ArrowUp, &one_hand),
             "P1's placement under the preset, as the round plays it"
-        );
-    }
-
-    /// Every row fits the two cells that hold it, in every language, on
-    /// every stop of every dial.
-    ///
-    /// Measured in the same pixels the two cells are declared in, which is
-    /// why they are declared that way: see [`LABEL_W`].
-    #[test]
-    fn every_row_fits_its_cell_in_every_language() {
-        use crate::app::i18n::metrics::text_px;
-        use crate::app::settings::{GameSettings, NAME_MAX};
-        for lang in crate::app::i18n::ALL_LANGS {
-            let mut settings = GameSettings {
-                language: lang,
-                ..GameSettings::default()
-            };
-            // A seat named to the hilt: the naming row shows the name, a
-            // caret and the hint, and all three have to share the cell.
-            settings.names[0] = "M".repeat(NAME_MAX);
-            let tr = settings.tr();
-            for seats in 2..=MAX_PLAYERS as u8 {
-                for bots in 0..seats {
-                    for (map, series) in MapChoice::ALL.into_iter().flat_map(|map| {
-                        crate::app::tournament::SeriesLength::ALL.map(move |s| (map, s))
-                    }) {
-                        // A handmade beach's name is the player's, up to
-                        // twenty-eight characters of it, and no cell on
-                        // any screen is built to hold that. It clips, the
-                        // way a typed name clips on the settings card.
-                        if map == MapChoice::Custom {
-                            continue;
-                        }
-                        let config = MatchConfig {
-                            seats,
-                            bots,
-                            map,
-                            gulls: GullPressure::Frenzy,
-                            round: RoundLength::Long,
-                            // Every position of the mode dial, not the
-                            // longest guessed at: "best of 3" and "best of
-                            // 5" are the same width in English and are not
-                            // in every language this ships in.
-                            series,
-                            ..MatchConfig::default()
-                        };
-                        for row in Row::ALL {
-                            // Both states of the one row that is typed
-                            // into rather than stepped through.
-                            for naming in [None, Some(0)] {
-                                let (label, value) = row_text(
-                                    tr,
-                                    &config,
-                                    &settings,
-                                    &CustomBeaches::default(),
-                                    naming,
-                                    row,
-                                );
-                                let label_w = text_px(&label, ROW_FONT);
-                                assert!(
-                                    label_w <= LABEL_W,
-                                    "{row:?} in {lang:?}: label {label:?} is \
-                                     {label_w:.1}px, and the cell holds {LABEL_W}"
-                                );
-                                let value_w = text_px(&value, ROW_FONT);
-                                assert!(
-                                    value_w <= VALUE_W,
-                                    "{row:?} in {lang:?}: value {value:?} is \
-                                     {value_w:.1}px, and the cell holds {VALUE_W}"
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// The card has to fit the window the interface was drawn for, as the
-    /// settings card does. One column rather than two, so there is room,
-    /// but not enough to widen a cell without looking.
-    #[test]
-    fn the_card_fits_the_window_it_was_drawn_for() {
-        let card = LABEL_W + VALUE_W + 2.0 * 10.0 + 2.0 * 22.0;
-        // The crab and the gull stand in the same row as the card and do
-        // not shrink, so the width they take is the card's to spare. Left
-        // out, the card would be the one squeezed on a narrow window.
-        let across = card;
-        assert!(
-            across <= crate::app::settings::DESIGN_W,
-            "the match card and its company are {across}px of the {}px they \
-             are allowed ({card}px of it the card)",
-            crate::app::settings::DESIGN_W
-        );
-    }
-
-    /// The most rows a table can show at once: six seats, five of them AI,
-    /// is every name and every AI level besides the dials.
-    fn fullest_table() -> usize {
-        (2..=MAX_PLAYERS as u8)
-            .flat_map(|seats| {
-                (0..seats).map(move |bots| MatchConfig {
-                    seats,
-                    bots,
-                    ..MatchConfig::default()
-                })
-            })
-            .map(|config| live_rows(&config).iter().filter(|live| **live).count())
-            .max()
-            .unwrap_or(0)
-    }
-
-    /// A full table fits the card with every row at the height it lays out
-    /// at. Sized for rows at their least, the card ran a table of six with
-    /// five AI past its frame: the last name sat on the wood.
-    #[test]
-    fn the_fullest_table_fits_its_card() {
-        let rows = fullest_table();
-        assert_eq!(rows, ROWS, "a full table shows every row");
-        let needed = 2.0 * crate::app::menu_ui::CARD_PAD
-            + crate::app::menu_ui::HEADING_H
-            + rows as f32 * crate::app::menu_ui::row_pitch(ROW_FONT);
-        assert!(
-            card_height() >= needed,
-            "the card is {}px for {needed}px of rows",
-            card_height()
-        );
-    }
-
-    /// And on the shortest window the interface is drawn for, where the
-    /// card has to shrink to the room between the bars, the rows can close
-    /// up enough to fit it, with the lines under the card still below it.
-    #[test]
-    fn the_fullest_table_closes_up_to_fit_the_design_window() {
-        use crate::app::menu_ui::{BAR_H, CARD_PAD, HEADING_H, ROW_H, type_scale};
-        let squeezed = 2.0 * CARD_PAD + HEADING_H + fullest_table() as f32 * ROW_H;
-        // The beach note, the two controller lines (a padded line each),
-        // and the column's gap between the four.
-        let footer = 20.0
-            + 2.0 * (type_scale::BODY * crate::app::menu_ui::LINE_HEIGHT + 6.0)
-            + 3.0 * FOOTER_GAP;
-        let room = crate::app::settings::DESIGN_H - 2.0 * BAR_H;
-        assert!(
-            squeezed + footer <= room,
-            "{squeezed}px of card and {footer}px under it, in {room}px"
         );
     }
 
@@ -1010,6 +1375,60 @@ mod tests {
         assert_eq!(MapChoice::from_index(usize::from(fitted.map)), sized_for(2));
     }
 
+    /// A handmade beach plays the tide-event wheel as every versus round
+    /// does, on the couch and online: its file never says `events: on`,
+    /// and it used to play without, its sparkling crabs spinning nothing.
+    /// The replay of such a round says so.
+    #[test]
+    fn a_handmade_beach_turns_the_wheel() {
+        let level = crate::sim::Level::parse(
+            "name: Two\nposts: 1\nmap:\n\
+             +-+-+-+\n|0 . .|\n+ + + +\n|. . 1|\n+ + + +\n|. . .|\n+-+-+-+\n",
+        )
+        .expect("a level");
+        assert!(!level.board().events_enabled(), "the file says nothing");
+        let packed = crate::lzw::compress(level.to_text().as_bytes(), 8);
+        let terms = MatchTerms {
+            map: MapChoice::Custom.index() as u8,
+            ..MatchTerms::default()
+        };
+        let online = board_from(&terms, 2, &packed);
+        assert_eq!((online.width(), online.height()), (3, 3), "on the beach");
+        let config = MatchConfig {
+            map: MapChoice::Custom,
+            seats: 2,
+            ..MatchConfig::default()
+        };
+        let shelf = CustomBeaches(vec![Beach::new(level)]);
+        let couch = local_board(&config, &shelf, terms.seed);
+        assert_eq!((couch.width(), couch.height()), (3, 3), "on the beach");
+        for mut board in [online, couch] {
+            assert!(board.events_enabled(), "the wheel is on");
+            let replay = crate::sim::Level::from_board("Replay", 1, board.clone()).to_text();
+            assert!(replay.contains("events: on"), "{replay}");
+            // A sparkling crab walked into a castle spins it.
+            let (x, y) = board.castle_of(1).expect("seat 1 has a castle");
+            let (from, facing) = match x {
+                0 => (x + 1, crate::sim::Direction::Left),
+                _ => (x - 1, crate::sim::Direction::Right),
+            };
+            board.spawn_crab(
+                from,
+                y,
+                facing,
+                crate::sim::Handedness::Left,
+                crate::sim::CrabKind::Sparkling,
+            );
+            for _ in 0..120 {
+                board.tick_idle();
+                if board.last_event().is_some() {
+                    break;
+                }
+            }
+            assert!(board.last_event().is_some(), "the bank spun an event");
+        }
+    }
+
     /// And the same beach refused again at the far end, where the round is
     /// actually built. The launch drops one that cannot seat the table, but
     /// the round *after* it does not: `call_next_round` re-sends the beach
@@ -1080,10 +1499,7 @@ mod tests {
         assert_eq!(played.tile_at(2, 0), crate::sim::TileKind::Empty);
         assert_eq!(board_from(&terms, 3, &packed).seats_in_play(), 3);
 
-        let shelf = CustomBeaches(vec![
-            beaches::Beach::new(three),
-            beaches::Beach::new(beach("0 . 2")),
-        ]);
+        let shelf = CustomBeaches(vec![Beach::new(three), Beach::new(beach("0 . 2"))]);
         for seats in 2..=3 {
             let fitting: Vec<&str> = shelf
                 .fitting(seats)
@@ -1102,7 +1518,7 @@ mod tests {
     /// indexes a per-seat array straight off a byte a peer chose, so a
     /// `bots` count larger than the table must reach no further.
     #[test]
-    fn the_ai_holds_the_top_seats_and_reaches_no_further() {
+    fn the_ai_holds_the_last_places_and_reaches_no_further() {
         let terms = |bots| MatchTerms {
             bots,
             ..MatchTerms::default()
@@ -1139,6 +1555,19 @@ mod tests {
         };
         assert_eq!(bot_seats_from(&fierce, 6)[5], Some(BotLevel::Hard));
         assert_eq!(bot_seats_from(&fierce, 6)[0], None);
+        // A host that picked partners puts the AI where the order says:
+        // here the AI's two places in seats 1 and 3, the players in 0 and 2.
+        let arranged = MatchTerms {
+            bots: 2,
+            order: [0, 2, 1, 3, 4, 5],
+            ..MatchTerms::default()
+        };
+        let held: Vec<bool> = bot_seats_from(&arranged, 4)
+            .iter()
+            .map(Option::is_some)
+            .collect();
+        assert_eq!(held, [false, true, false, true, false, false]);
+        assert_eq!(arranged.player_seats(4), [0, 2]);
     }
 
     /// Nonsense on the wire must not stop the round: the beach falls back
@@ -1264,10 +1693,16 @@ mod tests {
         next_map(&mut config, &shelf);
         assert_eq!(
             config.map,
-            MapChoice::GenLarge,
-            "past Custom, Classic, Small, 12x9"
+            MapChoice::GullRoad,
+            "past Custom, Classic and the handmade maps for other tables"
         );
         assert_eq!(config.seats, 5, "nobody left the table");
+        next_map(&mut config, &shelf);
+        assert_eq!(
+            config.map,
+            MapChoice::GenLarge,
+            "past Back to Back, Small, 12x9"
+        );
         next_map(&mut config, &shelf);
         assert_eq!(config.map, MapChoice::GenOcean, "past the 20x13");
 
@@ -1288,7 +1723,7 @@ mod tests {
         let next = next_round_terms(terms, 5, 2);
         assert_eq!(
             MapChoice::from_index(usize::from(next.map)),
-            MapChoice::GenLarge
+            MapChoice::GullRoad
         );
         assert_eq!(next.seed, 2);
         let next = next_round_terms(terms, 2, 3);
@@ -1368,7 +1803,11 @@ mod tests {
             "the label names what would launch"
         );
         settle_map(&mut config, &shelf);
-        assert_eq!(config.map, MapChoice::Classic, "the stop after Custom");
+        assert_eq!(
+            config.map,
+            sized_for(3),
+            "no beach to name: the one dealt to the table"
+        );
 
         config.map = MapChoice::Custom;
         config.seats = 5;
@@ -1439,17 +1878,39 @@ mod tests {
         assert_eq!(small.map, sized_for(5));
         let mut classic = MatchConfig {
             map: MapChoice::Classic,
-            seats: 4,
-            bots: 3,
-            ..MatchConfig::default()
+            ..MatchConfig::with_ai(4, 3)
         };
         reseat(&mut classic, 5, &shelf);
         assert!(holds(classic.map, 5));
+        assert_eq!(
+            classic.controller(4),
+            SeatController::Local,
+            "a seat added is a person's, open until somebody sits there"
+        );
         reseat(&mut classic, 2, &shelf);
-        assert_eq!(classic.bots, 1, "the AI holds at most every seat but one");
+        assert_eq!(
+            classic.ai_seats(),
+            1,
+            "the AI holds at most every seat but one"
+        );
     }
 
-    use crate::app::settings::GameSettings;
+    /// A seat dialled away and back keeps who it was set to: the
+    /// controllers past the count are kept for when it comes back up.
+    #[test]
+    fn a_seat_dialled_away_and_back_keeps_its_choice() {
+        let shelf = CustomBeaches::default();
+        let mut config = MatchConfig {
+            seats: 4,
+            ..MatchConfig::default()
+        };
+        config.controllers[3] = SeatController::Ai(BotLevel::Hard);
+        config.controllers[2] = SeatController::Bot;
+        reseat(&mut config, 2, &shelf);
+        reseat(&mut config, 4, &shelf);
+        assert_eq!(config.controller(3), SeatController::Ai(BotLevel::Hard));
+        assert_eq!(config.controller(2), SeatController::Bot);
+    }
 
     /// The beach dealt to a table seats it, and grows with it: two players
     /// get the smallest, and nobody is dealt the 20x13 without asking.
@@ -1459,7 +1920,6 @@ mod tests {
         for seats in 2..=MAX_PLAYERS as u8 {
             let map = sized_for(seats);
             assert!(holds(map, seats), "{seats} seats on {map:?}");
-            assert!(map.is_a_plain_size());
             assert_ne!(map, MapChoice::GenXl, "{seats} seats");
             let (w, h) = map.size();
             let area = u32::from(w) * u32::from(h);
@@ -1469,23 +1929,33 @@ mod tests {
         assert_eq!(sized_for(2), MapChoice::GenSmall);
     }
 
-    /// Open ocean is the one beach with no edges. Every other map choice
-    /// stays walled, or a beach changes shape under everyone.
+    /// Open ocean, Round the World, Four Doors, Gull Road and Back to Back
+    /// are the beaches with no edges, each at a table it seats. Every other
+    /// map choice stays walled, or a beach changes shape under everyone.
     #[test]
-    fn only_the_open_ocean_has_no_edges() {
+    fn only_the_open_beaches_have_no_edges() {
         for map in MapChoice::ALL {
             let terms = MatchTerms {
                 map: map.index() as u8,
                 seed: 99,
                 ..MatchTerms::default()
             };
-            let board = board_for(&terms, 4);
+            let seats = map.tables().map_or(4, |tables| tables[0]);
+            let board = board_for(&terms, seats);
             assert_eq!(
                 board.wrap(),
-                map == MapChoice::GenOcean,
+                matches!(
+                    map,
+                    MapChoice::GenOcean
+                        | MapChoice::RoundTheWorld
+                        | MapChoice::FourDoors
+                        | MapChoice::GullRoad
+                        | MapChoice::BackToBack
+                ),
                 "{map:?} wraps: {}",
                 board.wrap()
             );
+            assert_eq!(board.wrap(), map.wraps(), "{map:?}");
         }
         // And it is appended, so an older settings file or a `Start` from
         // another machine still names the beach it meant.
@@ -1493,186 +1963,5 @@ mod tests {
             assert_eq!(MapChoice::from_index(index), *map);
         }
         assert_eq!(MapChoice::from_index(4), MapChoice::GenXl, "xl stayed put");
-    }
-
-    /// Naming a seat, end to end in a headless App: Enter on a name row
-    /// takes the keyboard instead of starting the match, what is typed lands
-    /// in the name, and Enter hands the keyboard back.
-    #[test]
-    fn typing_renames_a_seat_without_starting_the_match() {
-        use bevy::input::ButtonState;
-        use bevy::input::keyboard::{Key, KeyboardInput};
-
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.init_state::<Screen>();
-        app.add_message::<KeyboardInput>();
-        app.init_resource::<ButtonInput<KeyCode>>();
-        app.init_resource::<MatchMenu>();
-        app.init_resource::<MatchConfig>();
-        app.init_resource::<crate::app::bot_seats::BotSeats>();
-        app.init_resource::<CustomBeaches>();
-        app.init_resource::<crate::app::tournament::Tournament>();
-        app.init_resource::<crate::app::gamepad::PadSeats>();
-        app.insert_resource(GameSettings::default());
-        app.add_systems(Update, match_setup_input);
-
-        let name_row = Row::ALL
-            .iter()
-            .position(|row| matches!(row, Row::Name(0)))
-            .expect("a name row for seat 1");
-        app.world_mut().resource_mut::<MatchMenu>().selected = name_row;
-
-        let tap = |app: &mut App, key: KeyCode| {
-            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            keys.reset_all();
-            keys.press(key);
-            app.update();
-        };
-        let type_char = |app: &mut App, ch: &str| {
-            app.world_mut()
-                .resource_mut::<ButtonInput<KeyCode>>()
-                .reset_all();
-            app.world_mut().write_message(KeyboardInput {
-                key_code: KeyCode::KeyB,
-                logical_key: Key::Character(ch.into()),
-                state: ButtonState::Pressed,
-                text: Some(ch.into()),
-                repeat: false,
-                window: Entity::PLACEHOLDER,
-            });
-            app.update();
-        };
-
-        // Tab opens the name box. Enter must not: the name rows are last
-        // on the list, so a player who has just named everybody presses
-        // Enter to start and would get the name box again.
-        tap(&mut app, KeyCode::Tab);
-        assert_eq!(app.world().resource::<MatchMenu>().naming, Some(0));
-        assert!(
-            !app.world().resource::<MatchConfig>().armed,
-            "Tab named the seat instead of launching"
-        );
-
-        type_char(&mut app, "B");
-        type_char(&mut app, "o");
-        assert_eq!(app.world().resource::<GameSettings>().names[0], "Bo");
-        assert_eq!(app.world().resource::<GameSettings>().seat_name(0), "Bo");
-
-        tap(&mut app, KeyCode::Enter);
-        assert_eq!(app.world().resource::<MatchMenu>().naming, None);
-        assert!(
-            !app.world().resource::<MatchConfig>().armed,
-            "the Enter that finished the name did not launch either"
-        );
-
-        // And now Enter starts the match from that very row, rather than
-        // reopening the box it just closed: with somebody to play, since
-        // a table of two humans and no AI starts only once P2 is there.
-        app.world_mut().resource_mut::<MatchMenu>().p2_here = true;
-        assert!(
-            matches!(Row::ALL[name_row], Row::Name(0)),
-            "still on a name row"
-        );
-        tap(&mut app, KeyCode::Enter);
-        assert!(
-            app.world().resource::<MatchConfig>().armed,
-            "Enter on a name row has to start the match"
-        );
-    }
-
-    /// A name row per seat in the match, and none for the seats that are
-    /// not playing.
-    #[test]
-    fn name_rows_follow_the_seat_count() {
-        let config = MatchConfig {
-            seats: 3,
-            ..MatchConfig::default()
-        };
-        let live = live_rows(&config);
-        let named: Vec<u8> = Row::ALL
-            .iter()
-            .enumerate()
-            .filter(|&(row, _)| live[row])
-            .filter_map(|(_, kind)| {
-                if let Row::Name(seat) = kind {
-                    Some(*seat)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        assert_eq!(named, vec![0, 1, 2], "one row per seat, seat 4 sits out");
-    }
-
-    /// AI seats fill from the top down, one difficulty row each, and the
-    /// unused rows stay hidden.
-    #[test]
-    fn ai_rows_track_the_seats_the_ai_holds() {
-        let mut config = MatchConfig {
-            seats: 4,
-            bots: 2,
-            ..MatchConfig::default()
-        };
-        assert_eq!(ai_seat(&config, 0), Some(3));
-        assert_eq!(ai_seat(&config, 1), Some(2));
-        assert_eq!(ai_seat(&config, 2), None, "only two AI seats are taken");
-
-        let live = live_rows(&config);
-        let hidden: Vec<bool> = Row::ALL
-            .iter()
-            .zip(live)
-            .filter_map(|(row, live)| matches!(row, Row::BotLevel(_)).then_some(live))
-            .collect();
-        let mut want = vec![false; MAX_BOTS];
-        want[0] = true;
-        want[1] = true;
-        assert_eq!(hidden, want, "one live row per AI seat, the rest folded");
-        // An all-human match hides every AI row, and a table of four hides
-        // the name rows of the two seats nobody is sitting in.
-        config.bots = 0;
-        let empty_seats = MAX_PLAYERS - usize::from(config.seats);
-        assert_eq!(
-            live_rows(&config).iter().filter(|live| **live).count(),
-            ROWS - MAX_BOTS - empty_seats
-        );
-    }
-
-    /// Each AI seat carries its own difficulty: turning one row must not
-    /// drag the other seats with it.
-    #[test]
-    fn difficulties_are_per_seat() {
-        let mut config = MatchConfig {
-            seats: 4,
-            bots: 3,
-            ..MatchConfig::default()
-        };
-        cycle_ai_level(&mut config, 0, Turn::Right); // seat 4: normal -> fierce
-        cycle_ai_level(&mut config, 2, Turn::Left); // seat 2: normal -> easy
-        assert_eq!(config.controllers, {
-            let mut want = [SeatController::Ai(BotLevel::Normal); MAX_PLAYERS];
-            want[1] = SeatController::Ai(BotLevel::Easy); // seat 2, stepped down
-            want[3] = SeatController::Ai(BotLevel::Hard); // seat 4, stepped up
-            want
-        });
-        // A slot with no AI behind it is inert.
-        config.bots = 1;
-        cycle_ai_level(&mut config, 2, Turn::Right);
-        assert_eq!(config.controllers[1], SeatController::Ai(BotLevel::Easy));
-    }
-
-    /// Three AI dialled in the lobby, alone at the host's table, then back
-    /// to a couch of two: the screen counts `seats - bots` humans, and that
-    /// went below zero. It comes back as one AI and one person.
-    #[test]
-    fn the_lobbys_ai_dial_does_not_outnumber_the_couch() {
-        let mut config = MatchConfig {
-            seats: 2,
-            bots: 3,
-            ..MatchConfig::default()
-        };
-        settle(&mut config, &CustomBeaches::default());
-        assert_eq!(config.bots, 1);
-        assert_eq!(config.humans(), 1, "somebody still plays");
     }
 }

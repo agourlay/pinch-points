@@ -9,10 +9,103 @@
 
 use super::*;
 
-/// How many beaches the join list shows at once. A busy LAN can have more
-/// games running than this; the list scrolls to the cursor rather than
-/// pretending the rest are not there.
-pub const LIST_ROWS: usize = 14;
+/// How many beaches the join list shows at once: as many as its card has
+/// room for, which the window and the interface scale decide
+/// ([`fit_lobby_list`]). A busy LAN can have more games running than that;
+/// the list scrolls to the cursor rather than pretending the rest are not
+/// there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ListRows(pub usize);
+
+impl Default for ListRows {
+    /// Before the card has been laid out once: what it holds at 1280x720,
+    /// the least room it ever has, since the interface scale grows with
+    /// the window and never past it.
+    fn default() -> Self {
+        Self(12)
+    }
+}
+
+/// The rows built into the card, so the most it can ever show: the card at
+/// the smallest interface scale on a 16:10 window holds about thirty. A
+/// window taller still shows this many and leaves the rest of the card
+/// blank.
+pub const LIST_ROW_SLOTS: usize = 40;
+
+/// The fewest rows the list shows, however little the layout says there is
+/// room for: a list cut to nothing would hide that there are games at all.
+const FEWEST_LIST_ROWS: usize = 3;
+
+/// The air between two rows of the list.
+const LIST_GAP: f32 = 4.0;
+
+/// The type size of a beach's name, the largest print in a row.
+const LIST_NAME_PX: f32 = 21.0;
+
+/// The air above and below a row's print, inside the row.
+const LIST_ROW_PAD: f32 = 4.0;
+
+/// How tall a row of the list is, whatever it holds: a line of the name's
+/// print and the air round it. Fixed rather than left to the print, which
+/// leaves a row with no beach in it shorter than one with, so the rows
+/// measured for how many fit are the height of every row that will be
+/// painted.
+const LIST_ROW_H: f32 = LIST_NAME_PX * crate::app::menu_ui::LINE_HEIGHT + 2.0 * LIST_ROW_PAD;
+
+/// The column the list's rows sit in, measured for how many fit.
+#[derive(Component)]
+pub struct LobbyListRoom;
+
+impl crate::app::menu_ui::scroll_bar::Scrolls for LobbyState {
+    /// The rows [`update_lobby_list`] paints: [`LobbyState::rows_shown`]
+    /// beaches from `scroll`, and none at all while standing at a beach,
+    /// where the list is not up.
+    fn window(&self) -> crate::app::menu_ui::scroll_bar::ScrollWindow {
+        use crate::app::menu_ui::scroll_bar::ScrollWindow;
+        match self.standing().at_a_beach() {
+            true => ScrollWindow::NONE,
+            false => ScrollWindow::rows(self.scroll, self.rows_shown(), self.hosts.len()),
+        }
+    }
+}
+
+/// Show as many rows of the join list as its card has room for, measured
+/// from last frame's layout, which is the one there is.
+///
+/// The room is the column the rows sit in, which takes the card's height
+/// rather than the rows' ([`crate::app::menu_ui::scroll_bar::filling`]):
+/// the card is sized by the window, so the count follows a resize or a new
+/// interface scale and never feeds back into the height it was read from.
+/// The column clips, so on the one frame after a resize before this has
+/// caught up, a row too many is cut off rather than drawn over the frame.
+pub fn fit_lobby_list(
+    mut state: ResMut<LobbyState>,
+    room: Query<&ComputedNode, With<LobbyListRoom>>,
+    rows: Query<&ComputedNode, With<LobbyRow>>,
+) {
+    let Ok(room) = room.single() else {
+        return;
+    };
+    // Every row is one height ([`LIST_ROW_H`]); the tallest is read so a
+    // row not laid out yet cannot pass for it. Sizes before rounding to
+    // whole pixels, which rounds each row its own way and would make the
+    // count wander by one between neighbouring scales.
+    let row = rows
+        .iter()
+        .map(|node| node.unrounded_size.y)
+        .fold(0.0, f32::max);
+    let room_y = room.unrounded_size.y;
+    // A hidden face, or one not laid out yet, says nothing about the room.
+    if room_y <= 0.0 || row <= 0.0 {
+        return;
+    }
+    let gap = LIST_GAP / room.inverse_scale_factor;
+    let fit = crate::app::menu_ui::scroll_bar::rows_that_fit(room_y, row, gap)
+        .clamp(FEWEST_LIST_ROWS, LIST_ROW_SLOTS);
+    if state.rows_shown() != fit {
+        state.fit_rows(fit);
+    }
+}
 
 #[derive(Component)]
 pub struct LobbyUi;
@@ -78,6 +171,11 @@ pub struct TableView;
 #[derive(Component)]
 pub struct PlayerRowName(pub usize);
 
+/// The cell row `n` of the table sits in: half the card's width, two seats
+/// to a line, or a third of it in trios, a team to a line.
+#[derive(Component)]
+pub struct PlayerRowCell(pub usize);
+
 /// The robot before a name at the table, drawn when a bot holds the place:
 /// an `InlineImage` in the row's line of text, sized to nothing otherwise.
 #[derive(Component)]
@@ -85,6 +183,9 @@ pub struct PlayerRowRobot(pub usize);
 
 /// How big the robot is at the table.
 const TABLE_ROBOT_PX: f32 = 18.0;
+
+/// The size a seat's line at the table is set in.
+const TABLE_NAME_PX: f32 = 21.0;
 
 /// The robot on a row of the beach list, shown when that beach takes bots.
 #[derive(Component)]
@@ -184,33 +285,46 @@ pub(super) fn spawn_lobby_ui(commands: &mut Commands, tr: &crate::app::i18n::Tr,
     spawn_entry_bar(commands);
 }
 
+/// The line being typed, and neither face.
+type EntryBarOnly = (With<ChatEntryBox>, Without<BrowseView>, Without<TableView>);
+
 /// Show the face that applies: the hall of beaches, or the one you are at.
 pub fn update_lobby_view(
     state: Res<LobbyState>,
     mut browse: Query<&mut Node, (With<BrowseView>, Without<TableView>)>,
     mut table: Query<&mut Node, (With<TableView>, Without<BrowseView>)>,
+    mut entry: Query<&mut Node, EntryBarOnly>,
 ) {
     let aboard = state.standing().at_a_beach();
+    // The host's map page ([`super::pick`]) stands in for the table face
+    // and the line under it while it is up.
+    let picking = state
+        .hosted()
+        .is_some_and(|hosted| hosted.picking.is_some());
     for mut node in &mut browse {
         crate::app::menu_ui::set_shown(&mut node, !aboard);
     }
     for mut node in &mut table {
-        crate::app::menu_ui::set_shown(&mut node, aboard);
+        crate::app::menu_ui::set_shown(&mut node, aboard && !picking);
+    }
+    for mut node in &mut entry {
+        crate::app::menu_ui::set_shown(&mut node, !picking);
     }
 }
 
 /// The ink a seat's name reads in, wherever its name is written: on the
 /// table, and on everything that seat says in the feed beside it.
 fn seat_tone(seat: usize) -> Color {
-    palette::player_color(seat as u8).lighter(0.15)
+    palette::seat_text(seat as u8)
 }
 
-/// The ink a name in the feed reads in. A name with no seat at the table,
-/// a watcher or somebody who has since walked off, reads idle rather than
+/// The ink a name in the feed reads in: its seat's, the seat its place at
+/// the table sits in (`seated`). A name with no seat at the table, a
+/// watcher or somebody who has since walked off, reads idle rather than
 /// borrowing a colour that belongs to a player who is still here.
-fn name_ink(table: &[String], who: &str) -> Color {
+fn name_ink(table: &[String], seated: &Seated, who: &str) -> Color {
     match table.iter().position(|seat| seat == who) {
-        Some(seat) => seat_tone(seat),
+        Some(place) => seat_tone(usize::from(seated.seat_of(place))),
         None => palette::IDLE_ROW,
     }
 }
@@ -225,24 +339,22 @@ fn line_at(chat: &[Said], row: usize) -> Option<&Said> {
     chat.len().checked_sub(back + 1).map(|at| &chat[at])
 }
 
-/// Whether a bot holds the table's place `row`.
-fn bot_at(state: &LobbyState, row: usize) -> bool {
-    state.table.get(row).is_some() && state.table_kinds.get(row) == Some(&crate::sim::SeatKind::Bot)
-}
-
 /// The robots: before a bot at the table, and on a beach that takes bots.
 pub fn update_lobby_robots(
     state: Res<LobbyState>,
+    settings: Res<GameSettings>,
     mut at_table: Query<(&PlayerRowRobot, &mut InlineImage)>,
     mut on_list: Query<(&ListRowRobot, &mut Visibility, &mut ImageNode)>,
 ) {
+    let shown = seats_shown(&state, settings.tr());
     for (row, mut image) in &mut at_table {
-        let px = match bot_at(&state, row.0) {
+        let seat = shown.get(row.0);
+        let px = match seat.is_some_and(|seat| seat.kind == crate::sim::SeatKind::Bot) {
             true => TABLE_ROBOT_PX,
             false => 0.0,
         };
         let want = InlineImage {
-            color: seat_tone(row.0),
+            color: seat_tone(seat.map_or(row.0, |seat| usize::from(seat.seat))),
             width: Some(px),
             height: Some(px),
             ..image.clone()
@@ -251,12 +363,8 @@ pub fn update_lobby_robots(
             *image = want;
         }
     }
-    let listing = !state.standing().at_a_beach();
     for (row, mut shown, mut image) in &mut on_list {
-        let host = listing
-            .then(|| state.hosts.get(state.scroll + row.0))
-            .flatten();
-        let want = match host {
+        let want = match state.listed(row.0) {
             Some(host) if host.bots => Visibility::Inherited,
             Some(_) | None => Visibility::Hidden,
         };
@@ -270,26 +378,62 @@ pub fn update_lobby_robots(
     }
 }
 
-/// Paint the table: everyone at this beach, the local player first.
+/// Paint the table: everyone at this beach, the host first, each by the
+/// number of the seat it sits in and in its colour; under a team mode
+/// every seat, the AI's too, team by team, a team to a line
+/// ([`seats_shown`]). A line too long for its cell as laid out is cut
+/// short with "…" ([`crate::app::match_setup::cut_to`]); the cell clips
+/// it otherwise, with no mark that anything is missing.
 pub fn update_lobby_players(
     state: Res<LobbyState>,
+    settings: Res<GameSettings>,
     mut rows: Query<(&PlayerRowName, &mut TextSpan, &mut TextColor)>,
+    mut cells: Query<(&PlayerRowCell, &mut Node, &ComputedNode)>,
 ) {
+    let shown = seats_shown(&state, settings.tr());
+    // Each cell's room inside its padding, in the interface's pixels, once
+    // it has been laid out.
+    let mut rooms = [None; MAX_PLAYERS];
+    for (cell, _, laid) in &cells {
+        let inner = laid.size.x - laid.padding.min_inset.x - laid.padding.max_inset.x;
+        if let Some(room) = rooms.get_mut(cell.0)
+            && inner > 0.0
+        {
+            *room = Some(inner * laid.inverse_scale_factor);
+        }
+    }
     for (row, mut text, mut color) in &mut rows {
-        let (line, tone) = match state.table.get(row.0) {
-            Some(who) => (
-                crate::app::seating::beside_the_robot(
-                    bot_at(&state, row.0),
-                    &format!("{}. {who}", row.0 + 1),
-                ),
-                seat_tone(row.0),
-            ),
+        let (line, tone) = match shown.get(row.0) {
+            Some(seat) => {
+                let bot = seat.kind == crate::sim::SeatKind::Bot;
+                let line = crate::app::seating::beside_the_robot(
+                    bot,
+                    &format!("{}. {}", seat.seat + 1, seat.name),
+                );
+                let line = match rooms.get(row.0).copied().flatten() {
+                    Some(room) => {
+                        let robot = if bot { TABLE_ROBOT_PX } else { 0.0 };
+                        crate::app::match_setup::cut_to(&line, room - robot, TABLE_NAME_PX)
+                    }
+                    None => line,
+                };
+                (line, seat_tone(usize::from(seat.seat)))
+            }
             None => (String::new(), Color::NONE),
         };
         if text.0 != line {
             text.0 = line;
         }
         crate::app::menu_ui::set_color(&mut color, tone);
+    }
+    let width = Val::Percent(match state.seated.teams {
+        crate::app::teams::TeamMode::Trios => 100.0 / 3.0,
+        crate::app::teams::TeamMode::Solo | crate::app::teams::TeamMode::Pairs => 50.0,
+    });
+    for (_, mut node, _) in &mut cells {
+        if node.width != width {
+            node.width = width;
+        }
     }
 }
 
@@ -417,13 +561,8 @@ pub fn update_lobby_list(
     mut cells: Query<(&LobbyCell, &mut Text, &mut TextColor)>,
 ) {
     let tr = settings.tr();
-    let listing = !state.standing().at_a_beach();
     let at = state.selected_index();
-    let host_at = |row: usize| -> Option<&HostEntry> {
-        listing
-            .then(|| state.hosts.get(state.scroll + row))
-            .flatten()
-    };
+    let host_at = |row: usize| state.listed(row);
     for (row, mut fill) in &mut rows {
         let picked = host_at(row.0).is_some() && Some(state.scroll + row.0) == at;
         let want = crate::app::menu_ui::band(picked);
@@ -451,20 +590,18 @@ pub fn update_lobby_list(
     }
 }
 
-/// The line under the host's dials ([`super::terms::dials_note`]). A
+/// The line under the host's dials ([`dials_note`]). A
 /// system of its own because [`update_lobby_terms`] already reaches for
 /// `Text` twice.
 pub fn update_lobby_beach_note(
     settings: Res<GameSettings>,
-    config: Res<MatchConfig>,
-    beaches: Res<crate::app::match_setup::CustomBeaches>,
     state: Res<LobbyState>,
     mut note: Query<&mut Text, With<DialBeachNote>>,
 ) {
     let Ok(mut text) = note.single_mut() else {
         return;
     };
-    let line = super::terms::dials_note(&state, &config, settings.tr(), &beaches);
+    let line = dials_note(&state, settings.tr());
     crate::app::menu_ui::set_text(&mut text, &line);
 }
 
@@ -473,23 +610,23 @@ pub fn update_lobby_terms(
     state: Res<LobbyState>,
     settings: Res<GameSettings>,
     config: Res<MatchConfig>,
-    beaches: Res<crate::app::match_setup::CustomBeaches>,
     mut rows: Query<(&DialRow, &mut BackgroundColor)>,
     mut names: Query<(&DialName, &mut Text, &mut TextColor), Without<DialValue>>,
     mut values: Query<(&DialValue, &mut Text, &mut TextColor), Without<DialName>>,
 ) {
     let tr = settings.tr();
-    let card = super::terms::card_of(&state, &config, settings.team_mode);
+    let card = card_of(&state, &config, settings.team_mode);
     // Only the host can turn them, so only the host's read as live.
     let host = matches!(card, super::terms::TermsCard::Hosting { .. });
     for (row, mut fill) in &mut rows {
-        let want = crate::app::menu_ui::band(host && row.0 == state.dial);
+        let under = Dial::ALL.get(row.0) == Dial::TURNS.get(state.dial);
+        let want = crate::app::menu_ui::band(host && under);
         crate::app::menu_ui::set_bg(&mut fill, want);
     }
     for (row, mut text, mut color) in &mut names {
         let line = Dial::ALL
             .get(row.0)
-            .map(|dial| dial.label(tr, &card, &beaches).0)
+            .map(|dial| dial.label(tr, &card).0)
             .unwrap_or_default();
         crate::app::menu_ui::set_text(&mut text, line);
         crate::app::menu_ui::set_color(&mut color, palette::IDLE_ROW);
@@ -497,9 +634,12 @@ pub fn update_lobby_terms(
     for (row, mut text, mut color) in &mut values {
         let line = Dial::ALL
             .get(row.0)
-            .map(|dial| dial.label(tr, &card, &beaches).1)
+            .map(|dial| dial.label(tr, &card).1)
             .unwrap_or_default();
-        let tone = match host {
+        // Live only where the host turns it: the map row is picked at
+        // the start, not here.
+        let turns = Dial::ALL.get(row.0).is_some_and(|dial| dial.turns());
+        let tone = match host && turns {
             true => palette::PARCHMENT,
             false => palette::IDLE_ROW,
         };
@@ -531,6 +671,8 @@ fn set_slant(font: &mut Mut<TextFont>, slanted: bool) {
 pub fn update_lobby_chat(
     state: Res<LobbyState>,
     settings: Res<GameSettings>,
+    face: Res<crate::app::gamepad::PadFace>,
+    device: Res<crate::app::gamepad::LastDevice>,
     mut rows: Query<(&ChatRow, &mut Text, &mut TextColor), Without<ChatSaid>>,
     mut said: Query<(&ChatSaid, &mut TextSpan, &mut TextColor, &mut TextFont), Without<ChatRow>>,
     mut entry: Query<&mut BackgroundColor, With<ChatEntryBox>>,
@@ -555,14 +697,29 @@ pub fn update_lobby_chat(
                 };
                 (format!("{asked}{}_", open.text), palette::GOLD)
             }
-            (true, None) if state.can_chat() => (tr.lobby_chat_hint.to_string(), palette::IDLE_ROW),
+            // A pad's player is told the pad's button for a line of chat,
+            // from the face's table the lobby reads it by.
+            (true, None) if state.can_chat() => {
+                let pad = crate::app::gamepad::scheme::button_name(
+                    &face.0,
+                    crate::app::gamepad::scheme::Does::Talk,
+                    tr,
+                )
+                .filter(|_| *device == crate::app::gamepad::LastDevice::Pad);
+                let line = match pad {
+                    Some(button) => fill(tr.pad.bind, &[("b", &button), ("a", tr.pad.talk)]),
+                    None => tr.lobby_chat_hint.to_string(),
+                };
+                (line, palette::IDLE_ROW)
+            }
             (true, None) => (String::new(), Color::NONE),
             // Only the name lives here; the words are on the span beside
             // it. A notice was said by nobody, and leaves this half empty.
             (false, _) => match line_at(&state.chat, row.0) {
-                Some(said) if !said.is_notice() => {
-                    (format!("{}: ", said.who), name_ink(&state.table, &said.who))
-                }
+                Some(said) if !said.is_notice() => (
+                    format!("{}: ", said.who),
+                    name_ink(&state.table, &state.seated, &said.who),
+                ),
                 _ => (String::new(), Color::NONE),
             },
         };
@@ -598,53 +755,59 @@ fn spawn_browse_face(
                 tr.lobby_card_beaches,
                 Val::Auto,
                 |body| {
-                    for row in 0..LIST_ROWS {
-                        body.spawn((
-                            LobbyRow(row),
-                            Node {
-                                align_items: AlignItems::Center,
-                                column_gap: Val::Px(16.0),
-                                padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
-                                border_radius: BorderRadius::all(Val::Px(6.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::NONE),
-                        ))
-                        .with_children(|line| {
-                            line.spawn((
-                                LobbyCell(row, ListCol::Name),
-                                list_cell(21.0, Val::Px(NAME_COL), 0.0),
-                            ));
-                            // "Bots welcome", before anyone walks up.
-                            line.spawn((
-                                ListRowRobot(row),
-                                ImageNode::new(art.robot.clone()),
+                    let bar = crate::app::menu_ui::scroll_bar::BarOf::<LobbyState>::default();
+                    let room = LobbyListRoom;
+                    crate::app::menu_ui::scroll_bar::filling(body, LIST_GAP, bar, room, |body| {
+                        for row in 0..LIST_ROW_SLOTS {
+                            body.spawn((
+                                LobbyRow(row),
                                 Node {
-                                    width: Val::Px(20.0),
-                                    height: Val::Px(20.0),
+                                    align_items: AlignItems::Center,
+                                    column_gap: Val::Px(16.0),
+                                    height: Val::Px(LIST_ROW_H),
                                     flex_shrink: 0.0,
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(LIST_ROW_PAD)),
+                                    border_radius: BorderRadius::all(Val::Px(6.0)),
                                     ..default()
                                 },
-                                Visibility::Hidden,
-                            ));
-                            line.spawn((
-                                LobbyCell(row, ListCol::Host),
-                                list_cell(17.0, Val::Px(HOST_COL), 0.0),
-                            ));
-                            // The address takes the slack of a wide window,
-                            // which puts the gap between the three columns
-                            // that say which beach and the one that says
-                            // whether it can be joined.
-                            line.spawn((
-                                LobbyCell(row, ListCol::Where),
-                                list_cell(17.0, Val::Px(WHERE_COL), 1.0),
-                            ));
-                            line.spawn((
-                                LobbyCell(row, ListCol::Table),
-                                list_cell(19.0, Val::Px(TABLE_COL), 0.0),
-                            ));
-                        });
-                    }
+                                BackgroundColor(Color::NONE),
+                            ))
+                            .with_children(|line| {
+                                line.spawn((
+                                    LobbyCell(row, ListCol::Name),
+                                    list_cell(LIST_NAME_PX, Val::Px(NAME_COL), 0.0),
+                                ));
+                                // "Bots welcome", before anyone walks up.
+                                line.spawn((
+                                    ListRowRobot(row),
+                                    ImageNode::new(art.robot.clone()),
+                                    Node {
+                                        width: Val::Px(20.0),
+                                        height: Val::Px(20.0),
+                                        flex_shrink: 0.0,
+                                        ..default()
+                                    },
+                                    Visibility::Hidden,
+                                ));
+                                line.spawn((
+                                    LobbyCell(row, ListCol::Host),
+                                    list_cell(17.0, Val::Px(HOST_COL), 0.0),
+                                ));
+                                // The address takes the slack of a wide window,
+                                // which puts the gap between the three columns
+                                // that say which beach and the one that says
+                                // whether it can be joined.
+                                line.spawn((
+                                    LobbyCell(row, ListCol::Where),
+                                    list_cell(17.0, Val::Px(WHERE_COL), 1.0),
+                                ));
+                                line.spawn((
+                                    LobbyCell(row, ListCol::Table),
+                                    list_cell(19.0, Val::Px(TABLE_COL), 0.0),
+                                ));
+                            });
+                        }
+                    });
                 },
             );
         });
@@ -692,18 +855,21 @@ fn spawn_table_face(
                             })
                             .with_children(|grid| {
                                 for row in 0..MAX_PLAYERS {
-                                    grid.spawn(Node {
-                                        width: Val::Percent(50.0),
-                                        padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
-                                        // Twelve characters is all this
-                                        // build lets a player type, but a
-                                        // name off the wire may be longer,
-                                        // and clips rather than wrapping.
-                                        overflow: Overflow::clip_x(),
-                                        ..default()
-                                    })
+                                    grid.spawn((
+                                        PlayerRowCell(row),
+                                        Node {
+                                            width: Val::Percent(50.0),
+                                            padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+                                            // A name too long for the cell
+                                            // is cut with "…" where it ends
+                                            // (`update_lobby_players`), and
+                                            // never wraps.
+                                            overflow: Overflow::clip_x(),
+                                            ..default()
+                                        },
+                                    ))
                                     .with_children(|line| {
-                                        let (text, font, ink) = row_text(21.0);
+                                        let (text, font, ink) = row_text(TABLE_NAME_PX);
                                         line.spawn((
                                             text,
                                             font.clone(),
@@ -888,17 +1054,16 @@ fn spawn_entry_bar(commands: &mut Commands) {
 mod list_row_tests {
     use super::*;
 
-    /// A joiner's terms card names the host's handmade beach by the name
-    /// the roster carried, never by a lookup on its own shelf: the terms
-    /// say only "a handmade beach", which read against this machine's
-    /// beaches named one of its own, or the generated arena.
+    /// A joiner's terms card says the host picks the map at the start,
+    /// whatever the host's dials or this machine's shelf hold, and before
+    /// the host's first roster it waits blank rather than painting this
+    /// machine's own setup as if it were the host's.
     #[test]
-    fn a_joiner_reads_the_hosts_beach_by_its_name() {
+    fn a_joiners_card_says_the_map_is_picked_at_the_start() {
         let mut app = App::new();
         app.insert_resource(GameSettings::default());
         app.init_resource::<LobbyState>();
         app.init_resource::<MatchConfig>();
-        app.init_resource::<crate::app::match_setup::CustomBeaches>();
         {
             let mut state = app.world_mut().resource_mut::<LobbyState>();
             let mut joined = Joined::dialled(
@@ -910,7 +1075,6 @@ mod list_row_tests {
                     map: crate::app::match_setup::MapChoice::Custom.index() as u8,
                     ..MatchTerms::default()
                 },
-                beach_name: "The Pier".into(),
             });
             state.standing = Standing::Joining(joined);
         }
@@ -931,24 +1095,7 @@ mod list_row_tests {
                 .map(|(_, text)| text.0.clone())
                 .expect("a map dial")
         };
-        assert_eq!(map_value(&mut app), "The Pier");
-
-        // A handmade beach that does not travel is played as the generated
-        // arena at both ends, and is named so.
-        if let Some(joined) = app.world_mut().resource_mut::<LobbyState>().joined_mut()
-            && let Some(host) = &mut joined.host_terms
-        {
-            host.beach_name.clear();
-        }
-        app.update();
-        assert_eq!(
-            map_value(&mut app),
-            crate::app::i18n::EN.map_names[crate::app::match_setup::MapChoice::GenXl.index()]
-        );
-
-        // Before the host's first roster there is no match to show: the
-        // card waits blank rather than painting this machine's own setup
-        // as if it were the host's.
+        assert_eq!(map_value(&mut app), crate::app::i18n::EN.lobby_map_at_start);
         if let Some(joined) = app.world_mut().resource_mut::<LobbyState>().joined_mut() {
             joined.host_terms = None;
         }
@@ -998,7 +1145,7 @@ mod list_row_tests {
         app.add_systems(Update, update_lobby_list);
         app.update();
 
-        let mut rows = vec![[const { (String::new(), Color::NONE) }; 4]; LIST_ROWS];
+        let mut rows = vec![[const { (String::new(), Color::NONE) }; 4]; LIST_ROW_SLOTS];
         let world = app.world_mut();
         let mut cells = world.query::<(&LobbyCell, &Text, &TextColor)>();
         for (cell, text, color) in cells.iter(world) {
@@ -1138,11 +1285,369 @@ mod feed_layout_tests {
     #[test]
     fn a_name_reads_in_its_seats_colour() {
         let table = vec!["Anna".to_string(), "Bo".to_string()];
-        assert_eq!(name_ink(&table, "Anna"), seat_tone(0));
-        assert_eq!(name_ink(&table, "Bo"), seat_tone(1));
+        let seated = Seated::default();
+        assert_eq!(name_ink(&table, &seated, "Anna"), seat_tone(0));
+        assert_eq!(name_ink(&table, &seated, "Bo"), seat_tone(1));
         assert_ne!(seat_tone(0), seat_tone(1), "one colour per seat");
         // A watcher, or somebody who left: no seat, so no seat's colour.
-        assert_eq!(name_ink(&table, "Cy"), palette::IDLE_ROW);
-        assert_eq!(name_ink(&[], "Anna"), palette::IDLE_ROW);
+        assert_eq!(name_ink(&table, &seated, "Cy"), palette::IDLE_ROW);
+        assert_eq!(name_ink(&[], &seated, "Anna"), palette::IDLE_ROW);
+        // A place the host's partner picks moved wears its new seat's.
+        let moved = Seated {
+            order: [0, 2, 1, 3, 4, 5],
+            ..Seated::default()
+        };
+        assert_eq!(name_ink(&table, &moved, "Bo"), seat_tone(2));
+    }
+}
+
+#[cfg(test)]
+mod list_fit_tests {
+    use super::*;
+    use bevy::camera::{ComputedCameraValues, RenderTargetInfo, Viewport};
+
+    /// The lobby laid out by Bevy's own layout, in a window `width` by
+    /// `height` at the interface scale dial's `ui_scale` percent, with
+    /// `beaches` games on the air.
+    fn laid_out(width: u32, height: u32, ui_scale: u8, beaches: u8) -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            TransformPlugin,
+            AssetPlugin::default(),
+            ImagePlugin::default(),
+            bevy::text::TextPlugin,
+            bevy::ui::UiPlugin,
+        ));
+        app.add_plugins((
+            bevy::input::InputPlugin,
+            WindowPlugin {
+                primary_window: None,
+                exit_condition: bevy::window::ExitCondition::DontExit,
+                ..default()
+            },
+            bevy::a11y::AccessibilityPlugin,
+            DefaultPickingPlugins,
+        ));
+        app.init_asset::<TextureAtlasLayout>();
+        let settings = GameSettings {
+            ui_scale,
+            ..GameSettings::default()
+        };
+        app.insert_resource(UiScale(crate::app::settings::applied_ui_ratio(
+            settings.ui_ratio(),
+            width as f32,
+            height as f32,
+        )));
+        app.insert_resource(settings);
+        app.init_resource::<LobbyState>();
+        app.world_mut().spawn((
+            Camera2d,
+            Camera {
+                computed: ComputedCameraValues {
+                    target_info: Some(RenderTargetInfo {
+                        physical_size: UVec2::new(width, height),
+                        scale_factor: 1.0,
+                    }),
+                    ..default()
+                },
+                viewport: Some(Viewport {
+                    physical_size: UVec2::new(width, height),
+                    ..default()
+                }),
+                ..default()
+            },
+        ));
+        {
+            let mut state = app.world_mut().resource_mut::<LobbyState>();
+            state.hosts = (1..=beaches)
+                .map(|n| HostEntry {
+                    addr: format!("10.0.0.{n}:47777").parse().expect("addr"),
+                    id: u64::from(n),
+                    name: format!("Beach {n}"),
+                    host: "Anna".to_string(),
+                    taken: 1,
+                    seats: 6,
+                    running: false,
+                    bots: false,
+                    full: false,
+                    age: 0.0,
+                    heard: 1,
+                })
+                .collect();
+            state.settle_cursor();
+        }
+        app.add_systems(
+            Startup,
+            |mut commands: Commands, settings: Res<GameSettings>| {
+                spawn_lobby_ui(&mut commands, settings.tr(), &LobbyArt::default());
+            },
+        );
+        app.add_systems(
+            Update,
+            (fit_lobby_list, update_lobby_list, update_lobby_view).chain(),
+        );
+        for _ in 0..4 {
+            app.update();
+        }
+        app
+    }
+
+    /// Point the camera at a window `width` by `height` with the dial at
+    /// `ui_scale` percent, as the game's own systems would on a resize.
+    fn resize(app: &mut App, width: u32, height: u32, ui_scale: u8) {
+        let world = app.world_mut();
+        let ratio = f32::from(ui_scale) / 100.0;
+        world.resource_mut::<UiScale>().0 =
+            crate::app::settings::applied_ui_ratio(ratio, width as f32, height as f32);
+        let mut cameras = world.query::<&mut Camera>();
+        for mut camera in cameras.iter_mut(world) {
+            camera.computed.target_info = Some(RenderTargetInfo {
+                physical_size: UVec2::new(width, height),
+                scale_factor: 1.0,
+            });
+            camera.viewport = Some(Viewport {
+                physical_size: UVec2::new(width, height),
+                ..default()
+            });
+        }
+        for _ in 0..4 {
+            app.update();
+        }
+    }
+
+    /// The bottom edge, in physical pixels, of a laid-out node.
+    fn bottom(world: &World, entity: Entity) -> f32 {
+        let node = world.get::<ComputedNode>(entity).expect("laid out");
+        let at = world.get::<UiGlobalTransform>(entity).expect("placed");
+        at.translation.y + node.size.y / 2.0
+    }
+
+    /// Where the rows of the list's card may reach: the foot of its
+    /// content box, inside its padding and border, so above the frame and
+    /// the tide drawn round it.
+    fn card_floor(world: &mut World) -> f32 {
+        let mut room = world.query_filtered::<Entity, With<LobbyListRoom>>();
+        let room = room.single(world).expect("one list");
+        let band = world.get::<ChildOf>(room).expect("in a band").parent();
+        let card = world.get::<ChildOf>(band).expect("in a card").parent();
+        let node = world.get::<ComputedNode>(card).expect("laid out");
+        bottom(world, card) - node.border.max_inset.y - node.padding.max_inset.y
+    }
+
+    /// The rows that are painted with a beach, as row entity and slot,
+    /// top to bottom.
+    fn painted_rows(world: &mut World) -> Vec<(usize, Entity)> {
+        let mut cells = world.query::<(&LobbyCell, &Text, &ChildOf)>();
+        let mut rows: Vec<(usize, Entity)> = cells
+            .iter(world)
+            .filter(|(cell, text, _)| cell.1 == ListCol::Name && !text.0.is_empty())
+            .map(|(cell, _, row)| (cell.0, row.parent()))
+            .collect();
+        rows.sort_by_key(|(slot, _)| *slot);
+        rows
+    }
+
+    /// Every row the list paints ends inside its card, and the list paints
+    /// as many as fit: the next one down would have crossed the card's
+    /// foot. Checked at the sizes players bring: the 1280x720 the game is
+    /// designed at, a Steam Deck's 1280x800, a 1920x1200 monitor, an
+    /// ultrawide, the smallest window the window manager allows, and the
+    /// interface scale dial at both ends.
+    #[test]
+    fn the_list_paints_the_rows_its_card_fits() {
+        use crate::app::settings::{UI_SCALE_MAX, UI_SCALE_MIN};
+        let sizes = [
+            (1280, 720, UI_SCALE_MAX),
+            (1280, 800, UI_SCALE_MAX),
+            (1920, 1200, UI_SCALE_MAX),
+            (2560, 1080, UI_SCALE_MAX),
+            (180, 120, UI_SCALE_MAX),
+            (1280, 720, UI_SCALE_MIN),
+            (1280, 800, UI_SCALE_MIN),
+            (1920, 1200, UI_SCALE_MIN),
+        ];
+        let mut shown = Vec::new();
+        for (width, height, dial) in sizes {
+            let mut app = laid_out(width, height, dial, 60);
+            let world = app.world_mut();
+            let floor = card_floor(world);
+            let rows = painted_rows(world);
+            let fit = world.resource::<LobbyState>().rows_shown();
+            let at = format!("{width}x{height} at {dial}%");
+            assert_eq!(rows.len(), fit, "{at}: paints the rows it says it shows");
+            let (_, last) = *rows.last().expect("rows");
+            let last_bottom = bottom(world, last);
+            assert!(
+                last_bottom <= floor + 0.5,
+                "{at}: row {fit} ends at {last_bottom}, past the card's foot at {floor}"
+            );
+            // The next row down, laid out but left blank, would not have fit.
+            let mut slots = world.query::<(Entity, &LobbyRow)>();
+            let next = slots
+                .iter(world)
+                .find(|(_, row)| row.0 == fit)
+                .map(|(entity, _)| entity)
+                .expect("a slot below the last row shown");
+            let next_bottom = bottom(world, next);
+            assert!(
+                next_bottom > floor + 0.5,
+                "{at}: row {} would have fit, ending at {next_bottom} above {floor}",
+                fit + 1
+            );
+            shown.push((at, fit));
+        }
+        let rows_at = |want: &str| {
+            shown
+                .iter()
+                .find(|(at, _)| at == want)
+                .map(|(_, fit)| *fit)
+                .expect("measured")
+        };
+        assert_eq!(rows_at("1280x720 at 100%"), 12, "the design size");
+        assert_eq!(
+            rows_at("1280x720 at 100%"),
+            ListRows::default().0,
+            "the guess before the first layout is the design size's count"
+        );
+        assert!(
+            rows_at("1280x800 at 100%") > 12,
+            "a taller window shows more"
+        );
+        assert_eq!(
+            rows_at("1920x1200 at 100%"),
+            rows_at("1280x800 at 100%"),
+            "16:10 is one interface at any size"
+        );
+        assert!(
+            rows_at("1280x720 at 60%") > rows_at("1280x720 at 100%"),
+            "a smaller interface shows more"
+        );
+    }
+
+    /// A resize moves the window of rows without losing the cursor, and the
+    /// scroll bar's thumb is the window the rows are painted from.
+    #[test]
+    fn a_resize_keeps_the_cursor_in_view_and_the_thumb_on_the_rows() {
+        use crate::app::menu_ui::scroll_bar::{BarOf, Scrolls, reading};
+        let mut app = laid_out(1280, 800, 100, 30);
+        app.add_systems(
+            Update,
+            crate::app::menu_ui::scroll_bar::follow::<LobbyState>.after(update_lobby_list),
+        );
+        let thumb = |app: &mut App| {
+            app.update();
+            let window = app.world().resource::<LobbyState>().window();
+            let grows = reading::<BarOf<LobbyState>>(app.world_mut()).expect("a bar");
+            let share = window.shown / window.total;
+            let at = window.first / (window.total - window.shown);
+            let want = [(1.0 - share) * at, share, (1.0 - share) * (1.0 - at)];
+            for (got, want) in grows.iter().zip(want) {
+                assert!((got - want).abs() < 1e-5, "{grows:?} for {window:?}");
+            }
+        };
+        // The cursor on the last beach: the window at the foot of the list.
+        app.world_mut()
+            .resource_mut::<LobbyState>()
+            .point_at(Some(29));
+        thumb(&mut app);
+        let tall = app.world().resource::<LobbyState>().rows_shown();
+        assert_eq!(app.world().resource::<LobbyState>().scroll, 30 - tall);
+
+        // Shorter: fewer rows, and the cursor still on the last one shown.
+        resize(&mut app, 1280, 720, 100);
+        let state = app.world().resource::<LobbyState>();
+        assert_eq!(state.rows_shown(), 12);
+        assert_eq!(state.selected_index(), Some(29), "the cursor stays put");
+        assert_eq!(state.scroll, 30 - 12, "and in view");
+        thumb(&mut app);
+
+        // Cursor at the top of a short window, then taller again: more
+        // rows, taken in from above rather than left blank below.
+        app.world_mut()
+            .resource_mut::<LobbyState>()
+            .point_at(Some(25));
+        resize(&mut app, 1920, 1200, 100);
+        let state = app.world().resource::<LobbyState>();
+        assert_eq!(state.rows_shown(), tall);
+        assert_eq!(
+            state.scroll,
+            30 - tall,
+            "no blank rows under the last beach"
+        );
+        assert_eq!(state.selected_index(), Some(25));
+        thumb(&mut app);
+
+        // The list fits: no bar at all.
+        resize(&mut app, 1280, 720, crate::app::settings::UI_SCALE_MIN);
+        let fit = app.world().resource::<LobbyState>().rows_shown();
+        app.world_mut()
+            .resource_mut::<LobbyState>()
+            .hosts
+            .truncate(fit);
+        app.world_mut().resource_mut::<LobbyState>().fit_rows(fit);
+        app.update();
+        assert_eq!(reading::<BarOf<LobbyState>>(app.world_mut()), None);
+    }
+
+    /// A name at the table is cut with "…" where its cell ends: under
+    /// trios, a third of the card, as under pairs and free-for-all, half
+    /// of it. The widest names there are, in Latin and in kana, a bot's
+    /// beside its robot among them, stay inside the cell as it is laid out
+    /// at the design sizes, and end on the cut mark.
+    #[test]
+    fn a_long_name_at_the_table_is_cut_to_its_cell() {
+        use crate::app::match_setup::line_px;
+        use crate::app::teams::TeamMode;
+        use crate::transport::Air;
+        for (width, height) in [(1280, 720), (1280, 800)] {
+            for teams in TeamMode::ALL {
+                for name in ["W".repeat(12), "あいうえおかきくけこさし".to_string()] {
+                    let mut app = laid_out(width, height, 100, 0);
+                    app.add_systems(Update, (update_lobby_players, update_lobby_robots));
+                    {
+                        let mut state = app.world_mut().resource_mut::<LobbyState>();
+                        state.standing = Standing::hosting(
+                            Announcer::on(0x9A9B, Air::loopback(&[])).expect("announcer"),
+                            UdpTransport::host(0).expect("game socket"),
+                        );
+                        state.table = vec![name.clone(); MAX_PLAYERS];
+                        state.table_kinds = vec![crate::sim::SeatKind::Bot; MAX_PLAYERS];
+                        state.seated = Seated {
+                            teams,
+                            ..Seated::default()
+                        };
+                    }
+                    for _ in 0..4 {
+                        app.update();
+                    }
+                    let world = app.world_mut();
+                    let mut cells =
+                        world.query_filtered::<(&ComputedNode, &Children), With<PlayerRowCell>>();
+                    let mut checked = 0;
+                    for (cell, children) in cells.iter(world) {
+                        let inner =
+                            (cell.size.x - cell.padding.min_inset.x - cell.padding.max_inset.x)
+                                * cell.inverse_scale_factor;
+                        for &text in children {
+                            let Some(spans) = world.get::<Children>(text) else {
+                                continue;
+                            };
+                            for &span in spans {
+                                let Some(line) = world.get::<TextSpan>(span) else {
+                                    continue;
+                                };
+                                let drawn = line_px(&line.0, TABLE_NAME_PX) + TABLE_ROBOT_PX;
+                                let at = format!("{width}x{height} {teams:?} {:?}", line.0);
+                                assert!(drawn <= inner, "{at}: {drawn}px in a {inner}px cell");
+                                assert!(line.0.ends_with('…'), "{at}: cut");
+                                checked += 1;
+                            }
+                        }
+                    }
+                    assert_eq!(checked, MAX_PLAYERS);
+                }
+            }
+        }
     }
 }

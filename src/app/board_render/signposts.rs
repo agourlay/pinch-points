@@ -133,54 +133,116 @@ pub fn sync_signposts(
         let Some(sp) = board.signpost_at(x, y) else {
             continue;
         };
-        let pos = layout::tile_center(board, x, y);
-        // A driftwood board, cut to a point, with an arrow painted on it
-        // in the owner's colour, over a shadow of itself so it stands in
-        // the sand rather than being painted on it. The board is its own
-        // colour and only the paint is tinted. The art and the colours are
-        // written on the first frame by `dress_signposts`.
-        commands
-            .spawn((
-                SignpostSprite {
-                    x,
-                    y,
-                    dir: sp.dir,
-                    owner: sp.owner,
-                    age: 0.0,
-                    planted: sp.placed,
-                },
-                image_sprite(&art.sign_board, Color::WHITE, Vec2::splat(SIGN_SIZE)),
-                Transform::from_translation(pos.extend(z::SIGNPOST))
-                    .with_rotation(layout::dir_rotation(sp.dir)),
-            ))
-            .with_children(|parent| {
-                parent.spawn((
-                    SignpostHalo,
-                    image_sprite(&art.sign_shape, palette::GOLD, Vec2::splat(SIGN_SIZE)),
-                    Transform::from_translation(Vec3::new(0.0, 0.0, -0.04))
-                        .with_scale(Vec3::splat(HALO_SCALE)),
-                    Visibility::Hidden,
-                ));
-                parent.spawn((
-                    SignpostShadow,
-                    image_sprite(&art.sign_shape, SIGN_SHADOW, Vec2::splat(SIGN_SIZE)),
-                    // Down-and-right in the board's own frame would swing
-                    // with its heading; the offset is applied in world
-                    // space by `dress_signposts` for that reason.
-                    Transform::from_translation(Vec3::new(0.0, 0.0, -0.05)),
-                ));
-                parent.spawn((
-                    SignpostPaint,
-                    image_sprite(
-                        &art.sign_paint,
-                        palette::seat_paint(sp.owner),
-                        Vec2::splat(SIGN_SIZE),
-                    ),
-                    Transform::from_translation(Vec3::new(0.0, 0.0, 0.01)),
-                ));
-            });
+        spawn_signpost(&mut commands, &art, board, (x, y), sp);
     }
 }
+
+/// The post `sp` planted on tile `(x, y)`: the one post a round draws
+/// ([`sync_signposts`], dressed after by [`dress_signposts`]), and a map
+/// card's preview too ([`super::spawn_board_pieces`]).
+pub(crate) fn spawn_signpost(
+    commands: &mut Commands,
+    art: &Art,
+    board: &crate::sim::Board,
+    (x, y): (u8, u8),
+    sp: crate::sim::Signpost,
+) -> Entity {
+    let pos = layout::tile_center(board, x, y);
+    // A driftwood board, cut to a point, with an arrow painted on it
+    // in the owner's colour, over a shadow of itself so it stands in
+    // the sand rather than being painted on it. The board is its own
+    // colour and only the paint is tinted. The art and the colours are
+    // written on the first frame by `dress_signposts`.
+    commands
+        .spawn((
+            SignpostSprite {
+                x,
+                y,
+                dir: sp.dir,
+                owner: sp.owner,
+                age: 0.0,
+                planted: sp.placed,
+            },
+            image_sprite(&art.sign_board, Color::WHITE, Vec2::splat(SIGN_SIZE)),
+            Transform::from_translation(pos.extend(z::SIGNPOST))
+                .with_rotation(layout::dir_rotation(sp.dir)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                SignpostHalo,
+                image_sprite(&art.sign_shape, palette::GOLD, Vec2::splat(SIGN_SIZE)),
+                Transform::from_translation(Vec3::new(0.0, 0.0, -0.04))
+                    .with_scale(Vec3::splat(HALO_SCALE)),
+                Visibility::Hidden,
+            ));
+            parent.spawn((
+                SignpostShadow,
+                image_sprite(&art.sign_shape, SIGN_SHADOW, Vec2::splat(SIGN_SIZE)),
+                // Down-and-right in the board's own frame would swing
+                // with its heading; the offset is applied in world
+                // space by `dress_signposts` for that reason.
+                Transform::from_translation(Vec3::new(0.0, 0.0, -0.05)),
+            ));
+            parent.spawn((
+                SignpostPaint,
+                image_sprite(
+                    &art.sign_paint,
+                    palette::seat_paint(sp.owner),
+                    Vec2::splat(SIGN_SIZE),
+                ),
+                Transform::from_translation(Vec3::new(0.0, 0.0, 0.01)),
+            ));
+            // On a co-op stage the arrow also wears the claw it turns: a
+            // small crab in the corner with its big claw on that side and
+            // in that claw's colour, the same tell the crabs it steers
+            // carry, so the seat colour is not the only cue.
+            if board.rules().claw_hands.is_some()
+                && let Some(handed) = crate::sim::claw_of(sp.owner)
+            {
+                parent.spawn(claw_badge(art, sp.dir, handed));
+            }
+        })
+        .id()
+}
+
+/// A signpost's claw mark ([`spawn_signpost`]): drawn upright in a corner
+/// of the tile whichever way the post points, so it is placed and turned
+/// against the post's own rotation.
+fn claw_badge(art: &Art, dir: Direction, handed: crate::sim::Handedness) -> impl Bundle {
+    let undo = layout::dir_rotation(dir).inverse();
+    let side = Vec2::splat(SIGN_SIZE * CLAW_BADGE);
+    let corner = Vec3::new(SIGN_SIZE * 0.34, -SIGN_SIZE * 0.30, 0.03);
+    let face_up = layout::dir_rotation(Direction::Up);
+    let mirrored = crate::app::creatures::mirrored(handed);
+    (
+        SignpostClaw,
+        Sprite {
+            image: art.crab.clone(),
+            color: palette::PARCHMENT,
+            custom_size: Some(side),
+            flip_y: mirrored,
+            ..default()
+        },
+        Transform::from_translation(undo * corner).with_rotation(undo * face_up),
+        Children::spawn_one((
+            Sprite {
+                image: art.claw.clone(),
+                color: crate::app::creatures::claw_color(handed, true),
+                custom_size: Some(side),
+                flip_y: mirrored,
+                ..default()
+            },
+            Transform::from_translation(Vec3::new(0.0, 0.0, 0.01)),
+        )),
+    )
+}
+
+/// The claw mark on a co-op stage's signpost: which crabs it turns.
+#[derive(Component)]
+pub struct SignpostClaw;
+
+/// The claw mark's size, of a signpost's.
+const CLAW_BADGE: f32 = 0.5;
 
 /// The shadow a signpost drops, at full strength.
 const SIGN_SHADOW: Color = Color::srgba(0.14, 0.10, 0.06, 0.34);
@@ -323,7 +385,7 @@ pub fn dress_signposts(
                 };
                 shown.set_if_neq(want);
                 if marked {
-                    halo.color = palette::GOLD.with_alpha(pulse);
+                    layout::tint(&mut halo, palette::GOLD.with_alpha(pulse));
                 }
                 continue;
             }
@@ -331,13 +393,13 @@ pub fn dress_signposts(
                 if coat.image != *paint_art {
                     coat.image = paint_art.clone();
                 }
-                coat.color = paint.with_alpha(alpha);
+                layout::tint(&mut coat, paint.with_alpha(alpha));
                 continue;
             }
             let Ok((mut shadow, mut shadow_tf)) = shadows.get_mut(*child) else {
                 continue;
             };
-            shadow.color = SIGN_SHADOW;
+            layout::tint(&mut shadow, SIGN_SHADOW);
             // The sun is one direction for the whole beach, so the offset
             // is undone out of the arrow's rotation: a post pointing left
             // and one pointing up drop their shadow the same way. Divided

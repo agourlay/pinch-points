@@ -27,7 +27,6 @@ Rocket!** (1999):
 | Arrow panels | Arrows |
 | "?" roulette specials | Random events |
 | Cat Mania / Mouse Mania | Gull Mania / Crab Mania |
-| Stage Challenge | Challenges |
 | Wrap-around edges | Open-ocean levels |
 
 Inherited: creatures walk forward and turn at walls by a fixed rule, arrows
@@ -38,7 +37,11 @@ steering the predator is as much fun as steering the prey.
 
 **Six players, not four**, at four corner castles plus two mid-edge on the
 wider generated arenas. Team play grows with the table: 2v2 at four, 2v2v2
-or 3v3 at six.
+or 3v3 at six. Which castle is whose is drawn each round on a generated
+arena, and on the classic map at three, so the spot an odd table leaves
+worst off is nobody's for good; three players get the four end spawner
+holes, and five take the four corners and one long edge (on the open
+ocean, both long edges and three corners).
 
 **Every crab has a handedness.** The original's turn rule is global; here
 left-clawed crabs try left first and right-clawed right, with the oversized
@@ -48,8 +51,8 @@ ones: the same corridor routes two crabs to two destinations.
 **The score is on the board.** Castles grow through four tiers as they
 score; the HUD is the redundancy, not the readout.
 
-**A raid costs half, and hands some back.** A gull carries off half the
-castle's score, spills live crabs onto the sand for everyone to scramble
+**A raid costs a third, and hands some back.** A gull carries off a third
+of the castle's score, spills live crabs onto the sand for everyone to scramble
 over, and leaves with its loot: a raid drains the flock instead of
 compounding it.
 
@@ -77,12 +80,15 @@ washes away after ~10 seconds, and two gull crossings destroy one.
 **Crabs** stream out of spawner holes and score by walking into any
 castle. By value/speed: common (1), juvenile (2, fast), giant (10, slow),
 molting (5; scoring one **lures every loose crab toward your castle for
-10 s, overriding all arrows**), golden (fast: 30 in versus, 50 in puzzles
-and challenges), and sparkling
+5 s, overriding all arrows**), golden (fast: 30 in versus, 50 in
+puzzles), and sparkling
 (scoring one spins the **random event** roulette: crab/gull manias, speed
-shifts, castle swaps, fresh sand…). While a timed event is still running
-the roulette is on cooldown, and the event feed says so when a sparkling
-crab is scored for nothing.
+shifts, castle swaps, fresh sand…). The banner and the event feed say
+whose crab started it. Speed Up also opens the crab holes twice as often,
+and a castle swap with three castles or more leaves the castle of whoever
+started it alone. While a timed event is still running, the top of the
+event feed counts down its seconds left, the roulette is on cooldown, and
+the feed says so when a sparkling crab is scored for nothing.
 
 **The golden crab is called.** It never just wanders out: once a round
 (twice in a long one, never in a one-minute one) a banner announces it, and one spawner hole swells
@@ -91,7 +97,7 @@ Everyone sees it coming, so it goes to whoever routes it home first.
 
 **Gulls** eat crabs on contact and are steerable: aiming them at a rival's
 castle is the entire offensive game. A gull reaching a castle **carries off
-half its score** and departs. Gulls occasionally take flight for a few
+a third of its score** and departs. Gulls occasionally take flight for a few
 tiles, ignoring walls and arrows, so no corner is ever fully safe. The
 flock keeps moving: when it is full, the oldest gull away from the castles
 flies off and a fresh one arrives from the edge, so birds circling where
@@ -130,13 +136,63 @@ score lost, so the rest of the table has something to point at too.
   handing you one to practise with on a board that cannot be lost.
   Press **C** on the stage list for **co-op**: a second player joins on the
   second seat's keys or a pad, and the two of you share the stage's arrows,
-  either of you free to put one down, turn it or pick it up. Every stage
-  plays the same with two as with one, so all hundred are open to it.
+  either of you free to put one down, turn it or pick it up. Every Tide
+  Pool stage plays the same with two as with one, so all hundred are open
+  to it. For stages that need two, see Co-op.
+- **Co-op**: a shelf of stages for two players, easiest first, on the
+  stage list below the Tide Pool (marked **2P**). Each player has their
+  own arrows, and **your
+  arrows turn only crabs with your claw**: P1's turn the left-clawed
+  crabs, P2's the right-clawed ones, and a crab of the other claw walks
+  straight over them. On these stages each crab's big claw is drawn in
+  the colour of the player who steers it, the colour of that player's
+  arrows. Gulls turn on anybody's
+  arrow. A tile still takes one arrow, and only its owner can turn or lift
+  it, so the two plans meet on the sand: often one of you has to give way.
+  Each arrow carries a small crab showing the claw it turns. Press **C**
+  first to seat P2; a co-op stage will not start with one player. The test
+  suite proves each stage needs both: neither player wins it alone with
+  every arrow, and arrows that turned every crab would not win it either.
+  The editor's **Players** row makes a stage of your own for two.
 - **Versus**: local versus for **2-6 players** on one keyboard plus
-  gamepads. Six built-in maps, from the handcrafted classic map to
-  generated arenas up to 20×13 and an edgeless **open ocean** (five and
-  six players need one of the wide maps, 16 tiles across or more), plus
-  any map you built yourself that has a castle for every player. A
+  gamepads. Eighteen built-in maps: the handcrafted classic map, eleven
+  more handmade maps each built around one idea, generated arenas up to
+  20×13, an edgeless **open ocean**, and **Surprise** (five players need
+  a generated map 16 tiles across or more, the open ocean included,
+  Surprise, or Gull Road, built for five; six can also play Round Table,
+  Round the World and Back to Back, built for two, four or six), plus any
+  map you built yourself that has a castle for every player. The
+  handmade maps are **The Gates** (each castle in a kelp hedge with one
+  gate, the only way a gull walks in), **The Moat** (each castle in a
+  pond with a dry jetty), **Log Jam** (every hole feeds a log that deals
+  its crabs to two castles in turn), **Three Lanes** (two sea walls cut
+  the beach into lanes), **Round Table** (six castles, a wall behind
+  each corner, so the edge ones win as often as the corners), **Round the World** (no edges: three
+  strips of beach, every castle a copy of the others), **Duel** (for
+  two), **The Fountain** (all four holes sit in a pond in the middle, so
+  the crabs wade out slowly, and no arrow stands in water), **Four
+  Doors** (for three, no edges: each castle stands in walls with a door
+  on every side, the only way in for crabs and gulls alike), **Gull
+  Road** (for five, no edges: gulls land only on a road along the top
+  and bottom, kelp keeps them on it, and two gates lead from it to each
+  castle) and **Back to Back** (no edges: the castles stand back to back
+  in pairs, a wall between them). Each seats the tables it was balanced for: two or four players,
+  Round Table, Round the World and Back to Back six too, Duel two, Four
+  Doors three and Gull Road five. Those two are open beaches of
+  identical strips with a castle in each, so no castle is left empty and
+  none is better placed than another; elsewhere an odd table plays a
+  generated map, because a castle left empty on a fixed layout hands the
+  castle across from it the round. **Surprise** generates a new map
+  every round in one of five styles (a braided maze, logs strewn about,
+  islands crossed by sand bridges, a lagoon with a kelp shore, or long
+  sea walls in lanes, lanes only up to four players), drawn from the
+  round's seed. **Every round's map is mirrored** left-right and/or
+  top-bottom at random from its seed (an edgeless handmade map is also
+  rolled round by a whole strip), and a handmade map deals its castles
+  to the players in opposite pairs, so team play keeps its partners
+  across from each other: the sim and the AI favour one diagonal by a few
+  points, and the mirror spreads that over every castle. A map you built
+  yourself is played as you drew it. A
   generated map follows the table as players sit down: the 9×7 for two,
   12×9 for three or four, 16×11 for five or six, and 20×13 only when you
   pick it. The bigger maps get more walls and more gulls for their size,
@@ -148,8 +204,30 @@ score lost, so the rest of the table has something to point at too.
   board for free (`cargo run --example ladder` plays them off). Every
   round, local or online, opens on a **three-second count** with the board
   holding still, so the table can read the map and find its castles first.
-- **Challenges**: eight score-attack challenge stages (timed goals, versus
-  rules).
+
+  A match is set up in three steps, and going back a step keeps every
+  choice. **Game**: players (2-6, people and AI together), the AI's
+  level, round length, arrows, gulls, scoring (teams play only when the
+  table splits evenly) and series. **Map**: a card per map, each a picture
+  of the very board the match is played on, mirrored as it will be (a
+  map's seed is fixed when the card is drawn and the match keeps it); a
+  map that cannot seat the table is greyed and says which tables it
+  seats, and **Random** draws one of the maps that seat everyone (all but
+  the 20x13, which is only ever picked, and Surprise), your own included,
+  afresh every round of a series and every rematch. **Surprise** is a new
+  generated map every round, its own included, so its card shows four of
+  its styles rather than one board. The map picked stays picked: if the players grow
+  past what it seats, the closest map that does is played instead, the
+  Map and Players steps say so, and the pick comes back when the table
+  fits it again. **Players**: one row per seat saying who plays it: the
+  keyboard's P1 or P2 keys, a controller, the AI at a level, or a bot. A
+  controller plugged in plays the seat it is dealt without pressing
+  anything. A/D changes a seat (P1 stays the person at the menu), Tab
+  names it, and a friend sits down by pressing Start on a controller, on
+  any of the three steps: in the lowest open seat, else in a chair the AI
+  had, else in a seat added to the table. A seat nobody sat down in is
+  played by the AI at the Game step's level for that match, and is open
+  again when you come back.
 - **Level Editor**: a level editor with a built-in solver, playtesting, and
   save-to-campaign. `F1` names the level, `F5` cycles the map size
   (up to 20×13), `F6` toggles between a puzzle stage and a versus map,
@@ -172,7 +250,27 @@ score lost, so the rest of the table has something to point at too.
   setup travels with the invitation, **AI seats** included, and every player
   joins under their P1 name, so the leaderboard reads the same on every
   machine. A map the host built travels whole; every other map is a seed
-  both machines build from.
+  both machines build from, mirror and Surprise style included.
+
+  The host picks the map **when it starts the match**: Enter freezes the
+  table as it sits and brings up the same map cards as the local setup,
+  greyed for that many players (a map of your own too big to send is
+  greyed too). Enter on a card starts the match on it, Esc goes back to
+  the lobby with nobody dropped. Meanwhile everyone else is told the host
+  is picking; a player who sits down then watches this match, and one who
+  leaves calls the start off.
+
+  Every machine then shows the **line-up** for a few seconds before the
+  count: the players in seat order and in their colours (the AI with its
+  level, each team named under a team mode) beside the map's name and
+  picture, the one actually drawn under Random.
+
+  In a series the host picks **each next round's map** the same way: Enter
+  on the results card brings up the map cards, greyed for the table the
+  next round is dealt, the cursor on the map just played. Enter on a card
+  calls the round, and everyone sees the line-up again; Esc goes back to
+  the results card without calling anything. Meanwhile the others are told
+  the host is picking.
 
   `T` sends a short line to the lobby, relayed by the host.
 
@@ -211,14 +309,21 @@ score lost, so the rest of the table has something to point at too.
   joiner as player 1. There is no lobby to agree the terms, so
   `PINCH_BOTS=<n>` (AI seats behind the two humans) has to be set
   identically on both sides.
-- **Replay**: every finished round is kept in a library and watchable at
-  1x/2x/4x. `C` copies a round as a checksummed **share code**, `V` pastes
+- **Replay**: a finished round goes on the replay shelf only if you keep
+  it: `G` on its results card (X on a pad) keeps it, and in a series the
+  offer stands on the interlude too, until the next round starts. A
+  rematch, the menu or the lobby lets it go. Online, each player decides
+  for their own shelf, even when the host calls the next round at once.
+  Kept rounds are watchable at 1x/2x/4x. `C` copies a round as a
+  checksummed **share code**, `V` pastes
   one back, including a versus round *in progress*, which `V` on the
-  menu drops you into mid-play. The editor shares levels the same way
-  (`F3`/`F4`).
+  menu drops you into mid-play. `D` deletes the round under the cursor,
+  pressed twice (Select on a pad), and lowering "Rounds kept" in Settings
+  trims the shelf to the newest as Settings is left. The editor shares
+  levels the same way (`F3`/`F4`).
 - **Daily Challenge**: one date-seeded arena per day, identical worldwide,
   with a local best.
-- **Achievements**: fifty trophies and lifetime stats, on a shelf that
+- **Achievements**: 48 trophies and lifetime stats, on a shelf that
   scrolls.
 
 ![The stage list: cleared stages filled gold, and every tile edged by how many arrows it grants](screenshots/stages.png)
@@ -229,13 +334,33 @@ score lost, so the rest of the table has something to point at too.
 |---|---|---|---|---|
 | P1 | WASD | arrow keys | Space | Left Shift |
 | P2 | IJKL | numpad 8/5/4/6 | numpad 0 | numpad . |
-| any seat | gamepad d-pad/stick | face buttons | L1 | R1 |
+| any seat | gamepad d-pad/stick | A/B/X/Y | LB | RB |
 
-Pads are plug-and-play and fill seats from the highest player down, so
-keyboard-plus-pad, two pads and two keyboards all work with no setup; P1 and
-P2 can each say otherwise and name a controller of their own. Every menu is
-navigable from a pad, and Start on the match-setup screen joins the next
-seat. `M` toggles music, and `Esc` on the menu quits.
+Pads are plug-and-play and fill seats from P2 up, P1 last, so
+keyboard-plus-pad and two pads play with no setup, and two at one
+keyboard once P2 presses one of their keys (a pad then goes to P3). A
+setup worked with a pad makes that pad P1, so a Steam Deck on its own
+plays P1 against the AI; a friend's Start only ever moves their own pad.
+P1 and P2 can each say otherwise and name a controller of their own. In match
+setup the d-pad chooses, A goes on and B goes back on the Game and Map
+steps; on the Players step Start seats a friend in the lowest open seat,
+else in a chair the AI had, else in a seat added to the table, X renames,
+Select starts the match and A does nothing, so a friend reaching for a
+button to join cannot start it.
+`M` toggles music, and `Esc` on the menu quits; a pad's Start there asks
+first, on a card where A (or Enter) quits and B, Start again or Esc goes
+back.
+
+Everything plays from a pad alone, a Steam Deck's own controls included.
+The prompt line along the bottom names the buttons of whichever you touched
+last: keys at the keyboard, A/B/X/Y and the bumpers once a pad moves. On the
+menus the d-pad chooses, A confirms and B goes back; in a puzzle's setup
+Start runs it, LT/RT step through the levels and Select opens the pause
+card. In the level editor the right stick puts walls on the cursor's sides,
+A paints, the bumpers pick a brush and the triggers set the arrow count, X
+checks and Start playtests; hold Select for the rest (save, name, share,
+paste, size, kind, gulls, wrap). Boxes you type into are the keyboard's: on a
+Deck, Steam + X brings up its own.
 
 The music comes in two sets, each shuffled: calm tracks for the menus,
 puzzles and editor, with a long quiet between them, and dance tracks for
@@ -247,7 +372,7 @@ the calm track out under a dance one.
 Settings is grouped into controls, sound, the round, presentation and the
 game itself: what plays each of the first two seats, per-key rebinding, a
 single-hand preset, cursor tuning, puzzle speed assist, rumble and
-deadzone, versus scoring, how many finished rounds the shelf keeps, a
+deadzone, versus scoring, how many kept rounds the shelf holds, a
 colour-vision-safe palette, fullscreen, UI scaling, reduced motion, the update check,
 a progress reset, and the UI language: **English, Français, Deutsch,
 Español, Italiano, Nederlands, Русский, 日本語**, each with its flag beside
@@ -291,7 +416,9 @@ committed, embedded into the binary at build time, and regenerated by
 `tools/gen_sprites.py`, `tools/gen_flags.py` (the language chips),
 `tools/gen_jp_font.py` (the Japanese face, cut down to the characters the
 game says) and `tools/gen_sounds.py` (which needs `ffmpeg` for the music
-loops).
+loops). The first three declare their Python libraries inline (PEP 723), so
+run them with [uv](https://docs.astral.sh/uv/), as `uv run tools/gen_sprites.py`
+or directly as `tools/gen_sprites.py`; uv fetches Pillow or fontTools itself.
 
 ## Determinism
 
@@ -312,18 +439,36 @@ deliberately.
   CI, with a progress bar; exits non-zero naming any level with an arrow to
   spare. Run it by hand after editing a level file.
 - `PINCH_*` env hooks skip the menus for development and testing:
-  `PINCH_SKIRMISH=classic|arena|large|xl|ocean|custom` boots a bots match
-  (`arena` is the handmade classic beach, `PINCH_SERIES=3` or `=5` for a
+  `PINCH_SKIRMISH=<map>` boots a bots match on a map named as the bots'
+  `--map` names it (`small|large|xl|ocean|custom|gates|moat|log-jam|three-lanes|round-table|round-the-world|duel|fountain|four-doors|gull-road|back-to-back|surprise`;
+  `classic` is the generated 12x9 beach and `arena` the handmade classic
+  one, `PINCH_SERIES=3` or `=5` for a
   series, `PINCH_SEATS=<n>` for the table,
   `PINCH_BOTS=<n>` for AI seats), and `PINCH_SANDBOX`,
-  `PINCH_AUTOPLAY=<level>`, `PINCH_EDITOR`, `PINCH_MATCH`, `PINCH_REPLAY`,
+  `PINCH_AUTOPLAY=<level>`, `PINCH_EDITOR` (`PINCH_EDITOR_LEVEL=<path>`
+  opens it with that level file on the bench, and `PINCH_EDITOR_PRESS=F2,F2`
+  presses those keys there one a second), `PINCH_MATCH=1|2|3` (match
+  setup on that step; `PINCH_MATCH_MAP=<skirmish name>|random` picks the
+  map card, and `PINCH_SEATS`/`PINCH_BOTS`/`PINCH_BOT_SEATS` set the
+  table), `PINCH_REPLAY`,
   `PINCH_LIBRARY`, `PINCH_ACHIEVEMENTS`, `PINCH_SETTINGS`,
-  `PINCH_CONTROLS`, `PINCH_LANGUAGE`, `PINCH_STAGES=tide|beach`, and
+  `PINCH_CONTROLS`, `PINCH_LANGUAGE`, `PINCH_STAGES`, and
   `PINCH_LOBBY_HOST=<n>`/`PINCH_LOBBY_JOIN`/`PINCH_LOBBY_WATCH` open the rest
   (the host launches once `n` peers are aboard, and `PINCH_LOBBY_JOIN_BOT`
   joins the first host heard as a bot, opening the doorway for it);
   `PINCH_AUTOPLAY` with `PINCH_NOSOLVE=1` starts each level's run without
-  placing anything, so a timed level runs out.
+  placing anything, so a timed level runs out, and with `PINCH_STAY=1`
+  leaves the level in its setup, nothing placed and nothing started.
+  `PINCH_PAD_PROMPTS` starts with the controller's prompts up, as if a pad
+  had just been pressed, until the first key; `PINCH_QUIT_CARD` opens the
+  main menu with its quit card (a pad's Start) up, naming the keys or,
+  with `PINCH_PAD_PROMPTS`, the buttons; `PINCH_PADS=<n>` plugs in that
+  many idle pads, the first of them the one that worked the menus under
+  `PINCH_PAD_PROMPTS`.
+  `PINCH_DELETE=1` presses the replay shelf's delete once, a second after
+  `PINCH_LIBRARY` opens it, so its question can be shot.
+  `PINCH_KEEP=1` presses the results card's keep key once, a second after
+  the card goes up (with `PINCH_OVER=1`, say).
   `PINCH_BANNER=lure|surge|<0-8>` raises an announcement, `PINCH_TIDE=<0-8>`
   fires the tide event itself, and `PINCH_LURE=<seat>` starts a lure a few
   seconds in. `PINCH_SPECTATOR=card|say|pick<n>|<0-6>` works a watching peer's
@@ -344,10 +489,10 @@ deliberately.
   process's own seat with the bot brain, through the same path a keystroke
   takes, so several processes can play a real online round unattended.
   `PINCH_COOP` starts the Tide Pool in co-op. `PINCH_NET_PROBE=1`
-  submits one scripted signpost mid-round over the wire, and `PINCH_ST_EXEC`
-  runs every schedule on the single-threaded executor, for the CPU
-  measurement. `PINCH_THREADS=<n>` caps Bevy's compute pool (`0` lifts the
-  cap), and `PINCH_SHUFFLE=<seed>`, in a build with the `shuffle` feature,
+  submits one scripted signpost mid-round over the wire, and `PINCH_MT_EXEC`
+  puts the main world back on Bevy's parallel executor (the game runs it
+  single-threaded), for the CPU measurement. `PINCH_THREADS=<n>` caps
+  Bevy's compute pool (`0` lifts the cap), and `PINCH_SHUFFLE=<seed>`, in a build with the `shuffle` feature,
   runs every schedule's unordered systems in a seeded shuffled order to
   flush out a missing ordering. `PINCH_FRAMES=1` prints the frame times
   every five seconds (mean, 99th percentile, worst) and every frame over
@@ -358,7 +503,12 @@ deliberately.
   `PINCH_SCREENSHOT=<path>` with `PINCH_SCREENSHOT_AT=<seconds>` took every
   picture in this guide. `PINCH_NO_UPDATE` skips the release check for a
   run, and `PINCH_UPDATE_DEMO` opens the new-version page for a made-up
-  release.
+  release. `PINCH_PROFILE=<seconds>` profiles whatever screen the other
+  hooks open and exits (each render pass's GPU time; with
+  `PINCH_PROFILE_CPU=1`, the CPU time a frame costs, thread by thread, and
+  how many sprites and materials change a frame), and `PINCH_ALL_PLUGINS`
+  puts back the engine plugins the game leaves out, to measure what they
+  cost.
 
 The design document lives in [`pinch-points-spec.md`](pinch-points-spec.md),
 and [`backlog.md`](backlog.md) tracks the remaining ideas.

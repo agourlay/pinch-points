@@ -36,10 +36,13 @@ impl PlaybackSpeed {
 pub fn playback_speed_input(
     keys: Res<ButtonInput<KeyCode>>,
     caps: Res<crate::app::keycaps::KeyCaps>,
+    pads: crate::app::gamepad::face::PadsOnFace,
     playback: Res<Playback>,
     mut speed: ResMut<PlaybackSpeed>,
 ) {
-    if playback.0.is_some() && caps.just_pressed(&keys, 'S') {
+    let asked =
+        caps.just_pressed(&keys, 'S') || pads.pressed(crate::app::gamepad::scheme::Does::Speed);
+    if playback.0.is_some() && asked {
         *speed = PlaybackSpeed(speed.0).stepped();
     }
 }
@@ -194,7 +197,7 @@ pub fn update_replay_bar(
     }
 }
 
-/// Space stops and starts a recording.
+/// Space (or the replay table's pad button) stops and starts a recording.
 ///
 /// Only while one is playing: in a live match the same key pulls a
 /// signpost.
@@ -206,13 +209,18 @@ pub fn update_replay_bar(
 /// stopped. Every other key on a play screen wanted the same rule.
 pub fn playback_pause_input(
     keys: Res<ButtonInput<KeyCode>>,
+    pads: crate::app::gamepad::face::PadsOnFace,
     playback: Res<Playback>,
     mut paused: ResMut<crate::app::Paused>,
 ) {
     if playback.0.is_none() {
         return;
     }
-    if keys.just_pressed(KeyCode::Space) {
+    // The pad's button is read here, not pressed as Space: Space is P1's
+    // remove key in a live round, and a pad never stands in for a seat's.
+    if keys.just_pressed(KeyCode::Space)
+        || pads.pressed(crate::app::gamepad::scheme::Does::PlayPause)
+    {
         paused.0 = !paused.0;
     }
 }

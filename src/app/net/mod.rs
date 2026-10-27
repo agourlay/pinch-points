@@ -8,8 +8,8 @@
 
 use crate::sim::{HASH_INTERVAL, Lockstep, MAX_PLAYERS, PlayerAction};
 use crate::transport::{
-    Announcer, MatchTerms, NetMsg, SeriesStanding, UdpTransport, chat_from_wire, name_from_wire,
-    table_from_wire, wire_table,
+    Announcer, Batch, MatchTerms, NetMsg, SeriesStanding, UdpTransport, chat_from_wire,
+    name_from_wire, table_from_wire, wire_table,
 };
 use bevy::prelude::*;
 pub use peers::{Goodbye, Peer, PeerBook, Place, renumber};
@@ -38,6 +38,10 @@ pub enum PutOut {
     /// The host closed its socket: the beach is gone, whether or not its
     /// beacon's farewell reached this listener.
     Closed,
+    /// The host's socket had no room for this peer, watching or playing
+    /// ([`crate::transport::MAX_PEERS`]): said, rather than met with a
+    /// silence that reads as a wrong address.
+    Full,
     /// The host asked us to go: back to the list.
     Kicked,
     /// We came as a bot, and the host is not taking bots. Being asked to
@@ -67,6 +71,7 @@ impl PutOut {
                     ("o", &crate::transport::PROTOCOL_VERSION.to_string()),
                 ],
             ),
+            PutOut::Full => tr.lobby_no_room.to_string(),
             PutOut::Kicked => tr.lobby_kicked_you.to_string(),
             PutOut::NoBots => tr.lobby_no_bots.to_string(),
             PutOut::Closed => tr.lobby_host_closed.to_string(),
@@ -156,6 +161,22 @@ pub struct OnlineSession {
     pub series_standing: Option<SeriesStanding>,
     /// Ticks of `Resume` still to repeat (see [`pump::RESUME_ECHOES`]).
     resume_echo: u8,
+    /// Host: seconds until the next `Ping`, between rounds.
+    ping_in: f32,
+    /// Ticks played since the round began here, which spaces out the
+    /// host's `Start` sent again to a peer not heard from in it yet
+    /// (`pump::START_AGAIN`) and its players' clocks, and a watcher's word
+    /// on what it holds (`pump::WATCHER_WORD_EVERY`).
+    round_ticks: u32,
+    /// Joiner: the newest frame the host has committed this round, as far
+    /// as its inputs have arrived, read against the host's clock.
+    host_newest: Option<u32>,
+    /// Joiner: the frames the host last said it was missing, per seat
+    /// (`Batch::wants`): this peer's own commits are resent from there.
+    host_wants: Option<[u32; MAX_PLAYERS]>,
+    /// Joiner: the last clock reading not yet acted on (see
+    /// `pump::keep_time`).
+    clock_apart: Option<i64>,
     /// How many rounds the host has dealt on this socket, the one being
     /// played included: what a `Start` is numbered with, so a joiner can
     /// tell the next round from any it has already been dealt
@@ -172,6 +193,21 @@ pub struct OnlineSession {
     pub crowned: u8,
     /// A round joined late, or owed to someone who came late to it.
     pub catch_up: catch_up::CatchUp,
+    /// Lockstep messages dropped for naming another round than the one
+    /// played here ([`Self::of_this_round`]), over the session's life: the
+    /// last round's still on the wire, or the next one's reaching a peer
+    /// still finishing this. Counted for the soak and the log; nothing
+    /// reads it to decide anything.
+    pub stale_rounds: u32,
+    /// Between rounds of a series: on the host, its map page is up; on a
+    /// joiner, the host has said so (`NetMsg::Roster::picking`). The
+    /// results card says it while the table waits. Cleared as a round
+    /// begins.
+    pub picking_map: bool,
+    /// Host: the seats its partner picks put its bots and the AI in, once
+    /// it has picked any ([`order`]); `None` for a table dealt in seat
+    /// order. Carried over from the lobby, and back to it.
+    pub arranged: Option<order::Arranged>,
 }
 
 #[derive(Resource, Default)]
@@ -198,9 +234,20 @@ pub fn poll_between_rounds(time: Res<Time>, mut online: ResMut<Online>) {
     }
 }
 
+/// Keep the session talking, every fixed tick, while its round is dealt
+/// but not yet played: the interlude, the line-up and the count. See
+/// [`OnlineSession::listen`]: a peer silent through them was taken for
+/// gone, its seat given to the AI before it had played a frame.
+pub fn listen_before_the_round(time: Res<Time>, mut online: ResMut<Online>) {
+    if let Some(session) = &mut online.0 {
+        session.before_the_round(time.delta_secs());
+    }
+}
+
 pub(crate) mod catch_up;
 mod crowd;
 mod home;
+pub mod order;
 mod peers;
 mod presence;
 mod pump;
@@ -213,7 +260,8 @@ pub(crate) use pump::CATCH_UP_FRAMES;
 use pump::HashCheck;
 pub use rounds::Invitation;
 pub(crate) use rounds::{
-    chairs_for_bots, lockstep_for, seat_kinds, seat_names, seat_the_hosts_bots,
+    arrange_the_deal, chairs_for_bots, input_delay, lockstep_for, seat_kinds, seat_names,
+    seat_the_hosts_bots,
 };
 
 impl OnlineSession {
@@ -244,9 +292,17 @@ impl OnlineSession {
             next_round: false,
             series_standing: None,
             resume_echo: 0,
+            ping_in: 0.0,
+            round_ticks: 0,
+            host_newest: None,
+            host_wants: None,
+            clock_apart: None,
             rounds_dealt: 0,
             crowned: 0,
             catch_up: Default::default(),
+            stale_rounds: 0,
+            picking_map: false,
+            arranged: None,
         }
     }
 
@@ -259,6 +315,25 @@ impl OnlineSession {
     /// Whether this peer watches rather than plays.
     pub fn watching(&self) -> bool {
         self.session.watching()
+    }
+
+    /// The round this session plays, as its batches say it
+    /// ([`Batch::round`]): the low byte of the deal that began it.
+    pub(super) fn round_tag(&self) -> u8 {
+        crate::transport::round_tag(self.rounds_dealt)
+    }
+
+    /// Whether a lockstep message tagged `round` (an input batch, a hash,
+    /// a pause, a resume, a seat given up on) is about the round played
+    /// here. Every round counts its frames from zero, so a frame number
+    /// cannot tell one round's message from another's; the tag can. One of
+    /// another round is dropped, and counted in [`Self::stale_rounds`].
+    pub(super) fn of_this_round(&mut self, round: u8) -> bool {
+        let ours = round == self.round_tag();
+        if !ours {
+            self.stale_rounds = self.stale_rounds.saturating_add(1);
+        }
+        ours
     }
 
     /// Whether the book holds no plan to go by because none was ever

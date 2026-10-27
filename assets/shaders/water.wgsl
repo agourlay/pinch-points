@@ -219,6 +219,12 @@ fn ocean(world: vec2<f32>, uv: vec2<f32>, height: f32) -> vec4<f32> {
 
 fn pool(world: vec2<f32>, uv: vec2<f32>) -> vec4<f32> {
     let shape = textureSample(mask, mask_sampler, uv).a;
+    // Most of a pool's quad is the sand round the puddle: there the light
+    // on the floor, two Voronoi passes, would be worked out to be drawn at
+    // no alpha at all.
+    if shape <= 0.0 {
+        return vec4<f32>(0.0);
+    }
     var c = water.shallow.rgb + vec3<f32>(0.92, 1.0, 0.98) * light(world) * water.caustics;
     return vec4<f32>(c, water.shallow.a * shape);
 }

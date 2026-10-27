@@ -3,7 +3,7 @@
 **Version:** 0.1 (pre-release; describes shipped behaviour)
 **Engine:** Rust + Bevy 0.19
 **Genre:** Real-time grid routing puzzler / party game
-**Players:** 1 (puzzle, challenge), 2–6 (versus, local + online)
+**Players:** 1 (puzzle), 2–6 (versus, local + online)
 
 ---
 
@@ -31,7 +31,7 @@ is, and what this game makes of it:
 | Predator that degrades placements | Gulls, with a flight state |
 | Goal tiles that bank agents | Sandcastles that visibly grow |
 | Penalty for predator reaching goal | Turret collapse + crab spill |
-| Puzzle / challenge / versus / editor modes | Same structure, original levels |
+| Puzzle / versus / editor modes | Same structure, original levels |
 
 Every asset, level, and line of code here is this project's own. **No original
 level layouts are reproduced** - every stage is authored fresh - and no art,
@@ -74,13 +74,13 @@ control. Each carries a **handedness** bit assigned at spawn.
 | **Common crab** | 1.0× | 1 | The bulk of the population |
 | **Juvenile** | 1.5× | 2 | Fast, hard to route |
 | **Giant crab** | 0.6× | 10 | Slow, valuable, a liability to protect |
-| **Molting crab** | 1.0× | 5 + effect | On banking: for 10 s all loose crabs path toward the banker's castle. Lures do not stack, and a further 20 s must pass after one ends before another may start |
+| **Molting crab** | 1.0× | 5 + effect | On banking: for 5 s all loose crabs path toward the banker's castle. Lures do not stack, and a further 30 s must pass after one ends before another may start |
 | **Golden crab** | 1.25× | 50 | The jackpot: rare and quick |
 | **Sparkling crab** | 1.0× | 1 + effect | On banking: spins the tide-event roulette (§3.6) |
 
 Distinct values mean what is walking toward a castle reads as a score
-forecast. Spawner mix: 70% common, 15% juvenile, 8% giant, 3% molting,
-2% golden, 2% sparkling, deterministic per seed.
+forecast. Spawner mix: 68% common, 15% juvenile, 8% giant, 3% molting,
+2% golden, 4% sparkling, deterministic per seed.
 
 Versus has since moved on from this table in one place: its golden crab
 is never rolled. One is announced and comes out of a chosen hole once
@@ -118,12 +118,13 @@ redundancy:
 | 25–49 | Wall + two turrets |
 | 50+ | Full keep, moat, pennants |
 
-**Damage.** A gull reaching a castle **carries off half the banked crabs**,
-**spills some back as live crabs** in the surrounding tiles (up to a spill
-cap), then **leaves the beach with its loot**: raids drain the flock rather
-than compounding it (balance freeze: without departure, four-player rounds
-collapse to zero under repeated halving). The spill turns a private penalty
-into a scramble everyone joins.
+**Damage.** A gull reaching a castle **carries off a third of the banked
+crabs** (rounded up), **spills some back as live crabs** in the surrounding
+tiles (up to a spill cap), then **leaves the beach with its loot**: raids
+drain the flock rather than compounding it (balance freeze: without
+departure, four-player rounds collapse to zero under repeated raids). A
+third rather than half keeps a wild gull nobody steered from deciding most
+rounds. The spill turns a private penalty into a scramble everyone joins.
 
 ### 3.5 Gulls (the predator)
 
@@ -151,7 +152,7 @@ pressure cycles instead of accumulating.
 
 The original's "?"-roulette, re-themed. A sparkling crab banks for 1 and
 spins the roulette on boards with events enabled (versus arenas; never
-puzzles or goal-checked challenges):
+puzzles):
 
 | Event | Effect |
 |---|---|
@@ -159,9 +160,22 @@ puzzles or goal-checked challenges):
 | Gull Mania | Spawners emit gulls for 10 s |
 | Crab Monopoly | Half the loose crabs scuttle straight into the banker's castle |
 | Gull Attack | A gull lands beside every rival castle, facing it |
-| Speed Up / Slow Down | Everything moves double / half speed for 10 s |
+| Speed Up | Everything moves at double speed, and the spawner holes open twice as often, for 10 s |
+| Slow Down | Everything moves at half speed for 10 s |
 | Fresh Sand | Every signpost washes away |
-| Castle Swap | Castles trade owners in rotation ("rockets swap places") |
+| Castle Swap | Castles trade owners in rotation ("rockets swap places"). With three castles or more, the spinner's castle sits out and the others rotate; two castles, or a swap the spectators call (nobody spun it), rotate everyone. Banks stay with their seats |
+| Right Claws | For 10 s a right-clawed crab banks for double and a left-clawed one costs what it was worth |
+
+One event runs at a time: after a timed one (the manias, Speed Up, Slow
+Down, Right Claws) the roulette locks until it ends, and a sparkling crab
+banked meanwhile scores but spins nothing. The instant ones (Crab
+Monopoly, Gull Attack, Fresh Sand, Castle Swap) leave it free.
+
+On screen, the event's banner names it, says what it does and, above
+the name, whose sparkling crab spun it, in that seat's colour; the feed
+records it the same way. While a timed event runs, the top of the feed
+card shows its name, the seconds left and a draining bar, read off the
+board's own countdown.
 
 ### 3.7 The Tide
 
@@ -277,28 +291,70 @@ sealed on all four sides waits in place.
 
 Fixed signpost inventory, no score: place, press start, watch it run.
 The classic goal, and most of the campaign, is **all crabs**: every crab
-home is a win, one escapee is a loss. A handful of stages carry one of the
-Beach Day goals instead (`goal:` in the level file, `round:` for a tide of
-its own): **bank N** crabs, **survive** with none eaten until the tide, or
+home is a win, one escapee is a loss. A handful of stages carry a goal of
+their own instead (`goal:` in the level file, `round:` for a tide of its
+own): **bank N** crabs, **survive** with none eaten until the tide, or
 bank a **golden** crab. Every stage ends inside a sixty-second tick limit
 even without a tide, which a survive stage runs out to win and every other
 goal loses to. Deterministic and short, so failures are readable and retries
 instant, and it exercises the whole core sim while postponing caps,
 degradation, tiers and networking.
 
-### 5.2 Beach Day (challenge)
-
-Goal-based 30-second stages under versus arrow rules (cap 3, evict, posts
-fade), the original's Stage Challenge re-themed. Goals: `bank N`, `survive`
-(no crab eaten), `golden` (catch the golden crab). Stages live in
-`challenges/*.txt` with authored solutions machine-verified by tests.
-
-### 5.3 Turf War (versus)
+### 5.2 Turf War (versus)
 
 2–6 players, local or online: the full ruleset. Five and six seats need a
-generated arena wide enough for the two long-edge castles.
+generated arena wide enough for the two long-edge castles, or a handmade
+map built for the table.
 
-### 5.4 Driftwood (editor)
+**Maps** (the map byte of the match terms, appended in this order and
+never reordered): the handcrafted classic arena (12x9, 2-4); generated
+beaches at 9x7, 12x9, 16x11 and 20x13; the open ocean (generated, 16x11,
+no edges); a beach the host built, which travels whole; seven handmade
+maps, embedded level files under `levels/versus/` that state the tables
+they seat (`seats:`): The Gates, The Moat, Log Jam, Three Lanes (13x9 or
+15x9, 2 and 4), Round Table (15x11, 2, 4 and 6), Round the World (21x12,
+no edges, 2, 4 and 6, `roll: 7`) and Duel (11x7, 2); **Surprise**; and
+four more handmade maps, appended after it: The Fountain (13x11, 2 and
+4: every hole sits on a rock in a pond in the middle), Four Doors (21x11,
+no edges, 3, `roll: 7`: each castle walled in with a door on each side),
+Gull Road (25x13, no edges, 5, `roll: 5`: kelp hedges keep the walking
+gulls on a road along the top and bottom rows, with two gates to each
+castle) and Back to Back (21x12, no edges, 2, 4 and 6, `roll: 7`: the
+castles stand in pairs back to back, a wall between them).
+
+An odd table gets a handmade map only on an open beach of identical
+strips, one castle a strip and none put away, whose seam (the first and
+last columns) is kelp or rock from the second row to the second last, so
+the edge spawner lands gulls on the top and bottom rows of every strip
+alike. Every castle is then a copy of every other. On a fixed layout
+with a castle put away, the one across from the gap wins 45-58% at
+three, which is why the other handmade maps leave odd tables to a
+generated beach.
+
+**Surprise** generates a beach every round in a style drawn from the
+round's seed: Maze, Driftwood (logs), Islands, Lagoon, and Lanes at four
+seats or fewer, at 12x9 up to four seats and 16x11 (17 wide) at five and
+six. A style is a terrain step over the generated frame (castles, holes
+and rules as the classic terrain's), laid in mirror groups of four and
+retried until every castle is reachable from every hole, no sand is cut
+off and no castle is boxed in; the classic terrain is the default, and
+every seed builds the beach it always built.
+
+**The round's turn.** Every versus board but a player's own beach is
+mirrored left-right and/or top-bottom from the round's seed, and an
+edgeless handmade map is rolled round by a whole number of its strips
+(`roll:`, 7 columns on Round the World, Four Doors and Back to Back, 5 on
+Gull Road); a handmade map first deals its castles to the seats in
+opposite pairs (0/1, 2/3, 4/5 stay across from each other, which both
+team modes rely on), and at an odd table the seat left over keeps the
+last castle, a copy of the others on the only beaches that seat one. The sim and the AI lean a few points toward one diagonal pair on a
+beach that is mirror-symmetric both ways; the mirror spreads the lean
+over every castle. Every peer turns the board alike from the seed, and a
+replay records the board as played. The AI measures distances through
+the seam of an open beach (its hand's walk stays on the flat grid, since
+a cursor does not wrap).
+
+### 5.3 Driftwood (editor)
 
 Walls, castles, spawners, rocks, crab mix, gull count; ships with the game.
 Puzzle levels are **auto-validated** by brute-forcing placements against the
@@ -402,9 +458,12 @@ Non-negotiable if netcode is in scope:
 
 ### 7.6 Networking
 
-**Shipped: deterministic lockstep**, 3-frame input delay (100 ms at 30 Hz),
-UDP host-relay star. A frame simulates only once every seat's action is
-known; peers exchange state hashes every 30 frames to catch desync loudly.
+**Shipped: deterministic lockstep**, 3-frame input delay (100 ms at 30 Hz)
+on a quick network and up to 6 on a slow one (the host picks it per round
+from its players' round trips), UDP host-relay star. A frame simulates
+only once every seat's action is known, and a player's own commits pace
+it to one a tick; the host keeps the players' clocks level with its own.
+Peers exchange state hashes every 30 frames to catch desync loudly.
 
 Each action packs into **3 bytes**:
 
@@ -426,8 +485,9 @@ Bevy wrappers are the wrong way in.
 ### 7.7 Replays
 
 A replay is the starting level plus the per-tick input list; replaying
-through `Board::tick` reproduces the round bit-for-bit. Every finished round
-is kept in a library and can travel as a share code.
+through `Board::tick` reproduces the round bit-for-bit. A finished round the
+player keeps from its results card (or the interlude after it) goes into a
+library, and any round can travel as a share code.
 
 ---
 
@@ -493,4 +553,4 @@ How each design risk was settled. Remaining ideas live in `backlog.md`.
 | 5 | Handedness + directional castle gates | Gates dropped. Handedness alone carries the sorting puzzles, and the pair was unreadable in the player's head |
 | 6 | Bevy 0.19 ecosystem maturity for netcode | Overtaken (re-checked 2026-09-17): `bevy_ggrs` 0.22 takes 0.19, and raw `ggrs` never wanted an engine at all. Online ships as deterministic lockstep because a 100 ms delay over a 1 ms LAN does not need prediction, not because rollback is blocked (§7.6, `backlog.md`) |
 | 7 | Title SEO collision | Accepted; revisit before a store page |
-| 8 | Board wrap-around edges | The original wraps. Per-level flag, taught at campaign level 26, and the open-ocean versus map turns it on |
+| 8 | Board wrap-around edges | The original wraps. Per-level flag, taught at campaign level 26, and the open-ocean and Round the World versus maps turn it on |

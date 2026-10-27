@@ -26,10 +26,12 @@ pub struct GoldenEntry;
 /// A crab's size in the guide. It was 20, and a crab drawn with its legs
 /// out to the corners of its square was a speck at that size.
 const LEGEND_CRAB_PX: f32 = 26.0;
+/// The air between a coin and its note, and a note and the next coin.
+const GUIDE_GAP: f32 = 10.0;
+/// The strip's padding at either end.
+const GUIDE_PAD_X: f32 = 12.0;
 
-/// The sand a legend crab stands on: the board's own, a touch dimmed so the
-/// coins do not outshine the notes beside them.
-const LEGEND_SAND: Color = Color::srgb(0.84, 0.77, 0.62);
+use crate::app::palette::LEGEND_SAND;
 
 /// The kinds the guide lists, in the order shown.
 const KINDS: [crate::sim::CrabKind; 6] = [
@@ -53,10 +55,19 @@ const KINDS: [crate::sim::CrabKind; 6] = [
 /// The sparkling crab's "surprise" is the event wheel it spins, and on a
 /// beach whose wheel is off (`Board::events_enabled`, the same switch the
 /// spin reads) it is a crab worth its points and nothing more.
+///
+/// The molting crab's lure is followed by a rest in which a molt banked
+/// starts none (`Board::lure_ready`), and its note says how long, from
+/// the sim's constant.
 fn field_guide_note(tr: &crate::app::i18n::Tr, i: usize, board: &crate::sim::Board) -> String {
     let worth = board.crab_value(KINDS[i]);
     let wheel_off = KINDS[i] == crate::sim::CrabKind::Sparkling && !board.events_enabled();
-    let note = if wheel_off { "" } else { tr.crab_notes[i] };
+    let rest = crate::sim::LURE_COOLDOWN_SECONDS.to_string();
+    let note = if wheel_off {
+        String::new()
+    } else {
+        crate::app::i18n::fill(tr.crab_notes[i], &[("s", &rest)])
+    };
     if note.is_empty() {
         worth.to_string()
     } else {
@@ -122,9 +133,9 @@ pub(super) fn spawn_field_guide(
         .with_children(|row| {
             row.spawn((
                 Node {
-                    column_gap: Val::Px(10.0),
+                    column_gap: Val::Px(GUIDE_GAP),
                     align_items: AlignItems::Center,
-                    padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
+                    padding: UiRect::axes(Val::Px(GUIDE_PAD_X), Val::Px(4.0)),
                     border_radius: BorderRadius::all(Val::Px(11.0)),
                     ..default()
                 },
@@ -192,9 +203,25 @@ pub fn field_guide_visibility(
     playback: Res<Playback>,
     mut guides: Query<&mut Node, With<FieldGuide>>,
 ) {
+    let wanted = field_guide_shown(*screen.get(), playback.0.is_some());
+    for mut node in &mut guides {
+        menu_ui::set_shown(&mut node, wanted);
+    }
+}
+
+/// Whether the crab legend stands at the foot of `screen`, `replaying`
+/// whether a recording is playing on it: on the two screens crabs walk,
+/// unless a recording is.
+///
+/// The band at the foot of the board holds one row, and while a recording
+/// is playing the transport belongs in it: what a crab is worth is a thing
+/// to know while routing them, and nobody watching a replay is routing
+/// anything. The prompt line reads this too ([`super::prompt_band`]), since
+/// the legend is what holds it to one line.
+pub(crate) fn field_guide_shown(screen: Screen, replaying: bool) -> bool {
     // An exhaustive match rather than a `matches!`, so a new screen has to
     // say whether crabs are on it.
-    let wanted = match screen.get() {
+    let crabs = match screen {
         Screen::Versus | Screen::Puzzle => true,
         Screen::Menu
         | Screen::Editor
@@ -209,14 +236,7 @@ pub fn field_guide_visibility(
         | Screen::Language
         | Screen::NewVersion => false,
     };
-    // The band at the foot of the board holds one row, and while a
-    // recording is playing the transport belongs in it: what a crab is
-    // worth is a thing to know while routing them, and nobody watching a
-    // replay is routing anything.
-    let wanted = wanted && playback.0.is_none();
-    for mut node in &mut guides {
-        menu_ui::set_shown(&mut node, wanted);
-    }
+    crabs && !replaying
 }
 
 #[cfg(test)]
@@ -258,5 +278,47 @@ mod tests {
         board.set_events_enabled(true);
         let note = field_guide_note(tr, sparkling, &board);
         assert!(note.ends_with(tr.crab_notes[sparkling]), "{note}");
+    }
+
+    /// The molting crab's note says how long the rest after its lure
+    /// lasts, from the sim's constant, in every language.
+    #[test]
+    fn the_molting_crab_says_how_long_its_lure_rests() {
+        let molting = KINDS
+            .iter()
+            .position(|&k| k == crate::sim::CrabKind::Molting)
+            .expect("the molting crab is in the guide");
+        let board = crate::sim::Board::new(9, 7, 1);
+        let rest = crate::sim::LURE_COOLDOWN_SECONDS.to_string();
+        for lang in crate::app::i18n::ALL_LANGS {
+            let note = field_guide_note(lang.tr(), molting, &board);
+            assert!(note.contains(&rest), "{lang:?}: {note}");
+            assert!(!note.contains('{'), "{lang:?}: {note}");
+        }
+    }
+
+    /// The whole strip fits between the side panels at the design width,
+    /// in every language, with the golden crab shown.
+    #[test]
+    fn the_field_guide_fits_between_the_side_panels() {
+        use crate::app::i18n::metrics::text_px;
+        use crate::app::settings::DESIGN_W;
+        use crate::app::side_panels::SIDEBAR_W;
+
+        let board = crate::sim::Board::new(9, 7, 1);
+        let room = DESIGN_W - 2.0 * SIDEBAR_W;
+        for lang in crate::app::i18n::ALL_LANGS {
+            let notes: f32 = (0..KINDS.len())
+                .map(|i| {
+                    text_px(
+                        &field_guide_note(lang.tr(), i, &board),
+                        menu_ui::type_scale::FINE,
+                    )
+                })
+                .sum();
+            let gaps = (2 * KINDS.len() - 1) as f32 * GUIDE_GAP;
+            let width = 2.0 * GUIDE_PAD_X + KINDS.len() as f32 * LEGEND_CRAB_PX + gaps + notes;
+            assert!(width <= room, "{lang:?}: the guide is {width}px of {room}");
+        }
     }
 }

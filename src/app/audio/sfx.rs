@@ -29,6 +29,14 @@ pub struct Sounds {
     pub(super) horn: Handle<AudioSource>,
     pub(super) denied: Handle<AudioSource>,
     pub(super) evict: Handle<AudioSource>,
+    /// A lure beginning: every loose crab turning for one castle.
+    pub(super) lure: Handle<AudioSource>,
+    /// Each number of the count before a round.
+    pub(super) count: Handle<AudioSource>,
+    /// The word that starts the round.
+    pub(super) go: Handle<AudioSource>,
+    /// Each of a timed round's last seconds.
+    pub(super) tick: Handle<AudioSource>,
 }
 
 /// How far, in listener units, the edge of the board sits from the centre
@@ -69,6 +77,18 @@ fn play(commands: &mut Commands, sound: &Handle<AudioSource>, gain: f32) {
 
 /// A one-shot panned to a spot in the listener's field (see [`pan_pos`]).
 fn play_at(commands: &mut Commands, sound: &Handle<AudioSource>, gain: f32, at: Vec3) {
+    play_pitched(commands, sound, gain, at, 1.0);
+}
+
+/// [`play_at`], played `speed` times as fast, which raises its pitch by
+/// the same ratio: one sample, a scale of notes.
+fn play_pitched(
+    commands: &mut Commands,
+    sound: &Handle<AudioSource>,
+    gain: f32,
+    at: Vec3,
+    speed: f32,
+) {
     if gain <= 0.0 {
         return;
     }
@@ -76,12 +96,34 @@ fn play_at(commands: &mut Commands, sound: &Handle<AudioSource>, gain: f32, at: 
         AudioPlayer::new(sound.clone()),
         PlaybackSettings {
             volume: Volume::Linear(gain * SPATIAL_GAIN),
+            speed,
             spatial: true,
             spatial_scale: Some(SpatialScale::new_2d(1.0)),
             ..PlaybackSettings::DESPAWN
         },
         Transform::from_translation(at),
     ));
+}
+
+/// The least a bank pays to be a jackpot, and sound like one: the golden
+/// crab's worth where it is called, the smallest it ever banks for.
+pub const JACKPOT_POINTS: i32 = crate::sim::GOLDEN_CALLED_VALUE as i32;
+
+/// How a bank of `points` chimes: the bank sample's pitch, as a playback
+/// speed, and a second voice layered under it for a big one. Read off the
+/// points the bank paid and never off the crab, so a crab whose worth a
+/// call doubled or cut chimes for what it brought: one point at the
+/// sample's own pitch, two to four a major third up, five to nine a fifth,
+/// and ten or more the octave with the fifth beneath it. A bank of
+/// [`JACKPOT_POINTS`] or more adds the golden fanfare on top. A bank that
+/// paid nothing or cost is never chimed (see [`play_events`]).
+pub fn bank_chime(points: i32) -> (f32, Option<f32>) {
+    match points {
+        i32::MIN..=1 => (1.0, None),
+        2..=4 => (1.26, None),
+        5..=9 => (1.5, None),
+        10.. => (2.0, Some(1.5)),
+    }
 }
 
 /// A panned one-shot that sounds at most once a frame: `used` is the
@@ -182,7 +224,10 @@ pub fn play_events(
     // Per seat rather than one flag for the lot, because unlike posts these
     // are distinguishable: a seat's crabs walk into that seat's castle, so
     // six castles filling at once still read as six.
-    let mut banked = [false; crate::sim::MAX_PLAYERS];
+    // The frame's biggest bank at each castle, and where: chimed once,
+    // at its own pitch, after the frame's events are read.
+    let mut banked: [Option<(i32, Vec3)>; crate::sim::MAX_PLAYERS] =
+        [None; crate::sim::MAX_PLAYERS];
     let mut goldened = [false; crate::sim::MAX_PLAYERS];
     for event in events.read() {
         match event {
@@ -192,14 +237,16 @@ pub fn play_events(
             // for a loss either. The falling number says what happened.
             SimEvent::CrabBanked { points, .. } if *points <= 0 => {}
             SimEvent::CrabBanked {
-                owner, kind, pos, ..
+                owner, pos, points, ..
             } => {
                 let seat = usize::from(*owner);
                 let at = pan(pos);
-                if let Some(used) = banked.get_mut(seat) {
-                    once(&mut commands, used, &sounds.bank, gain, at);
+                if let Some(best) = banked.get_mut(seat)
+                    && best.is_none_or(|(most, _)| *points > most)
+                {
+                    *best = Some((*points, at));
                 }
-                if *kind == crate::sim::CrabKind::Golden
+                if *points >= JACKPOT_POINTS
                     && let Some(used) = goldened.get_mut(seat)
                 {
                     once(&mut commands, used, &sounds.golden, gain, at);
@@ -213,6 +260,9 @@ pub fn play_events(
             SimEvent::CastleRaided { pos, .. } => {
                 play_at(&mut commands, &sounds.raid, gain, pan(pos));
             }
+            // Heard on the sand, not in the sky: the screech is the bird
+            // landing, and its shadow is the warning before it.
+            SimEvent::GullIncoming { .. } => {}
             SimEvent::GullArrived => play(&mut commands, &sounds.screech, gain),
             SimEvent::GullTookOff => play(&mut commands, &sounds.takeoff, gain),
             // The wingbeat of a bird leaving, from where it leaves: not the
@@ -250,7 +300,13 @@ pub fn play_events(
             }
             SimEvent::TierUp { .. } => play(&mut commands, &sounds.tier, gain),
             SimEvent::TideEventFired { .. } => play(&mut commands, &sounds.event, gain),
-            SimEvent::LureStarted { .. } => {}
+            // From the castle every loose crab is turning for.
+            SimEvent::LureStarted { owner } => {
+                let castle = sim.0.castle_of(*owner).map_or(Vec2::ZERO, |(x, y)| {
+                    crate::app::layout::tile_center(&sim.0, x, y)
+                });
+                play_at(&mut commands, &sounds.lure, gain, pan(&castle));
+            }
             // The chime a golden crab banks with, from the hole it will
             // come out of: the sound of the prize, before it is anyone's.
             SimEvent::GoldenCalled { pos } => {
@@ -276,7 +332,15 @@ pub fn play_events(
             }
             SimEvent::CrabSpawned { .. }
             | SimEvent::GullLanded { .. }
-            | SimEvent::WheelLocked { .. } => {}
+            | SimEvent::WheelLocked { .. }
+            | SimEvent::LureRefused { .. } => {}
+        }
+    }
+    for (points, at) in banked.into_iter().flatten() {
+        let (speed, octave) = bank_chime(points);
+        play_pitched(&mut commands, &sounds.bank, gain, at, speed);
+        if let Some(speed) = octave {
+            play_pitched(&mut commands, &sounds.bank, gain * 0.6, at, speed);
         }
     }
 }
@@ -305,6 +369,50 @@ pub fn play_denied(mut speaker: Speaker, mut denials: MessageReader<PlacementDen
 /// A bright unlock chime (the tier fanfare doing double duty).
 pub fn play_chime(commands: &mut Commands, sounds: &Sounds, gain: f32) {
     play(commands, &sounds.tier, gain);
+}
+
+/// The count before a round, out loud: a blip for each number and a
+/// brighter one for the word that starts it. One beat per number,
+/// whatever the frame rate: the count says which, once each
+/// ([`crate::app::countdown::CountBeat`]).
+pub fn play_count(
+    mut speaker: Speaker,
+    mut beats: MessageReader<crate::app::countdown::CountBeat>,
+) {
+    use crate::app::countdown::CountBeat;
+    for beat in beats.read() {
+        match beat {
+            CountBeat::Number(_) => speaker.centred(|sounds| &sounds.count),
+            CountBeat::Go => speaker.centred(|sounds| &sounds.go),
+        }
+    }
+}
+
+/// How many of a timed round's closing seconds tick out loud.
+pub const TICKED_SECONDS: u64 = 5;
+
+/// Whether a clock reading `secs` (the clock's own figure, rounded up as
+/// [`crate::app::hud::clock_into`] rounds it) is one of the closing
+/// seconds that tick: [`TICKED_SECONDS`] down to one. Zero is the horn's.
+pub fn ticks_aloud(secs: u64) -> bool {
+    (1..=TICKED_SECONDS).contains(&secs)
+}
+
+/// A tick for each of a timed round's last seconds, as the clock turns
+/// over to it. Read off the board's own clock, so a paused round is
+/// silent, and at most one a frame, so a replay played fast through its
+/// closing seconds ticks rather than rattles. A clock that went up or
+/// appeared (a new round, a board swapped in) is not a second passing.
+pub fn play_final_seconds(mut speaker: Speaker, sim: Res<Sim>, mut last: Local<Option<u64>>) {
+    let tps = u64::from(crate::sim::TICKS_PER_SECOND);
+    let now = sim.0.remaining_ticks().map(|ticks| ticks.div_ceil(tps));
+    let was = std::mem::replace(&mut *last, now);
+    if let (Some(now), Some(was)) = (now, was)
+        && now < was
+        && ticks_aloud(now)
+    {
+        speaker.centred(|sounds| &sounds.tick);
+    }
 }
 
 #[cfg(test)]
@@ -500,13 +608,13 @@ mod tests {
     fn a_golden_arrival_chimes_once_a_castle_too() {
         use crate::sim::CrabKind;
         let mut app = table(1);
-        let golden = |owner| banked(owner, CrabKind::Golden);
+        let golden = |owner| banked_for(owner, CrabKind::Golden, JACKPOT_POINTS);
         let played = heard(&mut app, [golden(0)]);
-        assert_eq!(played, 2, "the bank it is, and the chime it is worth");
+        assert_eq!(played, 3, "the bank's chord it is, and the fanfare");
         let played = heard(&mut app, [golden(0), golden(0)]);
-        assert_eq!(played, 2, "two into one castle are still one of each");
+        assert_eq!(played, 3, "two into one castle are still one of each");
         let played = heard(&mut app, [golden(0), golden(1)]);
-        assert_eq!(played, 4, "two castles are two of each");
+        assert_eq!(played, 6, "two castles are two of each");
     }
 
     /// The stereo field mirrors the board (rodio boosts the far ear), tops
@@ -525,5 +633,140 @@ mod tests {
         // rodio attenuates beyond one unit; every ear-to-emitter distance
         // must stay inside that, or the pan would double as a volume drop.
         const { assert!(PAN_WIDTH + EAR_GAP / 2.0 < 1.0) };
+    }
+
+    /// The speeds the frame's sounds were spawned at, sorted, with the
+    /// stage swept clear for the next call.
+    fn speeds(app: &mut App, events: impl IntoIterator<Item = SimEvent>) -> Vec<f32> {
+        for event in events {
+            app.world_mut().write_message(event);
+        }
+        app.update();
+        let mut out: Vec<f32> = app
+            .world_mut()
+            .query::<&PlaybackSettings>()
+            .iter(app.world())
+            .map(|settings| settings.speed)
+            .collect();
+        out.sort_by(f32::total_cmp);
+        heard(app, []);
+        out
+    }
+
+    /// The bank chime climbs with the crab: a common at the sample's own
+    /// pitch, a juvenile above it, a molting crab higher, and a giant the
+    /// highest with the octave over it. A castle taking a common and a
+    /// giant on one frame chimes once, for the giant.
+    #[test]
+    fn a_bigger_crab_banks_a_brighter_chime() {
+        use crate::sim::CrabKind;
+        let mut app = table(1);
+        let mut last = 0.0;
+        for kind in [
+            CrabKind::Common,
+            CrabKind::Juvenile,
+            CrabKind::Molting,
+            CrabKind::Giant,
+        ] {
+            let played = speeds(&mut app, [banked_for(0, kind, kind.value() as i32)]);
+            let top = played.last().copied().unwrap_or(0.0);
+            assert!(top > last, "{kind:?}: {played:?}");
+            last = top;
+            let layered = kind.value() >= 10;
+            assert_eq!(played.len(), 1 + usize::from(layered), "{kind:?}");
+        }
+        let both = speeds(
+            &mut app,
+            [
+                banked_for(0, CrabKind::Common, 1),
+                banked_for(0, CrabKind::Giant, 10),
+            ],
+        );
+        assert_eq!(both, [1.5, 2.0], "the giant's chord, once");
+    }
+
+    /// The chime is the points' and not the crab's: banks paying the same
+    /// sound the same whatever walked in, a common doubled to two chimes as
+    /// a juvenile does, and the fanfare is a jackpot's worth of points.
+    #[test]
+    fn the_chime_follows_the_points_not_the_crab() {
+        use crate::sim::CrabKind;
+        let mut app = table(1);
+        let doubled = speeds(&mut app, [banked_for(0, CrabKind::Common, 2)]);
+        let juvenile = speeds(&mut app, [banked_for(0, CrabKind::Juvenile, 2)]);
+        assert_eq!(doubled, juvenile);
+        let giant = speeds(&mut app, [banked_for(0, CrabKind::Giant, 20)]);
+        assert_eq!(giant.len(), 2, "a doubled giant is no jackpot: {giant:?}");
+        let jackpot = JACKPOT_POINTS;
+        let golden = heard(&mut app, [banked_for(0, CrabKind::Golden, jackpot)]);
+        assert_eq!(golden, 3, "the chord and the fanfare");
+    }
+
+    /// A lure is heard, and the master mute silences it as it does every
+    /// other effect.
+    #[test]
+    fn a_lure_is_heard_unless_muted() {
+        let mut app = table(1);
+        let lure = || SimEvent::LureStarted { owner: 0 };
+        assert_eq!(heard(&mut app, [lure()]), 1);
+        app.insert_resource(Muted(true));
+        assert_eq!(heard(&mut app, [lure()]), 0, "M silences it");
+    }
+
+    /// The count's beats each play their sound, and a muted game plays
+    /// none of them.
+    #[test]
+    fn the_count_is_heard_beat_by_beat() {
+        use crate::app::countdown::CountBeat;
+        let mut app = table(0);
+        app.add_message::<CountBeat>();
+        app.add_systems(Update, play_count);
+        for beat in [CountBeat::Number(3), CountBeat::Number(2), CountBeat::Go] {
+            app.world_mut().write_message(beat);
+        }
+        assert_eq!(heard(&mut app, []), 3);
+        app.insert_resource(Muted(true));
+        app.world_mut().write_message(CountBeat::Go);
+        assert_eq!(heard(&mut app, []), 0, "muted");
+    }
+
+    /// The last five seconds of a timed round tick, one a second as the
+    /// clock turns over, and nothing before them or on the horn. A frame
+    /// that covers several seconds (a replay at speed) ticks once.
+    #[test]
+    fn the_closing_seconds_tick_once_each() {
+        let mut app = App::new();
+        app.insert_resource(GameSettings::default());
+        app.insert_resource(Muted(false));
+        app.insert_resource(Sounds::default());
+        let mut board = crate::sim::Board::new(5, 5, 1);
+        let tps = crate::sim::TICKS_PER_SECOND;
+        board.rules_mut().round_length = Some(8 * tps);
+        app.insert_resource(Sim(board));
+        app.add_systems(Update, play_final_seconds);
+        let mut ticked = Vec::new();
+        for _ in 0..8 * tps {
+            app.world_mut().resource_mut::<Sim>().0.tick_idle();
+            let secs = app
+                .world()
+                .resource::<Sim>()
+                .0
+                .remaining_ticks()
+                .unwrap_or(0);
+            if heard(&mut app, []) > 0 {
+                ticked.push(secs.div_ceil(u64::from(tps)));
+            }
+        }
+        assert_eq!(ticked, [5, 4, 3, 2, 1]);
+
+        // A fresh round, then three seconds in one frame.
+        let mut board = crate::sim::Board::new(5, 5, 1);
+        board.rules_mut().round_length = Some(8 * tps);
+        app.insert_resource(Sim(board));
+        assert_eq!(heard(&mut app, []), 0, "a clock that went up is no second");
+        for _ in 0..5 * tps {
+            app.world_mut().resource_mut::<Sim>().0.tick_idle();
+        }
+        assert_eq!(heard(&mut app, []), 1, "one tick for the frame");
     }
 }

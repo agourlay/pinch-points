@@ -3,6 +3,9 @@
 //! sea catch the same moving light, and the dry sand round the board
 //! (assets/shaders/sand.wgsl).
 //!
+//! And [`FadeMaterial`] (assets/shaders/fade.wesl): a flat colour each quad
+//! draws at its own strength, for the footprints.
+//!
 //! A [`WaterMaterial`] is drawn on a quad. Which water it is comes from
 //! [`WaterMode`]; every board shares the few materials held in [`Shaders`].
 
@@ -128,6 +131,8 @@ pub struct Shaders {
     pub sand: Handle<SandMaterial>,
     /// The board's own sand, one quad over the whole board.
     pub board_sand: Handle<SandMaterial>,
+    /// The crabs' footprints, each quad at its own strength.
+    pub prints: Handle<FadeMaterial>,
 }
 
 impl Shaders {
@@ -185,6 +190,9 @@ impl Shaders {
                     sand: SandUniform::board(),
                     noise,
                 }),
+            prints: world
+                .resource_mut::<Assets<FadeMaterial>>()
+                .add(FadeMaterial::new(PRINT)),
         }
     }
 }
@@ -211,6 +219,7 @@ pub(super) fn still_water(
         ocean,
         sand: _,
         board_sand: _,
+        prints: _,
     } = &art.shaded;
     for handle in [pool_shallow, pool_deep, glint, sea, ocean] {
         if materials
@@ -229,6 +238,7 @@ pub(super) fn install(app: &mut App) {
     app.add_plugins((
         Material2dPlugin::<WaterMaterial>::default(),
         Material2dPlugin::<SandMaterial>::default(),
+        Material2dPlugin::<FadeMaterial>::default(),
     ))
     .insert_resource(ClearColor(SAND))
     .add_systems(Update, still_water);
@@ -239,6 +249,75 @@ pub(super) fn install(app: &mut App) {
     app.world_mut()
         .resource_mut::<Time<Virtual>>()
         .set_wrap_period(std::time::Duration::from_secs(24 * 60 * 60));
+}
+
+/// A crab's footprint pressed into dry sand, at its strongest. Near-opaque:
+/// the prints are tuned to read at this strength against the beach.
+pub const PRINT: Color = Color::srgba(0.45, 0.36, 0.24, 0.9);
+
+/// A flat colour that each quad drawn with it shows at a strength of its
+/// own, carried in the quad's `MeshTag` as an f32's bits ([`fade_tag`]).
+///
+/// For the many small things that only fade, the footprints above all: a
+/// sprite fading changes its colour, and Bevy draws each colour a sprite
+/// takes with a material of its own, so every print on the beach made a new
+/// material, and the renderer set it up, every frame of its life. Drawn
+/// with this, all of them share one, and a frame's fade is a number in the
+/// instance data. What reaches the screen is the sprite's own sum: the
+/// colour in linear light at that alpha, blended the same way.
+#[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
+pub struct FadeMaterial {
+    /// Linear; the alpha is not read, the tag is.
+    #[uniform(0)]
+    pub color: LinearRgba,
+}
+
+impl FadeMaterial {
+    pub fn new(color: Color) -> Self {
+        FadeMaterial {
+            color: color.into(),
+        }
+    }
+}
+
+impl Material2d for FadeMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/fade.wesl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Blend
+    }
+
+    /// The shader reads the mesh pipeline's per-instance data itself, so it
+    /// declares it the way that pipeline was built: a uniform array in
+    /// batches on a device without storage buffers (WebGL2, some older
+    /// mobile GPUs), the batch size passed as the shader def Bevy's own
+    /// mesh2d bindings are built with, else a storage array. Read off the
+    /// pipeline, so it is the answer the mesh pipeline itself was given.
+    /// Declared a storage array whatever the device, the first footprint
+    /// failed validation there and closed the game.
+    fn specialize(
+        pipeline: &bevy::sprite_render::Material2dPipeline,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::sprite_render::Material2dKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        if let Some(batch) = pipeline.mesh2d_pipeline.per_object_buffer_batch_size
+            && let Some(fragment) = descriptor.fragment.as_mut()
+        {
+            fragment.shader_defs.push(bevy::shader::ShaderDefVal::UInt(
+                "PER_OBJECT_BUFFER_BATCH_SIZE".into(),
+                batch,
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The tag a [`FadeMaterial`] quad is drawn at `alpha` with.
+pub fn fade_tag(alpha: f32) -> bevy::mesh::MeshTag {
+    bevy::mesh::MeshTag::new(alpha.to_bits())
 }
 
 /// The sand shader's uniform; the WGSL `Sand` struct's fields, in order.

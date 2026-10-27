@@ -1,8 +1,8 @@
 //! The beach lobby: LAN matchmaking for online Turf War.
 //!
 //! Hosting binds an ephemeral game port and broadcasts it once a second;
-//! every lobby on the network lists discovered hosts and joins one with a
-//! number key. Pairing completes through the normal online handshake, then
+//! every lobby on the network lists discovered hosts and joins the one under
+//! the cursor with Enter (a number key points at a row). Pairing completes through the normal online handshake, then
 //! both sides drop into versus. Direct-IP play (`PINCH_JOIN`) still works
 //! for beyond-the-LAN matches. When the match ends, the whole table walks
 //! back in through [`Homecoming`], sockets still connected, so the next
@@ -23,6 +23,12 @@ mod entry;
 mod hosting;
 mod input;
 mod joining;
+#[cfg(test)]
+mod load;
+mod partners;
+mod pick;
+#[cfg(test)]
+mod pick_tests;
 mod standing;
 mod terms;
 mod ui;
@@ -31,6 +37,8 @@ pub use entry::*;
 pub use hosting::*;
 pub use input::*;
 pub use joining::*;
+pub use partners::{Seated, partner_rows, partners_open, seats_shown};
+pub use pick::Picking;
 pub use standing::*;
 pub use terms::*;
 pub use ui::*;
@@ -119,8 +127,10 @@ pub struct LobbyState {
     /// up, so an index would silently point at a different game between the
     /// frame a player reads it and the frame they press Enter.
     pub selected: Option<SocketAddr>,
-    /// First row shown, so a list longer than [`LIST_ROWS`] can scroll.
+    /// First row shown, so a list longer than its card can scroll.
     pub scroll: usize,
+    /// How many rows the list shows: as many as its card has room for.
+    rows: ListRows,
     /// What has been said in this lobby, oldest first, capped at
     /// [`CHAT_LINES`]. Cleared with everything else on leaving.
     pub chat: Vec<Said>,
@@ -136,6 +146,10 @@ pub struct LobbyState {
     /// What holds each place in [`Self::table`], so a bot at the beach
     /// wears the robot on the card that lists who is there.
     pub table_kinds: Vec<crate::sim::SeatKind>,
+    /// The seat each of [`Self::table`]'s places sits in, the AI behind
+    /// them and how the table is scored ([`Seated`]): the host's own
+    /// partner picks on the host, the roster's terms on a joiner.
+    pub seated: Seated,
     /// What this beach is called, once its host has said. Announced in
     /// place of the host's own name: the list is choosing between games.
     /// Beside the standing rather than inside [`Hosted`] because it is
@@ -280,8 +294,8 @@ impl LobbyState {
     }
 
     /// The beach this joiner is at, as its beacon described it: by the
-    /// address it dialled, not the cursor, which a digit or a typed address
-    /// never moved.
+    /// address it dialled, not the cursor, which a typed address never moved
+    /// and a number key moves at will.
     pub fn joined_entry(&self) -> Option<&HostEntry> {
         let joined = self.joined()?;
         match joined.beach {
@@ -346,9 +360,55 @@ impl LobbyState {
                 0
             }
         };
-        // Scroll only as far as it must to keep the cursor in view.
-        self.scroll = self.scroll.min(at).max(at.saturating_sub(LIST_ROWS - 1));
-        self.scroll = self.scroll.min(self.hosts.len().saturating_sub(1));
+        // Scroll only as far as it must to keep the cursor in view, and
+        // never past a list that got shorter: a window opened below its
+        // last full screen hides rows above and paints blanks below.
+        let rows = self.rows_shown();
+        self.scroll = self
+            .scroll
+            .min(at)
+            .max(at.saturating_sub(rows - 1))
+            .min(self.hosts.len().saturating_sub(rows));
+    }
+
+    /// How many rows of the list are in view. Everything that reads the
+    /// window reads it here: the painter, the scroll bar and the cursor.
+    pub fn rows_shown(&self) -> usize {
+        self.rows.0
+    }
+
+    /// The beach in row `row` of the window, if that row shows one: not
+    /// past the rows in view, and none while standing at a beach, where
+    /// the list is not up.
+    pub fn listed(&self, row: usize) -> Option<&HostEntry> {
+        if self.standing().at_a_beach() || row >= self.rows_shown() {
+            return None;
+        }
+        self.hosts.get(self.scroll + row)
+    }
+
+    /// Show `rows` rows from now on, the card having been resized. A window
+    /// that grew takes in rows from above rather than showing blanks below
+    /// the last beach, and the cursor stays in view either way.
+    pub fn fit_rows(&mut self, rows: usize) {
+        let rows = rows.max(1);
+        if rows > self.rows.0 {
+            self.scroll = self.scroll.min(self.hosts.len().saturating_sub(rows));
+        }
+        self.rows = ListRows(rows);
+        self.settle_cursor();
+    }
+
+    /// Put the cursor on row `at` of the list as numbered on screen, from
+    /// zero, if there is such a row. The rows are numbered from the top of
+    /// the list rather than of the window, so the number beside a name is
+    /// the one that points at it.
+    pub(crate) fn point_at(&mut self, at: Option<usize>) {
+        let Some(host) = at.and_then(|at| self.hosts.get(at)) else {
+            return;
+        };
+        self.selected = Some(host.addr);
+        self.settle_cursor();
     }
 
     /// Step the cursor, wrapping, and follow it with the window.
@@ -405,8 +465,9 @@ fn settle_back_in(
             transport,
             game_name,
             mut peers,
-            tail,
+            played,
             rounds_dealt,
+            arranged,
         } => {
             // A host that never announced (the direct pair) has no beach to
             // stand back up, and `from_lobby` keeps it from coming this way.
@@ -423,10 +484,13 @@ fn settle_back_in(
                 transport,
                 peers,
                 announce_in: 0.0,
-                kicking: false,
+                kicking: None,
                 bot_string: None,
-                tail: RoundTail::kept(tail),
+                tail: RoundTail::kept(played, rounds_dealt),
                 rounds_dealt,
+                picking: None,
+                partnering: false,
+                arranged,
             });
         }
         LobbyReturn::Joiner {
@@ -496,8 +560,27 @@ pub fn enter_lobby(
     }
 }
 
-pub fn exit_lobby(mut state: ResMut<LobbyState>) {
+pub fn exit_lobby(
+    mut state: ResMut<LobbyState>,
+    dials: crate::app::match_setup::Dials,
+    mut menu: ResMut<crate::app::match_setup::MatchMenu>,
+) {
     say_goodbye(&state);
+    // A map page still up goes with the lobby, the setup put back as it
+    // was. The launch takes it down itself, keeping the pick.
+    let crate::app::match_setup::Dials {
+        mut config,
+        beaches,
+    } = dials;
+    if let Some(picking) = state.hosted_mut().and_then(|hosted| hosted.picking.take()) {
+        pick::close_the_pick(
+            picking,
+            pick::Close::PutBack,
+            &mut config,
+            &mut menu,
+            &beaches,
+        );
+    }
     state.start_over();
 }
 
@@ -598,21 +681,23 @@ mod tests {
     fn the_gathering_line_counts_who_is_actually_there() {
         use crate::app::i18n::EN;
         let none = MatchConfig {
-            bots: 0,
+            lobby_bots: 0,
             ..MatchConfig::default()
         };
         // The AI the launch deals behind the host and `aboard`.
-        let ai = |config: &MatchConfig, aboard: usize| {
-            crate::app::lobby::terms::dealt(config, 1 + aboard as u8).bots
-        };
+        let ai = |config: &MatchConfig, aboard: usize| dealt(config, 1 + aboard as u8).bots;
         let line = |config: &MatchConfig, aboard: usize, watching: usize| {
-            gathering_feedback(&EN, aboard, watching, ai(config, aboard))
+            gathering_feedback(&EN, aboard, watching, ai(config, aboard), EN.key_enter)
         };
-        assert_eq!(line(&none, 1, 0), EN.lobby_rivals_one);
+        let enter = [("k", EN.key_enter)];
+        assert_eq!(line(&none, 1, 0), fill(EN.lobby_rivals_one, &enter));
         // Only watchers aboard: Enter starts against the AI, and the line
         // says no player came rather than counting zero of them.
         let onlookers = line(&none, 0, 1);
-        assert!(onlookers.starts_with(EN.lobby_rivals_none), "{onlookers}");
+        assert!(
+            onlookers.starts_with(&fill(EN.lobby_rivals_none, &enter)),
+            "{onlookers}"
+        );
         assert!(
             onlookers.contains(&fill(EN.lobby_ai_seats, &[("n", "1")])),
             "{onlookers}"
@@ -626,7 +711,7 @@ mod tests {
         // The AI takes what the table leaves and no more, however many the
         // host asked for. Five aboard plus the host is a full beach.
         let greedy = MatchConfig {
-            bots: 5,
+            lobby_bots: 5,
             ..MatchConfig::default()
         };
         let full = line(&greedy, MAX_PLAYERS - 1, 0);
@@ -698,6 +783,7 @@ mod tests {
 mod homecoming_tests {
     use super::*;
     use crate::app::i18n::EN;
+    use crate::sim::{DEFAULT_DELAY, Lockstep};
 
     use crate::app::lobby::hosting::peers_named;
 
@@ -759,8 +845,9 @@ mod homecoming_tests {
                 transport,
                 game_name: "Room 3".into(),
                 peers: peers_named(&["Bo", "Cy"], &[1]),
-                tail: Vec::new(),
+                played: Box::new(Lockstep::new(0, vec![0, 1], DEFAULT_DELAY)),
                 rounds_dealt: 3,
+                arranged: None,
             },
             &EN,
         );
@@ -781,33 +868,86 @@ mod homecoming_tests {
         );
     }
 
-    /// A host back in the lobby keeps repeating the last frames of the
-    /// round it walked away from, for a while: at once to a peer still
-    /// resending its commits, to everybody on the beacon's tick, and to
-    /// nobody once the while is up.
+    /// A host back in the lobby keeps repeating the end of the round it
+    /// walked away from, for a while: the last frames to everybody on the
+    /// beacon's tick, at once to a peer still in the round whatever it is
+    /// missing, a spectator far behind included, and to nobody once the
+    /// while is up. A batch of another round asks for nothing.
     #[test]
-    fn the_lobby_repeats_the_last_frames_for_a_while() {
+    fn the_lobby_repeats_the_rounds_end_for_a_while() {
+        use crate::sim::{InputMsg, PlayerAction};
+        use crate::transport::Batch;
         let (transport, mut joiners) = with_peers(2);
-        let input = crate::sim::InputMsg {
-            player: 2,
-            frame: 40,
-            action: crate::sim::PlayerAction::None,
-        };
-        let heard = |joiner: &mut UdpTransport| {
+        // A round of 300 frames, the host's and Bo's, played out.
+        let mut played = Lockstep::new(0, vec![0, 1], DEFAULT_DELAY);
+        while played.frame() < 300 {
+            if let Some(ours) = played.commit_local(PlayerAction::None) {
+                played.receive(InputMsg { player: 1, ..ours });
+            }
+            while played.due() && played.advance().is_some() {}
+        }
+        let rounds_dealt = 4;
+        let round = crate::transport::round_tag(rounds_dealt);
+        let frames = |joiner: &mut UdpTransport| -> Vec<u32> {
             std::thread::sleep(std::time::Duration::from_millis(20));
-            joiner
+            let mut frames: Vec<u32> = joiner
                 .recv_all()
                 .into_iter()
-                .any(|(msg, _)| msg == NetMsg::Inputs(vec![input]))
+                .filter_map(|(msg, _)| {
+                    let NetMsg::Inputs(batch) = msg else {
+                        return None;
+                    };
+                    (batch.round == round).then_some(batch.inputs)
+                })
+                .flatten()
+                .map(|input| input.frame)
+                .collect();
+            frames.sort_unstable();
+            frames.dedup();
+            frames
         };
-        let mut tail = RoundTail::kept(vec![input]);
-        tail.repeat(&transport, 0.1, false, &[1]);
-        assert!(!heard(&mut joiners[0]), "only the peer that asked");
-        assert!(heard(&mut joiners[1]), "is answered at once");
+        let mut tail = RoundTail::kept(Box::new(played), rounds_dealt);
+        // A spectator at frame 180, four seconds short of the end.
+        let behind = Batch {
+            round,
+            wants: Some([180; MAX_PLAYERS]),
+            ..Batch::default()
+        };
+        tail.repeat(&transport, 0.1, false, &[(1, behind.clone())]);
+        assert!(
+            frames(&mut joiners[0]).is_empty(),
+            "only the peer that asked"
+        );
+        let sent = frames(&mut joiners[1]);
+        assert_eq!(sent.first(), Some(&180), "from where it stands: {sent:?}");
+        assert!(
+            sent.iter().all(|&frame| frame < 300),
+            "and none past the end"
+        );
+        let last = sent.last().copied().unwrap_or(0);
+        let mut wants = behind.clone();
+        wants.wants = Some([last + 1; MAX_PLAYERS]);
+        tail.repeat(&transport, 0.1, false, &[(1, wants)]);
+        assert_eq!(
+            frames(&mut joiners[1]).last(),
+            Some(&299),
+            "to the very end"
+        );
+        // Another round's batch is answered with nothing.
+        let stale = Batch {
+            round: round.wrapping_sub(1),
+            ..behind.clone()
+        };
+        tail.repeat(&transport, 0.1, false, &[(1, stale)]);
+        assert!(frames(&mut joiners[1]).is_empty(), "the last round's");
         tail.repeat(&transport, 0.1, true, &[]);
-        assert!(heard(&mut joiners[0]) && heard(&mut joiners[1]), "the tick");
-        tail.repeat(&transport, 60.0, true, &[0, 1]);
-        assert!(!heard(&mut joiners[0]) && !heard(&mut joiners[1]), "over");
+        let everybody = [frames(&mut joiners[0]), frames(&mut joiners[1])];
+        assert!(
+            everybody.iter().all(|sent| sent.last() == Some(&299)),
+            "the tick: {everybody:?}"
+        );
+        tail.repeat(&transport, 60.0, true, &[(1, behind)]);
+        assert!(frames(&mut joiners[0]).is_empty() && frames(&mut joiners[1]).is_empty());
     }
 
     /// The rows a host is handed back have to be one per peer the socket
@@ -825,8 +965,9 @@ mod homecoming_tests {
                 game_name: String::new(),
                 // Fewer names than the socket knows peers.
                 peers: peers_named(&["Bo"], &[0]),
-                tail: Vec::new(),
+                played: Box::new(Lockstep::new(0, vec![0, 1], DEFAULT_DELAY)),
                 rounds_dealt: 0,
+                arranged: None,
             },
             &EN,
         );

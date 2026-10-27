@@ -227,7 +227,7 @@ pub(super) fn demo_release() -> Release {
         url: format!("{}/releases", env!("CARGO_PKG_REPOSITORY")),
         notes: "## What's new\n\n\
                 - A **new tide event**: the undertow, which drags every loose crab one tile seaward.\n\
-                - Two more Beach Day challenges.\n\
+                - Two more campaign stages.\n\
                 - The lobby names the beach that went off the air instead of just dropping it.\n\n\
                 ## Fixes\n\n\
                 - Pairs mode no longer overflows the settings row in German.\n\

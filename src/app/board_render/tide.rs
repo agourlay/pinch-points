@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(clock.map(|c| c.remaining), Some(30), "the HUD's figure");
         let (rise, swell) = climb(&board, clock, 0.3, false);
         assert!(rise > 0.95, "nearly all the way at the end: {rise}");
-        assert!(swell != 0.0, "and heaving");
+        assert_ne!(swell, 0.0, "and heaving");
     }
 
     /// The sea climbs as the round runs down, from nothing to its full
@@ -162,7 +162,7 @@ mod tests {
         let late = timed(3600, 3590);
         let (rise, swell) = sea(&late, 0.3, false);
         assert!(rise > 0.95, "nearly all the way at the end: {rise}");
-        assert!(swell != 0.0, "and heaving");
+        assert_ne!(swell, 0.0, "and heaving");
         assert_eq!(sea(&late, 0.3, true).1, 0.0, "but still when asked");
         // A stopped round stops the swell's clock, and the swell holds
         // where that clock left it rather than dropping flat.

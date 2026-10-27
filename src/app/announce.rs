@@ -50,7 +50,14 @@ const MAX_QUEUED: usize = 2;
 /// Something worth the centre of the screen.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Announcement {
-    Tide(TideEvent),
+    /// A tide event: `by` is the seat whose sparkling crab spun it (`None`
+    /// for a called one), `keeper` the seat whose castle sat out a Castle
+    /// Swap ([`crate::sim::Board::castle_swap_keeper`]).
+    Tide {
+        event: TideEvent,
+        by: Option<PlayerId>,
+        keeper: Option<PlayerId>,
+    },
     /// A molting crab banked: every loose crab now runs for this seat.
     Lure(PlayerId),
     /// The final scramble.
@@ -73,14 +80,26 @@ impl Announcement {
     ) -> (String, String, Color) {
         let tr = settings.tr();
         match self {
-            Announcement::Tide(event) => (
+            Announcement::Tide { event, keeper, .. } => (
                 tr.events[event.index()].to_string(),
-                tr.event_blurbs[event.index()].to_string(),
+                match keeper {
+                    // Only a swap has a keeper, and then the blurb has to
+                    // say whose castle stayed put, or it tells the spinner
+                    // they lost theirs.
+                    Some(seat) => fill(tr.event_blurb_swap_kept, &[("p", &names.label(tr, seat))]),
+                    None => tr.event_blurbs[event.index()].to_string(),
+                },
                 palette::INK_TIDE,
             ),
             Announcement::Lure(owner) => (
                 tr.ann_lure.to_string(),
-                fill(tr.ann_lure_sub, &[("p", &names.label(tr, owner))]),
+                fill(
+                    tr.ann_lure_sub,
+                    &[
+                        ("p", &names.label(tr, owner)),
+                        ("n", &crate::sim::LURE_SECONDS.to_string()),
+                    ],
+                ),
                 palette::INK_LURE,
             ),
             Announcement::Surge => (
@@ -96,6 +115,28 @@ impl Announcement {
                 ),
                 palette::GOLD,
             ),
+        }
+    }
+
+    /// The small line over the headline, in its own ink: whose sparkling
+    /// crab spun a tide event, in that seat's colour, as the feed line
+    /// that records it is. Nothing for a called event, which nobody spun,
+    /// or for any other announcement.
+    pub fn kicker(
+        self,
+        settings: &GameSettings,
+        names: &crate::app::SeatNames,
+    ) -> Option<(String, Color)> {
+        let tr = settings.tr();
+        match self {
+            Announcement::Tide { by: Some(seat), .. } => Some((
+                fill(tr.ann_spun_by, &[("p", &names.label(tr, seat))]),
+                palette::seat_text(seat),
+            )),
+            Announcement::Tide { by: None, .. }
+            | Announcement::Lure(_)
+            | Announcement::Surge
+            | Announcement::Golden => None,
         }
     }
 }
@@ -161,12 +202,30 @@ pub struct BannerPart {
 /// feed: an announcement that fires every few seconds is wallpaper.
 pub fn collect_announcements(
     mut events: MessageReader<SimEvent>,
+    sim: Res<crate::app::Sim>,
     mut announcer: ResMut<Announcer>,
 ) {
     for event in events.read() {
         match event {
-            SimEvent::TideEventFired { event, .. } => {
-                announcer.push(Announcement::Tide(*event));
+            SimEvent::TideEventFired { event, by } => {
+                // Read off the board after the swap: a rotation keeps the
+                // same owners, so the count that decided it still holds.
+                let keeper = match event {
+                    TideEvent::CastleSwap => sim.0.castle_swap_keeper(*by),
+                    TideEvent::CrabMania
+                    | TideEvent::GullMania
+                    | TideEvent::Monopoly
+                    | TideEvent::GullAttack
+                    | TideEvent::SpeedUp
+                    | TideEvent::SlowDown
+                    | TideEvent::FreshSand
+                    | TideEvent::RightClaws => None,
+                };
+                announcer.push(Announcement::Tide {
+                    event: *event,
+                    by: *by,
+                    keeper,
+                });
             }
             SimEvent::LureStarted { owner } => announcer.push(Announcement::Lure(*owner)),
             SimEvent::SurgeStarted => announcer.push(Announcement::Surge),
@@ -175,6 +234,7 @@ pub fn collect_announcements(
             | SimEvent::CrabEaten { .. }
             | SimEvent::CrabSpawned { .. }
             | SimEvent::CastleRaided { .. }
+            | SimEvent::GullIncoming { .. }
             | SimEvent::GullArrived
             | SimEvent::GullTookOff
             | SimEvent::GullLanded { .. }
@@ -185,6 +245,7 @@ pub fn collect_announcements(
             | SimEvent::SignpostEvicted { .. }
             | SimEvent::TierUp { .. }
             | SimEvent::WheelLocked { .. }
+            | SimEvent::LureRefused { .. }
             | SimEvent::GoldenOut { .. }
             | SimEvent::RoundEnded => {}
         }
@@ -266,6 +327,7 @@ fn spawn_banner(
     names: &crate::app::SeatNames,
 ) {
     let (headline, blurb, ink) = announcement.lines(settings, names);
+    let kicker = announcement.kicker(settings, names);
     // Opaque, like the pause card: a translucent panel over a busy board
     // showed the crabs through the letters, which is the opposite of the
     // point. It only holds the middle for two seconds.
@@ -295,6 +357,20 @@ fn spawn_banner(
                 BorderColor::all(ink.with_alpha(0.0)),
             ))
             .with_children(|card| {
+                if let Some((line, seat_ink)) = kicker {
+                    card.spawn((
+                        BannerPart {
+                            ink: seat_ink,
+                            fill: None,
+                        },
+                        Text::new(line),
+                        TextFont {
+                            font_size: FontSize::Px(menu_ui::type_scale::ROW),
+                            ..default()
+                        },
+                        TextColor(seat_ink.with_alpha(0.0)),
+                    ));
+                }
                 card.spawn((
                     BannerPart { ink, fill: None },
                     Text::new(headline),
@@ -361,12 +437,20 @@ mod tests {
         announcer.push(Announcement::Surge);
         announcer.push(Announcement::Surge);
         assert_eq!(announcer.pending(), 1);
-        announcer.push(Announcement::Tide(TideEvent::CrabMania));
+        announcer.push(Announcement::Tide {
+            event: TideEvent::CrabMania,
+            by: None,
+            keeper: None,
+        });
         announcer.push(Announcement::Lure(2));
         // Counted off the cap rather than written as a number, so moving
         // the cap moves the test with it instead of pinning the old value.
         assert_eq!(announcer.pending(), MAX_QUEUED, "everything up to the cap");
-        announcer.push(Announcement::Tide(TideEvent::FreshSand));
+        announcer.push(Announcement::Tide {
+            event: TideEvent::FreshSand,
+            by: Some(1),
+            keeper: None,
+        });
         assert_eq!(announcer.pending(), MAX_QUEUED, "the pile-up is capped");
     }
 
@@ -374,7 +458,7 @@ mod tests {
     fn banner_app() -> App {
         let mut app = App::new();
         app.init_resource::<Time>();
-        app.add_message::<crate::app::sim_events::SimEvent>();
+        app.add_message::<SimEvent>();
         app.init_resource::<Announcer>();
         app.insert_resource(GameSettings::default());
         app.init_resource::<crate::app::SeatNames>();
@@ -382,6 +466,7 @@ mod tests {
         app.init_resource::<crate::app::Paused>();
         app.init_resource::<crate::app::pause::PauseMenu>();
         app.init_resource::<crate::app::net::Online>();
+        app.insert_resource(crate::app::Sim(crate::sim::Board::new(7, 5, 1)));
         app.add_systems(Update, (collect_announcements, drive_announcements).chain());
         app
     }
@@ -522,7 +607,16 @@ mod tests {
     #[test]
     fn every_announcement_says_what_happened() {
         let mut all = vec![Announcement::Surge, Announcement::Lure(0)];
-        all.extend(TideEvent::ALL.map(Announcement::Tide));
+        all.extend(TideEvent::ALL.map(|event| Announcement::Tide {
+            event,
+            by: Some(0),
+            keeper: None,
+        }));
+        all.push(Announcement::Tide {
+            event: TideEvent::CastleSwap,
+            by: Some(0),
+            keeper: Some(0),
+        });
         for lang in ALL_LANGS {
             for announcement in &all {
                 let settings = GameSettings {
@@ -540,5 +634,90 @@ mod tests {
             .lines(&GameSettings::default(), &crate::app::SeatNames::default());
         assert!(blurb.contains('4'), "{blurb}");
         assert_eq!(ink, palette::INK_LURE, "the feed line's colour");
+    }
+
+    /// A spun event's banner names the seat that spun it, in that seat's
+    /// colour, in every language; a called one names nobody.
+    #[test]
+    fn a_spun_event_names_its_spinner_in_their_colour() {
+        for lang in ALL_LANGS {
+            let settings = GameSettings {
+                language: lang,
+                ..GameSettings::default()
+            };
+            let names = crate::app::SeatNames(settings.names.clone());
+            let label = names.label(settings.tr(), 2);
+            let spun = Announcement::Tide {
+                event: TideEvent::SpeedUp,
+                by: Some(2),
+                keeper: None,
+            };
+            let (line, ink) = spun.kicker(&settings, &names).expect("a spinner");
+            assert!(line.contains(&label), "{lang:?}: {line}");
+            assert!(!line.contains('{'), "{lang:?} left a placeholder: {line}");
+            assert_eq!(ink, palette::seat_text(2));
+            let called = Announcement::Tide {
+                event: TideEvent::SpeedUp,
+                by: None,
+                keeper: None,
+            };
+            assert_eq!(called.kicker(&settings, &names), None);
+        }
+    }
+
+    /// Castle Swap's banner says whose castle stayed put when one did, read
+    /// off the same rule the swap used: three castles keep the spinner's,
+    /// two rotate both, and the blurb for a full rotation is the plain one.
+    #[test]
+    fn a_castle_swap_banner_says_whose_castle_stayed() {
+        use crate::app::sim_events::SimEvent;
+        use crate::sim::TileKind;
+
+        let keeper_at = |castles: u8| {
+            let mut app = banner_app();
+            {
+                let mut sim = app.world_mut().resource_mut::<crate::app::Sim>();
+                for seat in 0..castles {
+                    sim.0.set_tile(seat, 0, TileKind::Castle(seat));
+                }
+            }
+            app.world_mut().write_message(SimEvent::TideEventFired {
+                event: TideEvent::CastleSwap,
+                by: Some(1),
+            });
+            app.update();
+            let texts: Vec<String> = app
+                .world_mut()
+                .query::<&Text>()
+                .iter(app.world())
+                .map(|text| text.0.clone())
+                .collect();
+            texts
+        };
+        let names = crate::app::SeatNames::default();
+        let p2 = names.label(&EN, 1);
+        let kept = fill(EN.event_blurb_swap_kept, &[("p", &p2)]);
+        let three = keeper_at(3);
+        assert!(three.contains(&kept), "{three:?}");
+        let two = keeper_at(2);
+        assert!(two.iter().any(|t| t == EN.event_blurbs[7]), "{two:?}");
+        assert!(!two.contains(&kept), "{two:?}");
+    }
+
+    /// The lure banner says how long the lure runs, and in every language
+    /// the figure is filled from the rule, so the two cannot disagree.
+    #[test]
+    fn the_lure_banner_states_the_lure_length_from_the_rule() {
+        let seconds = crate::sim::LURE_SECONDS.to_string();
+        for lang in ALL_LANGS {
+            let settings = GameSettings {
+                language: lang,
+                ..GameSettings::default()
+            };
+            let (_, blurb, _) = Announcement::Lure(0)
+                .lines(&settings, &crate::app::SeatNames(settings.names.clone()));
+            assert!(blurb.contains(&seconds), "{lang:?}: {blurb}");
+            assert!(!blurb.contains('{'), "{lang:?} left a placeholder: {blurb}");
+        }
     }
 }

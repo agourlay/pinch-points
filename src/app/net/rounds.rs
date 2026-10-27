@@ -14,14 +14,40 @@ use super::*;
 /// message's own payload, under the name the session takes it up by.
 pub use crate::transport::Start as Invitation;
 
-/// The lockstep a peer plays a round over: the `humans` low seats, from
-/// the given chair, or from no chair at all for a watcher.
-pub(crate) fn lockstep_for(seat: Option<u8>, humans: u8) -> Lockstep {
-    let players: Vec<u8> = (0..humans).collect();
+/// The lockstep a peer plays a round over: the `players`' seats (every
+/// seat but the AI's, [`MatchTerms::player_seats`]), from the given chair,
+/// or from no chair at all for a watcher, with the round's input `delay`.
+pub(crate) fn lockstep_for(seat: Option<u8>, players: Vec<u8>, delay: u32) -> Lockstep {
     match seat {
-        None => Lockstep::observer(players, crate::sim::DEFAULT_DELAY),
-        Some(seat) => Lockstep::new(seat, players, crate::sim::DEFAULT_DELAY),
+        None => Lockstep::observer(players, delay),
+        Some(seat) => Lockstep::new(seat, players, delay),
     }
+}
+
+/// The input delay a host deals a round with: enough for the slowest link
+/// among the peers `plan` seats, each played as its round trips say
+/// (`RoundTrips::telling`, [`crate::sim::delay_for_round_trip`]),
+/// or the default for a table nobody has answered at (the direct pair, a
+/// table of the host and the AI). A watcher is waited on by nobody, so its
+/// link does not count. Nor does a player that has never answered a ping:
+/// it is played at what the rest of the table needs, the least the host
+/// can say of a link it knows nothing about.
+pub(crate) fn input_delay(peers: &PeerBook, plan: &[Option<u8>]) -> u32 {
+    plan.iter()
+        .enumerate()
+        .filter(|(_, seat)| seat.is_some())
+        .filter_map(|(peer, _)| peers.get(peer)?.round_trips.telling())
+        .reduce(f32::max)
+        .map_or(crate::sim::DEFAULT_DELAY, crate::sim::delay_for_round_trip)
+}
+
+/// The AI a round between rounds is dealt behind `humans`, the terms
+/// asking for `dial`: as many as there are chairs for, and enough for two
+/// castles, since a host whose table has emptied is still entitled to a
+/// round against the AI. The same floor `seat_count` keeps.
+fn next_round_ai(humans: u8, dial: u8) -> u8 {
+    dial.min(MAX_PLAYERS as u8 - humans)
+        .max(2u8.saturating_sub(humans))
 }
 
 /// How many of the host's own bots (route 2) a table with `people` seated
@@ -40,15 +66,70 @@ pub(crate) fn seat_the_hosts_bots(bots: &mut Vec<HostedBot>, people: u8) {
     }
 }
 
-/// What every seat is before the deal says more: the AI in the top seats
-/// from `humans` up to `seats`, a person in the rest.
-fn ai_on_top(humans: u8, seats: u8) -> [crate::sim::SeatKind; MAX_PLAYERS] {
-    std::array::from_fn(
-        |seat| match seat >= usize::from(humans) && seat < usize::from(seats) {
-            true => crate::sim::SeatKind::Ai,
-            false => crate::sim::SeatKind::Human,
-        },
-    )
+/// What every seat is before the deal says more: the AI in the seats the
+/// terms give it at a table of `seats` ([`MatchTerms::ai_seats`]), a
+/// person in the rest.
+fn ai_where_the_terms_say(terms: MatchTerms, seats: u8) -> [crate::sim::SeatKind; MAX_PLAYERS] {
+    let ai = terms.ai_seats(seats);
+    std::array::from_fn(|seat| match ai.contains(&(seat as u8)) {
+        true => crate::sim::SeatKind::Ai,
+        false => crate::sim::SeatKind::Human,
+    })
+}
+
+/// Put a dealt table in the seats its host arranged when it picked
+/// partners ([`super::order`]): `plan` and `bots_here` come dealt in places
+/// (the host, the players in peer order, the host's bots), and leave in
+/// the seats each was arranged in, the AI in what is left, the order in
+/// `terms`; and the seats are remembered for the next deal. A table never
+/// arranged, or played free-for-all ([`order::picks_hold`]), is dealt in
+/// seat order, as every table was before.
+pub(crate) fn arrange_the_deal(
+    (plan, bots_here): (&mut [Option<u8>], &mut [HostedBot]),
+    peers: &mut PeerBook,
+    arranged: Option<&mut order::Arranged>,
+    terms: &mut MatchTerms,
+    seats: u8,
+) {
+    use crate::app::match_setup::TermsDials;
+    let held = order::picks_hold(terms.teams().played_by(seats));
+    let Some(arranged) = arranged.filter(|_| held) else {
+        terms.order = crate::transport::IN_SEAT_ORDER;
+        return;
+    };
+    let humans = terms.humans(seats);
+    let mut wants = vec![None; usize::from(seats)];
+    for (peer, place) in plan.iter().enumerate() {
+        if let Some(place) = place
+            && let Some(want) = wants.get_mut(usize::from(*place))
+        {
+            *want = peers.get(peer).and_then(|row| row.seat_wish);
+        }
+    }
+    for bot in bots_here.iter() {
+        if let Some(want) = wants.get_mut(usize::from(bot.seat)) {
+            *want = arranged
+                .bots
+                .iter()
+                .find(|(id, _)| *id == bot.id)
+                .map(|&(_, seat)| seat);
+        }
+    }
+    terms.order = order::seat_order(&wants, &arranged.ai, humans, seats);
+    info!(
+        "dealt in the seats the host's partner picks put them in: {:?}",
+        &terms.order[..usize::from(seats)]
+    );
+    for (peer, place) in plan.iter_mut().enumerate() {
+        if let Some(place) = place {
+            *place = terms.seat_of_place(*place);
+            peers.row(peer).seat_wish = Some(*place);
+        }
+    }
+    for bot in bots_here.iter_mut() {
+        bot.seat = terms.seat_of_place(bot.seat);
+    }
+    *arranged = order::remember(*terms, seats, bots_here);
 }
 
 /// The table's names for a dealt `plan`: the host in seat 0 under `host`,
@@ -77,16 +158,16 @@ pub(crate) fn seat_names<'a>(
 }
 
 /// What holds each seat of a dealt `plan`: the host a person, a peer
-/// whatever its greeting said, the host's own bots bots, and the top seats
-/// (`humans` up to `seats`) the AI.
+/// whatever its greeting said, the host's own bots bots, and the AI the
+/// seats `terms` give it at a table of `seats`.
 pub(crate) fn seat_kinds(
     plan: &[Option<u8>],
     peers: &PeerBook,
     bots_here: &[HostedBot],
-    humans: u8,
+    terms: MatchTerms,
     seats: u8,
 ) -> [crate::sim::SeatKind; MAX_PLAYERS] {
-    let mut kinds = ai_on_top(humans, seats);
+    let mut kinds = ai_where_the_terms_say(terms, seats);
     for bot in bots_here {
         kinds[usize::from(bot.seat)] = crate::sim::SeatKind::Bot;
     }
@@ -105,11 +186,15 @@ impl OnlineSession {
     /// lobby: the socket it greeted over, and everything the `Start` said.
     pub fn invited(transport: UdpTransport, invitation: Invitation) -> OnlineSession {
         let Invitation {
-            seats, seat, terms, ..
+            seats,
+            seat,
+            terms,
+            delay,
+            ..
         } = &invitation;
         let mut session = OnlineSession::new(
             transport,
-            lockstep_for(*seat, terms.humans(*seats)),
+            lockstep_for(*seat, terms.player_seats(*seats), u32::from(*delay)),
             *seats,
             *terms,
         );
@@ -133,9 +218,16 @@ impl OnlineSession {
             beach,
             deal,
             crowned,
+            delay,
         } = invitation;
         self.beach = beach;
-        self.begin_round(seats, seat, terms, table_from_wire(&names));
+        self.begin_round(
+            seats,
+            seat,
+            terms,
+            table_from_wire(&names),
+            u32::from(delay),
+        );
         self.kinds = kinds.map(crate::transport::kind_from_byte);
         self.series_standing = standing;
         self.rounds_dealt = deal;
@@ -205,8 +297,8 @@ impl OnlineSession {
     /// host decides there will be another round, so the two messages that
     /// matter here are a greeting to queue and the invitation that answers
     /// it. Hashes belong to the round that just ended, and are dropped with
-    /// it; a peer's inputs say it is still playing that round, and are
-    /// answered with its last frames (`send_the_tail`).
+    /// it; a peer's batch says it is still playing that round, and is
+    /// answered with the frames it says it is missing (`send_the_tail`).
     ///
     /// A joiner also keeps greeting, which is not for the host's benefit:
     /// the answer is what proves the host is still there. Nothing else is
@@ -217,6 +309,16 @@ impl OnlineSession {
         self.age_the_silence(delta);
         if !host && crate::app::lobby::once_a_second(&mut self.home.greet_in, delta) {
             self.transport.send(self.own_greeting());
+        }
+        // The card is where the next round's delay is picked, from how
+        // quickly the table answers now. And whether the host is picking
+        // the next map goes with it, as it stands, picking or not: one
+        // datagram is the one the network eats, and a lost word that the
+        // host stopped picking left the table told it still was until the
+        // next round.
+        if host && crate::app::lobby::once_a_second(&mut self.ping_in, delta) {
+            self.ping();
+            self.transport.send(self.roster_msg());
         }
         for (msg, from) in self.transport.recv_all() {
             // Except a goodbye, which says the opposite, and whose grace
@@ -241,9 +343,10 @@ impl OnlineSession {
                         self.send_the_tail(from);
                     }
                 }
-                // A peer still in the round, resending what it committed:
-                // it has not finished, and may be missing the last frames.
-                NetMsg::Inputs(_) if host => self.send_the_tail(from),
+                // A peer still in the round, resending what it committed
+                // or saying what it holds: it has not finished, and may be
+                // missing the last frames.
+                NetMsg::Inputs(batch) if host => self.answer_a_straggler(from, &batch),
                 NetMsg::Start(start) => {
                     if self.calls_the_next_round(&start) {
                         self.take_the_next_round(start);
@@ -264,12 +367,18 @@ impl OnlineSession {
                 // spectators' prompt offers it there: a line dropped here
                 // was a key that did nothing for anyone but its sender.
                 NetMsg::Chat { name, text } => self.hear_chat(host, from, name, text),
+                // The host's word that it is picking the next map, which
+                // the results card says while the table waits on it.
+                NetMsg::Roster { picking, .. } => {
+                    if !host {
+                        self.picking_map = picking;
+                    }
+                }
                 NetMsg::Inputs(_)
                 | NetMsg::Hash { .. }
                 | NetMsg::Pause { .. }
                 | NetMsg::Resume { .. }
                 | NetMsg::Queued { .. }
-                | NetMsg::Roster { .. }
                 | NetMsg::Abandoned { .. }
                 // There is no beach here to call anything onto, which is
                 // why the key is not offered between rounds either.
@@ -278,16 +387,21 @@ impl OnlineSession {
                 // Calls are for a round being played, and this one is over.
                 | NetMsg::SpectatorPick { .. }
                 | NetMsg::CrowdPicks { .. }
+                // A clock is kept while a round is played.
+                | NetMsg::Clock { .. }
                 | NetMsg::Incompatible { .. } => {}
                 // The host asked us to leave while the card was up.
                 NetMsg::Kicked if !host => PutOut::hear(&mut self.put_out, PutOut::Kicked),
                 NetMsg::NoBots if !host => PutOut::hear(&mut self.put_out, PutOut::NoBots),
-                NetMsg::Kicked | NetMsg::NoBots => {}
+                NetMsg::Full if !host => PutOut::hear(&mut self.put_out, PutOut::Full),
+                NetMsg::Kicked | NetMsg::NoBots | NetMsg::Full => {}
                 // Gone from the card: forgotten by the sweep just below,
                 // before the next round can deal it a chair. On a joiner
                 // it is the host, and there is no next round, unless the
                 // goodbye was forged (`heard_a_goodbye`).
                 NetMsg::Leaving => self.heard_a_goodbye(from),
+                NetMsg::Ping { stamp } => self.answer_ping(host, stamp),
+                NetMsg::Pong { stamp } => self.take_pong(host, from, stamp),
             }
         }
         // After the socket is drained, so a greeting that arrived in this
@@ -297,24 +411,58 @@ impl OnlineSession {
         }
     }
 
-    /// Host: the last frames of the round just played, to a peer that
-    /// followed it and may not have finished it.
+    /// Host, on the results card: a batch from a peer still in the round
+    /// just played. What it says it holds is noted, as during the round,
+    /// and it is answered with what it is missing of the round's end.
+    fn answer_a_straggler(&mut self, from: usize, batch: &Batch) {
+        if !self.of_this_round(batch.round) {
+            return;
+        }
+        if let Some(wants) = self.wants_of_this_round(batch.wants) {
+            self.peers.row(from).wants = Some(wants);
+        }
+        self.send_the_tail(from);
+    }
+
+    /// What a peer says it holds (`Batch::wants`), if it names nothing past
+    /// a frame this round can have reached.
+    pub(super) fn wants_of_this_round(
+        &self,
+        wants: Option<[u32; MAX_PLAYERS]>,
+    ) -> Option<[u32; MAX_PLAYERS]> {
+        wants.filter(|wants| {
+            wants
+                .iter()
+                .all(|&frame| self.session.within_horizon(frame))
+        })
+    }
+
+    /// Host: the end of the round just played, to a peer that followed it
+    /// and may not have finished it: every input it has not said it holds,
+    /// up to the last frame (`unheard_by`).
     ///
     /// The host relays an input once, as it arrives, and its sim stops
     /// the moment the round is over, so the relay of the input that
     /// completed the last frame is never repeated: lost, it left a joiner
     /// a frame short of the end for good, "waiting for" a player who had
     /// long stopped sending. A player still in the round keeps resending
-    /// its own commits, and a watcher greets a host gone quiet, so either
-    /// is answered with every input the host played for the frames it can
-    /// still be missing. A peer that has finished hears frames it has
-    /// played, and drops them.
+    /// its own commits, a watcher keeps saying what it holds, and either
+    /// greets a host gone quiet, so each is answered from the frame it
+    /// says it is missing, as far back as the record reaches: a spectator
+    /// seconds behind when the tide came in is still fed the round to its
+    /// end, where a fixed tail of the last second left it short of it for
+    /// good. A peer that has finished hears frames it has played, and
+    /// drops them.
     pub(super) fn send_the_tail(&self, peer: usize) {
         if !self.follows_the_round(peer) {
             return;
         }
-        self.transport
-            .send_inputs(&self.session.played_tail(), |to| to == peer);
+        let tail = Batch {
+            round: self.round_tag(),
+            inputs: self.unheard_by(peer, self.session.frame()),
+            ..Batch::default()
+        };
+        self.transport.send_batch(&tail, |to| to == peer);
     }
 
     /// What this peer says to its host to be let in, or to be answered:
@@ -391,13 +539,26 @@ impl OnlineSession {
         let beach = beach_in_play(self.terms.map(), beach_from(&self.beach), self.seats)
             .map_or_else(String::new, |level| level.name);
         // The places at the table, as the lobby counts them (`send_roster`):
-        // the people and bots, with the AI in the terms.
+        // the people and bots in place order, with the AI and the seat each
+        // place sits in in the terms.
+        let humans = self.terms.humans(self.seats);
+        let by_place = |place: u8| usize::from(self.terms.seat_of_place(place));
+        let names: Vec<String> = (0..humans)
+            .map(|place| self.names[by_place(place)].clone())
+            .collect();
+        let mut kinds = [crate::sim::SeatKind::Human; MAX_PLAYERS];
+        for place in 0..humans {
+            kinds[usize::from(place)] = self.kinds[by_place(place)];
+        }
         NetMsg::Roster {
-            seats: self.terms.humans(self.seats),
-            names: wire_table(&self.names),
+            seats: humans,
+            names: wire_table(&names),
             terms: self.terms,
-            kinds: crate::transport::wire_kinds(&self.kinds),
+            kinds: crate::transport::wire_kinds(&kinds),
             beach: crate::transport::wire_name(&beach),
+            // Its place is the `Queued` it is sent with.
+            chair: None,
+            picking: self.picking_map,
         }
     }
 
@@ -441,6 +602,47 @@ impl OnlineSession {
             .filter(|name| !name.is_empty())
     }
 
+    /// Host: how many seats the next round is dealt if it is called now
+    /// with the AI dial at `dial`, as [`Self::call_next_round`] deals them:
+    /// whoever queued admitted, whoever left gone, and the AI behind them.
+    /// What the host's map page between rounds greys its cards by.
+    pub fn next_round_seats(&self, dial: u8) -> u8 {
+        let plan = self.next_round_plan();
+        let people = 1 + plan.iter().flatten().count() as u8;
+        let bots = self.bots_here.len().min(chairs_for_bots(people)) as u8;
+        let humans = people + bots;
+        humans + next_round_ai(humans, dial)
+    }
+
+    /// Host: who the next round seats, one entry per peer on the socket,
+    /// `None` for one that watches or that the table cannot fit: whoever
+    /// queued admitted and whoever left gone ([`PeerBook::seat_plan`]).
+    /// While the host picks the map for it, the table it was picking for
+    /// and nobody else ([`PeerBook::frozen_plan`]): one that turned up
+    /// meanwhile watches the round and plays the one after, as at the
+    /// lobby's start, so the map is played by the table it was picked for.
+    fn next_round_plan(&self) -> Vec<Option<u8>> {
+        let peers = self.transport.peer_count();
+        match self.picking_map && self.is_host() {
+            true => self.peers.frozen_plan(peers),
+            false => self.peers.seat_plan(peers),
+        }
+    }
+
+    /// Say whether the host is picking the next round's map: on the host,
+    /// noted and told to every peer at once, as the roster that carries it
+    /// (`NetMsg::Roster::picking`); a lost one, either way, is said again
+    /// on the results card's once-a-second tick. Picking, the next round's table is
+    /// frozen as it stands ([`Self::next_round_plan`]).
+    pub fn say_picking(&mut self, picking: bool) {
+        if picking && !self.picking_map {
+            let plan = self.peers.seat_plan(self.transport.peer_count());
+            self.peers.freeze(&plan);
+        }
+        self.picking_map = picking;
+        self.transport.send(self.roster_msg());
+    }
+
     /// Host: call the next round on `terms`, admitting the queue, and tell
     /// every peer which seat it now holds. Arms this session too, so host
     /// and joiners take the same path back into the arena.
@@ -448,10 +650,16 @@ impl OnlineSession {
     /// `standing` is the series as it is now, by *this* round's seats, or
     /// `None` outside a series; the return value is the same standing
     /// re-dealt to the seats the next round hands out, which the caller
-    /// folds back into its `Tournament`. Seats are re-dealt in peer order
-    /// every round (they have to stay the contiguous `0..humans` the sim
-    /// fills the top of with AI), so a peer that leaves shifts everyone
-    /// behind it up a chair and the wins have to move with them.
+    /// folds back into its `Tournament`. Seats are re-dealt every round, in
+    /// peer order or in the seats the host's partner picks put everybody
+    /// in ([`arrange_the_deal`]), so a peer that leaves can move others a
+    /// chair and the wins have to move with them.
+    ///
+    /// `terms.bots` is the host's AI dial, not the AI of the round just
+    /// played: the next round deals its AI from the table as it then sits
+    /// ([`next_round_ai`]). Read off the round before, an AI seated only
+    /// to give a host alone a second castle stayed on after a friend sat
+    /// down in its place.
     pub fn call_next_round(
         &mut self,
         mut terms: MatchTerms,
@@ -460,20 +668,22 @@ impl OnlineSession {
         // The table for the next round, admitting whoever queued while
         // this one played: one entry per peer on the socket, `None` for a
         // peer that watches or that the table could not fit.
-        let plan = self.peers.seat_plan(self.transport.peer_count());
+        let mut plan = self.next_round_plan();
         let people = 1 + plan.iter().flatten().count() as u8;
         let mut bots_here = std::mem::take(&mut self.bots_here);
         let bots_were: Vec<u8> = bots_here.iter().map(|bot| bot.seat).collect();
         seat_the_hosts_bots(&mut bots_here, people);
         let humans = people + bots_here.len() as u8;
-        // A beach needs two castles, and a host whose table has emptied is
-        // still entitled to another round, against the AI, since playing
-        // itself is not a round. The same floor `seat_count` keeps.
-        terms.bots = terms
-            .bots
-            .min(MAX_PLAYERS as u8 - humans)
-            .max(2u8.saturating_sub(humans));
+        terms.bots = next_round_ai(humans, terms.bots);
         let seats = humans + terms.bots;
+        // Everybody back in the seat the host's partner picks put them in.
+        arrange_the_deal(
+            (&mut plan, &mut bots_here),
+            &mut self.peers,
+            self.arranged.as_mut(),
+            &mut terms,
+            seats,
+        );
         // The map was stepped on for the table as it sat, and admitting the
         // queue can have grown it past what that beach holds: stepped on
         // again for the table as it now is, or two players at a table of
@@ -502,12 +712,15 @@ impl OnlineSession {
             for (bot, old_seat) in bots_here.iter().zip(&bots_were) {
                 new_wins[usize::from(bot.seat)] = wins[usize::from(*old_seat)];
             }
-            // And the game's AI, which sits in the top chairs: the first AI
-            // seat of this round's table is the first of the next one's.
-            // Left out, an AI that won a round was back at nothing the
-            // next, and could never take an online series.
-            for (old_seat, new_seat) in
-                (self.terms.humans(self.seats)..self.seats).zip(humans..seats)
+            // And the game's AI, in the seats the terms give it: the first
+            // AI place of this round's table is the first of the next
+            // one's. Left out, an AI that won a round was back at nothing
+            // the next, and could never take an online series.
+            for (old_seat, new_seat) in self
+                .terms
+                .ai_seats(self.seats)
+                .into_iter()
+                .zip(terms.ai_seats(seats))
             {
                 new_wins[usize::from(new_seat)] = wins[usize::from(old_seat)];
             }
@@ -528,8 +741,9 @@ impl OnlineSession {
             |peer| self.peer_name(peer),
             &bots_here,
         );
-        let kinds = seat_kinds(&plan, &self.peers, &bots_here, humans, seats);
-        self.begin_round(seats, Some(0), terms, names);
+        let kinds = seat_kinds(&plan, &self.peers, &bots_here, terms, seats);
+        let delay = input_delay(&self.peers, &plan);
+        self.begin_round(seats, Some(0), terms, names, delay);
         self.deal(&plan, kinds, bots_here, standing);
         self.next_round = true;
         standing
@@ -563,24 +777,17 @@ impl OnlineSession {
         // A round dealt after every one before it, which is what tells it
         // from a stale invitation still on the wire (`is_next_round`).
         self.rounds_dealt = self.rounds_dealt.wrapping_add(1);
-        let names = wire_table(&self.names);
-        let kinds = crate::transport::wire_kinds(&self.kinds);
         for (peer, slot) in plan.iter().enumerate() {
-            self.transport.send_to(
-                peer,
-                NetMsg::Start(Invitation {
-                    seats: self.seats,
-                    seat: *slot,
-                    terms: self.terms,
-                    names,
-                    kinds,
-                    standing,
-                    beach: self.beach.clone(),
-                    deal: self.rounds_dealt,
-                    crowned: self.crowned,
-                }),
-            );
+            self.transport.send_to(peer, self.start_msg(*slot));
         }
+    }
+
+    /// The launch plan alone, no `Start` sent: for a table whose every
+    /// peer was handed the session the plan gives it some other way, as the
+    /// soak table builds them (`examples/soak/table.rs`). The game deals
+    /// with [`Self::deal`].
+    pub fn seat_the_table(&mut self, plan: &[Option<u8>]) {
+        self.peers.deal(plan);
     }
 
     /// Take up the terms of a new round: a fresh board, a lockstep back at
@@ -592,6 +799,7 @@ impl OnlineSession {
         seat: Option<u8>,
         terms: MatchTerms,
         names: [String; MAX_PLAYERS],
+        delay: u32,
     ) {
         debug_assert!(
             (2..=MAX_PLAYERS as u8).contains(&seats),
@@ -601,15 +809,19 @@ impl OnlineSession {
             seat.is_none_or(|seat| seat < seats),
             "seated at {seat:?} of {seats}"
         );
-        self.session = lockstep_for(seat, terms.humans(seats));
+        self.session = lockstep_for(seat, terms.player_seats(seats), delay);
         self.seats = seats;
         self.terms = terms;
         self.names = names;
-        // The AI holds the top seats; anything else a person until the
+        // The AI where the terms seat it; anything else a person until the
         // round's kinds say otherwise, which its caller writes after this.
-        self.kinds = ai_on_top(terms.humans(seats), seats);
+        self.kinds = ai_where_the_terms_say(terms, seats);
         self.hashes.reset();
         self.resume_echo = 0;
+        self.round_ticks = 0;
+        self.host_newest = None;
+        self.host_wants = None;
+        self.clock_apart = None;
         // Seats given up on were last round's seats, at last round's
         // frames. The seats are dealt afresh, so a stale entry would read
         // a re-seated player as dropped and hand its chair to the AI.
@@ -624,6 +836,7 @@ impl OnlineSession {
         for peer in self.peers.iter_mut() {
             peer.pick = None;
             peer.pause = None;
+            peer.wants = None;
         }
         // And nobody is late for a round that has not begun. The results
         // card is a place a table sits for a while, and carrying that
@@ -631,6 +844,8 @@ impl OnlineSession {
         // frame.
         self.stall.reset(self.session.frame());
         self.peers.hush();
+        // The map for it is picked.
+        self.picking_map = false;
     }
 
     /// Whether a `Start` off the wire is the next round rather than a
@@ -668,7 +883,31 @@ impl OnlineSession {
             beach: self.beach.clone(),
             deal: self.rounds_dealt,
             crowned: self.crowned,
+            // At most `MAX_DELAY`, which is what the decoder allows.
+            delay: self.session.delay().min(crate::sim::MAX_DELAY) as u8,
         })
+    }
+
+    /// Host: ask every peer on the socket how long a round trip to it
+    /// takes (`take_pong` hears the answers).
+    pub(super) fn ping(&self) {
+        self.transport.send(NetMsg::ping());
+    }
+
+    /// A `Ping` off the wire, answered at once on a joiner: only the host
+    /// asks, so the one heard on a host is nobody's to answer.
+    pub(super) fn answer_ping(&self, host: bool, stamp: u32) {
+        if !host {
+            self.transport.send(NetMsg::Pong { stamp });
+        }
+    }
+
+    /// A `Pong` off the wire: on the host, one more round trip for the
+    /// row of the peer that answered.
+    pub(super) fn take_pong(&mut self, host: bool, from: usize, stamp: u32) {
+        if host {
+            self.peers.answered(from, stamp);
+        }
     }
 
     /// The seat a peer index holds, or `None` for a watcher, and for a
@@ -1116,9 +1355,11 @@ mod next_round_tests {
             if cys.frame != last {
                 joiner.session.receive(cys);
             }
+            // Played as they come, as a round is: eleven commits ahead of
+            // a frame nobody plays are past the commit lead.
+            while host.session.advance().is_some() {}
+            while joiner.session.advance().is_some() {}
         }
-        while host.session.advance().is_some() {}
-        while joiner.session.advance().is_some() {}
         assert_eq!(
             host.session.frame(),
             last + 1,
@@ -1151,6 +1392,57 @@ mod next_round_tests {
             "the joiner finished the round: {:?}",
             joiner.session.awaiting()
         );
+    }
+
+    /// The input delay a round is dealt with is the one the slowest player
+    /// it seats needs, from the round trips the host measured; a watcher's
+    /// link holds nobody up and does not count, and a table nobody has
+    /// answered at plays the default. One hitch among a few answers is not
+    /// the link, and an answer from long ago gives way to fresh ones. A
+    /// joiner plays the delay its `Start` carries.
+    #[test]
+    fn a_round_is_dealt_the_delay_its_slowest_player_needs() {
+        let mut peers = PeerBook::default();
+        peers.reach(3);
+        let plan = [Some(1), Some(2), None];
+        assert_eq!(input_delay(&peers, &plan), DEFAULT_DELAY, "nobody answered");
+        peers.row(0).round_trips.note(0.010);
+        peers.row(1).round_trips.note(0.060);
+        peers.row(1).round_trips.note(0.070);
+        peers.row(2).round_trips.note(0.500);
+        assert_eq!(
+            input_delay(&peers, &plan),
+            crate::sim::delay_for_round_trip(0.070),
+            "the slowest seated answer of two, not the watcher's"
+        );
+        assert_eq!(crate::sim::delay_for_round_trip(0.070), 5);
+        // A third answer, and the one hitch among them is let go.
+        peers.row(1).round_trips.note(0.020);
+        assert_eq!(
+            input_delay(&peers, &plan),
+            crate::sim::delay_for_round_trip(0.060)
+        );
+        assert_eq!(crate::sim::delay_for_round_trip(0.060), 4);
+        // Minutes of a round later, the results card's own pings say the
+        // link is quick now, and the old answers are let go.
+        peers.age(300.0);
+        assert_eq!(
+            input_delay(&peers, &plan),
+            crate::sim::delay_for_round_trip(0.060),
+            "stale, but nothing fresher"
+        );
+        peers.row(1).round_trips.note(0.010);
+        assert_eq!(input_delay(&peers, &plan), DEFAULT_DELAY);
+
+        let joiner = OnlineSession::invited(
+            UdpTransport::join(("127.0.0.1", 9)).expect("socket"),
+            Invitation {
+                seat: Some(1),
+                delay: 5,
+                ..Invitation::blank()
+            },
+        );
+        assert_eq!(joiner.session.delay(), 5);
     }
 
     /// Register `joiners` on the host's socket in order, so their peer
@@ -1645,8 +1937,8 @@ mod next_round_tests {
             3,
             terms(7),
         );
-        let mut sockets = gather(&mut host, &["Bo", "Cy"]);
-        host.peers.deal(&[Some(1), Some(2)]);
+        let mut sockets = gather(&mut host, &["Bo", "Cy", "Dee"]);
+        host.peers.deal(&[Some(1), Some(2), None]);
 
         // Bo holds seat one. It sends for its own chair, and for Cy's.
         let own = crate::sim::InputMsg {
@@ -1659,19 +1951,23 @@ mod next_round_tests {
             frame: DEFAULT_DELAY,
             action: PlayerAction::Remove { x: 2, y: 2 },
         };
-        // What reaches Cy is the question: the hub is the only way Bo can
-        // reach it at all, so what the hub relays is what the table plays.
+        // What reaches Dee, watching, is the question: she is sent every
+        // seat, and the hub is the only way Bo can reach her at all, so
+        // what the hub passes on is what the table plays.
         let mut relayed: Vec<u8> = Vec::new();
         for _ in 0..40 {
             // Both in one batch, which is the shape the weeding has to
-            // survive now: the honest input and the forged one arrive in a
+            // survive: the honest input and the forged one arrive in a
             // single datagram, and only one of them may be passed on.
-            sockets[0].send(NetMsg::Inputs(vec![own, forged]));
+            sockets[0].send(NetMsg::Inputs(Batch {
+                inputs: vec![own, forged],
+                ..Batch::default()
+            }));
             std::thread::sleep(std::time::Duration::from_millis(5));
             host.pump(PlayerAction::None, |_| {});
-            for (msg, _) in sockets[1].recv_all() {
-                if let NetMsg::Inputs(inputs) = msg {
-                    relayed.extend(inputs.iter().map(|input| input.player));
+            for (msg, _) in sockets[2].recv_all() {
+                if let NetMsg::Inputs(batch) = msg {
+                    relayed.extend(batch.inputs.iter().map(|input| input.player));
                 }
             }
             if relayed.contains(&1) {
@@ -1733,6 +2029,49 @@ mod next_round_tests {
         assert_eq!(joiner.terms.seed, 333);
     }
 
+    /// The host's word that it stopped picking the next map is said again
+    /// on its results card, like the word that it started: lost, the table
+    /// went on being told the host was picking until the next round.
+    #[test]
+    fn a_lost_word_that_the_host_stopped_picking_is_said_again() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(111),
+        );
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(111),
+        );
+        joiner.transport.send(NetMsg::hello("Bo"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() == 1 {
+                break;
+            }
+        }
+        host.peers.deal(&[Some(1)]);
+        host.say_picking(true);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        joiner.poll_between_rounds(0.0);
+        assert!(joiner.picking_map, "told the host is picking");
+        // The host puts its page away, and that word is lost.
+        host.say_picking(false);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        drop(joiner.transport.recv_all());
+        for _ in 0..3 {
+            host.poll_between_rounds(1.0);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            joiner.poll_between_rounds(0.0);
+        }
+        assert!(!joiner.picking_map, "told again that it stopped");
+    }
+
     /// A player who sat a round out because the table was full asked for
     /// a chair, not a seat in the stands: the next round deals it one.
     #[test]
@@ -1778,5 +2117,212 @@ mod next_round_tests {
         // And the plan is drawn from who is actually connected, not from
         // last round's list: a peer that left does not hold a chair.
         assert!(host.peers.is_empty(), "nobody is connected any more");
+    }
+
+    /// One fixed tick, as long as the shell's.
+    const TICK: f32 = 1.0 / crate::sim::TICKS_PER_SECOND as f32;
+
+    /// The ticks a peer stands through from the call to its round's first
+    /// frame: the interlude (between rounds), the line-up and the count.
+    fn ticks_before(interlude: bool) -> u32 {
+        let interlude = match interlude {
+            true => crate::app::tournament::INTERLUDE_SECS,
+            false => 0.0,
+        };
+        let secs =
+            interlude + crate::app::lineup::LINEUP_SECS + crate::app::countdown::COUNTDOWN_SECS;
+        (secs / TICK).ceil() as u32
+    }
+
+    /// One tick of a round being played, as the shell runs it: the
+    /// silences aged and the stalled given up on, then the pump.
+    fn play_a_tick(net: &mut OnlineSession) {
+        net.keep_in_touch(TICK);
+        net.abandon_stalled(TICK, false);
+        net.pump(PlayerAction::None, |net| {
+            net.session.advance();
+        });
+    }
+
+    /// A pause long enough for a datagram over loopback.
+    fn beat() {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+    /// How long a joiner says nothing while it builds the arena: the one
+    /// long frame of the way in, which nothing networks through.
+    const LOADING: u32 = 45;
+
+    /// Where a joiner is on its way into a round.
+    enum Way {
+        /// On the results card (or in the lobby), its `Start` not heard.
+        Waiting,
+        /// Building the arena, this many ticks from done.
+        Loading(u32),
+        /// Its round dealt, this many ticks from its first frame.
+        Before(u32),
+        Playing,
+    }
+
+    /// Walk a host and its joiner into the round the host dealt `before`
+    /// ticks ago, the joiner on `way`, both as the shell does: standing
+    /// through the interlude, line-up and count before playing. Returns
+    /// once both have been playing for a while.
+    fn walk_in(
+        host: &mut OnlineSession,
+        joiner: &mut OnlineSession,
+        interlude: bool,
+        mut host_left: u32,
+    ) {
+        let mut way = Way::Waiting;
+        for _ in 0..3 * ticks_before(interlude) + 300 {
+            beat();
+            match host_left {
+                0 => play_a_tick(host),
+                _ => {
+                    host_left -= 1;
+                    host.before_the_round(TICK);
+                }
+            }
+            beat();
+            way = match way {
+                Way::Waiting => {
+                    joiner.poll_between_rounds(TICK);
+                    match std::mem::take(&mut joiner.next_round) {
+                        true => Way::Loading(LOADING),
+                        false => Way::Waiting,
+                    }
+                }
+                Way::Loading(0) => Way::Before(ticks_before(interlude)),
+                Way::Loading(left) => Way::Loading(left - 1),
+                Way::Before(0) | Way::Playing => {
+                    play_a_tick(joiner);
+                    Way::Playing
+                }
+                Way::Before(left) => {
+                    joiner.before_the_round(TICK);
+                    Way::Before(left - 1)
+                }
+            };
+        }
+    }
+
+    /// A joiner whose call to the next round was lost hears it again while
+    /// the host still stands in its interlude, and is seated and playing
+    /// once the line-up and count are through, not given to the AI: it
+    /// used to hear the call only once the host's round ran, then stood
+    /// through its own interlude, line-up and count without a word, past
+    /// the host's patience.
+    #[test]
+    fn a_start_lost_between_rounds_still_seats_the_joiner() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(111),
+        );
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            terms(111),
+        );
+        joiner.transport.send(NetMsg::hello("Bo"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() == 1 {
+                break;
+            }
+        }
+        host.peers.deal(&[Some(1)]);
+        host.call_next_round(terms(222), None);
+        host.next_round = false;
+        // The call never reaches the joiner.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        drop(joiner.transport.recv_all());
+        walk_in(&mut host, &mut joiner, true, ticks_before(true));
+        assert!(host.abandoned.is_empty(), "nobody was given up on");
+        assert!(!joiner.dropped());
+        assert_eq!(joiner.terms, host.terms, "on the round the host called");
+        assert_eq!(joiner.session.seat(), Some(1));
+        assert!(
+            joiner.session.frame() > 60,
+            "and playing it: frame {}",
+            joiner.session.frame()
+        );
+    }
+
+    /// The same at the launch: a joiner in the lobby whose `Start` was
+    /// lost is sent it again while the host stands on its line-up, and is
+    /// seated when its own count is out.
+    #[test]
+    fn a_start_lost_at_the_launch_still_seats_the_joiner() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            lockstep_for(Some(0), (0..2).collect(), DEFAULT_DELAY),
+            2,
+            terms(111),
+        );
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut lobby = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        lobby.send(NetMsg::hello("Bo"));
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            host.poll_between_rounds(0.0);
+            if host.transport.peer_count() == 1 {
+                break;
+            }
+        }
+        host.deal(
+            &[Some(1)],
+            [crate::sim::SeatKind::Human; MAX_PLAYERS],
+            Vec::new(),
+            None,
+        );
+        // The launch's `Start` never reaches the lobby, which greets on,
+        // once a second, as the lobby does.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        drop(lobby.recv_all());
+        let mut host_left = ticks_before(false);
+        let mut greet_in = 0.0;
+        let mut invited = None;
+        for _ in 0..3 * ticks_before(false) {
+            beat();
+            match host_left {
+                0 => play_a_tick(&mut host),
+                _ => {
+                    host_left -= 1;
+                    host.before_the_round(TICK);
+                }
+            }
+            beat();
+            if crate::app::lobby::once_a_second(&mut greet_in, TICK) {
+                lobby.send(NetMsg::hello("Bo"));
+            }
+            invited = lobby.recv_all().into_iter().find_map(|(msg, _)| {
+                let NetMsg::Start(start) = msg else {
+                    return None;
+                };
+                Some(start)
+            });
+            if invited.is_some() {
+                break;
+            }
+        }
+        let start = invited.expect("the Start is sent again");
+        let mut joiner = OnlineSession::invited(lobby, start);
+        // In the arena on it, straight into its line-up and count.
+        joiner.next_round = true;
+        walk_in(&mut host, &mut joiner, false, host_left);
+        assert!(host.abandoned.is_empty(), "nobody was given up on");
+        assert!(!joiner.dropped());
+        assert_eq!(joiner.session.seat(), Some(1));
+        assert!(
+            joiner.session.frame() > 60,
+            "playing: frame {}",
+            joiner.session.frame()
+        );
     }
 }

@@ -5,15 +5,14 @@
 //! the game, so they are worth testing.
 
 use crate::app::editor::EditorState;
+use crate::app::gamepad::scheme::{self, Face, LastDevice, Pad, PadPick};
 use crate::app::i18n::{Tr, fill};
 use crate::app::lobby::LobbyState;
 use crate::app::net::Online;
 use crate::app::seating::Viewer;
 use crate::app::settings::GameSettings;
 use crate::app::teams::TeamMode;
-use crate::app::{
-    Campaign, CampaignKind, Controllers, Phase, Playback, Screen, Seats, Sim, VersusPhase,
-};
+use crate::app::{Campaign, Controllers, Phase, Playback, Screen, Seats, Sim, VersusPhase};
 use crate::sim::{Goal, LURE_TICKS, TICKS_PER_SECOND, TideEvent};
 use bevy::prelude::*;
 
@@ -59,20 +58,37 @@ fn typing_prompt(tr: &Tr, esc_cancels: bool) -> String {
 }
 
 /// The match setup's keys: a name row's Tab, or the dials'.
-fn match_setup_prompt(tr: &Tr, menu: &crate::app::match_setup::MatchMenu) -> String {
-    use crate::app::match_setup::Row;
-    // A name being typed: W and S are letters, and Enter, Esc and Tab all
-    // keep it and put the box away (`type_a_name`).
+/// The keyboard's line on match setup: each step's own keys, and while a
+/// seat's name is typed, the name box's (W and S are letters there, and
+/// Enter, Esc and Tab all keep it and put the box away: `type_a_name`).
+/// Under a team mode step 3's line ends on the partner key, which the
+/// pad's face offers on the same condition (`face`'s `partners`).
+fn match_setup_prompt(tr: &Tr, menu: &crate::app::match_setup::MatchMenu, face: &Face) -> String {
+    use crate::app::match_setup::Step;
     if menu.naming.is_some() {
-        typing_prompt(tr, false)
-    } else if matches!(Row::ALL[menu.selected], Row::Name(_)) {
-        tr.prompt_match_name.to_string()
-    } else {
-        tr.prompt_match_setup.to_string()
+        return typing_prompt(tr, false);
+    }
+    let line = match menu.step {
+        Step::Game => tr.prompt_setup_game,
+        Step::Map => tr.prompt_setup_map,
+        // A/D said only where it turns the seat: not on player 1's row.
+        Step::Players => match crate::app::match_setup::seat_turns(menu.seat) {
+            true => tr.prompt_setup_players,
+            false => tr.prompt_setup_players_p1,
+        },
+    };
+    let partners =
+        menu.step == Step::Players && matches!(face, Face::MatchSetup { partners: true, .. });
+    match partners {
+        true => format!("{line} | {}", tr.prompt_setup_partners),
+        false => line.to_string(),
     }
 }
 
-pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
+/// `map_pick` whether the host's map page has its cursor on a card Enter
+/// picks ([`crate::app::match_setup::card_to_pick`]): elsewhere on it the
+/// prompt does not offer Enter, which does nothing there.
+pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState, map_pick: bool) -> HudText {
     let title = tr.title_lobby.to_string();
     let status = lobby.feedback.clone();
     use crate::app::lobby::Standing;
@@ -98,12 +114,31 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
         // of them describing the same peer differently is the whole of
         // what a player has to go on before the round starts.
         Standing::Joining(joined) if joined.watching => tr.lobby_watching_prompt.to_string(),
+        // Past the last chair: the launch seats it watching, and the
+        // status line above says so.
+        Standing::Joining(joined) if joined.no_chair => tr.lobby_no_chair_prompt.to_string(),
         Standing::Joining(_) => tr.lobby_aboard_prompt.to_string(),
+        // The map page, once the host has started the match.
+        Standing::Hosting(hosted) if hosted.picking.is_some() => match map_pick {
+            true => tr.lobby_pick_prompt.to_string(),
+            false => tr.lobby_pick_prompt_no_pick.to_string(),
+        },
         // Picking whom to ask to leave: the prompt says how.
-        Standing::Hosting(hosted) if hosted.kicking => {
-            crate::app::lobby::kick_prompt(tr, &hosted.peers)
+        Standing::Hosting(crate::app::lobby::Hosted {
+            peers,
+            kicking: Some(page),
+            ..
+        }) => crate::app::lobby::kick_prompt(tr, peers, *page),
+        // Picking partners: the seat numbers name whose partners change.
+        Standing::Hosting(hosted) if hosted.partnering => {
+            let seats = lobby.table.len() + usize::from(lobby.seated.ai);
+            fill(tr.lobby_partner_prompt, &[("n", &seats.to_string())])
         }
-        Standing::Hosting(_) => tr.lobby_broadcasting.to_string(),
+        // Under a team mode, P picks partners.
+        Standing::Hosting(_) => match crate::app::lobby::partners_open(lobby) {
+            true => format!("{} | {}", tr.lobby_broadcasting, tr.prompt_setup_partners),
+            false => tr.lobby_broadcasting.to_string(),
+        },
         Standing::Choosing { watching: false } if lobby.hosts.is_empty() => {
             tr.lobby_none_yet.to_string()
         }
@@ -123,7 +158,12 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState) -> HudText {
 /// The editor's lines. Its prompt names the move keys as `{moves}` in
 /// place of the language's "WASD": the cursor walks on P1's bindings,
 /// which `editor::spell_editor_keys` spells once the legend has run.
-pub(super) fn editor_text(tr: &Tr, editor: &EditorState, sim: &Sim) -> HudText {
+pub(super) fn editor_text(
+    tr: &Tr,
+    editor: &EditorState,
+    board: &crate::sim::Board,
+    settings: &GameSettings,
+) -> HudText {
     let testing = editor.is_testing();
     // The title carries the level's name, which is the file it saves to
     // and the caption the stage list shows, so it has to be visible before
@@ -146,27 +186,104 @@ pub(super) fn editor_text(tr: &Tr, editor: &EditorState, sim: &Sim) -> HudText {
             if editor.is_naming() { "_" } else { "" }
         )
     };
-    // A beach is not played with a granted inventory, so the number beside
-    // the feedback is the one that decides whether it can be played at all:
-    // how big a table it seats.
-    let counted = match editor.kind {
-        crate::sim::LevelKind::Puzzle => fill(tr.ed_posts, &[("n", &editor.posts.to_string())]),
-        crate::sim::LevelKind::Arena => {
-            // The table it seats, which is none while a player is skipped:
-            // the same count the map dial offers it at.
-            let seats = sim.0.table_seats().unwrap_or(0);
-            fill(tr.ed_seats, &[("n", &seats.to_string())])
-        }
+    // What was last said, and nothing else: the signposts, the seats, the
+    // goal and every other setting are rows of the settings card, there
+    // the whole time rather than only after the key that turned them.
+    // A playtest shows what its player would see instead: a stage's
+    // arrows and goal, a beach's scores and time.
+    let status = match editor.test() {
+        Some(test) => crate::app::editor::test_status(tr, test, board),
+        None => editor.feedback.clone(),
     };
-    let status = fill(&counted, &[("msg", &editor.feedback)]);
-    let prompt = match testing {
+    let prompt = match editor.test() {
         // F1's box has the keyboard: Enter keeps the name, Esc puts the
         // old one back (`type_a_name`).
         _ if editor.is_naming() => typing_prompt(tr, true),
-        true => tr.ed_playtest_prompt.to_string(),
-        false => tr.ed_prompt.replacen("WASD", "{moves}", 1),
+        // "My levels" has the keys (`editor::editor_levels_input`).
+        _ if matches!(editor.mode, crate::app::editor::Mode::Levels(_)) => {
+            tr.ed_levels_keys.to_string()
+        }
+        // Any key puts a card away (`editor::editor_card_input`).
+        _ if editor.card().is_some() => tr.ed_card_close.to_string(),
+        Some(test) => crate::app::editor::test_prompt(tr, test, settings),
+        None => tr.ed_prompt.replacen("WASD", "{moves}", 1),
     };
     HudText::new(title, status, prompt)
+}
+
+/// A stage's status line: the arrows standing of those it grants, and
+/// its goal with the tally toward it. The stage list's own run and the
+/// editor's playtest of a stage both say it this way.
+pub(crate) fn puzzle_status(
+    tr: &Tr,
+    level: &crate::sim::Level,
+    board: &crate::sim::Board,
+) -> String {
+    let used = board.signpost_count(0);
+    let saved = fill(
+        tr.saved_count,
+        &[
+            ("a", &board.crabs_banked().to_string()),
+            (
+                "b",
+                &board.crabs_spawned().max(level.crab_count()).to_string(),
+            ),
+        ],
+    );
+    // What the level asks for. The default goal has nothing to state beyond
+    // the tally of crabs already home; the rest name their own target.
+    let goal = match level.goal {
+        Goal::AllCrabs => saved,
+        Goal::Bank(n) => fill(
+            tr.goal_bank,
+            &[
+                ("a", &board.crabs_banked().to_string()),
+                ("b", &n.to_string()),
+                ("t", ""),
+            ],
+        ),
+        Goal::Survive => fill(tr.goal_survive, &[("t", "")]),
+        Goal::Golden => fill(tr.goal_golden, &[("t", "")]),
+    };
+    // The inventory goes in front of it, on every goal. Printed only under
+    // `AllCrabs`, nine campaign levels named a target without saying how many signposts paid for it, which reads
+    // as "as many as I like". A level that hands out none says so in the
+    // prompt instead.
+    if let Some([left, right]) = level.hands() {
+        let count = fill(
+            &crate::app::name_the_pair(tr, tr.hands_count),
+            &[
+                ("a", &board.signpost_count(0).to_string()),
+                ("b", &left.to_string()),
+                ("c", &board.signpost_count(1).to_string()),
+                ("d", &right.to_string()),
+            ],
+        );
+        return format!("{count} | {goal}");
+    }
+    match level.posts {
+        0 => goal,
+        posts => format!(
+            "{} | {goal}",
+            fill(
+                tr.signposts_count,
+                &[("a", &used.to_string()), ("b", &posts.to_string())]
+            )
+        ),
+    }
+}
+
+/// Whether every arrow a stage grants is down, every hand's on a co-op
+/// stage, which the stage's `posts` totals: the "all arrows placed" line,
+/// the keyboard's and the pad's. Only under a fixed inventory, since on a
+/// level whose rule evicts the next arrow replaces the oldest.
+fn arrows_all_down(level: &crate::sim::Level, board: &crate::sim::Board) -> bool {
+    let hands: u8 = match level.hands() {
+        Some(_) => 2,
+        None => 1,
+    };
+    let used: usize = (0..hands).map(|seat| board.signpost_count(seat)).sum();
+    used >= usize::from(level.posts) && board.signpost_rule().1 == crate::sim::CapPolicy::Reject
 }
 
 pub(super) fn puzzle_text(
@@ -179,81 +296,34 @@ pub(super) fn puzzle_text(
     custom_keys: bool,
 ) -> HudText {
     let level = campaign.current();
-    let campaign_title = match campaign.kind {
-        CampaignKind::TidePool => tr.title_tide_pool,
-        CampaignKind::BeachDay => tr.title_beach_day,
-    };
     // The player's own levels take the stage list's own label for them in
     // place of the list's name, so driftwood three is never read as stage
     // three. In place of, and not as well as: the header bar runs from the
     // window's edge to the clock in its middle, and the longest shipped
     // level name already reaches most of the way there.
-    let crate::app::campaign::Place { at, of, custom } = campaign.place();
-    let section = match custom {
-        true => tr.stage_custom,
-        false => campaign_title,
+    let crate::app::campaign::Place { at, of, section } = campaign.place();
+    let section = match section {
+        crate::app::campaign::Section::Custom => tr.stage_custom,
+        crate::app::campaign::Section::Coop => tr.stage_coop,
+        crate::app::campaign::Section::TidePool => tr.title_tide_pool,
     };
     let title = format!(
         "{section} {at}/{of} - {}",
         campaign.shown_name(campaign.index, lang)
     );
-    let used = sim.0.signpost_count(0);
-    let saved = fill(
-        tr.saved_count,
-        &[
-            ("a", &sim.0.crabs_banked().to_string()),
-            (
-                "b",
-                &sim.0.crabs_spawned().max(level.crab_count()).to_string(),
-            ),
-        ],
-    );
-    // What the level asks for. The default goal has nothing to state beyond
-    // the tally of crabs already home; the rest name their own target.
-    let goal = match level.goal {
-        Goal::AllCrabs => saved,
-        Goal::Bank(n) => fill(
-            tr.goal_bank,
-            &[
-                ("a", &sim.0.crabs_banked().to_string()),
-                ("b", &n.to_string()),
-                ("t", ""),
-            ],
-        ),
-        Goal::Survive => fill(tr.goal_survive, &[("t", "")]),
-        Goal::Golden => fill(tr.goal_golden, &[("t", "")]),
-    };
-    // The inventory goes in front of it, on every goal. Printed only under
-    // `AllCrabs`, nine campaign levels and all eight Beach Day stages named
-    // a target without saying how many signposts paid for it, which reads
-    // as "as many as I like". A level that hands out none says so in the
-    // prompt instead.
-    let status = match level.posts {
-        0 => goal,
-        posts => format!(
-            "{} | {goal}",
-            fill(
-                tr.signposts_count,
-                &[("a", &used.to_string()), ("b", &posts.to_string())]
-            )
-        ),
-    };
+    let status = puzzle_status(tr, level, &sim.0);
     let prompt = match phase.get() {
         Phase::Setup if level.posts == 0 => tr.prompt_setup_no_posts.to_string(),
         Phase::Setup if custom_keys => tr.prompt_setup_custom.to_string(),
         // Two sets of hands, so both sets of keys: the solo line names one.
         Phase::Setup if coop => crate::app::name_the_pair(tr, tr.prompt_setup_coop),
-        // Full is only full under a fixed inventory. A Beach Day stage
-        // evicts: its fourth arrow replaces the oldest, as its own hint
-        // says, so "remove one first" would be wrong there. After the two
+        // Full is only full under a fixed inventory. A player's level file
+        // may state an evicting rule (`rule: evict`), where the next arrow
+        // replaces the oldest, so "remove one first" would be wrong there.
+        // After the two
         // above, because this line names the stock key, and neither a
         // rebound key nor the second pair of hands is Space.
-        Phase::Setup
-            if used >= level.posts as usize
-                && sim.0.signpost_rule().1 == crate::sim::CapPolicy::Reject =>
-        {
-            tr.prompt_setup_full.to_string()
-        }
+        Phase::Setup if arrows_all_down(level, &sim.0) => tr.prompt_setup_full.to_string(),
         Phase::Setup => tr.prompt_setup.to_string(),
         Phase::Running => tr.prompt_running.to_string(),
         // On the last level the card says the run is over and Enter goes
@@ -301,6 +371,8 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         vphase,
         tournament,
         speed,
+        rematch,
+        keep,
         ..
     } = *r;
     let scores = sim.0.scores();
@@ -345,8 +417,17 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
     // status slot carries only banners.
     let mut status = if viewer == Viewer::Replay && speed > 1 {
         let next = crate::app::replays::PlaybackSpeed(speed).stepped().0;
+        // The button that steps the speed, on a pad's line: the replay
+        // table's, as the transport reads it.
+        let template = match (
+            r.device,
+            scheme::button_name(r.face, scheme::Does::Speed, tr),
+        ) {
+            (LastDevice::Pad, Some(button)) => fill(tr.pad.replay_speed, &[("b", &button)]),
+            _ => tr.replay_speed.to_string(),
+        };
         fill(
-            tr.replay_speed,
+            &template,
             &[("n", &speed.to_string()), ("next", &next.to_string())],
         )
     } else if sim.0.in_surge() && !sim.0.round_over() {
@@ -383,6 +464,9 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
             status = fill(tr.desync, &[("f", &frame.to_string())]);
         } else if !session.transport.connected() {
             status = tr.waiting_peer.to_string();
+        } else if *vphase.get() == VersusPhase::Over && !session.is_host() && session.picking_map {
+            // The table waits on the host's map page for the next round.
+            status = tr.host_picking_next.to_string();
         } else if let Some(seat) = session.waiting_on() {
             // Decided once a frame by the session rather than read off the
             // stall clock here: at three frames of input delay a moment's
@@ -462,7 +546,13 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
                 None => format!(
                     "{} | {}",
                     tr.lobby_chat_hint,
-                    crate::app::play_input::enter_door(tr, online, tournament.is_running())
+                    crate::app::rematch::over_prompt(
+                        tr,
+                        online,
+                        tournament.is_running(),
+                        rematch,
+                        keep
+                    )
                 ),
             }
         }
@@ -489,8 +579,13 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         // key itself reads: a finished lobby match goes back to the lobby
         // together, a series plays on, and the prompt must not promise a
         // door the key does not open.
+        // The host's map page for the next round has the keys.
+        VersusPhase::Over if crate::app::next_map::page_up(r.match_menu) => match r.map_pick {
+            true => tr.series_pick_prompt.to_string(),
+            false => tr.series_pick_prompt_no_pick.to_string(),
+        },
         VersusPhase::Over => {
-            crate::app::play_input::enter_door(tr, online, tournament.is_running()).to_string()
+            crate::app::rematch::over_prompt(tr, online, tournament.is_running(), rematch, keep)
         }
     };
     HudText::new(mode, status, prompt)
@@ -543,6 +638,23 @@ pub(super) struct Readout<'a> {
     /// The host's word on the crowd.
     pub crowd: crate::app::spectators::Crowd,
     pub speed: u8,
+    /// The face of the game whose pad table is in force, as the bridge
+    /// and the screens that read the pad see it.
+    pub face: &'a Face,
+    /// Which hands the player last reached with, which the prompt names
+    /// the controls of.
+    pub device: LastDevice,
+    /// Where the pad's pick stands on a list it picks from.
+    pub pick: PadPick,
+    /// What R plays again on the results card, at a table set up here
+    /// ([`crate::app::rematch::rematch`]).
+    pub rematch: Option<crate::app::rematch::Rematch>,
+    /// What the results card offers the replay shelf
+    /// ([`crate::app::replays::RoundToKeep::offer`]).
+    pub keep: crate::app::replays::KeepOffer,
+    /// Whether a host's map page has its cursor on a card Enter picks
+    /// ([`crate::app::match_setup::card_to_pick`]).
+    pub map_pick: bool,
 }
 
 /// What the header, the status slot and the prompt say on `screen`.
@@ -553,6 +665,12 @@ pub(super) struct Readout<'a> {
 /// remember to carry.
 pub(super) fn screen_text(screen: Screen, r: &Readout) -> HudText {
     let mut said = screen_text_for(screen, r);
+    // A pad's player is told the pad's buttons, from the table the bridge
+    // and the screens read. None of the keyboard's spelling applies.
+    if r.device == LastDevice::Pad {
+        said.prompt = pad_prompt(r);
+        return said;
+    }
     if matches!(screen, Screen::Versus | Screen::Puzzle) {
         // The pause card has the keyboard while it is up, so the line
         // names its keys rather than the beach's: Escape is the way on
@@ -576,14 +694,139 @@ pub(super) fn screen_text(screen: Screen, r: &Readout) -> HudText {
     said
 }
 
+/// The prompt while a pad was the last thing touched: the line in front
+/// of the controls, if the face has one to say, and the face's controls
+/// as its table has them ([`scheme::legend`]).
+pub(super) fn pad_prompt(r: &Readout) -> String {
+    let tr = r.tr;
+    let p = &tr.pad;
+    let lead: Option<String> = match r.face {
+        // A spectator's line as it is typed, in either hands: the box
+        // has no other place on the screen. First, so a line long enough
+        // to crowd the prompt shrinks or wraps the hint beside it and is
+        // never itself what goes.
+        Face::Typing(_) => Some(match r.spectator_typing {
+            Some(line) => format!("> {line}_ | {}", p.steam_keyboard),
+            None => p.steam_keyboard.to_string(),
+        }),
+        Face::Browse { watching: true, .. } => Some(p.watch_armed.to_string()),
+        Face::Browse {
+            watching: false, ..
+        } => Some(match r.lobby.hosts.len() {
+            0 => p.none_yet.to_string(),
+            1 => p.open_game.to_string(),
+            n => fill(p.open_games, &[("n", &n.to_string())]),
+        }),
+        Face::Hosting { .. } => Some(p.hosting.to_string()),
+        // The page's own heading names the table it picks for.
+        Face::HostMap { .. } | Face::NextMap { .. } => None,
+        Face::Kicking { picks, .. } => picks
+            .rows
+            .get(r.pick.row(picks))
+            .map(|(n, who)| fill(p.kick_who, &[("p", &format!("{n}. {who}"))])),
+        Face::Card(picks) => picks
+            .rows
+            .get(r.pick.row(picks))
+            .map(|(n, who)| format!("{n}. {who}")),
+        Face::AtBeach => r.lobby.joined().map(|joined| {
+            match (joined.queued.is_some(), joined.watching, joined.no_chair) {
+                (true, true, _) => p.queued_watch,
+                (true, false, _) => p.queued,
+                (false, true, _) => p.watching,
+                (false, false, true) => p.no_chair,
+                (false, false, false) => p.joined,
+            }
+            .to_string()
+        }),
+        Face::PuzzleSetup { posts: false, .. } => Some(p.no_posts.to_string()),
+        Face::PuzzleSetup { posts: true, .. } => {
+            // Full as the keyboard's line has it.
+            arrows_all_down(r.campaign.current(), &r.sim.0).then(|| p.full.to_string())
+        }
+        Face::PuzzleRunning => Some(p.running.to_string()),
+        Face::PuzzleWon { last: true } => Some(p.last_level.to_string()),
+        Face::PuzzleWon { last: false } => Some(
+            match r.campaign.current().goal.saves_every_crab() {
+                true => p.won,
+                false => p.won_goal,
+            }
+            .to_string(),
+        ),
+        Face::PuzzleLost { .. } => Some(
+            match r.campaign.current().goal.saves_every_crab() {
+                true => p.lost,
+                false => p.lost_goal,
+            }
+            .to_string(),
+        ),
+        Face::Watching { .. } => spectator_call(r),
+        Face::Results { keep, .. } | Face::Interlude { keep } => {
+            crate::app::replays::kept_lead(tr, *keep).map(String::from)
+        }
+        // Held, the second layer's buttons are Select and each of them.
+        Face::Editor { layer: true } => Some(format!("{} +", Pad::Select.name(tr))),
+        Face::Menu
+        | Face::Quitting
+        | Face::Settings
+        | Face::Controls
+        | Face::MatchSetup { .. }
+        | Face::StageSelect { .. }
+        | Face::Replays
+        | Face::Achievements
+        | Face::Language
+        | Face::NewVersion
+        | Face::Door { .. }
+        | Face::Paused
+        | Face::Round
+        | Face::Replay
+        | Face::Editor { layer: false }
+        | Face::LevelList
+        | Face::EditorCard
+        | Face::LevelCard
+        | Face::Playtest(_) => None,
+    };
+    let controls = scheme::legend(tr, r.face);
+    match (lead, r.face) {
+        (Some(lead), Face::Editor { layer: true }) => format!("{lead} {controls}"),
+        (Some(lead), _) => format!("{lead} | {controls}"),
+        (None, _) => controls,
+    }
+}
+
+/// What a spectator's calls stand at, for the pad's line: a vote open or
+/// waited on, and the winner still to call or called. The keyboard's line
+/// says the same with its keys in it.
+fn spectator_call(r: &Readout) -> Option<String> {
+    let tr = r.tr;
+    let vote = match (r.sim.0.events_enabled(), r.crowd.open, r.crowd.wait) {
+        (false, ..) | (true, 0, 0) => None,
+        (true, 0, wait) => Some(fill(tr.spectator_wait, &[("n", &wait.to_string())])),
+        (true, open, _) => Some(fill(tr.spectator_vote_open, &[("n", &open.to_string())])),
+    };
+    let session = r.online.0.as_ref();
+    let open = session.map_or(0, |s| s.stands.winner.picks.open);
+    match (open, session.and_then(|s| s.stands.winner.my_pick)) {
+        (0, _) => vote,
+        (n, None) => Some(fill(tr.pad.pick_open, &[("n", &n.to_string())])),
+        (n, Some(seat)) => Some(fill(
+            tr.spectator_picked,
+            &[("p", &r.names.label(tr, seat)), ("n", &n.to_string())],
+        )),
+    }
+}
+
 pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
     match screen {
         // The menu's status slot carries word of a code that would not
-        // load: the only news the menu ever has.
+        // load: the only news the menu ever has. Under the quit card the
+        // line is the card's keys, Esc going back there rather than out.
         Screen::Menu => HudText::new(
             String::new(),
             r.notice.0.clone(),
-            r.tr.menu_prompt.to_string(),
+            match matches!(r.face, Face::Quitting) {
+                true => crate::app::menu_scene::quit_card_keys(r.tr, LastDevice::Keyboard),
+                false => r.tr.menu_prompt.to_string(),
+            },
         ),
         Screen::Settings => HudText::new(
             r.tr.title_settings.to_string(),
@@ -598,7 +841,7 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
         Screen::MatchSetup => HudText::new(
             r.tr.title_match_setup.to_string(),
             String::new(),
-            match_setup_prompt(r.tr, r.match_menu),
+            match_setup_prompt(r.tr, r.match_menu, r.face),
         ),
         Screen::Achievements => HudText::new(
             r.tr.title_achievements.to_string(),
@@ -611,32 +854,33 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
             r.tr.prompt_replays.to_string(),
         ),
         Screen::StageSelect => HudText::new(
-            format!(
-                "{} - {}",
-                match r.campaign.kind {
-                    CampaignKind::TidePool => r.tr.title_tide_pool,
-                    CampaignKind::BeachDay => r.tr.title_beach_day,
-                },
-                r.tr.title_stages
-            ),
-            match r.coop {
-                true => r.tr.stage_coop_on.to_string(),
-                false => String::new(),
+            format!("{} - {}", r.tr.title_tide_pool, r.tr.title_stages),
+            // A code copied off one of the player's own stages, or why
+            // not, over the co-op line.
+            match (r.notice.0.is_empty(), r.coop) {
+                (false, _) => r.notice.0.clone(),
+                (true, true) => crate::app::name_the_pair(r.tr, r.tr.stage_coop_on),
+                (true, false) => String::new(),
             },
-            // Co-op is the Tide Pool's alone (see `app::Coop`), so only its
-            // list offers the key.
-            match r.campaign.kind {
-                CampaignKind::TidePool => r.tr.prompt_stages_tide.to_string(),
-                CampaignKind::BeachDay => r.tr.prompt_stages.to_string(),
+            // The player's own stages are theirs to edit and share, which
+            // the pad's table answers to on the same face.
+            match matches!(r.face, Face::StageSelect { custom: true }) {
+                true => r.tr.prompt_stages_custom.to_string(),
+                false => r.tr.prompt_stages.to_string(),
             },
         ),
+        // Nothing to press but the round just played, while it can still
+        // be kept: the same offer the results card made, which survives
+        // into the doorway to the next round.
         Screen::Interlude => HudText::new(
             r.tr.title_turf_war.to_string(),
             String::new(),
-            String::new(),
+            crate::app::replays::keep_words(r.tr, r.keep)
+                .unwrap_or_default()
+                .to_string(),
         ),
-        Screen::Lobby => lobby_text(r.tr, r.lobby),
-        Screen::Editor => editor_text(r.tr, r.editor, r.sim),
+        Screen::Lobby => lobby_text(r.tr, r.lobby, r.map_pick),
+        Screen::Editor => editor_text(r.tr, r.editor, &r.sim.0, r.settings),
         Screen::Puzzle => puzzle_text(
             r.tr,
             r.lang,
@@ -770,8 +1014,45 @@ mod tests {
                 spectator_typing: None,
                 crowd: Default::default(),
                 speed: 1,
+                face: &Face::Menu,
+                device: LastDevice::Keyboard,
+                pick: PadPick::default(),
+                rematch: None,
+                keep: crate::app::replays::KeepOffer::Nothing,
+                map_pick: true,
             }
         }
+    }
+
+    /// A pad's player on a co-op stage is told every arrow is down once
+    /// both hands are, as the keyboard's line reads it: the stage's
+    /// `posts` is the two hands together, and P1's alone never reach it.
+    #[test]
+    fn a_pad_says_full_when_both_hands_are_down() {
+        let level = crate::sim::coop_levels().remove(0);
+        let mut board = level.board();
+        let fx = |board: &Board| Fixture {
+            sim: Sim(board.clone()),
+            campaign: Campaign::tide_pool_of(vec![level.clone()]),
+            ..Fixture::default()
+        };
+        let face = Face::PuzzleSetup {
+            posts: true,
+            hint: false,
+        };
+        let pad = |fx: &Fixture| {
+            pad_prompt(&Readout {
+                face: &face,
+                device: LastDevice::Pad,
+                ..fx.readout()
+            })
+        };
+        assert!(!pad(&fx(&board)).starts_with(EN.pad.full), "none down");
+        level
+            .place_solution(&mut board)
+            .expect("its solution goes down");
+        let full = pad(&fx(&board));
+        assert!(full.starts_with(EN.pad.full), "{full}");
     }
 
     /// Every screen has to say what it is and what the keys do: one added
@@ -789,7 +1070,8 @@ mod tests {
                 assert!(!title.is_empty(), "{screen:?} has no header");
             }
             // The interlude is a between-rounds breather with nothing to
-            // press; everything else tells you a key.
+            // press but the keep key, and no round to keep here; everything
+            // else tells you a key.
             if screen != Screen::Interlude {
                 assert!(!prompt.is_empty(), "{screen:?} offers no keys");
             }
@@ -838,6 +1120,34 @@ mod tests {
         }
     }
 
+    /// Under the main menu's quit card the keyboard's line is the card's
+    /// keys, the ones `menu_input` reads there: Esc goes back, so the
+    /// menu's "Esc: quit" would be a line that lies.
+    #[test]
+    fn the_quit_cards_line_names_its_keys() {
+        let fx = Fixture::default();
+        let tr = fx.settings.tr();
+        let menu = screen_text(Screen::Menu, &fx.readout()).prompt;
+        assert_eq!(menu, tr.menu_prompt);
+        let quitting = Readout {
+            face: &Face::Quitting,
+            ..fx.readout()
+        };
+        assert_eq!(
+            screen_text(Screen::Menu, &quitting).prompt,
+            "Esc: back | Enter: quit"
+        );
+        let pad = Readout {
+            face: &Face::Quitting,
+            device: LastDevice::Pad,
+            ..fx.readout()
+        };
+        assert_eq!(
+            screen_text(Screen::Menu, &pad).prompt,
+            crate::app::menu_scene::quit_card_keys(tr, LastDevice::Pad)
+        );
+    }
+
     /// The editor header names the mode it is in and carries the solver's
     /// last word; playtesting swaps both the title and the key legend.
     /// The speed line names where S goes next, from the same step the key
@@ -871,46 +1181,46 @@ mod tests {
         editor.posts = 3;
         editor.name = "Gull Alley".into();
         editor.feedback = "solvable: 2".into();
-        // Two castles on the sand, so the beach reading has something to
-        // count when the kind is flipped.
-        let mut board = Board::new(9, 7, 1);
-        board.set_tile(0, 0, crate::sim::TileKind::Castle(0));
-        board.set_tile(8, 6, crate::sim::TileKind::Castle(1));
-        let sim = Sim(board);
         let HudText {
             title,
             status,
             prompt,
-        } = editor_text(&EN, &editor, &sim);
+        } = editor_text(&EN, &editor, &Board::new(4, 4, 0), &GameSettings::default());
         assert!(title.starts_with(EN.title_editor), "{title}");
         assert!(title.contains("Gull Alley"), "the name is on the header");
         // And what is being built, which decides which list it saves to.
         assert!(title.contains(EN.ed_kind_puzzle), "{title}");
-        assert!(status.contains('3') && status.contains("solvable: 2"));
+        // The status is what was last said; the settings are on the card.
+        assert_eq!(status, "solvable: 2");
         assert_eq!(prompt, EN.ed_prompt.replacen("WASD", "{moves}", 1));
 
-        // As a beach the status counts seats instead of an inventory the
-        // match will never read.
         editor.kind = crate::sim::LevelKind::Arena;
-        let beach = editor_text(&EN, &editor, &sim);
+        let beach = editor_text(&EN, &editor, &Board::new(4, 4, 0), &GameSettings::default());
         assert!(beach.title.contains(EN.ed_kind_arena), "{}", beach.title);
-        assert_eq!(beach.status, "seats: 2 | solvable: 2", "{}", beach.status);
+        assert_eq!(beach.status, "solvable: 2", "{}", beach.status);
         editor.kind = crate::sim::LevelKind::Puzzle;
 
         // Typing shows a caret, so it is obvious the keyboard is spelling a
         // name rather than picking brushes.
         editor.mode = crate::app::editor::Mode::Naming { was: String::new() };
-        let typing = editor_text(&EN, &editor, &sim);
+        let typing = editor_text(&EN, &editor, &Board::new(4, 4, 0), &GameSettings::default());
         assert!(typing.title.ends_with('_'), "{}", typing.title);
         // And the prompt names the box's keys, not the brushes': every one
         // of those is a letter until Enter or Esc.
         assert_eq!(typing.prompt, EN.prompt_typing);
         editor.mode = crate::app::editor::Mode::Painting;
 
-        editor.mode = crate::app::editor::Mode::Testing(Box::new(Board::new(4, 4, 0)));
-        let HudText { title, prompt, .. } = editor_text(&EN, &editor, &sim);
+        editor.mode = crate::app::editor::Mode::testing(Board::new(4, 4, 0));
+        let HudText {
+            title,
+            status,
+            prompt,
+        } = editor_text(&EN, &editor, &Board::new(4, 4, 0), &GameSettings::default());
         assert_eq!(title, EN.title_playtest);
-        assert_eq!(prompt, EN.ed_playtest_prompt);
+        // A running stage: R takes it back, and the line over it is the
+        // stage's own count of arrows and crabs, as the stage list shows it.
+        assert_eq!(prompt, EN.ed_test_retry);
+        assert!(status.starts_with(&fill(EN.signposts_count, &[("a", "0"), ("b", "3")])));
     }
 
     /// The lobby prompt is a small state machine: aboard, broadcasting,
@@ -919,7 +1229,7 @@ mod tests {
     #[test]
     fn the_lobby_prompt_tracks_the_connection_state() {
         let mut lobby = LobbyState::default();
-        assert_eq!(lobby_text(&EN, &lobby).prompt, EN.lobby_none_yet);
+        assert_eq!(lobby_text(&EN, &lobby, true).prompt, EN.lobby_none_yet);
 
         for at in 1..=3u8 {
             lobby.hosts.push(crate::app::lobby::HostEntry {
@@ -938,36 +1248,60 @@ mod tests {
         }
         // The count is the part that matters: a hall with more games than
         // rows should not look like it has only as many as fit.
-        let prompt = lobby_text(&EN, &lobby).prompt;
+        let prompt = lobby_text(&EN, &lobby, true).prompt;
         assert!(prompt.contains('3'), "how many are out there: {prompt}");
 
         lobby.feedback = "hosting on port 47777".into();
-        assert_eq!(lobby_text(&EN, &lobby).status, "hosting on port 47777");
+        assert_eq!(
+            lobby_text(&EN, &lobby, true).status,
+            "hosting on port 47777"
+        );
 
         // A line being typed has every key: the host's Enter sends it and
         // starts nothing, so the line does not offer a start.
         lobby.typing = Some(crate::app::lobby::Typing::chat());
-        assert_eq!(lobby_text(&EN, &lobby).prompt, EN.prompt_typing);
+        assert_eq!(lobby_text(&EN, &lobby, true).prompt, EN.prompt_typing);
     }
 
-    /// While a seat's name is being typed, the setup's W/S and Enter are
-    /// letters and a way out of the box, not the dials and a start.
+    /// Each setup step says its own keys, and while a seat's name is being
+    /// typed, W/S and Enter are letters and a way out of the box, not the
+    /// dials and a start.
     #[test]
-    fn the_match_setup_prompt_follows_the_name_box() {
-        use crate::app::match_setup::{MatchMenu, Row};
-        let name_row = Row::ALL
-            .iter()
-            .position(|row| matches!(row, Row::Name(0)))
-            .expect("a name row");
+    fn the_match_setup_prompt_follows_the_step_and_the_name_box() {
+        use crate::app::match_setup::{MatchMenu, Step};
         let mut menu = MatchMenu {
-            selected: name_row,
+            seat: 1,
             ..MatchMenu::default()
         };
-        assert_eq!(match_setup_prompt(&EN, &menu), EN.prompt_match_name);
+        for (step, line) in [
+            (Step::Game, EN.prompt_setup_game),
+            (Step::Map, EN.prompt_setup_map),
+            (Step::Players, EN.prompt_setup_players),
+        ] {
+            menu.step = step;
+            assert_eq!(match_setup_prompt(&EN, &menu, &Face::Menu), line);
+        }
+        // On player 1's row A/D turns nothing, and the line does not say
+        // it does.
+        menu.seat = 0;
+        let p1 = match_setup_prompt(&EN, &menu, &Face::Menu);
+        assert_eq!(p1, EN.prompt_setup_players_p1);
+        assert!(!p1.contains("A/D") && p1.contains("Tab"), "{p1}");
+        // Under a team mode it ends on the partner key, as the pad's
+        // face offers it.
+        let teams = Face::MatchSetup {
+            step: Step::Players,
+            join: false,
+            partners: true,
+        };
+        let line = match_setup_prompt(&EN, &menu, &teams);
+        assert!(line.ends_with(" | P: partners"), "{line}");
+        menu.seat = 1;
         menu.naming = Some(0);
-        assert_eq!(match_setup_prompt(&EN, &menu), EN.prompt_typing_keep);
-        menu = MatchMenu::default();
-        assert_eq!(match_setup_prompt(&EN, &menu), EN.prompt_match_setup);
+        assert_eq!(
+            match_setup_prompt(&EN, &menu, &Face::Menu),
+            EN.prompt_typing_keep
+        );
     }
 
     /// Three ways to be at somebody else's beach, and three lines.
@@ -983,14 +1317,16 @@ mod tests {
         use crate::app::lobby::{Joined, Standing};
         use crate::transport::UdpTransport;
 
-        let joined = |watching, queued| {
+        let joined_past = |watching, queued, no_chair| {
             let mut lobby = LobbyState::default();
             let mut aboard =
                 Joined::returned(UdpTransport::host(0).expect("socket"), watching, 0, None);
             aboard.queued = queued;
+            aboard.no_chair = no_chair;
             lobby.standing = Standing::Joining(aboard);
-            lobby_text(&EN, &lobby).prompt
+            lobby_text(&EN, &lobby, true).prompt
         };
+        let joined = |watching, queued| joined_past(watching, queued, false);
         assert_eq!(joined(false, None), EN.lobby_aboard_prompt);
         assert_eq!(joined(true, None), EN.lobby_watching_prompt);
         // And a peer in line is waiting for a round that has already
@@ -999,16 +1335,20 @@ mod tests {
         // queued like anybody else, and is not in line for a chair.
         assert_eq!(joined(false, Some(0)), EN.lobby_queued_prompt);
         assert_eq!(joined(true, Some(2)), EN.lobby_queued_watch_prompt);
+        // A player past the table's last chair is not aboard either: the
+        // launch seats it watching.
+        assert_eq!(joined_past(false, None, true), EN.lobby_no_chair_prompt);
         let all = [
             EN.lobby_aboard_prompt,
             EN.lobby_watching_prompt,
             EN.lobby_queued_prompt,
             EN.lobby_queued_watch_prompt,
+            EN.lobby_no_chair_prompt,
         ];
         for (at, line) in all.iter().enumerate() {
             assert!(
                 !all[at + 1..].contains(line),
-                "four standings want four lines: {line}"
+                "each standing wants its own line: {line}"
             );
         }
     }
@@ -1056,6 +1396,44 @@ mod tests {
         }
         assert_eq!(header_viewer(&session(Some(1)), &none), Viewer::Peer(1));
         assert_eq!(header_viewer(&session(None), &none), Viewer::Spectator);
+    }
+
+    /// The host's map page between rounds offers Enter only where Enter
+    /// picks: on a greyed card, or the one saying how to make a map, the
+    /// prompt walks and goes back and says nothing of a next round. The
+    /// lobby's page the same.
+    #[test]
+    fn the_map_pages_prompt_offers_enter_only_on_a_card_it_picks() {
+        let mut fx = Fixture {
+            vphase: State::new(VersusPhase::Over),
+            ..Fixture::default()
+        };
+        fx.match_menu.online = true;
+        fx.match_menu.step = crate::app::match_setup::Step::Map;
+        let said = |map_pick: bool| {
+            versus_text(&Readout {
+                map_pick,
+                ..fx.readout()
+            })
+            .prompt
+        };
+        assert_eq!(said(true), EN.series_pick_prompt);
+        assert_eq!(said(false), EN.series_pick_prompt_no_pick);
+        for lang in crate::app::i18n::ALL_LANGS {
+            let tr = lang.tr();
+            for (line, whole) in [
+                (tr.lobby_pick_prompt_no_pick, tr.lobby_pick_prompt),
+                (tr.series_pick_prompt_no_pick, tr.series_pick_prompt),
+            ] {
+                assert!(!line.contains(tr.key_enter), "{lang:?}: {line}");
+                // The way back, as the whole prompt says it.
+                let back = whole.rsplit(" | ").next().unwrap_or_default();
+                assert!(line.ends_with(back), "{lang:?}: {line}");
+            }
+            for line in [tr.lobby_pick_prompt, tr.series_pick_prompt] {
+                assert!(line.contains(tr.key_enter), "{lang:?}: {line}");
+            }
+        }
     }
 
     /// What the key does right now, in the crowd's own terms. A spectator
@@ -1136,6 +1514,82 @@ mod tests {
 
         for state in [idle, open, wait, both] {
             assert!(state.contains(EN.lobby_chat_hint), "and T is always there");
+        }
+    }
+
+    /// The results card's prompt names the keep key at a keyboard and the
+    /// results table's button on a pad while the round is on offer, says
+    /// it is kept once it is, and says nothing of it with no recording.
+    #[test]
+    fn the_prompt_offers_the_round_in_the_hands_last_used() {
+        use crate::app::play_input::AfterRound;
+        use crate::app::replays::KeepOffer;
+        let fx = Fixture::default();
+        let said = |keep, device| {
+            let face = Face::Results {
+                door: AfterRound::Menu,
+                talk: false,
+                rematch: None,
+                keep,
+            };
+            screen_text(
+                Screen::Versus,
+                &Readout {
+                    vphase: &State::new(VersusPhase::Over),
+                    keep,
+                    device,
+                    face: &face,
+                    ..fx.readout()
+                },
+            )
+            .prompt
+        };
+        let keys = said(KeepOffer::Offered, LastDevice::Keyboard);
+        assert!(keys.contains("G: keep replay"), "{keys}");
+        let pad = said(KeepOffer::Offered, LastDevice::Pad);
+        assert!(pad.contains("X: keep replay"), "{pad}");
+        for device in [LastDevice::Keyboard, LastDevice::Pad] {
+            let kept = said(KeepOffer::Kept, device);
+            assert!(kept.contains(EN.replay_kept), "{device:?}: {kept}");
+            assert!(!kept.contains("keep replay"), "{device:?}: {kept}");
+            let none = said(KeepOffer::Nothing, device);
+            assert!(!none.contains("replay"), "{device:?}: {none}");
+        }
+    }
+
+    /// The interlude's prompt carries the results card's offer on: the
+    /// keep key at a keyboard and X on a pad while the round before it is
+    /// on offer, the word that it is kept once it is, and nothing with no
+    /// round to keep.
+    #[test]
+    fn the_interlude_offers_the_round_before_it() {
+        use crate::app::replays::KeepOffer;
+        let fx = Fixture::default();
+        let said = |keep, device| {
+            let face = Face::Interlude { keep };
+            screen_text(
+                Screen::Interlude,
+                &Readout {
+                    keep,
+                    device,
+                    face: &face,
+                    ..fx.readout()
+                },
+            )
+            .prompt
+        };
+        assert_eq!(
+            said(KeepOffer::Offered, LastDevice::Keyboard),
+            "G: keep replay"
+        );
+        let pad = said(KeepOffer::Offered, LastDevice::Pad);
+        assert!(pad.contains("X: keep replay"), "{pad}");
+        for device in [LastDevice::Keyboard, LastDevice::Pad] {
+            let kept = said(KeepOffer::Kept, device);
+            assert!(kept.contains(EN.replay_kept), "{device:?}: {kept}");
+            assert!(!kept.contains("keep replay"), "{device:?}: {kept}");
+            let none = said(KeepOffer::Nothing, device);
+            assert!(!none.contains("replay"), "{device:?}: {none}");
         }
     }
 
@@ -1499,5 +1953,513 @@ mod tests {
             names.len(),
             "duplicate event names: {names:?}"
         );
+    }
+
+    /// The prompt follows the hands last used: the keyboard's keys, and
+    /// once a pad is touched the pad's buttons, from the face's table, on
+    /// every screen. The header and the status stay as they were.
+    #[test]
+    fn the_prompt_follows_the_hands_last_used() {
+        let fx = Fixture::default();
+        let keys = fx.readout();
+        let pad = Readout {
+            device: LastDevice::Pad,
+            ..fx.readout()
+        };
+        let said = screen_text(Screen::Menu, &keys);
+        assert!(said.prompt.contains("Enter: play"), "{}", said.prompt);
+        let said = screen_text(Screen::Menu, &pad);
+        assert_eq!(said.prompt, scheme::legend(&EN, &Face::Menu));
+        assert!(said.prompt.contains("A: play"), "{}", said.prompt);
+        // Each screen with the face it shows at rest, and the pad's line
+        // there ends on that face's own legend: a screen whose prompt came
+        // off another face's table would name buttons that do nothing.
+        let mut legends = Vec::new();
+        for screen in Screen::ALL {
+            let face = match screen {
+                Screen::Menu => Face::Menu,
+                Screen::Settings => Face::Settings,
+                Screen::Controls => Face::Controls,
+                Screen::MatchSetup => Face::MatchSetup {
+                    step: crate::app::match_setup::Step::Game,
+                    join: true,
+                    partners: false,
+                },
+                Screen::Achievements => Face::Achievements,
+                Screen::Replays => Face::Replays,
+                Screen::StageSelect => Face::StageSelect { custom: false },
+                Screen::Interlude => Face::Interlude {
+                    keep: crate::app::replays::KeepOffer::Nothing,
+                },
+                Screen::Lobby => Face::Browse {
+                    hosts: false,
+                    watching: false,
+                },
+                Screen::Editor => Face::Editor { layer: false },
+                Screen::Puzzle => Face::PuzzleSetup {
+                    posts: true,
+                    hint: false,
+                },
+                Screen::Versus => Face::Round,
+                Screen::Language => Face::Language,
+                Screen::NewVersion => Face::NewVersion,
+            };
+            let keyboard = screen_text(
+                screen,
+                &Readout {
+                    face: &face,
+                    ..fx.readout()
+                },
+            );
+            let pads = screen_text(
+                screen,
+                &Readout {
+                    face: &face,
+                    device: LastDevice::Pad,
+                    ..fx.readout()
+                },
+            );
+            let legend = scheme::legend(&EN, &face);
+            assert_eq!(keyboard.title, pads.title, "{screen:?}");
+            assert!(
+                pads.prompt.ends_with(&legend),
+                "{screen:?}: {:?} is not {face:?}'s legend {legend:?}",
+                pads.prompt
+            );
+            assert_ne!(keyboard.prompt, pads.prompt, "{screen:?} did not switch");
+            legends.push((screen, legend));
+        }
+        // And the faces are told apart: no two screens share one line.
+        for (i, (screen, legend)) in legends.iter().enumerate() {
+            for (other, theirs) in &legends[i + 1..] {
+                assert_ne!(legend, theirs, "{screen:?} and {other:?}");
+            }
+        }
+    }
+
+    /// A pad's prompt names each button with what it does, in the words
+    /// of the table, and the line in front of the controls where the face
+    /// has something to say first.
+    #[test]
+    fn a_pads_prompt_leads_with_what_the_face_has_to_say() {
+        let fx = Fixture::default();
+        let pad = |face: &Face| {
+            pad_prompt(&Readout {
+                face,
+                device: LastDevice::Pad,
+                ..fx.readout()
+            })
+        };
+        assert_eq!(
+            pad(&Face::PuzzleRunning),
+            format!("{} | Y: reset | Start: pause", EN.pad.running)
+        );
+        assert!(
+            pad(&Face::Typing(scheme::TextBox::Cancels))
+                .starts_with("Steam + X: keyboard | A: confirm")
+        );
+        assert_eq!(
+            pad(&Face::Editor { layer: true }),
+            format!(
+                "Select + {}",
+                scheme::legend(&EN, &Face::Editor { layer: true })
+            )
+        );
+        let picks = scheme::Picks {
+            list: scheme::PickList::Kick,
+            rows: vec![(2, "Ann".to_string()), (3, "Bob".to_string())],
+        };
+        assert!(
+            pad(&Face::Kicking {
+                picks,
+                pages: false
+            })
+            .starts_with("Ask who to leave? 2. Ann |"),
+            "the pick stands on the first row"
+        );
+    }
+
+    /// A spectator typing a line on a pad sees the line, as at a keyboard,
+    /// with the pad's hint after it.
+    #[test]
+    fn a_spectators_line_shows_while_a_pad_is_in_hand() {
+        let fx = Fixture::default();
+        let face = Face::Typing(scheme::TextBox::Cancels);
+        let said = screen_text(
+            Screen::Versus,
+            &Readout {
+                face: &face,
+                device: LastDevice::Pad,
+                spectator_typing: Some("nice save"),
+                ..fx.readout()
+            },
+        );
+        assert_eq!(
+            said.prompt,
+            format!(
+                "> nice save_ | {} | {}",
+                EN.pad.steam_keyboard,
+                scheme::legend(&EN, &face)
+            )
+        );
+    }
+
+    /// Each screen a line is shown on, and whether a recording is playing
+    /// there.
+    type Shown = Vec<(Screen, bool)>;
+
+    /// Where a pad's face is shown: each screen it can stand on, and
+    /// whether a recording is playing there. A face on more than one has
+    /// to fit the tightest of them.
+    fn face_screens(face: &Face) -> Shown {
+        use scheme::TextBox;
+        let live = |screen| vec![(screen, false)];
+        match face {
+            Face::Menu | Face::Quitting | Face::LevelCard => live(Screen::Menu),
+            Face::Settings => live(Screen::Settings),
+            Face::Controls => live(Screen::Controls),
+            Face::MatchSetup { .. } | Face::Typing(TextBox::Keeps) => live(Screen::MatchSetup),
+            Face::StageSelect { .. } => live(Screen::StageSelect),
+            Face::Replays => live(Screen::Replays),
+            Face::Achievements => live(Screen::Achievements),
+            Face::Language => live(Screen::Language),
+            Face::NewVersion => live(Screen::NewVersion),
+            Face::Interlude { .. } => live(Screen::Interlude),
+            Face::Door { .. } => vec![(Screen::MatchSetup, false), (Screen::Lobby, false)],
+            Face::Typing(TextBox::Chat)
+            | Face::Browse { .. }
+            | Face::Hosting { .. }
+            | Face::Kicking { .. }
+            | Face::AtBeach => live(Screen::Lobby),
+            Face::HostMap { .. } => live(Screen::Lobby),
+            // Over the results card between rounds.
+            Face::NextMap { .. } => live(Screen::Versus),
+            Face::Typing(TextBox::Cancels) => vec![
+                (Screen::Editor, false),
+                (Screen::Lobby, false),
+                (Screen::Versus, false),
+            ],
+            Face::PuzzleSetup { .. }
+            | Face::PuzzleRunning
+            | Face::PuzzleWon { .. }
+            | Face::PuzzleLost { .. } => live(Screen::Puzzle),
+            Face::Paused => vec![(Screen::Puzzle, false), (Screen::Versus, false)],
+            Face::Round | Face::Watching { .. } | Face::Card(_) => live(Screen::Versus),
+            Face::Replay => vec![(Screen::Versus, true)],
+            // A recording runs on to its own results.
+            Face::Results { .. } => vec![(Screen::Versus, false), (Screen::Versus, true)],
+            Face::Editor { .. } | Face::LevelList | Face::EditorCard | Face::Playtest(_) => {
+                live(Screen::Editor)
+            }
+        }
+    }
+
+    /// Every line a pad's prompt can show in `tr`, with the longest line
+    /// each face can lead with, and where it is shown.
+    fn pad_prompts(tr: &'static Tr) -> Vec<(Shown, String)> {
+        let p = &tr.pad;
+        let name = "W".repeat(crate::app::settings::NAME_MAX);
+        let n = |template: &str| fill(template, &[("n", "99"), ("p", &format!("9. {name}"))]);
+        let longest_event = tr
+            .events
+            .iter()
+            .max_by_key(|e| crate::app::i18n::metrics::display_px(e, 1.0) as u32)
+            .copied()
+            .unwrap_or("");
+        let mut out = Vec::new();
+        for face in crate::app::gamepad::face::every_face() {
+            let leads: Vec<String> = match &face {
+                Face::Typing(_) => vec![p.steam_keyboard.to_string()],
+                Face::Browse { .. } => [p.watch_armed, p.none_yet, p.open_game, p.open_games]
+                    .map(n)
+                    .to_vec(),
+                Face::Hosting { .. } => vec![p.hosting.to_string()],
+                Face::HostMap { .. } | Face::NextMap { .. } => vec![String::new()],
+                Face::Kicking { .. } => vec![n(p.kick_who)],
+                Face::Card(_) => vec![format!("9. {longest_event}"), format!("6. {name}")],
+                Face::AtBeach => [p.queued_watch, p.queued, p.watching, p.no_chair, p.joined]
+                    .map(String::from)
+                    .to_vec(),
+                Face::PuzzleSetup { posts: false, .. } => vec![p.no_posts.to_string()],
+                Face::PuzzleSetup { posts: true, .. } => {
+                    vec![String::new(), p.full.to_string()]
+                }
+                Face::PuzzleRunning => vec![p.running.to_string()],
+                Face::PuzzleWon { .. } => {
+                    [p.last_level, p.won, p.won_goal].map(String::from).to_vec()
+                }
+                Face::PuzzleLost { .. } => [p.lost, p.lost_goal].map(String::from).to_vec(),
+                Face::Watching { .. } => [
+                    tr.spectator_wait,
+                    tr.spectator_vote_open,
+                    p.pick_open,
+                    tr.spectator_picked,
+                ]
+                .map(n)
+                .to_vec(),
+                Face::Editor { layer: true } => vec![format!("{} +", Pad::Select.name(tr))],
+                Face::Results { keep, .. } | Face::Interlude { keep } => {
+                    vec![
+                        crate::app::replays::kept_lead(tr, *keep)
+                            .map_or_else(String::new, String::from),
+                    ]
+                }
+                Face::Menu
+                | Face::Quitting
+                | Face::Settings
+                | Face::Controls
+                | Face::MatchSetup { .. }
+                | Face::StageSelect { .. }
+                | Face::Replays
+                | Face::Achievements
+                | Face::Language
+                | Face::NewVersion
+                | Face::Door { .. }
+                | Face::Paused
+                | Face::Round
+                | Face::Replay
+                | Face::Editor { layer: false }
+                | Face::LevelList
+                | Face::EditorCard
+                | Face::LevelCard
+                | Face::Playtest(_) => vec![String::new()],
+            };
+            let controls = scheme::legend(tr, &face);
+            for lead in leads {
+                let line = match (lead.is_empty(), &face) {
+                    (true, _) => controls.clone(),
+                    (false, Face::Editor { layer: true }) => format!("{lead} {controls}"),
+                    (false, _) => format!("{lead} | {controls}"),
+                };
+                out.push((face_screens(&face), line));
+            }
+        }
+        out
+    }
+
+    /// A table whose results card opens `door`, as `after_round` reads it
+    /// with a series running only for the next round.
+    fn door_online(door: crate::app::play_input::AfterRound) -> Online {
+        use crate::app::play_input::{AfterRound, after_round};
+        let online = match door {
+            AfterRound::NextRound | AfterRound::Menu => Online::default(),
+            AfterRound::NextMap => Online(Some(crate::app::net::OnlineSession::new(
+                crate::transport::UdpTransport::host(0).expect("socket"),
+                crate::sim::Lockstep::new(0, vec![0, 1], crate::sim::DEFAULT_DELAY),
+                2,
+                crate::transport::MatchTerms::default(),
+            ))),
+            AfterRound::Lobby => {
+                let mut session = crate::app::net::OnlineSession::new(
+                    crate::transport::UdpTransport::host(0).expect("socket"),
+                    crate::sim::Lockstep::observer(vec![0, 1], crate::sim::DEFAULT_DELAY),
+                    2,
+                    crate::transport::MatchTerms::default(),
+                );
+                session.home.from_lobby = true;
+                Online(Some(session))
+            }
+        };
+        let series_on = matches!(door, AfterRound::NextRound | AfterRound::NextMap);
+        assert_eq!(after_round(&online, series_on), door);
+        online
+    }
+
+    /// Every line the keyboard's prompt can show in `lang`, and the screen
+    /// it is shown on and whether a recording is playing there. Built
+    /// through the functions the screens call, so a line made of parts is
+    /// measured whole, the mute key the play screens add included; the
+    /// numbers and names in it are the widest they come.
+    fn keyboard_prompts(lang: Lang) -> Vec<(Screen, bool, String)> {
+        let fx = Fixture {
+            settings: GameSettings {
+                language: lang,
+                ..GameSettings::default()
+            },
+            ..Fixture::default()
+        };
+        let tr = fx.settings.tr();
+        let name = "W".repeat(crate::app::settings::NAME_MAX);
+        let mut out = Vec::new();
+        // The screens with one line, as the screen itself says it.
+        for screen in [
+            Screen::Menu,
+            Screen::Settings,
+            Screen::Controls,
+            Screen::Achievements,
+            Screen::Replays,
+            Screen::StageSelect,
+            Screen::Language,
+            Screen::NewVersion,
+            Screen::Editor,
+        ] {
+            out.push((screen, false, screen_text(screen, &fx.readout()).prompt));
+        }
+        out.push((
+            Screen::StageSelect,
+            false,
+            tr.prompt_stages_custom.to_string(),
+        ));
+        for line in [
+            tr.prompt_setup_game.to_string(),
+            tr.prompt_setup_map.to_string(),
+            tr.prompt_setup_players.to_string(),
+            tr.prompt_setup_players_p1.to_string(),
+            format!("{} | {}", tr.prompt_setup_players, tr.prompt_setup_partners),
+            format!(
+                "{} | {}",
+                tr.prompt_setup_players_p1, tr.prompt_setup_partners
+            ),
+            typing_prompt(tr, false),
+        ] {
+            out.push((Screen::MatchSetup, false, line));
+        }
+        let spell =
+            |line: &str| crate::app::editor::spell_editor_keys(line, tr, &fx.keycaps, &fx.settings);
+        for line in [
+            typing_prompt(tr, true),
+            spell(tr.ed_playtest_prompt),
+            spell(tr.ed_test_setup),
+            spell(&crate::app::name_the_pair(tr, tr.ed_test_setup_coop)),
+            spell(tr.ed_test_setup_coop_custom),
+            spell(tr.ed_test_retry),
+            tr.ed_levels_keys.to_string(),
+        ] {
+            out.push((Screen::Editor, false, line));
+        }
+        let kick = format!(
+            "{} | 7. {name}  8. {name}  9. {name} | {}",
+            tr.lobby_kick_ask,
+            fill(tr.lobby_kick_more, &[("p", "9"), ("n", "9")])
+        );
+        for line in [
+            typing_prompt(tr, true),
+            tr.lobby_watch_armed.to_string(),
+            tr.lobby_queued_watch_prompt.to_string(),
+            tr.lobby_queued_prompt.to_string(),
+            tr.lobby_watching_prompt.to_string(),
+            tr.lobby_no_chair_prompt.to_string(),
+            tr.lobby_aboard_prompt.to_string(),
+            kick,
+            tr.lobby_broadcasting.to_string(),
+            format!("{} | {}", tr.lobby_broadcasting, tr.prompt_setup_partners),
+            fill(tr.lobby_partner_prompt, &[("n", "6")]),
+            tr.lobby_pick_prompt.to_string(),
+            tr.lobby_pick_prompt_no_pick.to_string(),
+            tr.lobby_none_yet.to_string(),
+            tr.lobby_join_list_one.to_string(),
+            fill(tr.lobby_join_list, &[("n", "99")]),
+        ] {
+            out.push((Screen::Lobby, false, line));
+        }
+        // The play screens add the mute key to whatever they say.
+        let mut play = |screen, replaying, line: String| {
+            let line = fx.keycaps.legend(&format!("{line} | {}", tr.prompt_mute));
+            out.push((screen, replaying, line));
+        };
+        for line in [
+            tr.prompt_setup_no_posts.to_string(),
+            tr.prompt_setup_custom.to_string(),
+            crate::app::name_the_pair(tr, tr.prompt_setup_coop),
+            tr.prompt_setup_full.to_string(),
+            tr.prompt_setup.to_string(),
+            tr.prompt_running.to_string(),
+            tr.last_level.to_string(),
+            tr.prompt_won.to_string(),
+            tr.prompt_won_goal.to_string(),
+            tr.prompt_lost.to_string(),
+            tr.prompt_lost_goal.to_string(),
+            tr.prompt_paused.to_string(),
+        ] {
+            play(Screen::Puzzle, false, line);
+        }
+        let mut versus = vec![
+            tr.prompt_versus_custom.to_string(),
+            tr.prompt_versus_short.to_string(),
+            tr.prompt_versus_local.to_string(),
+            tr.prompt_paused.to_string(),
+        ];
+        let rest = format!("{} | {}", tr.lobby_chat_hint, tr.prompt_esc_menu);
+        versus.push(rest.clone());
+        versus.push(tr.series_pick_prompt.to_string());
+        versus.push(tr.series_pick_prompt_no_pick.to_string());
+        for call in [
+            tr.spectator_call_hint.to_string(),
+            fill(tr.spectator_wait, &[("n", "99")]),
+            fill(tr.spectator_vote_open, &[("n", "99")]),
+            fill(tr.spectator_pick_hint, &[("n", "99")]),
+            fill(tr.spectator_picked, &[("p", &name), ("n", "99")]),
+        ] {
+            versus.push(format!("{call} | {rest}"));
+        }
+        // The results card's line, as `over_prompt` builds it, for every
+        // door, rematch and offer to keep the round, and a spectator's
+        // with the chat key in front.
+        {
+            use crate::app::play_input::AfterRound;
+            use crate::app::rematch::Rematch;
+            use crate::app::replays::KeepOffer;
+            for door in [
+                AfterRound::NextRound,
+                AfterRound::NextMap,
+                AfterRound::Lobby,
+                AfterRound::Menu,
+            ] {
+                let online = door_online(door);
+                let series_on = matches!(door, AfterRound::NextRound | AfterRound::NextMap);
+                for keep in [KeepOffer::Nothing, KeepOffer::Offered, KeepOffer::Kept] {
+                    let over = |again| {
+                        crate::app::rematch::over_prompt(tr, &online, series_on, again, keep)
+                    };
+                    versus.push(format!("{} | {}", tr.lobby_chat_hint, over(None)));
+                    for again in [
+                        None,
+                        Some(Rematch::Round),
+                        Some(Rematch::Series),
+                        Some(Rematch::SeriesAsked),
+                    ] {
+                        versus.push(over(again));
+                    }
+                }
+            }
+        }
+        for line in versus {
+            play(Screen::Versus, false, line);
+        }
+        play(Screen::Versus, true, tr.prompt_replay_transport.to_string());
+        out
+    }
+
+    /// Every prompt in every language, from the keyboard and from a pad,
+    /// fits the line its screen sets it on ([`super::super::prompt_band`]):
+    /// one row at full size on the card screens and under a replay, one
+    /// row shrunk no further than the fine print over the crab legend, and
+    /// two rows where the screen keeps a second clear. At the narrowest the
+    /// interface is, which is also the Steam Deck's 1280.
+    ///
+    /// A line too long wraps up over the card above it, or over the legend.
+    #[test]
+    fn every_prompt_fits_its_band() {
+        use super::super::{prompt_band, prompt_fits};
+        let mut long = Vec::new();
+        for lang in crate::app::i18n::ALL_LANGS {
+            let mut lines: Vec<(Shown, String, &str)> = keyboard_prompts(lang)
+                .into_iter()
+                .map(|(screen, replaying, line)| (vec![(screen, replaying)], line, "keys"))
+                .collect();
+            lines.extend(
+                pad_prompts(lang.tr())
+                    .into_iter()
+                    .map(|(screens, line)| (screens, line, "pad")),
+            );
+            for (screens, line, hands) in lines {
+                for (screen, replaying) in screens {
+                    if let Err(why) = prompt_fits(prompt_band(screen, replaying), &line) {
+                        long.push(format!("{lang:?} {hands} {screen:?}: {why}: {line}"));
+                    }
+                }
+            }
+        }
+        assert!(long.is_empty(), "too long:\n{}", long.join("\n"));
     }
 }

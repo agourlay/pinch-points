@@ -6,7 +6,7 @@ use pinch_points::sim::{
     Board, CrabKind, DEFAULT_DELAY, Direction, Handedness, Lockstep, PlayerAction, Spawner,
     TileKind,
 };
-use pinch_points::transport::{MatchTerms, NetMsg, Start, UdpTransport};
+use pinch_points::transport::{Batch, MatchTerms, NetMsg, Start, UdpTransport};
 
 fn arena(seed: u64) -> Board {
     let mut board = Board::new(12, 9, seed);
@@ -39,24 +39,32 @@ impl Peer {
         let _ = self.session.commit_local(local_action);
         // Redundant resend of the recent tail: survives packet loss and the
         // pre-handshake window where the host cannot send yet. One datagram
-        // for the lot, as the game sends it.
-        self.transport
-            // This harness keeps no lobby and no plan, so everyone hears.
-            .send_inputs(self.session.recent_commits(), |_| true);
+        // for the lot, as the game sends it to a peer that has not said
+        // what it holds.
+        let tail = Batch {
+            inputs: self.session.recent_commits(),
+            ..Batch::default()
+        };
+        // This harness keeps no lobby and no plan, so everyone hears.
+        self.transport.send_batch(&tail, |_| true);
         for (msg, _) in self.transport.recv_all() {
             match msg {
                 NetMsg::Hello { .. }
                 | NetMsg::Watch { .. }
                 | NetMsg::SpectatorVote { .. }
                 | NetMsg::SpectatorTally { .. } => {}
-                NetMsg::Inputs(inputs) => {
-                    for input in inputs {
+                NetMsg::Inputs(batch) => {
+                    for input in batch.inputs {
                         self.session.receive(input);
                     }
                 }
-                NetMsg::Hash { frame, hash } => self.peer_hashes.push((frame, hash)),
-                NetMsg::Pause { frame } => self.session.receive_pause(frame),
-                NetMsg::Resume { frame } => {
+                NetMsg::Hash {
+                    round: _,
+                    frame,
+                    hash,
+                } => self.peer_hashes.push((frame, hash)),
+                NetMsg::Pause { round: _, frame } => self.session.receive_pause(frame),
+                NetMsg::Resume { round: _, frame } => {
                     self.session.receive_resume(frame);
                 }
                 NetMsg::Start(_)
@@ -70,6 +78,10 @@ impl Peer {
                 | NetMsg::CrowdPicks { .. }
                 | NetMsg::Kicked
                 | NetMsg::NoBots
+                | NetMsg::Full
+                | NetMsg::Ping { .. }
+                | NetMsg::Pong { .. }
+                | NetMsg::Clock { .. }
                 | NetMsg::Leaving => {}
             }
         }
@@ -79,7 +91,11 @@ impl Peer {
             if frame.is_multiple_of(30) {
                 let hash = self.board.state_hash();
                 self.own_hashes.push((frame, hash));
-                self.transport.send(NetMsg::Hash { frame, hash });
+                self.transport.send(NetMsg::Hash {
+                    round: 0,
+                    frame,
+                    hash,
+                });
             }
         }
     }
@@ -87,6 +103,14 @@ impl Peer {
 
 #[test]
 fn two_udp_peers_play_a_bit_identical_match() {
+    play_two_peers(arena(0xA11CE), arena(0xA11CE));
+}
+
+/// Two peers over real loopback sockets, each on its own board, placing
+/// arrows now and then for 400 steps: every hash either exchanges matches
+/// the other's for the same frame, deep into the round.
+fn play_two_peers(host_board: Board, join_board: Board) {
+    let (w, h) = (host_board.width(), host_board.height());
     // Port 0: the OS picks a free port; the joiner reads it back.
     let host_transport = UdpTransport::host(0).expect("bind host");
     let port = host_transport.local_addr().expect("local addr").port();
@@ -97,14 +121,14 @@ fn two_udp_peers_play_a_bit_identical_match() {
     let mut host = Peer {
         transport: host_transport,
         session: Lockstep::new(0, players.clone(), DEFAULT_DELAY),
-        board: arena(0xA11CE),
+        board: host_board,
         peer_hashes: vec![],
         own_hashes: vec![],
     };
     let mut join = Peer {
         transport: join_transport,
         session: Lockstep::new(1, players, DEFAULT_DELAY),
-        board: arena(0xA11CE),
+        board: join_board,
         peer_hashes: vec![],
         own_hashes: vec![],
     };
@@ -112,7 +136,7 @@ fn two_udp_peers_play_a_bit_identical_match() {
     for step in 0u32..400 {
         let host_action = if step % 45 == 10 {
             PlayerAction::Place {
-                x: (step % 12) as u8,
+                x: (step % u32::from(w)) as u8,
                 y: 2,
                 dir: Direction::Down,
             }
@@ -121,8 +145,8 @@ fn two_udp_peers_play_a_bit_identical_match() {
         };
         let join_action = if step % 60 == 20 {
             PlayerAction::Place {
-                x: 6,
-                y: (step % 9) as u8,
+                x: w / 2,
+                y: (step % u32::from(h)) as u8,
                 dir: Direction::Right,
             }
         } else {
@@ -219,7 +243,7 @@ fn a_pause_stops_both_peers_on_the_same_frame() {
             session.pump(PlayerAction::None, |net| {
                 while let Some(actions) = net.session.advance() {
                     board.tick(&actions);
-                    net.after_frame(board.state_hash());
+                    net.after_frame(|| board.state_hash());
                 }
             });
         }
@@ -545,7 +569,7 @@ fn a_peer_that_diverges_is_flagged_by_both_ends() {
             session.pump(PlayerAction::None, |net| {
                 while let Some(actions) = net.session.advance() {
                     board.tick(&actions);
-                    net.after_frame(board.state_hash());
+                    net.after_frame(|| board.state_hash());
                 }
             });
         }
@@ -612,6 +636,7 @@ fn a_launched_round_seats_every_peer_on_the_same_beach() {
         beach: packed.clone(),
         deal: 1,
         crowned: 0,
+        delay: DEFAULT_DELAY as u8,
     });
     let Some(NetMsg::Start(Start {
         terms: heard,
@@ -664,5 +689,238 @@ fn a_launched_round_seats_every_peer_on_the_same_beach() {
                 "map {map} for {seats} seats built differently with no beach"
             );
         }
+    }
+}
+
+/// The soak table the `net_soak` example plays, shared rather than copied.
+#[path = "../../examples/soak/table.rs"]
+mod soak;
+
+/// A short soak of a full table: six players and three watchers through
+/// lossy proxies, one joiner starting late and freezing mid-round, and two
+/// players pausing at once. Every peer agrees on every hash, the table
+/// keeps moving through the loss, the late joiner's clock is pulled level
+/// rather than leaving everybody's inputs waiting on it, and the pause
+/// costs the host little more than play does.
+#[test]
+fn a_full_table_rides_out_loss_a_late_start_and_a_pause() {
+    let scenario = soak::Scenario {
+        steps: 900,
+        loss: 0.03,
+        skew: 20,
+        hitch_at: 400,
+        hitch: 15,
+        pause_at: 600,
+        pause_storm: 2,
+        pause_len: 90,
+        ..soak::Scenario::default()
+    };
+    let report = soak::play(&scenario);
+    let described = soak::describe(&scenario, &report);
+    assert_eq!(report.desyncs, 0, "{described}");
+    assert_eq!(report.hash_mismatches, 0, "{described}");
+    assert_eq!(report.abandoned, 0, "{described}");
+    assert!(report.hashes_compared > 100, "{described}");
+    // The hashes went over the wire too, so the session's own check ran.
+    let hashes_sent = report
+        .sent
+        .get("joiner up")
+        .and_then(|flow| flow.by_kind.get("hash"))
+        .map_or(0, |(datagrams, _)| *datagrams);
+    assert!(hashes_sent > 100, "{described}");
+    assert!(
+        report.player_stall_ratio() < 0.04,
+        "the table stalled on {:.1}% of ticks\n{described}",
+        100.0 * report.player_stall_ratio()
+    );
+    let delay = scenario.delay();
+    assert!(
+        report.settled_lead <= delay + 3,
+        "a lead of {} frames once settled, at delay {delay}\n{described}",
+        report.settled_lead
+    );
+    assert!(
+        report.host_dgps_paused < report.host_dgps_before_pause * 1.3,
+        "{described}"
+    );
+    // A watcher keeps a few frames in hand, and rides out the loss too.
+    assert!(
+        report.watcher_stall_ratio() < 0.02,
+        "the watchers stalled on {:.1}% of ticks\n{described}",
+        100.0 * report.watcher_stall_ratio()
+    );
+    // One datagram a tick to each of the eight peers following the round,
+    // and a hash now and then: a host used to send 43.
+    assert!(
+        report.host_datagrams_per_tick() <= 9.0,
+        "{:.2} datagrams a tick from the host\n{described}",
+        report.host_datagrams_per_tick()
+    );
+    assert!(
+        report.max_datagram() <= pinch_points::transport::MAX_DATAGRAM,
+        "{described}"
+    );
+}
+
+/// A table whose host picked partners: two players and the AI in pairs,
+/// dealt into seats that are not their places, the AI in P2 between the
+/// host in P1 and the joiner in P3, and a watcher. Every peer builds its
+/// lockstep over the players' seats with a gap in them, plays the AI in
+/// its seats off the agreed frames, and agrees on every hash, through a
+/// second round whose deal keeps the AI where the pick put it.
+#[test]
+fn a_table_dealt_out_of_place_order_plays_level() {
+    let scenario = soak::Scenario {
+        players: 2,
+        ai: 2,
+        order: [0, 2, 1, 3, 4, 5],
+        teams: 1,
+        watchers: 1,
+        steps: 1300,
+        round_frames: 500,
+        loss: 0.02,
+        ..soak::Scenario::default()
+    };
+    let report = soak::play(&scenario);
+    let described = soak::describe(&scenario, &report);
+    assert_eq!(report.desyncs, 0, "{described}");
+    assert_eq!(report.hash_mismatches, 0, "{described}");
+    assert_eq!(report.abandoned, 0, "{described}");
+    assert!(report.hashes_compared > 40, "{described}");
+    assert_eq!(report.reached_round_two, report.peers, "{described}");
+    assert!(report.round_two.player_steps > 400, "{described}");
+    assert_eq!(
+        report.round_two.ai_seats,
+        vec![vec![1, 3]; report.peers],
+        "the AI kept the seats the pick put it in\n{described}"
+    );
+}
+
+/// Two rounds back to back, the way a table plays a series: the host
+/// shows its results card, deals the next round while the last one's
+/// inputs are still on the wire, some of them held back past the deal,
+/// and the deal's `Start` to one joiner is lost. A watcher that heard
+/// nothing for the last three and a half seconds of the first round still
+/// plays it out to its last frame and sees the card. Every peer reaches
+/// the second round through the interlude, line-up and count, nobody's
+/// seat given to the AI, which plays at full speed with the leads at the
+/// delay, and every peer agrees on every hash of both.
+#[test]
+fn a_second_round_dealt_over_the_last_ones_stragglers_runs_level() {
+    let scenario = soak::Scenario {
+        steps: 1500,
+        round_frames: 600,
+        card: 150,
+        loss: 0.02,
+        straggle: 0.5,
+        lose_deal_start: true,
+        watcher_lag: 105,
+        ..soak::Scenario::default()
+    };
+    let report = soak::play(&scenario);
+    let described = soak::describe(&scenario, &report);
+    assert_eq!(report.desyncs, 0, "{described}");
+    assert_eq!(report.hash_mismatches, 0, "{described}");
+    assert_eq!(
+        report.reached_round_two, report.peers,
+        "a peer never reached round 2\n{described}"
+    );
+    assert_eq!(
+        report.missed_card, 0,
+        "a peer never saw round 1 out\n{described}"
+    );
+    // Through the interlude, line-up and count, the joiner whose `Start`
+    // was lost included.
+    assert_eq!(
+        report.abandoned, 0,
+        "a seat was given to the AI\n{described}"
+    );
+    let two = &report.round_two;
+    assert!(two.player_steps > 1000, "{described}");
+    assert!(
+        two.player_stall_ratio() < 0.04,
+        "round 2 stalled on {:.1}% of ticks\n{described}",
+        100.0 * two.player_stall_ratio()
+    );
+    assert!(
+        two.watcher_stall_ratio() < 0.04,
+        "the watchers stalled on {:.1}% of round 2\n{described}",
+        100.0 * two.watcher_stall_ratio()
+    );
+    assert!(
+        two.settled_lead <= two.delay + 3,
+        "a lead of {} frames in round 2, at delay {}\n{described}",
+        two.settled_lead,
+        two.delay
+    );
+}
+
+/// A mirrored round over the wire: the host builds the board from its
+/// terms, the joiner from the `Start` it decoded, on a handmade map whose
+/// seed mirrors it both ways and on Round the World rolled round, and on a
+/// Surprise beach. Both turn the beach the same way, so they play it
+/// bit-identically to the last exchanged hash.
+#[test]
+fn two_peers_play_a_mirrored_round_bit_identically() {
+    use pinch_points::app::match_setup::{self, MapChoice};
+    use pinch_points::sim::{MAX_PLAYERS, Orientation};
+    use pinch_points::transport::wire_name;
+    for map in [
+        MapChoice::TheGates,
+        MapChoice::RoundTheWorld,
+        MapChoice::Surprise,
+    ] {
+        // A seed that turns the beach every way there is.
+        let (w, strip) = match map.wraps() {
+            true => (21, 7),
+            false => (13, 0),
+        };
+        let seed = (1u64..)
+            .find(|&seed| {
+                let turn = Orientation::for_round(seed, w, strip);
+                turn.flip_x && turn.flip_y && (strip == 0 || turn.roll > 0)
+            })
+            .expect("a seed that turns the beach");
+        let index = MapChoice::ALL
+            .iter()
+            .position(|&m| m == map)
+            .expect("a map");
+        let terms = MatchTerms {
+            map: index as u8,
+            gulls: 2,
+            round: 0,
+            seed,
+            ..MatchTerms::default()
+        };
+        let invitation = NetMsg::Start(Start {
+            seats: 2,
+            seat: Some(1),
+            terms,
+            names: std::array::from_fn(|i| wire_name(&format!("Seat {i}"))),
+            kinds: [0; MAX_PLAYERS],
+            standing: None,
+            beach: Vec::new(),
+            deal: 1,
+            crowned: 0,
+            delay: DEFAULT_DELAY as u8,
+        });
+        let Some(NetMsg::Start(Start { terms: heard, .. })) = NetMsg::decode(&invitation.encode())
+        else {
+            panic!("the invitation did not survive the wire");
+        };
+        let host = match_setup::board_from(&terms, 2, &[]);
+        let join = match_setup::board_from(&heard, 2, &[]);
+        assert_eq!(
+            host.state_hash(),
+            join.state_hash(),
+            "{map:?} at frame zero"
+        );
+        // And it is the beach drawn, turned: two peers that both forgot to
+        // turn it would agree as well.
+        let (beach, strip) = crate::maps::drawn(map, seed, 2);
+        let turn = Orientation::for_round(seed, beach.width(), strip);
+        assert!(turn.flip_x && turn.flip_y, "{map:?}: the seed turns it");
+        crate::maps::assert_turned(&beach, &host, turn, &format!("{map:?} on the wire"));
+        play_two_peers(host, join);
     }
 }

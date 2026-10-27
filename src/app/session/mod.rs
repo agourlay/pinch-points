@@ -80,6 +80,8 @@ pub(super) struct BoardSprites<'w, 's> {
     logs: Query<'w, 's, Entity, With<board_render::TurnstileSprite>>,
     crabs: Query<'w, 's, Entity, With<creatures::CrabSprite>>,
     gulls: Query<'w, 's, Entity, With<creatures::GullSprite>>,
+    /// Gulls flying in to the old beach, on their way to tiles it had.
+    arrivals: Query<'w, 's, Entity, With<creatures::GullArrival>>,
     /// Crab Monopoly's crabs in the air. Only their own system takes them
     /// down otherwise, and it runs on the board screens alone: a round
     /// quit inside a sweep left them glowing over the menu.
@@ -87,8 +89,8 @@ pub(super) struct BoardSprites<'w, 's> {
     /// The old beach's dust, splashes, footprints and crabs hopping into
     /// its castles: drawn where things stood on it, and on a reload or
     /// an editor swap on the same screen they went on over the new one.
-    particles: Query<'w, 's, Entity, With<crate::app::effects::Particle>>,
-    hops: Query<'w, 's, Entity, With<crate::app::effects::Hop>>,
+    particles: Query<'w, 's, Entity, With<effects::Particle>>,
+    hops: Query<'w, 's, Entity, With<effects::Hop>>,
 }
 
 impl BoardSprites<'_, '_> {
@@ -101,6 +103,7 @@ impl BoardSprites<'_, '_> {
             .chain(self.logs.iter())
             .chain(self.crabs.iter())
             .chain(self.gulls.iter())
+            .chain(self.arrivals.iter())
             .chain(self.sweeps.iter())
             .chain(self.particles.iter())
             .chain(self.hops.iter())
@@ -113,6 +116,13 @@ impl BoardSprites<'_, '_> {
 /// Despawn everything rendered from board state, in every category.
 pub(super) fn despawn_board_sprites(mut commands: Commands, sprites: BoardSprites) {
     sprites.despawn_all(&mut commands);
+}
+
+/// Who decides each seat of an online round on this peer, as the round
+/// reads it.
+#[cfg(test)]
+pub(crate) fn online_controllers_for_tests(session: &net::OnlineSession) -> Controllers {
+    online_controllers(session)
 }
 
 #[cfg(test)]
@@ -141,6 +151,20 @@ mod tests {
         app.init_resource::<awards::RoundTally>();
         app.add_systems(Update, advance_sim);
         app
+    }
+
+    /// A couch match set up here opens on the line-up, every round of it;
+    /// the daily, a dev hook's table and a resumed round do not.
+    #[test]
+    fn a_couch_match_opens_on_the_lineup() {
+        use super::versus::RoundOrigin;
+        let config = crate::app::match_setup::MatchConfig::default();
+        assert!(RoundOrigin::Configured(&config).opens_on_lineup(true));
+        assert!(
+            !RoundOrigin::Configured(&config).opens_on_lineup(false),
+            "the daily"
+        );
+        assert!(!RoundOrigin::Unconfigured.opens_on_lineup(true));
     }
 
     /// What a finished round is filed under. Nothing else tests this, and
@@ -203,11 +227,51 @@ mod tests {
 
     fn armed(seats: u8, bots: u8) -> match_setup::MatchConfig {
         match_setup::MatchConfig {
-            seats,
-            bots,
             armed: true,
-            ..match_setup::MatchConfig::default()
+            ..match_setup::MatchConfig::with_ai(seats, bots)
         }
+    }
+
+    /// A round launched from the setup steps is played on the board its
+    /// map card showed: the board the card's picture is drawn from (the
+    /// card's config, the setup's seed) against the one the round builds
+    /// from the config the launch leaves. With no seed kept (a series'
+    /// next round, a rematch) every round draws its own.
+    #[test]
+    fn a_launched_round_is_played_on_the_previewed_seed() {
+        use match_setup::{Card, MapChoice};
+        let beaches = match_setup::CustomBeaches::default();
+        let setup = armed(4, 2);
+        let card = Card::Map(MapChoice::GenLarge);
+        let shown = match_setup::card_config(&setup, card, &beaches).expect("a card");
+        let pictured = match_setup::preview_board(&shown, &beaches, 31337);
+        let mut launched = setup.clone();
+        match_setup::pick_card(&mut launched, card, &beaches);
+        match_setup::seat_the_match(&mut launched, &[], 31337, &beaches, 0);
+        let mut board = RoundOrigin::Configured(&launched).board(None, &beaches, false, 0);
+        assert_eq!(board.seed(), 31337);
+        for _ in 0..match_setup::PREVIEW_TICKS {
+            board.tick_idle();
+        }
+        assert_eq!(board.state_hash(), pictured.state_hash());
+        let fresh = match_setup::MatchConfig {
+            seed: None,
+            ..launched
+        };
+        let board = RoundOrigin::Configured(&fresh).board(None, &beaches, false, 0);
+        assert_ne!(board.seed(), 31337);
+    }
+
+    /// Step 3 puts the AI in any seat, not only the top ones: the round
+    /// seats it where step 3 did, and a cursor on every other seat.
+    #[test]
+    fn the_ai_sits_where_step_three_put_it() {
+        let mut config = armed(4, 0);
+        config.controllers[1] = SeatController::Ai(BotLevel::Easy);
+        let table = bot_seats(&config);
+        assert_eq!(table.0[1], SeatController::Ai(BotLevel::Easy));
+        assert_eq!(table.0[3], SeatController::Local);
+        assert_eq!(config.human_seats(), vec![0, 2, 3]);
     }
 
     /// The open ocean has no edges on the couch either. The local launch
@@ -222,7 +286,7 @@ mod tests {
             (match_setup::MapChoice::Classic, false),
         ] {
             let config = match_setup::MatchConfig { map, ..armed(2, 0) };
-            let board = versus::RoundOrigin::Configured(&config).board(None, &beaches, false, 0);
+            let board = RoundOrigin::Configured(&config).board(None, &beaches, false, 0);
             assert_eq!(board.wrap(), wraps, "{map:?}");
         }
     }
@@ -291,8 +355,6 @@ mod tests {
         assert_eq!(table.0[1], SeatController::Remote);
     }
 
-    /// The AI fills from the top seat down, each with its own level, and
-    /// leaves the human seats alone.
     /// Boards from the shelf or a pasted code can be any size at all, and
     /// the cursor's opening spot has to be on every one of them: near the
     /// castle on a real arena, and simply on the board when there is no
@@ -602,8 +664,7 @@ mod tests {
         app.world_mut()
             .spawn(creatures::SweepSprite::new(2, Vec2::ZERO));
         // A footprint: on a reload it was left pressed into the new beach.
-        app.world_mut()
-            .spawn(crate::app::effects::Particle::default());
+        app.world_mut().spawn(effects::Particle::default());
         let before = app.world().entities().len();
         assert!(before > 5, "the fixture did not spawn");
 
@@ -632,7 +693,7 @@ mod tests {
                 .iter(app.world())
                 .count(),
             app.world_mut()
-                .query_filtered::<Entity, With<crate::app::effects::Particle>>()
+                .query_filtered::<Entity, With<effects::Particle>>()
                 .iter(app.world())
                 .count(),
         ] {
@@ -679,6 +740,427 @@ mod tests {
             "and all the way through"
         );
         assert_eq!(at(0, 900), None, "and a seat nobody left is left be");
+    }
+
+    /// A recorded round whose tide comes in on the first frame: see
+    /// [`round_over`].
+    fn finished_round(dir: &std::path::Path, online: net::Online) -> App {
+        round_over(dir, online, true)
+    }
+
+    /// A round whose tide comes in on the first frame, on a shelf of its
+    /// own, with the results card's keep key and the arena's teardown.
+    /// `online` is the table it was played at, and `recorded` whether this
+    /// machine has a recording of it.
+    fn round_over(dir: &std::path::Path, online: net::Online, recorded: bool) -> App {
+        round_over_with(dir, online, recorded, |_| {})
+    }
+
+    /// [`round_over`], with `prepare` let at the world before the round
+    /// is played.
+    fn round_over_with(
+        dir: &std::path::Path,
+        online: net::Online,
+        recorded: bool,
+        prepare: impl FnOnce(&mut App),
+    ) -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_state(Screen::Versus);
+        app.insert_state(VersusPhase::Running);
+        let mut board = classic_arena(false, 2);
+        board.rules_mut().round_length = Some(0);
+        board.set_score(1, 3);
+        let mut replay = Replay::new(Level::from_board("Versus", 3, board.clone()));
+        replay.ai[1] = Some(BotLevel::Hard);
+        app.insert_resource(Sim(board));
+        app.insert_resource(Recorder(recorded.then_some(replay)));
+        app.insert_resource(Seats(2));
+        app.init_resource::<Controllers>();
+        let settings = settings::GameSettings::default();
+        app.insert_resource(SeatNames(settings.names.clone()));
+        app.insert_resource(settings);
+        app.insert_resource(online);
+        app.init_resource::<Playback>();
+        app.init_resource::<Daily>();
+        app.init_resource::<ReelThread>();
+        app.init_resource::<Highlight>();
+        app.init_resource::<replays::RoundToKeep>();
+        app.insert_resource(replays::Library {
+            dir: dir.to_path_buf(),
+            ..replays::Library::default()
+        });
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<keycaps::KeyCaps>();
+        app.init_resource::<cursor::LiveSeatKeys>();
+        app.init_resource::<pause::PauseMenu>();
+        app.init_resource::<spectators::SpectatorChat>();
+        app.init_resource::<PendingActions>();
+        app.init_resource::<rematch::LocalTable>();
+        app.init_resource::<match_setup::MatchConfig>();
+        app.add_systems(
+            Update,
+            (
+                check_versus_over.run_if(in_state(VersusPhase::Running)),
+                replays::keep_input.run_if(in_state(VersusPhase::Over)),
+                replays::keep_input.run_if(in_state(Screen::Interlude)),
+            ),
+        );
+        app.add_systems(OnExit(Screen::Versus), end_versus);
+        app.add_systems(OnExit(Screen::Interlude), replays::let_the_round_go);
+        prepare(&mut app);
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<VersusPhase>>().get(),
+            VersusPhase::Over,
+            "the tide is in"
+        );
+        app
+    }
+
+    fn press_keep(app: &mut App) {
+        let key = app
+            .world()
+            .resource::<keycaps::KeyCaps>()
+            .key_for(replays::KEEP_CAP)
+            .expect("a key");
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.clear();
+        keys.press(key);
+        app.update();
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.release(key);
+        keys.clear();
+    }
+
+    /// A shelf of its own, emptied first.
+    fn scratch_shelf(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pinch-shelf-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// A finished round goes on the shelf only when it is kept: nothing
+    /// lands while the card is up, and one press files it once, under
+    /// the name the round earned and with its whole recording, the AI's
+    /// level line included.
+    #[test]
+    fn a_finished_round_is_shelved_only_when_kept() {
+        let dir = scratch_shelf("kept");
+        let mut app = finished_round(&dir, net::Online::default());
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(replays::shelf_in(&dir).is_empty(), "not by itself");
+        assert_eq!(
+            app.world().resource::<replays::RoundToKeep>().offer(),
+            replays::KeepOffer::Offered
+        );
+        press_keep(&mut app);
+        let shelf = replays::shelf_in(&dir);
+        assert_eq!(shelf.len(), 1, "kept");
+        assert_eq!(shelf[0].winner, "P2", "filed under who took it");
+        let kept = Replay::parse(&std::fs::read_to_string(&shelf[0].path).expect("read"))
+            .expect("a round");
+        assert_eq!(kept.ai[1], Some(BotLevel::Hard), "with its AI's level");
+        assert_eq!(kept.playback().scores()[1], 3);
+        // And how it ended, as the results card showed it: the board the
+        // tide came in on, and the row's points the card's first row.
+        let card = *app.world().resource::<Sim>().0.scores();
+        assert_eq!(kept.scores, Some(card), "the final board's scores");
+        let mode = teams::TeamMode::Solo;
+        assert_eq!(shelf[0].points, Some(teams::top_total(&card, 2, mode)));
+        assert_eq!(shelf[0].points, Some(3));
+        press_keep(&mut app);
+        assert_eq!(replays::shelf_in(&dir).len(), 1, "and only once");
+        assert_eq!(
+            app.world().resource::<replays::RoundToKeep>().offer(),
+            replays::KeepOffer::Kept
+        );
+    }
+
+    /// A seat named with a trailing space, "Bo ", beside one named "Bo!",
+    /// takes the round for the AI: it is kept under the name the shelf
+    /// reads back from the recording, and the shelf tags the AI's row,
+    /// not the person's whose name tidies to what an untrimmed one did.
+    #[test]
+    fn a_name_ending_in_a_space_is_kept_under_the_name_read_back() {
+        let dir = scratch_shelf("spaced");
+        let mut app = round_over_with(&dir, net::Online::default(), true, |app| {
+            let names = ["Bo!", "Bo ", "", "", "", ""].map(String::from);
+            app.world_mut()
+                .resource_mut::<settings::GameSettings>()
+                .names = names;
+            app.world_mut().resource_mut::<Controllers>().0[1] = SeatController::Ai(BotLevel::Hard);
+            app.init_resource::<SeatKinds>();
+            app.add_systems(Startup, resolve_seat_names);
+        });
+        press_keep(&mut app);
+        let shelf = replays::shelf_in(&dir);
+        assert_eq!(shelf.len(), 1);
+        assert_eq!(shelf[0].winner, "Bo", "filed as the recording names it");
+        assert_eq!(
+            shelf[0].won_by,
+            Some(replays::WonBy::Ai(Some(BotLevel::Hard))),
+            "and tagged as the AI that took it"
+        );
+    }
+
+    /// Leaving the card to the menu, or straight back in for a rematch,
+    /// lets the round go: nothing is shelved, then or after.
+    #[test]
+    fn leaving_the_card_lets_an_unkept_round_go() {
+        for (way, to) in [("menu", Screen::Menu), ("rematch", Screen::Versus)] {
+            let dir = scratch_shelf(way);
+            let mut app = finished_round(&dir, net::Online::default());
+            app.world_mut().resource_mut::<NextState<Screen>>().set(to);
+            app.update();
+            assert_eq!(
+                app.world().resource::<replays::RoundToKeep>().offer(),
+                replays::KeepOffer::Nothing,
+                "{way}: let go"
+            );
+            press_keep(&mut app);
+            assert!(replays::shelf_in(&dir).is_empty(), "{way}: nothing shelved");
+        }
+    }
+
+    /// Leaving the card for the interlude before a series' next round
+    /// keeps the offer standing there, and the key keeps it from there;
+    /// the interlude left, for the next round or the menu, lets an unkept
+    /// round go.
+    #[test]
+    fn the_interlude_holds_the_offer_until_it_is_left() {
+        for (way, after) in [("next round", Screen::Versus), ("menu", Screen::Menu)] {
+            let dir = scratch_shelf(&format!("interlude-{}", after == Screen::Menu));
+            let mut app = finished_round(&dir, net::Online::default());
+            let go = |app: &mut App, to: Screen| {
+                app.world_mut().resource_mut::<NextState<Screen>>().set(to);
+                app.update();
+            };
+            go(&mut app, Screen::Interlude);
+            assert_eq!(
+                app.world().resource::<replays::RoundToKeep>().offer(),
+                replays::KeepOffer::Offered,
+                "{way}: still on offer in the interlude"
+            );
+            go(&mut app, after);
+            assert_eq!(
+                app.world().resource::<replays::RoundToKeep>().offer(),
+                replays::KeepOffer::Nothing,
+                "{way}: let go as the interlude is left"
+            );
+            press_keep(&mut app);
+            assert!(replays::shelf_in(&dir).is_empty(), "{way}: nothing shelved");
+        }
+    }
+
+    /// Online, the host calls the next round of a series the moment its
+    /// own card is up, which walks a joiner off its card on the spot. The
+    /// joiner can still keep the round it just played, from the
+    /// interlude: once, and that round rather than the one being called.
+    #[test]
+    fn a_joiner_walked_on_keeps_the_round_from_the_interlude() {
+        use crate::app::tournament::{SeriesLength, Tournament};
+        use crate::sim::{DEFAULT_DELAY, Lockstep};
+        use crate::transport::{MatchTerms, UdpTransport};
+        let dir = scratch_shelf("walked-on");
+        let joiner = net::Online(Some(net::OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", 47998)).expect("socket"),
+            Lockstep::new(1, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        )));
+        let mut app = round_over_with(&dir, joiner, true, |app| {
+            app.insert_resource(Tournament::start(SeriesLength::BestOfThree));
+            app.init_resource::<lobby::Homecoming>();
+            app.init_resource::<Time>();
+            app.init_resource::<crate::app::next_map::NextMap>();
+            app.init_resource::<match_setup::MatchMenu>();
+            app.add_systems(
+                Update,
+                play_input::versus_over_input.run_if(conditions::versus_over),
+            );
+        });
+        let finished = match app.world().resource::<replays::RoundToKeep>() {
+            replays::RoundToKeep::Offered(round) => round.text.clone(),
+            other @ (replays::RoundToKeep::Nothing | replays::RoundToKeep::Kept) => {
+                panic!("the round is offered: {other:?}")
+            }
+        };
+        // The host's call lands while the joiner's card is up.
+        app.world_mut()
+            .resource_mut::<net::Online>()
+            .0
+            .as_mut()
+            .expect("at the table")
+            .next_round = true;
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Interlude,
+            "walked on by the call"
+        );
+        press_keep(&mut app);
+        press_keep(&mut app);
+        let shelf = replays::shelf_in(&dir);
+        assert_eq!(shelf.len(), 1, "kept, and only once");
+        let kept = std::fs::read_to_string(&shelf[0].path).expect("read");
+        assert_eq!(kept, finished, "the round just played");
+        assert_eq!(
+            app.world().resource::<replays::RoundToKeep>().offer(),
+            replays::KeepOffer::Kept
+        );
+        // The next round starts: nothing of the last is left on offer.
+        app.world_mut()
+            .resource_mut::<NextState<Screen>>()
+            .set(Screen::Versus);
+        app.update();
+        assert_eq!(
+            app.world().resource::<replays::RoundToKeep>().offer(),
+            replays::KeepOffer::Nothing
+        );
+        assert_eq!(replays::shelf_in(&dir).len(), 1);
+    }
+
+    /// Online each machine keeps the round for itself: the host keeping
+    /// it shelves it on the host alone, and a joiner keeps its own copy
+    /// or none, with nothing sent either way.
+    #[test]
+    fn host_and_joiner_each_keep_their_own() {
+        use crate::sim::{DEFAULT_DELAY, Lockstep};
+        use crate::transport::{MatchTerms, UdpTransport};
+        let table = |seat: u8| {
+            let transport = match seat {
+                0 => UdpTransport::host(0).expect("socket"),
+                _ => UdpTransport::join(("127.0.0.1", 47999)).expect("socket"),
+            };
+            net::Online(Some(net::OnlineSession::new(
+                transport,
+                Lockstep::new(seat, vec![0, 1], DEFAULT_DELAY),
+                2,
+                MatchTerms::default(),
+            )))
+        };
+        let (host_dir, joiner_dir) = (scratch_shelf("host"), scratch_shelf("joiner"));
+        let mut host = finished_round(&host_dir, table(0));
+        let mut joiner = finished_round(&joiner_dir, table(1));
+        assert!(
+            host.world()
+                .resource::<net::Online>()
+                .0
+                .as_ref()
+                .expect("on")
+                .is_host()
+        );
+        for app in [&host, &joiner] {
+            assert_eq!(
+                app.world().resource::<replays::RoundToKeep>().offer(),
+                replays::KeepOffer::Offered,
+                "both are offered it"
+            );
+        }
+        press_keep(&mut host);
+        joiner.update();
+        assert_eq!(replays::shelf_in(&host_dir).len(), 1, "the host kept it");
+        assert!(
+            replays::shelf_in(&joiner_dir).is_empty(),
+            "the joiner did not"
+        );
+        press_keep(&mut joiner);
+        assert_eq!(replays::shelf_in(&joiner_dir).len(), 1, "until it does");
+        assert_eq!(replays::shelf_in(&host_dir).len(), 1);
+    }
+
+    /// A round with no recording here, a replay watched or a round picked
+    /// up from a code, has nothing to offer the shelf.
+    #[test]
+    fn a_round_with_no_recording_offers_nothing() {
+        let dir = scratch_shelf("none");
+        let mut app = round_over(&dir, net::Online::default(), false);
+        assert_eq!(
+            app.world().resource::<replays::RoundToKeep>().offer(),
+            replays::KeepOffer::Nothing
+        );
+        press_keep(&mut app);
+        assert!(replays::shelf_in(&dir).is_empty());
+    }
+
+    /// A round being recorded is stamped with what held each seat and,
+    /// for the game's AI, at which level: the shelf names the AI that
+    /// took a round by it.
+    /// A couch round names each seat after the person partner picks put
+    /// there, from the names saved in settings, which stay as typed; the
+    /// daily's own table goes by the saved rows.
+    #[test]
+    fn a_couch_round_names_the_people_picked_into_each_seat() {
+        let mut app = App::new();
+        let mut saved = settings::GameSettings::default();
+        saved.names[1] = "Bo".into();
+        saved.names[2] = "Cleo".into();
+        app.insert_resource(saved);
+        let mut config = match_setup::MatchConfig::default();
+        config.people.0.swap(1, 2);
+        app.insert_resource(config);
+        app.init_resource::<Daily>();
+        app.init_resource::<net::Online>();
+        app.init_resource::<Playback>();
+        app.init_resource::<SeatNames>();
+        app.init_resource::<SeatKinds>();
+        app.insert_resource(Seats(4));
+        app.init_resource::<Controllers>();
+        app.insert_resource(Recorder(None));
+        app.add_systems(Update, resolve_seat_names);
+        app.update();
+        assert_eq!(app.world().resource::<SeatNames>().0[1..3], ["Cleo", "Bo"]);
+        app.world_mut().resource_mut::<Daily>().active = true;
+        app.update();
+        assert_eq!(app.world().resource::<SeatNames>().0[1..3], ["Bo", "Cleo"]);
+    }
+
+    #[test]
+    fn a_recorded_round_keeps_each_ai_level() {
+        let mut app = App::new();
+        app.init_resource::<settings::GameSettings>();
+        app.init_resource::<match_setup::MatchConfig>();
+        app.init_resource::<Daily>();
+        app.init_resource::<net::Online>();
+        app.init_resource::<Playback>();
+        app.init_resource::<SeatNames>();
+        app.init_resource::<SeatKinds>();
+        app.insert_resource(Seats(4));
+        app.insert_resource(Controllers([
+            SeatController::Local,
+            SeatController::Ai(BotLevel::Hard),
+            SeatController::Bot,
+            SeatController::Ai(BotLevel::Easy),
+            SeatController::Local,
+            SeatController::Local,
+        ]));
+        app.insert_resource(Recorder(Some(Replay::new(Level::from_board(
+            "Turf War",
+            3,
+            classic_arena(false, 4),
+        )))));
+        app.add_systems(Update, resolve_seat_names);
+        app.update();
+        let replay = app.world().resource::<Recorder>().0.clone().expect("kept");
+        assert_eq!(
+            replay.ai,
+            [
+                None,
+                Some(BotLevel::Hard),
+                None,
+                Some(BotLevel::Easy),
+                None,
+                None
+            ]
+        );
+        assert_eq!(replay.kinds[2], crate::sim::SeatKind::Bot);
+        let back = Replay::parse(&replay.to_text()).expect("reads back");
+        assert_eq!(back.ai, replay.ai, "and the file says so");
     }
 
     /// A round recorded as it is played holds one input a tick, and played

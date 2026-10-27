@@ -9,9 +9,12 @@ use bevy::prelude::*;
 
 // --- toasts ----------------------------------------------------------------
 
+/// An unlock's toast: how long it has been up, and whether its chime
+/// has rung yet, which it does as the toast first shows.
 #[derive(Component)]
 pub struct Toast {
     age: f32,
+    rung: bool,
 }
 
 const TOAST_LIFE: f32 = 4.0;
@@ -28,7 +31,10 @@ const TOAST_GUESS: f32 = 64.0;
 pub(super) fn spawn_toast(commands: &mut Commands, name: &str, desc: &str) {
     commands
         .spawn((
-            Toast { age: 0.0 },
+            Toast {
+                age: 0.0,
+                rung: false,
+            },
             GlobalZIndex(menu_ui::layer::TOAST),
             Node {
                 position_type: PositionType::Absolute,
@@ -61,19 +67,51 @@ pub(super) fn spawn_toast(commands: &mut Commands, name: &str, desc: &str) {
         });
 }
 
-/// Stack visible toasts under the header and expire them.
+/// What a toast's chime is rung with.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Chime<'w> {
+    settings: Res<'w, GameSettings>,
+    sounds: Option<Res<'w, crate::app::audio::Sounds>>,
+    muted: Res<'w, crate::app::audio::Muted>,
+}
+
+/// Stack visible toasts under the header and expire them, each ringing
+/// its chime as it first shows.
 ///
 /// Each one is placed under the measured height of the one before it, not
 /// under a constant: a toast is as tall as its two lines make it, and a
 /// constant that cleared the real thing by one pixel would overlap on a
 /// longer name or a language with taller metrics.
+///
+/// Held, unseen and not ageing, while a host's map page is up: the page
+/// fills the window, and a toast sat over its corner and its scroll bar.
+/// They show, and ring, once it is down.
 pub fn update_toasts(
     time: Res<Time>,
     mut commands: Commands,
+    menu: Res<crate::app::match_setup::MatchMenu>,
+    chime: Chime,
     mut toasts: Query<(Entity, &mut Toast, &mut Node, &ComputedNode)>,
 ) {
+    let held = crate::app::next_map::page_up(&menu);
+    let display = match held {
+        true => Display::None,
+        false => Display::Flex,
+    };
     let mut top = TOAST_TOP;
     for (entity, mut toast, mut node, computed) in &mut toasts {
+        if node.display != display {
+            node.display = display;
+        }
+        if held {
+            continue;
+        }
+        if !std::mem::replace(&mut toast.rung, true)
+            && let Some(sounds) = &chime.sounds
+        {
+            let gain = crate::app::audio::sfx_gain(&chime.settings, &chime.muted);
+            crate::app::audio::play_chime(&mut commands, sounds, gain);
+        }
         toast.age += time.delta_secs();
         if toast.age >= TOAST_LIFE {
             commands.entity(entity).despawn();
@@ -112,7 +150,7 @@ fn category_ink(id: &str) -> Color {
         "dry_castle" | "raids_25" | "all_seats" => palette::INK_RAID,
         // The campaign, and how it was walked rather than that it was.
         _ if id.starts_with("puzzle_") => palette::INK_SURGE,
-        "campaign_done" | "beach_done" => palette::INK_SURGE,
+        "campaign_done" => palette::INK_SURGE,
         _ if id.starts_with("under_par") || id.starts_with("clean_") => palette::INK_SURGE,
         _ if id.starts_with("deep_") => palette::INK_SURGE,
         _ if id.starts_with("daily_") => palette::INK_TIDE,
@@ -183,20 +221,10 @@ const SHELF_HEIGHT: f32 = SHELF_ROWS * ROW_PITCH - TILE_GAP;
 #[derive(Component)]
 pub struct Shelf;
 
-/// The moving part of the scrollbar, sized and placed from where the shelf
-/// has got to.
+/// The shelf's scroll bar, kept on the shelf's viewport by
+/// [`update_shelf_scrollbar`].
 #[derive(Component)]
-pub struct ShelfThumb;
-
-/// The scrollbar's width, and the air between it and the rows. Slim: it is
-/// there to say the list goes on, not to be dragged.
-const BAR_WIDTH: f32 = 6.0;
-const BAR_GAP: f32 = 8.0;
-
-/// The shortest the thumb is allowed to get. A list long enough would
-/// otherwise shrink it to a dot, which reads as a speck of dirt rather than
-/// as a position.
-const MIN_THUMB: f32 = 24.0;
+pub struct ShelfBar;
 
 /// One trophy's row: the mark, its name, what it asks for, how far along,
 /// and a bar saying the same thing at a glance. "292/1000" is a fact you
@@ -383,8 +411,7 @@ pub fn enter_achievements(
                     // stops at a clean row boundary looks finished, and the
                     // prompt in the corner is not where anyone is looking.
                     card.spawn(Node {
-                        column_gap: Val::Px(BAR_GAP),
-                        align_items: AlignItems::FlexStart,
+                        column_gap: Val::Px(menu_ui::scroll_bar::BAR_GAP),
                         ..default()
                     })
                     .with_children(|band| {
@@ -434,33 +461,11 @@ pub fn enter_achievements(
                                     }
                                 });
                         });
-                        // The track, and the thumb that says how far down the
-                        // shelf you are. Placed by `update_shelf_scrollbar`,
-                        // which is the only thing that knows how tall the rows
-                        // turned out to be.
-                        band.spawn((
-                            Node {
-                                width: Val::Px(BAR_WIDTH),
-                                height: Val::Px(SHELF_HEIGHT),
-                                flex_shrink: 0.0,
-                                border_radius: BorderRadius::all(Val::Px(BAR_WIDTH / 2.0)),
-                                ..default()
-                            },
-                            BackgroundColor(palette::PARCHMENT.with_alpha(0.12)),
-                        ))
-                        .with_children(|track| {
-                            track.spawn((
-                                ShelfThumb,
-                                Node {
-                                    position_type: PositionType::Absolute,
-                                    width: Val::Px(BAR_WIDTH),
-                                    height: Val::Px(SHELF_HEIGHT),
-                                    border_radius: BorderRadius::all(Val::Px(BAR_WIDTH / 2.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(palette::GOLD.with_alpha(0.7)),
-                            ));
-                        });
+                        // The bar that says how far down the shelf you
+                        // are, as tall as the viewport beside it. Placed by
+                        // `update_shelf_scrollbar`, which is the only thing
+                        // that knows how tall the rows turned out to be.
+                        menu_ui::scroll_bar::spawn(band, ShelfBar);
                     });
                     let footer = fill(
                         tr.stats_footer,
@@ -515,50 +520,25 @@ pub fn achievements_input(
     }
 }
 
-/// Size and place the thumb from where the shelf has got to.
+/// Show the shelf's viewport on its scroll bar, in pixels: how far down
+/// it is scrolled, how tall it is, and how tall the shelf behind it is.
 ///
 /// Runs every frame the screen is up rather than on a scroll message: the
 /// rows are measured by the layout a frame after they are spawned, so the
 /// first honest answer is not available at the moment the shelf is built.
 pub fn update_shelf_scrollbar(
     shelf: Query<(&ScrollPosition, &ComputedNode), With<Shelf>>,
-    mut thumb: Query<&mut Node, With<ShelfThumb>>,
+    mut bars: menu_ui::scroll_bar::ScrollBars<ShelfBar>,
 ) {
     let Ok((position, computed)) = shelf.single() else {
         return;
     };
     let scale = computed.inverse_scale_factor();
-    let (height, top) = thumb_bounds(
-        computed.size().y * scale,
-        computed.content_size().y * scale,
-        position.0.y,
-    );
-    for mut node in &mut thumb {
-        let (height, top) = (Val::Px(height), Val::Px(top));
-        // Written only on a change: `Node` is change-detected and the
-        // layout runs again for anything that touches it, every frame.
-        if node.height != height {
-            node.height = height;
-        }
-        if node.top != top {
-            node.top = top;
-        }
-    }
-}
-
-/// How tall the thumb is and how far down the track it sits.
-///
-/// Its height is the fraction of the shelf you can see, which is the part
-/// that says there is more; its position is how far through you are. A
-/// shelf shorter than its viewport fills the track.
-fn thumb_bounds(viewport: f32, content: f32, scroll: f32) -> (f32, f32) {
-    if content <= viewport || viewport <= 0.0 {
-        return (SHELF_HEIGHT, 0.0);
-    }
-    let height = (SHELF_HEIGHT * (viewport / content)).max(MIN_THUMB);
-    let travel = (SHELF_HEIGHT - height).max(0.0);
-    let progress = (scroll / (content - viewport)).clamp(0.0, 1.0);
-    (height, travel * progress)
+    bars.show(menu_ui::scroll_bar::ScrollWindow {
+        first: position.0.y,
+        shown: computed.size().y * scale,
+        total: computed.content_size().y * scale,
+    });
 }
 
 /// Where a scroll of `step` lands, given what the viewport shows and how
@@ -603,35 +583,58 @@ mod tests {
         assert_eq!(scrolled(0.0, ROW_PITCH, viewport, viewport - 10.0), 0.0);
     }
 
-    /// The thumb is the affordance: its height says how much of the shelf
-    /// is in front of you, which is the part that says there is more, and
-    /// its position says how far through you are.
+    /// The trophy shelf's bar shows the viewport the trophies scroll
+    /// behind, in pixels: at the top at rest, at the bottom once the input
+    /// has scrolled as far as it goes, and hidden when the shelf fits.
     #[test]
-    fn the_thumb_reports_how_much_is_hidden() {
-        // Twice as much shelf as viewport: half a track of thumb.
-        let (height, top) = thumb_bounds(100.0, 200.0, 0.0);
-        assert_eq!(height, SHELF_HEIGHT / 2.0);
-        assert_eq!(top, 0.0, "at the top");
+    fn the_bar_follows_the_shelf_viewport() {
+        use crate::app::menu_ui::scroll_bar::{self, reading};
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        let shelf = app
+            .world_mut()
+            .spawn((
+                Shelf,
+                ScrollPosition::default(),
+                ComputedNode {
+                    size: Vec2::new(400.0, 4.0 * ROW_PITCH),
+                    content_size: Vec2::new(400.0, 10.0 * ROW_PITCH),
+                    inverse_scale_factor: 1.0,
+                    ..default()
+                },
+            ))
+            .id();
+        app.world_mut()
+            .run_system_once(|mut commands: Commands| {
+                commands.spawn(Node::default()).with_children(|band| {
+                    scroll_bar::spawn(band, ShelfBar);
+                });
+            })
+            .expect("the bar is built");
+        app.add_systems(Update, update_shelf_scrollbar);
+        let bar = |app: &mut App| {
+            app.update();
+            reading::<ShelfBar>(app.world_mut())
+        };
+        assert_eq!(bar(&mut app), Some([0.0, 0.4, 0.6]), "at the top");
 
-        // Scrolled to the end, the thumb sits at the end of its travel.
-        let (height, top) = thumb_bounds(100.0, 200.0, 100.0);
-        assert_eq!(top, SHELF_HEIGHT - height, "flush with the bottom");
+        // As far down as the input goes: the bottom of the track.
+        let bottom = scrolled(1000.0, 0.0, 4.0 * ROW_PITCH, 10.0 * ROW_PITCH);
+        app.world_mut()
+            .entity_mut(shelf)
+            .insert(ScrollPosition(Vec2::new(0.0, bottom)));
+        let [above, thumb, below] = bar(&mut app).expect("still overflows");
+        assert!((above - 0.6).abs() < 1e-5 && thumb == 0.4 && below.abs() < 1e-5);
 
-        // Halfway is halfway.
-        let (_, top) = thumb_bounds(100.0, 200.0, 50.0);
-        assert_eq!(top, (SHELF_HEIGHT - SHELF_HEIGHT / 2.0) / 2.0);
-
-        // A shelf that fits fills the track: all of it is in front of you.
-        assert_eq!(thumb_bounds(100.0, 80.0, 0.0), (SHELF_HEIGHT, 0.0));
-
-        // And a very long shelf keeps a thumb you can still see, without
-        // letting it run off the end of the track.
-        let (height, top) = thumb_bounds(100.0, 100_000.0, 100_000.0);
-        assert_eq!(height, MIN_THUMB);
-        assert!(top + height <= SHELF_HEIGHT, "{top} + {height}");
-
-        // Before the layout has measured anything, nothing is claimed.
-        assert_eq!(thumb_bounds(0.0, 0.0, 0.0), (SHELF_HEIGHT, 0.0));
+        // A shelf that fits its viewport has no bar.
+        app.world_mut().entity_mut(shelf).insert(ComputedNode {
+            size: Vec2::new(400.0, 4.0 * ROW_PITCH),
+            content_size: Vec2::new(400.0, 3.0 * ROW_PITCH),
+            inverse_scale_factor: 1.0,
+            ..default()
+        });
+        assert_eq!(bar(&mut app), None);
     }
 
     /// The viewport is whole rows, so the shelf never rests showing half of
@@ -642,5 +645,52 @@ mod tests {
             SHELF_HEIGHT,
             SHELF_ROWS * TILE_HEIGHT + (SHELF_ROWS - 1.0) * TILE_GAP
         );
+    }
+
+    /// An unlock while a host's map page is up waits under it: unseen and
+    /// not ageing while the page is up, and shown, its time running, once
+    /// it is down. It used to sit over the page's corner and scroll bar.
+    #[test]
+    fn a_toast_waits_out_the_map_page() {
+        use bevy::ecs::system::RunSystemOnce;
+        use std::time::Duration;
+        let mut app = App::new();
+        app.insert_resource(Time::<()>::default());
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<crate::app::audio::Muted>();
+        app.insert_resource(crate::app::match_setup::MatchMenu {
+            online: true,
+            step: crate::app::match_setup::Step::Map,
+            ..Default::default()
+        });
+        app.add_systems(Update, update_toasts);
+        app.world_mut()
+            .run_system_once(|mut commands: Commands| spawn_toast(&mut commands, "A", "B"))
+            .expect("spawned");
+        let toast = |app: &mut App| {
+            let world = app.world_mut();
+            world
+                .query::<(&Toast, &Node)>()
+                .iter(world)
+                .map(|(toast, node)| (toast.age, node.display))
+                .next()
+        };
+        for _ in 0..3 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_secs(2));
+            app.update();
+        }
+        assert_eq!(toast(&mut app), Some((0.0, Display::None)), "held");
+        app.world_mut()
+            .resource_mut::<crate::app::match_setup::MatchMenu>()
+            .online = false;
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs(1));
+        app.update();
+        let (age, display) = toast(&mut app).expect("still up");
+        assert_eq!(display, Display::Flex, "shown once the page is down");
+        assert!(age > 0.0 && age < TOAST_LIFE, "{age}");
     }
 }

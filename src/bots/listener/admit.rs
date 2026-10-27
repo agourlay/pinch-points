@@ -8,7 +8,7 @@ use super::{
     same_owner,
 };
 use crate::bots::connstr::{Key, Token};
-use crate::bots::protocol::{PROTOCOL, Register};
+use crate::bots::protocol::{OLDEST_PROTOCOL, PROTOCOL, Register};
 use crate::sim::PlayerId;
 use serde_json::json;
 use std::collections::HashMap;
@@ -139,13 +139,13 @@ pub(super) fn register_bot(
     peer: SocketAddr,
     register: Register,
 ) -> Result<(BotId, u64), String> {
-    if register.protocol != PROTOCOL {
+    if !(OLDEST_PROTOCOL..=PROTOCOL).contains(&register.protocol) {
         return Err(format!(
-            "this listener speaks protocol {PROTOCOL}, not {}",
+            "this listener speaks protocol {OLDEST_PROTOCOL} to {PROTOCOL}, not {}",
             register.protocol
         ));
     }
-    let wire = Wire::of(stream).map_err(|e| e.to_string())?;
+    let wire = Wire::of(stream, register.protocol).map_err(|e| e.to_string())?;
     // A reconnect: the token is who the bot is, and nothing else is asked.
     // A wrong one is no strike against the address: a token is too long
     // to guess, and a stale one is a bot that outlived its listener, not

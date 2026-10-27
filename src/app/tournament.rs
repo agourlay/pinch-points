@@ -281,7 +281,7 @@ pub fn standings(
             Standing {
                 who,
                 stars: "*".repeat(usize::from(wins)),
-                color: palette::player_color(face),
+                color: palette::seat_text(face),
             }
         })
         .collect()
@@ -323,6 +323,9 @@ pub fn champion_name(
 /// Marker for the between-rounds interlude card.
 #[derive(Component)]
 pub struct InterludeUi;
+
+/// How long the interlude stands between two rounds of a series.
+pub const INTERLUDE_SECS: f32 = 2.4;
 
 /// Auto-advance clock on the interlude card.
 #[derive(Component)]
@@ -400,16 +403,23 @@ pub fn enter_interlude(
         .is_some_and(|session| session.catch_up.board.is_some())
     {
         true => 0.0,
-        false => 2.4,
+        false => INTERLUDE_SECS,
     };
-    // The dial's own step, with the dial's own guards: past the shelf when
+    // The next map: drawn again under step 2's Random card, else the
+    // dial's own step, with the dial's own guards: past the shelf when
     // nothing on it seats the table, past the four-castle beaches when
     // five or six are sitting. A local series only: online the host's
     // invitation names the map, and this config is the player's own dials,
     // which the next beach they host reads its terms from. Stepped here,
     // a best of five left that dial four maps on from where they set it.
     if online.0.is_none() {
-        crate::app::match_setup::next_map(&mut config, &beaches);
+        crate::app::match_setup::map_for_next_round(
+            &mut config,
+            &beaches,
+            crate::app::clock::fresh_seed(),
+        );
+        // Its own seed: the one step 2 previewed was the first round's.
+        config.seed = None;
         config.armed = true;
     }
     let tr = settings.tr();
@@ -684,7 +694,7 @@ mod tests {
             };
             let mut session = OnlineSession::new(
                 UdpTransport::join(("127.0.0.1", 47990)).expect("socket"),
-                crate::app::net::lockstep_for(Some(1), 2),
+                crate::app::net::lockstep_for(Some(1), (0..2).collect(), crate::sim::DEFAULT_DELAY),
                 2,
                 terms,
             );
@@ -750,7 +760,7 @@ mod tests {
         };
         let mut session = OnlineSession::new(
             UdpTransport::host(0).expect("socket"),
-            crate::app::net::lockstep_for(Some(0), 3),
+            crate::app::net::lockstep_for(Some(0), (0..3).collect(), crate::sim::DEFAULT_DELAY),
             3,
             terms,
         );
@@ -800,7 +810,7 @@ mod tests {
         };
         let mut session = OnlineSession::new(
             UdpTransport::host(0).expect("socket"),
-            crate::app::net::lockstep_for(Some(0), 2),
+            crate::app::net::lockstep_for(Some(0), (0..2).collect(), crate::sim::DEFAULT_DELAY),
             2,
             terms,
         );

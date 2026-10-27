@@ -307,6 +307,28 @@ impl Board {
             .then(|| self.index(x + dx, y + dy))
     }
 
+    /// The `(dx, dy)` a walker covers going from `from` to `to` the short
+    /// way: straight across on a beach with edges, and through the seam on
+    /// a wrapping one when that is shorter. Every distance the sim and the
+    /// AI measure between two tiles comes from here, so the lure that pulls
+    /// a crab through the seam and the AI judging how far that crab is from
+    /// home agree on the beach they stand on.
+    pub fn displacement(&self, from: u16, to: u16) -> (i32, i32) {
+        let (fx, fy) = self.coords(from);
+        let (tx, ty) = self.coords(to);
+        let (mut dx, mut dy) = (tx - fx, ty - fy);
+        if self.wrap {
+            let (w, h) = (i32::from(self.width()), i32::from(self.height()));
+            if dx.abs() * 2 > w {
+                dx -= dx.signum() * w;
+            }
+            if dy.abs() * 2 > h {
+                dy -= dy.signum() * h;
+            }
+        }
+        (dx, dy)
+    }
+
     /// Tile index to `(x, y)`, in the `i32` the movement arithmetic speaks;
     /// [`Board::coords_u8`] is the byte-sized form. Forwards to the grid,
     /// which owns the arithmetic.

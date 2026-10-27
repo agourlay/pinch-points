@@ -123,9 +123,19 @@ fn spawn_tile_feature(
 }
 
 /// Everything about a board that never moves: the sand, what sits on each
-/// tile, and the driftwood fence around and through it.
+/// tile, and the driftwood fence around and through it, on the beach and
+/// under the weather.
 pub fn spawn_static_board(commands: &mut Commands, board: &Board, art: &Art) {
     spawn_beach(commands, board, art);
+    spawn_board_grid(commands, board, art);
+    spawn_weather(commands, board, art);
+}
+
+/// The board itself, without the beach round it or the weather over it:
+/// what a map card's preview is drawn from
+/// ([`crate::app::match_setup::render_previews`]), so the card shows the
+/// board a round lays out.
+pub fn spawn_board_grid(commands: &mut Commands, board: &Board, art: &Art) {
     // The board's sand: one quad the sand shader draws as the tiles'
     // checkerboard, rippled, damp in patches and grained in world space,
     // so no two squares look alike.
@@ -143,13 +153,12 @@ pub fn spawn_static_board(commands: &mut Commands, board: &Board, art: &Art) {
     }
     spawn_pools(commands, board, art);
     spawn_walls(commands, board, art);
-    spawn_weather(commands, board, art);
 }
 
 /// Iterates every tile's Up and Left edges plus the far borders, so each
 /// edge is drawn exactly once.
 fn spawn_walls(commands: &mut Commands, board: &Board, art: &Art) {
-    let plank_size = Vec2::new(TILE + 8.0, 13.0);
+    let plank_size = Vec2::new(TILE + 8.0, super::FENCE_DEPTH);
     let plank = |commands: &mut Commands, center: Vec2, vertical: bool| {
         let rotation = if vertical {
             Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
@@ -286,8 +295,23 @@ pub fn sync_turnstiles(
         if covered[usize::from(board.index_of(x, y))] {
             continue;
         }
-        let tilt = if next_right { -0.6 } else { 0.6 };
-        commands.spawn((
+        spawn_log(&mut commands, &art, board, (x, y), next_right);
+    }
+}
+
+/// The turnstile log on tile `(x, y)`, leaning toward the side it deflects
+/// to next: the one log a round draws ([`sync_turnstiles`]), and a map
+/// card's preview too ([`super::spawn_board_pieces`]).
+pub(crate) fn spawn_log(
+    commands: &mut Commands,
+    art: &Art,
+    board: &Board,
+    (x, y): (u8, u8),
+    next_right: bool,
+) -> Entity {
+    let tilt = if next_right { -0.6 } else { 0.6 };
+    commands
+        .spawn((
             TurnstileSprite {
                 x,
                 y,
@@ -301,8 +325,8 @@ pub fn sync_turnstiles(
                 layout::tile_center(board, x, y).extend(z::TILE_FEATURE + 0.1),
             )
             .with_rotation(Quat::from_rotation_z(tilt)),
-        ));
-    }
+        ))
+        .id()
 }
 
 /// Marker for spawner holes; carries the cadence so the hole can swell just
@@ -326,10 +350,13 @@ pub fn pulse_spawners(sim: Res<Sim>, mut holes: Query<(&SpawnerSprite, &mut Tran
             transform.scale = Vec3::splat(1.3);
             continue;
         }
-        if hole.period == 0 {
+        // The sim's cadence, Speed Up's included, so the swell comes just
+        // before the crab it promises.
+        let period = sim.0.hole_period(hole.period);
+        if period == 0 {
             continue;
         }
-        let phase = (tick % u64::from(hole.period)) as f32 / hole.period as f32;
+        let phase = (tick % u64::from(period)) as f32 / period as f32;
         let swell = if phase > 0.75 {
             1.0 + (phase - 0.75) * 0.6
         } else {

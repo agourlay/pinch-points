@@ -10,59 +10,38 @@ use bevy::prelude::*;
 /// `LEVEL_HINTS`); a test checks the table still says so.
 pub(crate) const KEY_LESSON_LEVEL: &str = "Welcome Ashore";
 
-/// Which level list the player is running.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum CampaignKind {
-    TidePool,
-    BeachDay,
-}
-
-impl CampaignKind {
-    /// Stable save-file key, so progress in one list is not progress in the
-    /// other.
-    pub fn key(self) -> &'static str {
-        match self {
-            CampaignKind::TidePool => "tide",
-            CampaignKind::BeachDay => "beach",
-        }
-    }
-
-    /// The list a save-file key names, if this build has it.
-    pub fn from_key(key: &str) -> Option<CampaignKind> {
-        [CampaignKind::TidePool, CampaignKind::BeachDay]
-            .into_iter()
-            .find(|kind| kind.key() == key)
-    }
-}
-
-/// Whether the Tide Pool is being played by two, side by side.
+/// Whether the stage list is being played by two, side by side.
 ///
-/// Co-op is a second pair of hands, not a second player: both cursors place
-/// and lift the same seat's arrows, so the stage's inventory is one pool the
-/// two of them share and either can re-point or pick up any arrow on the
-/// beach. Every stage is proved solvable with exactly its arrows, whoever
-/// puts them down, so all hundred work as they are.
-///
-/// Tide Pool only. Beach Day's rule evicts the oldest arrow to make room,
-/// and "the oldest of a shared pool" is a rule nobody would guess.
+/// On a Tide Pool stage the second player is a second pair of hands: both
+/// cursors place and lift the same seat's arrows, so the stage's inventory
+/// is one pool the two of them share. Every such stage is proved solvable
+/// with exactly its arrows, whoever puts them down, so all hundred work as
+/// they are. A co-op stage ([`Level::is_coop`]) is the other
+/// kind: it needs this on, and each cursor places its own hand there.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Coop(pub bool);
 
-impl Coop {
-    /// Whether co-op applies to the list being played.
-    pub fn in_play(self, campaign: &Campaign) -> bool {
-        self.0 && campaign.kind == CampaignKind::TidePool
-    }
-}
-
 #[derive(Resource)]
 pub struct Campaign {
-    pub kind: CampaignKind,
     pub levels: Vec<Level>,
     pub index: usize,
     /// How many leading entries of `levels` ship with the game. The rest are
     /// the player's own, which the stage list never locks.
     pub builtins: usize,
+    /// How many of the shipped entries are co-op stages: the last `coop` of
+    /// the `builtins`, a ladder of their own after the Tide Pool's.
+    pub coop: usize,
+}
+
+/// The three lists the stage list shows, in the order it shows them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Section {
+    /// The shipped campaign, for one player (or two sharing one hand).
+    TidePool,
+    /// The shipped stages that need two players, each with a hand.
+    Coop,
+    /// The player's own levels.
+    Custom,
 }
 
 /// Where a level sits in its own section of the list ([`Campaign::place`]).
@@ -72,8 +51,8 @@ pub struct Place {
     pub at: usize,
     /// How many levels the section holds.
     pub of: usize,
-    /// Whether the section is the player's own levels, not the shipped list.
-    pub custom: bool,
+    /// Which section it is.
+    pub section: Section,
 }
 
 #[cfg(test)]
@@ -86,10 +65,10 @@ impl Campaign {
     /// A Tide Pool of `levels`, every one shipped, on its first stage.
     pub fn tide_pool_of(levels: Vec<Level>) -> Self {
         Campaign {
-            kind: CampaignKind::TidePool,
             builtins: levels.len(),
             levels,
             index: 0,
+            coop: 0,
         }
     }
 }
@@ -105,26 +84,50 @@ impl Campaign {
     /// hundredth stage and the first driftwood read as one of their own
     /// count. The stage list draws the two sections apart the same way.
     pub fn place(&self) -> Place {
-        match self.index < self.builtins {
-            true => Place {
-                at: self.index + 1,
-                of: self.builtins,
-                custom: false,
-            },
-            false => Place {
-                at: self.index - self.builtins + 1,
-                of: self.levels.len() - self.builtins,
-                custom: true,
-            },
+        self.place_of(self.index)
+    }
+
+    /// [`Campaign::place`] for level `at`.
+    pub fn place_of(&self, at: usize) -> Place {
+        let section = self.section_of(at);
+        let range = self.section(section);
+        Place {
+            at: at.saturating_sub(range.start) + 1,
+            of: range.len(),
+            section,
+        }
+    }
+
+    /// Which section level `at` is in. The one answer the grid, the
+    /// ladder, the header and the cards all ask.
+    pub fn section_of(&self, at: usize) -> Section {
+        let builtins = self.builtins.min(self.levels.len());
+        let coop = self.coop.min(builtins);
+        if at >= builtins {
+            Section::Custom
+        } else if at >= builtins - coop {
+            Section::Coop
+        } else {
+            Section::TidePool
+        }
+    }
+
+    /// The levels a section holds, as indices into the list.
+    pub fn section(&self, section: Section) -> std::ops::Range<usize> {
+        let builtins = self.builtins.min(self.levels.len());
+        let coop = self.coop.min(builtins);
+        match section {
+            Section::TidePool => 0..builtins - coop,
+            Section::Coop => builtins - coop..builtins,
+            Section::Custom => builtins..self.levels.len(),
         }
     }
 
     /// The name level `at` is shown under in `lang`.
     ///
     /// The translations are written for the shipped levels and keyed by
-    /// their English names, on both lists at once, so only a shipped level
-    /// is looked up. A player's level keeps the name they gave it, even
-    /// one that happens to match a stage on the other list.
+    /// their English names, so only a shipped level is looked up. A
+    /// player's level keeps the name they gave it.
     pub fn shown_name(&self, at: usize, lang: Lang) -> &str {
         let name = &self.levels[at].name;
         match self.is_shipped(at) {
@@ -133,13 +136,21 @@ impl Campaign {
         }
     }
 
-    /// The teaching hint for level `at`, if it is a shipped level that has
-    /// one. A player's level teaches what its author meant it to, which no
-    /// hint was written for, so it borrows none on account of its name.
-    fn hint(&self, at: usize, lang: Lang) -> Option<&'static str> {
-        match self.is_shipped(at) {
+    /// The teaching hint for level `at`: a shipped level's own, if it has
+    /// one, else on any co-op stage the claw rule it is played by. A
+    /// player's level teaches what its author meant it to, which no hint
+    /// was written for, so it borrows none on account of its name; the
+    /// rule it plays by is the game's, and stated on every co-op stage.
+    fn hint(&self, at: usize, lang: Lang) -> Option<String> {
+        let own = match self.is_shipped(at) {
             true => lang.level_hint(&self.levels[at].name),
             false => None,
+        };
+        let coop = self.levels.get(at).is_some_and(Level::is_coop);
+        match (own, coop) {
+            (Some(hint), _) => Some(hint.to_string()),
+            (None, true) => Some(crate::app::name_the_pair(lang.tr(), lang.tr().coop_rule)),
+            (None, false) => None,
         }
     }
 
@@ -148,22 +159,52 @@ impl Campaign {
     /// The first level's lesson names the stock keys, so with the keys
     /// rebound or the one-hand preset on it would teach the wrong ones, and
     /// it is kept back. Asked as the prompt asks it: a co-op partner sets
-    /// the preset aside.
+    /// the preset aside. Kept back from a pad's player too, whose prompt
+    /// names the pad's buttons in its place.
     pub fn shown_hint(
         &self,
         at: usize,
         settings: &crate::app::settings::GameSettings,
         coop: Coop,
-    ) -> Option<&'static str> {
+        device: crate::app::gamepad::LastDevice,
+    ) -> Option<String> {
         let hint = self.hint(at, settings.language)?;
         let names_keys = self.levels[at].name == KEY_LESSON_LEVEL;
-        (!names_keys || settings.stock_legend(coop.in_play(self))).then_some(hint)
+        let keys_as_named =
+            settings.stock_legend(coop.0) && device == crate::app::gamepad::LastDevice::Keyboard;
+        (!names_keys || keys_as_named).then_some(hint)
+    }
+
+    /// Whether level `at` is a co-op stage with nobody seated to play P2:
+    /// the one thing that keeps a stage that is open from being played.
+    /// The stage list says so and the browsing keys refuse it, rather than
+    /// starting a stage half of whose arrows nobody holds.
+    pub fn needs_partner(&self, at: usize, coop: Coop) -> bool {
+        !coop.0 && self.levels.get(at).is_some_and(Level::is_coop)
     }
 
     /// Whether level `at` ships with the game, rather than being one of
     /// the player's own behind it.
     fn is_shipped(&self, at: usize) -> bool {
         at < self.builtins
+    }
+
+    /// Whether level `at` came from a code pasted on the menu and played
+    /// from its card: one of the player's own in place but in no file, so
+    /// with no filing to keep a tick under and nothing on the shelf for
+    /// the stage list's Edit or Copy to open.
+    pub(crate) fn is_from_a_code(&self, at: usize) -> bool {
+        !self.is_shipped(at)
+            && self
+                .levels
+                .get(at)
+                .is_some_and(|level| level.filing.is_none())
+    }
+
+    /// Whether any level on the list came from a pasted code
+    /// ([`Campaign::is_from_a_code`]).
+    pub(crate) fn holds_a_code(&self) -> bool {
+        (0..self.levels.len()).any(|at| self.is_from_a_code(at))
     }
 
     /// Whether the current level ends the run Enter is walking. Both
@@ -177,25 +218,39 @@ impl Campaign {
 
     /// Swap in a fresh level list and start from its first level.
     /// A whole struct literal, so a new field cannot survive a reset unseen.
-    pub(crate) fn reset(&mut self, kind: CampaignKind, levels: Vec<Level>, builtins: usize) {
+    pub(crate) fn reset(&mut self, fresh: Campaign) {
+        let Campaign {
+            levels,
+            index: _,
+            builtins,
+            coop,
+        } = fresh;
         let builtins = builtins.min(levels.len());
         *self = Campaign {
-            kind,
             levels,
             index: 0,
             builtins,
+            coop: coop.min(builtins),
         };
     }
 }
 
-/// The Tide Pool list: the shipped campaign, then whatever the player has
-/// built, with the count of shipped levels (the ones the stage list gates).
-pub(crate) fn tide_pool_levels() -> (Vec<Level>, usize) {
+/// The stage list: the shipped campaign, the shipped co-op stages, then
+/// whatever the player has built, on its first stage.
+pub(crate) fn stage_list() -> Campaign {
     let mut levels = crate::sim::campaign_levels();
+    let coop = crate::sim::coop_levels();
+    let coops = coop.len();
+    levels.extend(coop);
     let builtins = levels.len();
     levels.extend(custom_puzzles(load_custom_levels()));
     disambiguate(&mut levels, builtins);
-    (levels, builtins)
+    Campaign {
+        levels,
+        index: 0,
+        builtins,
+        coop: coops,
+    }
 }
 
 /// Give every level on the list a name of its own. Progress on a player's
@@ -213,14 +268,6 @@ pub(crate) fn tide_pool_levels() -> (Vec<Level>, usize) {
 /// the renaming cannot have handed the shown name to another file; such a
 /// level's filing names it as `legacy` for the stage list to adopt (see
 /// `Progress::adopt_legacy`).
-///
-/// Only this list's names are reserved. A puzzle of the player's called
-/// "First Flood", like a Beach Day stage, shares no tick with it, since
-/// the two are filed under different lists; and it is not shown under
-/// that stage's translated name or offered its hint, because those are
-/// only looked up for shipped levels (see [`Campaign::shown_name`]).
-/// Renaming it would cost the player the tick it has earned under its own
-/// name.
 pub(crate) fn disambiguate(levels: &mut [Level], builtins: usize) {
     let builtins = builtins.min(levels.len());
     let mut taken: std::collections::HashSet<String> = levels[..builtins]
@@ -263,13 +310,15 @@ pub fn custom_puzzles(levels: Vec<Level>) -> Vec<Level> {
         .collect()
 }
 
-/// The player's levels that are beaches to fight over. The seat count is
-/// the map dial's to check: a two-castle arena is a beach, just not one a
-/// table of four can sit at.
+/// The player's levels that are beaches to fight over: built as beaches,
+/// with crabs coming onto them ([`crate::sim::Board::feeds_crabs`]). The
+/// seat count is the map dial's to check: a two-castle arena is a beach,
+/// just not one a table of four can sit at. One with no crab and no hole
+/// is not a beach at any size of table, being a round of nothing.
 pub fn custom_arenas(levels: Vec<Level>) -> Vec<Level> {
     levels
         .into_iter()
-        .filter(|level| level.kind == LevelKind::Arena)
+        .filter(|level| level.kind == LevelKind::Arena && level.board().feeds_crabs())
         .collect()
 }
 
@@ -294,6 +343,18 @@ fn filing_key(legacy: &std::path::Path, path: &std::path::Path) -> String {
         true => format!("file:{file}"),
         false => format!("file:custom/{file}"),
     }
+}
+
+/// The file a level off the shelf was read from, by the key it is filed
+/// under ([`filing_key`] read backwards): what the editor opens, copies
+/// and deletes it by. `None` for a level that came from no file.
+pub(crate) fn filed_path(level: &Level) -> Option<std::path::PathBuf> {
+    let key = &level.filing.as_ref()?.key;
+    let file = key.strip_prefix("file:")?;
+    Some(match file.strip_prefix("custom/") {
+        Some(file) => editor::custom_dir().join(file),
+        None => editor::legacy_save_path(),
+    })
 }
 
 /// [`load_custom_levels`] with both places named outright: the old single
@@ -341,6 +402,10 @@ pub fn load_custom_levels_in(legacy: &std::path::Path, custom: &std::path::Path)
                             "{}: a beach with castles for {seats} - no table can sit at it",
                             path.display()
                         ),
+                        None if !level.board().feeds_crabs() => warn!(
+                            "{}: a beach with no crabs and no holes - nothing to fight over",
+                            path.display()
+                        ),
                         None => {}
                     },
                     LevelKind::Puzzle if level.crab_count() == 0 => {
@@ -368,6 +433,14 @@ mod tests {
         .expect("a level")
     }
 
+    /// A beach with no crab standing on it and a hole to bring them.
+    fn hole_fed(name: &str) -> Level {
+        Level::parse(&format!(
+            "name: {name}\nposts: 2\nkind: arena\nspawner: 1,0 R 60\nmap:\n+-+-+-+\n|0 . 1|\n+-+-+-+\n"
+        ))
+        .expect("a level")
+    }
+
     /// The shelf splits by what the author chose, not by what the board
     /// looks like: both of these have two castles and only one is a beach.
     #[test]
@@ -377,6 +450,7 @@ mod tests {
                 level("Stage", "puzzle", true),
                 level("Beach", "arena", true),
                 level("Empty Beach", "arena", false),
+                hole_fed("Hole Beach"),
                 level("Crabless", "puzzle", false),
             ]
         };
@@ -385,22 +459,18 @@ mod tests {
         };
         assert_eq!(names(custom_puzzles(shelf())), ["Stage"]);
         // A beach fed only by holes has no crab standing on it at the
-        // start, which is not a reason to keep it off the map dial.
-        assert_eq!(names(custom_arenas(shelf())), ["Beach", "Empty Beach"]);
+        // start, which is not a reason to keep it off the map dial; one with
+        // neither crab nor hole has nothing to fight over, which is.
+        assert_eq!(names(custom_arenas(shelf())), ["Beach", "Hole Beach"]);
     }
 
     /// The names progress is filed under have to be one each on the
-    /// shipped lists, or two stages would share a tick.
+    /// shipped list, or two stages would share a tick.
     #[test]
     fn shipped_level_names_are_unique() {
-        for levels in [
-            crate::sim::campaign_levels(),
-            crate::sim::challenge_levels(),
-        ] {
-            let mut seen = std::collections::HashSet::new();
-            for level in &levels {
-                assert!(seen.insert(level.name.clone()), "{:?} twice", level.name);
-            }
+        let mut seen = std::collections::HashSet::new();
+        for level in &crate::sim::campaign_levels() {
+            assert!(seen.insert(level.name.clone()), "{:?} twice", level.name);
         }
     }
 
@@ -431,52 +501,6 @@ mod tests {
                 "Mine (3)",
                 "Mine (2) (2)",
             ]
-        );
-    }
-
-    /// A Tide Pool level of the player's named like a Beach Day stage keeps
-    /// its name, and with it the tick progress filed under that name: the
-    /// two lists file progress apart. It is shown under its own name all
-    /// the same, untranslated and with no hint, since those are only for
-    /// the shipped levels, and so is a Tide Pool level of theirs whose
-    /// name a shipped one's translation happens to be keyed by.
-    #[test]
-    fn a_player_level_named_like_a_beach_day_stage_keeps_its_name() {
-        let beach_day = crate::sim::challenge_levels()[0].name.clone();
-        let tide_pool = crate::sim::campaign_levels()[0].name.clone();
-        let mut levels = vec![
-            level(&tide_pool, "puzzle", true),
-            level(&beach_day, "puzzle", true),
-        ];
-        disambiguate(&mut levels, 1);
-        assert_eq!(levels[0].name, tide_pool, "the shipped one is left alone");
-        assert_eq!(levels[1].name, beach_day, "and so is the player's");
-
-        let lang = Lang::Fr;
-        assert_ne!(
-            lang.level_name(&beach_day),
-            beach_day,
-            "the Beach Day stage has a French name for this to be about"
-        );
-        let campaign = Campaign {
-            builtins: 1,
-            ..Campaign::tide_pool_of(levels)
-        };
-        assert_eq!(campaign.shown_name(1, lang), beach_day, "untranslated");
-        assert_eq!(campaign.hint(1, lang), None, "and with no hint");
-        assert_eq!(
-            campaign.shown_name(0, lang),
-            lang.level_name(&tide_pool),
-            "the shipped stage is still translated"
-        );
-        assert_eq!(campaign.hint(0, lang), lang.level_hint(&tide_pool));
-
-        let mut progress = crate::app::progress::Progress::default();
-        progress.mark(CampaignKind::TidePool, &beach_day);
-        assert!(progress.is_cleared(CampaignKind::TidePool, &beach_day));
-        assert!(
-            !progress.is_cleared(CampaignKind::BeachDay, &beach_day),
-            "the stage it is named like is not ticked by it"
         );
     }
 
@@ -516,14 +540,14 @@ mod tests {
             .position(|level| level.name == "Twins (2)")
             .expect("the second is told apart");
         let mut progress = Progress::default();
-        progress.mark_level(CampaignKind::TidePool, &before.levels[cleared]);
+        progress.mark_level(&before.levels[cleared]);
 
         std::fs::write(shelf.join("a.txt"), text("Twins")).expect("write");
         let after = listed(&dir);
         let ticked: Vec<&str> = after
             .levels
             .iter()
-            .filter(|level| progress.level_cleared(CampaignKind::TidePool, level))
+            .filter(|level| progress.level_cleared(level))
             .map(|level| level.progress_key())
             .collect();
         assert_eq!(
@@ -550,7 +574,7 @@ mod tests {
         let campaign = listed(&dir);
         let mut progress = Progress::default();
         for name in ["Alone", "Pair", "Pair (2)"] {
-            progress.mark(CampaignKind::TidePool, name);
+            progress.mark(name);
         }
         assert!(progress.adopt_legacy(&campaign), "something moved");
         assert!(!progress.adopt_legacy(&campaign), "and only once");
@@ -560,7 +584,7 @@ mod tests {
                 .iter()
                 .find(|level| level.progress_key() == key)
                 .expect("on the list");
-            progress.level_cleared(CampaignKind::TidePool, level)
+            progress.level_cleared(level)
         };
         assert!(ticked("file:custom/a.txt"), "the only Alone");
         assert!(!ticked("file:custom/b.txt"), "either Pair could have");
@@ -598,21 +622,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Co-op is the Tide Pool's alone: on Beach Day the switch changes
-    /// nothing, and off it is off everywhere.
-    #[test]
-    fn coop_applies_to_the_tide_pool_only() {
-        let (levels, builtins) = (crate::sim::campaign_levels(), 3);
-        let mut campaign = Campaign {
-            builtins,
-            ..Campaign::tide_pool_of(levels)
-        };
-        assert!(Coop(true).in_play(&campaign));
-        assert!(!Coop(false).in_play(&campaign));
-        campaign.kind = CampaignKind::BeachDay;
-        assert!(!Coop(true).in_play(&campaign));
-    }
-
     /// A reset starts the new list from its first level, and a shipped
     /// count longer than the list is held to the list.
     #[test]
@@ -623,10 +632,14 @@ mod tests {
             ..Campaign::tide_pool()
         };
         let two = vec![level("One", "puzzle", true), level("Two", "puzzle", true)];
-        campaign.reset(CampaignKind::BeachDay, two, 9);
-        assert_eq!(campaign.kind, CampaignKind::BeachDay);
+        campaign.reset(Campaign {
+            builtins: 9,
+            coop: 12,
+            ..Campaign::tide_pool_of(two)
+        });
         assert_eq!(campaign.index, 0);
         assert_eq!(campaign.builtins, 2);
+        assert_eq!(campaign.coop, 2);
         assert_eq!(campaign.current().name, "One");
     }
 
@@ -635,6 +648,7 @@ mod tests {
     /// cannot show it where the puzzle would not.
     #[test]
     fn the_key_lesson_is_shown_only_under_the_stock_keys() {
+        use crate::app::gamepad::LastDevice;
         use crate::app::settings::{CommitScheme, GameSettings};
         let levels = crate::sim::campaign_levels();
         let at = levels
@@ -643,14 +657,30 @@ mod tests {
             .expect("the key lesson ships");
         let campaign = Campaign::tide_pool_of(levels);
         let stock = GameSettings::default();
-        assert!(campaign.shown_hint(at, &stock, Coop(false)).is_some());
+        assert!(
+            campaign
+                .shown_hint(at, &stock, Coop(false), LastDevice::Keyboard)
+                .is_some()
+        );
         let one_hand = GameSettings {
             commit: CommitScheme::Ijkl,
             ..GameSettings::default()
         };
-        assert_eq!(campaign.shown_hint(at, &one_hand, Coop(false)), None);
+        assert_eq!(
+            campaign.shown_hint(at, &one_hand, Coop(false), LastDevice::Keyboard),
+            None
+        );
         // Co-op sets the preset aside, so the stock keys are true again.
-        assert!(campaign.shown_hint(at, &one_hand, Coop(true)).is_some());
+        assert!(
+            campaign
+                .shown_hint(at, &one_hand, Coop(true), LastDevice::Keyboard)
+                .is_some()
+        );
+        // A pad's player is not taught keys: the prompt names the pad's.
+        assert_eq!(
+            campaign.shown_hint(at, &stock, Coop(false), LastDevice::Pad),
+            None
+        );
     }
 
     /// The level whose hint is withheld under rebound keys is the one that
@@ -662,11 +692,7 @@ mod tests {
         // the bare word is the *object* and appears in several hints. Only
         // the keys are withheld under a rebound keyboard.
         let names_keys = |hint: &str| hint.contains("WASD") || hint.contains("arrow key");
-        assert!(names_keys(
-            crate::app::i18n::Lang::En
-                .level_hint(KEY_LESSON_LEVEL)
-                .unwrap()
-        ));
+        assert!(names_keys(Lang::En.level_hint(KEY_LESSON_LEVEL).unwrap()));
         for level in crate::sim::campaign_levels() {
             if level.name != KEY_LESSON_LEVEL
                 && let Some(hint) = Lang::En.level_hint(&level.name)

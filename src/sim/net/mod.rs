@@ -5,29 +5,77 @@
 //! fallback: **deterministic lockstep with a small input delay**. The
 //! protocol lives here, transport-agnostic and engine-free, so it is
 //! unit-testable and reusable; the shell owns sockets. The packed input
-//! (3 bytes an action, 8 an [`InputMsg`]) and the `Board`'s clone + `state_hash` snapshots are exactly the
-//! groundwork GGRS-style rollback needs, so upgrading later is contained.
+//! (3 bytes an action, a seat's frames in runs) and the `Board`'s clone +
+//! `state_hash` snapshots are exactly the groundwork GGRS-style rollback
+//! needs, so upgrading later is contained.
 //!
 //! Wire model: every tick, each peer sends its local action scheduled
-//! `delay` frames ahead. A frame simulates only when every player's action
-//! for it is known. On a LAN with delay 3 (100 ms at 30 Hz) the sim never
-//! stalls; on jitter it waits rather than desyncs. Peers exchange state
-//! hashes every [`HASH_INTERVAL`] frames to detect desync loudly.
+//! `delay` frames ahead, the delay the host picked for the round from its
+//! players' round trips ([`delay_for_round_trip`]). A frame simulates only
+//! when every player's action for it is known, and on a player only once
+//! it has committed the `delay` frames after it ([`Lockstep::due`]), so loss and
+//! jitter within the delay never stall it; past it the sim waits rather
+//! than desyncs. Peers exchange state hashes every [`HASH_INTERVAL`]
+//! frames to detect desync loudly.
 
-use crate::sim::board::{MAX_PLAYERS, PlayerAction, PlayerId, TideEvent};
+use crate::sim::board::{MAX_PLAYERS, PlayerAction, PlayerId, TICKS_PER_SECOND, TideEvent};
 use crate::sim::direction::Direction;
 use std::collections::BTreeMap;
 
 /// Input delay in frames: 3 at 30 Hz = 100 ms, the spec's 2–3 frame range.
+/// The least a round is played with, and the delay of a table nobody
+/// measured: the direct `PINCH_HOST` pair, and the tests.
 pub const DEFAULT_DELAY: u32 = 3;
+/// The most input delay a host picks for a round, 200 ms: past it the
+/// controls feel like wading, and a table that slow is better off stalling
+/// now and then than lagging always.
+pub const MAX_DELAY: u32 = 6;
+
+/// The input delay for a round whose slowest player answers the host in
+/// `round_trip` seconds.
+///
+/// A player's input reaches another player through the host, so it
+/// travels about one round trip's worth (half of each of their two),
+/// and lands on the far side a tick after the host's own tick picks it
+/// up, which is a frame of its own; one more frame rides out a lost
+/// datagram, made good by the next tick's resend. Between
+/// [`DEFAULT_DELAY`] and [`MAX_DELAY`].
+pub fn delay_for_round_trip(round_trip: f32) -> u32 {
+    let travel = (round_trip.max(0.0) * TICKS_PER_SECOND as f32).ceil() as u32;
+    (travel + 2).clamp(DEFAULT_DELAY, MAX_DELAY)
+}
 /// How far ahead of its own next commit a peer schedules a pause. Far
 /// enough that the other peers, whose commit counters run a frame or two
 /// apart, have almost always not passed it yet, and near enough (a third
 /// of a second) that pressing Escape feels like it stopped the game.
 pub const PAUSE_LEAD: u32 = 10;
-/// How far local commits may run ahead of the simulated frame before the
-/// session pushes back on the caller (a peer is stalled or unreachable).
-pub const MAX_COMMIT_LEAD: u32 = 30;
+/// How far past the input delay local commits may run ahead of the
+/// simulated frame before the session refuses them (a peer is stalled or
+/// unreachable). Every frame of lead is a frame of input lag for everybody
+/// once the table moves again, so it is kept to a quarter of a second;
+/// in play the host's clock ([`Lockstep::nudge`]) keeps the lead at the
+/// delay, and this only bounds a stall.
+pub const MAX_COMMIT_LEAD: u32 = 8;
+/// How far past the input delay the resend tails reach, for a peer that
+/// has not said what it holds ([`Lockstep::tail_start`]): a second.
+///
+/// At least [`MAX_COMMIT_LEAD`], or a peer still in step could miss a
+/// commit nobody repeats any more (see [`resend_span`]). The rest is for
+/// a spectator that has yet to say which frames it wants, a watcher at
+/// the launch whose first word is still on its way among them; once it
+/// says, it is sent from there ([`Lockstep::resend_from`]).
+pub const RESEND_LEAD: u32 = 30;
+const _: () = assert!(RESEND_LEAD >= MAX_COMMIT_LEAD);
+/// How far back a peer keeps every input it has played or holds: twenty
+/// seconds.
+///
+/// Far past anything a peer in step can be missing, for a spectator that
+/// arrived mid-round: it is handed the board as it stood at some frame,
+/// and asks for the inputs from that frame on only once it has walked
+/// into the arena, which a slow machine takes seconds over. The host
+/// answers from here ([`Lockstep::held_between`]); a few kilobytes a
+/// round.
+pub const RECORD_SPAN: u32 = 20 * TICKS_PER_SECOND;
 /// How often peers exchange state hashes for desync detection.
 pub const HASH_INTERVAL: u32 = 30;
 
@@ -70,32 +118,14 @@ pub fn decode_action(bytes: [u8; 3]) -> PlayerAction {
 
 // --- lockstep session ------------------------------------------------------
 
-/// A message to put on the wire: this player's action for a future frame.
-/// 8 bytes packed via [`InputMsg::encode`].
+/// One player's action for one frame: what peers exchange. On the wire a
+/// seat's consecutive frames travel as one run of packed actions
+/// (`transport::Batch`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct InputMsg {
     pub player: PlayerId,
     pub frame: u32,
     pub action: PlayerAction,
-}
-
-/// Bytes an [`InputMsg`] occupies on the wire.
-pub const INPUT_BYTES: usize = 8;
-
-impl InputMsg {
-    pub fn encode(self) -> [u8; INPUT_BYTES] {
-        let f = self.frame.to_le_bytes();
-        let a = encode_action(self.action);
-        [self.player, f[0], f[1], f[2], f[3], a[0], a[1], a[2]]
-    }
-
-    pub fn decode(bytes: [u8; INPUT_BYTES]) -> InputMsg {
-        InputMsg {
-            player: bytes[0],
-            frame: u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]),
-            action: decode_action([bytes[5], bytes[6], bytes[7]]),
-        }
-    }
 }
 
 /// Transport-agnostic lockstep state machine for one peer.
@@ -113,10 +143,18 @@ pub struct Lockstep {
     next_commit: u32,
     /// Known actions per future frame.
     pending: BTreeMap<u32, [Option<PlayerAction>; MAX_PLAYERS]>,
-    /// Recent local commits, kept for redundant resends: UDP drops packets,
-    /// and the handshake itself can eat the first few, so every outgoing
-    /// batch repeats this tail. Receivers ignore duplicates.
-    history: Vec<InputMsg>,
+    /// Every input a player made that this peer holds, its own commits,
+    /// the seats it speaks for and what it heard from everyone else, by
+    /// frame, for the last [`RECORD_SPAN`] frames and every frame ahead.
+    ///
+    /// What every resend is cut from: UDP drops packets, so each datagram
+    /// repeats whatever its receiver has not said it holds
+    /// ([`Lockstep::wants`]), and receivers ignore duplicates. Only what a
+    /// player made: the empty input of an absent or abandoned seat is
+    /// every peer's own to fill in, and never travels.
+    record: BTreeMap<u32, [Option<PlayerAction>; MAX_PLAYERS]>,
+    /// The newest frame the record has ever held an input for, per seat.
+    newest: [Option<u32>; MAX_PLAYERS],
     /// The pause called and the pauses lifted. See [`PauseState`].
     pause: PauseState,
     /// Seats this peer commits for besides its own: a host speaking for
@@ -124,10 +162,9 @@ pub struct Lockstep {
     /// an input on every frame the local seat does, so the table never
     /// waits on one; to the other peers they are players like any other.
     also: Vec<PlayerId>,
-    /// The other players' inputs accepted here, kept for the same span as
-    /// `history`: what the host passes on again for a player it gives up
-    /// on (see [`Lockstep::abandon`]).
-    heard: Vec<InputMsg>,
+    /// Commits still to hold back (positive) or to add (negative) to bring
+    /// this peer level with the host's clock (see [`Lockstep::nudge`]).
+    nudge: i32,
     /// Players given up on, and the frame from which their seat is empty.
     /// Their inputs for the frames before it are still the real ones, and
     /// still awaited and accepted.
@@ -227,18 +264,21 @@ impl PauseState {
 }
 
 /// How far behind the local simulated frame a peer that is still talking
-/// to us can be, in frames: `delay + MAX_COMMIT_LEAD`.
+/// to us can be, in frames: `delay + RESEND_LEAD`, at least the
+/// `delay + MAX_COMMIT_LEAD` a player can be.
 ///
 /// We only advance a frame once that peer's input for it is in, and it
-/// only commits that far past its own stalled frame; so our frame is at
-/// most this far past theirs, and everything we committed from that far
-/// back is something they may still be missing. [`Lockstep::recent_commits`]
+/// only commits `delay + MAX_COMMIT_LEAD` past its own stalled frame; so
+/// our frame is at most that far past theirs, and everything we committed
+/// from that far back is something they may still be missing. A late
+/// spectator can be further behind, which [`RESEND_LEAD`] allows for.
+/// [`Lockstep::recent_commits`]
 /// therefore keeps every commit from `frame - span` on, which with commits
 /// running up to `frame + span - 1` is `2 * span` messages at most. A fixed
 /// window of forty deadlocked under a one-way loss burst, with the commit
 /// the stalled peer needed already scrolled out.
 fn resend_span(delay: u32) -> u32 {
-    delay + MAX_COMMIT_LEAD
+    delay + RESEND_LEAD
 }
 
 impl Lockstep {
@@ -285,10 +325,11 @@ impl Lockstep {
             frame: 0,
             next_commit: delay,
             pending: BTreeMap::new(),
-            history: Vec::new(),
+            record: BTreeMap::new(),
+            newest: [None; MAX_PLAYERS],
             also: Vec::new(),
             pause: PauseState::default(),
-            heard: Vec::new(),
+            nudge: 0,
             leaving: Vec::new(),
         };
         // The first `delay` frames have no committed inputs by construction;
@@ -374,6 +415,7 @@ impl Lockstep {
     /// Returns the frame the lifted pause was to freeze on (the highest
     /// ever lifted here, if there was no pause to lift), for the peers.
     pub fn resume(&mut self) -> u32 {
+        self.nudge = 0;
         self.pause.resume()
     }
 
@@ -401,7 +443,11 @@ impl Lockstep {
             return None;
         }
         let horizon = self.horizon();
-        self.pause.receive_resume(frame, horizon)
+        let lifted = self.pause.receive_resume(frame, horizon);
+        if lifted.is_some() {
+            self.nudge = 0;
+        }
+        lifted
     }
 
     /// Whether a `Pause` naming `frame` is of a pause already lifted here:
@@ -452,11 +498,65 @@ impl Lockstep {
         &self.also
     }
 
+    /// Move this peer's commits `frames` frames against the host's clock:
+    /// a positive count holds that many ticks' commits back, a negative
+    /// one commits that many extra frames, one a tick, empty. Replaces
+    /// any nudge still pending, since each is a fresh reading of the whole
+    /// gap (see `OnlineSession::keep_time`).
+    ///
+    /// Every peer commits one frame a tick, so two peers whose rounds began
+    /// some ticks apart stay that far apart for good, and the gap lands
+    /// on everybody as input lag: the early peer's commits sit waiting on
+    /// the late one's. Nudged, the late peer catches up and the early one
+    /// waits, until both commit each frame on the same tick.
+    pub fn nudge(&mut self, frames: i32) {
+        self.nudge = frames;
+    }
+
+    /// Whether a [`Self::nudge`] is still being taken.
+    pub fn nudging(&self) -> bool {
+        self.nudge != 0
+    }
+
     /// [`Self::commit_local`], and on the same frame an input for every
     /// seat this peer speaks for: the one given in `extra`, or nothing for
     /// a seat it does not name. All or none: a commit refused for the local
     /// seat is refused for every seat.
+    ///
+    /// The pending [`Self::nudge`] is taken here: a commit held back (a
+    /// `None` like any refused commit, so the action is kept for the next
+    /// tick), or one empty frame committed after this one.
+    ///
+    /// And dropped whenever the clocks it was read from stop meaning
+    /// anything: while a pause is called, which stops every peer's
+    /// commits at its frame, when one is lifted, and when a commit is
+    /// refused at the commit lead, where this peer is waiting on the table
+    /// rather than out of step with it. Kept, it fired on the far side of
+    /// the stop, against clocks that had moved on without it.
     pub fn commit_local_with(
+        &mut self,
+        action: PlayerAction,
+        extra: &[(PlayerId, PlayerAction)],
+    ) -> Option<InputMsg> {
+        if self.paused() {
+            self.nudge = 0;
+        }
+        if self.nudge > 0 && !self.watching() {
+            self.nudge -= 1;
+            return None;
+        }
+        let Some(msg) = self.commit_frame(action, extra) else {
+            self.nudge = 0;
+            return None;
+        };
+        if self.nudge < 0 && self.commit_frame(PlayerAction::None, &[]).is_some() {
+            self.nudge += 1;
+        }
+        Some(msg)
+    }
+
+    /// One frame's commit, for the local seat and every seat spoken for.
+    fn commit_frame(
         &mut self,
         action: PlayerAction,
         extra: &[(PlayerId, PlayerAction)],
@@ -469,7 +569,7 @@ impl Lockstep {
                 .map_or(PlayerAction::None, |(_, a)| *a);
             let given = decode_action(encode_action(given));
             self.slot(msg.frame)[usize::from(seat)] = Some(given);
-            self.history.push(InputMsg {
+            self.keep(InputMsg {
                 player: seat,
                 frame: msg.frame,
                 action: given,
@@ -505,30 +605,135 @@ impl Lockstep {
             frame,
             action,
         };
-        self.history.push(msg);
-        self.trim_history();
+        self.keep(msg);
         Some(msg)
     }
 
-    /// Drop the commits no peer can still be missing (see [`resend_span`]).
-    fn trim_history(&mut self) {
-        let oldest_wanted = self.frame.saturating_sub(resend_span(self.delay));
-        let keep = self
-            .history
-            .iter()
-            .position(|msg| msg.frame >= oldest_wanted)
-            .unwrap_or(self.history.len());
-        if keep > 0 {
-            self.history.drain(..keep);
-        }
+    /// Write a player's input into the [`record`](Self::record).
+    fn keep(&mut self, msg: InputMsg) {
+        let seat = usize::from(msg.player);
+        let slot = self.record.entry(msg.frame).or_insert([None; MAX_PLAYERS]);
+        slot[seat] = Some(msg.action);
+        self.newest[seat] = self.newest[seat].max(Some(msg.frame));
     }
 
-    /// The recent local commits, oldest first: every one a peer still in
-    /// step with us could be missing (see [`resend_span`]). Resend these
-    /// every step so packet loss (or a not-yet-completed handshake) cannot
-    /// stall the peer.
-    pub fn recent_commits(&self) -> &[InputMsg] {
-        &self.history
+    /// The first frame a resend tail starts from for a peer that has not
+    /// said what it holds: as far back as one still in step could be
+    /// missing (see [`resend_span`]).
+    pub fn tail_start(&self) -> u32 {
+        self.frame.saturating_sub(resend_span(self.delay))
+    }
+
+    /// The recent commits of this peer and the seats it speaks for, oldest
+    /// first: every one a peer still in step with us could be missing (see
+    /// [`resend_span`]).
+    pub fn recent_commits(&self) -> Vec<InputMsg> {
+        let start = Some(self.tail_start());
+        let mut from = [None; MAX_PLAYERS];
+        for seat in self.local.iter().chain(&self.also) {
+            from[usize::from(*seat)] = start;
+        }
+        self.held_between(&from, u32::MAX)
+    }
+
+    /// Every input held here for each seat `from` names, from the frame it
+    /// names for that seat and before `until`, in frame order (seat order
+    /// within a frame): what a peer that holds everything before those
+    /// frames is still missing.
+    ///
+    /// No further than a [`horizon`](Self::horizon)'s reach past the
+    /// earliest of them, since a peer that far back drops anything beyond
+    /// it, and it is sent the rest as it catches up.
+    pub fn held_between(&self, from: &[Option<u32>; MAX_PLAYERS], until: u32) -> Vec<InputMsg> {
+        let Some(earliest) = from.iter().flatten().min().copied() else {
+            return Vec::new();
+        };
+        let until = until.min(earliest.saturating_add(2 * resend_span(self.delay)));
+        if until <= earliest {
+            return Vec::new();
+        }
+        let mut held = Vec::new();
+        for (&frame, slot) in self.record.range(earliest..until) {
+            for (seat, start) in from.iter().enumerate() {
+                if let (Some(start), Some(action)) = (start, slot[seat])
+                    && frame >= *start
+                {
+                    held.push(InputMsg {
+                        player: seat as PlayerId,
+                        frame,
+                        action,
+                    });
+                }
+            }
+        }
+        held
+    }
+
+    /// For every seat, the first frame from the one about to be simulated
+    /// whose input for that seat this peer does not hold: what it tells
+    /// whoever sends it inputs, so they resend only from there.
+    ///
+    /// Read off the [`record`](Self::record), so a seat filled in here
+    /// (absent, or given up on) reads as wanting what nobody sends, which
+    /// nobody does.
+    pub fn wants(&self) -> [u32; MAX_PLAYERS] {
+        let mut wants = [self.frame; MAX_PLAYERS];
+        let mut open = [true; MAX_PLAYERS];
+        for (&frame, slot) in self.record.range(self.frame..) {
+            for seat in 0..MAX_PLAYERS {
+                if open[seat] && wants[seat] == frame && slot[seat].is_some() {
+                    wants[seat] = frame + 1;
+                } else {
+                    open[seat] = false;
+                }
+            }
+            if !open.contains(&true) {
+                break;
+            }
+        }
+        wants
+    }
+
+    /// Where to resend `seat`'s inputs from, to a peer that said it wants
+    /// them from `wanted` on (`None` when it said nothing), or `None` when
+    /// this peer has never held one of them.
+    ///
+    /// From there, as far back as the [`record`](Self::record) reaches,
+    /// so a spectator far behind is still fed. Unless it names a frame
+    /// past the newest input held here for the seat, plus one: nothing a
+    /// peer in this round can hold, so a word from the last one still on
+    /// the wire, and the tail goes from [`Self::tail_start`] as for a peer
+    /// that said nothing.
+    pub fn resend_from(&self, seat: PlayerId, wanted: Option<u32>) -> Option<u32> {
+        let newest = (*self.newest.get(usize::from(seat))?)?;
+        Some(match wanted {
+            Some(wanted) if wanted <= newest + 1 => wanted,
+            _ => self.tail_start(),
+        })
+    }
+
+    /// Every input held here that a peer is missing, by what it said it
+    /// holds (`wants`, per seat, or `None` when it has said nothing), for
+    /// every seat but `own`, the one it plays, whose inputs it made, and
+    /// for the frames before `until`: what that peer is sent.
+    ///
+    /// One reckoning for every sender of a resend: the host each tick of a
+    /// round, and on its results card and back in the lobby, where `until`
+    /// is the round's last frame and a spectator far behind is still owed
+    /// every frame from where it stands.
+    pub fn owed(
+        &self,
+        wants: Option<[u32; MAX_PLAYERS]>,
+        own: Option<PlayerId>,
+        until: u32,
+    ) -> Vec<InputMsg> {
+        let mut from = [None; MAX_PLAYERS];
+        for (seat, start) in (0..).zip(from.iter_mut()) {
+            if Some(seat) != own {
+                *start = self.resend_from(seat, wants.map(|wants| wants[usize::from(seat)]));
+            }
+        }
+        self.held_between(&from, until)
     }
 
     /// Which players the next frame is still waiting on. Empty means it is
@@ -579,10 +784,13 @@ impl Lockstep {
     /// played every one of them with the player's real input, and a peer
     /// behind it may still be missing some (the relay was lost, and the
     /// player has stopped resending). Those slots are left waiting and
-    /// still accept the player's input, which the decider sends again
-    /// ([`Lockstep::owed_by`]). Filled empty, as they used to be, that peer
-    /// played a frame the host never did, and lockstep cannot recover a
-    /// desync.
+    /// still accept the player's input, which the decider sends again:
+    /// it stays in the [`record`](Self::record) and goes out in every
+    /// resend to a peer that still wants it. Filled empty, as they used to
+    /// be, that peer played a frame the host never did, and lockstep
+    /// cannot recover a desync. Whatever the player sent for `frame` on is
+    /// dropped from the record, so nobody is sent an input the seat no
+    /// longer plays.
     pub fn abandon(&mut self, player: PlayerId, frame: u32) {
         debug_assert!(
             usize::from(player) < MAX_PLAYERS,
@@ -597,23 +805,9 @@ impl Lockstep {
                 slot[player as usize] = Some(PlayerAction::None);
             }
         }
-    }
-
-    /// The inputs a player given up on at `frame` sent for the frames
-    /// before it, as far back as a peer still in step could be missing
-    /// them: what the decider repeats alongside the notice.
-    ///
-    /// Bounded by the same span as `heard`, read against the frame now
-    /// rather than the last time anything arrived: at a table with nobody
-    /// else left to hear from, `heard` is never trimmed, and the repeat
-    /// went out every tick until the round ended.
-    pub fn owed_by(&self, player: PlayerId, frame: u32) -> Vec<InputMsg> {
-        let oldest_wanted = self.frame.saturating_sub(resend_span(self.delay));
-        self.heard
-            .iter()
-            .copied()
-            .filter(|msg| msg.player == player && msg.frame < frame && msg.frame >= oldest_wanted)
-            .collect()
+        for (_, slot) in self.record.range_mut(frame..) {
+            slot[player as usize] = None;
+        }
     }
 
     /// Every input played here for the frames a peer still in step could
@@ -624,14 +818,7 @@ impl Lockstep {
     /// and with it the relays, so a peer whose relay of the last frames
     /// was lost has nobody else to hear them from.
     pub fn played_tail(&self) -> Vec<InputMsg> {
-        let oldest_wanted = self.frame.saturating_sub(resend_span(self.delay));
-        let played = |msg: &&InputMsg| msg.frame >= oldest_wanted && msg.frame < self.frame;
-        self.history
-            .iter()
-            .filter(played)
-            .chain(self.heard.iter().filter(played))
-            .copied()
-            .collect()
+        self.held_between(&[Some(self.tail_start()); MAX_PLAYERS], self.frame)
     }
 
     /// The furthest frame a peer may name: as far ahead of the frame being
@@ -656,12 +843,18 @@ impl Lockstep {
     /// A frame past the [`horizon`](Self::horizon) is ignored too: every
     /// frame accepted here makes a slot, and a peer naming frames up to
     /// `u32::MAX` would grow the table without bound.
-    pub fn receive(&mut self, msg: InputMsg) {
-        if msg.frame < self.frame
-            || !self.within_horizon(msg.frame)
-            || !self.takes(msg.player, msg.frame)
-        {
-            return;
+    ///
+    /// Whether the input is one this round takes, new or a resend: a seat
+    /// it plays (or still owes frames to), on a frame it can have reached.
+    /// What a peer's newest commit is read from (`OnlineSession`'s clock
+    /// and its word that a `Start` got there), so a frame named by nobody
+    /// at this table, or by the last round, says nothing about this one.
+    pub fn receive(&mut self, msg: InputMsg) -> bool {
+        if !self.within_horizon(msg.frame) || !self.takes(msg.player, msg.frame) {
+            return false;
+        }
+        if msg.frame < self.frame {
+            return true;
         }
         // Past the guard, the sender is a seated player (or one leaving),
         // so the index below is in range, which is the only reason it is
@@ -670,10 +863,15 @@ impl Lockstep {
         let slot = self.slot(msg.frame);
         if slot[msg.player as usize].is_none() {
             slot[msg.player as usize] = Some(msg.action);
-            self.heard.push(msg);
-            let oldest_wanted = self.frame.saturating_sub(resend_span(self.delay));
-            self.heard.retain(|kept| kept.frame >= oldest_wanted);
+            self.keep(msg);
         }
+        true
+    }
+
+    /// Whether `player` holds a seat in this round: one of its players,
+    /// and not given up on.
+    pub fn plays(&self, player: PlayerId) -> bool {
+        self.players.contains(&player)
     }
 
     /// If every player's action for the next frame is known, pop it for
@@ -698,7 +896,78 @@ impl Lockstep {
         self.frame += 1;
         let frame = self.frame;
         self.leaving.retain(|&(_, from)| from > frame);
+        let oldest_kept = frame.saturating_sub(RECORD_SPAN);
+        while self
+            .record
+            .first_key_value()
+            .is_some_and(|(&at, _)| at < oldest_kept)
+        {
+            self.record.pop_first();
+        }
         Some(actions)
+    }
+
+    /// Whether the frame about to be simulated is due here yet: a seated
+    /// peer plays a frame only once it has committed the `delay` frames
+    /// after it, so its next commit is `delay + 1` past it.
+    ///
+    /// Played the moment the last input for it arrives, a frame comes in
+    /// the rhythm the network delivers them: a lost datagram stalls the
+    /// peer a tick and the next plays two. Held to its own commits, a
+    /// peer plays a frame `delay` ticks after it committed its own input
+    /// for it, and everybody else, level with it, committed theirs on the
+    /// same tick: that is the `delay` ticks of travel, host pick-up and
+    /// one resend [`delay_for_round_trip`] budgets, and the peer plays one
+    /// frame a tick through loss and jitter that size. A peer behind still
+    /// catches up a couple of frames a tick, its commits being far ahead.
+    ///
+    /// A spectator commits nothing, and plays whatever it holds (see
+    /// [`Self::playout`] for how fast). So does a paused session, whose
+    /// commits have stopped at the pause frame: it plays on up to it.
+    pub fn due(&self) -> bool {
+        self.watching()
+            || self.pause.reached(self.next_commit)
+            || self.next_commit > self.frame + self.delay
+    }
+
+    /// How many frames this tick plays, of the `most` a tick may: all of
+    /// them for a player, whose commits pace it ([`Self::due`]).
+    ///
+    /// A spectator has no commits to go by, so it goes by the frames it
+    /// holds whole: one a tick while it holds up to `delay` of them, and
+    /// `most` once it holds more. Played as fast as they came, the frames
+    /// it held were spent the moment they arrived, and every datagram the
+    /// network lost or held back stalled the picture; kept a few frames
+    /// behind the newest it can play, it rides that out like a player
+    /// does. Each stall leaves it a frame further behind, so a buffer used
+    /// up (by a pause, which stops the frames at its frame) builds back by
+    /// itself, and one grown past the delay is played down to it. The
+    /// frames stop coming at the end of the round too, and it plays the
+    /// buffer out to the last of them.
+    pub fn playout(&self, most: usize) -> usize {
+        if !self.watching() || self.held_whole() > self.delay {
+            return most;
+        }
+        most.min(1)
+    }
+
+    /// How many frames from the one about to be simulated have every
+    /// input in, with none missing between.
+    fn held_whole(&self) -> u32 {
+        let mut frame = self.frame;
+        while self
+            .pending
+            .get(&frame)
+            .is_some_and(|slot| slot.iter().all(Option::is_some))
+        {
+            frame += 1;
+        }
+        frame - self.frame
+    }
+
+    /// The input delay this session plays with, in frames.
+    pub fn delay(&self) -> u32 {
+        self.delay
     }
 
     /// The frame the next local commit will be for: what a seat driven

@@ -49,6 +49,7 @@ impl Board {
                     fair_spawns: _,
                     round_length: _,
                     castle_raids: _,
+                    claw_hands: _,
                 },
             lure: _,
             lure_cooldown: _,
@@ -81,6 +82,7 @@ impl Board {
             seed: _,
             // hash_round, at its tail
             hands: _,
+            incoming: _,
             sweeps:
                 Sweeps {
                     // Outside the fingerprint: the swept-home record is
@@ -91,6 +93,15 @@ impl Board {
                     // hash_round, at its tail
                     in_air: _,
                 },
+            // Outside the fingerprint: why a molt started no lure is
+            // written for the render layer and never read back by the sim.
+            refused_lures: _,
+            // Outside the fingerprint: which crabs walked home is written
+            // for the render layer and never read back by the sim.
+            walked_home: _,
+            // Outside the fingerprint: who steered a gull is for the feed
+            // and the awards, and never read by the rules.
+            steering: _,
         } = self;
         let mut h = Fnv::new();
         self.hash_terrain(&mut h);
@@ -291,6 +302,22 @@ impl Board {
                     h.u64(*at);
                 }
             }
+        }
+        // The gulls on their way in: each lands on its tick, on its tile,
+        // so two peers that disagree on one have different flocks soon.
+        h.u32(self.incoming.len() as u32);
+        for gull in &self.incoming {
+            h.u64(gull.at);
+            h.u16(gull.tile);
+            h.u8(gull.dir.id());
+        }
+        // Claw-keyed arrows, and only where they are on: every board
+        // without them hashes the bytes it always has, so no versus round,
+        // replay or solo stage moves for a rule none of them plays by.
+        if let Some([left, right]) = self.rules.claw_hands {
+            h.u8(1);
+            h.u8(left);
+            h.u8(right);
         }
     }
 }

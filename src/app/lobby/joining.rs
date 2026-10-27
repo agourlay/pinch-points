@@ -7,8 +7,7 @@
 use super::*;
 use crate::app::i18n::fill;
 
-/// What pressing a number, or Enter, or having just given a name, comes
-/// to.
+/// What pressing Enter, or having just given a name, comes to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pick {
     /// No beach was asked for, or the one asked for is not there.
@@ -31,8 +30,6 @@ pub enum Pick {
 /// swapped without the compiler noticing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct JoinAsk {
-    /// A number key, as a row of the list.
-    pub digit: Option<usize>,
     /// Enter, on the row under the cursor.
     pub enter_on: Option<usize>,
     /// What the player was doing when they were stopped and asked their
@@ -57,7 +54,6 @@ pub(super) struct JoinAsk {
 /// behind is not dialled again, and that a full one is refused.
 pub(super) fn which_beach(ask: JoinAsk, hosts: &[HostEntry]) -> Pick {
     let JoinAsk {
-        digit,
         enter_on,
         intent,
         auto_join,
@@ -77,7 +73,7 @@ pub(super) fn which_beach(ask: JoinAsk, hosts: &[HostEntry]) -> Pick {
         // Both are dealt with by the caller.
         (Some(Intent::Host | Intent::Dial(_) | Intent::JoinBot(_)), _) => return Pick::Nothing,
         (None, true) => Some(0),
-        (None, false) => digit.or(enter_on),
+        (None, false) => enter_on,
     };
     let Some(at) = asked.filter(|at| *at < hosts.len()) else {
         return Pick::Nothing;
@@ -99,8 +95,11 @@ pub(super) fn which_beach(ask: JoinAsk, hosts: &[HostEntry]) -> Pick {
         false => Pick::AskName(at),
     }
 }
-/// Take a beach: by its number, by Enter on the cursor, or because a name
-/// was just given on the way to one.
+/// Take a beach: by Enter on the cursor, or because a name was just given
+/// on the way to one. A number key only moves the cursor
+/// ([`walk_the_list`]): the list is sorted by name, so a beach that comes
+/// on the air above the one meant moves every number, and "press 3" said
+/// across a room would join whichever beach had slid into row three.
 pub(super) fn take_a_beach(
     keys: &ButtonInput<KeyCode>,
     settings: &GameSettings,
@@ -118,13 +117,11 @@ pub(super) fn take_a_beach(
         }
         return;
     }
-    let digit = crate::app::menu_ui::number_pressed(keys, crate::app::menu_ui::NUMBER_KEYS.len());
     let enter_on = crate::app::menu_ui::enter(keys)
         .then(|| state.selected_index())
         .flatten();
     let pick = which_beach(
         JoinAsk {
-            digit,
             enter_on,
             intent,
             auto_join,
@@ -242,6 +239,13 @@ fn answer_the_silence(
         .peer_addr()
         .map(|addr| addr.to_string())
         .unwrap_or_default();
+    // A beach that said all along it had no room is there, and full: so
+    // said, and its row stays on the list, which says full too.
+    if joined.told_full {
+        state.let_go();
+        state.feedback = tr.lobby_no_room.to_string();
+        return true;
+    }
     // And its row goes from the list with it: nothing answers there, and
     // up the port ladder the list would otherwise keep it long after this
     // (see `NO_ANSWER_AFTER`). A beach whose beacon is still on the air is
@@ -391,13 +395,68 @@ fn walk_into_the_arena(
 ///
 /// Its own function because the rule is the part worth being able to
 /// test, the path to it being a socket and a running round.
-fn queued_feedback(tr: &'static crate::app::i18n::Tr, watching: bool, ahead: u8) -> String {
-    match (watching, ahead) {
+///
+/// While the host picks the next round's map (`picking`, the roster sent
+/// with the `Queued`), that round is dealt the table the map is picked
+/// for, and a player in line watches it and plays the one after
+/// (`PeerBook::frozen_plan`), wherever it stands.
+fn queued_feedback(
+    tr: &'static crate::app::i18n::Tr,
+    watching: bool,
+    picking: bool,
+    ahead: u8,
+) -> String {
+    match (watching, picking, ahead) {
         // No place to report: the crowd has room whoever is playing, so
         // there is nobody ahead of them and nothing to be next after.
-        (true, _) => tr.lobby_queued_watching.to_string(),
-        (false, 0) => tr.lobby_queued_next.to_string(),
-        (false, n) => fill(tr.lobby_queued_behind, &[("n", &n.to_string())]),
+        (true, _, _) => tr.lobby_queued_watching.to_string(),
+        (false, true, _) => tr.lobby_queued_picking.to_string(),
+        (false, false, 0) => tr.lobby_queued_next.to_string(),
+        (false, false, n) => fill(tr.lobby_queued_behind, &[("n", &n.to_string())]),
+    }
+}
+
+/// Keep a joiner's line in step with the host's lobby roster, which says
+/// whether the table has a chair for it: past the last one, the line says
+/// the launch seats it watching, as the launch does
+/// (`PeerBook::seat_plan`); once one frees, it is aboard again. Only on a
+/// change, so the line is not rewritten under a player reading it.
+///
+/// A lobby roster is also the host's word that it is gathering again, so
+/// a peer that was in line for the next round is in line no longer: the
+/// queue was told on the way in and nothing else takes it back, and a
+/// beach dialled by its address has no row on the list to say so. Said
+/// with the chair in the same breath, so a player past the last chair is
+/// not told it is aboard first.
+fn tell_of_a_chair(
+    state: &mut LobbyState,
+    tr: &'static crate::app::i18n::Tr,
+    no_chair: bool,
+    picking: bool,
+) {
+    let Some(joined) = state.joined_mut() else {
+        return;
+    };
+    let was_queued = joined.queued.take().is_some();
+    // A watcher wants no chair.
+    let no_chair = no_chair && !joined.watching;
+    if joined.no_chair == no_chair && joined.host_picking == picking && !was_queued {
+        return;
+    }
+    joined.no_chair = no_chair;
+    joined.host_picking = picking;
+    state.feedback = joiners_line(tr, joined).to_string();
+}
+
+/// A joiner's status line at the lobby card, by what the host last said:
+/// the host picking the map, which the whole room waits on, else where
+/// this peer will be when the match starts.
+pub(super) fn joiners_line(tr: &'static crate::app::i18n::Tr, joined: &Joined) -> &'static str {
+    match (joined.host_picking, joined.watching, joined.no_chair) {
+        (true, _, _) => tr.lobby_host_picking,
+        (false, true, _) => tr.lobby_watching,
+        (false, false, true) => tr.lobby_no_chair,
+        (false, false, false) => tr.lobby_aboard,
     }
 }
 
@@ -415,9 +474,15 @@ struct HostWord {
     /// several arrived together (`PutOut::hear`).
     put_out: Option<PutOut>,
     queued: Option<u8>,
+    /// The lobby roster's word on a chair: `Some(true)` for a would-be
+    /// player the table has none for, `Some(false)` for one it has, `None`
+    /// for a frame with no lobby roster.
+    no_chair: Option<bool>,
+    /// The lobby roster's word on the host picking the map.
+    picking: bool,
     said: Vec<(crate::transport::WireName, crate::transport::WireChat)>,
     table: Option<(Vec<String>, [u8; MAX_PLAYERS])>,
-    host_terms: Option<(MatchTerms, crate::transport::WireName)>,
+    host_terms: Option<MatchTerms>,
 }
 
 /// Greet the host if it is time, and gather what it said this frame,
@@ -431,18 +496,23 @@ fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>, delta: f32) -> Host
     }
     for (msg, _) in transport.recv_all() {
         // A goodbye starts its clock at the first copy, and any other word
-        // from the host takes it back (`Joined::host_goodbye`).
+        // from the host takes it back (`Joined::host_goodbye`). A beach
+        // with no room is not one this peer is at, so its word is no
+        // answer either (`Joined::told_full`).
         if msg == NetMsg::Leaving {
             joined.host_goodbye.spoke();
+        } else if msg == NetMsg::Full {
+            joined.told_full = true;
         } else {
             word.heard = true;
+            joined.told_full = false;
             joined.host_goodbye.heard();
         }
         match msg {
             NetMsg::Start(start) => word.started = Some(start),
             NetMsg::Kicked => PutOut::hear(&mut word.put_out, PutOut::Kicked),
             NetMsg::NoBots => PutOut::hear(&mut word.put_out, PutOut::NoBots),
-            NetMsg::Leaving => {}
+            NetMsg::Leaving | NetMsg::Full => {}
             // A watcher at a beach mid-round: the round as it stands,
             // part by part, until there is a whole of it to walk into.
             //
@@ -483,7 +553,11 @@ fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>, delta: f32) -> Host
                 names,
                 terms,
                 kinds,
-                beach,
+                // The host's handmade beach: the lobby card does not name
+                // the map, which is picked at the start.
+                beach: _,
+                chair,
+                picking,
             } => {
                 // The table is as many places as the host says, in seat
                 // order. Not the leading run of named ones: a nameless
@@ -497,10 +571,17 @@ fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>, delta: f32) -> Host
                         .collect(),
                     kinds,
                 ));
-                word.host_terms = Some((terms, beach));
+                word.host_terms = Some(terms);
+                word.no_chair = chair.map(|chair| !chair);
+                word.picking = picking;
             }
+            // The host timing the round trip: answered at once, since the
+            // wait is what it measures.
+            NetMsg::Ping { stamp } => transport.send(NetMsg::Pong { stamp }),
             NetMsg::Hello { .. }
             | NetMsg::Watch { .. }
+            | NetMsg::Pong { .. }
+            | NetMsg::Clock { .. }
             | NetMsg::Inputs(_)
             | NetMsg::Hash { .. }
             | NetMsg::Pause { .. }
@@ -550,6 +631,8 @@ pub fn join_tick(
         caught,
         put_out: _,
         queued,
+        no_chair,
+        picking,
         said,
         table,
         host_terms,
@@ -560,26 +643,37 @@ pub fn join_tick(
             .take(table.len())
             .map(|&byte| crate::transport::kind_from_byte(byte))
             .collect();
+        // The seats the host dealt the places, from the terms beside them.
+        if let Some(terms) = &host_terms {
+            state.seated = Seated::from_terms(terms, table.len() as u8);
+        }
         // A place the host sent no name for reads as its seat, as on
         // every other screen.
-        state.table = (0..table.len() as u8)
-            .map(|seat| crate::app::name_or_label(&table, settings.tr(), seat))
+        let seated = state.seated;
+        state.table = (0..table.len())
+            .map(|place| {
+                let name = table.get(place).map_or("", String::as_str);
+                match name.is_empty() {
+                    true => crate::app::seat_label(settings.tr(), seated.seat_of(place)),
+                    false => name.to_string(),
+                }
+            })
             .collect();
     }
-    if let Some((terms, beach)) = host_terms
+    if let Some(terms) = host_terms
         && let Some(joined) = state.joined_mut()
     {
-        joined.host_terms = Some(HostTerms {
-            terms,
-            beach_name: super::terms::roster_beach_name(&beach),
-        });
+        joined.host_terms = Some(HostTerms { terms });
     }
     for (name, text) in said {
         state.hear(&name, &text);
     }
+    if let Some(no_chair) = no_chair {
+        tell_of_a_chair(&mut state, settings.tr(), no_chair, picking);
+    }
     if let Some(ahead) = queued {
         let watching = state.joined().is_some_and(|joined| joined.watching);
-        state.feedback = queued_feedback(settings.tr(), watching, ahead);
+        state.feedback = queued_feedback(settings.tr(), watching, picking, ahead);
         // Kept as well as said, so the prompt under that line can agree
         // with it. A queued peer is not waiting for the host to launch:
         // the host launched without it.
@@ -662,11 +756,144 @@ mod tests {
             terms: MatchTerms::default(),
             kinds: [0; MAX_PLAYERS],
             beach: [0; crate::transport::WIRE_NAME],
+            chair: Some(true),
+            picking: false,
         });
         settle();
         let word = hear_the_host(&mut joined, None, 0.0);
         let (heard, _) = word.table.expect("a table");
         assert_eq!(heard, table, "three places, the nameless one included");
+    }
+
+    /// The host's word on a chair rides in each lobby roster: one saying
+    /// there is none leaves this player without a chair, and the next one
+    /// saying there is says a chair came free. A round's roster, sent to a
+    /// peer in line, says nothing about chairs; the lobby's ends the line,
+    /// and says the chair with it, so a player in line past the last chair
+    /// is never told it is aboard, whether or not its beach is on the list.
+    #[test]
+    fn a_roster_says_whether_there_is_a_chair_and_ends_the_line() {
+        let mut host = UdpTransport::host(0).expect("bind");
+        let port = host.local_addr().expect("addr").port();
+        let mut state = LobbyState {
+            standing: Standing::Joining(Joined::dialled(
+                UdpTransport::join(("127.0.0.1", port)).expect("join"),
+                false,
+            )),
+            ..LobbyState::default()
+        };
+        let settle = || std::thread::sleep(std::time::Duration::from_millis(20));
+        state
+            .joined()
+            .expect("joined")
+            .transport
+            .send(NetMsg::hello("Gil"));
+        settle();
+        let _ = host.recv_all();
+        let roster = |chair| NetMsg::Roster {
+            seats: 6,
+            names: crate::transport::wire_table(&[]),
+            terms: MatchTerms::default(),
+            kinds: [0; MAX_PLAYERS],
+            beach: [0; crate::transport::WIRE_NAME],
+            chair,
+            picking: false,
+        };
+        let tr = &crate::app::i18n::EN;
+        let hear = |state: &mut LobbyState| {
+            settle();
+            let joined = state.joined_mut().expect("joined");
+            let word = hear_the_host(joined, None, 0.0);
+            if let Some(no_chair) = word.no_chair {
+                tell_of_a_chair(state, tr, no_chair, word.picking);
+            }
+        };
+        host.send(roster(Some(false)));
+        hear(&mut state);
+        assert!(state.joined().is_some_and(|joined| joined.no_chair));
+        assert_eq!(state.feedback, tr.lobby_no_chair);
+        host.send(roster(Some(true)));
+        hear(&mut state);
+        assert!(state.joined().is_some_and(|joined| !joined.no_chair));
+        assert_eq!(state.feedback, tr.lobby_aboard, "a chair came free");
+
+        // In line while a round plays: the round's roster leaves it there.
+        if let Some(joined) = state.joined_mut() {
+            joined.queued = Some(0);
+        }
+        state.feedback = "next up".into();
+        host.send(roster(None));
+        hear(&mut state);
+        assert_eq!(state.joined().and_then(|joined| joined.queued), Some(0));
+        assert_eq!(state.feedback, "next up");
+        // Back in the lobby, past the last chair: out of line, no chair.
+        host.send(roster(Some(false)));
+        hear(&mut state);
+        assert_eq!(state.joined().and_then(|joined| joined.queued), None);
+        assert_eq!(state.feedback, tr.lobby_no_chair, "never told aboard");
+    }
+
+    /// A beach with no room says so to every greeting, and a peer it has
+    /// forgotten frees a place a moment later: the joiner keeps calling,
+    /// and is aboard on the first other word. Only a beach that says
+    /// nothing else for the whole patience is given up on, as full.
+    #[test]
+    fn a_full_beach_is_called_until_a_place_frees() {
+        let mut host = UdpTransport::host(0).expect("bind");
+        let port = host.local_addr().expect("addr").port();
+        let mut state = LobbyState {
+            standing: Standing::Joining(Joined::dialled(
+                UdpTransport::join(("127.0.0.1", port)).expect("join"),
+                false,
+            )),
+            ..LobbyState::default()
+        };
+        let settle = || std::thread::sleep(std::time::Duration::from_millis(20));
+        let tr = &crate::app::i18n::EN;
+        state
+            .joined()
+            .expect("joined")
+            .transport
+            .send(NetMsg::hello("Gil"));
+        settle();
+        let _ = host.recv_all();
+        let tick = |state: &mut LobbyState, delta: f32| {
+            settle();
+            let joined = state.joined_mut().expect("joined");
+            let word = hear_the_host(joined, None, delta);
+            assert_eq!(word.put_out, None, "Full is not the end of the call");
+            answer_the_silence(state, tr, word.heard, delta)
+        };
+        host.send(NetMsg::Full);
+        assert!(!tick(&mut state, 1.0), "still calling");
+        host.send(NetMsg::Full);
+        assert!(!tick(&mut state, NO_ANSWER_AFTER - 2.0), "still calling");
+        // A place freed, and the host answered as it answers anybody.
+        host.send(NetMsg::chat("", "hi"));
+        assert!(!tick(&mut state, 0.5));
+        assert_eq!(state.feedback, tr.lobby_aboard);
+
+        // Another beach that never has room: full, said so, at the end of
+        // the patience and not before.
+        let mut state = LobbyState {
+            standing: Standing::Joining(Joined::dialled(
+                UdpTransport::join(("127.0.0.1", port)).expect("join"),
+                false,
+            )),
+            ..LobbyState::default()
+        };
+        state
+            .joined()
+            .expect("joined")
+            .transport
+            .send(NetMsg::hello("Hal"));
+        settle();
+        let _ = host.recv_all();
+        host.send(NetMsg::Full);
+        assert!(!tick(&mut state, NO_ANSWER_AFTER - 1.0));
+        host.send(NetMsg::Full);
+        assert!(tick(&mut state, 1.0), "given up on");
+        assert_eq!(state.feedback, tr.lobby_no_room);
     }
 
     /// A host's goodbye in the lobby is believed only once it has stood
@@ -721,7 +948,6 @@ mod tests {
     /// change.
     fn asking() -> JoinAsk {
         JoinAsk {
-            digit: None,
             enter_on: None,
             intent: None,
             auto_join: false,
@@ -784,16 +1010,15 @@ mod tests {
         assert_eq!(greeted.as_deref(), Some("Cy"), "the host heard who called");
     }
 
-    /// Which row a key means. A digit picks by position and Enter takes
-    /// whatever the cursor is on, and neither may reach past the list:
-    /// pressing 7 with three beaches on the air is not a beach.
+    /// Which row Enter means: whatever the cursor is on, never past the
+    /// list.
     #[test]
     fn a_key_picks_the_row_it_names_and_no_further() {
         let hosts = open();
         assert_eq!(
             which_beach(
                 JoinAsk {
-                    digit: Some(1),
+                    enter_on: Some(1),
                     ..asking()
                 },
                 &hosts
@@ -803,13 +1028,13 @@ mod tests {
         assert_eq!(
             which_beach(
                 JoinAsk {
-                    digit: Some(6),
+                    enter_on: Some(6),
                     ..asking()
                 },
                 &hosts
             ),
             Pick::Nothing,
-            "the seventh of three"
+            "a cursor past the end of the list"
         );
         assert_eq!(
             which_beach(
@@ -830,7 +1055,7 @@ mod tests {
         assert_eq!(
             which_beach(
                 JoinAsk {
-                    digit: Some(0),
+                    enter_on: Some(0),
                     ..asking()
                 },
                 &[]
@@ -848,7 +1073,7 @@ mod tests {
         assert_eq!(
             which_beach(
                 JoinAsk {
-                    digit: Some(2),
+                    enter_on: Some(2),
                     named: false,
                     ..asking()
                 },
@@ -904,7 +1129,7 @@ mod tests {
         assert_eq!(
             which_beach(
                 JoinAsk {
-                    digit: Some(0),
+                    enter_on: Some(0),
                     ..asking()
                 },
                 &hosts
@@ -914,7 +1139,7 @@ mod tests {
         assert_eq!(
             which_beach(
                 JoinAsk {
-                    digit: Some(1),
+                    enter_on: Some(1),
                     ..asking()
                 },
                 &hosts
@@ -925,7 +1150,7 @@ mod tests {
         assert_eq!(
             which_beach(
                 JoinAsk {
-                    digit: Some(2),
+                    enter_on: Some(2),
                     ..asking()
                 },
                 &hosts
@@ -936,7 +1161,7 @@ mod tests {
     }
 
     /// A beach whose socket is full has no room for a watcher either: the
-    /// next peer of any kind is dropped there without a word.
+    /// next peer of any kind is turned away there.
     #[test]
     fn a_full_socket_is_full_for_a_watcher_too() {
         let mut hosts = open();
@@ -944,7 +1169,7 @@ mod tests {
         let ask = |to_watch| {
             which_beach(
                 JoinAsk {
-                    digit: Some(0),
+                    enter_on: Some(0),
                     to_watch,
                     ..asking()
                 },
@@ -956,7 +1181,7 @@ mod tests {
     }
 
     /// Already somewhere, hosting or joining, and the keys mean nothing.
-    /// Without this a digit would open a second socket over the first.
+    /// Without this Enter would open a second socket over the first.
     #[test]
     fn keys_do_nothing_once_you_are_already_at_a_beach() {
         let hosts = open();
@@ -964,7 +1189,7 @@ mod tests {
             assert_eq!(
                 which_beach(
                     JoinAsk {
-                        digit: pressed,
+                        enter_on: pressed,
                         busy: true,
                         ..asking()
                     },
@@ -1061,9 +1286,9 @@ mod tests {
     #[test]
     fn a_watcher_in_the_queue_is_not_waiting_for_a_chair() {
         let tr = &crate::app::i18n::EN;
-        assert_eq!(queued_feedback(tr, false, 0), tr.lobby_queued_next);
+        assert_eq!(queued_feedback(tr, false, false, 0), tr.lobby_queued_next);
         assert_eq!(
-            queued_feedback(tr, false, 3),
+            queued_feedback(tr, false, false, 3),
             fill(tr.lobby_queued_behind, &[("n", "3")]),
             "a player is told where in the line it stands"
         );
@@ -1071,16 +1296,32 @@ mod tests {
         // A watcher is told the same thing wherever it stands, because
         // where it stands does not decide anything: the crowd has room.
         for ahead in [0, 1, 9] {
-            assert_eq!(
-                queued_feedback(tr, true, ahead),
-                tr.lobby_queued_watching,
-                "with {ahead} ahead"
-            );
+            for picking in [false, true] {
+                assert_eq!(
+                    queued_feedback(tr, true, picking, ahead),
+                    tr.lobby_queued_watching,
+                    "with {ahead} ahead"
+                );
+            }
         }
         assert_ne!(
             tr.lobby_queued_watching, tr.lobby_queued_next,
             "and it is not the line a player is given"
         );
+    }
+
+    /// A player in line while the host picks the next map is told it
+    /// watches that round, which is dealt the table the map was picked
+    /// for, wherever it stands in line: not that it is next up.
+    #[test]
+    fn a_player_in_line_while_the_host_picks_watches_that_round() {
+        let tr = &crate::app::i18n::EN;
+        for ahead in [0, 2] {
+            assert_eq!(
+                queued_feedback(tr, false, true, ahead),
+                tr.lobby_queued_picking
+            );
+        }
     }
 
     /// The first word back is the moment a called address becomes a beach.

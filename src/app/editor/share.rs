@@ -1,9 +1,9 @@
-//! F3 and F4: the level on the bench as a share code, and a code back
-//! onto the bench.
+//! F3 and "Paste a code": the level on the bench as a share code, and a
+//! code back onto the bench.
 
 use super::naming::tidy_name;
-use super::validate::{arena_report, start_validation};
-use super::{BoardSwap, EditorState, Offer, ask_first, has_work, level_here, replace_board};
+use super::validate::{arena_report, start_check};
+use super::{BoardSwap, EditorState, Offer, ask_first, level_here, replace_board, unsaved_work};
 use crate::app::Sim;
 use crate::app::i18n::fill;
 use crate::sim::{Board, Level, LevelKind};
@@ -15,7 +15,7 @@ use bevy::prelude::*;
 /// ways this fails (nothing readable there, a code of the wrong sort, a
 /// level this build cannot parse) each get their own answer and their own
 /// test.
-fn level_from(
+pub fn level_from_code(
     pasted: Option<(crate::share::Kind, Vec<u8>)>,
     tr: &crate::app::i18n::Tr,
 ) -> Result<Level, String> {
@@ -36,27 +36,56 @@ fn is_from_elsewhere(pasted: &Level, bench: &Level, shelf: &[Level]) -> bool {
     text != bench.to_text() && shelf.iter().all(|own| own.to_text() != text)
 }
 
-/// Take on what a pasted level says about itself: its signpost grant, its
-/// kind, its goal and its name.
+/// Whether a level pasted on the menu came from somebody else: by the
+/// rule [`is_from_elsewhere`] holds a paste onto the bench to, with no
+/// bench to be the level already there. The menu's level card counts a
+/// code taken by it, as "Paste a code" does.
+pub fn taken_from_elsewhere(pasted: &Level) -> bool {
+    let shelf = crate::app::campaign::load_custom_levels();
+    shelf.iter().all(|own| own.to_text() != pasted.to_text())
+}
+
+/// Take on what a level brought onto the bench says about itself: its
+/// signpost grant, kind, goal, name, tables, roll, solution and the rate
+/// its holes let crabs out at. Called once
+/// its board is on the sand, since putting a board there is an edit and an
+/// edit lets a solution go.
 ///
-/// The goal, because [`level_here`] rebuilds the level from the board and
-/// a board does not carry one: a "bank 5" stage came back from F2 and F3 as
-/// an every-crab stage, checked on the way in under the goal it no longer
-/// had.
+/// The goal, tables, roll and solution, because [`level_here`] rebuilds
+/// the level from the board and a board carries none of them: a "bank 5"
+/// stage came back from F2 and F3 as an every-crab stage, and a beach for
+/// four and six lost the line that keeps a table of five off it.
 ///
 /// The kind, because opening somebody's beach and saving it back as a
 /// stage is not what either of you meant. The name, because the one on the
-/// bench belongs to the level the paste replaced, and F2 filed the pasted
-/// board over the author's own file under it, without a word when this
-/// session had saved it. And that name is taken back out of the ones this
-/// session has saved under, so saving over a file already called that
-/// says so.
-fn take_level(state: &mut EditorState, level: &Level, tr: &crate::app::i18n::Tr) {
-    state.posts = level.posts;
+/// bench belongs to the level this one replaced. And it is a different
+/// level from the one this bench saved, so none of the files the bench
+/// wrote are its own: F2 asks before it writes over any of them, the
+/// one under its name included. Its history begins with it, `board` being
+/// the level on the sand. And the mirror goes off, as on every level
+/// brought onto the bench: painted on with the last level's mirror, a
+/// level not drawn with one had copies stamped on it unasked.
+pub(super) fn take_level(
+    state: &mut EditorState,
+    level: &Level,
+    board: &Board,
+    tr: &crate::app::i18n::Tr,
+) {
+    state.posts = level.hands().map_or(level.posts, |[p1, _]| p1);
+    state.second_hand = level.hands().map(|[_, p2]| p2);
     state.kind = level.kind;
     state.goal = level.goal;
     state.name = tidy_name(&level.name, tr);
-    state.mine.remove(&state.name);
+    state.tables.clone_from(&level.tables);
+    state.roll = level.roll;
+    state.solution.clone_from(&level.solution);
+    state.hole_period = super::setting::first_hole_period(&level.board());
+    state.mine.clear();
+    state.opened = None;
+    state.filed = None;
+    state.symmetry = super::Symmetry::Off;
+    state.checked = None;
+    state.begin_history(board);
 }
 
 /// F3: the level on the bench, as a code on the clipboard. A level is a
@@ -84,47 +113,58 @@ pub(super) fn copy_level(
     }
 }
 
-/// F4: the level on the clipboard in place of the one on the bench.
+/// "Paste a code" on "My levels": the level on the clipboard (`pasted`, as
+/// `codes::paste` read it) in place of the one on the bench. Says whether
+/// it took the bench's place.
 ///
-/// A paste throws the board away as surely as F5 does, so once there is
-/// a level here it asks twice the same way.
+/// A paste throws the board away, so over unsaved work it asks twice, as
+/// every way of opening a level does.
 pub(super) fn paste_level(
     state: &mut EditorState,
     sim: &mut Sim,
-    clipboard: &mut Clipboard,
-    tr: &crate::app::i18n::Tr,
+    pasted: Option<(crate::share::Kind, Vec<u8>)>,
+    (tr, device): (&crate::app::i18n::Tr, crate::app::gamepad::LastDevice),
     taken: &mut MessageWriter<crate::app::CodeTaken>,
     swap: &mut BoardSwap,
-) {
-    match level_from(crate::app::codes::paste(clipboard), tr) {
+) -> bool {
+    match level_from_code(pasted, tr) {
         Ok(level) => {
-            let at_stake = has_work(state, &sim.0);
-            if !ask_first(state, Offer::Paste, at_stake, tr.ed_paste_confirm.into()) {
-                return;
+            let at_stake = unsaved_work(state, &sim.0);
+            if !ask_first(
+                state,
+                Offer::Open,
+                at_stake,
+                Offer::Open.warning(tr, device),
+            ) {
+                return false;
             }
             let bench = level_here(state, &sim.0, &state.name);
             let shelf = crate::app::campaign::load_custom_levels();
             if is_from_elsewhere(&level, &bench, &shelf) {
                 taken.write(crate::app::CodeTaken);
             }
-            take_level(state, &level, tr);
             // A pasted level is any size, so it is a board swap in
             // full, sprites and cursor included.
             replace_board(level.board(), sim, state, swap);
+            take_level(state, &level, &sim.0, tr);
             // A pasted level is the one board here that nobody vetted:
             // authored elsewhere, carried through a chat message, and
             // dropped straight onto the sand. Checked on the way in,
-            // which for a beach is a count of its castles.
+            // which for a beach is a count of its castles, and checked as
+            // the bench will save it: a stage's rule stamped on, which
+            // the code itself may not carry.
             if level.kind == LevelKind::Arena {
                 state.feedback = arena_report(&sim.0, tr);
             } else {
-                start_validation(state, level);
+                start_check(state, &sim.0);
                 state.feedback = tr.code_level_checking.into();
             }
+            true
         }
         Err(complaint) => {
             state.offer = None;
             state.feedback = complaint;
+            false
         }
     }
 }
@@ -148,7 +188,7 @@ mod tests {
             let mut state = EditorState::default();
             let mut level = Level::from_board("x", 3, sand());
             level.name = name.into();
-            take_level(&mut state, &level, tr);
+            take_level(&mut state, &level, &level.board(), tr);
             state.name
         };
         assert_eq!(named("  Gull Alley "), "Gull Alley");
@@ -183,8 +223,8 @@ mod tests {
     }
 
     /// A pasted level brings its name, so the next F2 files it under that
-    /// and not over the level it replaced, and saving over a file already
-    /// called that says so even when this session saved one under it.
+    /// and not over the level it replaced; and none of the files this
+    /// bench wrote are its own, so F2 asks before writing over any of them.
     #[test]
     fn a_pasted_level_brings_its_name() {
         let mut state = EditorState {
@@ -192,17 +232,51 @@ mod tests {
             name: "My Beach".into(),
             ..EditorState::default()
         };
-        state.mine.insert("My Beach".into());
-        state.mine.insert("Gull Alley".into());
+        state
+            .mine
+            .insert(super::super::shelf::save_path("My Beach"));
+        state
+            .mine
+            .insert(super::super::shelf::save_path("Gull Alley"));
         let pasted = Level::from_board("Gull Alley", 5, sand()).with_kind(LevelKind::Arena);
-        take_level(&mut state, &pasted, &crate::app::i18n::EN);
+        take_level(&mut state, &pasted, &pasted.board(), &crate::app::i18n::EN);
         assert_eq!(state.name, "Gull Alley");
         assert_eq!((state.posts, state.kind), (5, LevelKind::Arena));
-        assert!(!state.mine.contains("Gull Alley"), "a save over it is said");
-        assert!(state.mine.contains("My Beach"), "the rest are left alone");
+        assert!(state.mine.is_empty(), "a save over any of them is asked");
     }
 
-    /// A pasted Beach Day stage keeps its goal through the bench: what F2
+    /// A pasted beach keeps the lines its board cannot carry: the tables
+    /// it names and the strip it rolls by, through F2 and F3 alike; and a
+    /// pasted stage keeps its solution until an edit changes its board.
+    #[test]
+    fn a_pasted_level_keeps_its_tables_roll_and_solution() {
+        let text = "name: Four Six\nposts: 3\nkind: arena\nwrap: on\nseats: 4 6\nroll: 3\n\
+            spawner: 1,1 R 60\nmap:\n\
+            + + + + + + +\n 0 1 2 3 4 5 \n+ + + + + + +\n . . . . . . \n+ + + + + + +\n";
+        let pasted = Level::parse(text).expect("a beach");
+        assert_eq!((pasted.tables.as_slice(), pasted.roll), (&[4, 6][..], 3));
+        let mut state = EditorState::default();
+        take_level(&mut state, &pasted, &pasted.board(), &crate::app::i18n::EN);
+        let here = level_here(&state, &pasted.board(), &state.name);
+        assert_eq!(here.tables, [4, 6]);
+        assert_eq!(here.roll, 3);
+        // A table the castles no longer seat goes, and so does the roll
+        // once the beach stops wrapping.
+        let mut board = pasted.board();
+        board.set_tile(5, 0, TileKind::Empty);
+        board.set_wrap(false);
+        let here = level_here(&state, &board, &state.name);
+        assert_eq!((here.tables.as_slice(), here.roll), (&[4][..], 0));
+        assert!(Level::parse(&here.to_text()).is_ok(), "{}", here.to_text());
+
+        let mut stage = Level::from_board("Solved", 2, sand());
+        stage.solution = vec![(1, 1, Direction::Up, 0)];
+        take_level(&mut state, &stage, &stage.board(), &crate::app::i18n::EN);
+        let here = level_here(&state, &stage.board(), &state.name);
+        assert_eq!(here.solution, [(1, 1, Direction::Up, 0)]);
+    }
+
+    /// A pasted stage keeps its own goal through the bench: what F2
     /// saves, F3 shares, the playtest plays and the check certifies is the
     /// "bank 2" stage that was pasted, not an every-crab one.
     #[test]
@@ -214,7 +288,7 @@ mod tests {
         let pasted = Level::parse(&pasted.to_text()).expect("reads back");
         assert_eq!(pasted.goal, crate::sim::Goal::Bank(2));
         let mut state = EditorState::default();
-        take_level(&mut state, &pasted, &crate::app::i18n::EN);
+        take_level(&mut state, &pasted, &pasted.board(), &crate::app::i18n::EN);
         let here = level_here(&state, &pasted.board(), &state.name);
         assert_eq!(here.goal, crate::sim::Goal::Bank(2));
         assert!(
@@ -237,7 +311,7 @@ mod tests {
         let level = Level::from_board("Custom", 5, board.clone());
 
         let code = crate::share::encode(crate::share::Kind::Level, level.to_text().as_bytes());
-        let back = level_from(crate::share::decode(&code), &crate::app::i18n::EN)
+        let back = level_from_code(crate::share::decode(&code), &crate::app::i18n::EN)
             .expect("our own level reads back");
 
         assert_eq!(back.posts, 5, "the signpost budget travels with it");
@@ -253,18 +327,18 @@ mod tests {
     fn what_is_not_a_level_says_which_way_it_is_not() {
         let tr = &crate::app::i18n::EN;
         assert_eq!(
-            level_from(None, tr).err(),
+            level_from_code(None, tr).err(),
             Some(tr.code_none_pasted.to_string())
         );
         // A real code, for a round rather than a level.
         let round = crate::share::encode(crate::share::Kind::Round, b"replay-v1\n");
-        let complaint = level_from(crate::share::decode(&round), tr).expect_err("not a level");
+        let complaint = level_from_code(crate::share::decode(&round), tr).expect_err("not a level");
         assert!(
             complaint.contains("a round") && complaint.contains("a level"),
             "{complaint}"
         );
         // A level code carrying something that is not a level.
         let junk = crate::share::encode(crate::share::Kind::Level, b"not a level at all");
-        assert!(level_from(crate::share::decode(&junk), tr).is_err());
+        assert!(level_from_code(crate::share::decode(&junk), tr).is_err());
     }
 }

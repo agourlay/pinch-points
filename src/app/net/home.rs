@@ -121,15 +121,18 @@ pub enum LobbyReturn {
         /// next round would have seated it. Nobody holds a chair any more:
         /// the lobby deals them again at the launch.
         peers: PeerBook,
-        /// The last frames of the round just played
-        /// ([`crate::sim::Lockstep::played_tail`]), for a peer still a
-        /// frame short of its end: the host has stopped relaying, and the
-        /// lobby repeats them for a while instead.
-        tail: Vec<crate::sim::InputMsg>,
+        /// The round just played, as its lockstep ended, for a peer still
+        /// short of its end: the host has stopped relaying, and the lobby
+        /// sends what is missing for a while instead
+        /// (`crate::app::lobby::RoundTail`).
+        played: Box<Lockstep>,
         /// How many rounds this socket has dealt, the match just played
         /// included, for the next match to count on from
         /// ([`OnlineSession::rounds_dealt`]).
         rounds_dealt: u32,
+        /// The seats the host's partner picks put its bots and the AI in
+        /// ([`OnlineSession::arranged`]), for the next match's deal.
+        arranged: Option<super::order::Arranged>,
     },
     Joiner {
         transport: UdpTransport,
@@ -227,10 +230,9 @@ impl OnlineSession {
             }
         }
         self.peers.unseat();
-        let tail = self.session.played_tail();
         let Self {
             transport,
-            session: _,
+            session,
             seats: _,
             terms,
             beach: _,
@@ -249,9 +251,17 @@ impl OnlineSession {
             next_round: _,
             series_standing: _,
             resume_echo: _,
+            ping_in: _,
+            round_ticks: _,
+            host_newest: _,
+            host_wants: _,
+            clock_apart: _,
             rounds_dealt,
             crowned: _,
             catch_up: _,
+            stale_rounds: _,
+            picking_map: _,
+            arranged,
         } = self;
         let Home {
             announcer,
@@ -268,8 +278,9 @@ impl OnlineSession {
                 transport,
                 game_name,
                 peers,
-                tail,
+                played: Box::new(session),
                 rounds_dealt,
+                arranged,
             },
             false => LobbyReturn::Joiner {
                 transport,
@@ -340,8 +351,9 @@ mod tests {
             transport,
             game_name,
             peers: _,
-            tail: _,
+            played: _,
             rounds_dealt,
+            arranged: _,
         } = session.back_to_the_lobby()
         else {
             panic!("the host comes home as the host");
@@ -412,7 +424,11 @@ mod tests {
                         | NetMsg::CrowdPicks { .. }
                         | NetMsg::Kicked
                         | NetMsg::NoBots
+                        | NetMsg::Full
                         | NetMsg::Leaving
+                        | NetMsg::Ping { .. }
+                        | NetMsg::Pong { .. }
+                        | NetMsg::Clock { .. }
                         | NetMsg::Incompatible { .. } => {}
                     }
                 }

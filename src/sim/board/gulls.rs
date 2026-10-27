@@ -49,10 +49,28 @@ impl Board {
         self.gulls.push(gull);
     }
 
-    /// Auto-spawn a gull at the edge every `gull_period` ticks (double rate
-    /// during the final-scramble surge), at a PRNG perimeter tile, facing
+    /// The ambient flock's edge spawner: every `gull_period` ticks (double
+    /// rate during the final-scramble surge) it sends for a gull, which
+    /// lands [`GULL_LEAD`] ticks later on a PRNG perimeter tile, facing
     /// into the board.
+    ///
+    /// The tile is picked when the gull is sent for, not when it lands, so
+    /// the board can show where it comes down for the whole of its flight
+    /// in (see [`IncomingGull`]). Everything else is decided at the pick
+    /// too: the flock cap counts the gulls on their way as well as the ones
+    /// on the sand, and a full flock turning over sends its leaver off as
+    /// the newcomer is sent for. What is left to the landing is what the
+    /// bird itself rolls, its claw and its first takeoff.
+    ///
+    /// The other ways a gull comes onto the beach land at once: Gull
+    /// Mania's come up out of the crab holes and Gull Attack's are set
+    /// down beside the castles it names, both announced by the event's own
+    /// banner, and a level's gulls are on the sand when it starts.
     pub(super) fn run_gull_spawner(&mut self) {
+        // First, whatever was sent for earlier: the arrivals keep their
+        // tick whatever happens to the spawner, a lookahead that switched
+        // it off included, since the bird is already in the air.
+        self.land_incoming_gulls();
         if self.rules.gull_period == 0 {
             return;
         }
@@ -64,10 +82,20 @@ impl Board {
         if !self.tick.is_multiple_of(u64::from(period)) {
             return;
         }
+        // A gull that would land after the tide comes in is never sent
+        // for: the round is frozen by then and it would hang in the sky.
+        let at = self.tick + u64::from(GULL_LEAD);
+        if self
+            .rules
+            .round_length
+            .is_some_and(|len| at >= u64::from(len))
+        {
+            return;
+        }
         // Balance: the ambient flock is capped so the late round stays
         // playable (raiders leaving keeps the population cycling). Tide
         // events (GullMania, GullAttack) deliberately bypass the cap.
-        let full = self.gulls.len() >= self.flock_cap();
+        let full = self.gulls.len() + self.incoming.len() >= self.flock_cap();
         if full {
             // With turnover on, a full flock makes room rather than shutting
             // the spawner out: see `Rules::gull_turnover`. Under the old
@@ -92,11 +120,7 @@ impl Board {
         } else {
             (w - 1, k - 2 * w - (h - 2) + 1, Direction::Left) // right edge
         };
-        let tile = self.index(x as i32, y as i32);
-        if matches!(
-            self.grid.tiles[tile as usize],
-            TileKind::Rock | TileKind::Kelp
-        ) {
+        if !self.gull_may_stand(x as u8, y as u8) {
             return; // unlucky roll; the flock circles and tries again later
         }
         // Room made only for a newcomer that can land, so an unlucky roll
@@ -105,7 +129,25 @@ impl Board {
         if full && self.rules.whole_flock && !self.send_a_gull_off() {
             return;
         }
-        self.spawn_gull(x as u8, y as u8, dir);
+        let tile = self.index(x as i32, y as i32);
+        self.incoming.push(IncomingGull { at, tile, dir });
+    }
+
+    /// Land every gull due this tick, in the order they were sent for.
+    ///
+    /// A landing tile that can no longer take a gull (nothing in play turns
+    /// sand to rock today, but a snapshot is text) loses its bird rather
+    /// than tripping `spawn_gull`'s assertion.
+    pub(super) fn land_incoming_gulls(&mut self) {
+        while let Some(&next) = self.incoming.first()
+            && next.at <= self.tick
+        {
+            self.incoming.remove(0);
+            let (x, y) = self.coords_u8(next.tile);
+            if self.gull_may_stand(x, y) {
+                self.spawn_gull(x, y, next.dir);
+            }
+        }
     }
 
     /// How many ambient gulls the spawner allows right now: the board's
@@ -136,20 +178,19 @@ impl Board {
         let leaving = self
             .gulls
             .iter()
-            .enumerate()
-            .filter(|(_, gull)| matches!(gull.state, GullState::Walking))
-            .filter(|(_, gull)| {
+            .filter(|gull| matches!(gull.state, GullState::Walking))
+            .filter(|gull| {
                 let (x, y) = self.coords(gull.tile);
                 castles
                     .iter()
                     .all(|&(cx, cy)| (x - cx).abs().max((y - cy).abs()) > TURNOVER_CLEARANCE)
             })
-            .min_by_key(|(_, gull)| gull.id)
-            .map(|(i, _)| i);
-        let Some(i) = leaving else {
+            .map(|gull| gull.id)
+            .min();
+        let Some(id) = leaving else {
             return false;
         };
-        self.gulls.remove(i);
+        self.drop_gulls(|gull| gull.id == id);
         true
     }
 
@@ -158,7 +199,7 @@ impl Board {
     }
 
     pub(super) fn move_gulls(&mut self) {
-        let mut departed: Vec<usize> = Vec::new();
+        let mut departed: Vec<u32> = Vec::new();
         for i in 0..self.gulls.len() {
             let mut gull = self.gulls[i];
             gull.prev = gull.pose();
@@ -170,14 +211,24 @@ impl Board {
                 // Balance: a successful raider hauls its loot back to the
                 // flock and leaves the beach, so gull pressure regulates
                 // itself instead of compounding all round.
-                departed.push(i);
+                departed.push(gull.id);
             } else {
                 self.gulls[i] = gull;
             }
         }
-        for &i in departed.iter().rev() {
-            self.gulls.remove(i);
+        if !departed.is_empty() {
+            self.drop_gulls(|gull| departed.contains(&gull.id));
         }
+    }
+
+    /// Take every gull `leaves` picks off the beach, and its steerer with
+    /// it. The one way a gull leaves the board (a raider flying home, the
+    /// flock turning over, Crab Mania, the editor), so the steering list
+    /// never names a gull that is gone: a snapshot carrying one would not
+    /// parse back.
+    pub(super) fn drop_gulls(&mut self, mut leaves: impl FnMut(&Gull) -> bool) {
+        self.gulls.retain(|gull| !leaves(gull));
+        self.steering.keep_only(&self.gulls);
     }
 
     /// Returns true if the gull raided a castle (it departs with the loot).
@@ -213,7 +264,8 @@ impl Board {
         let t = gull.tile as usize;
         if let TileKind::Castle(owner) = self.grid.tiles[t] {
             if self.rules.castle_raids {
-                self.damage_castle(owner, gull.tile);
+                let lost = self.damage_castle(owner, gull.tile);
+                self.steering.credit(gull.id, owner, lost);
             }
             return true;
         }
@@ -222,6 +274,7 @@ impl Board {
         }
         if let Some(mut sp) = self.signposts[t] {
             gull.dir = sp.dir;
+            self.steering.steer(gull.id, sp.owner);
             self.signposts[t] = match sp.health {
                 SignpostHealth::Full => {
                     sp.health = SignpostHealth::Worn;
@@ -277,7 +330,8 @@ impl Board {
                     // departs with the loot, like a walking raid.
                     if let TileKind::Castle(owner) = self.grid.tiles[gull.tile as usize] {
                         if self.rules.castle_raids {
-                            self.damage_castle(owner, gull.tile);
+                            let lost = self.damage_castle(owner, gull.tile);
+                            self.steering.credit(gull.id, owner, lost);
                         }
                         return true;
                     }
@@ -291,17 +345,19 @@ impl Board {
         false
     }
 
-    /// Spec §3.4: a gull reaching a castle carries off **half** the banked
-    /// crabs (score halves, rounding the loss up). A raid on a fat castle is
-    /// devastating and legible from across the room, and the tier drop falls
-    /// out of the score loss. At most [`SPILL_CAP`] of the lost crabs respawn
+    /// Spec §3.4: a gull reaching a castle carries off a **third** of the
+    /// banked crabs, rounding the loss up ([`raid_loss`]). A raid on a fat
+    /// castle still hurts and reads from across the room, and the tier drop
+    /// falls out of the score loss. At most [`SPILL_CAP`] of the lost crabs respawn
     /// as live crabs in the surrounding tiles; the rest are carried off by
     /// the flock.
-    pub(super) fn damage_castle(&mut self, owner: PlayerId, castle_tile: u16) {
+    ///
+    /// Returns the points taken, for the raid's credit.
+    pub(super) fn damage_castle(&mut self, owner: PlayerId, castle_tile: u16) -> u32 {
         let score = self.scores[owner as usize];
-        let target = score / 2;
-        let spill = (score - target).min(SPILL_CAP);
-        self.scores[owner as usize] = target;
+        let lost = raid_loss(score);
+        let spill = lost.min(SPILL_CAP);
+        self.scores[owner as usize] = score - lost;
 
         let (cx, cy) = self.coords(castle_tile);
         for (nx, ny, ox, oy) in self
@@ -314,6 +370,7 @@ impl Board {
             let handed = self.roll_handedness();
             self.spawn_crab(nx as u8, ny as u8, dir, handed, CrabKind::Common);
         }
+        lost
     }
 
     /// Where a creature actually stands, in board subunits: the tile it is

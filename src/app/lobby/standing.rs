@@ -74,10 +74,13 @@ impl Standing {
             transport,
             peers: PeerBook::default(),
             announce_in: 0.0,
-            kicking: false,
+            kicking: None,
             bot_string: None,
             tail: RoundTail::default(),
             rounds_dealt: 0,
+            picking: None,
+            partnering: false,
+            arranged: None,
         })
     }
 }
@@ -96,8 +99,10 @@ pub struct Hosted {
     pub peers: PeerBook,
     pub(super) announce_in: f32,
     /// The host pressed K and is picking whom to ask to leave: the next
-    /// number is a seat at the table, Esc is never mind.
-    pub kicking: bool,
+    /// number is a seat at the table or, past the card's rows, one of the
+    /// peers it has none for, the page of them shown (Tab turns it), and
+    /// Esc is never mind. `None` while not picking.
+    pub kicking: Option<usize>,
     /// The string a bot connects straight to this beach with (route 2),
     /// while the host says bots are welcome and there is a chair for one.
     pub bot_string: Option<String>,
@@ -110,54 +115,95 @@ pub struct Hosted {
     /// card reads it as a round it has not been dealt (`is_next_round`).
     /// Begun again at one, the joiner sits the new match out.
     pub(super) rounds_dealt: u32,
+    /// The host started the match and is picking the map for the table
+    /// frozen then ([`super::pick`]). `None` while gathering.
+    pub picking: Option<Picking>,
+    /// The host pressed P and is picking partners: the next number is the
+    /// seat whose partners change ([`super::partners`]), and Esc or P puts
+    /// it away.
+    pub partnering: bool,
+    /// The seats the host's partner picks put its bots and the AI in, once
+    /// it has picked any ([`crate::app::net::order`]); the peers' are on
+    /// their rows. `None` for a table dealt in seat order.
+    pub arranged: Option<crate::app::net::order::Arranged>,
 }
 
 /// How long a host back in the lobby keeps repeating the last frames of
-/// the round it played, in seconds: a peer short of them is at most a
-/// commit lead behind, and finishes on the first copy that arrives.
+/// the round it played, in seconds: a player short of them is at most a
+/// commit lead behind and finishes on the first copy that arrives, and a
+/// spectator a few seconds behind has as long again to play the rest out.
 const TAIL_KEPT: f32 = 10.0;
 
-/// The last frames of a round the host has finished and walked away from
-/// ([`crate::sim::Lockstep::played_tail`]).
+/// The end of a round the host has finished and walked away from, and the
+/// lockstep it is cut from.
 ///
 /// The host relays an input once, as it arrives, and stops the moment its
 /// round is over: the relay of the input that completed the last frame,
 /// lost, left a joiner a frame short of the end for good, on "waiting
 /// for" a player who had long stopped sending, while the lobby's roster
-/// kept it from ever calling the host gone. So the lobby repeats them,
-/// once a second to everybody (a watcher sends nothing to answer), and at
-/// once to a player still resending its own commits.
+/// kept it from ever calling the host gone. So the lobby goes on sending
+/// it: the last frames once a second to everybody, and to a peer still in
+/// the round, whose batches say what it holds, everything it is missing
+/// up to the last frame (`Lockstep::owed`), as the results card does. A
+/// spectator seconds behind is a long way short of the last second.
 #[derive(Default)]
 pub struct RoundTail {
-    inputs: Vec<crate::sim::InputMsg>,
+    played: Option<Box<crate::sim::Lockstep>>,
+    round: u8,
     left: f32,
 }
 
 impl RoundTail {
-    /// The tail of a round just walked away from, kept for `TAIL_KEPT`.
-    pub(super) fn kept(inputs: Vec<crate::sim::InputMsg>) -> RoundTail {
+    /// The round just walked away from, the `rounds_dealt`-th this socket
+    /// dealt, kept for `TAIL_KEPT`.
+    pub(super) fn kept(played: Box<crate::sim::Lockstep>, rounds_dealt: u32) -> RoundTail {
         RoundTail {
-            inputs,
+            played: Some(played),
+            round: crate::transport::round_tag(rounds_dealt),
             left: TAIL_KEPT,
         }
     }
 
-    /// One tick of the lobby: the inputs to repeat now, if any, to
-    /// everybody when `announced` and to `asked` (peers that sent inputs
-    /// this tick) whatever the clock.
+    /// One tick of the lobby: the last frames to everybody when
+    /// `announced`, and to each peer in `asked` (its batch this tick) what
+    /// it says it is still missing, whatever the clock.
     pub(super) fn repeat(
         &mut self,
         transport: &UdpTransport,
         delta: f32,
         announced: bool,
-        asked: &[usize],
+        asked: &[(usize, crate::transport::Batch)],
     ) {
         self.left -= delta;
         if self.left <= 0.0 {
-            self.inputs.clear();
-            return;
+            self.played = None;
         }
-        transport.send_inputs(&self.inputs, |peer| announced || asked.contains(&peer));
+        let Some(played) = &self.played else {
+            return;
+        };
+        let round = self.round;
+        if announced {
+            let tail = crate::transport::Batch {
+                round,
+                inputs: played.played_tail(),
+                ..Default::default()
+            };
+            transport.send_batch(&tail, |_| true);
+        }
+        for (peer, batch) in asked {
+            if batch.round != round {
+                continue;
+            }
+            let wants = batch
+                .wants
+                .filter(|wants| wants.iter().all(|&frame| played.within_horizon(frame)));
+            let owed = crate::transport::Batch {
+                round,
+                inputs: played.owed(wants, None, played.frame()),
+                ..Default::default()
+            };
+            transport.send_batch(&owed, |to| to == *peer);
+        }
     }
 }
 
@@ -199,6 +245,19 @@ pub struct Joined {
     /// host has said we are in one. `None` while there is still a lobby
     /// to be in: a round has to be under way before anybody queues.
     pub queued: Option<u8>,
+    /// The host's word on its last lobby roster: this peer came to play,
+    /// and the table has no chair left for it (`NetMsg::Roster::chair`),
+    /// so the launch seats it watching.
+    pub no_chair: bool,
+    /// The host's word on its last lobby roster: it has started the match
+    /// and is picking the map (`NetMsg::Roster::picking`).
+    pub host_picking: bool,
+    /// The host answered a greeting with `Full`: its socket has no room for
+    /// this peer. Not taken as the end of the call, since a place frees
+    /// as soon as the host forgets a peer gone quiet, and the greeting
+    /// goes on until [`NO_ANSWER_AFTER`] of no other word,
+    /// which then says the beach is full rather than unanswered.
+    pub(super) told_full: bool,
     pub(super) hello_in: f32,
     /// Seconds since the host last said anything, and whether it has ever
     /// said anything at all.
@@ -210,7 +269,7 @@ pub struct Joined {
     pub(super) host_silence: f32,
     pub(super) host_answered: bool,
     /// Whether the host said it was going, and how long ago: believed once
-    /// it has stood for [`super::joining::LOBBY_GOODBYE_GRACE`], longer than
+    /// it has stood for [`LOBBY_GOODBYE_GRACE`], longer than
     /// the host's once-a-second roster, which takes it back.
     pub(super) host_goodbye: crate::app::net::Goodbye,
     /// The seed of the round just played, set when a finished match walks
@@ -237,15 +296,12 @@ pub struct Joined {
 }
 
 /// What a joiner knows of the match it is joining, from the host's
-/// roster: the two always arrive together.
+/// roster.
 pub struct HostTerms {
     /// The host's dials. The terms card paints these rather than this
     /// machine's own [`MatchConfig`], which is nothing to do with the match
     /// being joined.
     pub terms: MatchTerms,
-    /// What the host's handmade beach is called, when its terms are on
-    /// one: empty otherwise.
-    pub beach_name: String,
 }
 
 impl Joined {
@@ -257,6 +313,9 @@ impl Joined {
             transport,
             watching,
             queued: None,
+            no_chair: false,
+            host_picking: false,
+            told_full: false,
             hello_in: ANNOUNCE_EVERY,
             host_silence: 0.0,
             host_answered: false,
@@ -282,6 +341,9 @@ impl Joined {
             transport,
             watching,
             queued: None,
+            no_chair: false,
+            host_picking: false,
+            told_full: false,
             hello_in: 0.0,
             host_silence: 0.0,
             host_answered: true,
@@ -343,7 +405,7 @@ mod tests {
             panic!("a bot greets as one");
         };
         // The host writes the greeting's name down, and vouches by it.
-        let mut peers = crate::app::net::PeerBook::default();
+        let mut peers = PeerBook::default();
         peers.row(0).name = crate::transport::name_from_wire(&name);
         let vouched = peers.vouch(0, crate::transport::wire_name("Bo"));
         assert_eq!(

@@ -166,6 +166,31 @@ write("denied", (
     + tone(110, 0.09, square, vol=0.26)
 ))
 
+# Lure started: a beckoning call, two rising whistles over a low swell, the
+# sound of every loose crab on the beach turning round at once.
+write("lure", mix(
+    tone((440, 660), 0.14, triangle, vol=0.34, vibrato=0.03)
+    + [0.0] * int(0.03 * RATE)
+    + tone((587, 880), 0.24, triangle, vol=0.38, vibrato=0.03),
+    noise(0.41, vol=0.10, lowpass=0.08, fade_in=True),
+    tone((147, 220), 0.41, square, vol=0.10),
+))
+
+# The count before a round: a short blip for each number, and a brighter,
+# longer one an octave up on the word that starts it.
+write("count", tone(880, 0.09, square, vol=0.26, release=0.4))
+write("go", mix(
+    tone(1760, 0.26, square, vol=0.22, release=0.5),
+    tone(880, 0.26, triangle, vol=0.30, release=0.5),
+))
+
+# The last seconds of a timed round: a dry woodblock tick, short enough to
+# sit under everything else on the beach.
+write("tick", mix(
+    tone(1900, 0.035, triangle, vol=0.34, attack=0.0, release=0.15),
+    noise(0.02, vol=0.12, lowpass=0.6),
+))
+
 # --- theme B: a second seaside loop so the first one can breathe -------------
 # 16 bars at 132 bpm, waltz-y 3/4: triangle melody over a square bass,
 # different key (D minor-ish) and feel from theme.wav.

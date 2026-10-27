@@ -467,7 +467,7 @@ fn walls_are_shared_between_neighbours() {
 
 /// A forced event arms the cooldown too.
 ///
-/// The clock is set in `apply_tide_event` rather than in the roulette on
+/// The clock is set in `fire_tide_event` rather than in the roulette on
 /// purpose: what holds the wheel is "an event is running", not "the wheel
 /// was spun". The dev hook and the tests are the only other way an event
 /// starts, and one fired that way must not leave the beach open to a
@@ -989,7 +989,7 @@ fn distant_crab_survives_the_gull() {
 }
 
 #[test]
-fn gull_raid_halves_the_castle() {
+fn gull_raid_takes_a_third_of_the_castle() {
     let mut board = Board::new(7, 5, 0);
     board.set_tile(4, 2, TileKind::Castle(1));
     board.scores[1] = 30;
@@ -997,7 +997,11 @@ fn gull_raid_halves_the_castle() {
     for _ in 0..ticks_to_cross(4, 8) {
         board.tick_idle();
     }
-    assert_eq!(board.scores()[1], 15, "half the banked crabs carried off");
+    assert_eq!(
+        board.scores()[1],
+        20,
+        "a third of the banked crabs carried off"
+    );
     assert_eq!(
         board.crabs().len(),
         SPILL_CAP as usize,
@@ -1104,7 +1108,7 @@ fn molting_bank_lures_loose_crabs_then_expires() {
     for _ in 0..LURE_TICKS {
         board.tick_idle();
     }
-    assert!(board.lure().is_none(), "lure expires after 10 s");
+    assert!(board.lure().is_none(), "lure expires after LURE_TICKS");
 }
 
 /// The lure does not stack and does not restart on its own heels: a molt
@@ -1174,7 +1178,7 @@ fn the_beach_fills_to_a_cap_and_mania_to_twice_it() {
     // spin a wheel whose faces move the population around. It was left on,
     // and the flood was measured from wherever the last event had put the
     // beach: adding a ninth face moved the draws and the peak landed one
-    // crab under the bound. `apply_tide_event` fires regardless, which is
+    // crab under the bound. `force_tide_event` fires regardless, which is
     // what the mania below is started with.
     board.set_events_enabled(false);
     for _ in 0..1200 {
@@ -1192,7 +1196,11 @@ fn the_beach_fills_to_a_cap_and_mania_to_twice_it() {
         board.crabs_spawned()
     );
 
-    board.apply_tide_event(TideEvent::CrabMania, 0);
+    // The castle goes before the flood, so what the peak measures is the
+    // ceiling and not how fast the castle drains: with it standing, the
+    // flood's height swung with the kinds rolled (fast ones bank sooner).
+    board.set_tile(4, 4, TileKind::Empty);
+    board.force_tide_event(TideEvent::CrabMania, 0);
     // Watched across the whole flood rather than read at the end of it: the
     // mania lasts `EVENT_TICKS` and the beach drains back to the cap once
     // it lifts, so a count taken 600 ticks later measures the drain.
@@ -1212,7 +1220,7 @@ fn the_roulette_keeps_gulls_out_of_the_surge() {
     let mut board = party_board();
     board.rules_mut().round_length = Some(1000);
     assert!(!board.in_surge());
-    board.apply_tide_event(TideEvent::GullMania, 0);
+    board.force_tide_event(TideEvent::GullMania, 0);
     assert_eq!(
         board.last_event().map(|(e, _)| e),
         Some(TideEvent::GullMania),
@@ -1253,7 +1261,7 @@ fn the_roulette_keeps_gulls_out_of_the_surge() {
         "outside the surge"
     );
     // Applying one directly is still honoured; only the spin is filtered.
-    surging.apply_tide_event(TideEvent::GullMania, 0);
+    surging.force_tide_event(TideEvent::GullMania, 0);
     assert_eq!(
         surging.last_event().map(|(e, _)| e),
         Some(TideEvent::GullMania)
@@ -1458,7 +1466,7 @@ fn event_right_claws_pays_one_hand_and_charges_the_other() {
     bank(&mut board, Handedness::Left, CrabKind::Common);
     assert_eq!(board.scores()[0], 2, "two common crabs, two points");
 
-    board.apply_tide_event(TideEvent::RightClaws, 0);
+    board.force_tide_event(TideEvent::RightClaws, 0);
     bank(&mut board, Handedness::Right, CrabKind::Common);
     assert_eq!(board.scores()[0], 4, "the right claw pays twice over");
     bank(&mut board, Handedness::Left, CrabKind::Common);
@@ -1504,7 +1512,7 @@ fn event_crab_mania_clears_gulls_and_floods() {
         }),
     );
     board.spawn_gull(3, 2, Right);
-    board.apply_tide_event(TideEvent::CrabMania, 0);
+    board.force_tide_event(TideEvent::CrabMania, 0);
     assert!(board.gulls().is_empty(), "gulls washed away");
     let before = board.crabs().len();
     for _ in 0..64 {
@@ -1527,7 +1535,7 @@ fn a_mania_floods_at_two_holes_however_many_the_beach_has() {
         board.set_tile(x, y, TileKind::Spawner(Spawner { dir, period: 1000 }));
     }
     board.set_events_enabled(false);
-    board.apply_tide_event(TideEvent::CrabMania, 0);
+    board.force_tide_event(TideEvent::CrabMania, 0);
     let mut from = std::collections::HashSet::new();
     let before = board.crabs_spawned();
     for _ in 0..24 {
@@ -1556,7 +1564,7 @@ fn event_gull_mania_spawns_gulls_from_holes() {
             period: 100,
         }),
     );
-    board.apply_tide_event(TideEvent::GullMania, 0);
+    board.force_tide_event(TideEvent::GullMania, 0);
     for _ in 0..64 {
         board.tick_idle();
     }
@@ -1572,7 +1580,7 @@ fn event_monopoly_banks_half_the_loose_crabs() {
     for x in 0..6 {
         common(&mut board, x, 4, Right, Handedness::Left);
     }
-    board.apply_tide_event(TideEvent::Monopoly, 1);
+    board.force_tide_event(TideEvent::Monopoly, 1);
     assert_eq!(board.crabs().len(), 3);
     assert_eq!(board.scores()[1], 3);
     assert_eq!(board.crabs_banked(), 3);
@@ -1588,7 +1596,7 @@ fn a_flying_sweep_banks_each_crab_as_it_lands() {
     for x in 0..6 {
         common(&mut board, x, 4, Right, Handedness::Left);
     }
-    board.apply_tide_event(TideEvent::Monopoly, 1);
+    board.force_tide_event(TideEvent::Monopoly, 1);
     assert_eq!(board.crabs().len(), 3, "off the beach at once");
     assert_eq!(board.scores()[1], 0, "and nothing banked yet");
     let lands: Vec<u64> = board.sweeping().iter().map(|f| f.lands).collect();
@@ -1627,7 +1635,7 @@ fn a_flying_sweep_lands_everything_at_the_wave() {
     for x in 0..6 {
         common(&mut board, x, 4, Right, Handedness::Left);
     }
-    board.apply_tide_event(TideEvent::Monopoly, 1);
+    board.force_tide_event(TideEvent::Monopoly, 1);
     while !board.round_over() {
         board.tick_idle();
     }
@@ -1660,10 +1668,10 @@ fn a_swept_crab_banks_what_it_was_worth_when_the_sweep_fired() {
         }
         if called_at_fire {
             // Running at the sweep, and over before the first crab lands.
-            board.apply_tide_event(TideEvent::RightClaws, 0);
+            board.force_tide_event(TideEvent::RightClaws, 0);
             board.tide.claw_call = 10;
         }
-        board.apply_tide_event(TideEvent::Monopoly, 1);
+        board.force_tide_event(TideEvent::Monopoly, 1);
         // Only the swept crabs bank: the ones left on the sand go.
         board.crabs.clear();
         for _ in 0..20 {
@@ -1673,7 +1681,7 @@ fn a_swept_crab_banks_what_it_was_worth_when_the_sweep_fired() {
             // Spun mid-flight, which the timed lock leaves the wheel free
             // to do after a Monopoly.
             assert_eq!(board.tide.cooldown, 0, "the wheel is free");
-            board.apply_tide_event(TideEvent::RightClaws, 0);
+            board.force_tide_event(TideEvent::RightClaws, 0);
         }
         assert_eq!(board.in_claw_call(), !called_at_fire);
         let mut paid = 0;
@@ -1685,10 +1693,10 @@ fn a_swept_crab_banks_what_it_was_worth_when_the_sweep_fired() {
                 .filter_map(|&id| board.swept_paid(id))
                 .sum::<i32>();
         }
-        assert_eq!(10 + paid, expected as i32, "what the record says it paid");
+        assert_eq!(10 + paid, expected, "what the record says it paid");
         assert_eq!(
             board.scores()[1],
-            expected,
+            expected as u32,
             "keeps worth {keeps}, called at the sweep {called_at_fire}"
         );
     }
@@ -1703,7 +1711,7 @@ fn a_sweep_survives_a_snapshot_mid_flight() {
     for x in 0..6 {
         common(&mut board, x, 4, Right, Handedness::Left);
     }
-    board.apply_tide_event(TideEvent::Monopoly, 1);
+    board.force_tide_event(TideEvent::Monopoly, 1);
     for _ in 0..80 {
         board.tick_idle();
     }
@@ -1730,7 +1738,7 @@ fn a_swept_crab_is_written_down_against_the_seat_that_got_it() {
     }
     let taken: Vec<u32> = board.crabs()[..3].iter().map(|crab| crab.id).collect();
     let left: Vec<u32> = board.crabs()[3..].iter().map(|crab| crab.id).collect();
-    board.apply_tide_event(TideEvent::Monopoly, 1);
+    board.force_tide_event(TideEvent::Monopoly, 1);
     for crab in taken {
         assert_eq!(
             board.swept_home(crab),
@@ -1754,7 +1762,7 @@ fn a_swept_crab_is_remembered_a_few_ticks_and_then_forgotten() {
         common(&mut board, x, 4, Right, Handedness::Left);
     }
     let crab = board.crabs()[0].id;
-    board.apply_tide_event(TideEvent::Monopoly, 1);
+    board.force_tide_event(TideEvent::Monopoly, 1);
     assert_eq!(board.swept_home(crab), Some(1), "the tick it happened on");
     board.tick_idle();
     assert_eq!(board.swept_home(crab), Some(1), "and the frame after it");
@@ -1791,10 +1799,58 @@ fn a_sweep_leaves_the_fingerprint_alone() {
     );
 }
 
+/// Why a molt started no lure is written for the render layer, like the
+/// swept-home record, and the fingerprint cannot feel it either.
+#[test]
+fn a_refused_lure_leaves_the_fingerprint_alone() {
+    let mut board = party_board();
+    let before = board.state_hash();
+    board.refused_lures.push(RefusedLure {
+        crab: 7,
+        running: true,
+        at: 0,
+    });
+    assert_eq!(
+        board.lure_refused(7),
+        Some(true),
+        "the record is really there"
+    );
+    assert_eq!(
+        board.state_hash(),
+        before,
+        "and the fingerprint cannot feel it"
+    );
+}
+
+/// Which crabs walked home is written for the render layer: the
+/// fingerprint cannot feel it, a copy carries it, and a round restored
+/// from a snapshot starts without it.
+#[test]
+fn the_walked_home_record_is_render_only() {
+    let mut board = Board::new(6, 4, 7);
+    board.set_tile(3, 1, TileKind::Castle(1));
+    board.spawn_crab(2, 1, Right, Handedness::Left, CrabKind::Common);
+    let id = board.crabs()[0].id;
+    while !board.crabs().is_empty() {
+        board.tick_idle();
+    }
+    assert_eq!(board.walked_home(id), Some((1, board.index(3, 1), 1)));
+    let restored = Board::parse_snapshot(&board.to_snapshot()).expect("snapshot");
+    assert_eq!(restored.walked_home(id), None, "a restore starts afresh");
+    assert_eq!(restored.state_hash(), board.state_hash(), "unhashed");
+    let mut copy = restored.clone();
+    copy.copy_from(&board);
+    assert_eq!(copy.walked_home(id), board.walked_home(id), "copied");
+    for _ in 0..SWEEP_MEMORY {
+        board.tick_idle();
+    }
+    assert_eq!(board.walked_home(id), None, "and forgotten in time");
+}
+
 #[test]
 fn event_gull_attack_targets_rival_castles_only() {
     let mut board = party_board();
-    board.apply_tide_event(TideEvent::GullAttack, 0);
+    board.force_tide_event(TideEvent::GullAttack, 0);
     assert_eq!(board.gulls().len(), 1, "one gull, at the rival's castle");
     let (gx, gy) = (board.gulls()[0].tile % 7, board.gulls()[0].tile / 7);
     let dist = (i32::from(gx) - 5).abs() + (i32::from(gy) - 3).abs();
@@ -1805,7 +1861,7 @@ fn event_gull_attack_targets_rival_castles_only() {
 fn event_tempo_doubles_and_halves_movement() {
     let mut fast = party_board();
     common(&mut fast, 0, 4, Right, Handedness::Left);
-    fast.apply_tide_event(TideEvent::SpeedUp, 0);
+    fast.force_tide_event(TideEvent::SpeedUp, 0);
     for _ in 0..11 {
         fast.tick_idle();
     }
@@ -1813,7 +1869,7 @@ fn event_tempo_doubles_and_halves_movement() {
 
     let mut slow = party_board();
     common(&mut slow, 0, 4, Right, Handedness::Left);
-    slow.apply_tide_event(TideEvent::SlowDown, 0);
+    slow.force_tide_event(TideEvent::SlowDown, 0);
     for _ in 0..42 {
         slow.tick_idle();
     }
@@ -1827,22 +1883,158 @@ fn event_fresh_sand_washes_all_signposts() {
     let mut board = party_board();
     assert!(board.place_signpost(0, 3, 2, Up));
     assert!(board.place_signpost(1, 4, 2, Down));
-    board.apply_tide_event(TideEvent::FreshSand, 0);
+    board.force_tide_event(TideEvent::FreshSand, 0);
     assert_eq!(board.signpost_count(0) + board.signpost_count(1), 0);
 }
 
 #[test]
 fn event_castle_swap_rotates_owners() {
     let mut board = party_board();
-    board.apply_tide_event(TideEvent::CastleSwap, 0);
+    board.force_tide_event(TideEvent::CastleSwap, 0);
     assert_eq!(board.tile_at(1, 1), TileKind::Castle(1));
     assert_eq!(board.tile_at(5, 3), TileKind::Castle(0));
+}
+
+/// A beach of `seats` castles along the top row, from `seed`, castle `n` at (n, 0)
+/// owned by seat `n`, each seat holding `10 * (n + 1)` points.
+fn swap_beach(seats: u8, seed: u64) -> Board {
+    let mut board = Board::new(7, 5, seed);
+    board.set_events_enabled(true);
+    for seat in 0..seats {
+        board.set_tile(seat, 0, TileKind::Castle(seat));
+        board.scores[seat as usize] = 10 * (u32::from(seat) + 1);
+    }
+    board
+}
+
+/// Who owns each castle of a [`swap_beach`], in castle order.
+fn swap_owners(board: &Board, seats: u8) -> Vec<PlayerId> {
+    (0..seats)
+        .map(|x| {
+            let TileKind::Castle(owner) = board.tile_at(x, 0) else {
+                panic!("({x}, 0) is no castle");
+            };
+            owner
+        })
+        .collect()
+}
+
+/// With three castles or more, the seat that spun Castle Swap keeps its
+/// castle and its score, and the others trade among themselves.
+#[test]
+fn a_spun_castle_swap_leaves_the_spinners_castle_alone() {
+    for (seats, spinner, after) in [
+        (3, 1, vec![2, 1, 0]),
+        (4, 0, vec![0, 2, 3, 1]),
+        (4, 3, vec![1, 2, 0, 3]),
+        (6, 2, vec![1, 3, 2, 4, 5, 0]),
+    ] {
+        let mut board = swap_beach(seats, 11);
+        let scores = *board.scores();
+        board.force_spun_tide_event(TideEvent::CastleSwap, spinner);
+        assert_eq!(swap_owners(&board, seats), after, "{seats} seats");
+        assert_eq!(*board.scores(), scores, "banks stay where they were");
+        assert_eq!(board.event_spun_by(), Some(spinner));
+    }
+}
+
+/// Two castles have nobody else to trade with, so a spun swap at two
+/// rotates both as a called one does; and a called swap, which has no
+/// spinner, rotates everyone at any count.
+#[test]
+fn a_castle_swap_with_two_castles_or_no_spinner_rotates_everyone() {
+    let mut spun = swap_beach(2, 11);
+    spun.force_spun_tide_event(TideEvent::CastleSwap, 0);
+    assert_eq!(swap_owners(&spun, 2), vec![1, 0]);
+    let mut called = swap_beach(2, 11);
+    called.force_tide_event(TideEvent::CastleSwap, 0);
+    assert_eq!(swap_owners(&called, 2), swap_owners(&spun, 2));
+    assert_eq!(spun.scores(), called.scores());
+
+    let mut called = swap_beach(4, 11);
+    called.force_tide_event(TideEvent::CastleSwap, 0);
+    assert_eq!(swap_owners(&called, 4), vec![1, 2, 3, 0]);
+    assert_eq!(called.event_spun_by(), None);
+}
+
+/// The wheel itself passes its spinner on: a sparkling crab's roll that
+/// lands on Castle Swap keeps the banker's castle out of the trade.
+#[test]
+fn the_roulette_spins_castle_swap_as_the_bankers() {
+    let swapped = (0..500u64)
+        .find_map(|seed| {
+            let mut board = swap_beach(3, seed);
+            board.spin_tide_event(2);
+            (board.last_event().map(|(event, _)| event) == Some(TideEvent::CastleSwap))
+                .then(|| swap_owners(&board, 3))
+        })
+        .expect("some seed lands on Castle Swap");
+    assert_eq!(swapped, vec![1, 0, 2]);
+}
+
+/// Speed Up opens the holes twice as often while it runs, and only while
+/// it runs; Slow Down leaves their cadence alone.
+#[test]
+fn speed_up_doubles_the_holes_while_it_runs() {
+    let spawned = |event: Option<TideEvent>, ticks: u32| {
+        let mut board = Board::new(9, 7, 5);
+        board.set_tile(
+            0,
+            3,
+            TileKind::Spawner(Spawner {
+                dir: Right,
+                period: 30,
+            }),
+        );
+        // A castle at the far end drains the row, so the cap never decides.
+        board.set_tile(8, 3, TileKind::Castle(0));
+        if let Some(event) = event {
+            board.force_tide_event(event, 0);
+        }
+        for _ in 0..ticks {
+            board.tick_idle();
+        }
+        board.crabs_spawned()
+    };
+    let calm = spawned(None, EVENT_TICKS);
+    assert_eq!(calm, EVENT_TICKS / 30);
+    assert_eq!(spawned(Some(TideEvent::SpeedUp), EVENT_TICKS), 2 * calm);
+    assert_eq!(spawned(Some(TideEvent::SlowDown), EVENT_TICKS), calm);
+    assert_eq!(
+        spawned(Some(TideEvent::SpeedUp), 2 * EVENT_TICKS),
+        3 * calm,
+        "back to the hole's own cadence once it ends"
+    );
+}
+
+/// The faster holes still fill the beach only to the crab cap.
+#[test]
+fn speed_up_holes_still_stop_at_the_crab_cap() {
+    let mut board = Board::new(9, 7, 5);
+    for y in 0..7 {
+        board.set_tile(
+            0,
+            y,
+            TileKind::Spawner(Spawner {
+                dir: Right,
+                period: 10,
+            }),
+        );
+    }
+    board.force_tide_event(TideEvent::SpeedUp, 0);
+    let cap = board.crab_cap();
+    let mut peak = 0;
+    for _ in 0..EVENT_TICKS {
+        board.tick_idle();
+        peak = peak.max(board.crabs().len());
+    }
+    assert_eq!(peak, cap, "filled to the cap and no further");
 }
 
 #[test]
 fn event_timers_expire() {
     let mut board = party_board();
-    board.apply_tide_event(TideEvent::SpeedUp, 0);
+    board.force_tide_event(TideEvent::SpeedUp, 0);
     common(&mut board, 0, 4, Right, Handedness::Left);
     for _ in 0..EVENT_TICKS + 1 {
         board.tick_idle();
@@ -1916,14 +2108,15 @@ fn castle_tier_boundaries() {
 #[test]
 fn surge_doubles_gull_spawn_rate() {
     // Surged board: surge covers remaining <= 900, i.e. from tick 100 on,
-    // halving the period to 50 (spawns at 0, 100, 150, 200, 250 -> capped).
+    // halving the period to 50 (sent for at 0, 100, 150, 200, 250 and 300,
+    // each landing a lead later -> capped).
     let mut board = Board::new(7, 5, 3);
     board.rules_mut().gull_period = 100;
     board.rules_mut().round_length = Some(1000);
     // Control at the normal rate.
     let mut calm = Board::new(7, 5, 3);
     calm.rules_mut().gull_period = 100;
-    for _ in 0..320 {
+    for _ in 0..340 {
         board.tick_idle();
         calm.tick_idle();
     }
@@ -1970,12 +2163,14 @@ fn a_full_flock_turns_over_from_its_oldest_gull_clear_of_the_castles() {
         board.run_gull_spawner();
         let ids: Vec<u32> = board.gulls().iter().map(|g| g.id).collect();
         if turnover {
-            assert_eq!(ids.len(), 3, "one off, one on: {ids:?}");
+            assert_eq!(ids.len(), 2, "one off: {ids:?}");
+            assert_eq!(board.incoming_gulls().len(), 1, "and one sent for");
             assert!(ids.contains(&0), "the attack stays: {ids:?}");
             assert!(!ids.contains(&1), "the oldest clear one left: {ids:?}");
             assert!(ids.contains(&2), "{ids:?}");
         } else {
             assert_eq!(ids, [0, 1, 2]);
+            assert!(board.incoming_gulls().is_empty());
         }
     }
 }
@@ -2007,6 +2202,7 @@ fn a_whole_flock_stays_whole_when_the_newcomer_rolls_rock() {
         board.run_gull_spawner();
         let expected = if whole { 3 } else { 2 };
         assert_eq!(board.gulls().len(), expected, "whole {whole}");
+        assert!(board.incoming_gulls().is_empty(), "nobody lands on rock");
     }
 }
 
@@ -2026,7 +2222,8 @@ fn the_final_rush_raises_a_turning_over_flocks_cap() {
         board.spawn_gull(0, 6, Up);
         board.run_gull_spawner();
         let expected = if turnover { 3 } else { 2 };
-        assert_eq!(board.gulls().len(), expected, "turnover {turnover}");
+        let flock = board.gulls().len() + board.incoming_gulls().len();
+        assert_eq!(flock, expected, "turnover {turnover}");
     }
 }
 
@@ -2150,7 +2347,7 @@ fn gull_mania_ignores_the_flock_cap() {
         }),
     );
     board.set_events_enabled(true);
-    board.apply_tide_event(TideEvent::GullMania, 0);
+    board.force_tide_event(TideEvent::GullMania, 0);
     for _ in 0..200 {
         board.tick_idle();
     }
@@ -2161,20 +2358,20 @@ fn gull_mania_ignores_the_flock_cap() {
     );
 }
 
-/// Spec §3.4 says a raid halves the score "rounding the loss up": the
-/// castle keeps `score / 2` and the odd crab goes with the gull. A score of
-/// 7 keeps 3 and loses 4, all four spilling back onto the sand (under the
-/// spill cap); 3 keeps 1 and spills 2. Pinned so a later "round to nearest"
-/// cannot change how devastating a raid on a small castle is.
+/// Spec §3.4 says a raid takes a third of the score "rounding the loss up":
+/// a crab the division leaves over goes with the gull. A score of 7 keeps 4
+/// and loses 3, all three spilling back onto the sand (under the spill
+/// cap); 2 keeps 1 and spills 1. Pinned so a later "round to nearest"
+/// cannot change how hard a raid on a small castle hits.
 #[test]
 fn a_raid_on_an_odd_score_rounds_the_loss_up_and_spills_it() {
-    for (score, kept, spilled) in [(7, 3, 4), (3, 1, 2)] {
+    for (score, kept, spilled) in [(7, 4, 3), (2, 1, 1)] {
         let mut board = Board::new(7, 5, 0);
         board.set_tile(3, 2, TileKind::Castle(0));
         let castle = board.index_of(3, 2);
         board.scores[0] = score;
         board.damage_castle(0, castle);
-        assert_eq!(board.scores()[0], kept, "{score} halves to {kept}");
+        assert_eq!(board.scores()[0], kept, "{score} keeps {kept}");
         assert_eq!(
             board.crabs().len(),
             spilled,
@@ -2186,7 +2383,7 @@ fn a_raid_on_an_odd_score_rounds_the_loss_up_and_spills_it() {
 /// A castle in a corner with a rock on its diagonal has only two open ring
 /// tiles, fewer than the crabs a raid wants to spill. The spill takes what
 /// sand there is and the flock carries the rest off: nothing spawns off the
-/// board or on the rock, and the score still drops by the full half.
+/// board or on the rock, and the score still drops by the full third.
 #[test]
 fn a_spill_into_a_cramped_corner_lands_only_on_the_open_sand() {
     let mut board = Board::new(3, 3, 0);
@@ -2195,7 +2392,11 @@ fn a_spill_into_a_cramped_corner_lands_only_on_the_open_sand() {
     let castle = board.index_of(0, 0);
     board.scores[0] = 7;
     board.damage_castle(0, castle);
-    assert_eq!(board.scores()[0], 3, "the loss is the full half regardless");
+    assert_eq!(
+        board.scores()[0],
+        4,
+        "the loss is the full third regardless"
+    );
     let landed: Vec<(u8, u8)> = board
         .crabs()
         .iter()
@@ -2215,6 +2416,17 @@ fn a_spill_into_a_cramped_corner_lands_only_on_the_open_sand() {
     }
 }
 
+/// Run the edge spawner once and land the gull it sends for straight
+/// away, as the board would [`GULL_LEAD`] ticks on: for the tests of where
+/// a gull comes down and which way it faces, not when.
+fn send_for_a_gull_and_land_it(board: &mut Board) {
+    board.run_gull_spawner();
+    if let Some(gull) = board.incoming.last() {
+        board.tick = gull.at;
+        board.land_incoming_gulls();
+    }
+}
+
 /// Where the ambient flock comes from: every spawn is on the edge of the
 /// board and walks inward, and over enough rolls every edge tile gets its
 /// turn. The perimeter arithmetic has four branches, and an off-by-one in
@@ -2225,7 +2437,7 @@ fn the_gull_spawner_covers_the_whole_perimeter_and_faces_inward() {
     board.rules_mut().gull_period = 1;
     let mut hit = std::collections::BTreeSet::new();
     for _ in 0..400 {
-        board.run_gull_spawner();
+        send_for_a_gull_and_land_it(&mut board);
         let gull = board.gulls()[0];
         let (x, y) = board.coords(gull.tile);
         assert!(
@@ -2260,7 +2472,7 @@ fn the_gull_spawner_walks_the_length_of_a_strip() {
         board.rules_mut().gull_period = 1;
         let mut hit = std::collections::BTreeSet::new();
         for _ in 0..200 {
-            board.run_gull_spawner();
+            send_for_a_gull_and_land_it(&mut board);
             let gull = board.gulls()[0];
             let (x, y) = board.coords(gull.tile);
             let (dx, dy) = gull.dir.offset();
@@ -2431,4 +2643,352 @@ fn the_last_room_under_the_cap_goes_by_draw_when_spawns_are_fair() {
         fair.iter().any(|&left| left) && fair.iter().any(|&left| !left),
         "{fair:?}"
     );
+}
+
+/// The edge spawner sends for a gull [`GULL_LEAD`] ticks before it lands:
+/// the board says where and when from the tick it is sent for, nothing is
+/// on the sand until that tick has run, and then the gull is on the tile
+/// it was sent to, facing the way it was told, at the head of its walk.
+#[test]
+fn an_ambient_gull_is_sent_for_ahead_and_lands_on_its_tick() {
+    let mut board = Board::new(9, 7, 3);
+    board.rules_mut().gull_period = 500;
+    board.tick_idle();
+    let [incoming] = *board.incoming_gulls() else {
+        panic!("sent for on tick 0: {:?}", board.incoming_gulls());
+    };
+    assert_eq!(incoming.at, u64::from(GULL_LEAD), "due a lead after tick 0");
+    assert!(board.gulls().is_empty(), "nothing on the sand yet");
+    let (x, y) = board.coords(incoming.tile);
+    assert!(
+        x == 0 || y == 0 || x == 8 || y == 6,
+        "on the edge: ({x},{y})"
+    );
+    while board.ticks() <= incoming.at {
+        assert!(board.gulls().is_empty(), "early, at {}", board.ticks());
+        assert_eq!(board.incoming_gulls(), [incoming], "still on its way");
+        board.tick_idle();
+    }
+    assert!(board.incoming_gulls().is_empty(), "landed");
+    let [gull] = board.gulls() else {
+        panic!("one gull: {:?}", board.gulls());
+    };
+    assert_eq!(gull.prev.tile, incoming.tile, "came down where it was sent");
+    assert_eq!(gull.prev.dir, incoming.dir, "facing the way it was told");
+    assert_eq!(gull.prev.progress, 0);
+}
+
+/// A gull that would land after the tide comes in is never sent for, and
+/// Crab Mania clearing the sky calls off the ones on their way too.
+#[test]
+fn no_gull_is_left_hanging_in_the_sky() {
+    let mut board = Board::new(9, 7, 3);
+    board.rules_mut().gull_period = 100;
+    board.rules_mut().round_length = Some(130);
+    board.rules_mut().gull_turnover = true;
+    while !board.round_over() {
+        board.tick_idle();
+        // Tick 100 is a spawner tick, and a gull sent for then would be
+        // due at 136, past the wave.
+        assert!(
+            board.incoming_gulls().iter().all(|g| g.at < 130),
+            "sent for past the wave at {}",
+            board.ticks()
+        );
+    }
+    assert!(board.incoming_gulls().is_empty());
+
+    let mut board = Board::new(9, 7, 3);
+    board.set_tile(4, 3, TileKind::Castle(0));
+    board.rules_mut().gull_period = 500;
+    board.tick_idle();
+    assert_eq!(board.incoming_gulls().len(), 1);
+    board.force_tide_event(TideEvent::CrabMania, 0);
+    assert!(
+        board.incoming_gulls().is_empty(),
+        "called off with the rest"
+    );
+    for _ in 0..u64::from(GULL_LEAD) + 2 {
+        board.tick_idle();
+    }
+    assert!(board.gulls().is_empty(), "and it never lands");
+}
+
+/// The gulls on their way in are state like any other: two boards that
+/// differ only in one hash apart, a snapshot carries it to the tick, and
+/// a board read back from one lands it on the same tick as the original.
+/// A snapshot naming one out of turn, or on a rock, is refused.
+#[test]
+fn a_gull_on_its_way_in_is_hashed_and_survives_a_snapshot() {
+    let mut board = Board::new(9, 7, 3);
+    board.set_tile(4, 0, TileKind::Rock);
+    board.rules_mut().gull_period = 500;
+    let quiet = board.clone();
+    board.tick_idle();
+    let mut still = quiet.clone();
+    still.tick_idle();
+    still.incoming.clear();
+    assert_ne!(board.state_hash(), still.state_hash(), "unhashed");
+
+    let text = board.to_snapshot();
+    assert!(text.contains("incoming: "), "{text}");
+    let mut copy = Board::parse_snapshot(&text).expect("reads back");
+    assert_eq!(copy.state_hash(), board.state_hash());
+    assert_eq!(copy.incoming_gulls(), board.incoming_gulls());
+    let mut copied = Board::new(1, 1, 0);
+    copied.copy_from(&board);
+    assert_eq!(copied.incoming_gulls(), board.incoming_gulls(), "copied");
+    for _ in 0..GULL_LEAD + 5 {
+        board.tick_idle();
+        copy.tick_idle();
+        assert_eq!(
+            copy.state_hash(),
+            board.state_hash(),
+            "at {}",
+            board.ticks()
+        );
+    }
+    assert_eq!(copy.gulls().len(), 1, "landed in both");
+
+    let incoming = text
+        .lines()
+        .find(|l| l.starts_with("incoming: "))
+        .expect("written")
+        .to_string();
+    let words: Vec<&str> = incoming.split_whitespace().collect();
+    let [_, at, tile, dir] = words[..] else {
+        panic!("four words: {incoming}");
+    };
+    let far = format!("incoming: {} {tile} {dir}", 3 * GULL_LEAD);
+    let rock = format!("incoming: {at} 4 {dir}");
+    // The same gull, read on a board whose clock has run past its landing
+    // tick: in its past, which the board it came from was not.
+    let landing: u64 = at.parse().expect("a tick");
+    let ticked = text.replace("\ntick: 1\n", &format!("\ntick: {}\n", landing + 1));
+    assert_ne!(ticked, text, "the clock moved:\n{text}");
+    let on_time = text.replace("\ntick: 1\n", &format!("\ntick: {landing}\n"));
+    assert!(
+        Board::parse_snapshot(&on_time).is_ok(),
+        "landing on this very tick is still to come:\n{on_time}"
+    );
+    for (what, bad) in [
+        ("past", ticked),
+        ("too far off", text.replace(&incoming, &far)),
+        ("on a rock", text.replace(&incoming, &rock)),
+    ] {
+        assert!(
+            Board::parse_snapshot(&bad).is_err(),
+            "{what} read back:\n{bad}"
+        );
+    }
+}
+
+/// A bot's lookahead switches the spawner off, since where it sends the
+/// next gull is the dice's, but a gull already sent for is on the screen:
+/// the copy keeps it and lands it on its tick.
+#[test]
+fn a_lookahead_lands_the_gulls_already_on_their_way() {
+    let mut board = Board::new(9, 7, 3);
+    board.rules_mut().gull_period = 500;
+    board.tick_idle();
+    let incoming = board.incoming_gulls()[0];
+    let mut copy = board.lookahead(5);
+    assert_eq!(copy.incoming_gulls(), [incoming]);
+    while copy.ticks() <= incoming.at {
+        copy.tick_idle();
+    }
+    assert_eq!(copy.gulls().len(), 1);
+    assert_eq!(copy.gulls()[0].prev.tile, incoming.tile);
+}
+
+/// A gull an arrow turned is that arrow's owner's: its raid is put on
+/// their account, a gull walked into its own steerer's castle is on the
+/// diagonal (taken from themselves, not stolen), and a gull no arrow
+/// turned is wild and nobody's.
+#[test]
+fn a_raid_is_credited_to_the_last_arrow_that_turned_the_gull() {
+    for (steerer, stolen, own) in [(Some(0), 10, 0), (Some(1), 0, 10), (None, 0, 0)] {
+        let mut board = Board::new(7, 5, 0);
+        board.set_tile(4, 2, TileKind::Castle(1));
+        board.scores[1] = 30;
+        if let Some(seat) = steerer {
+            assert!(board.place_signpost(seat, 1, 2, Right));
+        }
+        board.spawn_gull(0, 2, Right);
+        let id = board.gulls()[0].id;
+        for _ in 0..ticks_to_cross(1, 8) {
+            board.tick_idle();
+        }
+        assert_eq!(board.gull_steerer(id), steerer, "steered on the arrow");
+        for _ in 0..ticks_to_cross(3, 8) {
+            board.tick_idle();
+        }
+        assert_eq!(board.scores()[1], 20, "the raid itself is the same");
+        assert_eq!(board.stolen(0, 1), stolen, "{steerer:?}");
+        assert_eq!(board.stolen(1, 1), own, "{steerer:?}: own castle");
+        assert_eq!(board.stolen(1, 0), 0, "P1 has no castle to raid");
+        assert_eq!(board.gull_steerer(id), None, "forgotten once it leaves");
+    }
+}
+
+/// Who steered whom is told on every screen, so it travels with the board
+/// (a copy, a snapshot), but the rules never read it, so two boards that
+/// differ only in it hash the same.
+#[test]
+fn the_steering_travels_with_the_board_and_stays_off_the_hash() {
+    let mut board = Board::new(7, 5, 0);
+    board.set_tile(4, 2, TileKind::Castle(1));
+    board.set_tile(6, 0, TileKind::Castle(0));
+    board.scores[1] = 30;
+    assert!(board.place_signpost(0, 1, 2, Right));
+    board.spawn_gull(0, 2, Right);
+    let id = board.gulls()[0].id;
+    for _ in 0..ticks_to_cross(1, 8) {
+        board.tick_idle();
+    }
+    board.steering.taken[2][1] = 9;
+    let read = Board::parse_snapshot(&board.to_snapshot()).expect("snapshot");
+    assert_eq!(read.gull_steerer(id), Some(0));
+    assert_eq!(read.stolen(2, 1), 9);
+    let mut copy = Board::new(1, 1, 1);
+    copy.copy_from(&board);
+    assert_eq!(copy.steering, board.steering);
+    let mut wild = board.clone();
+    wild.steering = steering::Steering::default();
+    assert_eq!(wild.state_hash(), board.state_hash());
+
+    let bad = board
+        .to_snapshot()
+        .replace(&format!("steered: {id} 0"), "steered: 99 0");
+    assert!(
+        Board::parse_snapshot(&bad).is_err(),
+        "a gull not on the sand"
+    );
+}
+
+/// A board with one gull on the sand that P1's signpost steered.
+fn a_steered_gull() -> (Board, u32) {
+    let mut board = Board::new(7, 5, 0);
+    board.set_tile(4, 2, TileKind::Castle(1));
+    board.set_tile(6, 0, TileKind::Castle(0));
+    assert!(board.place_signpost(0, 1, 2, Right));
+    board.spawn_gull(0, 2, Right);
+    let id = board.gulls()[0].id;
+    for _ in 0..ticks_to_cross(1, 8) {
+        board.tick_idle();
+    }
+    assert_eq!(board.gull_steerer(id), Some(0), "steered and still here");
+    (board, id)
+}
+
+/// A gull taken off the beach between ticks takes its steerer with it,
+/// whichever way it went, so the snapshot written next still parses.
+#[test]
+fn a_gull_removed_between_ticks_leaves_a_snapshot_that_parses() {
+    let (mut mania, id) = a_steered_gull();
+    mania.force_tide_event(TideEvent::CrabMania, 0);
+    let (mut editor, _) = a_steered_gull();
+    let (x, y) = editor.coords(editor.gulls()[0].tile);
+    editor.remove_gulls_at(x as u8, y as u8);
+    for (how, board) in [("crab mania", mania), ("the editor", editor)] {
+        assert!(board.gulls().is_empty(), "{how}");
+        assert_eq!(board.gull_steerer(id), None, "{how}");
+        let read = Board::parse_snapshot(&board.to_snapshot());
+        assert!(read.is_ok(), "{how}: {read:?}");
+    }
+}
+
+/// A steerer left behind by a slip elsewhere is not written out: the
+/// snapshot names only gulls on the sand.
+#[test]
+fn a_snapshot_names_only_steered_gulls_on_the_sand() {
+    let (mut board, id) = a_steered_gull();
+    board.steering.steer(id + 40, 1);
+    let text = board.to_snapshot();
+    assert!(!text.contains(&format!("steered: {} 1", id + 40)), "{text}");
+    let read = Board::parse_snapshot(&text).expect("snapshot");
+    assert_eq!(read.gull_steerer(id), Some(0));
+}
+
+/// Claw-keyed arrows: P1's arrow turns a left-clawed crab and a right-clawed
+/// one walks straight over it; P2's does the reverse. The same corridor,
+/// the same tile, two crowds.
+#[test]
+fn a_claw_keyed_arrow_turns_only_crabs_of_its_claw() {
+    let run = |owner: PlayerId, handed: Handedness| {
+        let mut board = Board::new(5, 3, 0);
+        board.set_signpost_rule(1, CapPolicy::Reject);
+        board.rules_mut().claw_hands = Some([1, 1]);
+        common(&mut board, 0, 1, Right, handed);
+        assert!(board.place_signpost(owner, 2, 1, Up));
+        for _ in 0..ticks_to_cross(2, 12) + 1 {
+            board.tick_idle();
+        }
+        board.crabs()[0].dir
+    };
+    assert_eq!(run(0, Handedness::Left), Up, "P1's arrow, a left claw");
+    assert_eq!(run(0, Handedness::Right), Right, "P1's arrow, a right claw");
+    assert_eq!(run(1, Handedness::Right), Up, "P2's arrow, a right claw");
+    assert_eq!(run(1, Handedness::Left), Right, "P2's arrow, a left claw");
+}
+
+/// A gull turns on every arrow under the claw rule, whoever placed it: the
+/// gull's claw is not drawn, and herding it stays a job for both players.
+#[test]
+fn a_gull_turns_on_either_hands_arrow() {
+    for owner in [0, 1] {
+        let mut board = Board::new(6, 3, 0);
+        board.set_signpost_rule(1, CapPolicy::Reject);
+        board.rules_mut().claw_hands = Some([1, 1]);
+        board.spawn_gull(0, 1, Right);
+        assert!(board.place_signpost(owner, 2, 1, Up));
+        let mut turned = false;
+        for _ in 0..200 {
+            board.tick_idle();
+            turned |= board.gulls().first().is_some_and(|g| g.dir == Up);
+        }
+        assert!(turned, "the gull turned on seat {owner}'s arrow");
+    }
+}
+
+/// Each hand has its own count under the claw rule, and a seat past the two
+/// hands has none; a tile still takes one arrow, and only its owner lifts it.
+#[test]
+fn claw_keyed_hands_count_apart() {
+    let mut board = Board::new(5, 3, 0);
+    board.set_signpost_rule(3, CapPolicy::Reject);
+    board.rules_mut().claw_hands = Some([2, 1]);
+    assert_eq!(board.signpost_cap_of(0), 2);
+    assert_eq!(board.signpost_cap_of(1), 1);
+    assert_eq!(board.signpost_cap_of(2), 0);
+    assert!(board.place_signpost(0, 0, 0, Down));
+    assert!(board.place_signpost(0, 1, 0, Down));
+    assert_eq!(
+        board.placement_refusal(0, 2, 0),
+        Some(Refusal::OutOfPosts),
+        "P1's two are spent"
+    );
+    assert_eq!(board.placement_refusal(1, 0, 0), Some(Refusal::RivalPost));
+    assert_eq!(board.removal_refusal(1, 0, 0), Some(Refusal::RivalPost));
+    assert!(board.place_signpost(1, 2, 0, Down));
+    assert_eq!(board.placement_refusal(1, 3, 0), Some(Refusal::OutOfPosts));
+    assert_eq!(board.placement_refusal(2, 3, 0), Some(Refusal::OutOfPosts));
+    assert_eq!(
+        board.next_to_go(0),
+        None,
+        "a fixed inventory evicts nothing"
+    );
+}
+
+/// The claw rule is part of the fingerprint where it is on, and adds
+/// nothing where it is off: every board without it hashes as it did.
+#[test]
+fn the_claw_rule_is_hashed_only_where_it_is_on() {
+    let plain = lively(3, 6);
+    let mut keyed = plain.clone();
+    keyed.rules_mut().claw_hands = Some([1, 1]);
+    assert_ne!(plain.state_hash(), keyed.state_hash());
+    let mut other = plain.clone();
+    other.rules_mut().claw_hands = Some([2, 0]);
+    assert_ne!(keyed.state_hash(), other.state_hash());
 }

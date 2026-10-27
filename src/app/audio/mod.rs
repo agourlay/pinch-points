@@ -16,7 +16,10 @@ mod music;
 mod sfx;
 
 pub use music::{FadingOut, Music, drive_music, fade_music, rotate_music, toggle_mute};
-pub use sfx::{Sounds, play_chime, play_denied, play_events, play_lose, play_win};
+pub use sfx::{
+    Sounds, play_chime, play_count, play_denied, play_events, play_final_seconds, play_lose,
+    play_win,
+};
 
 use bevy::audio::SpatialListener;
 use bevy::prelude::*;
@@ -90,6 +93,10 @@ pub fn load_sounds(mut commands: Commands, assets: Res<AssetServer>) {
         horn: assets.load("sounds/horn.wav"),
         denied: assets.load("sounds/denied.wav"),
         evict: assets.load("sounds/evict.wav"),
+        lure: assets.load("sounds/lure.wav"),
+        count: assets.load("sounds/count.wav"),
+        go: assets.load("sounds/go.wav"),
+        tick: assets.load("sounds/tick.wav"),
     });
 }
 

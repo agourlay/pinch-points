@@ -653,11 +653,14 @@ mod door_tests {
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.init_state::<Screen>();
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<LobbyState>();
         app.init_resource::<MatchConfig>();
         app.init_resource::<crate::app::bot_seats::BotSeats>();
         app.init_resource::<Online>();
         app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.init_resource::<crate::app::match_setup::MatchMenu>();
         app.insert_resource(GameSettings::default());
         app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.init_resource::<crate::app::cursor::LiveSeatKeys>();
@@ -747,11 +750,14 @@ mod door_tests {
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.init_state::<Screen>();
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<LobbyState>();
         app.init_resource::<MatchConfig>();
         app.init_resource::<crate::app::bot_seats::BotSeats>();
         app.init_resource::<Online>();
         app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.init_resource::<crate::app::match_setup::MatchMenu>();
         let mut settings = GameSettings::default();
         settings.names[0] = "あ".repeat(12);
         app.insert_resource(settings);
@@ -824,17 +830,28 @@ mod door_tests {
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.init_state::<Screen>();
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<LobbyState>();
         app.init_resource::<MatchConfig>();
         app.init_resource::<crate::app::bot_seats::BotSeats>();
         app.init_resource::<Online>();
         app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.init_resource::<crate::app::match_setup::MatchMenu>();
         app.insert_resource(GameSettings::default());
         app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.add_message::<bevy::input::keyboard::KeyboardInput>();
         app.world_mut().spawn(Gamepad::default());
-        app.add_systems(Update, lobby_input);
+        // The face the lobby is showing, worked out as the game does it,
+        // which is what tells the lobby what a pad's North means.
+        let face = |lobby: Res<LobbyState>,
+                    bots: Res<crate::app::bot_seats::BotSeats>,
+                    settings: Res<GameSettings>,
+                    mut face: ResMut<crate::app::gamepad::PadFace>| {
+            face.0 = crate::app::gamepad::face::lobby_face(&lobby, &bots, settings.tr(), true);
+        };
+        app.add_systems(Update, (face, lobby_input).chain());
         app
     }
 

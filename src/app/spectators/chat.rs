@@ -45,7 +45,10 @@ pub fn spectator_chat_input(
         }
         return;
     };
-    let said = crate::app::lobby::type_a_line(&mut typed, line, crate::transport::chat_fits);
+    // A pad's A reaches here as a pressed Enter with no keystroke behind
+    // it, the bridge having no text to give, and says the line all the same.
+    let said = crate::app::lobby::type_a_line(&mut typed, line, crate::transport::chat_fits)
+        .or_else(|| crate::app::menu_ui::enter(&keys).then(|| line.clone()));
     if keys.just_pressed(KeyCode::Escape) {
         chat.0 = None;
         crate::app::menu_ui::spend(&mut keys, &crate::app::menu_ui::CLOSERS);

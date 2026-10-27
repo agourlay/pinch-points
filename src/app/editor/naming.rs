@@ -33,7 +33,7 @@ pub(super) fn type_a_name(
     // Escape is not also read as leaving the editor.
     let abandoned = keys.just_pressed(KeyCode::Escape);
     if abandoned || crate::app::menu_ui::enter(keys) {
-        let Mode::Naming { was } = std::mem::replace(&mut state.mode, Mode::JustNamed) else {
+        let Mode::Naming { was } = std::mem::replace(&mut state.mode, Mode::JustClosed) else {
             return;
         };
         state.name = if abandoned {
@@ -62,12 +62,4 @@ pub(super) fn tidy_name(raw: &str, tr: &crate::app::i18n::Tr) -> String {
         "" => tr.ed_default_name.to_string(),
         name => name.to_string(),
     }
-}
-
-/// True while the editor is spelling out a name, which is when the board
-/// keys mean letters. A run condition rather than an early return, because
-/// the cursor is walked by a system of its own: typing "Wade" otherwise
-/// walks the cursor up and then left across the beach.
-pub fn editor_naming(state: Res<EditorState>) -> bool {
-    state.is_naming()
 }

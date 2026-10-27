@@ -15,13 +15,13 @@
 # grab films whatever window sits in front. With ffmpeg on the PATH, its
 # poster is remade from the first frame here too.
 #
-# Needs python3 with Pillow.
+# Needs uv, which fetches Pillow for the two Python steps.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 media="$root/site/media"
 
-python3 - "$root/docs/screenshots" "$media" <<'PY'
+uv run --no-project --with pillow python - "$root/docs/screenshots" "$media" <<'PY'
 import sys
 from PIL import Image
 shots, media = sys.argv[1], sys.argv[2]
@@ -35,7 +35,7 @@ if command -v ffmpeg >/dev/null 2>&1; then
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
   ffmpeg -hide_banner -loglevel error -y -i "$media/hero.mp4" -frames:v 1 "$tmp/poster.png"
-  python3 -c 'import sys; from PIL import Image; Image.open(sys.argv[1]).convert("RGB").save(sys.argv[2], quality=82, method=6)' \
+  uv run --no-project --with pillow python -c 'import sys; from PIL import Image; Image.open(sys.argv[1]).convert("RGB").save(sys.argv[2], quality=82, method=6)' \
     "$tmp/poster.png" "$media/hero-poster.webp"
   printf 'wrote %s\n' "$media/hero-poster.webp"
 fi

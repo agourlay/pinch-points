@@ -31,7 +31,8 @@ pub enum SeatCommand {
 }
 
 /// A command in a puzzle's setup, straight onto the still board: the one
-/// seat's arrows, whichever hands are placing them (see `Coop`).
+/// seat's arrows, whichever hands are placing them (see `Coop`), or on a
+/// co-op stage the cursor's own hand ([`crate::app::cursor::stage_seat`]).
 pub fn apply_setup(
     command: SeatCommand,
     hand: &mut Cursor,
@@ -39,23 +40,24 @@ pub fn apply_setup(
     next_phase: &mut NextState<Phase>,
     denied: &mut MessageWriter<PlacementDenied>,
 ) {
+    let seat = crate::app::cursor::stage_seat(&sim.0, hand);
     match command {
         SeatCommand::Place(dir) => {
             // CapPolicy::Reject enforces the inventory; surface the
             // no-op, and say which no it was.
-            let spent = sim.0.out_of_signposts(0, hand.x, hand.y);
-            if !sim.0.place_signpost(0, hand.x, hand.y, dir) {
+            let spent = sim.0.out_of_signposts(seat, hand.x, hand.y);
+            if !sim.0.place_signpost(seat, hand.x, hand.y, dir) {
                 hand.flash = FLASH_SECS;
                 denied.write(PlacementDenied {
-                    player: 0,
+                    player: seat,
                     out_of_signposts: spent,
                 });
             }
         }
         SeatCommand::Remove => {
-            let _ = sim.0.remove_signpost(0, hand.x, hand.y);
+            let _ = sim.0.remove_signpost(seat, hand.x, hand.y);
         }
-        SeatCommand::ClearAll => clear_setup(sim),
+        SeatCommand::ClearAll => clear_setup(sim, seat),
         SeatCommand::Start => next_phase.set(Phase::Running),
     }
 }
@@ -140,13 +142,14 @@ pub fn setup_input(
     }
 }
 
-/// Clear-all in a puzzle's setup: every arrow up at once. The board is
+/// Clear-all in a puzzle's setup: every arrow of `seat`'s up at once (on
+/// a co-op stage, the presser's hand and not the partner's). The board is
 /// still, so there is no tick to space the removals over as versus does.
 /// The controls table, the guide and the pad's help all promise this key
 /// in a puzzle too, where it used to do nothing.
-pub fn clear_setup(sim: &mut Sim) {
-    while let Some((x, y)) = sim.0.first_signpost_of(0) {
-        if !sim.0.remove_signpost(0, x, y) {
+pub fn clear_setup(sim: &mut Sim, seat: u8) {
+    while let Some((x, y)) = sim.0.first_signpost_of(seat) {
+        if !sim.0.remove_signpost(seat, x, y) {
             break;
         }
     }
@@ -157,11 +160,13 @@ pub fn clear_setup(sim: &mut Sim) {
 /// and word as a placement that cannot go down.
 pub fn browse_levels(
     keyboard: crate::app::keycaps::Keyboard,
+    pads: crate::app::gamepad::face::PadsOnFace,
     mut ladder: crate::app::progress::Ladder,
     mut load: MessageWriter<LoadLevel>,
     mut denied: MessageWriter<PlacementDenied>,
     mut cursors: Query<&mut Cursor>,
 ) {
+    let partner = crate::app::Coop(crate::app::cursor::has_partner(cursors.iter()));
     let Some(mut cursor) = cursors.iter_mut().find(|c| c.player == 0) else {
         return;
     };
@@ -170,19 +175,17 @@ pub fn browse_levels(
     // player's own levels, as Enter's run is (`Campaign::is_last`): N on
     // the last shipped stage used to walk on into the player's levels,
     // and P on the first wrapped onto the last of those.
-    let builtins = ladder.campaign.builtins;
-    let (start, end) = match at < builtins {
-        true => (0, builtins),
-        false => (builtins, ladder.campaign.levels.len()),
-    };
+    let section = ladder.campaign.section(ladder.campaign.section_of(at));
+    let (start, end) = (section.start, section.end);
     let len = end - start;
     // Browsing forward stops at the ladder: the stage list is the only
     // way past a stage you have not cleared. Backward from the first
     // shipped stage wraps onto the last, which is as locked as anything
     // ahead: the same ladder, the same refusal.
-    let asked = if keyboard.global('N') {
+    use crate::app::gamepad::scheme::Does;
+    let asked = if keyboard.global('N') || pads.pressed(Does::NextLevel) {
         start + (at - start + 1) % len
-    } else if keyboard.global('P') {
+    } else if keyboard.global('P') || pads.pressed(Does::PrevLevel) {
         start + (at - start + len - 1) % len
     } else {
         return;
@@ -192,7 +195,9 @@ pub fn browse_levels(
     if asked == at {
         return;
     }
-    if ladder.climb_to(asked) {
+    // A co-op stage among the player's own wants a second cursor this
+    // screen was not opened with: the stage list is where one sits down.
+    if !ladder.campaign.needs_partner(asked, partner) && ladder.climb_to(asked) {
         load.write(LoadLevel { keep_posts: false });
     } else {
         cursor.flash = FLASH_SECS;
@@ -203,7 +208,8 @@ pub fn browse_levels(
     }
 }
 
-/// Puzzle running phase: R resets to setup (keeping placed posts).
+/// Puzzle running phase: R (or the running table's pad button) resets to
+/// setup, keeping placed posts.
 ///
 /// Esc is the pause card's key, as it is in setup and in versus. Toggling
 /// `Paused` on it as well, the card read that as the state to hand back on
@@ -216,12 +222,14 @@ pub fn browse_levels(
 /// finish, so the outcome stands and the R is the card's to answer.
 pub fn running_input(
     keyboard: crate::app::keycaps::Keyboard,
+    pads: crate::app::gamepad::face::PadsOnFace,
     sim: Res<Sim>,
     campaign: Res<Campaign>,
     mut load: MessageWriter<LoadLevel>,
 ) {
     let settled = campaign.current().outcome(&sim.0) != crate::sim::PuzzleOutcome::Running;
-    if keyboard.global('R') && !settled {
+    let reset = keyboard.global('R') || pads.pressed(crate::app::gamepad::scheme::Does::Reset);
+    if reset && !settled {
         load.write(LoadLevel { keep_posts: true });
     }
 }
@@ -231,6 +239,7 @@ pub fn running_input(
 pub fn done_input(
     keyboard: crate::app::keycaps::Keyboard,
     phase: Res<State<Phase>>,
+    coop: Res<crate::app::Coop>,
     mut campaign: ResMut<Campaign>,
     mut next_screen: ResMut<NextState<Screen>>,
     mut load: MessageWriter<LoadLevel>,
@@ -253,6 +262,12 @@ pub fn done_input(
         // than walking on into the player's own levels.
         if campaign.is_last() {
             next_screen.set(Screen::Menu);
+            return;
+        }
+        // The next of the player's own levels is a co-op stage and only
+        // one is seated: back to the stage list, which says why.
+        if campaign.needs_partner(campaign.index + 1, *coop) {
+            next_screen.set(Screen::StageSelect);
             return;
         }
         campaign.index += 1;
@@ -305,20 +320,24 @@ pub fn versus_input(
 
 /// Versus results: Enter continues a running series, otherwise back to
 /// the menu - or, for a match formed in the beach lobby, back to that
-/// lobby with the whole table still connected.
+/// lobby with the whole table still connected. At a table set up here, R
+/// plays it again ([`crate::app::rematch::rematch`]).
 ///
-/// Online, the host's Enter calls the next round for the whole table,
-/// admitting anyone who queued while this one played, and every peer is
-/// walked back into the arena when the invitation lands. Mid-series a
+/// Online, the host's Enter opens its map page for the next round
+/// ([`crate::app::next_map`]), and the card picked there calls the next
+/// round for the whole table, admitting anyone who queued while this one
+/// played; every peer is walked back into the arena when the invitation
+/// lands. Mid-series a
 /// joiner's Enter is its own way out, since the series plays on without it;
 /// once the match is over, Enter takes everyone back to the lobby.
 pub fn versus_over_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    pause: Res<crate::app::pause::PauseMenu>,
+    mut keyboard: crate::app::keycaps::KeyboardMut,
+    (pause, time, mut next_map): (Res<crate::app::pause::PauseMenu>, Res<Time>, NextMapPage),
     mut tournament: ResMut<crate::app::tournament::Tournament>,
     mut online: ResMut<crate::app::net::Online>,
     mut homecoming: ResMut<crate::app::lobby::Homecoming>,
     mut next_screen: ResMut<NextState<Screen>>,
+    mut again: crate::app::rematch::PlayAgain,
 ) {
     let series_on = tournament.is_running();
     // The invitation may already have arrived, in which case nobody
@@ -330,33 +349,92 @@ pub fn versus_over_input(
         next_screen.set(Screen::Interlude);
         return;
     }
+    // The host's map page for the next round has the keys while it is up.
+    if next_map.page.is_up()
+        && let Some(session) = &mut online.0
+    {
+        let empty = crate::app::match_setup::CustomBeaches::default();
+        let beaches = again.beaches.as_deref().unwrap_or(&empty);
+        // `PINCH_LOBBY_PICK=go`: the dev hook picks the card under the
+        // cursor a second after the page opens, for a run that plays on.
+        *next_map.held += 1;
+        let mut go = ButtonInput::<KeyCode>::default();
+        if crate::app::dev::lobby_pick_go() && *next_map.held == 30 {
+            go.press(KeyCode::Enter);
+        }
+        let keys = match go.get_pressed().next() {
+            Some(_) => &go,
+            None => &*keyboard.keys,
+        };
+        let press = crate::app::next_map::next_map_keys(
+            keys,
+            &mut next_map.page,
+            session,
+            &mut again.config,
+            &mut next_map.menu,
+            beaches,
+            tournament.standing(),
+        );
+        if let crate::app::next_map::NextMapPress::Called(standing) = press {
+            if let Some(crate::transport::SeriesStanding { round, wins }) = standing {
+                tournament.round = round;
+                tournament.wins = wins;
+            }
+            next_screen.set(Screen::Interlude);
+        }
+        if !next_map.page.is_up() {
+            *next_map.held = 0;
+            // The key that put the page away is spent: the pause card
+            // behind it in the frame, whose condition the page no longer
+            // holds, would otherwise open on the same Esc.
+            crate::app::menu_ui::spend(&mut keyboard.keys, &crate::app::menu_ui::CLOSERS);
+        }
+        return;
+    }
     // The pause card's Enter is the card's. Not gated in the schedule like
     // the other play keys, because the invitation above is followed with
     // the card up or not.
-    if pause.is_open() || !crate::app::menu_ui::enter(&keys) {
+    if pause.is_open() {
+        return;
+    }
+    let keys = &*keyboard.keys;
+    let now = time.elapsed_secs();
+    let r = keyboard.global('R');
+    let other_key = !r && keys.get_just_pressed().next().is_some();
+    crate::app::rematch::settle_rematch_ask(&mut again.table, other_key, now);
+    // The dev hook's Enter, pressed once on a series' card by the host.
+    let hook = after_round(&online, series_on) == AfterRound::NextMap
+        && crate::app::dev::lobby_pick()
+        && !std::mem::replace(&mut *next_map.hooked, true);
+    if !crate::app::menu_ui::enter(keys) && !hook {
+        let rematch = crate::app::rematch::rematch(&again.table, &online, &tournament);
+        if let Some(rematch) = rematch.filter(|_| r) {
+            let pressed =
+                crate::app::rematch::press_rematch(&mut again.table, rematch, &tournament, now);
+            if let Some(rematch) = pressed {
+                let rematch = crate::app::rematch::Again::Rematch(rematch);
+                again.ask(rematch, &mut tournament, &mut next_screen);
+            }
+        }
         return;
     }
     match after_round(&online, series_on) {
-        AfterRound::NextRound => {
-            // Online, that is the host, and only the host: the seats are
-            // re-dealt for the next round and the series tally with them,
-            // the returned standing being the same wins on the chairs
-            // their holders now sit in.
+        // A local series steps its map on by itself.
+        AfterRound::NextRound => next_screen.set(Screen::Interlude),
+        // The online host picks the next round's map on the map page,
+        // which calls the round (`next_map_keys`).
+        AfterRound::NextMap => {
             if let Some(session) = &mut online.0 {
-                let standing = session.call_next_round(
-                    crate::app::match_setup::next_round_terms(
-                        session.terms,
-                        session.seats,
-                        crate::app::clock::fresh_seed(),
-                    ),
-                    tournament.standing(),
+                let empty = crate::app::match_setup::CustomBeaches::default();
+                let beaches = again.beaches.as_deref().unwrap_or(&empty);
+                crate::app::next_map::open_next_map(
+                    &mut next_map.page,
+                    session,
+                    &mut again.config,
+                    &mut next_map.menu,
+                    beaches,
                 );
-                if let Some(crate::transport::SeriesStanding { round, wins }) = standing {
-                    tournament.round = round;
-                    tournament.wins = wins;
-                }
             }
-            next_screen.set(Screen::Interlude);
         }
         AfterRound::Menu => next_screen.set(Screen::Menu),
         AfterRound::Lobby => {
@@ -367,6 +445,18 @@ pub fn versus_over_input(
             next_screen.set(Screen::Lobby);
         }
     }
+}
+
+/// The host's map page between the rounds of an online series, and the
+/// page's cursor.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct NextMapPage<'w, 's> {
+    page: ResMut<'w, crate::app::next_map::NextMap>,
+    menu: ResMut<'w, crate::app::match_setup::MatchMenu>,
+    /// The dev hook's Enter on a series' card was pressed.
+    hooked: Local<'s, bool>,
+    /// Frames the page has been up, for the dev hook's pick.
+    held: Local<'s, u32>,
 }
 
 /// What Enter does when the tide is in, named by the one function the key
@@ -383,6 +473,7 @@ pub fn enter_door(
 ) -> &'static str {
     match after_round(online, series_on) {
         AfterRound::NextRound => tr.tour_next,
+        AfterRound::NextMap => tr.tour_next_map,
         AfterRound::Lobby => tr.prompt_enter_lobby,
         AfterRound::Menu => tr.prompt_enter_menu,
     }
@@ -393,6 +484,9 @@ pub fn enter_door(
 pub enum AfterRound {
     /// On into the next round of a series, through the interlude.
     NextRound,
+    /// The online host, mid-series: its map page for the next round,
+    /// which calls it ([`crate::app::next_map`]).
+    NextMap,
     /// Back to the lobby the whole table came from.
     Lobby,
     Menu,
@@ -414,7 +508,7 @@ pub fn after_round(online: &crate::app::net::Online, series_on: bool) -> AfterRo
         };
     };
     if session.is_host() && series_on {
-        return AfterRound::NextRound;
+        return AfterRound::NextMap;
     }
     // Mid-series a joiner's Enter still means leaving, since the series
     // plays on without it, and a direct `PINCH_HOST` pair has no lobby to
@@ -428,7 +522,6 @@ pub fn after_round(online: &crate::app::net::Online, series_on: bool) -> AfterRo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::campaign::CampaignKind;
     use crate::app::progress::Progress;
     use crate::sim::{Goal, Level, campaign_levels};
 
@@ -452,12 +545,12 @@ mod tests {
         let mut sim = Sim(level.board());
         let mut placed = 0;
         for (x, y, _) in sim.0.tiles().collect::<Vec<_>>() {
-            if placed < 2 && sim.0.place_signpost(0, x, y, crate::sim::Direction::Up) {
+            if placed < 2 && sim.0.place_signpost(0, x, y, Direction::Up) {
                 placed += 1;
             }
         }
         assert_eq!(sim.0.signpost_count(0), 2);
-        clear_setup(&mut sim);
+        clear_setup(&mut sim, 0);
         assert_eq!(sim.0.signpost_count(0), 0);
     }
 
@@ -500,9 +593,12 @@ mod tests {
         app.insert_resource(State::new(Screen::Puzzle));
         app.insert_resource(State::new(Phase::Won));
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.insert_resource(campaign(index));
+        app.init_resource::<crate::app::Coop>();
         app.add_message::<LoadLevel>();
         app.add_systems(Update, done_input);
         app
@@ -523,6 +619,8 @@ mod tests {
         for (goal, reloads) in [(Goal::Bank(0), 0), (Goal::AllCrabs, 1)] {
             let mut app = App::new();
             app.init_resource::<ButtonInput<KeyCode>>();
+            app.init_resource::<crate::app::gamepad::PadFace>();
+            app.init_resource::<crate::app::gamepad::LastDevice>();
             app.init_resource::<crate::app::keycaps::KeyCaps>();
             app.init_resource::<crate::app::cursor::LiveSeatKeys>();
             let mut campaign = campaign(0);
@@ -610,9 +708,7 @@ mod tests {
         assert_eq!(denials(&app), 1);
 
         let first = app.world().resource::<Campaign>().levels[0].name.clone();
-        app.world_mut()
-            .resource_mut::<Progress>()
-            .mark(CampaignKind::TidePool, &first);
+        app.world_mut().resource_mut::<Progress>().mark(&first);
         tap(&mut app, KeyCode::KeyN);
         assert_eq!(
             app.world().resource::<Campaign>().index,
@@ -632,6 +728,8 @@ mod tests {
         app.init_state::<Phase>();
         app.insert_resource(State::new(Phase::Setup));
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.insert_resource(GameSettings::default());

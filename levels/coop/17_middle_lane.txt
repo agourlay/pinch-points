@@ -1,0 +1,28 @@
+# Each crab has to cross the middle lane to the far one. Both walk it the
+# same way, and the left crab's way down comes one step before the right
+# crab's way up.
+name: Middle Lane
+hands: 2 2
+crab: 0,1 R L common
+crab: 0,7 R R common
+solution: 2,1 D L; 6,4 D L; 3,7 U R; 7,4 U R
+map:
++-+-+-+-+-+-+-+-+-+-+
+|# # # # # # # # # #|
++-+-+-+-+-+-+-+-+-+-+
+|K K . K K K K K K K|
++-+-+ +-+-+-+-+-+-+-+
+|# #|.|# # K K K 0 #|
++-+-+ +-+-+ + + +-+-+
+|# #|.|# # K K|.|# #|
++-+-+ +-+-+-+-+ +-+-+
+|# # K . . . . . K K|
++-+-+-+ +-+-+ +-+-+-+
+|# # #|.|K K|.|# # #|
++-+-+-+ + + + +-+-+-+
+|# # #|.|K K K 0 # #|
++-+-+-+ +-+-+-+-+-+-+
+|K K K . K K K K K K|
++-+-+-+-+-+-+-+-+-+-+
+|# # # # # # # # # #|
++-+-+-+-+-+-+-+-+-+-+

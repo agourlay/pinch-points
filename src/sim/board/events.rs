@@ -10,7 +10,7 @@ use super::*;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Tide {
     /// Tide events fire only where enabled (versus arenas, the attract
-    /// beach), never in puzzles or goal-checked challenges.
+    /// beach), never in puzzles.
     pub(crate) enabled: bool,
     /// Ticks until the roulette may spin again; set when an event fires,
     /// or under [`Rules::timed_lock`] only when one that lasts does. See
@@ -91,11 +91,14 @@ pub enum TideEvent {
     Monopoly,
     /// A gull lands beside every rival castle.
     GullAttack,
+    /// Every crab and gull moves at double speed, and the holes open
+    /// twice as often.
     SpeedUp,
     SlowDown,
     /// Every signpost on the beach washes away.
     FreshSand,
-    /// Castles trade owners (rockets swap places!).
+    /// Castles trade owners (rockets swap places!). With three castles or
+    /// more, a spinner's own castle sits the trade out.
     CastleSwap,
     /// The tide calls a claw: for a while, a right-clawed crab banks for
     /// double and a left-clawed one costs what it was worth.
@@ -168,8 +171,7 @@ impl Board {
         // One draw indexes ALL, so the roulette's order *is* ALL's order:
         // the same one the string tables and the snapshot use.
         let event = TideEvent::ALL[(self.rng.next_u32() % TideEvent::ALL.len() as u32) as usize];
-        self.apply_tide_event(self.surge_safe(event), banker);
-        self.tide.spun_by = Some(banker);
+        self.fire_tide_event(self.surge_safe(event), banker, true);
     }
 
     /// The surge already doubles the flock, so the roulette keeps off the
@@ -205,18 +207,56 @@ impl Board {
         self.lure = Some((owner, LURE_TICKS));
     }
 
-    /// Fire a named tide event outright. The roulette is the only caller
-    /// in play; this exists for the dev hook that has to show one on
-    /// demand, and for the tests, which cannot wait for a sparkling crab.
+    /// Every seat that owns a castle, once each, in reading order of
+    /// their first one: the order Castle Swap rotates them in.
+    fn swap_owners(&self) -> Vec<PlayerId> {
+        let mut owners: Vec<PlayerId> = Vec::new();
+        for owner in self.castle_owners() {
+            if !owners.contains(&owner) {
+                owners.push(owner);
+            }
+        }
+        owners
+    }
+
+    /// The seat whose castle sits out a Castle Swap spun by `spinner`
+    /// (`None` for a called one), if any: the spinner, when three castles
+    /// or more are in play. The swap and the banner that explains it both
+    /// read this.
+    ///
+    /// Swept along with the rest, the spinner's castle went to a rival
+    /// with every arrow still pointing at it, which made the swap the one
+    /// face of the wheel that cost the seat that spun it (2 to 6 points of
+    /// win rate at three seats and up, measured); kept out, it is neutral.
+    /// Two castles have nobody else to trade with, and a call has no
+    /// spinner: both rotate everyone.
+    pub fn castle_swap_keeper(&self, spinner: Option<PlayerId>) -> Option<PlayerId> {
+        let spinner = spinner?;
+        let owners = self.swap_owners();
+        (owners.len() > 2 && owners.contains(&spinner)).then_some(spinner)
+    }
+
+    /// Fire a named tide event outright, as called rather than spun: the
+    /// way a spectators' vote lands, with nobody's sparkling crab behind
+    /// it. Also the dev hook's and the tests', which cannot wait for one.
     pub fn force_tide_event(&mut self, event: TideEvent, banker: PlayerId) {
-        self.apply_tide_event(event, banker);
+        self.fire_tide_event(event, banker, false);
+    }
+
+    /// Fire a named tide event as if `spinner`'s sparkling crab had spun
+    /// it, for the dev hook and the tests: the one way to reach a rule that
+    /// depends on who spun (Castle Swap) without waiting for the wheel.
+    pub fn force_spun_tide_event(&mut self, event: TideEvent, spinner: PlayerId) {
+        self.fire_tide_event(event, spinner, true);
     }
 
     /// Apply one tide event's effects (split from the roulette so each event
-    /// is unit-testable in isolation).
-    pub(super) fn apply_tide_event(&mut self, event: TideEvent, banker: PlayerId) {
+    /// is unit-testable in isolation). `banker` is the seat the event
+    /// favours; `spun` says the seat's own sparkling crab spun the wheel,
+    /// as against a call, which only Castle Swap tells apart.
+    fn fire_tide_event(&mut self, event: TideEvent, banker: PlayerId, spun: bool) {
         self.tide.last = Some((event, self.tick));
-        self.tide.spun_by = None;
+        self.tide.spun_by = spun.then_some(banker);
         // Set here rather than in the roulette so a forced event starts
         // the clock too: the point is "an event is running", not "the
         // wheel was spun". Under a timed lock an event that is already
@@ -227,7 +267,10 @@ impl Board {
         }
         match event {
             TideEvent::CrabMania => {
-                self.gulls.clear();
+                // The sky is cleared with the sand: the birds still on
+                // their way in are called off too.
+                self.drop_gulls(|_| true);
+                self.incoming.clear();
                 self.tide.mania = Some((Mania::Crab, EVENT_TICKS));
             }
             TideEvent::GullMania => {
@@ -297,19 +340,17 @@ impl Board {
             TideEvent::FreshSand => self.signposts.fill(None),
             TideEvent::CastleSwap => {
                 // Rockets swap places: every castle passes to the next
-                // participating owner, in a fixed rotation.
-                let mut owners: Vec<PlayerId> = Vec::new();
-                for tile in &self.grid.tiles {
-                    if let TileKind::Castle(owner) = tile
-                        && !owners.contains(owner)
-                    {
-                        owners.push(*owner);
-                    }
-                }
+                // participating owner, in a fixed rotation, bar the one
+                // that sits it out.
+                let keeper = self.castle_swap_keeper(spun.then_some(banker));
+                let mut owners = self.swap_owners();
+                owners.retain(|&owner| Some(owner) != keeper);
                 if owners.len() > 1 {
                     for tile in &mut self.grid.tiles {
-                        if let TileKind::Castle(owner) = tile {
-                            let at = owners.iter().position(|o| o == owner).unwrap_or(0);
+                        // A castle whose owner sat out keeps that owner.
+                        if let TileKind::Castle(owner) = tile
+                            && let Some(at) = owners.iter().position(|o| o == owner)
+                        {
                             *owner = owners[(at + 1) % owners.len()];
                         }
                     }

@@ -3,12 +3,15 @@
 
 use super::*;
 
-/// A dial the host turns while the table fills up.
+/// A row of the terms card, most of them dials the host turns while the
+/// table fills up.
 ///
 /// A subset of the match-setup screen's rows, because online two of them
 /// mean nothing: the seat count is however many people turn up, and the
 /// names are the players' own. Everything else about the round is the
-/// host's to set, and travels to every peer in the invitation.
+/// host's to set, and travels to every peer in the invitation. The map is
+/// not turned here: the host picks it on the map page once it starts the
+/// match and the table is frozen ([`super::pick`]), and the row says so.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Dial {
     Map,
@@ -35,20 +38,30 @@ impl Dial {
         Dial::Welcome,
     ];
 
+    /// The rows the host's cursor walks and turns: every one but the
+    /// map's ([`Dial::turns`]).
+    pub const TURNS: [Dial; 7] = [
+        Dial::Gulls,
+        Dial::Round,
+        Dial::Posts,
+        Dial::Bots,
+        Dial::Teams,
+        Dial::Series,
+        Dial::Welcome,
+    ];
+
+    /// Whether the host turns this row on the lobby card: all but the
+    /// map's, which is picked at the start.
+    pub fn turns(self) -> bool {
+        Dial::TURNS.contains(&self)
+    }
+
     /// The row as it reads: what it sets, and what it is set to, on
     /// `card`. The map, AI and teams rows read the table the card deals
     /// rather than the dials themselves; a joiner still waiting for the
     /// host's terms has no values to show.
-    pub fn label(
-        self,
-        tr: &crate::app::i18n::Tr,
-        card: &TermsCard,
-        beaches: &crate::app::match_setup::CustomBeaches,
-    ) -> (&'static str, String) {
-        (
-            self.name(tr),
-            self.value(tr, card, beaches).unwrap_or_default(),
-        )
+    pub fn label(self, tr: &crate::app::i18n::Tr, card: &TermsCard) -> (&'static str, String) {
+        (self.name(tr), self.value(tr, card).unwrap_or_default())
     }
 
     /// What the row sets.
@@ -67,12 +80,7 @@ impl Dial {
 
     /// What the row is set to on `card`, or `None` while there are no
     /// terms to read.
-    fn value(
-        self,
-        tr: &crate::app::i18n::Tr,
-        card: &TermsCard,
-        beaches: &crate::app::match_setup::CustomBeaches,
-    ) -> Option<String> {
+    fn value(self, tr: &crate::app::i18n::Tr, card: &TermsCard) -> Option<String> {
         use crate::app::cycle::Cycle;
         let (config, teams, dealt) = card.terms()?;
         // Only the host's own card says what its teams row is dialled to.
@@ -82,26 +90,17 @@ impl Dial {
             // appended here: this value cell clips, so a sentence on the
             // end would push the map's own name out of sight. It gets a
             // line of its own under the dials.
-            Dial::Map => match card {
-                // The host's beach by the name the roster gave it, never
-                // looked up on this machine's own shelf.
-                TermsCard::Joined { config, beach, .. } => hosts_map_label(tr, config.map, beach),
-                TermsCard::Hosting { config, dealt, .. } => {
-                    dealt_map_label(tr, config, *dealt, beaches)
-                }
-                TermsCard::Choosing { config, .. } => {
-                    crate::app::match_setup::map_label(config, tr, beaches)
-                }
-                TermsCard::Waiting => return None,
-            },
+            // Picked by the host once the table is frozen, at the start:
+            // the same word on every card.
+            Dial::Map => tr.lobby_map_at_start.to_string(),
             Dial::Gulls => tr.gull_names[config.gulls.index()].to_string(),
             Dial::Round => tr.round_names[config.round.index()].to_string(),
             Dial::Posts => config.posts.to_string(),
-            // With the level they play at, which no other row sets: it is
-            // the couch's top AI seat's, and played unannounced it could
-            // be one set there long ago.
+            // With the level they play at, which no other row sets: step
+            // 1's AI level ([`crate::app::match_setup::online_ai_level`]),
+            // and played unannounced it could be one set there long ago.
             Dial::Bots => {
-                let bots = dealt.map_or(config.bots, |dealt| dealt.bots);
+                let bots = dealt.map_or(config.lobby_bots, |dealt| dealt.bots);
                 match bots {
                     0 => bots.to_string(),
                     _ => format!(
@@ -114,20 +113,10 @@ impl Dial {
             // is not: the round falls back to free-for-all. The host, who
             // can dial a mode before the table fits it, is also told what
             // it dialled and when that starts.
-            Dial::Teams => {
-                let played = dealt.map_or(teams, |dealt| teams.played_by(dealt.seats));
-                let from = dealt.and_then(|dealt| teams.fits_from(dealt.seats));
-                match from.filter(|_| turns && played != teams) {
-                    Some(from) => fill(
-                        tr.team_mode_waits,
-                        &[
-                            ("m", tr.team_mode_names[teams.index()]),
-                            ("n", &from.to_string()),
-                        ],
-                    ),
-                    None => tr.team_modes[played.index()].to_string(),
-                }
-            }
+            Dial::Teams => match dealt {
+                Some(dealt) => crate::app::teams::row_value(tr, teams, dealt.seats, turns),
+                None => tr.team_modes[teams.index()].to_string(),
+            },
             Dial::Series => tr.mode_names[config.series.index()].to_string(),
             Dial::Welcome => tr.lobby_bots_values[usize::from(!config.bots_welcome)].to_string(),
         })
@@ -146,27 +135,12 @@ impl Dial {
         config: &mut MatchConfig,
         teams: &mut crate::app::teams::TeamMode,
         humans: u8,
-        beaches: &crate::app::match_setup::CustomBeaches,
     ) {
         use crate::app::cycle::Cycle;
         let room = (MAX_PLAYERS as u8).saturating_sub(humans);
         match self {
-            Dial::Map => {
-                // Past the stops the table has outgrown: on Classic with
-                // five aboard the row reads the large beach, and so does
-                // every other four-castle stop.
-                let on_air = |config: &MatchConfig| {
-                    let dealt = dealt(config, humans);
-                    (dealt.map, roster_beach(config, dealt.seats, beaches))
-                };
-                let shown = on_air(config);
-                for _ in 0..64 {
-                    crate::app::match_setup::cycle_map(config, turn, beaches);
-                    if on_air(config) != shown {
-                        break;
-                    }
-                }
-            }
+            // Not a dial ([`Dial::turns`]): the map page picks it.
+            Dial::Map => {}
             Dial::Gulls => config.gulls = config.gulls.cycled(turn),
             Dial::Round => config.round = config.round.cycled(turn),
             Dial::Posts => {
@@ -188,7 +162,7 @@ impl Dial {
                 let shown = dealt(config, humans).bots;
                 let step = (i32::from(shown) + turn.signum()).clamp(0, i32::from(room)) as u8;
                 if step != shown {
-                    config.bots = step;
+                    config.lobby_bots = step;
                 }
             }
             // Every mode, whether this table fits it yet or not: a host
@@ -220,13 +194,11 @@ pub enum TermsCard<'a> {
     /// setup painted in the meantime read as the host's.
     Waiting,
     /// A joiner's card: the host's dials off the roster, not its own setup
-    /// screen's, since the card is meant to show the match being joined,
-    /// and the host's beach by the name the roster gave it.
+    /// screen's, since the card is meant to show the match being joined.
     Joined {
         config: MatchConfig,
         mode: crate::app::teams::TeamMode,
         dealt: Dealt,
-        beach: &'a str,
     },
 }
 
@@ -246,7 +218,6 @@ impl TermsCard<'_> {
                 config,
                 mode,
                 dealt,
-                beach: _,
             } => Some((config, *mode, Some(*dealt))),
         }
     }
@@ -285,7 +256,6 @@ pub(super) fn card_of<'a>(
         mode,
         // The table the round would be dealt as it sits now, off the roster.
         dealt: roster_dealt(state.table.len(), &host.terms),
-        beach: host.beach_name.as_str(),
     }
 }
 
@@ -306,26 +276,14 @@ pub(super) fn hosts_dealt(state: &LobbyState, config: &MatchConfig) -> Option<De
 
 /// The line under the dials: the string a bot connects straight to this
 /// beach with (route 2) while there is one, since a bot cannot come in
-/// without it, else why the map dial offers none of the host's own
-/// beaches. Only the host's: a joiner's card is the host's match, and
-/// neither line is anything to do with it.
-///
-/// The beach note reads the table the launch deals ([`hosts_dealt`]), not
-/// the couch's seat count, and never outranks the bot string.
-pub(super) fn dials_note(
-    state: &LobbyState,
-    config: &MatchConfig,
-    tr: &crate::app::i18n::Tr,
-    beaches: &crate::app::match_setup::CustomBeaches,
-) -> String {
-    let (Some(hosted), Some(dealt)) = (state.hosted(), hosts_dealt(state, config)) else {
-        return String::new();
-    };
-    hosted
-        .bot_string
-        .as_ref()
+/// without it. Only the host's: a joiner's card is the host's match, and
+/// the line is nothing to do with it. Which of the host's own beaches a
+/// table can play is the map page's to say, once the table is frozen.
+pub(super) fn dials_note(state: &LobbyState, tr: &crate::app::i18n::Tr) -> String {
+    state
+        .hosted()
+        .and_then(|hosted| hosted.bot_string.as_ref())
         .map(|string| format!("{}: {string}", tr.lobby_bots_dial))
-        .or_else(|| crate::app::match_setup::beaches_note(dealt.seats, tr, beaches))
         .unwrap_or_default()
 }
 
@@ -350,7 +308,7 @@ pub(super) fn roster_beach(
 /// one-seat `Start` is refused by every joiner's decoder). The same floor
 /// `call_next_round` keeps between rounds.
 pub(super) fn launch_bots(humans: u8, dial: u8) -> u8 {
-    dial.min(crate::sim::MAX_PLAYERS as u8 - humans)
+    dial.min(MAX_PLAYERS as u8 - humans)
         .max(2u8.saturating_sub(humans))
 }
 
@@ -380,7 +338,7 @@ pub(super) fn roster_dealt(table: usize, terms: &MatchTerms) -> Dealt {
 }
 
 pub(super) fn dealt(config: &MatchConfig, humans: u8) -> Dealt {
-    let bots = launch_bots(humans, config.bots);
+    let bots = launch_bots(humans, config.lobby_bots);
     let seats = humans + bots;
     Dealt {
         bots,
@@ -389,59 +347,17 @@ pub(super) fn dealt(config: &MatchConfig, humans: u8) -> Dealt {
     }
 }
 
-/// The map row on the host's card: what the table as it sits would play,
-/// named the way a joiner's card names it off the roster, so the two
-/// agree. Read back under the beach's own cap, as the joiner reads it
-/// (`join_tick`): the player-name cap cut a long beach name to twelve
-/// characters on the host's card and nowhere else.
-fn dealt_map_label(
-    tr: &crate::app::i18n::Tr,
-    config: &MatchConfig,
-    dealt: Dealt,
-    beaches: &crate::app::match_setup::CustomBeaches,
-) -> String {
-    let beach = roster_beach(config, dealt.seats, beaches);
-    hosts_map_label(tr, dealt.map, &roster_beach_name(&beach))
-}
-
-/// The name of the host's beach as the roster carries it, read back the
-/// one way both ends read it.
-pub(super) fn roster_beach_name(beach: &crate::transport::WireName) -> String {
-    crate::transport::beach_name_from_wire(beach)
-}
-
-/// The map dial as a joiner reads it, off the host's terms and the name
-/// the roster gave the host's beach.
-///
-/// Not [`crate::app::match_setup::map_label`], which looks the beach up on
-/// *this* machine's shelf: `config_from_terms` can only say "a handmade
-/// beach, the first one", so a joiner's card named a beach of its own, or
-/// none, where the host's was going to be played.
-pub(super) fn hosts_map_label(
-    tr: &crate::app::i18n::Tr,
-    map: crate::app::match_setup::MapChoice,
-    beach: &str,
-) -> String {
-    use crate::app::match_setup::MapChoice;
-    match (map, beach.is_empty()) {
-        (MapChoice::Custom, false) => beach.to_string(),
-        // A handmade beach that does not travel: both ends build the
-        // generated arena in its place, as `map_label` says on the host.
-        (MapChoice::Custom, true) => tr.map_names[MapChoice::GenXl.index()].to_string(),
-        (map, _) => tr.map_names[map.index()].to_string(),
-    }
-}
-
 /// The beach these terms describe, once the table is known.
 ///
 /// The handcrafted arena seats four, and a fifth player arriving cannot be
-/// given a castle on it. The match-setup screen drops the seat count, which
+/// given a castle on it; a handmade versus map seats only the tables it is
+/// built for. The match-setup screen drops the seat count, which
 /// online is not its to drop, so the map gives way instead.
 pub fn map_for(config: &MatchConfig, seats: u8) -> crate::app::match_setup::MapChoice {
-    use crate::app::match_setup::{CLASSIC_SEATS, WIDE_ENOUGH, sized_for};
-    match seats > CLASSIC_SEATS && config.map.size().0 < WIDE_ENOUGH {
-        true => sized_for(seats),
-        false => config.map,
+    use crate::app::match_setup::{holds, sized_for};
+    match holds(config.map, seats) {
+        true => config.map,
+        false => sized_for(seats),
     }
 }
 
@@ -456,14 +372,14 @@ pub(super) fn turn_the_dials(
     caps: &crate::app::keycaps::KeyCaps,
     config: &mut MatchConfig,
     state: &mut LobbyState,
-    beaches: &crate::app::match_setup::CustomBeaches,
 ) {
     if state.hosting() {
+        let rows = Dial::TURNS.len();
         if keys.just_pressed(KeyCode::ArrowUp) {
-            state.dial = (state.dial + Dial::ALL.len() - 1) % Dial::ALL.len();
+            state.dial = (state.dial + rows - 1) % rows;
         }
         if keys.just_pressed(KeyCode::ArrowDown) {
-            state.dial = (state.dial + 1) % Dial::ALL.len();
+            state.dial = (state.dial + 1) % rows;
         }
         let turn = match (
             keys.just_pressed(KeyCode::ArrowRight),
@@ -474,13 +390,13 @@ pub(super) fn turn_the_dials(
             _ => None,
         };
         if let Some(turn) = turn
-            && let Some(dial) = Dial::ALL.get(state.dial).copied()
+            && let Some(dial) = Dial::TURNS.get(state.dial).copied()
         {
             // Everyone already here is what the AI has to fit behind,
             // counted as the card counts them: the bots at the door too.
             let humans = humans_here(state);
             let mut teams = settings.team_mode;
-            dial.turn(turn, config, &mut teams, humans, beaches);
+            dial.turn(turn, config, &mut teams, humans);
             if teams != settings.team_mode {
                 settings.team_mode = teams;
                 settings.save(caps);
@@ -506,7 +422,7 @@ mod dial_tests {
                     config: &config,
                     mode: TeamMode::Solo,
                 };
-                let (name, value) = dial.label(lang.tr(), &card, &Default::default());
+                let (name, value) = dial.label(lang.tr(), &card);
                 assert!(!name.is_empty(), "{dial:?} in {lang:?} has no name");
                 assert!(!value.is_empty(), "{dial:?} in {lang:?} has no value");
             }
@@ -514,32 +430,26 @@ mod dial_tests {
     }
 
     /// A joiner waiting for the host's first roster reads every row's
-    /// name and no value, and once the terms come its map row names the
-    /// host's beach as the roster gave it, whatever this machine's shelf
-    /// holds.
+    /// name and no value, and once the terms come its map row says the
+    /// host picks the map at the start.
     #[test]
     fn a_joiners_card_reads_the_hosts_terms_or_nothing() {
         let tr = &crate::app::i18n::EN;
-        let shelf = Default::default();
         for dial in Dial::ALL {
-            let (name, value) = dial.label(tr, &TermsCard::Waiting, &shelf);
+            let (name, value) = dial.label(tr, &TermsCard::Waiting);
             assert!(!name.is_empty(), "{dial:?}");
             assert!(
                 value.is_empty(),
                 "{dial:?} reads {value:?} before any terms"
             );
         }
-        let config = MatchConfig {
-            map: MapChoice::Custom,
-            ..MatchConfig::default()
-        };
+        let config = MatchConfig::default();
         let card = TermsCard::Joined {
             dealt: dealt(&config, 2),
             config,
             mode: TeamMode::Solo,
-            beach: "Crab Cove",
         };
-        assert_eq!(Dial::Map.label(tr, &card, &shelf).1, "Crab Cove");
+        assert_eq!(Dial::Map.label(tr, &card).1, tr.lobby_map_at_start);
     }
 
     /// Every dial turns, both ways, and turning one leaves the others
@@ -547,13 +457,13 @@ mod dial_tests {
     /// thing nobody notices until a match starts on the wrong beach.
     #[test]
     fn every_dial_turns_and_only_itself() {
-        for dial in Dial::ALL {
+        for dial in Dial::TURNS {
             for turn in [Turn::Right, Turn::Left] {
                 // Off the floor, or turning the AI down is correctly a
                 // no-op and the assertion below would be testing the
                 // clamp rather than the dial.
                 let mut config = MatchConfig {
-                    bots: 1,
+                    lobby_bots: 1,
                     ..MatchConfig::default()
                 };
                 let mut teams = TeamMode::Solo;
@@ -561,7 +471,7 @@ mod dial_tests {
                     config.map,
                     config.gulls,
                     config.round,
-                    config.bots,
+                    config.lobby_bots,
                     teams,
                     config.series,
                     config.posts,
@@ -570,12 +480,12 @@ mod dial_tests {
                 // Two at the table and the AI one more: three seats, which
                 // no team mode fits. The Teams dial turns all the same, so
                 // a host can set up pairs before the fourth sits down.
-                dial.turn(turn, &mut config, &mut teams, 2, &Default::default());
+                dial.turn(turn, &mut config, &mut teams, 2);
                 let after = (
                     config.map,
                     config.gulls,
                     config.round,
-                    config.bots,
+                    config.lobby_bots,
                     teams,
                     config.series,
                     config.posts,
@@ -611,36 +521,24 @@ mod dial_tests {
         let mut teams = TeamMode::Solo;
         // Four humans at the table: two chairs left, and no more.
         for _ in 0..10 {
-            Dial::Bots.turn(Turn::Right, &mut config, &mut teams, 4, &Default::default());
+            Dial::Bots.turn(Turn::Right, &mut config, &mut teams, 4);
         }
-        assert_eq!(config.bots, MAX_PLAYERS as u8 - 4);
+        assert_eq!(config.lobby_bots, MAX_PLAYERS as u8 - 4);
         // And back down to none, not below it.
         for _ in 0..10 {
-            Dial::Bots.turn(Turn::Left, &mut config, &mut teams, 4, &Default::default());
+            Dial::Bots.turn(Turn::Left, &mut config, &mut teams, 4);
         }
-        assert_eq!(config.bots, 0);
+        assert_eq!(config.lobby_bots, 0);
         // A full table leaves the AI nothing at all.
-        Dial::Bots.turn(
-            Turn::Right,
-            &mut config,
-            &mut teams,
-            MAX_PLAYERS as u8,
-            &Default::default(),
-        );
-        assert_eq!(config.bots, 0, "six people is six people");
+        Dial::Bots.turn(Turn::Right, &mut config, &mut teams, MAX_PLAYERS as u8);
+        assert_eq!(config.lobby_bots, 0, "six people is six people");
         // And a press there changes nothing the card shows, so it changes
         // nothing: the host's dial is still what it was when the next
         // table sits down.
-        config.bots = 3;
+        config.lobby_bots = 3;
         for turn in [Turn::Right, Turn::Left] {
-            Dial::Bots.turn(
-                turn,
-                &mut config,
-                &mut teams,
-                MAX_PLAYERS as u8,
-                &Default::default(),
-            );
-            assert_eq!(config.bots, 3, "a dead press {turn:?}");
+            Dial::Bots.turn(turn, &mut config, &mut teams, MAX_PLAYERS as u8);
+            assert_eq!(config.lobby_bots, 3, "a dead press {turn:?}");
         }
     }
 
@@ -680,14 +578,14 @@ mod dial_tests {
     fn what_the_host_turns_is_what_travels() {
         let mut config = MatchConfig::default();
         let mut teams = TeamMode::Solo;
-        for dial in Dial::ALL {
-            dial.turn(Turn::Right, &mut config, &mut teams, 2, &Default::default());
+        for dial in Dial::TURNS {
+            dial.turn(Turn::Right, &mut config, &mut teams, 2);
         }
         let terms = crate::app::match_setup::terms(&config, teams, 7);
         assert_eq!(terms.map, config.map.index() as u8);
         assert_eq!(terms.gulls, config.gulls.index() as u8);
         assert_eq!(terms.round, config.round.index() as u8);
-        assert_eq!(terms.bots, config.bots);
+        assert_eq!(terms.bots, config.lobby_bots);
         assert_eq!(terms.teams, teams.index() as u8);
         assert_eq!(terms.series, config.series.index() as u8);
         assert_eq!(terms.posts, config.posts);
@@ -703,10 +601,9 @@ mod dial_tests {
         use crate::app::i18n::EN;
         let mut config = MatchConfig {
             map: MapChoice::Classic,
-            bots: 4,
+            lobby_bots: 4,
             ..MatchConfig::default()
         };
-        let shelf = Default::default();
         let dealt = dealt(&config, 5);
         assert_eq!((dealt.bots, dealt.seats), (1, 6));
         let row = |dial: Dial, config: &MatchConfig| {
@@ -715,64 +612,35 @@ mod dial_tests {
                 mode: TeamMode::Solo,
                 dealt,
             };
-            dial.label(&EN, &card, &shelf).1
+            dial.label(&EN, &card).1
         };
         assert_eq!(row(Dial::Bots, &config), "1 (normal)");
+        // The map is picked at the start, for the table as it is then.
+        assert_eq!(row(Dial::Map, &config), EN.lobby_map_at_start);
         assert_eq!(
-            row(Dial::Map, &config),
-            EN.map_names[MapChoice::GenLarge.index()]
+            dealt.map,
+            MapChoice::GenLarge,
+            "five aboard outgrow Classic"
         );
         let mut teams = TeamMode::Solo;
-        Dial::Bots.turn(Turn::Left, &mut config, &mut teams, 5, &shelf);
-        assert_eq!(config.bots, 0, "one less than the one shown");
-
-        // Five aboard on Classic read the large beach. A turn of the map
-        // goes past every stop that would read the same, to one that
-        // reads otherwise.
-        config.map = MapChoice::Classic;
-        let before = dealt_map_label(&EN, &config, super::dealt(&config, 5), &shelf);
-        Dial::Map.turn(Turn::Right, &mut config, &mut teams, 5, &shelf);
-        let after = dealt_map_label(&EN, &config, super::dealt(&config, 5), &shelf);
-        assert_ne!(before, after, "a turn the card can see");
+        Dial::Bots.turn(Turn::Left, &mut config, &mut teams, 5);
+        assert_eq!(config.lobby_bots, 0, "one less than the one shown");
     }
 
-    /// The line under the dials is the host's, read against the table
-    /// the launch deals and not the couch's seat count, and the string a
-    /// bot connects with is never pushed out by it.
+    /// The line under the dials is the host's, and only says the string a
+    /// bot connects with: which beaches a table can play is the map page's
+    /// to say, once the table is frozen at the start.
     #[test]
-    fn the_note_under_the_dials_reads_the_hosts_table() {
+    fn the_note_under_the_dials_is_the_bots_string() {
         use crate::app::i18n::EN;
-        use crate::app::match_setup::{Beach, CustomBeaches};
-        let two = crate::sim::Level::parse(
-            "name: Two\nposts: 1\nkind: arena\ncrab: 0,1 R R common\nmap:\n\
-             +-+-+-+\n|0 . .|\n+ + + +\n|. . 1|\n+ + + +\n|. . .|\n+-+-+-+\n",
-        )
-        .expect("a level");
-        let shelf = CustomBeaches(vec![Beach::new(two)]);
-        // The couch is set for six, which no beach on the shelf seats.
-        let config = MatchConfig {
-            seats: 6,
-            bots: 0,
-            ..MatchConfig::default()
-        };
-        let mut state = LobbyState {
-            table: vec!["Ana".into(), "Bo".into()],
-            ..LobbyState::default()
-        };
-        // Not hosting: nothing to say, whatever the couch is set to.
-        assert_eq!(dials_note(&state, &config, &EN, &shelf), "");
+        let mut state = LobbyState::default();
+        assert_eq!(dials_note(&state, &EN), "", "not hosting");
         state.standing = hosting_lobby();
-        // Two at the table, and the beach seats two.
-        assert_eq!(dials_note(&state, &config, &EN, &shelf), "");
-        // Four at the table, and it does not.
-        state.table.extend(["Cy".into(), "Dee".into()]);
-        let note = dials_note(&state, &config, &EN, &shelf);
-        assert!(note.contains('4'), "{note}");
-        // And the bot's string outranks it.
+        assert_eq!(dials_note(&state, &EN), "");
         if let Standing::Hosting(hosted) = &mut state.standing {
             hosted.bot_string = Some("pinch://here".into());
         }
-        let note = dials_note(&state, &config, &EN, &shelf);
+        let note = dials_note(&state, &EN);
         assert!(note.contains("pinch://here"), "{note}");
     }
 
@@ -784,7 +652,6 @@ mod dial_tests {
     #[test]
     fn the_teams_row_reads_what_will_be_played() {
         use crate::app::i18n::EN;
-        let shelf = Default::default();
         let mut config = MatchConfig::default();
         let three = dealt(&config, 3);
         assert_eq!(three.seats, 3);
@@ -800,10 +667,9 @@ mod dial_tests {
                     config: MatchConfig::default(),
                     mode,
                     dealt,
-                    beach: "",
                 },
             };
-            Dial::Teams.label(&EN, &card, &shelf).1
+            Dial::Teams.label(&EN, &card).1
         };
         assert_eq!(
             row(TeamMode::Pairs, three, false),
@@ -833,7 +699,7 @@ mod dial_tests {
         // Every mode on the way round, at a table of three as at four.
         let mut teams = TeamMode::Solo;
         for want in [TeamMode::Pairs, TeamMode::Trios, TeamMode::Solo] {
-            Dial::Teams.turn(Turn::Right, &mut config, &mut teams, 3, &shelf);
+            Dial::Teams.turn(Turn::Right, &mut config, &mut teams, 3);
             assert_eq!(teams, want);
         }
         let four = dealt(&config, 4);
@@ -895,7 +761,7 @@ mod dial_tests {
                 mode: TeamMode::Pairs,
                 dealt: three,
             };
-            let row = Dial::Teams.label(tr, &card, &Default::default()).1;
+            let row = Dial::Teams.label(tr, &card).1;
             assert!(!row.contains('{'), "{lang:?}: {row}");
             assert!(row.contains('4'), "{lang:?}: {row}");
             assert!(
@@ -903,33 +769,5 @@ mod dial_tests {
                 "{lang:?}: {row}"
             );
         }
-    }
-
-    /// A handmade beach with a name longer than a player's reads whole on
-    /// the host's card, and the same as a joiner reads it off the roster.
-    #[test]
-    fn host_and_joiner_name_a_long_beach_alike() {
-        use crate::app::i18n::EN;
-        use crate::app::match_setup::{Beach, CustomBeaches};
-        let long = "Crabby Lagoon at Dusk";
-        assert!(long.chars().count() > crate::transport::NAME_CHARS);
-        let level = crate::sim::Level::parse(&format!(
-            "name: {long}\nposts: 1\nkind: arena\ncrab: 0,1 R R common\nmap:\n\
-             +-+-+-+\n|0 . .|\n+ + + +\n|. . 1|\n+ + + +\n|. . .|\n+-+-+-+\n"
-        ))
-        .expect("a level");
-        let shelf = CustomBeaches(vec![Beach::new(level)]);
-        let config = MatchConfig {
-            map: MapChoice::Custom,
-            seats: 2,
-            ..MatchConfig::default()
-        };
-        let dealt = dealt(&config, 2);
-        let host = dealt_map_label(&EN, &config, dealt, &shelf);
-        assert_eq!(host, long, "the host's card names it whole");
-        // What the roster carries, read the way `join_tick` reads it.
-        let wire = roster_beach(&config, dealt.seats, &shelf);
-        let joiner = hosts_map_label(&EN, dealt.map, &roster_beach_name(&wire));
-        assert_eq!(host, joiner);
     }
 }

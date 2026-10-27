@@ -1,5 +1,6 @@
 //! The bot protocol's messages: what a listener writes and how it reads
-//! what comes back. Version 1, as `docs/bot-protocol.md` publishes it.
+//! what comes back. Versions 1 and 2, as `docs/bot-protocol.md` publishes
+//! them: 2 is 1 with each tick sent as what changed ([`delta`]).
 //!
 //! Everything is built and read through `serde_json::Value` into the fixed
 //! shapes below and nothing else: no field a bot sends ever becomes a path,
@@ -12,8 +13,16 @@ use crate::sim::{
 };
 use serde_json::{Value, json};
 
-/// The protocol version this build speaks.
-pub const PROTOCOL: u64 = 1;
+/// The newest protocol version this build speaks: 2, where a tick is sent
+/// as what changed since the last one the bot was sent ([`delta`]).
+pub const PROTOCOL: u64 = 2;
+/// The oldest it still speaks: 1, where every tick is sent whole. A bot
+/// written against 1 is never sent a diff it does not know to apply.
+pub const OLDEST_PROTOCOL: u64 = 1;
+/// Under protocol 2, the most ticks a bot goes between two whole ones: a
+/// bot that applied a diff wrongly, and never noticed, is put right
+/// within five seconds without asking (`resync` asks at once).
+pub const FULL_EVERY: u64 = 150;
 /// The longest line a listener reads. Anything longer closes the
 /// connection: a full tick message is about 10 KB, so a reply this size is
 /// a bug or a flood.
@@ -328,6 +337,18 @@ pub fn tick(board: &Board, game: u32, you: &You, cursors: &[Option<(u8, u8)>]) -
             })
         })
         .collect();
+    // Shown as soon as the spawner sends for one, which is when the screen
+    // starts drawing it: its shadow sweeps in over the edge and lies on the
+    // landing tile from before half the lead until the gull lands on it
+    // (under reduced motion it fades in on that tile from the start).
+    let incoming: Vec<Value> = board
+        .incoming_gulls()
+        .iter()
+        .map(|gull| {
+            let (x, y) = board.coords_u8(gull.tile);
+            json!({"x": x, "y": y, "dir": dir_token(gull.dir), "tick": gull.at})
+        })
+        .collect();
     let now = board.ticks();
     let signposts: Vec<Value> = board
         .signposts()
@@ -335,7 +356,7 @@ pub fn tick(board: &Board, game: u32, you: &You, cursors: &[Option<(u8, u8)>]) -
             json!({
                 "x": x, "y": y, "dir": dir_token(post.dir), "owner": post.owner,
                 "worn": post.health == SignpostHealth::Worn,
-                "age": now.saturating_sub(post.placed),
+                "age": now.saturating_sub(post.placed), "placed": post.placed,
             })
         })
         .collect();
@@ -373,6 +394,7 @@ pub fn tick(board: &Board, game: u32, you: &You, cursors: &[Option<(u8, u8)>]) -
         "crabs": crabs,
         "sweeping": sweeping,
         "gulls": gulls,
+        "incoming_gulls": incoming,
         "signposts": signposts,
         "castles": castles,
         "turnstiles": turnstiles,
@@ -388,6 +410,260 @@ pub fn tick(board: &Board, game: u32, you: &You, cursors: &[Option<(u8, u8)>]) -
         "golden_call": board.golden_call().map(|(at, x, y)| json!({"tick": at, "x": x, "y": y})),
         "surge": board.in_surge(),
     })
+}
+
+/// The lists in a tick that a diff sends entry by entry, and the fields
+/// that name an entry: a crab or a gull by its `id`, everything that
+/// stands on a tile by the tile. Every other field changes whole.
+pub const KEYED: [(&str, &[&str]); 6] = [
+    ("crabs", &["id"]),
+    ("sweeping", &["id"]),
+    ("gulls", &["id"]),
+    ("signposts", &["x", "y"]),
+    ("castles", &["x", "y"]),
+    ("turnstiles", &["x", "y"]),
+];
+
+/// The one field a diff leaves a bot to work out: a post's `age`, which is
+/// the tick less its `placed`. Sent, it would change on every post every
+/// tick, and be the larger part of every diff. Every other field a diff
+/// carries as it changes.
+const AGE: (&str, &str, &str) = ("signposts", "age", "placed");
+
+/// The field of the keyed list `field`'s entries a diff leaves out, if any.
+fn derived(field: &str) -> Option<&'static str> {
+    (field == AGE.0).then_some(AGE.1)
+}
+
+/// Every post's `age` worked out from its `placed`, for the tick `state`
+/// is of ([`AGE`]).
+fn age_posts(state: &mut serde_json::Map<String, Value>) {
+    let Some(now) = state.get("tick").and_then(Value::as_u64) else {
+        return;
+    };
+    let Some(posts) = state.get_mut(AGE.0).and_then(Value::as_array_mut) else {
+        return;
+    };
+    for post in posts.iter_mut().filter_map(Value::as_object_mut) {
+        if let Some(placed) = post.get(AGE.2).and_then(Value::as_u64) {
+            post.insert(AGE.1.to_string(), json!(now.saturating_sub(placed)));
+        }
+    }
+}
+
+/// The fields that name an entry of the keyed list `field`, if it is one.
+fn keys_of(field: &str) -> Option<&'static [&'static str]> {
+    KEYED
+        .iter()
+        .find(|(name, _)| *name == field)
+        .map(|(_, keys)| *keys)
+}
+
+/// An entry's key: the values of its naming fields, or `None` for an
+/// entry missing one.
+fn key_of(entry: &Value, keys: &[&str]) -> Option<Vec<Value>> {
+    keys.iter().map(|k| entry.get(*k).cloned()).collect()
+}
+
+/// A tick as what changed from `base`, the last tick the bot was sent of
+/// the same game: protocol 2's diff. It names its own `tick` and the
+/// `base` tick it applies to, and carries only the fields that differ.
+/// A keyed list ([`KEYED`]) that changed comes as `{"set": [...], "gone":
+/// [...]}`: `set` holds every entry that is new (whole) or changed (its
+/// naming fields and the fields that changed), `gone` the naming fields of
+/// every entry no longer there. Any other field that changed, a list
+/// included, comes whole. A post's `age` is left out of `set` unless the
+/// post is new: it is the tick less the post's `placed`.
+///
+/// [`apply_delta`] is the inverse, and the one rule a bot implements.
+pub fn delta(base: &Value, now: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    for field in ["type", "game", "tick"] {
+        if let Some(v) = now.get(field) {
+            out.insert(field.to_string(), v.clone());
+        }
+    }
+    out.insert(
+        "base".to_string(),
+        base.get("tick").cloned().unwrap_or(Value::Null),
+    );
+    let (Some(before), Some(after)) = (base.as_object(), now.as_object()) else {
+        return now.clone();
+    };
+    for (field, value) in after {
+        if matches!(field.as_str(), "type" | "game" | "tick") || before.get(field) == Some(value) {
+            continue;
+        }
+        let changed = match (keys_of(field), before.get(field), value) {
+            (Some(keys), Some(Value::Array(old)), Value::Array(new)) => {
+                match list_delta(old, new, keys, derived(field)) {
+                    Some(ListDelta::Same) => continue,
+                    Some(ListDelta::Changed(change)) => change,
+                    None => value.clone(),
+                }
+            }
+            _ => value.clone(),
+        };
+        out.insert(field.clone(), changed);
+    }
+    // A field the new tick no longer has reads as `null`, never as
+    // unchanged.
+    for field in before.keys() {
+        if !after.contains_key(field) {
+            out.insert(field.clone(), Value::Null);
+        }
+    }
+    Value::Object(out)
+}
+
+/// What became of a keyed list between two ticks.
+enum ListDelta {
+    /// Nothing but its derived field ([`AGE`]): it is left out of the diff.
+    Same,
+    /// Its `set` and `gone`.
+    Changed(Value),
+}
+
+/// Two entries the same, but for the field `skip`.
+fn same_but(a: &Value, b: &Value, skip: Option<&str>) -> bool {
+    match (a.as_object(), b.as_object(), skip) {
+        (Some(a), Some(b), Some(skip)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(field, v)| field == skip || b.get(field) == Some(v))
+        }
+        _ => a == b,
+    }
+}
+
+/// A keyed list as its changes, leaving out the field `skip` of an entry
+/// that was there before; or `None` when an entry has no key or two share
+/// one: the list is then sent whole, which a bot applies the same way as
+/// any other field.
+fn list_delta(
+    old: &[Value],
+    new: &[Value],
+    keys: &[&str],
+    skip: Option<&str>,
+) -> Option<ListDelta> {
+    let mut before = std::collections::HashMap::new();
+    for entry in old {
+        if before.insert(key_of(entry, keys)?, entry).is_some() {
+            return None;
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut set = Vec::new();
+    for entry in new {
+        let key = key_of(entry, keys)?;
+        if !seen.insert(key.clone()) {
+            return None;
+        }
+        match before.get(&key) {
+            Some(was) if same_but(was, entry, skip) => {}
+            Some(was) => {
+                let mut part = serde_json::Map::new();
+                for (field, v) in entry.as_object()? {
+                    let named = keys.contains(&field.as_str());
+                    if named || (Some(field.as_str()) != skip && was.get(field) != Some(v)) {
+                        part.insert(field.clone(), v.clone());
+                    }
+                }
+                set.push(Value::Object(part));
+            }
+            None => set.push(entry.clone()),
+        }
+    }
+    let gone: Vec<Value> = old
+        .iter()
+        .filter_map(|entry| {
+            let key = key_of(entry, keys)?;
+            (!seen.contains(&key)).then(|| {
+                Value::Object(
+                    keys.iter()
+                        .zip(key)
+                        .map(|(k, v)| ((*k).to_string(), v))
+                        .collect(),
+                )
+            })
+        })
+        .collect();
+    Some(if set.is_empty() && gone.is_empty() {
+        ListDelta::Same
+    } else {
+        ListDelta::Changed(json!({"set": set, "gone": gone}))
+    })
+}
+
+/// The tick a protocol 2 message stands for, given `state`, the last tick
+/// this bot holds of the same game: a whole tick (one without `base`) is
+/// itself; a diff is applied to `state` when it names `state`'s tick as
+/// its `base`, and is `None` otherwise, which is the bot's cue to ask for
+/// a `resync`. The inverse of [`delta`], for a Rust bot; the Python bots
+/// carry the same few lines.
+///
+/// A keyed list keeps its entries' order, the new ones after: the order of
+/// a list is not part of the board. Every post's `age` is then worked out
+/// afresh from its `placed`, the one field a diff leaves to the bot.
+pub fn apply_delta(state: Option<&Value>, msg: &Value) -> Option<Value> {
+    let Some(base) = msg.get("base") else {
+        return Some(msg.clone());
+    };
+    let state = state?;
+    if state.get("tick") != Some(base) || state.get("game") != msg.get("game") {
+        return None;
+    }
+    let mut next = state.as_object()?.clone();
+    for (field, value) in msg.as_object()? {
+        if field == "base" {
+            continue;
+        }
+        let patched = match (keys_of(field), value) {
+            (Some(keys), Value::Object(change)) => match next.get(field) {
+                Some(Value::Array(old)) => Value::Array(patch_list(old, change, keys)?),
+                _ => return None,
+            },
+            _ => value.clone(),
+        };
+        next.insert(field.clone(), patched);
+    }
+    age_posts(&mut next);
+    Some(Value::Object(next))
+}
+
+/// A keyed list with its `set` and `gone` applied.
+fn patch_list(
+    old: &[Value],
+    change: &serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Option<Vec<Value>> {
+    let gone: Vec<Vec<Value>> = change
+        .get("gone")?
+        .as_array()?
+        .iter()
+        .map(|entry| key_of(entry, keys))
+        .collect::<Option<_>>()?;
+    let mut list: Vec<Value> = old
+        .iter()
+        .filter(|entry| key_of(entry, keys).is_none_or(|key| !gone.contains(&key)))
+        .cloned()
+        .collect();
+    for part in change.get("set")?.as_array()? {
+        let key = key_of(part, keys)?;
+        match list
+            .iter_mut()
+            .find(|entry| key_of(entry, keys).as_ref() == Some(&key))
+        {
+            Some(entry) => {
+                let entry = entry.as_object_mut()?;
+                for (field, v) in part.as_object()? {
+                    entry.insert(field.clone(), v.clone());
+                }
+            }
+            None => list.push(part.clone()),
+        }
+    }
+    Some(list)
 }
 
 /// What a bot asked its seat to do.
@@ -506,6 +782,11 @@ pub enum Incoming {
     Pong {
         id: u64,
     },
+    /// Protocol 2: send me the next tick of this game whole. A bot asks
+    /// when a diff names a `base` it does not hold.
+    Resync {
+        game: u32,
+    },
     /// Not something this protocol says. Kept with the game it named, if
     /// it named one, so a reply that was garbled still costs its tick.
     Garbled {
@@ -622,6 +903,13 @@ pub fn parse_incoming(line: &str) -> Incoming {
             None => Incoming::BadRequest {
                 game: None,
                 why: "`ready` names no game".to_string(),
+            },
+        },
+        Some("resync") => match game {
+            Some(game) => Incoming::Resync { game },
+            None => Incoming::BadRequest {
+                game: None,
+                why: "`resync` names no game".to_string(),
             },
         },
         Some("pong") => Incoming::Pong {
@@ -798,6 +1086,120 @@ mod tests {
         assert_eq!(msg["cursors"], json!([[1, 1], null]));
         assert!(!msg["crabs"].as_array().expect("crabs").is_empty());
         assert!(!msg.to_string().contains("takeoff"));
+    }
+
+    /// Six AI seats playing a generated beach, read the way a bot at seat
+    /// 0 is sent it: every tick, but now and then a few at once, as a bot
+    /// that asked to `wait` is.
+    fn six_seat_round(ticks: u64) -> Vec<Value> {
+        let mut board = crate::sim::generate_arena(7, 6, 16, 11);
+        crate::sim::set_versus_rules(&mut board, 240);
+        let you = You {
+            seat: 0,
+            last: None,
+        };
+        let cursors = vec![None; 6];
+        let mut sent = vec![tick(&board, 1, &you, &cursors)];
+        for t in 0..ticks {
+            let mut actions = [crate::sim::PlayerAction::None; MAX_PLAYERS];
+            for (seat, action) in actions.iter_mut().enumerate().take(6) {
+                *action =
+                    crate::sim::bot_action(&board, seat as PlayerId, crate::sim::BotLevel::Normal);
+            }
+            board.tick(&actions);
+            if t % 11 != 5 {
+                sent.push(tick(&board, 1, &you, &cursors));
+            }
+        }
+        sent
+    }
+
+    /// A tick with its keyed lists in key order: the order of a list is
+    /// not part of the board, and a diff applied puts new entries last.
+    fn in_key_order(tick: &Value) -> Value {
+        let mut tick = tick.clone();
+        for (field, keys) in KEYED {
+            if let Some(list) = tick.get_mut(field).and_then(Value::as_array_mut) {
+                list.sort_by_key(|entry| {
+                    keys.iter()
+                        .map(|k| entry[*k].as_u64().unwrap_or(0))
+                        .collect::<Vec<_>>()
+                });
+            }
+        }
+        tick
+    }
+
+    /// A diff applied to the tick it was made from is the tick it was made
+    /// to, field for field and entry for entry: a bot that applies every
+    /// diff it is sent holds exactly what a protocol 1 bot is sent whole,
+    /// but for the order of a list. And it is a fraction of the size.
+    #[test]
+    fn a_diff_applied_is_the_tick_it_was_made_to() {
+        let sent = six_seat_round(1800);
+        let mut held = sent[0].clone();
+        let (mut whole, mut diffs) = (0, 0);
+        for pair in sent.windows(2) {
+            let diff = delta(&pair[0], &pair[1]);
+            assert_eq!(diff["base"], pair[0]["tick"]);
+            held = apply_delta(Some(&held), &diff).expect("it applies");
+            assert_eq!(
+                in_key_order(&held),
+                in_key_order(&pair[1]),
+                "at tick {}",
+                pair[1]["tick"]
+            );
+            whole += pair[1].to_string().len();
+            diffs += diff.to_string().len();
+        }
+        assert!(diffs * 4 < whole, "diffs {diffs} B against {whole} B whole");
+    }
+
+    /// A diff names the tick it applies to, and a bot holding any other
+    /// gets nothing from it: its cue to ask for a `resync`, never a board
+    /// quietly wrong. A whole tick needs nothing held.
+    #[test]
+    fn a_diff_for_a_tick_not_held_is_refused() {
+        let sent = six_seat_round(40);
+        let diff = delta(&sent[10], &sent[11]);
+        assert_eq!(apply_delta(Some(&sent[9]), &diff), None);
+        assert_eq!(apply_delta(None, &diff), None);
+        assert_eq!(apply_delta(None, &sent[11]), Some(sent[11].clone()));
+        // Another game's tick of the same number is not it either.
+        let mut other = sent[10].clone();
+        other["game"] = json!(2);
+        assert_eq!(apply_delta(Some(&other), &diff), None);
+    }
+
+    /// A keyed list goes entry by entry: an entry that changed sends its
+    /// key and what changed, a new one goes whole, one gone goes by its
+    /// key. A field that did not change is left out.
+    #[test]
+    fn a_keyed_list_goes_entry_by_entry() {
+        let base = json!({
+            "type": "tick", "game": 1, "tick": 4, "surge": false,
+            "crabs": [{"id": 1, "x": 2, "progress": 10, "kind": "common"},
+                      {"id": 2, "x": 5, "progress": 0, "kind": "giant"}],
+            "scores": [1, 2],
+        });
+        let now = json!({
+            "type": "tick", "game": 1, "tick": 5, "surge": false,
+            "crabs": [{"id": 1, "x": 2, "progress": 22, "kind": "common"},
+                      {"id": 3, "x": 0, "progress": 0, "kind": "golden"}],
+            "scores": [1, 12],
+        });
+        let diff = delta(&base, &now);
+        assert_eq!(
+            diff,
+            json!({
+                "type": "tick", "game": 1, "tick": 5, "base": 4,
+                "crabs": {"set": [{"id": 1, "progress": 22},
+                                  {"id": 3, "x": 0, "progress": 0, "kind": "golden"}],
+                          "gone": [{"id": 2}]},
+                "scores": [1, 12],
+            })
+        );
+        assert_eq!(apply_delta(Some(&base), &diff), Some(now));
     }
 
     #[test]

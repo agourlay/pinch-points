@@ -1,0 +1,21 @@
+# Two paths cross. The tile below the crossing is the left crab's only
+# way home, so the right crab has to turn the other way, up.
+name: Crossing
+hands: 1 1
+crab: 4,0 D L common
+crab: 0,2 R R common
+solution: 4,3 R L; 4,2 U R
+map:
++-+-+-+-+-+-+-+-+-+
+|K K K K ~ 0|# # #|
++ +-+-+ + + + + + +
+|K K K K|.|# # # #|
++-+-+-+-+ +-+-+-+-+
+|. . . . .|# # 0 #|
++-+-+-+-+ + + + + +
+|# # # #|. . . ~ #|
++ + + + + +-+-+ + +
+|K K K K|~|K K K K|
++ +-+-+ + + +-+-+ +
+|K K K K K K K K K|
++-+-+-+-+-+-+-+-+-+

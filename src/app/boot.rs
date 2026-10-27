@@ -17,28 +17,37 @@ use parlance::Script;
 /// the grade through; a filmic curve dulled the sand and the player
 /// colours. The interface is drawn after the grade and never touched by
 /// it, so a colour in palette.rs is the colour on screen.
+///
+/// No bloom: nothing on the beach is brighter than white, so a threshold
+/// low enough to catch the foam and the gulls let through a glow too faint
+/// to change a pixel by one level, and its passes were the most expensive
+/// thing in the frame on an integrated chip.
 pub(super) fn setup_camera(mut commands: Commands) {
     commands.spawn((
         Camera2d,
         bevy::camera::Hdr,
         bevy::core_pipeline::tonemapping::Tonemapping::Linear,
         grade(),
-        glow(),
         // Spawned with it rather than left to the engine, so the settings'
-        // anti-aliasing switch (`apply_antialiasing`) always has one to set.
-        Msaa::Sample4,
+        // anti-aliasing switch (`apply_antialiasing`) always has one to set,
+        // at the setting's default.
+        Msaa::Off,
     ));
 }
 
 /// Smooth the beach's edges, or not, as the settings say: Bevy's 4x
-/// multisampling, or none. Off, a weak graphics chip skips most of its
-/// work each frame; the board is sprites and soft shaders, whose edges
-/// barely change either way.
+/// multisampling, or none. Off by default: every board piece is a sprite
+/// whose own texels fade out before its quad's edge, so multisampling only
+/// ever touched a row of pixels along a plank, while every layer blended
+/// over the beach was written four times over in a wide colour format.
+///
+/// The game's own camera only: a map card's preview camera draws with
+/// none, whatever the setting, into a picture shown at half its size.
 pub(super) fn apply_antialiasing(
     settings: Res<crate::app::settings::GameSettings>,
-    mut cameras: Query<&mut Msaa, With<Camera2d>>,
+    mut cameras: Query<&mut Msaa, crate::app::match_setup::GameCamera>,
 ) {
-    let want = if settings.antialiasing {
+    let want = if crate::app::dev::msaa_override().unwrap_or(settings.antialiasing) {
         Msaa::Sample4
     } else {
         Msaa::Off
@@ -50,7 +59,7 @@ pub(super) fn apply_antialiasing(
 
 /// A warm afternoon: a little more colour, a touch of contrast in the
 /// midtones, the white point nudged toward the sun.
-fn grade() -> bevy::render::view::ColorGrading {
+pub(crate) fn grade() -> bevy::render::view::ColorGrading {
     use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
     ColorGrading {
         global: ColorGradingGlobal {
@@ -63,22 +72,6 @@ fn grade() -> bevy::render::view::ColorGrading {
             ..default()
         },
         ..default()
-    }
-}
-
-/// Bloom on the brightest things only: foam, glints, sparkles, the white of
-/// a gull. The threshold is in linear light, where the board's palest sand
-/// sits well under it, so the play never haloes.
-fn glow() -> bevy::post_process::bloom::Bloom {
-    use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
-    Bloom {
-        intensity: 0.09,
-        prefilter: BloomPrefilter {
-            threshold: 0.86,
-            threshold_softness: 0.12,
-        },
-        composite_mode: BloomCompositeMode::Additive,
-        ..Bloom::NATURAL
     }
 }
 
@@ -210,39 +203,36 @@ pub(super) fn teach_the_kanji_fallback(
     *taught = true;
 }
 
-/// Zoom out just enough that any board fits between the header bar and the
-/// prompt line; standard boards stay at 1:1. On the menu the attract beach
-/// instead frames small in the lower right, clear of the title banner and
-/// the mode panel.
-pub(super) fn fit_camera(
-    sim: Res<Sim>,
-    screen: Res<State<Screen>>,
-    ui_scale: Res<UiScale>,
-    windows: Query<&Window>,
-    mut cameras: Query<(&mut Projection, &mut Transform), With<Camera2d>>,
-) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
+/// Where the camera rests over a board: its zoom, in world units per
+/// logical pixel, and how far the board's centre sits from the window's,
+/// in logical pixels. One answer for the camera and for the interface that
+/// lines up with the board's edges.
+struct View {
+    scale: f32,
+    offset: Vec2,
+}
+
+/// The [`View`] a `screen` showing `board` rests at in `window`, with the
+/// interface at `ui` times its design size.
+fn resting_view(window: &Window, ui: f32, screen: Screen, board: &crate::sim::Board) -> View {
     // Every postcard screen, not only the menu: the postcard is sized to
     // the window in world units, and scaling the camera to whatever board
     // `Sim` last held left it short of the window's edges on the list
     // screens after a round, by a strip of clear colour at the bottom.
-    let menu = crate::app::postcard_screen(*screen.get());
-    let chrome = screen.get().chrome();
+    let menu = crate::app::postcard_screen(screen);
+    let chrome = screen.chrome();
     // The chrome is UI, so it takes whatever the global UI scale makes of
     // it; the board does not, and the unscaled width would slide a big grid
     // under the sidebars as soon as the interface grew. Read the applied
     // scale rather than the setting: the interface also shrinks to fit a
     // small window.
-    let ui = ui_scale.0;
     let (chrome_w, chrome_top, chrome_bottom) =
         (chrome.width * ui, chrome.top * ui, chrome.bottom * ui);
     let chrome_h = chrome_top + chrome_bottom;
     let Vec2 {
         x: board_w,
         y: board_h,
-    } = layout::board_extent(&sim.0);
+    } = layout::board_extent(board);
     // The chrome (sidebars, header, prompt line) is fixed-size UI, so the
     // board must fit the window *minus* it; adding it to the board before
     // dividing would under-reserve and let a big grid slide under the
@@ -276,6 +266,42 @@ pub(super) fn fit_camera(
             (chrome_top - chrome_bottom) / 2.0
         },
     );
+    View { scale, offset }
+}
+
+/// How far down the window the foot of the board's fence lands at rest, in
+/// interface pixels (logical pixels over the interface's scale), so a card
+/// can reach down to it whatever the board and the window. Read from the
+/// camera's resting place rather than where it is: a shake would otherwise
+/// shake the card's height too.
+pub(super) fn board_foot(
+    window: &Window,
+    ui: f32,
+    screen: Screen,
+    board: &crate::sim::Board,
+) -> f32 {
+    let View { scale, offset } = resting_view(window, ui, screen, board);
+    let below_centre =
+        layout::board_extent(board).y / 2.0 + crate::app::board_render::FENCE_DEPTH / 2.0;
+    (window.height() / 2.0 + offset.y + below_centre / scale.max(f32::EPSILON))
+        / ui.max(f32::EPSILON)
+}
+
+/// Zoom out just enough that any board fits between the header bar and the
+/// prompt line; standard boards stay at 1:1. On the menu the attract beach
+/// instead frames small in the lower right, clear of the title banner and
+/// the mode panel.
+pub(super) fn fit_camera(
+    sim: Res<Sim>,
+    screen: Res<State<Screen>>,
+    ui_scale: Res<UiScale>,
+    windows: Query<&Window>,
+    mut cameras: Query<(&mut Projection, &mut Transform), crate::app::match_setup::GameCamera>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let View { scale, offset } = resting_view(window, ui_scale.0, *screen.get(), &sim.0);
     for (mut projection, mut transform) in &mut cameras {
         if let Projection::Orthographic(ortho) = &mut *projection
             && (ortho.scale - scale).abs() > 0.001
@@ -352,7 +378,7 @@ pub(super) fn shake_camera(
     time: Res<Time>,
     settings: Res<crate::app::settings::GameSettings>,
     mut trauma: ResMut<crate::app::effects::Trauma>,
-    mut cameras: Query<(&Projection, &mut Transform), With<Camera2d>>,
+    mut cameras: Query<(&Projection, &mut Transform), crate::app::match_setup::GameCamera>,
 ) {
     let offset = trauma.offset(time.delta_secs(), time.elapsed_secs());
     // Drained either way, so nothing accumulates while the shake is off.
@@ -373,6 +399,25 @@ pub(super) fn shake_camera(
 mod tests {
     use super::*;
     use crate::app::board_render::RIM;
+
+    /// The anti-aliasing switch turns the game's camera, and leaves a map
+    /// card's preview camera drawing without.
+    #[test]
+    fn antialiasing_leaves_the_preview_cameras_alone() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.insert_resource(crate::app::settings::GameSettings {
+            antialiasing: true,
+            ..crate::app::settings::GameSettings::default()
+        });
+        let game = world.spawn((Camera2d, Msaa::Off)).id();
+        let preview = world
+            .spawn((Camera2d, crate::app::match_setup::PreviewCamera, Msaa::Off))
+            .id();
+        world.run_system_once(apply_antialiasing).expect("runs");
+        assert_eq!(world.get::<Msaa>(game), Some(&Msaa::Sample4));
+        assert_eq!(world.get::<Msaa>(preview), Some(&Msaa::Off));
+    }
 
     /// What the fit was before the zoom was lifted: the grid alone, and
     /// never closer than 0.8.

@@ -517,6 +517,9 @@ impl Match<'_, '_> {
         // Kept before anybody is told the game is over, so a bot that asks
         // for the replay the moment it hears `end` finds it there.
         let players = self.bots.iter().flatten().map(|b| b.id).collect();
+        // Played to the tide, so the recording says how it ended, as one
+        // kept from a results card does.
+        self.replay.scores = Some(*self.spec.board.scores());
         self.listener
             .keep_replay(self.spec.replay_id.clone(), players, self.replay.to_text());
         for seat in 0..n {
@@ -576,6 +579,12 @@ pub fn play(listener: &Listener, spec: GameSpec, sinks: &mut Sinks) -> GameResul
     for (i, name) in spec.names.iter().enumerate().take(MAX_PLAYERS) {
         replay.names[i] = name.clone();
         replay.kinds[i] = kinds[i];
+    }
+    for (slot, seat) in replay.ai.iter_mut().zip(&spec.seats) {
+        *slot = match seat {
+            Seat::Ai(level) => Some(*level),
+            Seat::Bot(_) => None,
+        };
     }
     if let Some(feed) = &sinks.feed {
         let _ = feed.send(Feed::Start(Box::new(replay.clone())));

@@ -236,7 +236,7 @@ fn serve(plan: Plan) -> Result<(), String> {
         } else {
             format!("house-{}", i + 1)
         };
-        println!("  + {name} (ai:{})", super::cli::level_token(level));
+        println!("  + {name} (ai:{})", cli::level_token(level));
         house.push(Entrant {
             name,
             seat: Seat::Ai(level),

@@ -63,12 +63,17 @@ impl StallWatch {
 /// an AI. Long enough that a burst of loss cannot be mistaken for somebody
 /// leaving, since the resend tail repeats every tick, and short enough that a
 /// table is not left staring at a still beach.
-pub(super) const ABANDON_AFTER: f32 = 5.0;
+///
+/// Eight seconds: a laptop on Wi-Fi roaming between access points, or
+/// renewing its lease, goes quiet for several seconds and comes back, and
+/// losing a castle to that is worse than the table waiting a little
+/// longer on somebody who really has gone.
+pub(super) const ABANDON_AFTER: f32 = 8.0;
 
 /// How long a spectator may say nothing before the round forgets it.
 ///
 /// Longer than [`ABANDON_AFTER`] on purpose. A silent seat holds the whole
-/// table up, so five seconds is already generous; a silent spectator holds
+/// table up, so eight seconds is already generous; a silent spectator holds
 /// up nothing at all, and the only thing gained by dropping it quickly is
 /// the bandwidth of feeding a ghost. Ten seconds rides out a hiccup that
 /// would be rude to eject somebody for when they are only watching.
@@ -85,8 +90,8 @@ const WATCHER_GONE_AFTER: f32 = 10.0;
 /// Nothing can save a round whose host has gone: it alone relays every
 /// input, decides who has left, and calls the next one. So this buys
 /// nothing but a fair chance for a machine that stumbles (a big alt-tab, a
-/// sleeping laptop lid, a hotel wifi hiccup). Four times the patience the
-/// host shows an ordinary player.
+/// sleeping laptop lid, a hotel wifi hiccup). Well over twice the patience
+/// the host shows an ordinary player.
 const HOST_GONE_AFTER: f32 = 20.0;
 
 /// How long a joiner hears nothing from its host, mid-round, before it
@@ -96,7 +101,7 @@ const HOST_GONE_AFTER: f32 = 20.0;
 const QUIET_HOST: f32 = 1.0;
 
 /// How long a round held up on a seat whose player said goodbye waits
-/// before handing it over: not the five seconds of [`ABANDON_AFTER`],
+/// before handing it over: not the seconds of [`ABANDON_AFTER`],
 /// which are for telling a departure from a stumble, and the goodbye has
 /// already told. Just long enough for an input that crossed it to land.
 const GOODBYE_GRACE: f32 = 0.3;
@@ -262,7 +267,7 @@ impl OnlineSession {
         // frozen ticker would stop the pump that carries the resume), and
         // the session's own is the frame the table agreed to stop on. With
         // only the first, opening the pause card cost every rival their
-        // castle five seconds later.
+        // castle seconds later.
         if paused || self.session.paused() {
             // And a round holding still on purpose is not waiting on
             // anybody, so the line goes at once rather than lingering over
@@ -353,8 +358,11 @@ impl OnlineSession {
             // To everyone, the dropped peer included, and before it is
             // forgotten: its own abandonment is how it learns it was
             // dropped (`dropped`) rather than waiting out the host.
-            self.transport
-                .send(NetMsg::Abandoned { seat: *seat, frame });
+            self.transport.send(NetMsg::Abandoned {
+                round: self.round_tag(),
+                seat: *seat,
+                frame,
+            });
             if !self.abandoned.iter().any(|(held, _)| held == seat) {
                 self.abandoned.push((*seat, frame));
             }
@@ -524,23 +532,24 @@ pub(crate) fn abandon_the_departed(
         *slot = SeatController::Ai(level);
         log.push(
             fill(tr.online_seat_abandoned, &[("p", &names.label(tr, *seat))]),
-            palette::player_color(*seat),
+            palette::seat_text(*seat),
         );
     }
 }
 
 /// How long a caught-up watcher may sit on the frame it was caught up at
-/// before it asks again. The inputs from that frame on come from the
-/// players' resend tails, which reach about a second back; a watcher that
-/// took longer than that to walk into the arena never gets them.
+/// before it asks again. The inputs from that frame on are sent it from
+/// the frame it says it wants, as far back as the host keeps them
+/// (`crate::sim::RECORD_SPAN`); a watcher that took longer than that to
+/// walk into the arena never gets them.
 const CATCH_UP_PATIENCE: f32 = 3.0;
 
 /// A late watcher whose round never started moving goes back to the lobby
 /// and catches up again.
 ///
-/// Rare: the tails cover the second it takes to walk from the lobby into
-/// the arena. But a slow machine can take longer, and then the frame the
-/// snapshot was taken at has scrolled out of every tail, and the beach
+/// Rare: the host keeps twenty seconds of inputs to send it from the frame
+/// its board was taken at. But a machine slower than that to walk into
+/// the arena would find that frame gone from the host too, and the beach
 /// would stand still until the host gave up on a watcher that never
 /// hashed. The lobby greets the host the moment it opens, and a watcher's
 /// greeting mid-round is answered with a fresh snapshot, so the way back
@@ -570,6 +579,13 @@ pub(crate) fn catch_up_again(
     }
 }
 
+/// What a seat the host gave up on is told: how long nothing it sent got
+/// through, which is the host's patience, [`ABANDON_AFTER`], read off the
+/// constant so no translation can disagree with it.
+fn dropped_line(tr: &crate::app::i18n::Tr) -> String {
+    fill(tr.online_dropped, &[("s", &ABANDON_AFTER.to_string())])
+}
+
 /// Walk a joiner out of a round whose host has gone, and say why.
 ///
 /// Every other kind of departure leaves a round that can go on: a rival's
@@ -597,7 +613,7 @@ pub(crate) fn leave_a_hostless_round(
     let why = if let Some(why) = session.put_out {
         why.feedback(tr)
     } else if session.dropped() {
-        tr.online_dropped.to_string()
+        dropped_line(tr)
     } else if session.host_gone() {
         tr.online_host_gone.to_string()
     } else {
@@ -636,7 +652,7 @@ mod tests {
     /// shell's own `Paused` flag is never set in an online round, because
     /// the pause card leaves the ticker running so the pump keeps carrying
     /// the resume. Read from that flag alone, pausing for a moment cost
-    /// every rival their castle five seconds later.
+    /// every rival their castle seconds later.
     #[test]
     fn a_paused_round_is_not_an_abandoned_one() {
         // Delay zero, so frame zero is waiting on both seats from the off:
@@ -666,7 +682,21 @@ mod tests {
         assert_eq!(gone, vec![1], "and a seat that really is silent still goes");
     }
 
-    /// A player who said goodbye mid-round is not waited on for the five
+    /// The line a dropped seat is told says how long the host waited,
+    /// from the constant the host waits by, in every language.
+    #[test]
+    fn a_dropped_seat_is_told_the_patience_the_host_has() {
+        for lang in crate::app::i18n::ALL_LANGS {
+            let line = dropped_line(lang.tr());
+            assert!(
+                line.contains(&ABANDON_AFTER.to_string()),
+                "{lang:?}: {line}"
+            );
+            assert!(!line.contains('{'), "{lang:?}: {line}");
+        }
+    }
+
+    /// A player who said goodbye mid-round is not waited on for the
     /// seconds that tell a departure from a stumble: the goodbye already
     /// told. Its castle goes to the AI as soon as the round is held up on
     /// it (after a moment for an input that crossed the goodbye), and the
@@ -692,7 +722,7 @@ mod tests {
         assert_eq!(
             tick(&mut session, GOODBYE_GRACE, false),
             vec![1],
-            "and not the five seconds a silent seat gets"
+            "and not the seconds a silent seat gets"
         );
         assert_eq!(session.peers.len(), 0, "forgotten with its seat");
     }
@@ -793,7 +823,7 @@ mod tests {
         for leaver_paused in [true, false] {
             let mut host = OnlineSession::new(
                 UdpTransport::host(0).expect("host socket"),
-                Lockstep::new(0, vec![0, 1], crate::sim::DEFAULT_DELAY),
+                Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
                 2,
                 MatchTerms::default(),
             );
@@ -805,9 +835,9 @@ mod tests {
             assert_eq!(host.transport.peer_count(), 1, "Bo is aboard");
             host.peers.deal(&[Some(1)]);
             if leaver_paused {
-                let mut bos = Lockstep::new(1, vec![0, 1], crate::sim::DEFAULT_DELAY);
+                let mut bos = Lockstep::new(1, vec![0, 1], DEFAULT_DELAY);
                 let frame = bos.request_pause().expect("a player may pause");
-                bo.send(NetMsg::Pause { frame });
+                bo.send(NetMsg::Pause { round: 0, frame });
                 std::thread::sleep(std::time::Duration::from_millis(20));
                 host.pump(PlayerAction::None, |_| {});
             } else {
@@ -816,7 +846,7 @@ mod tests {
                 // every peer does. Taken as Bo's own pause, the goodbye
                 // below lifted the host's pause for the table.
                 let frame = host.session.pause_frame().expect("paused");
-                bo.send(NetMsg::Pause { frame });
+                bo.send(NetMsg::Pause { round: 0, frame });
                 std::thread::sleep(std::time::Duration::from_millis(20));
                 host.pump(PlayerAction::None, |_| {});
             }
@@ -840,7 +870,7 @@ mod tests {
     fn a_watcher_leaving_does_not_lift_the_pause() {
         let mut host = OnlineSession::new(
             UdpTransport::host(0).expect("host socket"),
-            Lockstep::new(0, vec![0, 1], crate::sim::DEFAULT_DELAY),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
             2,
             MatchTerms::default(),
         );
@@ -856,12 +886,12 @@ mod tests {
         host.peers.deal(&[Some(1), None]);
 
         // Bo pauses, and Dee, holding on it too, echoes it back.
-        let mut bos = Lockstep::new(1, vec![0, 1], crate::sim::DEFAULT_DELAY);
+        let mut bos = Lockstep::new(1, vec![0, 1], DEFAULT_DELAY);
         let frame = bos.request_pause().expect("a player may pause");
-        bo.send(NetMsg::Pause { frame });
+        bo.send(NetMsg::Pause { round: 0, frame });
         std::thread::sleep(std::time::Duration::from_millis(20));
         host.pump(PlayerAction::None, |_| {});
-        dee.send(NetMsg::Pause { frame });
+        dee.send(NetMsg::Pause { round: 0, frame });
         std::thread::sleep(std::time::Duration::from_millis(20));
         host.pump(PlayerAction::None, |_| {});
         assert!(host.session.paused());
@@ -907,7 +937,11 @@ mod tests {
 
         drop(cy);
         std::thread::sleep(std::time::Duration::from_millis(20));
-        bo.send(NetMsg::Hash { frame: 0, hash: 0 });
+        bo.send(NetMsg::Hash {
+            round: 0,
+            frame: 0,
+            hash: 0,
+        });
         host.pump(PlayerAction::None, |_| {});
         host.keep_in_touch(0.0);
         assert_eq!(host.transport.peer_count(), 1, "Cy is forgotten");
@@ -1524,7 +1558,7 @@ mod tests {
         // And then it is.
         app.world_mut()
             .resource_mut::<Time>()
-            .advance_by(std::time::Duration::from_secs(6));
+            .advance_by(std::time::Duration::from_secs_f32(ABANDON_AFTER + 1.0));
         app.update();
         assert!(
             app.world().resource::<Controllers>().ai(1).is_some(),
@@ -1594,12 +1628,20 @@ mod tests {
         assert_eq!(greetings(&mut host), 1, "and again");
 
         // The host speaks, as it does on every tick of a round.
-        host.send(NetMsg::Hash { frame: 0, hash: 0 });
+        host.send(NetMsg::Hash {
+            round: 0,
+            frame: 0,
+            hash: 0,
+        });
         settle();
         joiner.pump(PlayerAction::None, |_| {});
         for _ in 0..4 {
             joiner.keep_in_touch(0.2);
-            host.send(NetMsg::Hash { frame: 0, hash: 0 });
+            host.send(NetMsg::Hash {
+                round: 0,
+                frame: 0,
+                hash: 0,
+            });
             settle();
             joiner.pump(PlayerAction::None, |_| {});
         }

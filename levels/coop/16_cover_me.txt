@@ -1,0 +1,24 @@
+# A gull comes down a side passage into the corridor just as the crabs
+# pass. P1 keeps it busy at the top with a second arrow.
+name: Cover Me
+hands: 2 1
+kind: puzzle
+seed: 2125266945
+crab: 1,3 R L common
+crab: 0,3 R R common
+gull: 6,0 D
+solution: 3,3 U R; 6,1 U L; 8,3 D L
+map:
++-+-+-+-+-+-+-+-+-+-+-+
+|K K K K 0 # . # # # #|
++ +-+ + + + + + + + + +
+|K K K|.|# #|.|# # # #|
++-+-+-+ +-+-+ +-+-+-+-+
+|# # #|.|# #|.|# # # #|
++-+-+-+ +-+-+ +-+-+-+-+
+|. . . . . . . . . . .|
++-+-+-+-+-+-+-+-+ +-+-+
+|# # # # # K K K|.|# #|
++ + + + + + +-+ + + + +
+|# # # # # K K K K 0 #|
++-+-+-+-+-+-+-+-+-+-+-+

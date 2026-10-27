@@ -110,30 +110,6 @@ pub const CAMPAIGN: &[&str] = &[
     include_str!("../../levels/100_all_at_once.txt"),
 ];
 
-/// Beach Day (spec §5.2): goal-based 30-second challenge stages, the
-/// original's Stage Challenge re-themed. Versus arrow rules (cap 3, evict,
-/// posts fade), each validated by tests via its authored solution.
-pub const CHALLENGES: &[&str] = &[
-    include_str!("../../challenges/01_first_flood.txt"),
-    include_str!("../../challenges/02_fork_the_flow.txt"),
-    include_str!("../../challenges/03_hold_the_line.txt"),
-    include_str!("../../challenges/04_golden_ticket.txt"),
-    include_str!("../../challenges/05_torrent.txt"),
-    include_str!("../../challenges/06_gull_storm.txt"),
-    include_str!("../../challenges/07_double_gold.txt"),
-    include_str!("../../challenges/08_feeding_frenzy.txt"),
-];
-
-pub fn challenge_levels() -> Vec<Level> {
-    CHALLENGES
-        .iter()
-        .enumerate()
-        .map(|(i, text)| {
-            Level::parse(text).unwrap_or_else(|e| panic!("challenge stage {}: {e}", i + 1))
-        })
-        .collect()
-}
-
 /// Parse the whole campaign. Panics on a malformed level; the validation
 /// test fails first, so a shipped binary never hits this.
 pub fn campaign_levels() -> Vec<Level> {
@@ -144,4 +120,92 @@ pub fn campaign_levels() -> Vec<Level> {
             Level::parse(text).unwrap_or_else(|e| panic!("campaign level {}: {e}", i + 1))
         })
         .collect()
+}
+
+/// The co-op stages: each needs two players, P1's arrows turning the left
+/// claws and P2's the right (`hands:`). Embedded like the campaign, in play
+/// order, easiest first; `tests/it/coop.rs` proves each one needs both
+/// players.
+///
+/// A stage's clear is filed by its name ([`coop_progress_key`]), never by
+/// its place on the shelf or its file's number, so the shelf can be
+/// reordered and new stages slotted in without moving anyone's clears.
+/// Renaming a shipped stage is what would lose them.
+pub const COOP: &[&str] = &[
+    include_str!("../../levels/coop/01_swap_lanes.txt"),
+    include_str!("../../levels/coop/02_fork_in_the_road.txt"),
+    include_str!("../../levels/coop/03_head_on.txt"),
+    include_str!("../../levels/coop/04_two_each.txt"),
+    include_str!("../../levels/coop/05_roundabout.txt"),
+    include_str!("../../levels/coop/06_give_way.txt"),
+    include_str!("../../levels/coop/07_crossing.txt"),
+    include_str!("../../levels/coop/08_gull_in_the_lane.txt"),
+    include_str!("../../levels/coop/09_gull_ahead.txt"),
+    include_str!("../../levels/coop/10_flip_the_log.txt"),
+    include_str!("../../levels/coop/11_up_and_over.txt"),
+    include_str!("../../levels/coop/12_round_the_rock.txt"),
+    include_str!("../../levels/coop/13_the_log.txt"),
+    include_str!("../../levels/coop/14_busy_crossing.txt"),
+    include_str!("../../levels/coop/15_turn_back.txt"),
+    include_str!("../../levels/coop/16_cover_me.txt"),
+    include_str!("../../levels/coop/17_middle_lane.txt"),
+    include_str!("../../levels/coop/18_shoo.txt"),
+    include_str!("../../levels/coop/19_pen_the_gull.txt"),
+    include_str!("../../levels/coop/20_cover_each_other.txt"),
+];
+
+/// Parse every co-op stage. Panics on a malformed one; the tests read them
+/// first, so a shipped binary never does.
+///
+/// Each is filed under a key of the co-op ladder's own
+/// ([`coop_progress_key`]) rather than its bare name: an older build kept
+/// a player's level's clear under that level's name, and a level of the
+/// player's called "Give Way" would otherwise have cleared the shipped
+/// one and opened the stage after it.
+pub fn coop_levels() -> Vec<Level> {
+    COOP.iter()
+        .enumerate()
+        .map(|(i, text)| {
+            let mut level =
+                Level::parse(text).unwrap_or_else(|e| panic!("co-op stage {}: {e}", i + 1));
+            level.filing = Some(crate::sim::Filing {
+                key: coop_progress_key(&level.name),
+                legacy: None,
+            });
+            level
+        })
+        .collect()
+}
+
+/// The key a shipped co-op stage called `name` keeps its clear under. A
+/// player's level is filed by its file (`file:...`) and a Tide Pool stage
+/// by its bare name, so neither can hold this one.
+pub fn coop_progress_key(name: &str) -> String {
+    format!("coop:{name}")
+}
+
+/// The handmade versus maps, embedded like the campaign, in the order the
+/// map dial lists them. Each is an ordinary arena level that says which
+/// tables it is built for (`seats:`) and, on an open beach of identical
+/// strips, how wide one is (`roll:`). `tests/it/maps.rs` plays each at
+/// every table it seats and holds it to [`crate::sim::unplayable`].
+pub const VERSUS_MAPS: [&str; 11] = [
+    include_str!("../../levels/versus/the_gates.txt"),
+    include_str!("../../levels/versus/the_moat.txt"),
+    include_str!("../../levels/versus/log_jam.txt"),
+    include_str!("../../levels/versus/three_lanes.txt"),
+    include_str!("../../levels/versus/round_table.txt"),
+    include_str!("../../levels/versus/round_the_world.txt"),
+    include_str!("../../levels/versus/duel.txt"),
+    include_str!("../../levels/versus/the_fountain.txt"),
+    include_str!("../../levels/versus/four_doors.txt"),
+    include_str!("../../levels/versus/gull_road.txt"),
+    include_str!("../../levels/versus/back_to_back.txt"),
+];
+
+/// The `index`th handmade versus map ([`VERSUS_MAPS`]). Panics on a
+/// malformed one; the tests read every one first, so a shipped binary
+/// never does.
+pub fn versus_map(index: usize) -> Level {
+    Level::parse(VERSUS_MAPS[index]).unwrap_or_else(|e| panic!("versus map {index}: {e}"))
 }

@@ -51,6 +51,14 @@ pub fn refresh_custom_beaches(mut beaches: ResMut<CustomBeaches>) {
 }
 
 impl CustomBeaches {
+    /// Which beach on the shelf travels as `bytes`, the ones an online
+    /// round was sent: the host's own, found again to put the cursor on it.
+    pub fn shelf_of(&self, bytes: &[u8]) -> Option<usize> {
+        (!bytes.is_empty())
+            .then(|| self.0.iter().position(|beach| beach.wire == bytes))
+            .flatten()
+    }
+
     /// The ones that could host a match at this size: a versus arena wants
     /// a castle per seat, and a puzzle built for one crab has one.
     pub fn fitting(&self, seats: u8) -> Vec<&Beach> {
@@ -74,7 +82,7 @@ impl CustomBeaches {
     /// at `shelf` is, if it fits at all.
     pub fn among_fitting(&self, seats: u8, shelf: usize) -> Option<usize> {
         let beach = self.0.get(shelf)?;
-        (beach.level.fits(seats)).then(|| {
+        beach.level.fits(seats).then(|| {
             self.0[..shelf]
                 .iter()
                 .filter(|beach| beach.level.fits(seats))
@@ -116,8 +124,9 @@ pub fn beaches_note(
     })
 }
 
-/// Turn the map dial one step, walking the built-in beaches and then the
-/// handmade ones. `Custom` is one stop on `MapChoice`, so the dial stays
+/// Turn the map dial one step, in the dial's order ([`MapChoice::DIAL`]):
+/// the built-in beaches, the player's own, then Surprise, as step 2's
+/// sections run. `Custom` is one stop on `MapChoice`, so the dial stays
 /// on it while there are more beaches to walk through, and steps off when
 /// it runs out. With nothing saved it is skipped entirely: an empty stop
 /// on a dial is a dead press.
@@ -130,10 +139,10 @@ pub fn cycle_map(config: &mut MatchConfig, turn: Turn, beaches: &CustomBeaches) 
             return;
         }
     }
-    config.map = config.map.cycled(turn);
+    config.map = config.map.turned(turn);
     if config.map == MapChoice::Custom {
         if beaches == 0 {
-            config.map = config.map.cycled(turn);
+            config.map = config.map.turned(turn);
         } else {
             // Entering the run from the far side lands on its far end.
             config.custom = match turn {
@@ -161,7 +170,7 @@ pub fn map_label(
             .fitting(config.seats)
             .get(config.custom)
             .map_or_else(
-                || tr.map_names[MapChoice::GenXl.index()].to_string(),
+                || map_name(tr, MapChoice::GenXl),
                 |beach| {
                     // A beach too big to travel is marked on the dial. It
                     // plays here either way, so the label says what is lost
@@ -174,7 +183,75 @@ pub fn map_label(
                 },
             );
     }
-    tr.map_names[config.map.index()].to_string()
+    map_name(tr, config.map)
+}
+
+/// What a built-in map is called on a dial, a terms card or a roster:
+/// the name with its size. `Custom` with no beach in hand reads as the
+/// generated 20x13 every peer builds in its place.
+pub fn map_name(tr: &crate::app::i18n::Tr, map: MapChoice) -> String {
+    match map {
+        MapChoice::Classic
+        | MapChoice::GenSmall
+        | MapChoice::GenClassic
+        | MapChoice::GenLarge
+        | MapChoice::GenXl
+        | MapChoice::GenOcean => tr.map_names[map.index()].to_string(),
+        MapChoice::Custom => tr.map_names[MapChoice::GenXl.index()].to_string(),
+        MapChoice::TheGates
+        | MapChoice::TheMoat
+        | MapChoice::LogJam
+        | MapChoice::ThreeLanes
+        | MapChoice::RoundTable
+        | MapChoice::RoundTheWorld
+        | MapChoice::Duel
+        | MapChoice::TheFountain
+        | MapChoice::FourDoors
+        | MapChoice::GullRoad
+        | MapChoice::BackToBack => {
+            let (w, h) = map.size();
+            format!("{} ({w}x{h})", map_title(tr, map))
+        }
+        MapChoice::Surprise => map_title(tr, map),
+    }
+}
+
+/// A built-in map's name as its card on step 2 says it, without its size.
+pub fn map_title(tr: &crate::app::i18n::Tr, map: MapChoice) -> String {
+    match (map, map.handmade()) {
+        (_, Some(handmade)) => tr.setup_versus_maps[handmade].to_string(),
+        (MapChoice::Surprise, None) => tr.setup_surprise.to_string(),
+        (map, None) => tr.setup_map_names[map.index()].to_string(),
+    }
+}
+
+/// What a map is, for the line under step 2's cards. Surprise's line
+/// takes a number, and is said by the card's own note; a beach of the
+/// player's own is what a shelf card says of it. Every map has its line:
+/// indexed by the dial's place, `Custom` read past the end of the built-in
+/// lines.
+pub fn map_about(tr: &crate::app::i18n::Tr, map: MapChoice) -> &'static str {
+    match map {
+        MapChoice::Classic
+        | MapChoice::GenSmall
+        | MapChoice::GenClassic
+        | MapChoice::GenLarge
+        | MapChoice::GenXl
+        | MapChoice::GenOcean => tr.setup_map_about[map.index()],
+        MapChoice::TheGates
+        | MapChoice::TheMoat
+        | MapChoice::LogJam
+        | MapChoice::ThreeLanes
+        | MapChoice::RoundTable
+        | MapChoice::RoundTheWorld
+        | MapChoice::Duel
+        | MapChoice::TheFountain
+        | MapChoice::FourDoors
+        | MapChoice::GullRoad
+        | MapChoice::BackToBack => tr.setup_versus_about[map.handmade().unwrap_or(0)],
+        MapChoice::Surprise => tr.setup_surprise_sub,
+        MapChoice::Custom => tr.setup_custom_about,
+    }
 }
 
 /// The handmade beach a table of `seats` plays under `map`, out of the one
@@ -183,8 +260,8 @@ pub fn map_label(
 /// The one place that is decided, for the shelf and the wire alike: the
 /// bytes a launch sends ([`beach_bytes`]), the name the lobby's roster
 /// gives ([`beach_on_air`]), the board every peer builds
-/// ([`super::board_from`]), the name a round's roster gives, and the terms
-/// of the next round ([`super::fit_terms`]). Decided in several places
+/// ([`board_from`]), the name a round's roster gives, and the terms
+/// of the next round ([`fit_terms`]). Decided in several places
 /// once, the roster named a handmade beach the table had outgrown while
 /// everyone played the generated arena in its place.
 ///

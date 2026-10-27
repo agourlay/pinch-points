@@ -348,7 +348,12 @@ pub fn begin_round(
             kinds.0[..n].to_vec(),
             scoring.mode(n as u8),
         ),
-        route.online(),
+        route.online().then(|| {
+            online
+                .0
+                .as_ref()
+                .map_or(crate::sim::DEFAULT_DELAY, |session| session.session.delay())
+        }),
         game,
     );
     bots.round = Some(round);
@@ -382,7 +387,7 @@ pub fn announce(
             News::StandIn => fill(tr.bot_stand_in, &[("p", &who)]),
             News::Back => fill(tr.bot_back, &[("p", &who)]),
         };
-        log.push(line, crate::app::palette::player_color(seat));
+        log.push(line, crate::app::palette::seat_text(seat));
     }
 }
 

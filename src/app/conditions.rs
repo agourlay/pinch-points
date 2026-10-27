@@ -99,7 +99,9 @@ pub(super) fn sim_should_run(
         | Screen::NewVersion => false,
         Screen::Puzzle => *phase.get() == Phase::Running,
         Screen::Versus => *vphase.get() == VersusPhase::Running,
-        Screen::Editor => editor.is_testing(),
+        // A playtest's board ticks while it runs: not over a stage's
+        // setup, nor once it is won, lost or its round is over.
+        Screen::Editor => editor.test_running(),
     }
 }
 
@@ -113,14 +115,21 @@ pub(super) fn sim_should_run(
 /// the board a tick past the limit, which turned a Survive won on 1800
 /// into one lost to a gull on 1801. The solver's `play_out` stops at the
 /// first tick that decides the stage, and so does the game.
+///
+/// A stage played in the editor's playtest stops on its deciding tick the
+/// same way, judged by the level under test.
 pub(super) fn puzzle_undecided(
     screen: Res<State<Screen>>,
     campaign: Option<Res<super::Campaign>>,
     sim: Option<Res<super::Sim>>,
+    editor: Option<Res<editor::EditorState>>,
 ) -> bool {
-    match (screen.get(), campaign, sim) {
-        (Screen::Puzzle, Some(campaign), Some(sim)) => {
+    match (screen.get(), campaign, sim, editor) {
+        (Screen::Puzzle, Some(campaign), Some(sim), _) => {
             campaign.current().outcome(&sim.0) == crate::sim::PuzzleOutcome::Running
+        }
+        (Screen::Editor, _, Some(sim), Some(editor)) => {
+            editor.test().is_none_or(|test| test.undecided(&sim.0))
         }
         _ => true,
     }
@@ -129,6 +138,47 @@ pub(super) fn puzzle_undecided(
 /// A versus round in play, as against one already over.
 pub(super) fn versus_running(screen: Res<State<Screen>>, phase: Res<State<VersusPhase>>) -> bool {
     *screen.get() == Screen::Versus && *phase.get() == VersusPhase::Running
+}
+
+/// Whether the board cursors answer the keys and the pads: off the menu,
+/// not while the editor's keys are its own, not under the pause card, and
+/// not under the host's map page between rounds, whose keys (and the
+/// pad's d-pad, bridged to them) walk its cards; the cursor behind it
+/// walked with them.
+pub(super) fn board_cursor_free(
+    screen: Res<State<Screen>>,
+    editor: Res<editor::EditorState>,
+    pause: Res<crate::app::pause::PauseMenu>,
+    menu: Res<match_setup::MatchMenu>,
+) -> bool {
+    *screen.get() != Screen::Menu
+        && !editor.has_keys()
+        && !pause.is_open()
+        && !crate::app::next_map::page_up(&menu)
+}
+
+/// Whether a versus round is dealt but not yet played: the interlude
+/// before it, or its line-up and count.
+pub(super) fn versus_before_the_round(
+    screen: Res<State<Screen>>,
+    phase: Res<State<VersusPhase>>,
+) -> bool {
+    match screen.get() {
+        Screen::Interlude => true,
+        Screen::Versus => *phase.get() == VersusPhase::Countdown,
+        Screen::Menu
+        | Screen::Puzzle
+        | Screen::Editor
+        | Screen::Lobby
+        | Screen::Settings
+        | Screen::Controls
+        | Screen::MatchSetup
+        | Screen::Achievements
+        | Screen::StageSelect
+        | Screen::Replays
+        | Screen::Language
+        | Screen::NewVersion => false,
+    }
 }
 
 pub(super) fn versus_over(screen: Res<State<Screen>>, phase: Res<State<VersusPhase>>) -> bool {
@@ -348,7 +398,7 @@ mod tests {
         // Playtesting carries the board it is testing, which is the only
         // thing that tells this mode from painting.
         world.resource_mut::<editor::EditorState>().mode =
-            editor::Mode::Testing(Box::new(crate::sim::Board::new(9, 7, 1)));
+            editor::Mode::testing(crate::sim::Board::new(9, 7, 1));
         assert!(
             world.run_system_once(sim_should_run).expect("ran"),
             "and must, the moment it is played"

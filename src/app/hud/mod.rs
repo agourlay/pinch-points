@@ -18,8 +18,8 @@ use crate::app::palette::CLOCK_CALM;
 pub(crate) use clock::{Blink, clock_color, clock_into, urgency_band};
 pub use clock::{TideClock, update_tide_clock};
 use field_guide::spawn_field_guide;
-pub use field_guide::{FieldGuide, field_guide_visibility, update_field_guide};
-pub(crate) use text::event_name;
+pub use field_guide::{field_guide_visibility, update_field_guide};
+pub(crate) use text::{event_name, puzzle_status};
 
 #[derive(Component)]
 pub struct LevelLabel;
@@ -30,12 +30,94 @@ pub struct PostsLabel;
 #[derive(Component)]
 pub struct PromptLabel;
 
-/// The share of the window the prompt's pill may take, as its node says.
+/// The share of the window the prompt's pill may take, padding and all.
+///
+/// Set on the pill as a share of the viewport (`Val::Vw`) rather than of
+/// its parent (`Val::Percent`): Bevy's text measure resolves a percentage
+/// maximum against the room the layout hands the text, which is already
+/// this share less the padding, so a percentage was taken twice and the
+/// pill wrapped at about three quarters of the window, not this.
 const PROMPT_SHARE: f32 = 0.88;
 /// The pill's padding either side of the text.
 const PROMPT_PAD_X: f32 = 12.0;
 /// The smallest the prompt shrinks to on the play screens: the fine print.
 const PROMPT_MIN_PX: f32 = menu_ui::type_scale::FINE;
+
+/// How wide a line of the prompt may run before it wraps, in a window
+/// `width` interface pixels wide: the pill's share of it, less the padding.
+fn prompt_room(width: f32) -> f32 {
+    width * PROMPT_SHARE - 2.0 * PROMPT_PAD_X
+}
+
+/// How the prompt line is set on a screen, which is what the room above
+/// the foot of that screen allows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum PromptBand {
+    /// The crab legend sits just above it: one line, shrunk as far as the
+    /// fine print to stay one ([`prompt_fit`]), so it never wraps up over
+    /// the legend.
+    Shrinks,
+    /// One line at full size. The cards stop [`menu_ui::BAR_H`] above the
+    /// foot, which clears one row of the pill and not two, and a replay's
+    /// transport bar stands where a second row would.
+    OneRow,
+    /// Up to two lines: the screen keeps a second row clear for the
+    /// wordier languages. The lobby stops its chat line and panels above
+    /// two rows (`lobby::ui`), and the editor's board stops where every
+    /// board screen's does, above two rows (`Screen::chrome`).
+    TwoRows,
+}
+
+/// How the prompt is set on `screen`, `replaying` whether a recording is
+/// playing on it. One answer for the system that sets the line and the
+/// tests that measure every line against it.
+pub(crate) fn prompt_band(screen: Screen, replaying: bool) -> PromptBand {
+    if field_guide::field_guide_shown(screen, replaying) {
+        return PromptBand::Shrinks;
+    }
+    match screen {
+        Screen::Lobby | Screen::Editor => PromptBand::TwoRows,
+        Screen::Menu
+        | Screen::Puzzle
+        | Screen::Versus
+        | Screen::Settings
+        | Screen::Controls
+        | Screen::MatchSetup
+        | Screen::Achievements
+        | Screen::StageSelect
+        | Screen::Replays
+        | Screen::Interlude
+        | Screen::Language
+        | Screen::NewVersion => PromptBand::OneRow,
+    }
+}
+
+/// The prompt as `band` sets it. On a [`PromptBand::TwoRows`] screen the
+/// line may break only between two keys: after each ` | `, and between
+/// the entries of a list of picks, which are set two spaces apart. Every
+/// other space is made non-breaking, so a key is never parted from what
+/// it does ("| K" over "Möwen") and no row starts with the separator. The
+/// shaper also breaks after a `/` or a `-` before a letter ("LB/" over
+/// "RB: Seite"), so a word joiner, which draws as nothing, holds each to
+/// what follows. Every other band sets the line on one row, as it is.
+pub(crate) fn banded(band: PromptBand, line: &str) -> String {
+    use crate::app::i18n::WORD_JOINER;
+    const GLUE: &str = "\u{a0}";
+    let glued = |words: &str| {
+        words
+            .replace(' ', GLUE)
+            .replace('/', &format!("/{WORD_JOINER}"))
+            .replace('-', &format!("-{WORD_JOINER}"))
+    };
+    match band {
+        PromptBand::TwoRows => line
+            .split(" | ")
+            .map(|part| part.split("  ").map(glued).collect::<Vec<_>>().join("  "))
+            .collect::<Vec<_>>()
+            .join(&format!("{GLUE}| ")),
+        PromptBand::Shrinks | PromptBand::OneRow => line.to_string(),
+    }
+}
 
 /// The size the prompt is drawn at on a play screen, given how wide it
 /// would be at [`HEADER_PX`] and how much room its pill has: its own size
@@ -49,6 +131,97 @@ fn prompt_fit(natural: f32, room: f32) -> Option<f32> {
     (size >= PROMPT_MIN_PX).then_some(size)
 }
 
+/// The rows `line` is set in, in a window `width` interface pixels wide,
+/// at [`HEADER_PX`] in the display face, or `None` when a piece of it is
+/// wider than a row on its own and runs on past the pill.
+///
+/// Broken where the shaper breaks a line, a piece at a time, as the pill
+/// wraps it: at a space, and after a `/` or a `-` with a letter after it.
+/// A non-breaking space and a word joiner are no break, so a line
+/// [`banded`] for two rows is broken only between its keys. Not between
+/// two kana, where the shaper could also break, so a Japanese line is
+/// never counted shorter than it is.
+#[cfg(test)]
+fn prompt_lines(line: &str, width: f32) -> Option<Vec<String>> {
+    use crate::app::i18n::metrics::display_px;
+    let room = prompt_room(width);
+    // Each piece, and what joins it to the one before: a space, or
+    // nothing after a `/` or a `-`.
+    let mut pieces: Vec<(&str, String)> = Vec::new();
+    let (mut piece, mut joiner) = (String::new(), "");
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            ' ' => {
+                pieces.push((joiner, std::mem::take(&mut piece)));
+                joiner = " ";
+            }
+            '/' | '-' if chars.peek().is_some_and(|next| next.is_alphabetic()) => {
+                piece.push(ch);
+                pieces.push((joiner, std::mem::take(&mut piece)));
+                joiner = "";
+            }
+            _ => piece.push(ch),
+        }
+    }
+    pieces.push((joiner, piece));
+    let mut rows = vec![String::new()];
+    for (joiner, piece) in pieces {
+        let row = rows.last_mut().expect("a row");
+        let longer = match row.is_empty() {
+            true => piece.clone(),
+            false => format!("{row}{joiner}{piece}"),
+        };
+        if row.is_empty() || display_px(&longer, HEADER_PX) <= room {
+            *row = longer;
+        } else {
+            rows.push(piece);
+        }
+        if display_px(rows.last().expect("a row"), HEADER_PX) > room {
+            return None;
+        }
+    }
+    Some(rows)
+}
+
+/// How many rows `line` takes ([`prompt_lines`]), `usize::MAX` for a line
+/// that runs on past the pill.
+#[cfg(test)]
+fn prompt_rows(line: &str, width: f32) -> usize {
+    prompt_lines(line, width).map_or(usize::MAX, |rows| rows.len())
+}
+
+/// Whether `line` fits the prompt as `band` sets it, at the narrowest the
+/// interface ever is ([`crate::app::settings::DESIGN_W`]): the window is
+/// fitted to the design by its tighter side, so it is never less wide.
+/// `Err` says how it overruns.
+#[cfg(test)]
+pub(crate) fn prompt_fits(band: PromptBand, line: &str) -> Result<(), String> {
+    use crate::app::i18n::metrics::display_px;
+    let width = crate::app::settings::DESIGN_W;
+    let room = prompt_room(width);
+    let line = &banded(band, line);
+    let natural = display_px(line, HEADER_PX);
+    let fits = match band {
+        PromptBand::Shrinks => prompt_fit(natural, room).is_some(),
+        PromptBand::OneRow => natural <= room,
+        PromptBand::TwoRows => prompt_rows(line, width) <= 2,
+    };
+    match fits {
+        true => Ok(()),
+        false => Err(format!(
+            "{natural:.0}px in {band:?} ({room:.0}px a row{})",
+            match band {
+                PromptBand::Shrinks => format!(
+                    ", {:.0}px at the fine print",
+                    room * HEADER_PX / PROMPT_MIN_PX
+                ),
+                PromptBand::OneRow | PromptBand::TwoRows => String::new(),
+            }
+        )),
+    }
+}
+
 /// The prompt line as `fit_prompt` sizes it: the words, the size and
 /// wrapping it is set in, and how wide it came out last frame.
 type PromptText = (
@@ -59,33 +232,34 @@ type PromptText = (
 );
 
 /// Keep the prompt on one line on the screens that have the crab legend
-/// just above it.
+/// just above it ([`PromptBand::Shrinks`]).
 ///
 /// The prompt sits at the foot and wraps upward when it is long, into a
 /// second row the chrome once kept for it. The legend strip took that row,
 /// so the two-seat prompt at 720p ran its second line over the legend. On
 /// those screens it now stays one line and shrinks until it fits, which
 /// text width makes a single step: it scales with the font size. Anywhere
-/// else it wraps as it always has, where the screens make room for two
-/// rows (the lobby does). A prompt too long even at the fine print's size
+/// else it wraps at full size, which only the [`PromptBand::TwoRows`]
+/// screens have room for. A prompt too long even at the fine print's size
 /// wraps too, since running off the window is worse than the overlap.
 ///
 /// Reads last frame's layout, so a new prompt is one frame at the old
 /// size before it settles.
 pub fn fit_prompt(
     viewport: menu_ui::Viewport,
-    guides: Query<&Node, (With<FieldGuide>, Without<PromptLabel>)>,
+    screen: Res<State<Screen>>,
+    playback: Res<crate::app::Playback>,
     mut prompts: Query<PromptText, With<PromptLabel>>,
     // The line given up on: too long even at the fine print, and wrapped.
     // Held until the words change, or measuring the wrapped pill as if it
     // were the line would unwrap it and give up again, every other frame.
     mut too_long: Local<Option<String>>,
 ) {
-    let legend_up = guides.iter().any(|node| node.display != Display::None);
+    let legend_up = prompt_band(*screen.get(), playback.0.is_some()) == PromptBand::Shrinks;
     let Some(size) = viewport.size() else {
         return;
     };
-    let room = size.x * PROMPT_SHARE - 2.0 * PROMPT_PAD_X;
+    let room = prompt_room(size.x);
     for (text, mut font, mut layout, info) in &mut prompts {
         let FontSize::Px(now) = font.font_size else {
             continue;
@@ -142,7 +316,7 @@ pub fn spawn_hud(
     mut commands: Commands,
     settings: Res<GameSettings>,
     art: Res<crate::app::art::Art>,
-    sim: Res<crate::app::Sim>,
+    sim: Res<Sim>,
 ) {
     let font = menu_ui::display_font(HEADER_PX);
     // Header bar: title | score chips | clock-or-inventory.
@@ -187,12 +361,25 @@ pub fn spawn_hud(
                     TextLayout::no_wrap(),
                 ));
             });
-            bar.spawn((
-                PostsLabel,
-                Text::new(""),
-                font.clone(),
-                TextColor(palette::HUD_INK),
-            ));
+            // The status in a clipping box of its own, for the title's
+            // reason: on one line, and cut at the bar's end rather than
+            // wrapped down over the board. It gives way to the title, which
+            // does not shrink, and to the score chips.
+            bar.spawn(Node {
+                overflow: Overflow::clip_x(),
+                flex_shrink: 1.0,
+                min_width: Val::Px(0.0),
+                ..default()
+            })
+            .with_children(|box_| {
+                box_.spawn((
+                    PostsLabel,
+                    Text::new(""),
+                    font.clone(),
+                    TextColor(palette::HUD_INK),
+                    TextLayout::no_wrap(),
+                ));
+            });
         });
     // The prompt rides its own dark pill. On the play screens that is
     // nearly invisible against the backdrop; on the menu it is the only
@@ -207,11 +394,11 @@ pub fn spawn_hud(
             bottom: Val::Px(8.0),
             left: Val::Px(12.0),
             // Never the whole width: the menu's version pill sits at the
-            // other end of this strip, and a long prompt (French, on a
-            // big UI scale) wraps to its second row, which the chrome
-            // already reserves, rather than running under it.
-            max_width: Val::Percent(88.0),
-            padding: UiRect::axes(Val::Px(12.0), Val::Px(5.0)),
+            // other end of this strip, and a long prompt wraps rather than
+            // running under it. Which screens have room for that second
+            // row is `prompt_band`'s to say.
+            max_width: Val::Vw(PROMPT_SHARE * 100.0),
+            padding: UiRect::axes(Val::Px(PROMPT_PAD_X), Val::Px(5.0)),
             border_radius: BorderRadius::all(Val::Px(11.0)),
             ..default()
         },
@@ -332,14 +519,16 @@ pub struct HintNotes<'w> {
 }
 
 /// The level's own lesson and what decides how it reads: the list it is
-/// on, whether two play it (see `Coop::in_play`), the settings, and this
-/// keyboard's caps.
+/// on, whether two play it ([`crate::app::Coop`]), the settings, this
+/// keyboard's caps, and the hands last reached with.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct HintLesson<'w> {
     campaign: Res<'w, Campaign>,
     coop: Res<'w, crate::app::Coop>,
     settings: Res<'w, GameSettings>,
     caps: Res<'w, crate::app::keycaps::KeyCaps>,
+    device: Res<'w, crate::app::gamepad::LastDevice>,
+    face: Res<'w, crate::app::gamepad::PadFace>,
 }
 
 impl HintLesson<'_> {
@@ -348,8 +537,8 @@ impl HintLesson<'_> {
     /// does not describe, and the prompt line already points at Settings.
     fn shown(&self) -> Option<String> {
         let campaign = &self.campaign;
-        let hint = campaign.shown_hint(campaign.index, &self.settings, *self.coop)?;
-        Some(self.caps.legend(hint))
+        let hint = campaign.shown_hint(campaign.index, &self.settings, *self.coop, *self.device)?;
+        Some(self.caps.legend(&hint))
     }
 }
 
@@ -369,7 +558,17 @@ pub fn update_hint(
         // lesson again; the lesson is what they have already tried.
         let tr = lesson.settings.tr();
         let setup = *phase.get() == Phase::Setup;
-        crate::app::hint::hint_line(tr, &stuck, &denied, phase.get())
+        // A pad's player is told the pad's button for the hint, as the
+        // face's table has it.
+        let button = match *lesson.device {
+            crate::app::gamepad::LastDevice::Pad => crate::app::gamepad::scheme::button_name(
+                &lesson.face.0,
+                crate::app::gamepad::scheme::Does::Hint,
+                tr,
+            ),
+            crate::app::gamepad::LastDevice::Keyboard => None,
+        };
+        crate::app::hint::hint_line(tr, &stuck, &denied, phase.get(), button.as_deref())
             .or_else(|| setup.then(|| lesson.shown()).flatten())
             .unwrap_or_default()
     };
@@ -392,6 +591,11 @@ pub struct Modes<'w> {
     match_menu: Res<'w, crate::app::match_setup::MatchMenu>,
     pause_menu: Res<'w, crate::app::pause::PauseMenu>,
     coop: Res<'w, crate::app::Coop>,
+    table: Res<'w, crate::app::rematch::LocalTable>,
+    keep: Res<'w, crate::app::replays::RoundToKeep>,
+    /// What a host's map page's cursor is on is picked by these.
+    config: Res<'w, crate::app::match_setup::MatchConfig>,
+    beaches: Res<'w, crate::app::match_setup::CustomBeaches>,
 }
 
 /// Everything the header, the status slot and the prompt are written from:
@@ -410,6 +614,16 @@ pub struct HudSources<'w> {
     tournament: Res<'w, crate::app::tournament::Tournament>,
     spectators: Res<'w, crate::app::spectators::SpectatorChat>,
     daily: Res<'w, crate::app::Daily>,
+    pad: PadSources<'w>,
+}
+
+/// What the controller prompt is written from: the face whose table is in
+/// force, the hands last used, and the pad's pick.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct PadSources<'w> {
+    face: Res<'w, crate::app::gamepad::PadFace>,
+    device: Res<'w, crate::app::gamepad::LastDevice>,
+    pick: Res<'w, crate::app::gamepad::PadPick>,
 }
 
 impl HudSources<'_> {
@@ -427,13 +641,14 @@ impl HudSources<'_> {
             tournament,
             spectators,
             daily,
+            pad,
         } = self;
         text::Readout {
             tr: settings.tr(),
             lang: settings.language,
             sim,
             campaign,
-            coop: modes.coop.in_play(campaign),
+            coop: modes.coop.0,
             phase: &modes.phase,
             vphase: &modes.vphase,
             editor: &modes.editor,
@@ -461,6 +676,17 @@ impl HudSources<'_> {
                 .as_ref()
                 .map_or_else(Default::default, |session| session.stands.tide.crowd),
             speed: speed.0,
+            face: &pad.face.0,
+            device: *pad.device,
+            pick: *pad.pick,
+            rematch: crate::app::rematch::rematch(&modes.table, &seating.online, tournament),
+            keep: modes.keep.offer(),
+            map_pick: crate::app::match_setup::card_to_pick(
+                &modes.match_menu,
+                &modes.config,
+                &modes.beaches,
+            )
+            .is_some(),
         }
     }
 }
@@ -495,7 +721,8 @@ pub fn update_hud(sources: HudSources, mut labels: HudLabels) {
         menu_ui::set_text(&mut text, &said.status);
     }
     if let Ok((mut text, mut node)) = labels.p2().single_mut() {
-        menu_ui::set_text(&mut text, &said.prompt);
+        let band = prompt_band(*screen, sources.seating.playback.0.is_some());
+        menu_ui::set_text(&mut text, &banded(band, &said.prompt));
         // An empty prompt keeps its pill off the sand: a bare dark lozenge
         // in the corner reads as a broken widget, not as quiet.
         menu_ui::set_shown(&mut node, !said.prompt.is_empty());
@@ -638,7 +865,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.insert_state(Screen::Versus);
-        app.insert_state(crate::app::VersusPhase::Running);
+        app.insert_state(VersusPhase::Running);
         app.init_resource::<crate::app::Paused>();
         app.init_resource::<crate::app::pause::PauseMenu>();
         app.init_resource::<crate::app::Playback>();
@@ -681,30 +908,264 @@ mod tests {
         );
     }
 
-    /// Every prompt in every language, with the mute key the play screens
-    /// add to it, fits one line of a 720p window without going under the
-    /// fine print. The play screens keep their prompt on one line so it
-    /// stays off the crab legend, and a prompt this cannot hold would wrap
-    /// back over it.
+    /// The bands measure the pill the way it wraps: the longest line of
+    /// words that stays inside the room is one row, one word more is two,
+    /// which only the screens that keep a second row clear can take, and
+    /// which the legend's screens shrink to one.
     #[test]
-    fn every_prompt_fits_one_line_at_720p() {
-        use crate::app::i18n::ALL_LANGS;
+    fn a_line_past_the_room_takes_a_second_row() {
         use crate::app::i18n::metrics::display_px;
-        let room = 1280.0 * PROMPT_SHARE - 2.0 * PROMPT_PAD_X;
-        for lang in ALL_LANGS {
+        let room = prompt_room(crate::app::settings::DESIGN_W);
+        let mut line = "Esc".to_string();
+        while display_px(&format!("{line} | Esc"), HEADER_PX) <= room {
+            line.push_str(" | Esc");
+        }
+        assert_eq!(prompt_fits(PromptBand::OneRow, &line), Ok(()));
+        let over = format!("{line} | Esc");
+        assert!(prompt_fits(PromptBand::OneRow, &over).is_err(), "{over}");
+        assert_eq!(prompt_rows(&over, crate::app::settings::DESIGN_W), 2);
+        assert_eq!(prompt_fits(PromptBand::TwoRows, &over), Ok(()));
+        assert_eq!(prompt_fits(PromptBand::Shrinks, &over), Ok(()));
+        let three = format!("{line} | {line} | {line}");
+        assert!(prompt_fits(PromptBand::TwoRows, &three).is_err(), "{three}");
+    }
+
+    /// Two rows break only between keys: every breakable space of a line
+    /// set for them follows a separator, so a key is never parted from
+    /// what it does and no row starts with the separator. One-row bands
+    /// are set as they are.
+    #[test]
+    fn two_rows_break_only_between_keys() {
+        let line = "WASD: bewegen | K: Möwen setzen | Esc: Menü";
+        let set = banded(PromptBand::TwoRows, line);
+        let plain = |set: &str| set.replace('\u{a0}', " ").replace('\u{2060}', "");
+        assert_eq!(plain(&set), line, "the same words");
+        let breaks: Vec<usize> = set.match_indices(' ').map(|(at, _)| at).collect();
+        assert_eq!(breaks.len(), 2, "{set:?}");
+        for at in breaks {
+            assert!(set[..at].ends_with('|'), "a break inside a key: {set:?}");
+        }
+        // A list of picks breaks between its entries, never inside one.
+        let picks = banded(PromptBand::TwoRows, "Esc: zurück | 7. Bo Li  8. Anna");
+        assert_eq!(
+            picks,
+            "Esc:\u{a0}zurück\u{a0}| 7.\u{a0}Bo\u{a0}Li  8.\u{a0}Anna"
+        );
+        assert_eq!(banded(PromptBand::OneRow, line), line);
+        assert_eq!(banded(PromptBand::Shrinks, line), line);
+        // Measured as it is set: a first row of keys with room left for
+        // "| K:" and not for "Möwen" takes the whole key to the next row,
+        // and one with room for "| LB/" and not for "RB:" takes the whole
+        // pair. Set as written, each would have been parted.
+        let width = crate::app::settings::DESIGN_W;
+        let room = prompt_room(width);
+        let px = |text: &str| crate::app::i18n::metrics::display_px(text, HEADER_PX);
+        for (last, cut) in [("K: Möwen", "K:"), ("LB/RB: Seite", "LB/")] {
+            let mut keys = "Esc: Menü".to_string();
+            while px(&format!("{keys} | Esc: Menü | {cut}")) <= room {
+                keys.push_str(" | Esc: Menü");
+            }
+            // Then the last key's words a letter longer at a time, to
+            // within a letter of the room the cut needs.
+            while px(&format!("{keys}m | {cut}")) <= room {
+                keys.push('m');
+            }
+            let split = format!("{keys} | {last}");
+            assert!(px(&format!("{keys} | {cut}")) <= room, "room for {cut:?}");
+            assert!(px(&split) > room, "no room for {last:?}");
+            let naive = prompt_lines(&split, width).expect("fits two rows");
+            assert!(
+                naive[0].ends_with(cut),
+                "set as written, {cut:?} ends the first row: {naive:?}"
+            );
+            let set =
+                prompt_lines(&banded(PromptBand::TwoRows, &split), width).expect("fits two rows");
+            assert_eq!(set.len(), 2, "{set:?}");
+            assert_eq!(plain(&set[1]), last, "the whole key moves down: {set:?}");
+        }
+    }
+
+    /// Where the prompt may wrap: over the crab legend never, so it
+    /// shrinks; under a replay's transport and the cards not at all; and
+    /// to a second row where the lobby and the editor keep one clear.
+    #[test]
+    fn the_prompt_wraps_only_where_a_second_row_is_kept() {
+        assert_eq!(prompt_band(Screen::Versus, false), PromptBand::Shrinks);
+        assert_eq!(prompt_band(Screen::Puzzle, false), PromptBand::Shrinks);
+        assert_eq!(prompt_band(Screen::Versus, true), PromptBand::OneRow);
+        assert_eq!(prompt_band(Screen::MatchSetup, false), PromptBand::OneRow);
+        assert_eq!(prompt_band(Screen::Replays, false), PromptBand::OneRow);
+        assert_eq!(prompt_band(Screen::Lobby, false), PromptBand::TwoRows);
+        assert_eq!(prompt_band(Screen::Editor, false), PromptBand::TwoRows);
+    }
+
+    /// What a co-op stage says in the header fits beside the title it is
+    /// said under, in every language: the stage list's refusal of a co-op
+    /// stage with nobody seated as P2 beside the list's title, both hands'
+    /// count and the tally beside a co-op stage's title at its longest
+    /// name, and the editor's check of a co-op stage, every arrow named by
+    /// its hand and led by the verdict on whether it needs both players,
+    /// which is what must not clip (the arrows after it may, being drawn
+    /// on the bench).
+    #[test]
+    fn the_coop_lines_fit_beside_their_titles() {
+        use crate::app::i18n::fill;
+        use crate::app::i18n::metrics::display_px;
+        use crate::app::settings::DESIGN_W;
+        let room = DESIGN_W - 2.0 * 12.0 - 18.0;
+        let mut over = Vec::new();
+        for lang in crate::app::i18n::ALL_LANGS {
             let tr = lang.tr();
-            for (field, line) in tr.strings() {
-                if !field.starts_with("prompt_") {
-                    continue;
+            let pair = |line: &str| crate::app::name_the_pair(tr, line);
+            let shelf = crate::sim::coop_levels();
+            let longest = shelf
+                .iter()
+                .map(|level| lang.level_name(&level.name).to_string())
+                .max_by(|a, b| display_px(a, HEADER_PX).total_cmp(&display_px(b, HEADER_PX)))
+                .unwrap_or_default();
+            let of = shelf.len();
+            let stage = format!("{} {of}/{of} - {longest}", tr.stage_coop);
+            let count = fill(
+                &pair(tr.hands_count),
+                &[("a", "9"), ("b", "9"), ("c", "9"), ("d", "9")],
+            );
+            let saved = fill(tr.saved_count, &[("a", "12"), ("b", "12")]);
+            let list = format!("{} - {}", tr.title_tide_pool, tr.title_stages);
+            let editor = format!(
+                "{} [{}] - {} 2",
+                tr.title_editor, tr.ed_kind_puzzle, tr.ed_default_name
+            );
+            for (title, msg) in [
+                (list.clone(), pair(tr.stage_needs_two)),
+                (list, pair(tr.stage_coop_on)),
+                (stage, format!("{count} | {saved}")),
+                (editor.clone(), format!("{} - ", tr.ed_needs_both)),
+                (editor, format!("{} - ", tr.ed_one_alone)),
+            ] {
+                let used = display_px(&title, HEADER_PX) + display_px(&msg, HEADER_PX);
+                if used > room {
+                    over.push(format!("{lang:?}: {used:.0}px: {title} | {msg}"));
                 }
-                let prompt = format!("{line} | {}", tr.prompt_mute);
-                let natural = display_px(&prompt, HEADER_PX);
-                assert!(
-                    prompt_fit(natural, room).is_some(),
-                    "{lang:?} {field} is {natural:.0}px at full size, too long for one line: {prompt}"
-                );
+            }
+            // The stage list's caption and hint pills under the grid, at
+            // their sizes (`stage_select`), across the window less the
+            // pill's padding.
+            // Every stage's own caption, at the last place on the shelf
+            // and locked behind the one before it: the font these are
+            // measured in is not the one `longest` was picked by.
+            let open = fill(&pair(tr.stage_open_hands), &[("a", "9"), ("b", "9")]);
+            let before = (of - 1).to_string();
+            let width = DESIGN_W - 2.0 * 12.0;
+            let mut lines = vec![(pair(tr.coop_rule), 17.0)];
+            for level in &shelf {
+                let name = lang.level_name(&level.name);
+                lines.push((format!("{} {of}. {name} - {open}", tr.stage_coop), 20.0));
+                lines.push((
+                    format!(
+                        "{} {of}. {name} - {}",
+                        tr.stage_coop,
+                        fill(tr.stage_locked_coop, &[("n", before.as_str())])
+                    ),
+                    20.0,
+                ));
+            }
+            for (line, px) in lines {
+                let used = crate::app::i18n::metrics::text_px(&line, px);
+                if used > width {
+                    over.push(format!("{lang:?}: {used:.0}px: {line}"));
+                }
             }
         }
+        assert!(over.is_empty(), "too long:\n{}", over.join("\n"));
+    }
+
+    /// The editor's status line fits beside its title on one line, in every
+    /// language, for the lines a save and a check say: the file a level
+    /// was saved as, with the longest name a level may have, a found
+    /// solution of four signposts, F2's question over another level, and
+    /// each of a save's warnings, which lead the line they are on. It used to name the whole path, which ran
+    /// off the header in every language. The box it is drawn in clips what
+    /// is still longer (a save's warnings) rather than wrapping it down over
+    /// the board.
+    #[test]
+    fn the_editors_status_fits_beside_its_title() {
+        use crate::app::i18n::fill;
+        use crate::app::i18n::metrics::display_px;
+        use crate::app::settings::DESIGN_W;
+        // The bar's padding on both sides and its gap between the two.
+        let room = DESIGN_W - 2.0 * 12.0 - 18.0;
+        // As long as a level's name may be (`editor::NAME_MAX`), in the
+        // letters a file name keeps.
+        let stem = "the-long-gull-alley-at-dusk2";
+        assert_eq!(stem.chars().count(), 28);
+        let mut over = Vec::new();
+        for lang in crate::app::i18n::ALL_LANGS {
+            let tr = lang.tr();
+            let title = format!(
+                "{} [{}] - {} 2",
+                tr.title_editor, tr.ed_kind_puzzle, tr.ed_default_name
+            );
+            let saved = fill(tr.ed_saved_to, &[("file", &format!("{stem}.txt"))]);
+            let solved = fill(
+                tr.ed_solvable,
+                &[
+                    ("n", "4"),
+                    ("g", "9"),
+                    ("placements", "(10,8) (11,2) (3,12) (19,12)"),
+                ],
+            );
+            // F2's question, naming the level it would replace, from the
+            // keyboard and from a pad.
+            let fresh = format!("{} 2", tr.ed_default_name);
+            let asked = fill(tr.ed_save_taken, &[("name", &fresh)]);
+            let save = crate::app::gamepad::scheme::button_name(
+                &crate::app::gamepad::Face::Editor { layer: true },
+                crate::app::gamepad::scheme::Does::Save,
+                tr,
+            )
+            .expect("a button saves");
+            let pad = fill(tr.pad.save_taken, &[("name", &fresh), ("b", &save)]);
+            // A save's warning, which leads its line so that the file it
+            // was saved to is what clips (`editor::shelf::save_level`).
+            let warned = [
+                tr.ed_not_solvable_needs,
+                tr.ed_puzzle_no_castle,
+                tr.ed_puzzle_no_crabs,
+                tr.ed_arena_no_crabs,
+                tr.ed_arena_skips_seat,
+                tr.ed_arena_needs_seats,
+            ]
+            .map(|warning| fill(warning, &[("n", "6"), ("m", "9")]));
+            // A beach's check that weighs its seats, at its longest.
+            let seat = |n| crate::app::seat_label(tr, n);
+            let weighed = [
+                fill(
+                    tr.ed_fair_uneven,
+                    &[("p", &seat(5)), ("n", "188"), ("q", &seat(4)), ("m", "199")],
+                ),
+                fill(tr.ed_fair_cut_off, &[("p", &seat(5))]),
+                // What the mirror refuses, and a resize that turns it off.
+                tr.ed_mirror_line.to_string(),
+                tr.ed_mirror_across.to_string(),
+                fill(tr.ed_mirror_seats, &[("p", &seat(4)), ("q", &seat(5))]),
+                format!(
+                    "{} - {}",
+                    tr.ed_mirror_moved,
+                    fill(tr.ed_resized, &[("w", "12"), ("h", "9")])
+                ),
+            ];
+            for msg in [saved, solved, asked, pad]
+                .into_iter()
+                .chain(warned)
+                .chain(weighed)
+            {
+                let used = display_px(&title, HEADER_PX) + display_px(&msg, HEADER_PX);
+                if used > room {
+                    over.push(format!("{lang:?}: {used:.0}px: {title} | {msg}"));
+                }
+            }
+        }
+        assert!(over.is_empty(), "past {room:.0}px:\n{}", over.join("\n"));
     }
 
     /// The title stops before the clock, on the one screen that puts a
@@ -743,7 +1204,7 @@ mod tests {
             .into_iter()
             .map(|lang| {
                 let tr = lang.tr();
-                [tr.title_tide_pool, tr.title_beach_day, tr.stage_custom]
+                [tr.title_tide_pool, tr.stage_custom]
                     .into_iter()
                     .map(|section| display_px(&format!("{section} 100/100 - {name}"), HEADER_PX))
                     .fold(0.0f32, f32::max)

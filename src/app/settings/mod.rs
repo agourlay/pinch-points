@@ -58,26 +58,26 @@ pub(crate) fn clamp_in<T: PartialOrd + Copy>(value: T, range: &std::ops::RangeIn
     }
 }
 
-/// What drives one of the two keyboard seats. Pads fill the table from the
-/// top down, so with two pads and no ceremony pad one drives P2 and pad
-/// two drives P1; this is how you say otherwise.
+/// What drives one of the two keyboard seats. Pads fill the table from P2
+/// upwards and P1 last, so with two pads and no ceremony pad one drives P2
+/// and pad two drives P1; this is how you say otherwise.
 ///
 /// The keyboard stays live whatever this says, apart from [`Self::Keys`],
 /// which is the one that turns pads off: picking a controller says *which*
 /// controller is yours, not that the keyboard has stopped working.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SeatInput {
-    /// Pads fill the seats from the highest down, as they always have.
+    /// Whichever pad the seat rule deals it (see `gamepad::PadSeats`).
     #[default]
     Auto,
     /// Keyboard only: no pad drives this seat.
     Keys,
-    /// The nth controller, counting in the order they were claimed.
+    /// The nth controller, counting in the order they were plugged in:
+    /// never the order of the Starts, or a friend's Start renamed it.
     Pad(u8),
 }
 
-/// How many controllers a seat may name. Four is what the pad ceremony can
-/// seat, so it is what the dial offers.
+/// How many controllers a seat may name: the stops the dial offers.
 pub const NAMED_PADS: u8 = 4;
 
 /// Where player 1's four commit keys live: the stock arrows, or the §8.2
@@ -251,8 +251,9 @@ pub struct GameSettings {
     /// raid flashes, bouncing numbers, the blinking clock.
     pub reduced_motion: bool,
     /// Smooth the edges of what is drawn on the beach (4x multisampling).
-    /// Off saves a weaker graphics chip most of its per-frame work at no
-    /// cost a player would notice on this game's sprites.
+    /// Off by default: on this game's sprites it changes a row of pixels
+    /// along a plank, and on an integrated chip it made the beach's own
+    /// passes half again to twice as slow (see `boot::apply_antialiasing`).
     pub antialiasing: bool,
     /// Per-seat keyboard bindings (spec §8.4 full remapping).
     pub binds: [SeatBinds; BOUND_SEATS],
@@ -260,10 +261,11 @@ pub struct GameSettings {
     /// falls back to the localized P1/J1/S1 label, so a fresh install and
     /// a player who never opens the naming rows behave as they always did.
     pub names: [String; MAX_PLAYERS],
-    /// How many finished rounds the shelf keeps before the oldest fall off.
+    /// How many kept rounds the shelf holds before the oldest fall off.
     ///
-    /// A round is filed after every match, so without a cap the library
-    /// grows for as long as the game is played.
+    /// Rounds are kept one at a time from the results card and pasted in
+    /// as codes, so without a cap the library grows for as long as the
+    /// game is played.
     pub replay_cap: u8,
     /// The last beach dialled by hand, `ip:port`, empty until one is.
     ///
@@ -285,6 +287,10 @@ pub struct GameSettings {
     /// The two still share the file: the save path takes both and writes
     /// the `keycaps:` line beside this one.
     pub keyboard: Option<crate::app::keycaps::Layout>,
+    /// Whether the editor's tips are still to be shown: on until a first
+    /// visit puts the card away (`editor::editor_card_input`), and never
+    /// again after.
+    pub editor_tips: bool,
 }
 
 /// Longest seat name we keep. The score chips and the event feed are laid
@@ -464,12 +470,13 @@ impl Default for GameSettings {
             fullscreen: true,
             ui_scale: 100,
             reduced_motion: false,
-            antialiasing: true,
+            antialiasing: false,
             binds: default_binds(),
             names: std::array::from_fn(|_| String::new()),
             replay_cap: REPLAY_CAP_DEFAULT,
             last_beach: String::new(),
             check_updates: true,
+            editor_tips: true,
             keyboard: None,
         }
     }
@@ -744,7 +751,7 @@ mod tests {
             let mut app = clocked(Screen::Editor, PuzzleSpeed::Half);
             let mut editor = app.world_mut().resource_mut::<EditorState>();
             editor.kind = kind;
-            editor.mode = Mode::Testing(Box::new(crate::sim::Board::new(9, 9, 1)));
+            editor.mode = Mode::testing(crate::sim::Board::new(9, 9, 1));
             app.update();
             assert!((hz(&app) - want).abs() < 1e-6, "{kind:?}: {} Hz", hz(&app));
         }

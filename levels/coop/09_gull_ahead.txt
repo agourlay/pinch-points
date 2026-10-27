@@ -1,0 +1,23 @@
+# A gull walks down the corridor toward both crabs. Every arrow turns a
+# gull, so the gull follows the left crab through its door, as long as
+# the crab gets there first.
+name: Gull Ahead
+hands: 1 1
+kind: puzzle
+seed: 2125266945
+crab: 1,2 R R common
+crab: 0,2 R L common
+gull: 10,2 L
+solution: 3,2 U R; 5,2 D L
+map:
++-+-+-+-+-+-+-+-+-+-+-+
+|K K K K 0 # # # # # #|
++ +-+ + + + + + + + + +
+|K K K|.|# # # # # # #|
++-+-+-+ +-+-+-+-+-+-+-+
+|. . . . . . . . . . .|
++-+-+-+-+-+ +-+-+-+-+-+
+|# #|K K K|.|# # # # #|
++ + + +-+ + + + + + + +
+|# #|K K K K 0 # # # #|
++-+-+-+-+-+-+-+-+-+-+-+

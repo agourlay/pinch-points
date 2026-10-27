@@ -77,6 +77,7 @@ impl GameSettings {
             last_beach,
             check_updates,
             keyboard,
+            editor_tips,
         } = self;
         format!(
             "commit_scheme: {}\nrepeat_delay: {:.2}\nrepeat_interval: {:.2}\n\
@@ -84,7 +85,7 @@ impl GameSettings {
              puzzle_speed: {}\nteams: {}\nlanguage: {}\n\
              rumble: {}\npad_deadzone: {}\npalette: {}\nfullscreen: {}\nui_scale: {}\n\
              reduced_motion: {}\nantialiasing: {}\nnames: {}\nreplay_cap: {}\nbeach: {}\n\
-             updates: {}\nkeycaps: {}\nkeyboard: {}\n\
+             updates: {}\neditor_tips: {}\nkeycaps: {}\nkeyboard: {}\n\
              p1_input: {}\np2_input: {}\n{}",
             commit.key(),
             repeat_delay,
@@ -107,6 +108,7 @@ impl GameSettings {
             replay_cap,
             last_beach,
             on_off(*check_updates),
+            on_off(*editor_tips),
             caps.to_text(),
             keyboard.map_or("auto", crate::app::keycaps::Layout::key),
             seat_input[0].name(),
@@ -206,6 +208,7 @@ impl GameSettings {
                     }
                 }
                 "updates" => settings.check_updates = is_on(value),
+                "editor_tips" => settings.editor_tips = is_on(value),
                 "keycaps" => caps = crate::app::keycaps::KeyCaps::parse(value),
                 "keyboard" => settings.keyboard = crate::app::keycaps::Layout::from_key(value),
                 "keys_p1" | "keys_p2" => {
@@ -316,7 +319,9 @@ mod tests {
     fn settings_round_trip_through_text() {
         let settings = GameSettings {
             commit: CommitScheme::Ijkl,
+            seat_input: [SeatInput::Keys, SeatInput::Pad(2)],
             repeat_delay: 0.35,
+            repeat_interval: 0.12,
             // Both switches off, so the round trip is actually carrying
             // them: left at their default they would survive a `to_text`
             // that never wrote them and a `parse` that never read them.
@@ -333,10 +338,11 @@ mod tests {
             fullscreen: false,
             ui_scale: 70,
             reduced_motion: true,
-            // Off, away from its default, or a broken parse that read it
-            // back as on would pass.
-            antialiasing: false,
+            // On, away from its default, or a broken parse that read it
+            // back as off would pass.
+            antialiasing: true,
             check_updates: false,
+            editor_tips: false,
             binds: {
                 let mut binds = default_binds();
                 binds[0].set(crate::app::binds::Action::Remove, KeyCode::Backquote);

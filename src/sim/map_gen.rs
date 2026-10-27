@@ -10,6 +10,10 @@ use crate::sim::crab::{CrabKind, Handedness};
 use crate::sim::direction::Direction;
 use crate::sim::rng::Pcg32;
 
+mod styles;
+
+pub use styles::{BeachStyle, SURPRISE_LANES_MOST, surprise_size, surprise_style, surprise_styles};
+
 /// Tiles on the classic 12x9 beach, the size the gull pressures and the
 /// crab flow were tuned on.
 const CLASSIC_AREA: u32 = 12 * 9;
@@ -62,6 +66,9 @@ pub fn set_versus_rules(board: &mut Board, period: u32) {
 /// right mid-edges, which is where the side spawner holes point, and a
 /// castle in front of a hole is fed crabs for free.
 ///
+/// A five-seat table leaves one spot out, which one depending on the beach
+/// (see `five_spots`).
+///
 /// The long-edge pair takes the *centre* column, which is why generated
 /// six-seat arenas are widened to an odd width (see [`generate_arena`]): an
 /// even width has no centre, so the pair leans one tile nearer two corners
@@ -101,7 +108,8 @@ pub fn castle_spots(width: u8, height: u8) -> [(u8, u8); MAX_PLAYERS] {
 /// what moves instead is *who* gets it, and over a series the advantage
 /// cancels rather than compounding on whoever joined third.
 ///
-/// Shuffled in pairs, never seat by seat, and that is load-bearing.
+/// An even table is shuffled in pairs, never seat by seat, and that is
+/// load-bearing.
 /// [`castle_spots`] lists 180-degree opposite pairs, `(0,1) (2,3) (4,5)`,
 /// and both team modes are built on it: Pairs gives a team a whole pair,
 /// Trios gives each team one seat from every pair. Permuting whole pairs
@@ -112,7 +120,7 @@ pub fn castle_spots(width: u8, height: u8) -> [(u8, u8); MAX_PLAYERS] {
 /// Only the pairs in use are touched: at four seats or fewer the two edge
 /// spots stay out of it, which is what keeps a four-seat board off the
 /// long edges and the same size it asked for.
-fn seat_spots(seed: u64, seats: u8) -> [usize; MAX_PLAYERS] {
+fn seat_spots(seed: u64, seats: u8, wraps: bool) -> [usize; MAX_PLAYERS] {
     // A stream of its own, so drawing it cannot shift the arena's own rolls
     // and change the beach that a seed has always built.
     let mut rng = Pcg32::new(seed, 0x0c_a571);
@@ -134,6 +142,47 @@ fn seat_spots(seed: u64, seats: u8) -> [usize; MAX_PLAYERS] {
     for pair in pairs..MAX_PLAYERS / 2 {
         spots[pair * 2] = pair * 2;
         spots[pair * 2 + 1] = pair * 2 + 1;
+    }
+    // An odd table is dealt afresh. The pair draw leaves the seat on the
+    // last, half-used pair facing an empty castle that its two neighbours
+    // share between them, and over 1500 bot rounds that one seat won 22-26%
+    // at three and 15% at five. Team modes need an even table, so nothing
+    // leans on the pairing here.
+    let seated = usize::from(seats.clamp(2, MAX_PLAYERS as u8));
+    if seated % 2 == 1 {
+        if seated == 5 {
+            spots = five_spots(&mut rng, wraps);
+        }
+        // Whatever spots are in use, which seat sits on which is a fresh
+        // draw, so every seat is as likely as any other to get each one.
+        for i in (1..seated).rev() {
+            let j = (rng.next_u32() as usize) % (i + 1);
+            spots.swap(i, j);
+        }
+    }
+    spots
+}
+
+/// The five castle spots a five-seat table plays on, in [`castle_spots`]
+/// order, and the empty one last.
+///
+/// On a beach with edges that is the four corners and one long-edge centre:
+/// over 1500 bot rounds each, on the 17x11 and the 21x13, every spot then
+/// won within two points of a fifth, where leaving a corner empty handed
+/// the edge pair 27-31% and the corners as little as 11%. The open ocean is
+/// the other way round: its lone edge castle won 7%, and with a corner
+/// left empty every spot won 15-23%.
+fn five_spots(rng: &mut Pcg32, wraps: bool) -> [usize; MAX_PLAYERS] {
+    let empty = match wraps {
+        true => rng.next_u32() as usize % 4,
+        false => 4 + rng.next_u32() as usize % 2,
+    };
+    let mut spots = [empty; MAX_PLAYERS];
+    for (slot, spot) in spots
+        .iter_mut()
+        .zip((0..MAX_PLAYERS).filter(|&spot| spot != empty))
+    {
+        *slot = spot;
     }
     spots
 }
@@ -165,6 +214,19 @@ fn end_spawners(width: u8, height: u8) -> [(u8, u8, Direction); 4] {
     ]
 }
 
+/// The holes a three-seat table is dealt, on any beach: the four end
+/// holes, one by each corner whether or not a castle sits there.
+///
+/// A side hole feeds both corners on its side, and with three castles one
+/// side has a corner empty: its hole is one seat's alone while the other
+/// side's is split two ways. Over 1500 bot rounds of the classic arena
+/// with the seats drawn, the seat beside the empty corner on its side won
+/// 63% with the side holes in, and the seat facing the empty corner 16%;
+/// with the end holes alone every seat's spot won 24-38%, on every size.
+fn three_seat_holes(width: u8, height: u8) -> [(u8, u8, Direction); 4] {
+    end_spawners(width, height)
+}
+
 /// The fewest spawner holes a table of `seats` should be dealt: one fewer
 /// than the players. Two holes feeding four castles leave the crabs on two
 /// lanes everybody fights over, and the round turns into a scrum at the
@@ -194,7 +256,7 @@ fn quad(width: u8, height: u8, x: u8, y: u8) -> [(u8, u8); 4] {
 const QUAD_FLIPS: [(bool, bool); 4] = [(false, false), (true, false), (false, true), (true, true)];
 
 /// A direction seen in a mirror.
-fn mirror_dir(dir: Direction, flip_x: bool, flip_y: bool) -> Direction {
+pub(crate) fn mirror_dir(dir: Direction, flip_x: bool, flip_y: bool) -> Direction {
     let horizontal = matches!(dir, Direction::Left | Direction::Right);
     if (flip_x && horizontal) || (flip_y && !horizontal) {
         dir.reverse()
@@ -277,11 +339,20 @@ pub fn classic_arena_seeded(seed: u64, preload_scores: bool, seats: u8) -> Board
     let mut board = Board::new(12, 9, seed);
     // The handcrafted beach is a four-castle board; six seats want a
     // generated arena with room for the long-edge castles.
-    for (seat, &(x, y)) in castle_spots(12, 9)
-        .iter()
-        .enumerate()
-        .take(seats.clamp(2, 4) as usize)
-    {
+    //
+    // Three seats leave a corner empty, and its sand goes to the two castles
+    // beside it. Who sits where is drawn from the seed as on a generated
+    // beach ([`seat_spots`]), so that is nobody's seat in particular: drawn
+    // the same way every round, the castle at (1,1) won 69%. Two and four
+    // seats keep the beach as drawn.
+    let spots = castle_spots(12, 9);
+    let seated = seats.clamp(2, 4);
+    let order: [usize; MAX_PLAYERS] = match seated % 2 == 1 {
+        true => seat_spots(seed, seated, false),
+        false => std::array::from_fn(|spot| spot),
+    };
+    for (seat, &spot) in order.iter().enumerate().take(usize::from(seated)) {
+        let (x, y) = spots[spot];
         board.set_tile(x, y, TileKind::Castle(seat as PlayerId));
     }
     // Balance: strictly equal cadences. Even a 44/48 stagger measurably
@@ -291,9 +362,13 @@ pub fn classic_arena_seeded(seed: u64, preload_scores: bool, seats: u8) -> Board
     // than [`holes_wanted`] lets two holes feed also gets the generated
     // arenas' four end holes, one by each corner castle, and every hole
     // slows to keep the crab flow the beach was balanced on.
+    //
+    // Three seats get the four end holes alone (see [`three_seat_holes`]).
     let sides = side_spawners(12, 9);
     let ends = end_spawners(12, 9);
-    let holes: Vec<(u8, u8, Direction)> = if holes_wanted(seats) > sides.len() {
+    let holes: Vec<(u8, u8, Direction)> = if seated == 3 {
+        three_seat_holes(12, 9).to_vec()
+    } else if holes_wanted(seats) > sides.len() {
         sides.iter().chain(ends.iter()).copied().collect()
     } else {
         sides.to_vec()
@@ -340,8 +415,48 @@ const ROCK_AREA: u32 = 110;
 const WALL_AREA: u32 = 120;
 
 /// Generate a versus arena for `seats` players (2–[`MAX_PLAYERS`]) from a
-/// seed, at any size from 9×7 up.
+/// seed, at any size from 9×7 up, with edges.
 pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
+    generate_beach(seed, seats, width, height, false)
+}
+
+/// [`generate_arena`], with its edges open when `wraps`. The open ocean is
+/// laid out like any other generated beach except where the castles of an
+/// odd table go, which is measured separately for it (see [`five_spots`]),
+/// so it is built here rather than by opening an edged arena's edges.
+pub fn generate_beach(seed: u64, seats: u8, width: u8, height: u8, wraps: bool) -> Board {
+    generate_styled(seed, seats, width, height, wraps, BeachStyle::Classic)
+}
+
+/// [`generate_beach`] laid in `style`. The frame is the same whatever the
+/// style: castles dealt to the seats from the seed, the holes for the
+/// table and the versus rules, all as [`BeachStyle::Classic`] builds them,
+/// so a style changes the terrain between the castles and nothing else.
+/// The classic terrain is the default, and every seed builds the beach it
+/// always built (`tests/it/maps.rs` holds the generator to the text it
+/// wrote before styles existed).
+pub fn generate_styled(
+    seed: u64,
+    seats: u8,
+    width: u8,
+    height: u8,
+    wraps: bool,
+    style: BeachStyle,
+) -> Board {
+    let classic = classic_beach(seed, seats, width, height, wraps);
+    match style {
+        BeachStyle::Classic => classic,
+        BeachStyle::Islands
+        | BeachStyle::Lanes
+        | BeachStyle::Lagoon
+        | BeachStyle::Maze
+        | BeachStyle::Driftwood => styles::restyle(classic, style, seed),
+    }
+}
+
+/// The generated beach with today's terrain: the frame and the classic
+/// rocks, walls, pool, kelp and logs, on one stream.
+fn classic_beach(seed: u64, seats: u8, width: u8, height: u8, wraps: bool) -> Board {
     let (width, height) = (width.max(9), height.max(7));
     // Five seats or more put castles on the long edges, and those want the
     // centre column an even width does not have; one tile wider and the six
@@ -356,7 +471,7 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
     let mut board = Board::new(width, height, seed);
     let spots = castle_spots(width, height);
     // Which chair is which castle is drawn with the board: see `seat_spots`.
-    for (seat, spot) in seat_spots(seed, seats)
+    for (seat, spot) in seat_spots(seed, seats, wraps)
         .iter()
         .enumerate()
         .take(seats.clamp(2, MAX_PLAYERS as u8) as usize)
@@ -376,7 +491,9 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
     let sides = side_spawners(width, height);
     let ends = end_spawners(width, height);
     let wanted = holes_wanted(seats);
-    let spots: Vec<(u8, u8, Direction)> = if area >= 240 || wanted > ends.len() {
+    let spots: Vec<(u8, u8, Direction)> = if seats == 3 {
+        three_seat_holes(width, height).to_vec()
+    } else if area >= 240 || wanted > ends.len() {
         sides.iter().chain(ends.iter()).copied().collect()
     } else if roll == 0 && wanted <= sides.len() {
         sides.to_vec()
@@ -458,6 +575,7 @@ pub fn generate_arena(seed: u64, seats: u8, width: u8, height: u8) -> Board {
     set_versus_rules(&mut board, 200 + rng.next_u32() % 80);
     board.rules_mut().round_length = Some(3 * 60 * TICKS_PER_SECOND);
     board.set_events_enabled(true);
+    board.set_wrap(wraps);
     board
 }
 
@@ -484,9 +602,11 @@ mod tests {
         );
     }
 
+    /// Two and four seats sit as the beach was drawn. Three are drawn from
+    /// the seed (see `the_seat_facing_the_empty_spot_is_drawn_not_fixed`).
     #[test]
     fn classic_arena_seats_castles_in_join_order() {
-        for seats in 2..=4u8 {
+        for seats in [2u8, 4] {
             let board = classic_arena(false, seats);
             for seat in 0..4u8 {
                 let &(x, y) = &castle_spots(12, 9)[seat as usize];
@@ -701,10 +821,12 @@ mod tests {
     /// 180-degree opposites: Pairs hands a team a whole pair, Trios hands
     /// each team one seat out of every pair. Shuffle the six spots freely
     /// and a team quietly gets two corners while the other gets two edges.
+    /// Only an even table has teams, and only an even table keeps its pairs:
+    /// an odd one is dealt afresh (see `seat_spots`).
     #[test]
     fn every_seat_pair_still_sits_on_opposite_castles() {
         for seed in 0..200u64 {
-            for seats in 2..=MAX_PLAYERS as u8 {
+            for seats in (2..=MAX_PLAYERS as u8).step_by(2) {
                 let board = generate_arena(seed, seats, 12, 9);
                 let (w, h) = (board.width(), board.height());
                 for pair in 0..usize::from(seats) / 2 {
@@ -769,6 +891,115 @@ mod tests {
             (seeds / 6..seeds / 2).contains(&edge),
             "seat zero took an edge castle {edge} times in {seeds}"
         );
+    }
+
+    /// How often each seat of an odd table sits facing the empty spot, the
+    /// spot whose 180-degree image has no castle, over 300 seeds.
+    fn times_facing_the_empty_spot(seats: u8, build: impl Fn(u64) -> Board) -> Vec<u32> {
+        let mut facing = vec![0u32; usize::from(seats)];
+        for seed in 0..300u64 {
+            let board = build(seed);
+            let (w, h) = (board.width(), board.height());
+            let castles: Vec<(u8, u8)> = (0..seats)
+                .map(|seat| board.castle_of(seat).expect("every seat has a castle"))
+                .collect();
+            for (seat, &(x, y)) in castles.iter().enumerate() {
+                if !castles.contains(&(w - 1 - x, h - 1 - y)) {
+                    facing[seat] += 1;
+                }
+            }
+        }
+        facing
+    }
+
+    /// An odd table leaves a spot empty, and the castle facing it is the
+    /// worst seat at the table (its neighbours share the empty spot's sand).
+    /// Which seat gets it is drawn with the beach, at three and at five, on
+    /// the classic arena and on generated beaches alike, so it is no one
+    /// seat's every round.
+    #[test]
+    fn the_seat_facing_the_empty_spot_is_drawn_not_fixed() {
+        type Build = fn(u64) -> Board;
+        let cases: [(&str, u8, Build); 4] = [
+            ("classic", 3, |seed| classic_arena_seeded(seed, false, 3)),
+            ("12x9", 3, |seed| generate_arena(seed, 3, 12, 9)),
+            ("16x11", 5, |seed| generate_arena(seed, 5, 16, 11)),
+            ("ocean", 5, |seed| generate_beach(seed, 5, 16, 11, true)),
+        ];
+        for (name, seats, build) in cases {
+            let facing = times_facing_the_empty_spot(seats, build);
+            // One castle in the table faces the empty spot each round, so a
+            // seat should hold it 300 / seats times. Loose bounds: a draw.
+            let fair = 300 / u32::from(seats);
+            for (seat, &n) in facing.iter().enumerate() {
+                assert!(
+                    (fair / 2..fair * 3 / 2).contains(&n),
+                    "{name}, {seats} seats: seat {seat} faced the empty spot {n} times in 300"
+                );
+            }
+        }
+    }
+
+    /// Five seats on a beach with edges play the four corners and one
+    /// long-edge centre; on the open ocean it is a corner that stays empty.
+    /// Each is the layout whose spots won within a few points of each
+    /// other in bot rounds (see `five_spots`).
+    #[test]
+    fn five_seats_leave_an_edge_empty_on_land_and_a_corner_at_sea() {
+        for seed in 0..100u64 {
+            for wraps in [false, true] {
+                let board = generate_beach(seed, 5, 16, 11, wraps);
+                let (w, h) = (board.width(), board.height());
+                let corners = (0..5u8)
+                    .filter_map(|seat| board.castle_of(seat))
+                    .filter(|&(x, y)| (x == 1 || x == w - 2) && (y == 1 || y == h - 2))
+                    .count();
+                let expected = match wraps {
+                    false => 4,
+                    true => 3,
+                };
+                assert_eq!(corners, expected, "seed {seed}, wraps {wraps}");
+                assert_eq!(board.wrap(), wraps, "seed {seed}");
+            }
+        }
+    }
+
+    /// A three-seat table plays on the four end holes and no side hole, on
+    /// the classic arena and every generated size: a side hole beside the
+    /// empty corner is one seat's alone (see `three_seat_holes`).
+    #[test]
+    fn three_seats_get_the_end_holes_only() {
+        let holes = |board: &Board| -> Vec<(u8, u8)> {
+            let mut at = Vec::new();
+            for y in 0..board.height() {
+                for x in 0..board.width() {
+                    if let TileKind::Spawner(_) = board.tile_at(x, y) {
+                        at.push((x, y));
+                    }
+                }
+            }
+            at
+        };
+        let ends = |w: u8, h: u8| -> Vec<(u8, u8)> {
+            let mut at: Vec<(u8, u8)> =
+                end_spawners(w, h).iter().map(|&(x, y, _)| (x, y)).collect();
+            at.sort_unstable_by_key(|&(x, y)| (y, x));
+            at
+        };
+        for seed in 0..20u64 {
+            assert_eq!(
+                holes(&classic_arena_seeded(seed, false, 3)),
+                ends(12, 9),
+                "classic seed {seed}"
+            );
+            for (w, h) in [(9, 7), (12, 9), (16, 11), (20, 13)] {
+                assert_eq!(
+                    holes(&generate_arena(seed, 3, w, h)),
+                    ends(w, h),
+                    "{w}x{h} seed {seed}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -922,7 +1153,7 @@ mod tests {
     fn the_seat_draw_is_always_a_permutation_of_the_spots() {
         for seats in 0..=(MAX_PLAYERS as u8 + 2) {
             for seed in [0u64, 1, 7, 42, 0xDECAF, u64::MAX] {
-                let spots = seat_spots(seed, seats);
+                let spots = seat_spots(seed, seats, false);
                 let mut sorted = spots;
                 sorted.sort_unstable();
                 assert_eq!(
@@ -941,8 +1172,8 @@ mod tests {
     fn a_seed_draws_the_same_seats_every_time_and_a_different_one_does_not() {
         for seats in 2..=MAX_PLAYERS as u8 {
             assert_eq!(
-                seat_spots(0xC0FFEE, seats),
-                seat_spots(0xC0FFEE, seats),
+                seat_spots(0xC0FFEE, seats, false),
+                seat_spots(0xC0FFEE, seats, false),
                 "{seats} seats moved between two draws of one seed"
             );
         }
@@ -950,7 +1181,7 @@ mod tests {
         // where there are only two arrangements, but over a spread of them
         // the draw has to be doing something.
         let drawn: std::collections::HashSet<_> =
-            (0..64u64).map(|seed| seat_spots(seed, 6)).collect();
+            (0..64u64).map(|seed| seat_spots(seed, 6, false)).collect();
         assert!(drawn.len() > 1, "every seed drew the same six seats");
     }
 

@@ -11,7 +11,6 @@
 mod beacon;
 pub use beacon::*;
 
-use crate::sim::{INPUT_BYTES, InputMsg};
 use std::io;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 
@@ -93,6 +92,86 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 ///   version 10.
 /// - 32: every `Start` started carrying the seats the results card before
 ///   it crowned (`Start::crowned`).
+/// - 33: every `Start` started carrying the round's input delay
+///   (`Start::delay`), which the host picks from the round trips it
+///   measures with the new `Ping` and `Pong`, and the host started
+///   keeping its players' clocks with it (`Clock`).
+/// - 34: a tick's word between two peers became one `Batch`: inputs as runs
+///   of a seat's frames, what the sender is missing (`wants`), from which
+///   its receiver resends, and the pause, the clock and the seats given up
+///   on riding along; the host sends each peer one, cut from every input
+///   it holds, rather than passing each player's tail on as it came.
+/// - 35: a host started answering a greeting it has no room for (`Full`)
+///   and telling a would-be player past the last chair that it has none
+///   (`NoChair`).
+/// - 36: a batch says which round it is from (`Batch::round`), and its
+///   clock rides the last of its datagrams rather than the first; the
+///   lobby's roster says to each peer whether it has a chair
+///   (`Roster::chair`), and `NoChair` is retired.
+/// - 37: the edge spawner started sending for a gull `GULL_LEAD` ticks
+///   before it lands, the board carrying (and hashing) the gulls on their
+///   way in, so every ambient gull lands later than on 36 and the PRNG is
+///   drawn in a different order.
+/// - 38: a snapshot started carrying who steered each gull and what the
+///   steered gulls took (`steered:` and `stolen:` lines), which a peer on
+///   37 refuses as unknown keys when it is caught up mid-round.
+/// - 39: the lure went from 10 s to 5 s and its quiet spell from 20 s to
+///   30 s; a three-seat table plays on the four end holes, and an odd
+///   table's seats are drawn afresh onto its castles (five seats on a
+///   beach with edges take the four corners and one long-edge centre). A
+///   38 peer lays out a different beach for three or five from the same
+///   `Start` and plays every lure twice as long.
+/// - 40: the map byte names seven handmade versus maps and Surprise
+///   (indices 7 to 14, which a 39 peer reads as other maps), every versus
+///   beach but a player's own is mirrored from the round's seed (Round the
+///   World also rolled by whole strips), and the AI measures through the
+///   seam of an open beach; a level file may say `seats:` and `roll:`,
+///   which a 39 peer refuses as unknown keys in a replay or a sent beach.
+///   A 39 peer builds a different board from the same `Start`, and its AI
+///   seats move differently on the open ocean.
+/// - 41: sparkling crabs went from 2% of spawns to 4%, taken from the
+///   commons, so a 40 peer rolls a different kind from the same draw; and
+///   the Hard AI values a molt's lure for the 5 s it runs, and a molt that
+///   will get home while a lure runs or rests at its points alone, so a 40
+///   peer moves its Hard seats differently.
+/// - 42: a state hash, a pause, a resume and a seat given up on started
+///   saying which round they are from, as a batch has since 36 (the round
+///   tag, first in each), and a peer drops and counts any of another
+///   round. A 41 peer reads the tag as the first byte of the frame. The
+///   bot protocol went from 1 to 2 in the same build, over its own TCP
+///   line rather than these datagrams: a bot registering with 2 is sent
+///   each tick as what changed since the last (`bots::protocol::delta`).
+/// - 43: the Hard AI counts what banking a molt keeps from the rivals, a
+///   full lure for each rival past the first, so a 42 peer moves its Hard
+///   seats differently at three seats and more.
+/// - 44: the roster grew a byte saying the host is picking the map
+///   (`Roster::picking`): the host now picks it once the table is frozen,
+///   at the start in the lobby and between the rounds of a series on the
+///   results card, and the joiners wait on that rather than a dial. A
+///   series stopped stepping its map on by itself.
+/// - 45: the terms grew the seat order (`MatchTerms::order`, six bytes):
+///   the host picks partners in the lobby by moving people between seats,
+///   so the AI need no longer hold the top seats, and every peer builds
+///   its lockstep over the players' seats wherever they are. In the same
+///   version every versus round turns the tide-event wheel, a handmade
+///   beach included (`match_setup::apply_terms`): a 44 peer builds a
+///   custom beach with the wheel off and plays it differently.
+/// - 46: a gull raid takes a third of the castle's bank, not half
+///   (`sim::raid_loss`), so a 45 peer keeps a different score after the
+///   same raid.
+/// - 47: two tide-event rules. A spun Castle Swap with three castles or
+///   more leaves the spinner's castle out of the rotation
+///   (`Board::castle_swap_keeper`), and Speed Up opens the holes twice as
+///   often while it runs (`Board::hole_period`): a 46 peer hands castles
+///   and spawns crabs differently after either.
+/// - 48: four more handmade maps (The Fountain, Four Doors, Gull Road,
+///   Back to Back), appended to the map byte as indices 15 to 18. A 47
+///   peer reads those bytes round its own shorter list (`Cycle::from_index`
+///   wraps) and builds another beach from the same `Start`.
+/// - 49: Round Table retuned for six: its top and bottom holes one tile
+///   nearer the middle and a wall behind each corner castle
+///   (`levels/versus/round_table.txt`). The map byte is unchanged, so a 48
+///   peer builds the old layout from the same `Start`.
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in
@@ -102,29 +181,37 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// frozen for all time**: it is how a build tells "I cannot read this"
 /// apart from "I disagree with this", however the rest of the format
 /// moves.
-pub const PROTOCOL_VERSION: u8 = 32;
+pub const PROTOCOL_VERSION: u8 = 49;
 
 /// Connections a host accepts: five rivals (a six-seat table) and everyone
 /// else who turned up. How many of them get a seat is the lobby's
 /// business, not the socket's.
 ///
-/// One pool for the lot, so at ten a full table left room for four
-/// onlookers and the next person to arrive was ignored: no answer, and a
-/// joiner that hears nothing reports the host as absent rather than the
-/// beach as full.
+/// One pool for the lot, sized for a watched final at a party: a table of
+/// six and some thirty people round it. A peer in line is not sent the
+/// round it is not watching (see `PeerBook::follows_by_plan`), so it costs
+/// a roster line and a ping; a watcher costs the host one datagram a tick
+/// (about 31 a second): with 26 watching, a soaked host sends 961 a
+/// second (77 KB/s) in about 70 microseconds a tick, and a full socket
+/// comes to about 1250.
 ///
-/// Sixteen is affordable because a peer in line is no longer sent the round
-/// it is not watching (see `PeerBook::follows_by_plan`): someone waiting
-/// costs a roster line and a beacon, where before it cost the host about
-/// 180 datagrams a second. A *watcher* still costs that, being in the
-/// round like everybody else.
-pub const MAX_PEERS: usize = 16;
+/// The greeting past the cap is answered with [`NetMsg::Full`] rather than
+/// dropped: a joiner that hears nothing reports the host as absent rather
+/// than the beach as full.
+pub const MAX_PEERS: usize = 40;
 
-/// The receive buffer, which must hold the largest message whole: UDP
-/// truncates a datagram to the buffer given, and a truncated message fails
-/// decode silently. A test proves every message fits. Raised from 512 when
-/// the host became able to send a handmade beach with the invitation.
-const MAX_DATAGRAM: usize = 1024;
+/// The largest datagram this build sends, and its receive buffer, which
+/// must hold the largest message whole: UDP truncates a datagram to the
+/// buffer given, and a truncated message fails decode silently. A test
+/// proves every message fits. Raised from 512 when the host became able to
+/// send a handmade beach with the invitation, and from 1024 when a tick's
+/// inputs to each peer became one datagram (`write_pieces`).
+///
+/// Under any MTU worth worrying about: a datagram past the path MTU is
+/// fragmented, and a fragment lost is the whole datagram lost, so a batch
+/// that needed two IP packets would be a resend that fails twice as often
+/// as the thing it repairs.
+pub const MAX_DATAGRAM: usize = 1200;
 
 /// The most compressed beach an invitation may carry. Everything else in a
 /// `Start` - the seats, the terms, six names at full width - takes a little
@@ -137,7 +224,7 @@ const MAX_DATAGRAM: usize = 1024;
 /// bytes and fits; one with a crab on every tile packs to over 1300.
 ///
 /// `a_start_carrying_the_largest_beach_still_fits` holds the arithmetic.
-pub const MAX_BEACH_BYTES: usize = 824;
+pub const MAX_BEACH_BYTES: usize = 823;
 
 /// A non-blocking UDP endpoint. A joiner talks to one peer (the host); a
 /// host accepts up to [`MAX_PEERS`] of them, five rivals and a few
@@ -184,6 +271,79 @@ impl Drop for UdpTransport {
     }
 }
 
+/// This machine's own clock in milliseconds, for a [`NetMsg::Ping`]'s
+/// stamp. Only the machine that wrote a stamp reads it back, so any origin
+/// does: this one is the first time it is asked. Wraps after seven weeks,
+/// which [`round_trip_since`] reads through.
+pub fn ping_stamp() -> u32 {
+    if let Some(ms) = STEERED_PING_CLOCK.get() {
+        return ms;
+    }
+    static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let elapsed = ORIGIN.get_or_init(std::time::Instant::now).elapsed();
+    // Truncated on purpose: the stamp is read back as a difference.
+    elapsed.as_millis() as u32
+}
+
+thread_local! {
+    /// The milliseconds [`ping_stamp`] reads on this thread in place of
+    /// the machine's clock, while a harness steers it
+    /// ([`steer_ping_clock`]). Never set in the game.
+    static STEERED_PING_CLOCK: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+/// Read `ms` as the time for every [`ping_stamp`] on this thread: for a
+/// harness that plays a table at virtual time (`examples/soak`), where a
+/// round trip of a few virtual ticks is over in microseconds of the real
+/// clock and would pick every next round the shortest delay there is.
+/// Per thread, so tables played side by side keep their own time.
+pub fn steer_ping_clock(ms: u32) {
+    STEERED_PING_CLOCK.set(Some(ms));
+}
+
+/// The longest round trip a [`NetMsg::Pong`] is believed about. Anything
+/// slower is a stamp from somewhere else (or from a ping long forgotten),
+/// and a link that slow is played at the longest delay anyway.
+const SLOWEST_ROUND_TRIP_MS: u32 = 5_000;
+
+/// The seconds since [`ping_stamp`] read `stamp`, for the `Pong` that
+/// carries it back, or `None` for a stamp this machine cannot have
+/// written lately.
+pub fn round_trip_since(stamp: u32) -> Option<f32> {
+    let ms = ping_stamp().wrapping_sub(stamp);
+    (ms <= SLOWEST_ROUND_TRIP_MS).then(|| ms as f32 / 1000.0)
+}
+
+/// A UDP socket on every interface at `port`, where 0 asks the system for
+/// a free one: never one of the [`LOBBY_PORTS`]. They sit inside the range
+/// the system hands out (32768 to 60999 on Linux), so a game socket or an
+/// announcer could draw one and take a rung of the ladder from a lobby on
+/// this machine, and a test's listener that drew one heard every real
+/// beacon on the LAN.
+pub fn bind_udp(port: u16) -> io::Result<UdpSocket> {
+    match port {
+        0 => off_the_ladder(&LOBBY_PORTS, || UdpSocket::bind(("0.0.0.0", 0))),
+        port => UdpSocket::bind(("0.0.0.0", port)),
+    }
+}
+
+/// The first socket `bind` gives whose port is not on `ladder`. The ones
+/// turned down are held until then, so the system cannot hand the same
+/// port straight back, and with every rung held the next one is off it.
+fn off_the_ladder(
+    ladder: &[u16],
+    mut bind: impl FnMut() -> io::Result<UdpSocket>,
+) -> io::Result<UdpSocket> {
+    let mut turned_down = Vec::new();
+    loop {
+        let socket = bind()?;
+        if !ladder.contains(&socket.local_addr()?.port()) {
+            return Ok(socket);
+        }
+        turned_down.push(socket);
+    }
+}
+
 /// This machine's address on the network it would reach a beach over, or
 /// `None` if it has no route out of itself.
 ///
@@ -207,7 +367,7 @@ impl UdpTransport {
     /// Host: bind the given port; peers register from their first valid
     /// packet.
     pub fn host(port: u16) -> io::Result<UdpTransport> {
-        let socket = UdpSocket::bind(("0.0.0.0", port))?;
+        let socket = bind_udp(port)?;
         socket.set_nonblocking(true)?;
         Ok(UdpTransport {
             socket,
@@ -220,7 +380,7 @@ impl UdpTransport {
 
     /// Joiner: bind an ephemeral port and talk only to the host.
     pub fn join(host: impl ToSocketAddrs) -> io::Result<UdpTransport> {
-        let socket = UdpSocket::bind(("0.0.0.0", 0))?;
+        let socket = bind_udp(0)?;
         socket.set_nonblocking(true)?;
         let peer = host
             .to_socket_addrs()?
@@ -264,29 +424,28 @@ impl UdpTransport {
         }
     }
 
-    /// Send a tick's worth of inputs, in as few datagrams as the cap
-    /// allows, to every peer `hears` says is following the round.
+    /// Send one batch, in as few datagrams as [`MAX_DATAGRAM`] allows
+    /// (`write_pieces`), to every peer `hears` says is following the round.
     ///
     /// The audience is the caller's business and not the socket's: who is
     /// at the table, who is watching and who is in line for the next
-    /// round is the lobby's bookkeeping.
-    ///
-    /// Encodes once per datagram rather than once per peer, and into the
-    /// stack: this is the one path the game walks thousands of times a
-    /// second, and a `Vec` per recipient was most of what it allocated.
-    pub fn send_inputs(&self, msgs: &[InputMsg], mut hears: impl FnMut(usize) -> bool) {
-        if msgs.is_empty() {
+    /// round is the lobby's bookkeeping. Encoded once, whoever hears it.
+    pub fn send_batch(&self, batch: &Batch, mut hears: impl FnMut(usize) -> bool) {
+        let audience: Vec<&SocketAddr> = self
+            .peers
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| hears(*index))
+            .map(|(_, peer)| peer)
+            .collect();
+        if audience.is_empty() {
             return;
         }
-        for chunk in msgs.chunks(MAX_INPUTS_PER_DATAGRAM) {
-            let mut buf = [0u8; MAX_DATAGRAM];
-            let len = encode_inputs(chunk, &mut buf);
-            for (index, peer) in self.peers.iter().enumerate() {
-                if hears(index) {
-                    let _ = self.socket.send_to(&buf[..len], peer);
-                }
+        write_pieces(batch, |bytes| {
+            for peer in &audience {
+                let _ = self.socket.send_to(bytes, peer);
             }
-        }
+        });
     }
 
     /// Put arbitrary bytes on the wire: the only way to write a datagram
@@ -389,10 +548,13 @@ impl UdpTransport {
                         // and the second or third copy of a goodbye whose
                         // sender was forgotten on the first sat a nameless
                         // row at the table until the next sweep.
-                        None if self.accept_new
-                            && msg.greets()
-                            && self.peers.len() < self.max_peers =>
-                        {
+                        None if self.accept_new && msg.greets() => {
+                            if self.peers.len() >= self.max_peers {
+                                // No room, said so: once per greeting,
+                                // which a joiner repeats once a second.
+                                let _ = self.socket.send_to(&NetMsg::Full.encode(), from);
+                                continue;
+                            }
                             self.peers.push(from);
                             self.peers.len() - 1
                         }
@@ -435,6 +597,32 @@ pub use wire::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A system port that lands on the ladder is turned down, and held
+    /// while the next is drawn: here the first two sockets drawn stand for
+    /// lobby ports, and the third is the one kept.
+    #[test]
+    fn a_free_port_is_never_a_lobby_port() {
+        let mut drawn: Vec<UdpSocket> = (0..3)
+            .map(|_| UdpSocket::bind(("127.0.0.1", 0)).expect("bind"))
+            .collect();
+        let ports: Vec<u16> = drawn
+            .iter()
+            .map(|socket| socket.local_addr().expect("port").port())
+            .collect();
+        drawn.reverse();
+        let mut draws = 0;
+        let kept = off_the_ladder(&ports[..2], || {
+            draws += 1;
+            Ok(drawn.pop().expect("a socket left"))
+        })
+        .expect("a socket");
+        assert_eq!(kept.local_addr().expect("port").port(), ports[2]);
+        assert_eq!(draws, 3, "both ladder ports turned down");
+        let socket = bind_udp(0).expect("bind");
+        let port = socket.local_addr().expect("port").port();
+        assert!(!LOBBY_PORTS.contains(&port), "{port} is a lobby port");
+    }
 
     /// A peer asked to leave stays out. Its greeting already in flight, or
     /// the next one from a joiner that missed the word, is answered with
@@ -508,16 +696,29 @@ mod tests {
         let mut host = UdpTransport::host(0).expect("bind");
         let port = host.local_addr().expect("addr").port();
         let stranger = UdpTransport::join(("127.0.0.1", port)).expect("join");
-        stranger.send(NetMsg::Pause { frame: 40 });
-        stranger.send(NetMsg::Resume { frame: 40 });
-        stranger.send(NetMsg::Hash { frame: 30, hash: 1 });
+        stranger.send(NetMsg::Pause {
+            round: 0,
+            frame: 40,
+        });
+        stranger.send(NetMsg::Resume {
+            round: 0,
+            frame: 40,
+        });
+        stranger.send(NetMsg::Hash {
+            round: 0,
+            frame: 30,
+            hash: 1,
+        });
         stranger.send(NetMsg::chat("Bo", "hi"));
-        stranger.send_inputs(
-            &[InputMsg {
-                player: 1,
-                frame: 3,
-                action: crate::sim::PlayerAction::None,
-            }],
+        stranger.send_batch(
+            &Batch {
+                inputs: vec![crate::sim::InputMsg {
+                    player: 1,
+                    frame: 3,
+                    action: crate::sim::PlayerAction::None,
+                }],
+                ..Batch::default()
+            },
             |_| true,
         );
         for _ in 0..20 {
@@ -568,6 +769,17 @@ mod tests {
         assert_eq!(host.peer_count(), 0, "and it claimed no seat at the table");
     }
 
+    /// A `Pong` is timed by the stamp its `Ping` carried: read back at
+    /// once it is a round trip of next to nothing, and a stamp this
+    /// machine cannot have written lately says nothing at all.
+    #[test]
+    fn a_pong_is_timed_by_its_own_stamp() {
+        let now = ping_stamp();
+        assert!(round_trip_since(now).is_some_and(|seconds| seconds < 1.0));
+        assert_eq!(round_trip_since(now.wrapping_add(60_000)), None);
+        assert_eq!(round_trip_since(now.wrapping_sub(60_000)), None);
+    }
+
     /// A socket that closes says so, to every peer it has, and one that
     /// is handed on (moved) says nothing.
     #[test]
@@ -611,12 +823,13 @@ mod tests {
     }
 
     /// The socket takes peers up to [`MAX_PEERS`] and refuses the rest,
-    /// without the refused ones costing anything already connected.
+    /// out loud and without the refused ones costing anything already
+    /// connected.
     #[test]
     fn host_accepts_peers_up_to_its_cap() {
         let mut host = UdpTransport::host(0).expect("bind");
         let port = host.local_addr().expect("addr").port();
-        let joiners: Vec<UdpTransport> = (0..MAX_PEERS + 2)
+        let mut joiners: Vec<UdpTransport> = (0..MAX_PEERS + 2)
             .map(|_| UdpTransport::join(("127.0.0.1", port)).expect("join"))
             .collect();
         for joiner in &joiners {
@@ -633,6 +846,21 @@ mod tests {
             host.peer_count(),
             MAX_PEERS,
             "the ones past the cap are refused"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let told: Vec<bool> = joiners
+            .iter_mut()
+            .map(|joiner| {
+                joiner
+                    .recv_all()
+                    .iter()
+                    .any(|(msg, _)| *msg == NetMsg::Full)
+            })
+            .collect();
+        assert_eq!(
+            told.iter().filter(|full| **full).count(),
+            2,
+            "and each of them is told the beach is full"
         );
     }
 }

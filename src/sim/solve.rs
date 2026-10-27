@@ -1,4 +1,4 @@
-//! Brute-force puzzle validation (spec §5.4): search signpost placements
+//! Brute-force puzzle validation (spec §5.3): search signpost placements
 //! against the headless sim until one meets the level's goal.
 //!
 //! The search is depth-first over placement counts 0..=inventory. Candidate
@@ -7,15 +7,27 @@
 //! outcome, and the candidate set is recomputed at each depth so placements
 //! that open new paths are still found.
 
-use crate::sim::board::{Board, TileKind};
+use crate::sim::board::{Board, PlayerId, TileKind};
+use crate::sim::crab::Handedness;
 use crate::sim::direction::Direction;
 use crate::sim::level::{Level, PuzzleOutcome};
 
-/// A signpost as an instruction: where it goes and which way it points.
+/// A signpost as an instruction: where it goes, which way it points, and
+/// whose hand puts it down (seat 0 on every stage but a co-op one, where
+/// seat 1's arrows are the right claw's: see `Rules::claw_hands`).
 ///
-/// The same triple is a solution step, a hint, and a line in a level file,
-/// so it is one name rather than three spellings.
-pub type Placement = (u8, u8, Direction);
+/// The same four are a solution step, a hint, and a line in a level file,
+/// so they are one name rather than three spellings.
+pub type Placement = (u8, u8, Direction, PlayerId);
+
+/// The seats whose arrows a search on `board` places: both hands under
+/// claw-keyed arrows, else the one seat every puzzle is played for.
+fn placing_seats(board: &Board) -> &'static [PlayerId] {
+    match board.rules().claw_hands {
+        Some(_) => &[0, 1],
+        None => &[0],
+    }
+}
 
 /// Boards a budgeted search may simulate before it gives up.
 ///
@@ -77,6 +89,16 @@ pub fn solve(level: &Level) -> SolveOutcome {
 
 /// [`solve`], with the ceiling named by the caller.
 pub fn solve_with(level: &Level, effort: Effort) -> SolveOutcome {
+    solve_from(level, effort, 0)
+}
+
+/// [`solve_with`], trying no fewer than `fewest` signposts: for a caller
+/// that already knows fewer cannot win, such as the editor's second
+/// search past a grant the first proved short. Each count is a search of
+/// its own (the memo starts afresh at each), so the counts skipped are
+/// work saved and change nothing about the counts searched; the first
+/// that wins is still the fewest from `fewest` up.
+pub fn solve_from(level: &Level, effort: Effort, fewest: u8) -> SolveOutcome {
     let mut search = Search::new(level, effort);
     // No deeper than the board can hold. Every post goes down before the
     // first tick, so past the cap a placement either is refused (Reject)
@@ -91,8 +113,14 @@ pub fn solve_with(level: &Level, effort: Effort) -> SolveOutcome {
     // order cannot matter, and under Evict past the cap the order decides
     // which post goes; backing out of a placement that evicted one would
     // not put the evicted one back either.
-    let (cap, _) = search.sim.signpost_rule();
-    for depth in 0..=level.posts.min(cap) {
+    //
+    // Saturating: two hands pasted into the editor may hold more between
+    // them than a `u8` counts, and the grant is a `u8` anyway.
+    let room = placing_seats(&search.sim)
+        .iter()
+        .map(|&seat| search.sim.signpost_cap_of(seat))
+        .fold(0u8, u8::saturating_add);
+    for depth in fewest..=level.posts.min(room) {
         let mut board = level.board();
         if let Some(mut placements) = search.search_at(&mut board, depth) {
             placements.reverse();
@@ -133,10 +161,10 @@ struct Search<'a> {
     /// spend says nothing about the same set with two. Carrying the memo
     /// across those runs made `Both Lanes` unsolvable.
     ///
-    /// Keyed by `(x, y, Direction::id)` so the set can be sorted and hashed
-    /// without asking a sim type to grow orderings it has no other use
-    /// for.
-    seen: std::collections::HashSet<Vec<(u8, u8, u8)>>,
+    /// Keyed by `(x, y, Direction::id, seat)` so the set can be sorted and
+    /// hashed without asking a sim type to grow orderings it has no other
+    /// use for.
+    seen: std::collections::HashSet<Vec<(u8, u8, u8, u8)>>,
     /// The signposts standing right now, in placement order.
     placed: Vec<Placement>,
     /// The board every simulation is played on, kept from node to node.
@@ -151,20 +179,40 @@ struct Search<'a> {
     /// answer out, and is finished with it before recursing, so one board
     /// serves the whole search rather than one per depth.
     sim: Board,
-    /// Scratch for [`Search::visited_placeable_tiles`]: one flag per tile,
+    /// Scratch for [`Search::visited_placeable_tiles`]: per tile, which
+    /// walkers arrived there ([`LEFT_CLAW`], [`RIGHT_CLAW`], [`GULL`]),
     /// resized to the board and refilled per call.
-    visited: Vec<bool>,
+    visited: Vec<u8>,
     /// Candidate-tile buffers, handed back here as each level unwinds.
     ///
     /// This one does need a buffer per depth: `run` reads its candidates
     /// for as long as it is looping over them, and that loop spans its
     /// recursive calls. The depth is the level's inventory, so the pool
     /// settles at a handful of buffers and stops growing.
-    tile_pool: Vec<Vec<(u8, u8)>>,
+    tile_pool: Vec<Vec<(u8, u8, PlayerId)>>,
     /// Scratch for the memo key, so that a node the memo already holds
     /// costs a lookup and nothing else. Only a node that is new to the memo
     /// allocates, and that allocation is the memo's own entry.
-    key: Vec<(u8, u8, u8)>,
+    key: Vec<(u8, u8, u8, u8)>,
+}
+
+/// A left-clawed crab arrived at the tile ([`Search::visited`]).
+const LEFT_CLAW: u8 = 1;
+/// A right-clawed crab arrived at the tile.
+const RIGHT_CLAW: u8 = 2;
+/// A gull arrived at the tile, which every arrow turns.
+const GULL: u8 = 4;
+
+/// The walkers an arrow of `seat`'s turns on `board`, as [`Search::visited`]
+/// flags: everyone, unless claw-keyed arrows give it one claw's crabs and
+/// the gulls.
+fn turned_by(board: &Board, seat: PlayerId) -> u8 {
+    match (board.rules().claw_hands, crate::sim::board::claw_of(seat)) {
+        (Some(_), Some(Handedness::Left)) => LEFT_CLAW | GULL,
+        (Some(_), Some(Handedness::Right)) => RIGHT_CLAW | GULL,
+        (Some(_), None) => 0,
+        (None, _) => LEFT_CLAW | RIGHT_CLAW | GULL,
+    }
 }
 
 impl<'a> Search<'a> {
@@ -207,8 +255,8 @@ impl<'a> Search<'a> {
     /// Does this exact board win on its own, by the level's own reckoning?
     ///
     /// The judge is [`Level::outcome`], the same one the game uses, rather
-    /// than a copy of the all-crabs rule: a Beach Day stage asks for a
-    /// number banked, or for nobody eaten, and a solver that only knows how
+    /// than a copy of the all-crabs rule: a stage may ask for a number
+    /// banked, or for nobody eaten, and a solver that only knows how
     /// to bank every crab reports "no solution" for beatable stages.
     fn wins(&mut self, board: &Board) -> bool {
         if !self.charge() {
@@ -218,49 +266,57 @@ impl<'a> Search<'a> {
         self.level.play_out(&mut self.sim).0 == PuzzleOutcome::Won
     }
 
-    /// Tiles any creature arrives at during a run of the current board: the
-    /// only places a new signpost could matter. Gulls count too: a solution
-    /// may hinge on steering a gull away from the crabs. Restricted to empty,
-    /// signpost-free tiles (the only legal placements).
+    /// Tiles a creature an arrow would turn arrives at during a run of the
+    /// current board, with the seat whose arrow it would be: the only
+    /// places a new signpost could matter. Gulls count too: a solution may
+    /// hinge on steering a gull away from the crabs. Under claw-keyed
+    /// arrows a tile only left-clawed crabs cross is a candidate for P1's
+    /// hand alone, since P2's arrow there turns nobody. Restricted to
+    /// empty, signpost-free tiles (the only legal placements), and to seats
+    /// with a hand to place.
     ///
     /// Answers into `tiles` rather than into a fresh `Vec`, so that the
     /// caller can lend the same buffer to node after node.
-    fn visited_placeable_tiles(&mut self, board: &Board, tiles: &mut Vec<(u8, u8)>) {
+    fn visited_placeable_tiles(&mut self, board: &Board, tiles: &mut Vec<(u8, u8, PlayerId)>) {
         tiles.clear();
         if !self.charge() {
             return;
         }
         self.sim.copy_from(board);
         self.visited.clear();
-        self.visited.resize(
-            self.sim.width() as usize * self.sim.height() as usize,
-            false,
-        );
+        self.visited
+            .resize(self.sim.width() as usize * self.sim.height() as usize, 0);
         for _ in 0..Level::deadline(&self.sim) {
             self.sim.tick_idle();
             for crab in self.sim.crabs() {
-                self.visited[crab.tile as usize] = true;
+                self.visited[crab.tile as usize] |= match crab.handed {
+                    Handedness::Left => LEFT_CLAW,
+                    Handedness::Right => RIGHT_CLAW,
+                };
             }
             for gull in self.sim.gulls() {
-                self.visited[gull.tile as usize] = true;
+                self.visited[gull.tile as usize] |= GULL;
             }
             // Once the goal is decided, by the same judge `wins` plays to,
             // nothing later matters: a post only acts on what arrives at
             // it, so a tile first reached after the decision cannot change
             // it. A quiet beach is not a decision on a stage that plays on
-            // (a hole spawns more, a Beach Day stage banks a number or
-            // holds out to the clock), and scanning on to the deadline
+            // (a hole spawns more, a stage banks a number or holds out to
+            // the clock), and scanning on to the deadline
             // after a win or a loss is wasted ticks on every node.
             if self.level.outcome(&self.sim) != PuzzleOutcome::Running {
                 break;
             }
         }
         for (x, y, kind) in board.tiles() {
-            if self.visited[usize::from(board.index_of(x, y))]
-                && kind == TileKind::Empty
-                && board.signpost_at(x, y).is_none()
-            {
-                tiles.push((x, y));
+            let arrived = self.visited[usize::from(board.index_of(x, y))];
+            if arrived == 0 || kind != TileKind::Empty || board.signpost_at(x, y).is_some() {
+                continue;
+            }
+            for &seat in placing_seats(board) {
+                if arrived & turned_by(board, seat) != 0 && board.signpost_cap_of(seat) > 0 {
+                    tiles.push((x, y, seat));
+                }
             }
         }
     }
@@ -283,8 +339,11 @@ impl<'a> Search<'a> {
         // matter: a set of `d` posts has up to `d` parents, each playing the
         // full board out again.
         self.key.clear();
-        self.key
-            .extend(self.placed.iter().map(|(x, y, dir)| (*x, *y, dir.id())));
+        self.key.extend(
+            self.placed
+                .iter()
+                .map(|&(x, y, dir, seat)| (x, y, dir.id(), seat)),
+        );
         self.key.sort_unstable();
         if self.seen.contains(&self.key) {
             return None;
@@ -298,27 +357,91 @@ impl<'a> Search<'a> {
         let mut tiles = self.tile_pool.pop().unwrap_or_default();
         self.visited_placeable_tiles(board, &mut tiles);
         let mut found = None;
-        'candidates: for &(x, y) in &tiles {
+        'candidates: for &(x, y, seat) in &tiles {
             for dir in Direction::ALL {
                 if self.gave_up {
                     break 'candidates;
                 }
-                if !board.place_signpost(0, x, y, dir) {
+                if !board.place_signpost(seat, x, y, dir) {
                     continue;
                 }
-                self.placed.push((x, y, dir));
+                self.placed.push((x, y, dir, seat));
                 if let Some(mut placements) = self.run(board, depth - 1) {
-                    placements.push((x, y, dir));
+                    placements.push((x, y, dir, seat));
                     found = Some(placements);
                     break 'candidates;
                 }
                 self.placed.pop();
-                board.remove_signpost(0, x, y);
+                board.remove_signpost(seat, x, y);
             }
         }
         tiles.clear();
         self.tile_pool.push(tiles);
         found
+    }
+}
+
+/// What a co-op stage was tried under, beside its own two hands: each the
+/// same beach with its arrows dealt another way ([`Level::with_hands`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Deal {
+    /// One arrow fewer in this seat's hand: the hand is minimal when this
+    /// loses.
+    Short(PlayerId),
+    /// Every arrow in this seat's hand and none in the other's: one
+    /// player alone. The stage needs both when this loses for both seats.
+    Alone(PlayerId),
+    /// As many arrows, each turning every crab: the stage as a solo puzzle
+    /// with a quota. It needs the claw split when this loses.
+    Ordinary,
+}
+
+impl Deal {
+    /// Every way a co-op stage of `hands` is tried, in the order the
+    /// guards ask: the hands short first, then one player alone, then
+    /// ordinary arrows. A hand already empty has no shorter version.
+    pub fn all(hands: [u8; 2]) -> Vec<Deal> {
+        let mut deals: Vec<Deal> = (0..2)
+            .filter(|&seat| hands[usize::from(seat)] > 0)
+            .map(Deal::Short)
+            .collect();
+        deals.extend([Deal::Alone(0), Deal::Alone(1), Deal::Ordinary]);
+        deals
+    }
+
+    /// `level`, a co-op stage, with its arrows dealt this way.
+    pub fn level(self, level: &Level) -> Level {
+        let hands = level.hands().unwrap_or([level.posts, 0]);
+        let total = hands[0].saturating_add(hands[1]);
+        match self {
+            Deal::Short(seat) => {
+                let mut short = hands;
+                short[usize::from(seat)] = short[usize::from(seat)].saturating_sub(1);
+                level.with_hands(Some(short), 0)
+            }
+            Deal::Alone(0) => level.with_hands(Some([total, 0]), 0),
+            Deal::Alone(_) => level.with_hands(Some([0, total]), 0),
+            Deal::Ordinary => level.with_hands(None, total),
+        }
+    }
+}
+
+/// Whether a co-op stage needs both players: tried with every arrow in
+/// P1's hand and then in P2's, and won by neither. `Found` names a deal
+/// one player wins alone, with its placements; `Unsolvable` is the proof
+/// that the stage needs two; `GaveUp` says the budget ran out first.
+pub fn needs_both(level: &Level, effort: Effort) -> SolveOutcome {
+    let mut gave_up = false;
+    for seat in [0, 1] {
+        match solve_with(&Deal::Alone(seat).level(level), effort) {
+            found @ SolveOutcome::Found(_) => return found,
+            SolveOutcome::Unsolvable => {}
+            SolveOutcome::GaveUp => gave_up = true,
+        }
+    }
+    match gave_up {
+        true => SolveOutcome::GaveUp,
+        false => SolveOutcome::Unsolvable,
     }
 }
 
@@ -353,6 +476,42 @@ mod tests {
     use crate::sim::campaign_levels;
     use crate::sim::level::PuzzleOutcome;
 
+    /// A search that starts past the counts already proved short finds
+    /// the same fewest signposts for a fraction of the work: the editor's
+    /// second search past a grant, which repeated the first search's
+    /// counts and cost it many times over.
+    #[test]
+    fn a_search_from_a_count_skips_the_counts_below_it() {
+        let level = campaign_levels()
+            .into_iter()
+            .find(|level| level.posts >= 2)
+            .expect("a campaign stage of two signposts or more");
+        let budget = DEFAULT_NODE_BUDGET * 4;
+        let spent = |fewest: u8| {
+            let mut search = Search::new(&level, Effort::Budget(budget));
+            let mut found = None;
+            for depth in fewest..=level.posts {
+                let mut board = level.board();
+                if let Some(placements) = search.search_at(&mut board, depth) {
+                    found = Some(placements.len());
+                    break;
+                }
+            }
+            (found, budget - search.fuel.unwrap_or(0))
+        };
+        let (all, all_cost) = spent(0);
+        let (past, past_cost) = spent(level.posts);
+        assert_eq!(all, Some(usize::from(level.posts)), "{}", level.name);
+        assert_eq!(past, all);
+        assert!(past_cost < all_cost, "{past_cost} vs {all_cost}");
+        let SolveOutcome::Found(placements) =
+            solve_from(&level, Effort::Budget(budget), level.posts)
+        else {
+            panic!("{} wins at its grant", level.name);
+        };
+        assert_eq!(placements.len(), usize::from(level.posts));
+    }
+
     #[test]
     fn solver_cracks_an_early_campaign_level() {
         // Level 2, "First Turn": one post, one crab.
@@ -364,8 +523,8 @@ mod tests {
         assert!(solution.len() <= level.posts as usize);
         // Replay the found solution to be sure.
         let mut board = level.board();
-        for &(x, y, dir) in &solution {
-            assert!(board.place_signpost(0, x, y, dir));
+        for &(x, y, dir, seat) in &solution {
+            assert!(board.place_signpost(seat, x, y, dir));
         }
         let (outcome, _) = level.play_out(&mut board);
         assert_eq!(
@@ -403,8 +562,8 @@ map:
         };
         assert_eq!(solution.len(), 1, "{solution:?}");
         let mut board = level.board();
-        for &(x, y, dir) in &solution {
-            assert!(board.place_signpost(0, x, y, dir));
+        for &(x, y, dir, seat) in &solution {
+            assert!(board.place_signpost(seat, x, y, dir));
         }
         assert_eq!(level.play_out(&mut board).0, PuzzleOutcome::Won);
 
@@ -469,6 +628,29 @@ map:
         assert_eq!(solve_with(&level, Effort::Budget(4)), SolveOutcome::GaveUp);
     }
 
+    /// Two hands holding more between them than a `u8` counts, as a
+    /// pasted level can hand the editor's check, are searched up to the
+    /// grant rather than overflowing the count of room on the board.
+    #[test]
+    fn two_hands_past_a_u8_do_not_overflow_the_room() {
+        let text = "\
+name: Big Hands
+posts: 1
+crab: 0,0 R L common
+map:
++-+-+-+
+|. . 0|
++-+-+-+
+";
+        let level = Level::parse(text)
+            .expect("parses")
+            .with_hands(Some([250, 9]), 0);
+        assert!(matches!(
+            solve_with(&level, Effort::Budget(64)),
+            SolveOutcome::Found(_)
+        ));
+    }
+
     /// A beach can fall quiet and fill again: on a stage that banks a
     /// number, the tiles the next crab out of the hole walks are still
     /// places a post could matter. Here the turnstile sends the first crab
@@ -496,7 +678,10 @@ map:
         let mut search = Search::new(&level, Effort::Exhaustive);
         let mut tiles = Vec::new();
         search.visited_placeable_tiles(&level.board(), &mut tiles);
-        assert!(tiles.contains(&(1, 2)), "the second crab's tile: {tiles:?}");
+        assert!(
+            tiles.contains(&(1, 2, 0)),
+            "the second crab's tile: {tiles:?}"
+        );
     }
 
     /// The scan ends where the goal is decided, not at the deadline: once
@@ -525,7 +710,7 @@ map:
         let mut search = Search::new(&level, Effort::Exhaustive);
         let mut tiles = Vec::new();
         search.visited_placeable_tiles(&level.board(), &mut tiles);
-        assert!(!tiles.contains(&(1, 2)), "past the decision: {tiles:?}");
+        assert!(!tiles.contains(&(1, 2, 0)), "past the decision: {tiles:?}");
         assert!(search.sim.ticks() < Level::deadline(&search.sim));
     }
 

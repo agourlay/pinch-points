@@ -223,19 +223,24 @@ pub(super) fn refresh_hosts(
     });
 }
 
-/// Which row a full list gives up to a new id, if any may go: the one
-/// heard fewest times, and of those the one heard from longest ago. Never
-/// one in `held`.
+/// Which row a full list gives up to a new id, if any may go: one heard
+/// only once, the one heard from longest ago. Never one in `held`, and
+/// never a beach heard more than once.
 ///
 /// Not simply the stalest. One sender making up a fresh id per packet has
 /// every one of its rows at age zero, while a real beach is heard once a
 /// second, or once every few up the port ladder, so the stalest is always
 /// a real beach. A made-up id is heard once.
+///
+/// And not the fewest heard of all: with the list full of real beaches
+/// that is a real beach, whose row a newcomer would take and lose back at
+/// its next beacon, two rows swapping under the cursor every second. A
+/// beach past a full list of real ones is listed once one of them leaves.
 pub(super) fn the_row_to_give_up(hosts: &[HostEntry], held: &[SocketAddr]) -> Option<usize> {
     hosts
         .iter()
         .enumerate()
-        .filter(|(_, host)| !held.contains(&host.addr))
+        .filter(|(_, host)| !held.contains(&host.addr) && host.heard <= 1)
         .min_by(|(_, a), (_, b)| a.heard.cmp(&b.heard).then(b.age.total_cmp(&a.age)))
         .map(|(at, _)| at)
 }
@@ -294,7 +299,6 @@ pub fn discover(time: Res<Time>, settings: Res<GameSettings>, mut state: ResMut<
         state.let_go();
         state.feedback = settings.tr().lobby_host_closed.to_string();
     }
-    out_of_the_queue(&mut state, settings.tr());
     state.settle_cursor();
 }
 
@@ -320,32 +324,6 @@ fn learn_the_beach(state: &mut LobbyState) {
     }
 }
 
-/// A joiner queued for the next round of a beach whose round is over and
-/// whose host is back in the lobby, gathering: it is at the table now, not
-/// in line, and says so. The queue is told on the way in and nothing ever
-/// takes it back, so "you are next up" stayed on the status line and "in
-/// line for the next round" on the prompt until the launch.
-fn out_of_the_queue(state: &mut LobbyState, tr: &'static crate::app::i18n::Tr) {
-    let Some(joined) = state.joined() else {
-        return;
-    };
-    if joined.queued.is_none() {
-        return;
-    }
-    let gathering = state.joined_entry().is_some_and(|host| !host.running);
-    if !gathering {
-        return;
-    }
-    let watching = joined.watching;
-    if let Some(joined) = state.joined_mut() {
-        joined.queued = None;
-    }
-    state.feedback = match watching {
-        true => tr.lobby_watching.to_string(),
-        false => tr.lobby_aboard.to_string(),
-    };
-}
-
 /// [`refresh_hosts`] for a lobby holding no row, at the usual
 /// [`HOST_TTL`]: what most tests of the list ask.
 #[cfg(test)]
@@ -366,27 +344,66 @@ fn host_closed(state: &LobbyState, heard: &[(SocketAddr, Beacon)]) -> bool {
     )
 }
 
-/// A browser's arrows walk the beach list. Enter takes the one under the
-/// cursor, and the digit keys stay as a shortcut to the first nine, since
-/// "press 3" is a fast thing to shout across a room.
+/// A browser's arrows walk the beach list, and a number key puts the
+/// cursor on that row; Enter takes the one under the cursor.
+///
+/// A number only points, never joins: the list is sorted by name, so a
+/// beach coming on the air above the one meant moves every number down,
+/// and "press 3" shouted across a room would join whichever beach had
+/// slid into row three. Pointed at, the beach's name is under the cursor to be
+/// read before Enter, and the cursor then follows that beach, not the row.
 ///
 /// Arrows only, not the W/S pairing the other menus also accept: W is the
 /// watch toggle here, and has been since before there was a list to walk.
 pub(super) fn walk_the_list(keys: &ButtonInput<KeyCode>, state: &mut LobbyState) {
-    if !state.standing().at_a_beach() {
-        if keys.just_pressed(KeyCode::ArrowUp) {
-            state.step_cursor(Nav::Up);
-        }
-        if keys.just_pressed(KeyCode::ArrowDown) {
-            state.step_cursor(Nav::Down);
-        }
+    if state.standing().at_a_beach() {
+        return;
     }
+    if keys.just_pressed(KeyCode::ArrowUp) {
+        state.step_cursor(Nav::Up);
+    }
+    if keys.just_pressed(KeyCode::ArrowDown) {
+        state.step_cursor(Nav::Down);
+    }
+    let digit = crate::app::menu_ui::number_pressed(keys, crate::app::menu_ui::NUMBER_KEYS.len());
+    state.point_at(digit);
 }
 
 #[cfg(test)]
 mod list_tests {
     use super::*;
     use crate::app::i18n::EN;
+
+    /// A number key points at the row it names and joins nothing: the
+    /// cursor then follows that beach, so one sorting in above it moves
+    /// the row and not the choice, and a number past the list points at
+    /// nothing.
+    #[test]
+    fn a_number_points_at_a_row_and_the_cursor_keeps_its_beach() {
+        let mut state = LobbyState::default();
+        refresh_open(
+            &mut state.hosts,
+            &[
+                beach(1, "Cove", 1, 6, false),
+                beach(2, "Dunes", 1, 6, false),
+            ],
+            0.0,
+        );
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Digit2);
+        walk_the_list(&keys, &mut state);
+        assert!(state.joined().is_none(), "pointing is not joining");
+        let dunes = state.hosts[1].addr;
+        assert_eq!(state.selected, Some(dunes));
+        refresh_open(&mut state.hosts, &[beach(3, "Atoll", 1, 6, false)], 0.0);
+        state.settle_cursor();
+        assert_eq!(state.selected, Some(dunes), "still on Dunes");
+        assert_eq!(state.selected_index(), Some(2), "a row further down");
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(KeyCode::Digit9);
+        walk_the_list(&keys, &mut state);
+        assert_eq!(state.selected, Some(dunes), "nine of three is no row");
+    }
 
     /// A beach on the air, as `refresh_hosts` hears it. Hosted by "Sam"
     /// throughout: whose beach it is matters to the list, never to the
@@ -590,6 +607,33 @@ mod list_tests {
         assert_eq!(host_ttl(1), HOST_TTL, "the first port is as it was");
     }
 
+    /// A list full of real beaches keeps them, every one, when one more
+    /// comes on the air, rather than swapping the newcomer and the least
+    /// heard in and out under the cursor every second.
+    #[test]
+    fn a_full_list_of_real_beaches_holds_still() {
+        let real = |n: u64| {
+            let (_, mut beacon) = beach(1, &format!("B{n:02}"), 1, 6, false);
+            if let Beacon::Here { id, .. } = &mut beacon {
+                *id = 100 + n;
+            }
+            (format!("10.0.1.{n}:47777").parse().expect("addr"), beacon)
+        };
+        let all: Vec<(SocketAddr, Beacon)> = (0..MAX_BEACHES as u64).map(real).collect();
+        let mut hosts = Vec::new();
+        for _ in 0..3 {
+            refresh_open(&mut hosts, &all, 1.0);
+        }
+        let before: Vec<SocketAddr> = hosts.iter().map(|host| host.addr).collect();
+        for _ in 0..5 {
+            let mut heard = all.clone();
+            heard.push(real(MAX_BEACHES as u64));
+            refresh_open(&mut hosts, &heard, 1.0);
+            let now: Vec<SocketAddr> = hosts.iter().map(|host| host.addr).collect();
+            assert_eq!(now, before, "no real beach gave up its row");
+        }
+    }
+
     /// Beaches are listed in a stable order, so the numbers a child reads
     /// out loud still mean the same games a moment later.
     #[test]
@@ -663,7 +707,7 @@ mod list_tests {
         assert_eq!(at, 40);
         assert!(state.scroll <= at, "the cursor is not above the window");
         assert!(
-            at < state.scroll + LIST_ROWS,
+            at < state.scroll + state.rows_shown(),
             "nor below it: row {at}, window from {}",
             state.scroll
         );
@@ -676,6 +720,79 @@ mod list_tests {
         assert_ne!(state.selected, Some(was));
         let at = state.selected_index().expect("landed somewhere real");
         assert!(at < state.hosts.len());
+    }
+
+    /// Games going away from above a scrolled list pull the window back
+    /// up: with fewer games left than rows, every one of them is in view,
+    /// none hidden above blank rows, and the bar has nothing to show.
+    #[test]
+    fn games_leaving_from_above_pull_the_window_back() {
+        use crate::app::menu_ui::scroll_bar::Scrolls;
+        let mut state = LobbyState::default();
+        let heard: Vec<_> = (1..=15u8)
+            .map(|n| beach(n, &format!("beach{n:02}"), 1, 6, false))
+            .collect();
+        refresh_open(&mut state.hosts, &heard, 0.0);
+        state.fit_rows(12);
+        state.point_at(Some(14));
+        assert_eq!(state.scroll, 3, "scrolled to the bottom");
+        let gone: Vec<_> = state.hosts[..5].iter().map(|host| host.addr).collect();
+        state.hosts.retain(|host| !gone.contains(&host.addr));
+        state.settle_cursor();
+        assert_eq!(state.selected_index(), Some(9), "still on its game");
+        assert_eq!(state.scroll, 0, "nothing hidden above");
+        assert!(state.listed(0).is_some());
+        assert!(state.window().thumb().is_none(), "the whole list in view");
+    }
+
+    /// The beach list's scroll bar shows the window the rows are painted
+    /// from: at the top on arrival, at the bottom once the cursor reaches
+    /// the last beach, and gone when beaches go off the air and the rest
+    /// fit the card.
+    #[test]
+    fn the_bar_follows_the_beach_list() {
+        use crate::app::menu_ui::scroll_bar::{self, BarOf, reading};
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = App::new();
+        let mut state = LobbyState::default();
+        let heard: Vec<_> = (1..=30u8)
+            .map(|n| beach(n, &format!("beach{n:02}"), 1, 6, false))
+            .collect();
+        refresh_open(&mut state.hosts, &heard, 0.0);
+        state.settle_cursor();
+        app.insert_resource(state);
+        app.add_systems(Update, scroll_bar::follow::<LobbyState>);
+        app.world_mut()
+            .run_system_once(|mut commands: Commands| {
+                commands.spawn(Node::default()).with_children(|list| {
+                    scroll_bar::spawn(list, BarOf::<LobbyState>::default());
+                });
+            })
+            .expect("the bar is built");
+        let bar = |app: &mut App| {
+            app.update();
+            reading::<BarOf<LobbyState>>(app.world_mut())
+        };
+        let share = LobbyState::default().rows_shown() as f32 / 30.0;
+        assert_eq!(bar(&mut app), Some([0.0, share, 1.0 - share]), "at the top");
+
+        for _ in 0..29 {
+            app.world_mut()
+                .resource_mut::<LobbyState>()
+                .step_cursor(Nav::Down);
+        }
+        assert_eq!(
+            bar(&mut app),
+            Some([1.0 - share, share, 0.0]),
+            "at the bottom"
+        );
+
+        // Beaches go off the air until the rest fit: no bar.
+        let mut state = app.world_mut().resource_mut::<LobbyState>();
+        let rows = state.rows_shown();
+        state.hosts.truncate(rows);
+        state.settle_cursor();
+        assert_eq!(bar(&mut app), None, "everything fits");
     }
 
     /// One game, listed twice. Every beacon goes out to the broadcast
@@ -776,15 +893,13 @@ mod list_tests {
     }
 
     /// A joiner waiting at a beach whose host says goodbye on the air
-    /// hears it at once, and one queued at a beach that is gathering again
-    /// is in line no longer.
+    /// hears it at once.
     #[test]
-    fn a_joiner_hears_its_beach_close_and_its_queue_end() {
+    fn a_joiner_hears_its_beach_close() {
         use crate::transport::UdpTransport;
         let there: SocketAddr = "127.0.0.1:47999".parse().expect("addr");
         let mut state = LobbyState::default();
-        let mut joined = Joined::dialled(UdpTransport::join(there).expect("join"), false);
-        joined.queued = Some(0);
+        let joined = Joined::dialled(UdpTransport::join(there).expect("join"), false);
         state.standing = Standing::Joining(joined);
         state.hosts.push(HostEntry {
             addr: there,
@@ -799,16 +914,6 @@ mod list_tests {
             age: 0.0,
             heard: 1,
         });
-
-        out_of_the_queue(&mut state, &EN);
-        assert!(
-            state.joined().expect("joined").queued.is_some(),
-            "still running"
-        );
-        state.hosts[0].running = false;
-        out_of_the_queue(&mut state, &EN);
-        assert_eq!(state.joined().expect("joined").queued, None);
-        assert_eq!(state.feedback, EN.lobby_aboard);
 
         let elsewhere: SocketAddr = "10.0.0.9:47778".parse().expect("addr");
         assert!(!host_closed(

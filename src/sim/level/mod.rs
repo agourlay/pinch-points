@@ -57,15 +57,32 @@ pub struct Level {
     /// True when the level text carried an explicit `rule:` line (versus
     /// replays); otherwise `board()` applies puzzle rules from `posts`.
     explicit_rule: bool,
-    /// Where a player's own level keeps its cleared tick, set by whoever
-    /// read it off the shelf. `None` for a shipped level, and for one from
-    /// a code or the editor's bench: those are filed by name.
+    /// Where a level keeps its cleared tick when not under its name: a
+    /// player's own level by its file, set by whoever read it off the
+    /// shelf, and a shipped co-op stage under its ladder's key
+    /// ([`crate::sim::coop_progress_key`]). `None` for a Tide Pool stage,
+    /// and for one from a code or the editor's bench: those are filed by
+    /// name.
     pub filing: Option<Filing>,
+    /// The tables a versus beach is built for (`seats: 2 4 6`), smallest
+    /// first; empty for any table its castles seat. A beach whose castles
+    /// stand in opposite pairs is fair only at a table that fills whole
+    /// pairs: with the top castle put away for a table of three, the
+    /// castle across from the empty corner won 45-58% over thousands of
+    /// rounds. So a map can say which tables it is for, and the others
+    /// play a generated beach.
+    pub tables: Vec<u8>,
+    /// On an open beach built of identical strips, the strip's width in
+    /// columns (`roll: 7`), 0 for none: each round rolls the beach round by
+    /// a whole number of strips ([`crate::sim::Orientation::for_round`]),
+    /// so which castle sits by the seam moves from round to round.
+    pub roll: u8,
 }
 
-/// What a player's level from the shelf files its cleared tick under.
+/// What a level files its cleared tick under, where its name will not
+/// do: a player's level from the shelf, and a shipped co-op stage.
 ///
-/// Not its name: two files may carry the same one, and the stage list
+/// Not a shelf level's name: two files may carry the same one, and the stage list
 /// tells them apart by renaming all but the first "X (2)" in file order,
 /// so a new file sorting first took the tick of the one that had it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,8 +131,8 @@ impl LevelKind {
 }
 
 /// What a stage asks of the player. `AllCrabs` is classic puzzle mode; the
-/// rest are Beach Day challenge goals (the original's Stage Challenge,
-/// re-themed).
+/// rest are goals a stage may state instead (`goal:`), each judged by
+/// [`Level::outcome`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Goal {
     /// Every crab that ever exists must bank (spec §5.1).
@@ -163,9 +180,7 @@ impl Level {
         if !self.explicit_rule && self.kind == LevelKind::Puzzle {
             board.set_signpost_rule(self.posts, CapPolicy::Reject);
             // A campaign puzzle's castle is the finish line, not a bank to
-            // be robbed: see `Rules::castle_raids`. Beach Day states `rule:`
-            // and keeps its raids - there the goal is a number banked and a
-            // robbery is drama, not a target that moves.
+            // be robbed: see `Rules::castle_raids`.
             board.rules_mut().castle_raids = false;
         }
         board
@@ -204,11 +219,13 @@ impl Level {
     }
 
     /// Whether a table of `seats` can play this beach: a castle for every
-    /// seat, and no owner skipped ([`Board::table_seats`]). Castles for
+    /// seat, no owner skipped ([`Board::table_seats`]), and one of the
+    /// tables it names if it names any ([`Level::tables`]). Castles for
     /// more players than sit down are fine, and put away when the board is
     /// built ([`Level::table_board`]).
     pub fn fits(&self, seats: u8) -> bool {
         self.table_seats().is_some_and(|castles| castles >= seats)
+            && (self.tables.is_empty() || self.tables.contains(&seats))
     }
 
     /// See [`Board::table_seats`].
@@ -262,16 +279,47 @@ impl Level {
         }
     }
 
-    /// Place the authored solution on `board` for seat 0. `Err` names the
+    /// Place the authored solution on `board`, each arrow by the hand the
+    /// file names (seat 0 unless a co-op stage says P2's). `Err` names the
     /// first placement the board refused, which on a shipped level is a
     /// broken level file and never something to shrug off.
     pub fn place_solution(&self, board: &mut Board) -> Result<(), Placement> {
-        for &(x, y, dir) in &self.solution {
-            if !board.place_signpost(0, x, y, dir) {
-                return Err((x, y, dir));
+        for &(x, y, dir, seat) in &self.solution {
+            if !board.place_signpost(seat, x, y, dir) {
+                return Err((x, y, dir, seat));
             }
         }
         Ok(())
+    }
+
+    /// The two hands of a co-op stage, `[P1, P2]`: how many claw-keyed
+    /// arrows each player has ([`crate::sim::Rules::claw_hands`]). `None`
+    /// on every other level. Read off the board's own rule, so the level
+    /// and the beach it builds cannot disagree.
+    pub fn hands(&self) -> Option<[u8; 2]> {
+        self.board.rules().claw_hands
+    }
+
+    /// Whether this is a co-op stage: one played by two, each with a hand
+    /// of claw-keyed arrows.
+    pub fn is_coop(&self) -> bool {
+        self.hands().is_some()
+    }
+
+    /// The same level with its arrows dealt again: `Some` hands make it a
+    /// co-op stage granting their sum, `None` a solo one granting `posts`.
+    /// What the co-op guards and the editor's check try a level under:
+    /// every arrow in one hand, or every arrow turning every crab.
+    pub fn with_hands(&self, hands: Option<[u8; 2]>, posts: u8) -> Level {
+        let mut level = self.clone();
+        level.board.rules_mut().claw_hands = hands;
+        level.posts = hands.map_or(posts, |[left, right]| left.saturating_add(right));
+        if level.explicit_rule {
+            let policy = level.board.signpost_rule().1;
+            level.board.set_signpost_rule(level.posts, policy);
+        }
+        level.solution.clear();
+        level
     }
 
     /// A fresh board with the authored solution standing on it.
@@ -598,6 +646,71 @@ map:
 |. . 0|
 +-+-+-+
 ";
+
+    const DUO: &str = "\
+name: Duo
+hands: 1 1
+crab: 0,0 R L common
+crab: 0,1 R R common
+solution: 2,0 D L; 1,1 U R
+map:
++-+-+-+
+|. . .|
++ + + +
+|. . 0|
++-+-+-+
+";
+
+    /// A co-op stage reads its two hands, grants their sum, and names the
+    /// hand on each arrow of its solution; written back, it says the same.
+    #[test]
+    fn a_coop_stage_survives_the_format() {
+        let level = Level::parse(DUO).expect("parses");
+        assert_eq!(level.hands(), Some([1, 1]));
+        assert_eq!(level.posts, 2);
+        assert_eq!(level.kind, LevelKind::Puzzle);
+        assert_eq!(
+            level.solution,
+            [(2, 0, Direction::Down, 0), (1, 1, Direction::Up, 1)]
+        );
+        assert_eq!(level.board().rules().claw_hands, Some([1, 1]));
+        let text = level.to_text();
+        assert!(text.contains("hands: 1 1"), "{text}");
+        assert!(text.contains("solution: 2,0 D L; 1,1 U R"), "{text}");
+        let again = Level::parse(&text).expect("own output");
+        assert_eq!(again.solution, level.solution);
+        assert_eq!(again.board().state_hash(), level.board().state_hash());
+        assert_eq!(again.to_text(), text);
+    }
+
+    /// The hands and the grant cannot disagree, a solo stage names no
+    /// hand, and a beach for a match has none.
+    #[test]
+    fn a_coop_stage_refuses_what_contradicts_it() {
+        let posts = DUO.replace("hands: 1 1", "posts: 3\nhands: 1 1");
+        assert!(Level::parse(&posts).unwrap_err().contains("two hands"));
+        let solo = DUO.replace("hands: 1 1\n", "posts: 2\n");
+        assert!(Level::parse(&solo).unwrap_err().contains("names a hand"));
+        let arena = DUO.replace("hands: 1 1", "hands: 1 1\nkind: arena");
+        assert!(Level::parse(&arena).unwrap_err().contains("no hands"));
+        assert!(Level::parse(&DUO.replace("hands: 1 1", "hands: 1")).is_err());
+        // A hand left off is P1's, as on every solo stage.
+        let bare = Level::parse(&DUO.replace("2,0 D L", "2,0 D")).expect("parses");
+        assert_eq!(bare.solution[0], (2, 0, Direction::Down, 0));
+    }
+
+    /// Dealt again, a co-op stage keeps its beach and changes only its
+    /// hands: one player's, or ordinary arrows that turn every crab.
+    #[test]
+    fn a_coop_stage_deals_its_arrows_again() {
+        let level = Level::parse(DUO).expect("parses");
+        let alone = level.with_hands(Some([2, 0]), 0);
+        assert_eq!((alone.posts, alone.hands()), (2, Some([2, 0])));
+        let solo = level.with_hands(None, 2);
+        assert_eq!((solo.posts, solo.hands()), (2, None));
+        assert_eq!(solo.board().signpost_cap_of(0), 2);
+        assert!(solo.solution.is_empty(), "the deal's own answer is unknown");
+    }
 
     #[test]
     fn terrain_tiles_round_trip() {

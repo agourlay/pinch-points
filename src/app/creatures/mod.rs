@@ -13,11 +13,32 @@ mod sweeps;
 
 pub use crabs::{CrabSprite, interpolate_crabs, sync_crab_sprites};
 pub(crate) use crabs::{
-    WALK_FPS, body_color, claw_color, crab_body, crab_claw, mirrored, shade_of, shell_color,
-    sprite_side, walk_bob,
+    WALK_FPS, body_color, claw_color, coop_claws, crab_body, crab_claw, mirrored, resting_shell,
+    shade_of, shell_color, sprite_side, walk_bob,
 };
-pub use gulls::{GullSprite, interpolate_gulls, sync_gull_sprites};
+pub use gulls::{GullArrival, GullSprite, fly_in_gulls, interpolate_gulls, sync_gull_sprites};
 pub use sweeps::{SweepSprite, draw_sweeps};
+
+/// The parts of a creature's sprite the round's systems find it by and
+/// move it with: what a still picture of a board takes off the creatures
+/// it borrows ([`crate::app::match_setup::render_previews`]).
+pub(crate) type LiveCreature = (CrabSprite, crabs::Crowding, GullSprite);
+
+/// Every crab and gull on `board`, by the spawners the round draws them
+/// with ([`sync_crab_sprites`], [`sync_gull_sprites`]): for a still
+/// picture of the board, which a map card's preview is.
+pub fn spawn_creatures(
+    commands: &mut Commands,
+    board: &crate::sim::Board,
+    art: &crate::app::art::Art,
+) {
+    for crab in board.crabs() {
+        crabs::spawn_crab(commands, art, board, crab);
+    }
+    for gull in board.gulls() {
+        gulls::spawn_gull(commands, art, board, gull);
+    }
+}
 
 use crate::app::layout::TILE;
 use bevy::prelude::*;

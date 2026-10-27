@@ -5,6 +5,7 @@
 //! disagree with this".
 
 use super::*;
+use crate::sim::InputMsg;
 
 /// Host → joiner: the match begins with `seats` seats on `terms`; you are
 /// `seat`, and the table is called `names` (empty entries fall back to
@@ -60,6 +61,12 @@ pub struct Start {
     /// played, won or lost, on the host's word. Packed by
     /// [`crowned_bits`], read by [`is_crowned`].
     pub crowned: u8,
+    /// The input delay the round is played with, in frames: the host's
+    /// pick from how quickly its players answer it
+    /// (`crate::sim::delay_for_round_trip`). Every peer has to play with
+    /// the same one, since the frames nobody has committed for yet are
+    /// the first `delay` of them.
+    pub delay: u8,
 }
 
 #[cfg(test)]
@@ -78,6 +85,7 @@ impl Start {
             beach: Vec::new(),
             deal: 0,
             crowned: 0,
+            delay: crate::sim::DEFAULT_DELAY as u8,
         }
     }
 }
@@ -113,31 +121,28 @@ pub enum NetMsg {
     /// spectator it has no name for is a peer whose claim about who is
     /// talking nobody can check.
     Watch { name: WireName },
-    /// Every input the sender can still be holding for a peer: the newest
-    /// commit and the resend tail behind it, in one datagram.
-    ///
-    /// One datagram a tick, not one per seat-frame: at a six-seat table
-    /// that took the host from 850 datagrams a tick to 25, and the bytes
-    /// fell eightfold with them.
-    ///
-    /// The whole tail still goes out every tick, so a lost datagram is
-    /// made good by the next one 33 ms later. A peer now gets all of a
-    /// tick's tail or none of it, rather than the ragged subset a burst of
-    /// loss used to leave.
-    Inputs(Vec<InputMsg>),
-    /// State fingerprint after `frame`, for loud desync detection.
-    Hash { frame: u32, hash: u64 },
+    /// A peer's word about the round, every tick: the inputs its receiver
+    /// may still be missing, what the sender itself is missing, and the
+    /// round's standing notices. See [`Batch`].
+    Inputs(Batch),
+    /// State fingerprint after `frame`, for loud desync detection, of the
+    /// round tagged `round` ([`Batch::round`]): every round's frames count
+    /// from zero, so a hash from the last round still on the wire names a
+    /// frame this one also has, of a different board.
+    Hash { round: u8, frame: u32, hash: u64 },
     /// Host → joiner: the round begins (see [`Start`]).
     Start(Start),
     /// Someone hit pause: everybody stops committing at `frame`. Re-sent
     /// every tick while paused, so a dropped datagram costs a moment of
-    /// confusion rather than a stuck match.
-    Pause { frame: u32 },
+    /// confusion rather than a stuck match. Of the round tagged `round`,
+    /// as every lockstep message is ([`Batch::round`]).
+    Pause { round: u8, frame: u32 },
     /// Play on: the pause that was to freeze on `frame` is lifted. Also
     /// re-sent until the sim visibly moves again. The frame is what lets a
     /// peer tell the `Pause` echoes still in flight from before the resume
-    /// (see `Lockstep::receive_pause`) from a fresh pause.
-    Resume { frame: u32 },
+    /// (see `Lockstep::receive_pause`) from a fresh pause; the round tag
+    /// ([`Batch::round`]) tells the last round's from this one's.
+    Resume { round: u8, frame: u32 },
     /// Host → the table: `seat` has stopped sending and an AI is taking
     /// the chair.
     ///
@@ -152,7 +157,8 @@ pub enum NetMsg {
     /// player who has gone quiet, so "from the frame you are stuck on" is
     /// not the same frame everywhere. Repeated for the rest of the round,
     /// since a lost one leaves that peer frozen while the others play on.
-    Abandoned { seat: u8, frame: u32 },
+    /// Of the round tagged `round` ([`Batch::round`]).
+    Abandoned { round: u8, seat: u8, frame: u32 },
     /// Host → the lobby: who is at the table right now, in seat order.
     ///
     /// A joiner has only ever spoken to the host, so without this it knows
@@ -177,6 +183,24 @@ pub enum NetMsg {
         /// beach", and a joiner reading that against its own shelf named
         /// whatever beach *it* had first, or the wrong one entirely.
         beach: WireName,
+        /// The recipient's chair, in the lobby's roster, which is written
+        /// for each peer: `Some(false)` for a peer that came to play and is
+        /// past the table's last chair, which the launch seats watching
+        /// until one frees, `Some(true)` for everyone else. `None` in a
+        /// round's roster, sent to a peer in line with the `Queued` that
+        /// says where it stands.
+        ///
+        /// In the roster rather than a datagram of its own ahead of it: a
+        /// lost word read as a chair come free, and the line flickered.
+        /// And a lobby roster is itself the word that a round is over: a
+        /// peer in line for it is at the table again.
+        chair: Option<bool>,
+        /// The host has started the match and is picking the map for the
+        /// table as it stands, which every joiner's status line says, so
+        /// a wait at the lobby card is not read as the host gone quiet. Sent
+        /// with a round's roster too, between the rounds of a series, while
+        /// the host picks the next round's map.
+        picking: bool,
     },
     /// Host → one peer: the host asked you to leave. The peer goes back to
     /// choosing a beach, and the host forgets it.
@@ -185,11 +209,18 @@ pub enum NetMsg {
     /// bots. Asked to go like [`NetMsg::Kicked`], with the reason, which
     /// the peer could not tell from a host simply asking it to leave.
     NoBots,
+    /// Host → a greeting it has no room for: its socket holds every peer it
+    /// takes ([`MAX_PEERS`]), watchers counted, so there is no place
+    /// at this beach to play or to watch. Said rather than left unanswered:
+    /// a joiner that hears nothing waits out its patience and is told to
+    /// check an address that was right all along, and the beach goes from
+    /// its list.
+    Full,
     /// "I am going": said by a socket as it closes, to every peer it has
     /// (see `UdpTransport`'s `Drop`). From a joiner, the host forgets it at
     /// once rather than waiting out its silence, which left a launch or the
     /// next round inside that window seating a ghost and freezing the
-    /// table five seconds on it. From the host, the joiners know the beach
+    /// table on it until its silence ran out. From the host, the joiners know the beach
     /// is gone rather than waiting twenty seconds to decide so.
     Leaving,
     /// A line said in the lobby, and who said it. The sender names itself
@@ -261,6 +292,69 @@ pub enum NetMsg {
     /// is frozen along with the version byte: every build, past and future,
     /// can read `[TAG_INCOMPATIBLE, version]`.
     Incompatible { version: u8 },
+    /// Host → a peer, about once a second while the table gathers and
+    /// between rounds: answer with this `stamp`. The host's own clock, in
+    /// milliseconds, which only the host reads.
+    Ping { stamp: u32 },
+    /// The answer to a [`NetMsg::Ping`], with its `stamp`: how the host
+    /// learns each peer's round trip, which picks the next round's input
+    /// delay ([`Start::delay`]).
+    Pong { stamp: u32 },
+    /// Host → one player, a few times a second in a round: how far the
+    /// host's next commit runs past the newest commit it has heard from
+    /// that player. Set against the same reading the other way round, it
+    /// says how far apart the two clocks are, with the trip between them
+    /// cancelling out (`OnlineSession::keep_time`).
+    Clock { gap: i16 },
+}
+
+/// What one peer tells another every tick of a round, in one datagram.
+///
+/// One datagram a tick to each peer, not one per seat or per notice: the
+/// host sends each peer one, carrying every seat's inputs that peer has
+/// not said it holds and the notices beside them. Passing each player's
+/// tail on as it came, with the pause, the clock and every seat given up
+/// on as datagrams of their own, is 43 a tick at a table of six with
+/// three watching; this is eight.
+///
+/// Every input not yet acknowledged goes out again every tick, so a lost
+/// datagram is made good by the next one 33 ms later, and the word that
+/// shrinks the tail is the receiver's own [`Batch::wants`]: a peer that
+/// says nothing (or whose word is lost) is sent the whole tail.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct Batch {
+    /// Which round the sender is playing: the low byte of the deal that
+    /// began it (`OnlineSession::rounds_dealt`). A batch of any other round
+    /// is the last one's still on the wire, or the next one's reaching a
+    /// peer still finishing this, and nothing in it is about the round the
+    /// receiver is playing: its frames, its notices and its clock all name
+    /// another lockstep. Frame numbers cannot tell them apart, since every
+    /// round counts from zero.
+    pub round: u8,
+    /// The inputs, travelling as runs of one seat's consecutive frames.
+    pub inputs: Vec<InputMsg>,
+    /// For every seat, the first frame the sender does not hold
+    /// (`Lockstep::wants`): its receiver resends that seat from there.
+    pub wants: Option<[u32; crate::sim::MAX_PLAYERS]>,
+    /// The pause the sender is holding, repeated every tick while it holds
+    /// it: everybody stops committing at this frame.
+    pub pause: Option<u32>,
+    /// The pause the sender lifted, repeated for a while after (see
+    /// [`NetMsg::Resume`]).
+    pub resume: Option<u32>,
+    /// Host only: every seat given up on this round, and the frame each was
+    /// emptied from, repeated for the rest of it (see [`NetMsg::Abandoned`]).
+    pub abandoned: Vec<(u8, u32)>,
+    /// Host only, a few times a second: how its clock stands against this
+    /// player's (see [`NetMsg::Clock`]).
+    pub clock: Option<i16>,
+}
+
+/// The [`Batch::round`] of the round a socket dealt `rounds_dealt`-th: the
+/// low byte of the count, which is all a batch has to tell the round it
+/// belongs to from the one before or after it.
+pub fn round_tag(rounds_dealt: u32) -> u8 {
+    rounds_dealt.to_le_bytes()[0]
 }
 
 /// Where a series stands as a round begins: its 1-based number, and the
@@ -316,6 +410,13 @@ impl NetMsg {
         }
     }
 
+    /// A host's `Ping`, stamped with its own clock now.
+    pub fn ping() -> NetMsg {
+        NetMsg::Ping {
+            stamp: ping_stamp(),
+        }
+    }
+
     /// A line of chat as `who` said it, both halves in wire form. An empty
     /// `who` is the lobby itself speaking.
     pub fn chat(who: &str, line: &str) -> NetMsg {
@@ -359,24 +460,37 @@ const TAG_CROWD_PICKS: u8 = 17;
 const TAG_KICKED: u8 = 18;
 const TAG_LEAVING: u8 = 19;
 const TAG_NO_BOTS: u8 = 20;
+const TAG_PING: u8 = 21;
+const TAG_PONG: u8 = 22;
+const TAG_CLOCK: u8 = 23;
+const TAG_FULL: u8 = 24;
+/// Retired in version 36, when the lobby's roster began to carry each
+/// peer's chair (`NetMsg::Roster::chair`). Spoken for, like
+/// `TAG_RETIRED_INPUT`, and still the highest tag.
+const TAG_RETIRED_NO_CHAIR: u8 = 25;
 /// The last of them, which `peek_version` uses to tell one of ours from
 /// stray traffic on the port.
 ///
 /// It said `TAG_INPUTS` through two more tags, so a build of another
 /// version sending the spectators' two was ignored rather than told why.
-const HIGHEST_TAG: u8 = TAG_NO_BOTS;
+const HIGHEST_TAG: u8 = TAG_RETIRED_NO_CHAIR;
 
-/// Inputs one datagram may carry.
-///
-/// The cap is the buffer: `2 + 1 + 127 * INPUT_BYTES` is 1019 bytes, inside
-/// [`MAX_DATAGRAM`] and inside any MTU worth worrying about. A datagram past
-/// the path MTU is fragmented, and a fragment lost is the whole datagram
-/// lost, so a batch that needed two IP packets would be a resend tail that
-/// fails twice as often as the thing it repairs.
-///
-/// A tail never comes close: `2 * resend_span(DEFAULT_DELAY)` is 66. The
-/// host's relay does, at a full table, and chunks.
-pub const MAX_INPUTS_PER_DATAGRAM: usize = 127;
+// What a `Batch` carries besides its inputs, a bit each in its flags byte.
+const CARRIES_WANTS: u8 = 1;
+const CARRIES_PAUSE: u8 = 2;
+const CARRIES_RESUME: u8 = 4;
+const CARRIES_CLOCK: u8 = 8;
+const CARRIES_ABANDONED: u8 = 16;
+const CARRIES_ANY: u8 =
+    CARRIES_WANTS | CARRIES_PAUSE | CARRIES_RESUME | CARRIES_CLOCK | CARRIES_ABANDONED;
+
+/// Bytes a run of a seat's inputs takes before its actions: the seat, its
+/// first frame and how many frames it runs.
+const RUN_HEAD: usize = 6;
+/// Bytes one packed action takes.
+const ACTION_BYTES: usize = 3;
+/// The most frames one run carries, its count being a byte.
+const RUN_MOST: usize = u8::MAX as usize;
 
 /// The most of a snapshot one `CatchUp` carries: the datagram less its
 /// header (tag, version, frame, part, parts and a length), with room to
@@ -430,7 +544,8 @@ pub fn kind_from_byte(byte: u8) -> crate::sim::SeatKind {
 /// and knows nothing about menus. The app maps them at the edge.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct MatchTerms {
-    /// Seats the AI holds, counting down from the top seat.
+    /// How many seats the AI holds: the last places of the table, which
+    /// [`MatchTerms::order`] puts in their seats.
     pub bots: u8,
     /// AI difficulty index (easy/normal/fierce).
     pub bot_level: u8,
@@ -455,7 +570,18 @@ pub struct MatchTerms {
     /// How many arrows each player may have standing. A count, not an
     /// index, and not trusted: the app clamps it to its own dial's range.
     pub posts: u8,
+    /// The seat each place at the table sits in, by place: the host first,
+    /// then the players and the host's own bots in the order the host
+    /// deals them, then the AI ([`MatchTerms::bots`] of them). The places
+    /// in seat order unless the host picked partners, which moves people
+    /// between seats so the teams (fixed by seat, for fairness) are the
+    /// ones picked. Always a permutation with the host in seat 0:
+    /// anything else is refused on the wire ([`MatchTerms::decode`]).
+    pub order: [u8; crate::sim::MAX_PLAYERS],
 }
+
+/// Every place in its own seat: the order nobody rearranged.
+pub const IN_SEAT_ORDER: [u8; crate::sim::MAX_PLAYERS] = [0, 1, 2, 3, 4, 5];
 
 /// Written out because the arrows are not zero by default: terms nobody
 /// set play the versus rule's three, as every round did before the count
@@ -472,6 +598,7 @@ impl Default for MatchTerms {
             seed: 0,
             series: 0,
             posts: crate::sim::MAX_SIGNPOSTS_PER_PLAYER as u8,
+            order: IN_SEAT_ORDER,
         }
     }
 }
@@ -486,17 +613,51 @@ impl MatchTerms {
         self.series != 0
     }
 
-    /// The humans at a table of `seats`: the AI holds the top seats, so
-    /// the humans are the low `seats - bots` of them, and the lockstep is
-    /// built over those alone. Never fewer than one, since seat zero is
-    /// the host's whatever the dials say.
+    /// How many humans (people and the host's bots) a table of `seats`
+    /// has: the `seats - bots` places before the AI's, which the lockstep
+    /// is built over wherever [`MatchTerms::order`] seats them
+    /// ([`MatchTerms::player_seats`]). Never fewer than one, since seat
+    /// zero is the host's whatever the dials say.
     pub fn humans(self, seats: u8) -> u8 {
         seats.saturating_sub(self.bots).max(1)
+    }
+
+    /// The seat place `place` sits in ([`MatchTerms::order`]). A place past
+    /// the table's six is its own seat.
+    pub fn seat_of_place(self, place: u8) -> u8 {
+        self.order.get(usize::from(place)).copied().unwrap_or(place)
+    }
+
+    /// The seats the people and the host's own bots hold at a table of
+    /// `seats`, lowest first: every seat but the AI's, which the lockstep
+    /// is built over.
+    pub fn player_seats(self, seats: u8) -> Vec<u8> {
+        let mut out: Vec<u8> = (0..self.humans(seats))
+            .map(|place| self.seat_of_place(place))
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// The seats the AI holds at a table of `seats`, in place order: the
+    /// last `bots` places, where the order puts them. Every place, the
+    /// host's included, when the AI is the whole table.
+    pub fn ai_seats(self, seats: u8) -> Vec<u8> {
+        (seats.saturating_sub(self.bots)..seats)
+            .map(|place| self.seat_of_place(place))
+            .collect()
+    }
+
+    /// Whether the order seats a table of `seats` within it: each of its
+    /// places in one of its seats. The order is a permutation of six, so a
+    /// smaller table could still send a place past its last seat.
+    pub fn order_fits(self, seats: u8) -> bool {
+        (0..seats).all(|place| self.seat_of_place(place) < seats)
     }
 }
 
 impl MatchTerms {
-    const BYTES: usize = 16;
+    const BYTES: usize = 22;
 
     fn encode(self) -> [u8; Self::BYTES] {
         let mut out = [0u8; Self::BYTES];
@@ -509,6 +670,7 @@ impl MatchTerms {
         out[6..14].copy_from_slice(&self.seed.to_le_bytes());
         out[14] = self.series;
         out[15] = self.posts;
+        out[16..22].copy_from_slice(&self.order);
         out
     }
 
@@ -524,31 +686,268 @@ impl MatchTerms {
             seed,
             series: *bytes.get(14)?,
             posts: *bytes.get(15)?,
+            order: seat_order(bytes.get(16..22)?)?,
         })
     }
 }
 
-/// A batch of inputs straight into the caller's buffer: byte for byte what
-/// `NetMsg::Inputs(..).encode()` writes, without the `Vec` that would take.
-/// Answers the length written.
+/// A seat order off the wire ([`MatchTerms::order`]): a permutation of the
+/// six seats with the host in seat 0, or nothing. Squeezed into range
+/// instead, two places would share a seat, or the host lose its own.
+fn seat_order(bytes: &[u8]) -> Option<[u8; crate::sim::MAX_PLAYERS]> {
+    let order: [u8; crate::sim::MAX_PLAYERS] = bytes.try_into().ok()?;
+    let mut sorted = order;
+    sorted.sort_unstable();
+    (order[0] == 0 && sorted == IN_SEAT_ORDER).then_some(order)
+}
+
+/// The runs a list of inputs travels as: each run a stretch of
+/// consecutive elements of one seat on consecutive frames, at most
+/// [`RUN_MOST`] long, as `(start, len)` into the list.
+fn runs(inputs: &[InputMsg]) -> impl Iterator<Item = (usize, usize)> + '_ {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let first = inputs.get(at)?;
+        let mut len = 1;
+        while len < RUN_MOST
+            && inputs.get(at + len).is_some_and(|next| {
+                next.player == first.player
+                    && Some(next.frame) == first.frame.checked_add(len as u32)
+            })
+        {
+            len += 1;
+        }
+        let run = (at, len);
+        at += len;
+        Some(run)
+    })
+}
+
+/// A batch's bytes after the tag and version, onto `out`.
 ///
-/// `msgs` must be within [`MAX_INPUTS_PER_DATAGRAM`]; the one caller chunks,
-/// and `the_two_encoders_agree` holds the two spellings to each other.
-pub(super) fn encode_inputs(msgs: &[InputMsg], buf: &mut [u8; MAX_DATAGRAM]) -> usize {
-    debug_assert!(
-        msgs.len() <= MAX_INPUTS_PER_DATAGRAM,
-        "{} inputs in one datagram",
-        msgs.len()
-    );
-    let count = msgs.len().min(MAX_INPUTS_PER_DATAGRAM);
-    buf[0] = TAG_INPUTS;
-    buf[1] = PROTOCOL_VERSION;
-    buf[2] = count as u8;
-    for (index, msg) in msgs[..count].iter().enumerate() {
-        let at = 3 + index * INPUT_BYTES;
-        buf[at..at + INPUT_BYTES].copy_from_slice(&msg.encode());
+/// The inputs go as runs of consecutive elements ([`runs`]), so a sender
+/// that wants them short hands them in seat by seat, frames in order
+/// ([`write_pieces`] does). At most 255 runs: anything past that is left
+/// off, which no sender does.
+fn write_batch(batch: &Batch, out: &mut Vec<u8>) {
+    let Batch {
+        round,
+        inputs,
+        wants,
+        pause,
+        resume,
+        abandoned,
+        clock,
+    } = batch;
+    let mut flags = 0;
+    for (carried, bit) in [
+        (wants.is_some(), CARRIES_WANTS),
+        (pause.is_some(), CARRIES_PAUSE),
+        (resume.is_some(), CARRIES_RESUME),
+        (clock.is_some(), CARRIES_CLOCK),
+        (!abandoned.is_empty(), CARRIES_ABANDONED),
+    ] {
+        if carried {
+            flags |= bit;
+        }
     }
-    3 + count * INPUT_BYTES
+    out.push(*round);
+    out.push(flags);
+    if let Some(wants) = wants {
+        // From the least of them, a byte each past it: a peer's wants all
+        // sit within a horizon of its own frame. One further apart than a
+        // byte reaches is written as wanting less, which costs a resend
+        // and nothing else.
+        let base = wants.iter().copied().min().unwrap_or(0);
+        out.extend_from_slice(&base.to_le_bytes());
+        out.extend(wants.iter().map(|want| (want - base).min(255) as u8));
+    }
+    if let Some(frame) = pause {
+        out.extend_from_slice(&frame.to_le_bytes());
+    }
+    if let Some(frame) = resume {
+        out.extend_from_slice(&frame.to_le_bytes());
+    }
+    if let Some(gap) = clock {
+        out.extend_from_slice(&gap.to_le_bytes());
+    }
+    if !abandoned.is_empty() {
+        let kept = &abandoned[..abandoned.len().min(crate::sim::MAX_PLAYERS)];
+        out.push(kept.len() as u8);
+        for (seat, frame) in kept {
+            out.push(*seat);
+            out.extend_from_slice(&frame.to_le_bytes());
+        }
+    }
+    let count_at = out.len();
+    out.push(0);
+    let mut count = 0u8;
+    for (start, len) in runs(inputs) {
+        let Some(next) = count.checked_add(1) else {
+            debug_assert!(false, "more than 255 runs in one batch");
+            break;
+        };
+        count = next;
+        let first = inputs[start];
+        out.push(first.player);
+        out.extend_from_slice(&first.frame.to_le_bytes());
+        out.push(len as u8);
+        for input in &inputs[start..start + len] {
+            out.extend_from_slice(&crate::sim::encode_action(input.action));
+        }
+    }
+    out[count_at] = count;
+}
+
+/// A batch read back from the bytes after the tag and version, or `None`
+/// for anything [`write_batch`] would not have written.
+fn read_batch(body: &[u8]) -> Option<Batch> {
+    let mut at = 0;
+    let mut take = |len: usize| {
+        let bytes = body.get(at..at + len);
+        at += len;
+        bytes
+    };
+    let round = *take(1)?.first()?;
+    let flags = *take(1)?.first()?;
+    if flags & !CARRIES_ANY != 0 {
+        return None;
+    }
+    let mut batch = Batch {
+        round,
+        ..Batch::default()
+    };
+    if flags & CARRIES_WANTS != 0 {
+        let base = u32::from_le_bytes(take(4)?.try_into().ok()?);
+        let mut wants = [0; crate::sim::MAX_PLAYERS];
+        for (want, offset) in wants.iter_mut().zip(take(crate::sim::MAX_PLAYERS)?) {
+            *want = base.checked_add(u32::from(*offset))?;
+        }
+        batch.wants = Some(wants);
+    }
+    if flags & CARRIES_PAUSE != 0 {
+        batch.pause = Some(u32::from_le_bytes(take(4)?.try_into().ok()?));
+    }
+    if flags & CARRIES_RESUME != 0 {
+        batch.resume = Some(u32::from_le_bytes(take(4)?.try_into().ok()?));
+    }
+    if flags & CARRIES_CLOCK != 0 {
+        batch.clock = Some(i16::from_le_bytes(take(2)?.try_into().ok()?));
+    }
+    if flags & CARRIES_ABANDONED != 0 {
+        // A seat outside the table is not one anything can be done about,
+        // and acting on it would index off the end; nor is an empty list,
+        // which the flag says is not one.
+        let count = usize::from(*take(1)?.first()?);
+        if count == 0 || count > crate::sim::MAX_PLAYERS {
+            return None;
+        }
+        for _ in 0..count {
+            let notice = take(5)?;
+            let seat = notice[0];
+            if usize::from(seat) >= crate::sim::MAX_PLAYERS {
+                return None;
+            }
+            batch
+                .abandoned
+                .push((seat, u32::from_le_bytes(notice[1..5].try_into().ok()?)));
+        }
+    }
+    let runs = *take(1)?.first()?;
+    for _ in 0..runs {
+        let head = take(RUN_HEAD)?;
+        let player = head[0];
+        let first = u32::from_le_bytes(head[1..5].try_into().ok()?);
+        let len = usize::from(head[5]);
+        // A seat past the table indexes nothing, and a run past the last
+        // frame there is names frames that cannot be.
+        if usize::from(player) >= crate::sim::MAX_PLAYERS {
+            return None;
+        }
+        let actions = take(len * ACTION_BYTES)?;
+        for (offset, packed) in actions.as_chunks::<ACTION_BYTES>().0.iter().enumerate() {
+            batch.inputs.push(InputMsg {
+                player,
+                frame: first.checked_add(offset as u32)?,
+                action: crate::sim::decode_action(*packed),
+            });
+        }
+    }
+    Some(batch)
+}
+
+/// The bytes of a batch, cut into datagrams of at most [`MAX_DATAGRAM`]
+/// bytes each, every one handed to `emit` as it is written.
+///
+/// Cut in the order the inputs come in, which for a sender is frame by
+/// frame (`Lockstep::held_between`): each datagram carries the frames
+/// after the last one's, so losing one of several holds up only the
+/// frames from its own on, and the frames the others carried before it
+/// still play. Each packs its share seat by seat, as runs. The first
+/// carries the notices but the clock, and the last the clock: a clock is
+/// read against the newest of the sender's own inputs heard
+/// (`OnlineSession::keep_time`), which the last datagram carries, so the
+/// reading never lands ahead of the frames it was taken against. Every
+/// one carries the round and `wants`, which is what keeps the next ones
+/// short. A batch with no inputs is one datagram.
+pub fn write_pieces(batch: &Batch, mut emit: impl FnMut(&[u8])) {
+    let notices = Batch {
+        inputs: Vec::new(),
+        clock: None,
+        ..batch.clone()
+    };
+    let wants_only = Batch {
+        round: batch.round,
+        wants: batch.wants,
+        ..Batch::default()
+    };
+    let mut out = Vec::with_capacity(MAX_DATAGRAM);
+    let mut piece = notices;
+    let mut write = |piece: &mut Batch, out: &mut Vec<u8>| {
+        // Seat by seat, each seat's frames in the order they came.
+        piece.inputs.sort_by_key(|input| input.player);
+        out.clear();
+        out.push(TAG_INPUTS);
+        out.push(PROTOCOL_VERSION);
+        write_batch(piece, out);
+        debug_assert!(out.len() <= MAX_DATAGRAM, "{} bytes", out.len());
+        emit(out);
+    };
+    let head = |piece: &Batch| {
+        let mut out = Vec::new();
+        write_batch(piece, &mut out);
+        2 + out.len()
+    };
+    // Room kept in every piece for the clock, which rides whichever one
+    // turns out to be the last.
+    let clock_room = if batch.clock.is_some() { 2 } else { 0 };
+    let mut size = head(&piece) + clock_room;
+    // Per seat, the last frame this datagram has for it and how long the
+    // run ending there is: what the next input of the seat costs.
+    let mut last: [Option<(u32, usize)>; crate::sim::MAX_PLAYERS] = Default::default();
+    for &input in &batch.inputs {
+        let seat = usize::from(input.player).min(crate::sim::MAX_PLAYERS - 1);
+        let extends = last[seat].is_some_and(|(frame, len)| {
+            len < RUN_MOST && Some(input.frame) == frame.checked_add(1)
+        });
+        let cost = ACTION_BYTES + if extends { 0 } else { RUN_HEAD };
+        if size + cost > MAX_DATAGRAM && !piece.inputs.is_empty() {
+            write(&mut piece, &mut out);
+            piece = wants_only.clone();
+            size = head(&piece) + clock_room + ACTION_BYTES + RUN_HEAD;
+            last = Default::default();
+            last[seat] = Some((input.frame, 1));
+        } else {
+            size += cost;
+            last[seat] = Some(match (extends, last[seat]) {
+                (true, Some((_, len))) => (input.frame, len + 1),
+                _ => (input.frame, 1),
+            });
+        }
+        piece.inputs.push(input);
+    }
+    piece.clock = batch.clock;
+    write(&mut piece, &mut out);
 }
 
 impl NetMsg {
@@ -574,15 +973,32 @@ impl NetMsg {
             NetMsg::CrowdPicks { .. } => vec![TAG_CROWD_PICKS],
             NetMsg::Kicked => vec![TAG_KICKED],
             NetMsg::NoBots => vec![TAG_NO_BOTS],
+            NetMsg::Full => vec![TAG_FULL],
             NetMsg::Leaving => vec![TAG_LEAVING],
+            NetMsg::Ping { .. } => vec![TAG_PING],
+            NetMsg::Pong { .. } => vec![TAG_PONG],
+            NetMsg::Clock { .. } => vec![TAG_CLOCK],
             NetMsg::Incompatible { version } => return vec![TAG_INCOMPATIBLE, version],
         };
         bytes.push(PROTOCOL_VERSION);
         match self {
-            NetMsg::Incompatible { .. } | NetMsg::Kicked | NetMsg::NoBots | NetMsg::Leaving => {}
-            NetMsg::Resume { frame } => bytes.extend_from_slice(&frame.to_le_bytes()),
+            NetMsg::Incompatible { .. }
+            | NetMsg::Kicked
+            | NetMsg::NoBots
+            | NetMsg::Full
+            | NetMsg::Leaving => {}
+            // The round first, where every lockstep message keeps it.
+            NetMsg::Resume { round, frame } | NetMsg::Pause { round, frame } => {
+                bytes.push(round);
+                bytes.extend_from_slice(&frame.to_le_bytes());
+            }
+            NetMsg::Ping { stamp } | NetMsg::Pong { stamp } => {
+                bytes.extend_from_slice(&stamp.to_le_bytes());
+            }
+            NetMsg::Clock { gap } => bytes.extend_from_slice(&gap.to_le_bytes()),
             NetMsg::Queued { ahead } => bytes.push(ahead),
-            NetMsg::Abandoned { seat, frame } => {
+            NetMsg::Abandoned { round, seat, frame } => {
+                bytes.push(round);
                 bytes.push(seat);
                 bytes.extend_from_slice(&frame.to_le_bytes());
             }
@@ -596,6 +1012,8 @@ impl NetMsg {
                 terms,
                 kinds,
                 beach,
+                chair,
+                picking,
             } => {
                 bytes.push(seats);
                 for name in names {
@@ -604,29 +1022,23 @@ impl NetMsg {
                 bytes.extend_from_slice(&terms.encode());
                 bytes.extend_from_slice(&kinds);
                 bytes.extend_from_slice(&beach);
+                bytes.push(match chair {
+                    None => 0,
+                    Some(true) => 1,
+                    Some(false) => 2,
+                });
+                bytes.push(u8::from(picking));
             }
             NetMsg::Hello { name, bot } => {
                 bytes.extend_from_slice(&name);
                 bytes.push(u8::from(bot));
             }
             NetMsg::Watch { name } => bytes.extend_from_slice(&name),
-            NetMsg::Inputs(ref inputs) => {
-                // Count first, then that many fixed-width inputs. A batch
-                // past the cap is truncated rather than sent whole: the
-                // alternative is a datagram the receiver never sees.
-                // Senders chunk, so nothing here does.
-                debug_assert!(
-                    inputs.len() <= MAX_INPUTS_PER_DATAGRAM,
-                    "{} inputs in one datagram",
-                    inputs.len()
-                );
-                let count = inputs.len().min(MAX_INPUTS_PER_DATAGRAM);
-                bytes.push(count as u8);
-                for input in &inputs[..count] {
-                    bytes.extend_from_slice(&input.encode());
-                }
-            }
-            NetMsg::Hash { frame, hash } => {
+            // Whole, however long: a sender cuts a batch into datagrams
+            // with `write_pieces`, which each come back as one of these.
+            NetMsg::Inputs(ref batch) => write_batch(batch, &mut bytes),
+            NetMsg::Hash { round, frame, hash } => {
+                bytes.push(round);
                 bytes.extend_from_slice(&frame.to_le_bytes());
                 bytes.extend_from_slice(&hash.to_le_bytes());
             }
@@ -640,6 +1052,7 @@ impl NetMsg {
                 beach,
                 deal,
                 crowned,
+                delay,
             }) => {
                 bytes.push(seats);
                 bytes.push(seat.unwrap_or(SPECTATOR_SEAT));
@@ -658,13 +1071,13 @@ impl NetMsg {
                 bytes.extend_from_slice(&wins);
                 bytes.extend_from_slice(&deal.to_le_bytes());
                 bytes.push(crowned);
+                bytes.push(delay);
                 // Length-prefixed and last, so the fixed part above stays
                 // where it was and a beach of any size is one read.
                 let len = u16::try_from(beach.len()).unwrap_or(0);
                 bytes.extend_from_slice(&len.to_le_bytes());
                 bytes.extend_from_slice(&beach[..usize::from(len)]);
             }
-            NetMsg::Pause { frame } => bytes.extend_from_slice(&frame.to_le_bytes()),
             NetMsg::CatchUp {
                 frame,
                 part,
@@ -726,36 +1139,21 @@ impl NetMsg {
             }),
             TAG_KICKED => Some(NetMsg::Kicked),
             TAG_NO_BOTS => Some(NetMsg::NoBots),
+            TAG_FULL => Some(NetMsg::Full),
+            TAG_RETIRED_NO_CHAIR => None,
             TAG_LEAVING => Some(NetMsg::Leaving),
             TAG_WATCH => Some(NetMsg::Watch {
                 name: body.get(..WIRE_NAME)?.try_into().ok()?,
             }),
-            TAG_INPUTS => {
-                // A count past the cap is refused rather than clamped: the
-                // encoder would write back fewer than it read, and a message
-                // that does not survive its own round trip is one the host
-                // could relay as something other than what it was told.
-                let count = usize::from(*body.first()?);
-                if count > MAX_INPUTS_PER_DATAGRAM {
-                    return None;
-                }
-                let packed = body.get(1..1 + count * INPUT_BYTES)?;
-                Some(NetMsg::Inputs(
-                    packed
-                        .as_chunks::<INPUT_BYTES>()
-                        .0
-                        .iter()
-                        .map(|chunk| InputMsg::decode(*chunk))
-                        .collect(),
-                ))
-            }
+            TAG_INPUTS => read_batch(body).map(NetMsg::Inputs),
             // Spoken for and unread: a peer on this version never sends
             // it, and one on an older version is answered by the caller.
             TAG_RETIRED_INPUT => None,
             TAG_HASH => {
-                let frame = u32::from_le_bytes(body.get(..4)?.try_into().ok()?);
-                let hash = u64::from_le_bytes(body.get(4..12)?.try_into().ok()?);
-                Some(NetMsg::Hash { frame, hash })
+                let round = *body.first()?;
+                let frame = u32::from_le_bytes(body.get(1..5)?.try_into().ok()?);
+                let hash = u64::from_le_bytes(body.get(5..13)?.try_into().ok()?);
+                Some(NetMsg::Hash { round, frame, hash })
             }
             TAG_START => {
                 let terms = MatchTerms::decode(body.get(2..)?)?;
@@ -766,13 +1164,15 @@ impl NetMsg {
                 // to index the lockstep's own slots. Watching is the one
                 // seat legitimately outside the range.
                 //
-                // The AI holds the top seats, so the joiner builds its
-                // lockstep over the low `seats - bots`. A `Start` seating
-                // us in an AI's chair would have it play a session it is
-                // not a player of, which the lockstep meets with a panic.
-                let humans = terms.humans(seats);
+                // The joiner builds its lockstep over the players' seats,
+                // every seat but the AI's ([`MatchTerms::player_seats`]).
+                // A `Start` seating us in an AI's chair would have it play
+                // a session it is not a player of, which the lockstep
+                // meets with a panic, and an order seating a place off the
+                // table would index past it.
                 if !(2..=crate::sim::MAX_PLAYERS as u8).contains(&seats)
-                    || (seat != SPECTATOR_SEAT && seat >= humans)
+                    || !terms.order_fits(seats)
+                    || (seat != SPECTATOR_SEAT && !terms.player_seats(seats).contains(&seat))
                 {
                     return None;
                 }
@@ -793,7 +1193,14 @@ impl NetMsg {
                 let deal_at = series_at + 1 + crate::sim::MAX_PLAYERS;
                 let deal = u32::from_le_bytes(body.get(deal_at..deal_at + 4)?.try_into().ok()?);
                 let crowned = *body.get(deal_at + 4)?;
-                let after = deal_at + 5;
+                // A delay no host picks is no round to play: the lockstep
+                // would wait on more uncommitted frames than any peer
+                // keeps a resend tail for.
+                let delay = *body.get(deal_at + 5)?;
+                if u32::from(delay) > crate::sim::MAX_DELAY {
+                    return None;
+                }
+                let after = deal_at + 6;
                 // Every encoder of this version writes the length, so a
                 // datagram that ends before it is not one of ours.
                 let len = usize::from(u16::from_le_bytes(
@@ -810,10 +1217,21 @@ impl NetMsg {
                     beach,
                     deal,
                     crowned,
+                    delay,
                 }))
             }
+            TAG_PING => Some(NetMsg::Ping {
+                stamp: u32::from_le_bytes(body.get(..4)?.try_into().ok()?),
+            }),
+            TAG_PONG => Some(NetMsg::Pong {
+                stamp: u32::from_le_bytes(body.get(..4)?.try_into().ok()?),
+            }),
+            TAG_CLOCK => Some(NetMsg::Clock {
+                gap: i16::from_le_bytes(body.get(..2)?.try_into().ok()?),
+            }),
             TAG_PAUSE => Some(NetMsg::Pause {
-                frame: u32::from_le_bytes(body.get(..4)?.try_into().ok()?),
+                round: *body.first()?,
+                frame: u32::from_le_bytes(body.get(1..5)?.try_into().ok()?),
             }),
             TAG_CATCH_UP => {
                 let frame = u32::from_le_bytes(body.get(..4)?.try_into().ok()?);
@@ -850,17 +1268,22 @@ impl NetMsg {
                 wait: *body.get(2)?,
             }),
             TAG_RESUME => Some(NetMsg::Resume {
-                frame: u32::from_le_bytes(body.get(..4)?.try_into().ok()?),
+                round: *body.first()?,
+                frame: u32::from_le_bytes(body.get(1..5)?.try_into().ok()?),
             }),
             TAG_QUEUED => Some(NetMsg::Queued {
                 ahead: *body.first()?,
             }),
             TAG_ABANDONED => {
-                let seat = *body.first()?;
-                let frame = u32::from_le_bytes(body.get(1..5)?.try_into().ok()?);
+                let (round, seat) = (*body.first()?, *body.get(1)?);
+                let frame = u32::from_le_bytes(body.get(2..6)?.try_into().ok()?);
                 // A seat outside the table is not one anything can be done
                 // about, and acting on it would index off the end.
-                (seat < crate::sim::MAX_PLAYERS as u8).then_some(NetMsg::Abandoned { seat, frame })
+                (seat < crate::sim::MAX_PLAYERS as u8).then_some(NetMsg::Abandoned {
+                    round,
+                    seat,
+                    frame,
+                })
             }
             TAG_ROSTER => {
                 let table = body.get(1..)?;
@@ -874,12 +1297,25 @@ impl NetMsg {
                     .ok()?;
                 let beach_at = kinds_at + crate::sim::MAX_PLAYERS;
                 let beach = table.get(beach_at..beach_at + WIRE_NAME)?.try_into().ok()?;
+                let chair = match table.get(beach_at + WIRE_NAME)? {
+                    0 => None,
+                    1 => Some(true),
+                    2 => Some(false),
+                    _ => return None,
+                };
+                let picking = match table.get(beach_at + WIRE_NAME + 1)? {
+                    0 => false,
+                    1 => true,
+                    _ => return None,
+                };
                 Some(NetMsg::Roster {
                     seats: *body.first()?,
                     names,
                     terms,
                     kinds,
                     beach,
+                    chair,
+                    picking,
                 })
             }
             TAG_CHAT => Some(NetMsg::Chat {
@@ -925,6 +1361,7 @@ mod tests {
             },
             NetMsg::Kicked,
             NetMsg::NoBots,
+            NetMsg::Full,
             NetMsg::Leaving,
             NetMsg::Chat {
                 name: widest,
@@ -940,6 +1377,7 @@ mod tests {
                 ..Start::blank()
             }),
             NetMsg::Hash {
+                round: u8::MAX,
                 frame: u32::MAX,
                 hash: u64::MAX,
             },
@@ -949,85 +1387,155 @@ mod tests {
                 parts: CATCH_UP_PARTS,
                 bytes: vec![0xAB; CATCH_UP_CHUNK],
             },
-            // A batch filled to the cap, which is the one message whose
-            // size a caller chooses rather than the format fixing it.
-            NetMsg::Inputs(vec![
-                InputMsg {
-                    player: 5,
-                    frame: u32::MAX,
-                    action: PlayerAction::Place {
-                        x: 19,
-                        y: 12,
-                        dir: Direction::Left,
-                    },
-                };
-                MAX_INPUTS_PER_DATAGRAM
-            ]),
+            // A player's longest tail with every notice, which is the one
+            // message whose size a caller chooses rather than the format
+            // fixing it. Anything longer is cut (`write_pieces`).
+            NetMsg::Inputs(Batch {
+                inputs: tail(5, 2 * longest_span()),
+                ..notices()
+            }),
         ] {
             let len = msg.clone().encode().len();
             assert!(len <= MAX_DATAGRAM, "{len} bytes: {msg:?}");
         }
     }
 
-    /// The whole point of the batch: a tail as long as the lockstep can
-    /// ever hold it must be one datagram, not two. `resend_span` keeps
-    /// commits from `frame - span` while they run to `frame + span - 1`, so
-    /// twice the span is the most [`Lockstep::recent_commits`] can answer,
-    /// and it is nowhere near the cap.
-    ///
-    /// If this ever fails the fix is not a larger buffer but chunking, as
-    /// the host's relay already does. See [`MAX_INPUTS_PER_DATAGRAM`].
-    #[test]
-    fn a_full_resend_tail_is_one_datagram() {
-        let span = (crate::sim::DEFAULT_DELAY + crate::sim::MAX_COMMIT_LEAD) as usize;
-        let tail = 2 * span;
-        assert!(
-            tail <= MAX_INPUTS_PER_DATAGRAM,
-            "a {tail}-message tail does not fit {MAX_INPUTS_PER_DATAGRAM} per datagram",
-        );
-        let len = NetMsg::Inputs(vec![
-            InputMsg {
-                player: 5,
-                frame: u32::MAX,
-                action: PlayerAction::None,
-            };
-            tail
-        ])
-        .encode()
-        .len();
-        assert!(len <= MAX_DATAGRAM, "{len} bytes");
+    /// The longest a resend span gets: `Lockstep`'s, at the longest delay.
+    fn longest_span() -> usize {
+        (crate::sim::MAX_DELAY + crate::sim::RESEND_LEAD) as usize
     }
 
-    /// The batch has two encoders: the one every message uses, and the one
-    /// the send path uses to keep a `Vec` off the hot loop. They write the
-    /// same bytes or they are two protocols.
-    #[test]
-    fn the_two_encoders_agree() {
-        for count in [0usize, 1, 34, MAX_INPUTS_PER_DATAGRAM] {
-            let msgs: Vec<InputMsg> = (0..count)
-                .map(|i| InputMsg {
-                    player: (i % crate::sim::MAX_PLAYERS) as u8,
-                    frame: i as u32 * 7,
-                    action: PlayerAction::Place {
-                        x: (i % 20) as u8,
-                        y: (i % 13) as u8,
-                        dir: Direction::Right,
-                    },
-                })
-                .collect();
-            let mut buf = [0u8; MAX_DATAGRAM];
-            let len = encode_inputs(&msgs, &mut buf);
-            assert_eq!(
-                &buf[..len],
-                NetMsg::Inputs(msgs.clone()).encode().as_slice(),
-                "{count} inputs"
-            );
-            assert_eq!(
-                NetMsg::decode(&buf[..len]),
-                Some(NetMsg::Inputs(msgs)),
-                "{count} inputs"
-            );
+    /// `frames` consecutive inputs of `seat`, every one a placement out
+    /// at the far corner of the XL beach.
+    fn tail(seat: u8, frames: usize) -> Vec<InputMsg> {
+        (0..frames as u32)
+            .map(|frame| InputMsg {
+                player: seat,
+                frame: 70_000 + frame,
+                action: PlayerAction::Place {
+                    x: 19,
+                    y: 12,
+                    dir: Direction::Left,
+                },
+            })
+            .collect()
+    }
+
+    /// A batch carrying every notice there is, and no inputs.
+    fn notices() -> Batch {
+        Batch {
+            round: 7,
+            inputs: Vec::new(),
+            wants: Some([70_000, 70_002, 70_001, 70_040, 70_000, 70_003]),
+            pause: Some(70_050),
+            resume: Some(70_010),
+            abandoned: vec![(3, 69_000), (5, 69_500)],
+            clock: Some(-3),
         }
+    }
+
+    /// The datagrams [`write_pieces`] cuts `batch` into.
+    fn pieces(batch: &Batch) -> Vec<Vec<u8>> {
+        let mut pieces = Vec::new();
+        write_pieces(batch, |bytes| pieces.push(bytes.to_vec()));
+        pieces
+    }
+
+    /// A player's tail as long as the lockstep can ever hold it is one
+    /// datagram, notices and all: `resend_span` keeps commits from
+    /// `frame - span` while they run to `frame + span - 1`, so twice the
+    /// span is the most a seat's tail can be. One seat's frames travel as
+    /// one run, three bytes a frame.
+    #[test]
+    fn a_full_resend_tail_is_one_datagram() {
+        let batch = Batch {
+            inputs: tail(5, 2 * longest_span()),
+            ..notices()
+        };
+        let pieces = pieces(&batch);
+        assert_eq!(pieces.len(), 1);
+        assert!(pieces[0].len() <= 300, "{} bytes", pieces[0].len());
+        assert_eq!(NetMsg::decode(&pieces[0]), Some(NetMsg::Inputs(batch)));
+    }
+
+    /// The most a host ever sends one peer in a tick, every seat's longest
+    /// tail at once, is cut into datagrams that each fit, and comes back
+    /// whole: every input once, in datagrams that each take up the frames
+    /// where the last left off, so one that is lost holds up only the
+    /// frames it carried and those after. The notices ride the first, the
+    /// clock the last, and the round and what the sender wants ride them
+    /// all.
+    #[test]
+    fn a_batch_too_big_for_a_datagram_comes_back_whole_in_several() {
+        let frames = 2 * longest_span();
+        let mut inputs: Vec<InputMsg> = (0..crate::sim::MAX_PLAYERS as u8)
+            .flat_map(|seat| tail(seat, frames))
+            .collect();
+        // Frame by frame, as `Lockstep::held_between` hands them over.
+        inputs.sort_by_key(|input| (input.frame, input.player));
+        let batch = Batch {
+            inputs: inputs.clone(),
+            ..notices()
+        };
+        let pieces = pieces(&batch);
+        assert!(pieces.len() > 1, "{} datagram", pieces.len());
+        let mut back = Vec::new();
+        let mut reached = 0;
+        for (index, bytes) in pieces.iter().enumerate() {
+            assert!(bytes.len() <= MAX_DATAGRAM, "{} bytes", bytes.len());
+            let Some(NetMsg::Inputs(piece)) = NetMsg::decode(bytes) else {
+                panic!("datagram {index} does not decode");
+            };
+            assert_eq!(piece.wants, batch.wants, "datagram {index}");
+            let first = index == 0;
+            assert_eq!(piece.round, batch.round, "datagram {index}");
+            assert_eq!(piece.pause.is_some(), first, "datagram {index}");
+            assert_eq!(piece.abandoned.is_empty(), !first, "datagram {index}");
+            let last = index == pieces.len() - 1;
+            assert_eq!(piece.clock.is_some(), last, "datagram {index}");
+            let lowest = piece.inputs.iter().map(|input| input.frame).min();
+            assert!(lowest >= Some(reached), "datagram {index} goes back");
+            reached = piece
+                .inputs
+                .iter()
+                .map(|input| input.frame)
+                .max()
+                .unwrap_or(0);
+            back.extend(piece.inputs);
+        }
+        back.sort_by_key(|input| (input.frame, input.player));
+        assert_eq!(back, inputs);
+        // And as full as the cap lets them be.
+        let sent: usize = pieces.iter().map(Vec::len).sum();
+        assert!(
+            sent < (pieces.len() - 1) * MAX_DATAGRAM + 100 + MAX_DATAGRAM / 2,
+            "{sent} bytes in {} datagrams",
+            pieces.len()
+        );
+    }
+
+    /// A batch with nothing to say but what its sender wants is still a
+    /// datagram: it is what tells the host where to resend from.
+    #[test]
+    fn a_batch_with_no_inputs_is_one_small_datagram() {
+        let batch = Batch {
+            wants: notices().wants,
+            ..Batch::default()
+        };
+        let pieces = pieces(&batch);
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0].len(), 2 + 2 + 4 + crate::sim::MAX_PLAYERS + 1);
+        assert_eq!(NetMsg::decode(&pieces[0]), Some(NetMsg::Inputs(batch)));
+        // A seat further on than a byte past the least reaches is written
+        // as wanting less, which costs a resend and nothing else.
+        let far = NetMsg::Inputs(Batch {
+            wants: Some([9, 9 + 300, 9, 9, 9, 9]),
+            ..Batch::default()
+        });
+        let Some(NetMsg::Inputs(back)) = NetMsg::decode(&far.encode()) else {
+            panic!("does not decode");
+        };
+        assert_eq!(back.wants, Some([9, 9 + 255, 9, 9, 9, 9]));
     }
 
     /// The retired tag earns its keep at exactly one moment: a version 10
@@ -1037,7 +1545,7 @@ mod tests {
     #[test]
     fn a_version_ten_input_is_refused_and_answered() {
         let mut old = vec![TAG_RETIRED_INPUT, 10];
-        old.extend_from_slice(&[0u8; INPUT_BYTES]);
+        old.extend_from_slice(&[0u8; 8]);
         assert_eq!(NetMsg::decode(&old), None, "not read as anything");
         assert_eq!(
             NetMsg::peek_version(&old),
@@ -1069,6 +1577,8 @@ mod tests {
             terms: MatchTerms::default(),
             kinds,
             beach: wire_name("The Pier"),
+            chair: Some(false),
+            picking: true,
         };
         assert_eq!(NetMsg::decode(&roster.clone().encode()), Some(roster));
         let start = NetMsg::Start(Start {
@@ -1134,11 +1644,11 @@ mod tests {
         }
     }
 
-    /// The humans at a table: the range a joiner builds its lockstep over,
-    /// and the range this file's own decoder refuses a seat outside of.
+    /// The humans at a table: how many places a joiner builds its lockstep
+    /// over, and this file's own decoder refuses a seat outside of.
     ///
-    /// The AI holds the top chairs, so the humans are what is left
-    /// underneath - but never none. Seat zero is the host's whatever the
+    /// The AI holds the last places, so the humans are what is left
+    /// before them - but never none. Seat zero is the host's whatever the
     /// dials say, and a `bots` byte from a broken or hostile build must
     /// come to a floor rather than wrapping the count back up under it.
     #[test]
@@ -1187,9 +1697,12 @@ mod tests {
             NetMsg::hello("Anna"),
             NetMsg::hello("Überlang-Name-über-die-Kappe-hinaus"),
             NetMsg::watch("Dee"),
-            NetMsg::Resume { frame: 0 },
-            NetMsg::Resume { frame: 70_000 },
-            NetMsg::Pause { frame: 7 },
+            NetMsg::Resume { round: 0, frame: 0 },
+            NetMsg::Resume {
+                round: 255,
+                frame: 70_000,
+            },
+            NetMsg::Pause { round: 3, frame: 7 },
             NetMsg::SpectatorVote { event: 8 },
             NetMsg::SpectatorTally {
                 watching: 3,
@@ -1207,48 +1720,71 @@ mod tests {
                 parts: 3,
                 bytes: vec![7; 40],
             },
-            NetMsg::Inputs(vec![InputMsg {
-                player: 1,
-                frame: 42,
-                action: PlayerAction::Place {
-                    x: 3,
-                    y: 8,
-                    dir: Direction::Down,
-                },
-            }]),
-            // An empty batch is never sent, and still has to come back as
-            // one: the fuzzer will build the three bytes that say so.
-            NetMsg::Inputs(Vec::new()),
+            NetMsg::Inputs(Batch {
+                inputs: vec![InputMsg {
+                    player: 1,
+                    frame: 42,
+                    action: PlayerAction::Place {
+                        x: 3,
+                        y: 8,
+                        dir: Direction::Down,
+                    },
+                }],
+                ..Batch::default()
+            }),
+            // An empty batch, and one with every notice and nothing else.
+            NetMsg::Inputs(Batch::default()),
+            NetMsg::Inputs(notices()),
+            // What the sender wants, as far apart as a byte past the
+            // least of them reaches.
+            NetMsg::Inputs(Batch {
+                wants: Some([9, 9 + 255, 9, 9, 9, 9]),
+                ..Batch::default()
+            }),
             // The XL beach is 20 wide: a placement out in column 18 has to
             // survive the trip, which it did not while a tile was a nibble.
-            // Behind it, the shape a real tail has: several frames of one
-            // seat in one datagram.
-            NetMsg::Inputs(vec![
-                InputMsg {
-                    player: 5,
-                    frame: 4000,
-                    action: PlayerAction::Place {
-                        x: 18,
-                        y: 11,
-                        dir: Direction::Left,
+            // Around it, the shape a real batch has: runs of several frames
+            // of one seat, and seats taking turns.
+            NetMsg::Inputs(Batch {
+                inputs: vec![
+                    InputMsg {
+                        player: 2,
+                        frame: 3999,
+                        action: PlayerAction::None,
                     },
-                },
-                InputMsg {
-                    player: 5,
-                    frame: 4001,
-                    action: PlayerAction::None,
-                },
-                InputMsg {
-                    player: 5,
-                    frame: 4002,
-                    action: PlayerAction::Place {
-                        x: 0,
-                        y: 0,
-                        dir: Direction::Up,
+                    InputMsg {
+                        player: 5,
+                        frame: 4000,
+                        action: PlayerAction::Place {
+                            x: 18,
+                            y: 11,
+                            dir: Direction::Left,
+                        },
                     },
-                },
-            ]),
+                    InputMsg {
+                        player: 5,
+                        frame: 4001,
+                        action: PlayerAction::None,
+                    },
+                    InputMsg {
+                        player: 5,
+                        frame: 4002,
+                        action: PlayerAction::Place {
+                            x: 0,
+                            y: 0,
+                            dir: Direction::Up,
+                        },
+                    },
+                    InputMsg {
+                        player: 2,
+                        frame: 4000,
+                        action: PlayerAction::Remove { x: 4, y: 4 },
+                    },
+                ],
+                ..notices()
+            }),
             NetMsg::Hash {
+                round: 9,
                 frame: 990,
                 hash: 0xDEAD_BEEF_0BAD_F00D,
             },
@@ -1265,6 +1801,7 @@ mod tests {
                 beach: b"a handmade beach".to_vec(),
                 deal: 0x0102_0304,
                 crowned: 0b0000_0101,
+                delay: crate::sim::MAX_DELAY as u8,
                 ..Start::blank()
             }),
             // Mid-series: the round and the tally come back as they went,
@@ -1283,8 +1820,13 @@ mod tests {
                 ..Start::blank()
             }),
             NetMsg::Incompatible { version: 9 },
+            NetMsg::Ping { stamp: 0 },
+            NetMsg::Pong { stamp: 0xFEED_BEEF },
+            NetMsg::Clock { gap: -3 },
+            NetMsg::Clock { gap: i16::MAX },
             NetMsg::Queued { ahead: 0 },
             NetMsg::Queued { ahead: 4 },
+            NetMsg::Full,
             NetMsg::Chat {
                 name: wire_name("Anna"),
                 text: wire_chat("wait for me!"),
@@ -1299,9 +1841,16 @@ mod tests {
                     ..MatchTerms::default()
                 },
                 beach: [0; WIRE_NAME],
+                chair: None,
+                picking: false,
             },
-            NetMsg::Abandoned { seat: 0, frame: 0 },
             NetMsg::Abandoned {
+                round: 0,
+                seat: 0,
+                frame: 0,
+            },
+            NetMsg::Abandoned {
+                round: 1,
                 seat: crate::sim::MAX_PLAYERS as u8 - 1,
                 frame: 123_456,
             },
@@ -1364,6 +1913,42 @@ mod tests {
         assert!(with_bots(6, 6, 0).is_some(), "seat zero always stands");
     }
 
+    /// The seat order rides in the terms of every `Start` and roster: a
+    /// joiner sat where the host's partner picks put it, the AI wherever
+    /// the order says, and nobody in an AI's chair. An order that is not a
+    /// permutation with the host in seat 0, or that seats a place off the
+    /// table, is refused.
+    #[test]
+    fn the_seat_order_travels_and_a_broken_one_is_refused() {
+        let order = [0, 2, 1, 3, 4, 5];
+        let start = |seat, order| {
+            NetMsg::Start(Start {
+                seats: 4,
+                seat: Some(seat),
+                terms: MatchTerms {
+                    bots: 2,
+                    order,
+                    ..MatchTerms::default()
+                },
+                ..Start::blank()
+            })
+        };
+        let good = start(2, order);
+        assert_eq!(NetMsg::decode(&good.clone().encode()), Some(good));
+        assert!(
+            NetMsg::decode(&start(1, order).encode()).is_none(),
+            "seat 1 is an AI's under this order"
+        );
+        for broken in [[1, 0, 2, 3, 4, 5], [0, 1, 1, 3, 4, 5], [0, 1, 2, 3, 4, 9]] {
+            assert!(
+                NetMsg::decode(&start(2, broken).encode()).is_none(),
+                "{broken:?}"
+            );
+        }
+        // A permutation, but a place of this four-seat table in seat 5.
+        assert!(NetMsg::decode(&start(2, [0, 5, 1, 3, 4, 2]).encode()).is_none());
+    }
+
     /// The whole point of the version byte: a datagram from another build is
     /// refused rather than half-understood.
     #[test]
@@ -1417,17 +2002,28 @@ mod wire_fuzz_probe {
                 ..Start::blank()
             })
             .encode(),
-            NetMsg::Hash { frame: 7, hash: 9 }.encode(),
-            // The count byte is a length off the wire, and the one field
-            // in the protocol that says how much to read.
-            NetMsg::Inputs(vec![
-                InputMsg {
-                    player: 1,
-                    frame: 9,
-                    action: crate::sim::PlayerAction::None,
-                };
-                6
-            ])
+            NetMsg::Hash {
+                round: 1,
+                frame: 7,
+                hash: 9,
+            }
+            .encode(),
+            // The counts are lengths off the wire, and the fields in the
+            // protocol that say how much to read.
+            NetMsg::Inputs(Batch {
+                inputs: (0..6)
+                    .map(|frame| InputMsg {
+                        player: (frame % 2) as u8,
+                        frame: 9 + frame / 2,
+                        action: crate::sim::PlayerAction::None,
+                    })
+                    .collect(),
+                wants: Some([9, 12, 9, 9, 10, 9]),
+                pause: Some(40),
+                abandoned: vec![(1, 30)],
+                clock: Some(2),
+                ..Batch::default()
+            })
             .encode(),
             ANNOUNCE_MAGIC.to_vec(),
             Vec::new(),
@@ -1479,7 +2075,7 @@ mod wire_fuzz_probe {
             let _ = NetMsg::peek_version(&bytes);
             // And the beacon decoder, names and all: the host's name is
             // the field that runs off a short packet.
-            let _ = super::beacon::decode(&bytes);
+            let _ = decode(&bytes);
         }
     }
 }

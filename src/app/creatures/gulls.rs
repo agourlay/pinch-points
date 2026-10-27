@@ -59,27 +59,41 @@ pub fn sync_gull_sprites(
         if !settings.reduced_motion && !seen.contains(&id) {
             kick_up(&mut commands, &mut rng, &art, pos);
         }
-        commands
-            .spawn((
-                GullSprite(id),
-                layout::image_sprite(&art.gull, Color::WHITE, Vec2::splat(TILE * 0.78)),
-                Transform::from_translation(pos.extend(layout::z::CREATURE + 0.2))
-                    .with_rotation(layout::dir_rotation(gull.dir)),
-            ))
-            .with_children(|parent| {
-                parent.spawn((
-                    CreatureShadow,
-                    layout::image_sprite(
-                        &art.shadow,
-                        Color::WHITE,
-                        Vec2::new(TILE * 0.72, TILE * 0.54),
-                    ),
-                    Transform::from_translation(Vec3::new(0.0, 0.0, -0.5)),
-                ));
-            });
+        spawn_gull(&mut commands, &art, board, gull);
     }
     seen.clear();
     seen.extend(board.gulls().iter().map(|gull| gull.id));
+}
+
+/// `gull` where the board has it, with its shadow: the one gull a round
+/// draws ([`sync_gull_sprites`], which adds the puff of its arrival), and
+/// a map card's preview too ([`super::spawn_creatures`]).
+pub(crate) fn spawn_gull(
+    commands: &mut Commands,
+    art: &Art,
+    board: &crate::sim::Board,
+    gull: &Gull,
+) -> Entity {
+    let pos = layout::creature_pos(board, gull.tile, gull.dir, gull.progress);
+    commands
+        .spawn((
+            GullSprite(gull.id),
+            layout::image_sprite(&art.gull, Color::WHITE, Vec2::splat(TILE * 0.78)),
+            Transform::from_translation(pos.extend(layout::z::CREATURE + 0.2))
+                .with_rotation(layout::dir_rotation(gull.dir)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                CreatureShadow,
+                layout::image_sprite(
+                    &art.shadow,
+                    Color::WHITE,
+                    Vec2::new(TILE * 0.72, TILE * 0.54),
+                ),
+                Transform::from_translation(Vec3::new(0.0, 0.0, -0.5)),
+            ));
+        })
+        .id()
 }
 
 /// A gull's sprite, as the interpolation moves and dresses it.
@@ -233,8 +247,271 @@ pub fn interpolate_gulls(
             shadow_tf.scale = Vec3::splat((1.0 - 0.25 * altitude) / scale);
             // It stays dark as the bird climbs: the shadow is the warning,
             // and a warning that fades as the danger nears is no warning.
-            shadow_sprite.color = Color::srgba(1.0, 1.0, 1.0, 1.0 - 0.15 * altitude);
+            layout::tint(
+                &mut shadow_sprite,
+                Color::srgba(1.0, 1.0, 1.0, 1.0 - 0.15 * altitude),
+            );
         }
+    }
+}
+
+/// One piece of a gull flying in to land (see [`fly_in_gulls`]), keyed by
+/// the arrival it draws: the tick it lands on and its tile.
+#[derive(Component)]
+pub struct GullArrival {
+    at: u64,
+    tile: u16,
+    part: ArrivalPart,
+}
+
+/// The three sprites a gull flying in is drawn with.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArrivalPart {
+    /// The bird, in the air.
+    Bird,
+    /// Its spread wings' shadow on the sand while it is high.
+    Wings,
+    /// The round shadow every gull on the beach casts, which the wings'
+    /// fold into as it comes down.
+    Oval,
+}
+
+/// How much of a gull's lead its shadow takes to sweep in over the edge
+/// onto its landing tile. Under half: for the rest of the lead the shadow
+/// lies on that tile while the bird comes down onto it.
+const SHADOW_SWEEP: f32 = 0.45;
+
+/// Where a gull's shadow starts its sweep, in tiles from the landing tile:
+/// this far back beyond the edge, and this far along it, so it glides in
+/// at a slant, as a bird coming down does.
+const SHADOW_BEHIND: f32 = 1.3;
+const SHADOW_ALONG: f32 = 1.0;
+
+/// How far the bird trails its shadow back along the way it came, in
+/// tiles at the top of its flight. It closes to nothing as it lands.
+const BIRD_TRAIL: f32 = 1.6;
+
+/// The highest a gull flying in is, in the units of [`Flight`]'s altitude.
+const ARRIVAL_HEIGHT: f32 = 2.0;
+
+/// A gull flying in, `progress` of the way through its lead: where its
+/// shadow lies (on the ground, the sun's offset included, without the
+/// wing beat's drift), where the bird is, how high, and which way it flies.
+#[derive(Clone, Copy, Debug)]
+struct ArrivalPose {
+    shadow: Vec2,
+    bird: Vec2,
+    altitude: f32,
+    heading: f32,
+}
+
+/// Where a gull flying in to `land` (a tile on the beach's edge, which it
+/// lands on facing `facing`, into the beach) is drawn `progress` of the way
+/// through its lead.
+///
+/// The shadow is the warning, so the shadow leads and the bird follows. It
+/// sweeps in over the edge onto the landing tile in the first
+/// [`SHADOW_SWEEP`] of the lead and lies there for the rest, where it
+/// would lie under a standing gull: whichever edge the gull comes in over,
+/// a player sees the tile it comes down on for most of the lead. The bird
+/// is placed from its shadow rather than the shadow from the bird: high,
+/// it trails back along its line of flight, and it closes onto the shadow
+/// as it comes down, landing on it. Not by the sun's throw, the offset
+/// `interpolate_gulls` drops a hopping gull's shadow by: over the bottom
+/// edge that throw points back out of the beach, and the two cancel, so
+/// the bird sat on its shadow from the start. Which way along
+/// the edge it comes from is the tile's parity, so two landing side by
+/// side do not fly the same line.
+fn arrival_pose(progress: f32, land: Vec2, facing: Vec2, tile: u16) -> ArrivalPose {
+    let along = if tile.is_multiple_of(2) { 1.0 } else { -1.0 };
+    let rest = land + layout::SUN;
+    let entry = rest - facing * TILE * SHADOW_BEHIND + facing.perp() * along * TILE * SHADOW_ALONG;
+    let shadow = entry.lerp(rest, effects::smoothstep(progress / SHADOW_SWEEP));
+    let altitude = ARRIVAL_HEIGHT * (1.0 - effects::smoothstep(progress)).powf(1.1);
+    let back = (entry - rest).normalize_or_zero();
+    let high = altitude / ARRIVAL_HEIGHT;
+    let bird = shadow - layout::SUN + back * TILE * BIRD_TRAIL * high;
+    ArrivalPose {
+        shadow,
+        bird,
+        altitude,
+        heading: (-back).to_angle(),
+    }
+}
+
+/// The sprites a gull flying in is drawn with: all three in flight, and
+/// under reduced motion only the round shadow fading in on its tile.
+fn arrival_parts(calm: bool) -> &'static [ArrivalPart] {
+    match calm {
+        true => &[ArrivalPart::Oval],
+        false => &[ArrivalPart::Bird, ArrivalPart::Wings, ArrivalPart::Oval],
+    }
+}
+
+/// Draw each gull the edge spawner has sent for as it flies in.
+///
+/// The sim picks a gull's landing tile [`crate::sim::GULL_LEAD`] ticks
+/// before it lands, so for that long the board knows where a bird will
+/// come down that is not on the sand yet. That lead is drawn as the bird
+/// gliding in from beyond the beach, high and large at first, behind its
+/// shadow, a soft spread-wing silhouette that sweeps in over the edge and
+/// settles on the landing tile well before the bird ([`arrival_pose`]):
+/// that is the warning. As the bird comes down it closes onto the shadow,
+/// which folds into the round one a standing gull casts, and on the
+/// landing tick the bird is handed over to [`sync_gull_sprites`] on the
+/// very spot, in its puff of sand.
+///
+/// Everything is read off the board each frame, the flight's progress
+/// included (the sim's tick between frames, like every creature), so it
+/// holds still under a pause and a board laid out mid-flight draws its
+/// gulls already on their way. The sprites follow the setting each frame
+/// too: turning reduced motion on or off mid-flight takes away or brings
+/// back the parts it draws. Once the round is over, which stops the board
+/// (a stage won on its goal stops it mid-lead), a gull still on its
+/// way never lands, so it is not drawn hanging in the air.
+///
+/// Reduced motion keeps the warning and drops the flight: the round
+/// shadow fades in on the landing tile and the gull simply appears.
+pub fn fly_in_gulls(
+    current: CurrentBoard,
+    fx: effects::Fx,
+    tween: Tween,
+    mut parts: Query<(Entity, &GullArrival, &mut Transform, &mut Sprite)>,
+) {
+    let effects::Fx {
+        mut commands,
+        art,
+        rng: _,
+        settings,
+    } = fx;
+    let Tween {
+        time,
+        fixed_time,
+        mut watch,
+        round,
+        round_clock,
+    } = tween;
+    let board = &current.sim.0;
+    let over = round.ended(board);
+    let incoming = if over {
+        &[][..]
+    } else {
+        board.incoming_gulls()
+    };
+    let wanted = arrival_parts(settings.reduced_motion);
+    for (entity, part, _, _) in &parts {
+        let flying = incoming
+            .iter()
+            .any(|gull| gull.at == part.at && gull.tile == part.tile);
+        if !flying || !wanted.contains(&part.part) {
+            commands.entity(entity).despawn();
+        }
+    }
+    for gull in incoming {
+        for &part in wanted {
+            let drawn = parts
+                .iter()
+                .any(|(_, p, _, _)| p.at == gull.at && p.tile == gull.tile && p.part == part);
+            if drawn {
+                continue;
+            }
+            let (image, size) = match part {
+                ArrivalPart::Bird => (&art.gull_fly, Vec2::splat(TILE * 0.78)),
+                ArrivalPart::Wings => (&art.gull_shadow, Vec2::splat(TILE * 0.78 * 1.05)),
+                ArrivalPart::Oval => (&art.shadow, Vec2::new(TILE * 0.72, TILE * 0.54)),
+            };
+            commands.spawn((
+                GullArrival {
+                    at: gull.at,
+                    tile: gull.tile,
+                    part,
+                },
+                layout::image_sprite(image, Color::NONE, size),
+                // Placed by the pass below on the frame it shows.
+                Transform::from_translation(Vec3::new(0.0, 0.0, layout::z::CREATURE)),
+            ));
+        }
+    }
+    let alpha = smoothing_alpha(board.ticks(), &mut watch, time.delta_secs(), &fixed_time);
+    // The moment drawn, in ticks: the creatures are drawn `alpha` of the
+    // way from the last tick's poses to this one's, and a gull that lands
+    // on tick `at` is first drawn standing at `at` exactly.
+    let now = board.ticks() as f32 - 1.0 + alpha;
+    let lead = crate::sim::GULL_LEAD as f32;
+    let t = round_clock.0;
+    for (_, part, mut transform, mut sprite) in &mut parts {
+        let Some(gull) = incoming
+            .iter()
+            .find(|gull| gull.at == part.at && gull.tile == part.tile)
+        else {
+            continue;
+        };
+        let progress = ((now - (gull.at as f32 - lead)) / lead).clamp(0.0, 1.0);
+        let land = layout::creature_pos(board, gull.tile, gull.dir, 0);
+        let facing = (layout::dir_rotation(gull.dir) * Vec3::X).truncate();
+        let landed_heading = facing.to_angle();
+        if settings.reduced_motion {
+            transform.translation = (land + layout::SUN).extend(layout::z::CREATURE - 0.4);
+            transform.rotation = Quat::from_rotation_z(landed_heading);
+            transform.scale = Vec3::ONE;
+            layout::tint(
+                &mut sprite,
+                Color::srgba(1.0, 1.0, 1.0, effects::smoothstep(progress)),
+            );
+            continue;
+        }
+        let pose = arrival_pose(progress, land, facing, gull.tile);
+        let altitude = pose.altitude;
+        let phase = f32::from(gull.tile % 32);
+        let beat = (t * 16.0 + phase).sin();
+        let upstroke = beat > 0.35;
+        let scale = 1.0 + 0.22 * altitude + beat * 0.05;
+        // Nose along its line of flight, turning to face into the beach
+        // over the last quarter, the short way round.
+        let turn = effects::smoothstep((progress - 0.75) / 0.25);
+        let swing = (landed_heading - pose.heading + std::f32::consts::PI)
+            .rem_euclid(std::f32::consts::TAU)
+            - std::f32::consts::PI;
+        let heading = Quat::from_rotation_z(pose.heading + swing * turn);
+        // The same slow circling drift a hopping gull's shadow has.
+        let drift = Vec2::new((t * 2.1 + phase).cos() * 2.5, (t * 1.7 + phase).sin() * 2.5);
+        let shadow = pose.shadow + drift * altitude;
+        let wings = effects::smoothstep(altitude / 0.7);
+        match part.part {
+            ArrivalPart::Bird => {
+                transform.translation = pose.bird.extend(layout::z::ARRIVING_GULL);
+                transform.scale = Vec3::splat(scale);
+                layout::tint(&mut sprite, Color::WHITE);
+                let wanted = if upstroke {
+                    &art.gull_fly_b
+                } else {
+                    &art.gull_fly
+                };
+                if sprite.image != *wanted {
+                    sprite.image = wanted.clone();
+                }
+            }
+            ArrivalPart::Wings => {
+                transform.translation = shadow.extend(layout::z::CREATURE - 0.45);
+                transform.scale = Vec3::splat(scale);
+                layout::tint(&mut sprite, Color::srgba(1.0, 1.0, 1.0, 0.85 * wings));
+                let wanted = if upstroke {
+                    &art.gull_shadow_b
+                } else {
+                    &art.gull_shadow
+                };
+                if sprite.image != *wanted {
+                    sprite.image = wanted.clone();
+                }
+            }
+            ArrivalPart::Oval => {
+                transform.translation = shadow.extend(layout::z::CREATURE - 0.4);
+                transform.scale = Vec3::splat(1.0 - 0.25 * altitude);
+                let oval = Color::srgba(1.0, 1.0, 1.0, (1.0 - 0.15 * altitude) * (1.0 - wings));
+                layout::tint(&mut sprite, oval);
+            }
+        }
+        transform.rotation = heading;
     }
 }
 
@@ -327,5 +604,145 @@ mod tests {
         // A rock or kelp under the landing tile buys one more tile, and
         // its `across` starts over. The bird glides on; it does not bob.
         assert!(flight.height(1, 0.0) <= low, "went back up to {low}");
+    }
+
+    /// The shadow of a gull flying in is the warning, so it is on the sand
+    /// before the bird, whichever edge it comes in over: for at least half
+    /// the lead it lies inside the beach within a tile of the tile the
+    /// gull lands on, and it is there, settled, while the bird is still up
+    /// and away. Both end on the landing spot together.
+    #[test]
+    fn a_gull_flying_in_casts_its_shadow_on_its_tile_first() {
+        use crate::sim::Direction;
+        let land = Vec2::new(100.0, -40.0);
+        for dir in [
+            Direction::Down,
+            Direction::Up,
+            Direction::Left,
+            Direction::Right,
+        ] {
+            let facing = (layout::dir_rotation(dir) * Vec3::X).truncate();
+            for tile in [6u16, 7] {
+                let steps = 100;
+                let warned = (0..=steps)
+                    .filter(|&step| {
+                        let pose = arrival_pose(step as f32 / steps as f32, land, facing, tile);
+                        let off = pose.shadow - land;
+                        // Not out past the beach's edge, which is half a
+                        // tile behind the landing tile's centre.
+                        off.dot(facing) >= -TILE * 0.5 && off.length() <= TILE
+                    })
+                    .count();
+                assert!(
+                    warned * 2 >= steps,
+                    "{dir:?} tile {tile}: on the sand for {warned} of {steps}"
+                );
+                let half = arrival_pose(0.5, land, facing, tile);
+                assert!(
+                    half.shadow.distance(land + layout::SUN) < 1.0,
+                    "{dir:?}: settled on its tile by half way"
+                );
+                assert!(
+                    half.bird.distance(land) > TILE * 0.5,
+                    "{dir:?}: while the bird is still on its way"
+                );
+                let landed = arrival_pose(1.0, land, facing, tile);
+                assert!(
+                    landed.bird.distance(land) < 1e-3,
+                    "{dir:?}: lands on its tile"
+                );
+                assert!(landed.shadow.distance(land + layout::SUN) < 1e-3);
+                assert_eq!(landed.altitude, 0.0);
+            }
+        }
+    }
+
+    /// A stage that runs [`fly_in_gulls`] on a board with one gull on its
+    /// way in, mid versus round.
+    fn arriving(calm: bool) -> App {
+        use crate::app::{Screen, VersusPhase};
+        let mut app = App::new();
+        let mut board = crate::sim::Board::new(9, 7, 3);
+        board.rules_mut().gull_period = 500;
+        board.tick_idle();
+        assert_eq!(board.incoming_gulls().len(), 1, "one sent for");
+        app.insert_resource(crate::app::Sim(board));
+        app.init_resource::<crate::app::sim_events::BoardGeneration>();
+        app.insert_resource(Art::blank());
+        app.init_resource::<effects::VisualRng>();
+        app.insert_resource(crate::app::settings::GameSettings {
+            reduced_motion: calm,
+            ..default()
+        });
+        app.init_resource::<Time>();
+        app.init_resource::<Time<Fixed>>();
+        app.init_resource::<crate::app::round_state::RoundClock>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.insert_resource(State::new(VersusPhase::Running));
+        app.init_resource::<crate::app::Paused>();
+        app.init_resource::<crate::app::pause::PauseMenu>();
+        app.init_resource::<crate::app::net::Online>();
+        app.add_systems(Update, fly_in_gulls);
+        app
+    }
+
+    /// The parts of the gull flying in on screen, and the oval's scale.
+    fn drawn_parts(app: &mut App) -> (Vec<bool>, Option<Vec3>) {
+        let world = app.world_mut();
+        let mut parts = [false; 3];
+        let mut oval = None;
+        for (arrival, place) in world.query::<(&GullArrival, &Transform)>().iter(world) {
+            let index = match arrival.part {
+                ArrivalPart::Bird => 0,
+                ArrivalPart::Wings => 1,
+                ArrivalPart::Oval => {
+                    oval = Some(place.scale);
+                    2
+                }
+            };
+            parts[index] = true;
+        }
+        (parts.to_vec(), oval)
+    }
+
+    fn set_calm(app: &mut App, calm: bool) {
+        app.world_mut()
+            .resource_mut::<crate::app::settings::GameSettings>()
+            .reduced_motion = calm;
+    }
+
+    /// Reduced motion turned on or off while a gull is flying in redraws it
+    /// as the setting now asks: the bird and its wings go and the oval
+    /// lies at its full size, or the bird and its wings come back.
+    #[test]
+    fn a_gull_flying_in_follows_the_motion_setting_mid_flight() {
+        let mut app = arriving(false);
+        app.update();
+        app.update();
+        assert_eq!(drawn_parts(&mut app).0, [true, true, true], "in flight");
+        set_calm(&mut app, true);
+        app.update();
+        app.update();
+        let (parts, oval) = drawn_parts(&mut app);
+        assert_eq!(parts, [false, false, true], "only the oval");
+        assert_eq!(oval, Some(Vec3::ONE), "at its full size");
+        set_calm(&mut app, false);
+        app.update();
+        app.update();
+        assert_eq!(drawn_parts(&mut app).0, [true, true, true], "flying again");
+    }
+
+    /// A round over (a stage won on its goal stops the board) never
+    /// lands a gull still on its way in, so none is left hanging in the air.
+    #[test]
+    fn a_gull_flying_in_when_the_round_ends_is_not_left_in_the_air() {
+        let mut app = arriving(false);
+        app.update();
+        app.update();
+        assert_eq!(drawn_parts(&mut app).0, [true, true, true], "in flight");
+        app.insert_resource(State::new(crate::app::VersusPhase::Over));
+        app.update();
+        app.update();
+        assert_eq!(drawn_parts(&mut app).0, [false, false, false], "gone");
     }
 }

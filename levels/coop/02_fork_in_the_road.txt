@@ -1,0 +1,21 @@
+# Two crabs walk the same corridor, one a step behind the other. The door
+# up suits a left claw, the door down a right claw, and the kelp beds
+# keep whichever crab takes the wrong door. Your arrow steers your crabs.
+name: Fork in the Road
+posts: 2
+hands: 1 1
+crab: 1,2 R L common
+crab: 0,2 R R common
+solution: 3,2 U L; 5,2 D R
+map:
++-+-+-+-+-+-+-+-+-+
+|0 . . K K K K K K|
++ + + + +-+-+-+-+ +
+|. . .|K K K K K K|
++-+-+-+ +-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+ +-+-+-+
+|. . . . .|K K K K|
++ + + + + + +-+-+ +
+|0 . . . . K K K K|
++-+-+-+-+-+-+-+-+-+

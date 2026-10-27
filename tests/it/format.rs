@@ -3,8 +3,8 @@
 //! tests that guard the token tables against a mismatched edit.
 
 use pinch_points::sim::{
-    Direction, Level, MAX_PLAYERS, PlayerAction, Replay, campaign_levels, challenge_levels,
-    classic_arena, generate_arena,
+    Direction, Level, MAX_PLAYERS, PlayerAction, Replay, campaign_levels, classic_arena,
+    generate_arena,
 };
 
 /// The format has to carry as many castles as the sim seats. It did not:
@@ -44,12 +44,14 @@ fn a_board_with_every_seat_survives_the_format() {
 
 /// parse(to_text(level)) must reach a fixed point (identical text and an
 /// identical starting board) for the whole shipped corpus.
+///
+/// The fixtures ride along: the keys no shipped stage uses are still keys
+/// a player's own file may say.
 #[test]
 fn every_shipped_level_round_trips() {
-    let mut corpus = campaign_levels();
-    corpus.extend(challenge_levels());
+    let corpus = campaign_levels();
     assert!(corpus.len() >= 33, "corpus went missing?");
-    for level in corpus {
+    for level in corpus.into_iter().chain(crate::fixtures::rule_levels()) {
         let text = level.to_text();
         let reparsed = Level::parse(&text)
             .unwrap_or_else(|e| panic!("{:?} failed to reparse: {e}", level.name));
@@ -66,6 +68,20 @@ fn every_shipped_level_round_trips() {
             level.name
         );
     }
+}
+
+/// A level file written for the timed challenges, which carried medal
+/// lines, still loads: `silver:` and `gold:` are read past and dropped,
+/// and the level is the same one without them.
+#[test]
+fn old_medal_lines_are_read_past() {
+    let level = &crate::fixtures::rule_levels()[0];
+    let text = level.to_text();
+    let with_medals = text.replacen("map:", "silver: 40\ngold: 62\nmap:", 1);
+    assert_ne!(with_medals, text, "the lines went in");
+    let back = Level::parse(&with_medals).expect("medal lines are no error");
+    assert_eq!(back.to_text(), text, "and leave nothing behind");
+    assert_eq!(back.board().state_hash(), level.board().state_hash());
 }
 
 /// A recorded round must survive the text format: to_text -> parse ->
@@ -121,7 +137,6 @@ fn mangled_text_is_refused_rather_than_followed() {
 
     let seeds: Vec<String> = campaign_levels()
         .iter()
-        .chain(challenge_levels().iter())
         .take(4)
         .map(Level::to_text)
         .chain([String::new(), "map:\n+-+\n|.|\n+-+\n".to_string()])

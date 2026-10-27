@@ -1,0 +1,26 @@
+# Two crabs come in from each end. One arrow turns every crab of its
+# claw, so one arrow each is enough when it goes where both of your
+# crabs pass it.
+name: Two Each
+hands: 1 1
+crab: 1,3 R L common
+crab: 0,3 R R common
+crab: 9,3 L L common
+crab: 10,3 L R common
+solution: 4,3 U L; 6,3 D R
+map:
++-+-+-+-+-+-+-+-+-+-+-+
+|# # # 0 K K K K # # #|
++-+-+-+-+ + +-+ +-+-+-+
+|# # # #|.|K K K|# # #|
++-+-+-+-+ +-+-+-+-+-+-+
+|# # # #|.|# # # # # #|
++-+-+-+-+ +-+-+-+-+-+-+
+|. . . . . . . . . . .|
++-+-+-+-+-+-+ +-+-+-+-+
+|# # # # # #|.|# # # #|
++-+-+-+-+-+-+ +-+-+-+-+
+|# # # # # #|.|K K K|#|
++-+-+-+-+-+-+ + +-+ +-+
+|# # # # # 0 K K K K #|
++-+-+-+-+-+-+-+-+-+-+-+

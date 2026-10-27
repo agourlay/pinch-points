@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
-use wire::{accept_loop, line_of, ping, routes_of, send, send_line};
+use wire::{accept_loop, ping, routes_of, send, send_game};
 
 /// A registered bot's number on this listener.
 pub type BotId = usize;
@@ -219,10 +219,10 @@ impl GameLink {
         lock(&self.rx).recv_timeout(timeout)
     }
 
-    /// Write to one of this game's bots.
+    /// Write to one of this game's bots, shaped for its protocol
+    /// ([`send_game`]).
     pub fn send(&self, id: BotId, msg: &Value) -> bool {
-        let line = line_of(msg);
-        send_line(&mut lock(&self.shared.registry), id, line, true)
+        send_game(&self.shared, id, msg).is_some()
     }
 }
 
@@ -238,6 +238,22 @@ struct Conn {
     stream: TcpStream,
     /// Bytes handed to the writer and not yet written.
     queued: Arc<AtomicUsize>,
+    /// The protocol version the bot registered with on this connection.
+    protocol: u64,
+    /// Protocol 2: the last tick of each game sent on this connection,
+    /// which the next is sent as a diff from. Per connection, so a bot
+    /// back on a new one starts from a whole tick.
+    sent: HashMap<u32, Sent>,
+    /// Games whose next tick goes whole, on the bot's word (`resync`).
+    resync: std::collections::HashSet<u32>,
+}
+
+/// A tick sent under protocol 2, kept to send the next one as a diff from.
+struct Sent {
+    state: Value,
+    tick: u64,
+    /// The last tick of the game sent whole on this connection.
+    full_at: u64,
 }
 
 struct Bot {
@@ -543,21 +559,18 @@ impl Listener {
         }
     }
 
-    /// Write one of a game's messages to a bot. False if it is not
-    /// connected, or was just dropped for not reading.
+    /// Write one of a game's messages to a bot, shaped for its protocol
+    /// ([`send_game`]). False if it is not connected, or was just
+    /// dropped for not reading.
     pub fn send(&self, id: BotId, msg: &Value) -> bool {
-        let line = line_of(msg);
-        send_line(&mut lock(&self.shared.registry), id, line, true)
+        send_game(&self.shared, id, msg).is_some()
     }
 
     /// Write a game's `hello` to a bot, as [`Self::send`] does, and say
     /// which connection it went to: a game that hears the bot came back
     /// on that same connection knows it has been greeted there already.
     pub fn greet(&self, id: BotId, msg: &Value) -> Option<u64> {
-        let line = line_of(msg);
-        let mut registry = lock(&self.shared.registry);
-        let serial = registry.bots.get(id)?.conn.as_ref()?.serial;
-        send_line(&mut registry, id, line, true).then_some(serial)
+        send_game(&self.shared, id, msg)
     }
 
     /// Open a game's route: its seats' messages come to the returned link.

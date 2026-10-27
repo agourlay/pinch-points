@@ -1,0 +1,26 @@
+# The log turns the first crab to cross it one way and the next the
+# other. The left crab has to come down onto it from above first, so P2
+# sends the right crab the long way round.
+name: Flip the Log
+hands: 1 1
+crab: 0,2 R L common
+crab: 0,5 R R common
+solution: 5,2 D L; 1,5 D R
+map:
++-+-+-+-+-+-+-+-+-+-+-+
+|# # # # # # # # K K K|
++-+-+-+-+-+-+-+-+ +-+ +
+|# # # # # # # # K K K|
++-+-+-+-+-+-+-+-+-+-+ +
+|. . . . . . . . . . K|
++-+-+-+-+-+ +-+-+-+-+ +
+|K K K # #|.|# # # # 0|
++ +-+ + + + + + + + + +
+|K K K # #|.|# # # # #|
++ +-+-+-+-+ +-+-+-+-+-+
+|. . . . . T . . . . .|
++ + +-+ +-+ +-+-+-+-+-+
+|0|.|#|.|K K K|# # # #|
++-+ + + + + +-+ + + + +
+|#|. . .|K K K|# # # #|
++-+-+-+-+-+-+-+-+-+-+-+

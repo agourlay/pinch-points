@@ -154,8 +154,8 @@ fn only_fierce_chases_a_jackpot_across_the_board() {
 }
 
 /// A golden crab is worth to the chase what the board pays for it: fifty
-/// where it is rolled, which outranks a molt anywhere in reach, and thirty
-/// where it is called, which ties with one, so the nearer is taken.
+/// where it is rolled and thirty where it is called, and either outranks a
+/// molt and its lure (17) anywhere in reach.
 #[test]
 fn a_jackpot_is_worth_what_the_board_pays() {
     let target = |golden_every: u32| {
@@ -171,7 +171,7 @@ fn a_jackpot_is_worth_what_the_board_pays() {
         }
     };
     assert_eq!(target(0), (14, 0), "fifty is the jackpot");
-    assert_eq!(target(600), (3, 2), "thirty ties a molt, and it is nearer");
+    assert_eq!(target(600), (14, 0), "thirty outranks a molt's 17");
 }
 
 /// The bot's hand has to walk. A placement far from its last one has to
@@ -618,4 +618,116 @@ fn a_seats_thinking_moments_change_from_board_to_board() {
     let first = moments(0);
     let differing = (1..20u64).filter(|&seed| moments(seed) != first).count();
     assert_eq!(differing, 19, "every other board moves P2's schedule");
+}
+
+/// On an open beach the AI measures through the seam, as the creatures
+/// walk: a gull four tiles from a castle across the seam is a threat to
+/// defend against, and the short way home for a crab is through it. Read
+/// across the flat grid the same gull was thirteen tiles off, and the
+/// castles beside the seam went undefended.
+#[test]
+fn the_ai_measures_through_the_seam_on_an_open_beach() {
+    let defended = |wrap: bool| {
+        let mut board = Board::new(16, 11, 5);
+        board.set_wrap(wrap);
+        board.set_tile(1, 5, TileKind::Castle(0));
+        board.spawn_gull(13, 5, Direction::Right);
+        let castle = castle_of(&board, 0).expect("a castle");
+        defend(&board, 0, BotLevel::Normal, castle)
+    };
+    assert!(
+        matches!(
+            defended(true),
+            Some((
+                PlayerAction::Place {
+                    x: 14,
+                    y: 5,
+                    dir: Direction::Left
+                },
+                Intent::Defend
+            ))
+        ),
+        "{:?}",
+        defended(true)
+    );
+    assert_eq!(defended(false), None, "thirteen tiles away with edges");
+
+    let mut board = Board::new(16, 11, 5);
+    board.set_wrap(true);
+    let (from, home) = (board.index_of(14, 5), board.index_of(1, 5));
+    assert_eq!(manhattan(&board, from, home), 3);
+    assert_eq!(
+        toward(&board, from, home),
+        Direction::Right,
+        "through the seam"
+    );
+    board.set_wrap(false);
+    assert_eq!(manhattan(&board, from, home), 13);
+    assert_eq!(toward(&board, from, home), Direction::Left);
+}
+
+/// A molt is worth its points and its lure, the lure counted for as long
+/// as it runs; one that will reach the castle while a lure runs or rests
+/// is worth its points alone, and one that gets there after the rest is
+/// over is worth its lure again.
+#[test]
+fn a_molt_is_worth_its_lure_only_when_one_can_start() {
+    let mut board = arena();
+    let castle = board.index_of(4, 3);
+    board.spawn_crab(1, 3, Direction::Right, Handedness::Left, CrabKind::Molting);
+    // Read once and kept: three tiles out, about 66 ticks from home.
+    let molt = board.crabs()[0];
+    let points = board.crab_value(CrabKind::Molting);
+    let lure = LURE_TICKS * LURE_POINTS_PER_SECOND_X2 / (2 * TICKS_PER_SECOND);
+    assert_eq!(lure, 12, "2.5 points a second of a 5 s lure");
+    assert_eq!(molt_worth(&board, &molt, castle), points + lure);
+    board.force_lure(0);
+    assert_eq!(molt_worth(&board, &molt, castle), points, "a lure is on");
+    for _ in 0..LURE_TICKS {
+        board.tick_idle();
+    }
+    assert!(board.lure().is_none() && board.lure_cooldown() == LURE_COOLDOWN);
+    assert_eq!(molt_worth(&board, &molt, castle), points, "the lure rests");
+    while board.lure_cooldown() > 60 {
+        board.tick_idle();
+    }
+    assert_eq!(
+        molt_worth(&board, &molt, castle),
+        points + lure,
+        "the rest is over before it gets home"
+    );
+}
+
+/// A molt the AI leaves is one a rival may bank once a lure is ready, so
+/// each rival past the first adds a full lure to its worth: a molt that
+/// gets home during the rest outranks a giant at four seats, where at two
+/// it does not, and a ready one outranks a called golden crab.
+#[test]
+fn a_molt_is_worth_the_lure_it_keeps_from_each_rival_past_the_first() {
+    let mut board = arena();
+    let castle = board.index_of(4, 3);
+    board.spawn_crab(1, 3, Direction::Right, Handedness::Left, CrabKind::Molting);
+    let molt = board.crabs()[0];
+    let points = board.crab_value(CrabKind::Molting);
+    let lure = LURE_TICKS * LURE_POINTS_PER_SECOND_X2 / (2 * TICKS_PER_SECOND);
+    assert_eq!(board.seats_in_play(), 2);
+    assert_eq!(
+        molt_worth(&board, &molt, castle),
+        points + lure,
+        "one rival"
+    );
+    board.set_tile(0, 0, TileKind::Castle(0));
+    board.set_tile(8, 0, TileKind::Castle(2));
+    board.set_tile(8, 6, TileKind::Castle(3));
+    assert_eq!(board.seats_in_play(), 4);
+    assert_eq!(molt_worth(&board, &molt, castle), points + 3 * lure);
+    assert!(molt_worth(&board, &molt, castle) > crate::sim::GOLDEN_CALLED_VALUE);
+    board.force_lure(0);
+    assert_eq!(
+        molt_worth(&board, &molt, castle),
+        points + 2 * lure,
+        "a lure is on: no lure of its own, still the two it denies"
+    );
+    assert!(molt_worth(&board, &molt, castle) > board.crab_value(CrabKind::Giant));
+    assert!(molt_worth(&board, &molt, castle) < crate::sim::GOLDEN_CALLED_VALUE);
 }

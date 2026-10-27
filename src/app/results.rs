@@ -1,6 +1,7 @@
 //! Round-end overlays: the tide-is-in standings card, the puzzle victory
 //! card, and the winner confetti.
 
+use crate::app::gamepad::{Face, LastDevice};
 use crate::app::i18n::fill;
 use crate::app::menu_ui;
 use crate::app::net::Online;
@@ -39,13 +40,13 @@ fn winner_line(
                 "{t}",
                 &crate::app::teams::label(settings, names, mode, team, seats),
             ),
-            palette::player_color(seat as u8),
+            palette::seat_text(seat as u8),
         );
     }
     match leaders.iter().position(|&led| led) {
         Some(winner) => (
             fill(tr.wins, &[("p", &names.label(tr, winner as u8))]),
-            palette::player_color(winner as u8).lighter(0.10),
+            palette::seat_text(winner as u8),
         ),
         None => (tr.dead_heat.to_string(), CARD_TEXT),
     }
@@ -55,6 +56,24 @@ fn winner_line(
 /// castle: bigger than on the board, since it is the one thing on the card
 /// that is a picture.
 const CASTLE_TILE_PX: f32 = 96.0;
+/// The castle's tile on a crowded card ([`castle_tile_px`]).
+const CASTLE_TILE_PX_CROWDED: f32 = 60.0;
+/// The most lines of standings, awards and calls a versus card holds
+/// under a full-size castle at the 720-pixel window the interface is drawn
+/// for. A table of six with five awards and a series under it ran the
+/// card 35 pixels past the top and foot of the window.
+const LINES_UNDER_A_FULL_CASTLE: usize = 9;
+
+/// The castle's tile for a versus card with `lines` lines of standings,
+/// awards and calls: full size while they leave room, smaller past that,
+/// so the card stays inside the window rather than the picture pushing
+/// the table off it.
+fn castle_tile_px(lines: usize) -> f32 {
+    match lines <= LINES_UNDER_A_FULL_CASTLE {
+        true => CASTLE_TILE_PX,
+        false => CASTLE_TILE_PX_CROWDED,
+    }
+}
 
 /// The winner's castle on the results card, built from the same pieces as
 /// the one on their tile, at the tier they finished on: a round won big
@@ -64,8 +83,8 @@ fn winner_castle(
     art: &crate::app::art::Art,
     tier: u8,
     color: Color,
+    t: f32,
 ) {
-    let t = CASTLE_TILE_PX;
     // Room for the widest castle (the moat) and its flag above the keep.
     let side = 1.4 * t;
     card.spawn(Node {
@@ -148,6 +167,51 @@ fn card_text(size: f32, color: Color) -> (TextFont, TextColor) {
 }
 
 /// One line of a card: `text` at `size`, in `color`.
+/// A card's line of keys, in both its spellings: the keyboard's, and a
+/// pad's player's, from the table of the face the card stands for.
+/// [`swap_card_keys`] shows whichever the hands last used want.
+#[derive(Component)]
+pub struct CardKeys {
+    keys: String,
+    pad: String,
+}
+
+impl CardKeys {
+    /// The keyboard's words, and in front of the face's controls the pad's
+    /// `lead`, if the line has one.
+    fn new(keys: &str, lead: Option<&str>, face: &Face, tr: &crate::app::i18n::Tr) -> CardKeys {
+        let controls = crate::app::gamepad::scheme::legend(tr, face);
+        CardKeys {
+            keys: keys.to_string(),
+            pad: match lead {
+                Some(lead) => format!("{lead} | {controls}"),
+                None => controls,
+            },
+        }
+    }
+
+    fn line(&self, device: LastDevice) -> &str {
+        match device {
+            LastDevice::Keyboard => &self.keys,
+            LastDevice::Pad => &self.pad,
+        }
+    }
+}
+
+/// A card's line of keys, as the hands last used read it.
+fn keys_line(keys: CardKeys, device: LastDevice, size: f32, color: Color) -> impl Bundle {
+    let line = card_line(keys.line(device).to_string(), size, color);
+    (line, keys)
+}
+
+/// Say a card's keys in the hands last used: the keyboard's, or the pad's
+/// buttons, as the prompt line along the bottom does.
+pub fn swap_card_keys(device: Res<LastDevice>, mut lines: Query<(&CardKeys, &mut Text)>) {
+    for (keys, mut text) in &mut lines {
+        menu_ui::set_text(&mut text, keys.line(*device));
+    }
+}
+
 fn card_line(text: impl Into<String>, size: f32, color: Color) -> (Text, TextFont, TextColor) {
     let (font, ink) = card_text(size, color);
     (Text::new(text), font, ink)
@@ -189,7 +253,7 @@ fn standings_rows(
             .map(|((name, total, seat), place)| {
                 (
                     format!("{place}  {name:<13} {total:>4}"),
-                    palette::player_color(*seat),
+                    palette::seat_text(*seat),
                 )
             })
             .collect();
@@ -215,7 +279,7 @@ fn standings_rows(
                     who(seat),
                     scores[seat as usize]
                 ),
-                palette::player_color(seat),
+                palette::seat_text(seat),
             )
         })
         .collect()
@@ -256,7 +320,7 @@ fn award_rows(
         .map(|award| {
             (
                 award.line(tr, |seat| names.label(tr, seat)),
-                palette::player_color(award.who[0]),
+                palette::seat_text(award.who[0]),
             )
         })
         .collect()
@@ -295,7 +359,7 @@ fn crowd_rows(
                     tr.call_wrong,
                     &[("p", &names.label(tr, seat)), ("a", &a), ("b", &b)],
                 ),
-                palette::player_color(seat),
+                palette::seat_text(seat),
             ),
         });
     }
@@ -303,7 +367,8 @@ fn crowd_rows(
 }
 
 /// What a finished round fed into besides its own scores: the day's best,
-/// the reel being cut from it, the series it belongs to, and the awards.
+/// the reel being cut from it, the series it belongs to, the awards, and
+/// its recording waiting to be kept.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct RoundExtras<'w> {
     highlight: Res<'w, crate::app::Highlight>,
@@ -311,6 +376,12 @@ pub struct RoundExtras<'w> {
     tournament: Res<'w, crate::app::tournament::Tournament>,
     tally: Res<'w, crate::app::awards::RoundTally>,
     kinds: Res<'w, crate::app::SeatKinds>,
+    /// The hands the card's line of keys is said for.
+    device: Res<'w, LastDevice>,
+    /// Whether the table can be played again from the card.
+    table: Res<'w, crate::app::rematch::LocalTable>,
+    /// Whether the round can be kept on the replay shelf.
+    keep: Res<'w, crate::app::replays::RoundToKeep>,
 }
 
 /// The tide-is-in standings card: winner headline, ranked scores in seat
@@ -338,6 +409,9 @@ pub fn spawn_versus_results(
         tournament,
         tally,
         kinds,
+        device,
+        table,
+        keep,
     } = extras;
     let board = &sim.0;
     let scores = board.scores();
@@ -365,6 +439,7 @@ pub fn spawn_versus_results(
     });
     let haul = board.crabs_banked();
     let awards = award_rows(settings, &names, &tally, board, seats.0, mode);
+    let crowd = crowd_rows(settings, &names, &online);
 
     // Whose castle the card shows off: the winner's, at the tier the round
     // left it on. A dead heat has no one to crown, and keeps the card's gold.
@@ -387,7 +462,14 @@ pub fn spawn_versus_results(
             ));
             if let Some(seat) = crowned {
                 let tier = crate::sim::castle_tier(scores[usize::from(seat)]);
-                winner_castle(card, &art, tier, palette::player_color(seat));
+                let lines = rows.len() + awards.len() + crowd.len();
+                winner_castle(
+                    card,
+                    &art,
+                    tier,
+                    palette::player_color(seat),
+                    castle_tile_px(lines),
+                );
             }
             card.spawn((
                 Text::new(headline),
@@ -444,7 +526,7 @@ pub fn spawn_versus_results(
             for (line, color) in awards {
                 card.spawn(card_line(line, 17.0, color));
             }
-            for (line, color) in crowd_rows(settings, &names, &online) {
+            for (line, color) in crowd {
                 card.spawn(card_line(line, 17.0, color));
             }
             card.spawn(menu_ui::spacer(6.0));
@@ -475,22 +557,81 @@ pub fn spawn_versus_results(
                     palette::GOLD,
                 ));
             }
+            // The keys, in the words the prompt line uses, from the same
+            // answers the keys read: where Enter goes, what R plays again
+            // at a table set up here, and the offer to keep the round.
+            let rematch = crate::app::rematch::rematch(&table, &online, &tournament);
+            let offer = keep.offer();
+            let door = (
+                keys_line(
+                    over_keys(tr, &online, &tournament, rematch, offer),
+                    *device,
+                    17.0,
+                    CARD_TEXT.darker(0.15),
+                ),
+                OverKeys,
+            );
             if tournament.in_series() {
-                series_rows(card, settings, &names, &tournament, &online, mode, count);
+                series_rows(card, settings, &names, &tournament, door, mode, count);
+            } else if rematch.is_some() || offer != crate::app::replays::KeepOffer::Nothing {
+                card.spawn(menu_ui::spacer(6.0));
+                card.spawn(door);
             }
         });
     });
 }
 
+/// The versus results card's line of keys, which changes while the card
+/// is up: the offer to keep the round turns into its confirmation.
+#[derive(Component)]
+pub struct OverKeys;
+
+/// The versus results card's keys in both spellings: the keyboard's line
+/// as the prompt line has it ([`crate::app::rematch::over_prompt`]), and a
+/// pad's from the results table, led by the word that the round is kept.
+fn over_keys(
+    tr: &crate::app::i18n::Tr,
+    online: &Online,
+    tournament: &crate::app::tournament::Tournament,
+    rematch: Option<crate::app::rematch::Rematch>,
+    keep: crate::app::replays::KeepOffer,
+) -> CardKeys {
+    let series_on = tournament.is_running();
+    let face = crate::app::gamepad::face::results_face(online, series_on, rematch, keep);
+    let keys = crate::app::rematch::over_prompt(tr, online, series_on, rematch, keep);
+    CardKeys::new(&keys, crate::app::replays::kept_lead(tr, keep), &face, tr)
+}
+
+/// Say on the card that the round is kept, the moment it is, and what R
+/// does the moment that changes.
+pub fn refresh_over_keys(
+    keep: Res<crate::app::replays::RoundToKeep>,
+    settings: Res<GameSettings>,
+    online: Res<Online>,
+    tournament: Res<crate::app::tournament::Tournament>,
+    table: Res<crate::app::rematch::LocalTable>,
+    mut lines: Query<&mut CardKeys, With<OverKeys>>,
+) {
+    // The table changes when R asks before restarting a series, and when
+    // the question is taken back.
+    if !keep.is_changed() && !table.is_changed() {
+        return;
+    }
+    let rematch = crate::app::rematch::rematch(&table, &online, &tournament);
+    for mut keys in &mut lines {
+        *keys = over_keys(settings.tr(), &online, &tournament, rematch, keep.offer());
+    }
+}
+
 /// A series' part of the round's card: which round this was, each seat's
-/// wins, and then the champion, a drawn series, or the door to the next
-/// round.
+/// wins, the champion or a drawn series once it is decided, and the line
+/// of keys: the door to the next round, or the way on after the last.
 fn series_rows(
     card: &mut ChildSpawnerCommands,
     settings: &GameSettings,
     names: &crate::app::SeatNames,
     tournament: &crate::app::tournament::Tournament,
-    online: &Online,
+    door: impl Bundle,
     mode: TeamMode,
     count: u8,
 ) {
@@ -527,7 +668,7 @@ fn series_rows(
             card.spawn(card_line(
                 fill(tr.tour_champion, &[("p", &who)]),
                 26.0,
-                palette::player_color(seat).lighter(0.1),
+                palette::seat_text(seat),
             ));
         } else {
             // Over with nobody ahead. The card used to say nothing at all,
@@ -535,10 +676,10 @@ fn series_rows(
             // simply stopped.
             card.spawn(card_line(tr.tour_drawn, 26.0, CARD_TEXT));
         }
-    } else {
-        let door = crate::app::play_input::enter_door(tr, online, tournament.is_running());
-        card.spawn(card_line(door, 17.0, CARD_TEXT.darker(0.15)));
     }
+    // Under a decided series the line is still the way on: Enter to the
+    // menu and, at a couch table, R for the series again.
+    card.spawn(door);
 }
 
 /// The results card's "highlight reel: …" line, shown once the reel is
@@ -583,7 +724,7 @@ pub fn update_highlight_line(
 pub fn spawn_puzzle_won(
     mut commands: Commands,
     campaign: Res<Campaign>,
-    settings: Res<GameSettings>,
+    (settings, device): (Res<GameSettings>, Res<LastDevice>),
     sim: Res<Sim>,
     art: Res<crate::app::art::Art>,
 ) {
@@ -596,9 +737,7 @@ pub fn spawn_puzzle_won(
     // last of those ends only the list. So the card counts this level
     // within whichever of the two it belongs to, and only the shipped
     // section's end is the campaign's end.
-    let custom = campaign.place().custom;
     let last = campaign.is_last();
-    let last_shipped = last && !custom;
     let board = &sim.0;
     // The castle the crabs were routed to: the first on the beach, which
     // is the only one in all but a handful of stages.
@@ -609,11 +748,7 @@ pub fn spawn_puzzle_won(
         frame.insert(BackgroundColor(palette::CARD_BG));
         frame.with_children(|card| {
             let saved_all = campaign.current().goal.saves_every_crab();
-            let title = match (last_shipped, saved_all) {
-                (true, _) => tr.campaign_done,
-                (false, true) => tr.all_safe,
-                (false, false) => tr.goal_met,
-            };
+            let title = won_title(tr, campaign.place(), saved_all);
             card.spawn((
                 Text::new(title),
                 menu_ui::display_font(34.0),
@@ -621,21 +756,44 @@ pub fn spawn_puzzle_won(
             ));
             if let Some(owner) = castle {
                 let tier = crate::sim::castle_tier(board.scores()[usize::from(owner)]);
-                winner_castle(card, &art, tier, palette::player_color(owner));
+                winner_castle(
+                    card,
+                    &art,
+                    tier,
+                    palette::player_color(owner),
+                    CASTLE_TILE_PX,
+                );
             }
             saved_row(card, &art, &campaign, board);
             card.spawn(card_line(level_line(tr, &campaign, &name), 21.0, CARD_TEXT));
-            card.spawn(card_line(
-                match (last, saved_all) {
-                    (true, _) => tr.last_level,
-                    (false, true) => tr.prompt_won,
-                    (false, false) => tr.prompt_won_goal,
-                },
-                17.0,
-                CARD_TEXT.darker(0.15),
-            ));
+            let (keys, lead) = match (last, saved_all) {
+                (true, _) => (tr.last_level, tr.pad.last_level),
+                (false, true) => (tr.prompt_won, tr.pad.won),
+                (false, false) => (tr.prompt_won_goal, tr.pad.won_goal),
+            };
+            let keys = CardKeys::new(keys, Some(lead), &Face::PuzzleWon { last }, tr);
+            card.spawn(keys_line(keys, *device, 17.0, CARD_TEXT.darker(0.15)));
         });
     });
+}
+
+/// The won card's heading. The campaign's own last stage ends it, and
+/// only that one: the player's own levels behind it are a shelf, not stage
+/// a hundred and one, and the co-op shelf is a ladder of its own for two,
+/// whose last stage is not where the beach is made safe. Every other clear
+/// says whether every crab came home or the goal was met.
+fn won_title(
+    tr: &crate::app::i18n::Tr,
+    place: crate::app::campaign::Place,
+    saved_all: bool,
+) -> &'static str {
+    use crate::app::campaign::Section;
+    let campaign_end = place.at == place.of && place.section == Section::TidePool;
+    match (campaign_end, saved_all) {
+        (true, _) => tr.campaign_done,
+        (false, true) => tr.all_safe,
+        (false, false) => tr.goal_met,
+    }
 }
 
 /// Which level a puzzle card is about: its place in its own section and
@@ -643,10 +801,11 @@ pub fn spawn_puzzle_won(
 /// player's own levels read as a shelf of their own on either, the way the
 /// header bar counts them.
 fn level_line(tr: &crate::app::i18n::Tr, campaign: &Campaign, name: &str) -> String {
-    let crate::app::campaign::Place { at, of, custom } = campaign.place();
-    let shelf = match custom {
-        true => format!("{}  ", tr.stage_custom),
-        false => String::new(),
+    let crate::app::campaign::Place { at, of, section } = campaign.place();
+    let shelf = match section {
+        crate::app::campaign::Section::Custom => format!("{}  ", tr.stage_custom),
+        crate::app::campaign::Section::Coop => format!("{}  ", tr.stage_coop),
+        crate::app::campaign::Section::TidePool => String::new(),
     };
     format!("{shelf}{at} / {of}  -  {name}")
 }
@@ -721,7 +880,7 @@ fn saved_row(
             .with_children(|icon| {
                 // Facing along the row, the way they walked home.
                 icon.spawn(layer(&art.crab, body_color(kind)));
-                icon.spawn(layer(&art.claw, claw_color(handed)));
+                icon.spawn(layer(&art.claw, claw_color(handed, level.is_coop())));
             });
         }
     });
@@ -751,6 +910,7 @@ pub fn spawn_puzzle_lost(
     mut commands: Commands,
     campaign: Res<Campaign>,
     settings: Res<GameSettings>,
+    device: Res<LastDevice>,
     // Optional, so the card goes up whatever else is loaded: the row of
     // crabs is a picture on it, and the words are the news.
     sim: Option<Res<Sim>>,
@@ -778,7 +938,14 @@ pub fn spawn_puzzle_lost(
                 saved_row(card, art, &campaign, &sim.0);
             }
             card.spawn(card_line(level_line(tr, &campaign, &name), 21.0, CARD_TEXT));
-            card.spawn(card_line(prompt, 17.0, CARD_TEXT.darker(0.15)));
+            // The hint has a line of its own under the header, so the
+            // card names the ways on.
+            let lead = match campaign.current().goal.saves_every_crab() {
+                true => tr.pad.lost,
+                false => tr.pad.lost_goal,
+            };
+            let keys = CardKeys::new(prompt, Some(lead), &Face::PuzzleLost { hint: false }, tr);
+            card.spawn(keys_line(keys, *device, 17.0, CARD_TEXT.darker(0.15)));
         });
     });
 }
@@ -787,6 +954,22 @@ pub fn spawn_puzzle_lost(
 mod tests {
     use super::*;
     use crate::app::i18n::EN;
+
+    /// The beach is made safe on the Tide Pool's last stage, not on the
+    /// co-op shelf's last, which is a ladder of its own.
+    #[test]
+    fn only_the_campaigns_last_stage_makes_the_beach_safe() {
+        let mut campaign = Campaign::tide_pool();
+        let tide_end = campaign.levels.len() - 1;
+        let coop = crate::sim::coop_levels();
+        campaign.coop = coop.len();
+        campaign.levels.extend(coop);
+        campaign.builtins = campaign.levels.len();
+        let title = |at: usize| won_title(&EN, campaign.place_of(at), true);
+        assert_eq!(title(tide_end), EN.campaign_done);
+        assert_eq!(title(campaign.levels.len() - 1), EN.all_safe);
+        assert_eq!(title(0), EN.all_safe);
+    }
 
     /// Losing a puzzle raises a card over the held board, and leaving the
     /// phase takes it down again: the stop is said, not left to be guessed.
@@ -801,6 +984,7 @@ mod tests {
             ..Campaign::tide_pool()
         });
         app.insert_resource(GameSettings::default());
+        app.init_resource::<LastDevice>();
         app.insert_state(Screen::Puzzle);
         app.init_state::<Phase>();
         app.add_systems(
@@ -875,6 +1059,50 @@ mod tests {
         );
     }
 
+    /// The card's line of keys offers the round and then says it is kept,
+    /// in the keyboard's words and in a pad's.
+    #[test]
+    fn the_card_line_turns_the_offer_into_its_confirmation() {
+        use crate::app::replays::KeepOffer;
+        let (online, tournament) = (
+            Online::default(),
+            crate::app::tournament::Tournament::default(),
+        );
+        let tr = &EN;
+        let offered = over_keys(tr, &online, &tournament, None, KeepOffer::Offered);
+        assert_eq!(offered.keys, "Enter: menu | G: keep replay");
+        assert!(offered.pad.contains("X: keep replay"), "{}", offered.pad);
+        let kept = over_keys(tr, &online, &tournament, None, KeepOffer::Kept);
+        assert_eq!(kept.keys, "Enter: menu | replay kept");
+        assert!(kept.pad.starts_with("replay kept | "), "{}", kept.pad);
+        assert!(!kept.pad.contains("X:"), "{}", kept.pad);
+    }
+
+    /// A spectator's card names Y for talking to the table, as the bridge
+    /// presses it; a player's does not.
+    #[test]
+    fn a_spectators_card_says_y_talks() {
+        use crate::app::replays::KeepOffer;
+        use crate::sim::{DEFAULT_DELAY, Lockstep};
+        use crate::transport::{MatchTerms, UdpTransport};
+        let at_table = |step| {
+            Online(Some(crate::app::net::OnlineSession::new(
+                UdpTransport::host(0).expect("socket"),
+                step,
+                2,
+                MatchTerms::default(),
+            )))
+        };
+        let tournament = crate::app::tournament::Tournament::default();
+        let tr = &EN;
+        let watching = at_table(Lockstep::observer(vec![0, 1], DEFAULT_DELAY));
+        let card = over_keys(tr, &watching, &tournament, None, KeepOffer::Offered);
+        assert!(card.pad.contains("Y: talk"), "{}", card.pad);
+        let seated = at_table(Lockstep::new(1, vec![0, 1], DEFAULT_DELAY));
+        let card = over_keys(tr, &seated, &tournament, None, KeepOffer::Offered);
+        assert!(!card.pad.contains("Y: talk"), "{}", card.pad);
+    }
+
     /// The series line fits the card at its widest. A team of three with
     /// the longest names a seat can carry and the most wins a series can
     /// give is one entry, and has to fit a line on its own; the card around
@@ -920,8 +1148,8 @@ mod tests {
         assert!(lines[3].starts_with("4  P4"));
         assert!(lines[3].ends_with('0'), "the score is on the line");
         // Each row wears its own seat colour, not its placing colour.
-        assert_eq!(rows[0].1, palette::player_color(1));
-        assert_eq!(rows[2].1, palette::player_color(0));
+        assert_eq!(rows[0].1, palette::seat_text(1));
+        assert_eq!(rows[2].1, palette::seat_text(0));
     }
 
     /// Equal scores share a place, and the next row down skips past them:
@@ -952,6 +1180,38 @@ mod tests {
         );
         assert!(teams[0].0.starts_with("1 "), "{teams:?}");
         assert!(teams[1].0.starts_with("1 "), "{teams:?}");
+    }
+
+    /// The first row's number is [`teams::top_total`], the one the replay
+    /// shelf shows a kept round won with: a seat's score, a team's total,
+    /// or the score a dead heat tied on.
+    ///
+    /// [`teams::top_total`]: crate::app::teams::top_total
+    #[test]
+    fn the_first_row_shows_the_top_total() {
+        let cases: [([u32; MAX_PLAYERS], u8, TeamMode); 5] = [
+            ([3, 9, 5, 0, 0, 0], 4, TeamMode::Solo),
+            ([7, 7, 2, 0, 0, 0], 3, TeamMode::Solo),
+            ([1, 2, 10, 0, 0, 0], 4, TeamMode::Pairs),
+            ([1, 9, 1, 9, 1, 9], 6, TeamMode::Trios),
+            ([3, 3, 3, 3, 0, 0], 4, TeamMode::Pairs),
+        ];
+        for (scores, seats, mode) in cases {
+            let rows = standings_rows(
+                &GameSettings::default(),
+                &crate::app::SeatNames::default(),
+                &scores,
+                seats,
+                mode,
+                |_| "",
+            );
+            let shown = rows[0].0.split_whitespace().last().expect("a number");
+            assert_eq!(
+                shown,
+                crate::app::teams::top_total(&scores, seats, mode).to_string(),
+                "{scores:?} {mode:?}"
+            );
+        }
     }
 
     /// Team standings collapse to one row per team, named by the seats on

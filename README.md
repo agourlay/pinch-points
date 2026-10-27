@@ -50,7 +50,7 @@ and everyone places at once. What it does differently:
   ones.
 - **The score is on the board**: castles grow through four tiers as they
   score.
-- **A gull raid costs half a castle** and spills live crabs back onto the
+- **A gull raid costs a third of a castle** and spills live crabs back onto the
   sand for everyone to scramble over.
 - **The tide is the clock.** The last 30 seconds double the gull spawn
   rate; the wave stops everything where it stands.
@@ -64,13 +64,19 @@ one still in progress.
 - **Campaign**: a 100-level solo puzzle campaign, every level proved
   solvable with the arrows it grants and unsolvable without them.
 - **Versus**: local versus for 2-6 on one keyboard plus gamepads, with
-  team play, series, and AI at three levels.
+  team play, series, and AI at three levels, set up in three steps: the
+  game, the map (picked from pictures of the very board you will play:
+  the classic arena, eleven handmade maps each built around one idea,
+  generated beaches, an edgeless open ocean, Random, or Surprise, a new
+  generated map every round in one of five styles), and who plays each
+  seat. Every round's map is mirrored at random, so no castle keeps an
+  edge for good.
 - **Multiplayer**: up to 6 over LAN, on deterministic lockstep with
   desync detection. Anyone past the sixth chair watches instead,
   and can talk to the table and vote on a random event to call down on it.
 - **Level Editor**: a level editor whose solver proves a level beatable
   before it ships.
-- **Challenges**, **Replay**, **Daily Challenge**, **Achievements**.
+- **Replay**, **Daily Challenge**, **Achievements**.
 
 ## Bots
 
@@ -101,11 +107,14 @@ file to start from.
 |---|---|---|---|---|
 | P1 | WASD | arrow keys | Space | Left Shift |
 | P2 | IJKL | numpad 8/5/4/6 | numpad 0 | numpad . |
-| any seat | gamepad d-pad/stick | face buttons | L1 | R1 |
+| any seat | gamepad d-pad/stick | A/B/X/Y | LB | RB |
 
-Pads are plug-and-play and fill seats from the highest player down, so
-keyboard-plus-pad, two pads and two keyboards all work with no setup. Every
-menu is navigable from a pad, and the interface speaks eight languages.
+Pads are plug-and-play and fill seats from P2 up, so keyboard-plus-pad and
+two pads play with no setup, and two at one keyboard once P2 presses one of
+their keys. The
+whole game plays from a pad alone, the level editor included, and the prompt
+line names the buttons of whichever was touched last. The interface speaks
+eight languages.
 
 ## Documentation
 

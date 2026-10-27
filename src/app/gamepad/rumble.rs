@@ -9,7 +9,7 @@ use bevy::prelude::*;
 /// How hard, and for how long, a raid is felt.
 ///
 /// Both motors, weighted to the low-frequency one: a gull carrying off
-/// half a castle is a thump, not a buzz. Short enough that two raids in
+/// a third of a castle is a thump, not a buzz. Short enough that two raids in
 /// quick succession read as two knocks rather than one long shudder.
 const RAID_RUMBLE: GamepadRumbleIntensity = GamepadRumbleIntensity {
     strong_motor: 0.85,
@@ -86,6 +86,10 @@ mod tests {
         app.insert_resource(Sim(classic_arena(false, seats.max(2))));
         app.insert_resource(GameSettings::default());
         app.init_resource::<PadSeats>();
+        // What a Start on the setup screen claims a seat at.
+        app.init_resource::<crate::app::match_setup::MatchConfig>();
+        app.init_resource::<crate::app::match_setup::CustomBeaches>();
+        app.init_resource::<crate::app::bot_seats::BotSeats>();
         app.add_message::<SimEvent>();
         app.add_message::<GamepadRumbleRequest>();
         for player in 0..seats {
@@ -96,6 +100,22 @@ mod tests {
         }
         app.add_systems(Update, rumble_on_raid);
         app
+    }
+
+    /// `pad` presses Start on the setup screen, which claims it a seat
+    /// there by the system that reads the press.
+    fn sit_down(app: &mut App, pad: Entity) {
+        use bevy::ecs::system::RunSystemOnce;
+        app.world_mut()
+            .get_resource_or_init::<crate::app::match_setup::MatchMenu>();
+        let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
+        gamepad.digital_mut().press(GamepadButton::Start);
+        app.world_mut()
+            .run_system_once(super::super::pad_claim_seats)
+            .expect("runs");
+        let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
+        gamepad.digital_mut().release(GamepadButton::Start);
+        gamepad.digital_mut().clear();
     }
 
     /// Every pad asked to rumble since this was last called.
@@ -113,13 +133,14 @@ mod tests {
             owner,
             pos: Vec2::ZERO,
             lost: 4,
+            by: None,
         });
         app.update();
         buzzed(app)
     }
 
     /// The pad on the raided seat's own hands, and nobody else's. Pads
-    /// fill seats from the top down, so with two seats and one pad the
+    /// fill seats from P2 upwards, so with two seats and one pad the
     /// controller is seat two's: a raid on seat two is felt and a raid on
     /// seat one, who is on the keyboard, is not.
     #[test]
@@ -178,19 +199,19 @@ mod tests {
             .query_filtered::<Entity, With<Gamepad>>()
             .iter(app.world())
             .collect();
-        app.world_mut().resource_mut::<PadSeats>().0 = plugged.clone();
         app.update();
-        assert_eq!(
-            raid(&mut app, 1),
-            vec![plugged[0]],
-            "the first claim, on top"
-        );
+        sit_down(&mut app, plugged[0]);
+        assert_eq!(raid(&mut app, 1), vec![plugged[0]], "the claim, on P2");
 
         app.world_mut().entity_mut(plugged[0]).remove::<Gamepad>();
         let spare = app.world_mut().spawn(Gamepad::default()).id();
         app.update();
         assert_eq!(raid(&mut app, 1), vec![spare], "the spare takes P2");
-        assert_eq!(raid(&mut app, 0), vec![plugged[1]], "and P1 keeps its own");
+        assert_eq!(
+            raid(&mut app, 0),
+            vec![plugged[1]],
+            "P1 keeps the pad it was dealt: the friend's Start needed its own"
+        );
     }
 
     /// Two pads, two seats: each seat's own controller and only that one.
@@ -204,8 +225,8 @@ mod tests {
         assert_ne!(top, next, "one raid must not buzz both hands");
     }
 
-    /// Once the join ceremony has claimed pads, claim order decides which
-    /// controller an index means, not the order the operating system handed
+    /// Once the join ceremony has claimed a pad, the claim decides which
+    /// controller a seat means, not the order the operating system handed
     /// them over in.
     #[test]
     fn a_claimed_pad_beats_the_order_it_was_plugged_in() {
@@ -216,12 +237,17 @@ mod tests {
             .iter(app.world())
             .collect();
         assert_eq!(plugged.len(), 2);
-        let claimed: Vec<Entity> = plugged.iter().copied().rev().collect();
-        app.world_mut().resource_mut::<PadSeats>().0 = claimed.clone();
+        assert_eq!(raid(&mut app, 1), vec![plugged[0]], "unclaimed, plug order");
+        sit_down(&mut app, plugged[1]);
         assert_eq!(
             raid(&mut app, 1),
-            vec![claimed[0]],
-            "the top seat holds whichever pad claimed first"
+            vec![plugged[1]],
+            "P2 holds the pad that claimed it"
+        );
+        assert_eq!(
+            raid(&mut app, 0),
+            vec![plugged[0]],
+            "and the other is dealt P1, the seat left over"
         );
     }
 

@@ -4,16 +4,22 @@
 //!
 //! The navigation keys live in [`nav`] and the card dressing (driftwood
 //! frame, tide line) in [`frame`]; both are re-exported here, so every
-//! screen reaches them as `menu_ui::x`.
+//! screen reaches them as `menu_ui::x`. The scroll bar a long list wears
+//! is [`scroll_bar`].
 
 mod frame;
 mod nav;
+pub mod scroll_bar;
+mod second_press;
 
 pub use frame::{FOAM_DEPTH, FRAME_PX, Framed, ShoreCard, dress_cards, tide_line};
 pub use nav::{
-    Buttons, CLOSERS, NUMBER_KEYS, Nav, enter, left_right, nav, nav_live, number_pressed,
-    screen_chosen, spend, step,
+    Buttons, CLOSERS, NUMBER_KEYS, Nav, enter, left_right, nav, number_pressed, screen_chosen,
+    spend, step,
 };
+#[cfg(test)]
+pub use second_press::SECOND_PRESS_SECS;
+pub use second_press::SecondPress;
 
 use crate::app::palette;
 use bevy::prelude::*;
@@ -101,7 +107,7 @@ pub fn centred_overlay() -> Node {
 /// The padding round a card's contents: the driftwood frame drawn over
 /// the card's edge ([`FRAME_PX`]) and clear room inside it. At 16 the top
 /// row sat three pixels under the wood and the sides nine.
-pub const CARD_PAD: f32 = frame::FRAME_PX + 12.0;
+pub const CARD_PAD: f32 = FRAME_PX + 12.0;
 
 /// The shell's card: a deep fill behind a gold hairline, the shape every
 /// list screen is drawn on. Menu, stage list, trophies, settings, key
@@ -218,12 +224,6 @@ const ROW_PAD_Y: f32 = 3.0;
 pub fn row_pitch(font: f32) -> f32 {
     (font * LINE_HEIGHT + 2.0 * ROW_PAD_Y).max(ROW_H)
 }
-/// A group heading with the margin under it: the heading's line, at the
-/// line height Bevy gives text by default, and the air under it. Derived,
-/// because a guess of 20 left the match setup card four pixels short, and
-/// with every row of a full table at its minimum that put the last one on
-/// the card's frame.
-pub const HEADING_H: f32 = HEADING_FONT * LINE_HEIGHT + HEADING_MARGIN;
 /// The heading's type size, and the air between it and the first row.
 const HEADING_FONT: f32 = 15.0;
 const HEADING_MARGIN: f32 = 6.0;

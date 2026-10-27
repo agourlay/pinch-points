@@ -64,18 +64,33 @@ pub fn sync_castles(
         let TileKind::Castle(owner) = kind else {
             continue;
         };
-        let tier = castle_tier(board.scores()[owner as usize]);
-        let color = palette::player_color(owner);
-        let pos = layout::tile_center(board, x, y);
-        commands
-            .spawn((
-                CastleSprite { x, y, tier, owner },
-                CastleKick(0.0),
-                Transform::from_translation(pos.extend(z::TILE_FEATURE + 0.2)),
-                Visibility::default(),
-            ))
-            .with_children(|parent| build_castle(parent, &art, tier, color));
+        spawn_castle(&mut commands, &art, board, (x, y), owner);
     }
+}
+
+/// `owner`'s castle on tile `(x, y)`, at the tier its score has reached:
+/// the one castle a round draws ([`sync_castles`]), and a map card's
+/// preview too ([`super::spawn_board_pieces`]).
+pub(crate) fn spawn_castle(
+    commands: &mut Commands,
+    art: &Art,
+    board: &crate::sim::Board,
+    (x, y): (u8, u8),
+    owner: u8,
+) -> Entity {
+    let tier = castle_tier(board.scores()[owner as usize]);
+    let color = palette::player_color(owner);
+    let pos = layout::tile_center(board, x, y);
+    commands
+        .spawn((
+            CastleSprite { x, y, tier, owner },
+            CastleKick(0.0),
+            CastleFlinch::default(),
+            Transform::from_translation(pos.extend(z::CASTLE)),
+            Visibility::default(),
+        ))
+        .with_children(|parent| build_castle(parent, art, tier, color))
+        .id()
 }
 
 /// The sand a castle is built of before its owner's colour goes in.
@@ -105,19 +120,25 @@ pub struct CastleShadow {
 type SwollenCastle = (With<CastleSprite>, Changed<Transform>);
 
 /// Keep a castle's shadows where they lie and at their size however the
-/// castle swells above them: their offset and size divided by its scale,
-/// as a gull's are (a post's offset is too, though not yet its size).
-/// After the kick and the flight, which are what scale it.
+/// castle swells or sways above them: their offset and size divided by its
+/// scale, as a gull's are (a post's offset is too, though not yet its
+/// size), and the lean and shift of a raid's sway ([`CastleFlinch`]) taken
+/// back out. After the kick, the flight and the flinch, which are what
+/// move it.
 pub fn steady_castle_shadows(
-    castles: Query<(&Transform, &Children), SwollenCastle>,
+    castles: Query<(&Transform, &CastleFlinch, &Children), SwollenCastle>,
     mut shadows: Query<(&CastleShadow, &mut Transform), Without<CastleSprite>>,
 ) {
-    for (castle, children) in &castles {
+    for (castle, flinch, children) in &castles {
         let scale = castle.scale.x.max(f32::EPSILON);
+        let unlean = castle.rotation.inverse();
         for child in children {
             if let Ok((shadow, mut place)) = shadows.get_mut(*child) {
-                place.translation = (shadow.at.truncate() / scale).extend(shadow.at.z);
-                place.scale = Vec3::splat(1.0 / scale);
+                let ground = shadow.at.truncate() - flinch.offset;
+                let local = (unlean * ground.extend(0.0)).truncate() / scale;
+                place.translation = local.extend(shadow.at.z);
+                place.rotation = unlean;
+                place.scale = swell(1.0 / scale);
             }
         }
     }
@@ -172,7 +193,7 @@ const TOWER_TOP: f32 = 0.27;
 
 /// Everything standing on a castle's tile at `tier`: its shadow on the
 /// sand, and its [`castle_parts`].
-fn build_castle(parent: &mut ChildSpawnerCommands, art: &Art, tier: u8, color: Color) {
+pub(crate) fn build_castle(parent: &mut ChildSpawnerCommands, art: &Art, tier: u8, color: Color) {
     let footprint = if tier == 0 { 0.8 } else { 1.15 };
     // It sits on the sand rather than in it.
     parent.spawn((
@@ -211,7 +232,8 @@ fn build_castle(parent: &mut ChildSpawnerCommands, art: &Art, tier: u8, color: C
             Some(image) => image_sprite(image, part.tint, size),
             None => Sprite::from_color(part.tint, size),
         };
-        let mut piece = parent.spawn((sprite, Transform::from_translation(at)));
+        let mut piece =
+            parent.spawn((sprite, PartTint(part.tint), Transform::from_translation(at)));
         if part.pennant {
             piece.insert(Pennant);
         }
@@ -318,9 +340,21 @@ pub(crate) fn castle_parts(art: &Art, tier: u8, color: Color) -> Vec<CastlePart>
     parts
 }
 
+/// How far above its castle a flag is drawn: from the castle's layer up to
+/// the flags' own ([`z::FLAG`]), over the fences and whatever stands in the
+/// row above.
+const FLAG_LIFT: f32 = z::FLAG - z::CASTLE;
+
+/// How a flag's depth among its castle's pieces is kept above the lift:
+/// pressed into a sliver, so the flags keep their order among themselves
+/// and stay under the crown.
+const FLAG_DEPTH: f32 = 0.1;
+
 /// A pole standing on `base` (tiles from the castle's centre), `height`
-/// tiles tall, with a pennant of `scale` times the keep's first one.
+/// tiles tall, with a pennant of `scale` times the keep's first one, at
+/// depth `z` among the castle's flags, drawn on the flags' layer.
 fn flag(parts: &mut Vec<CastlePart>, color: Color, base: Vec2, height: f32, scale: f32, z: f32) {
+    let z = FLAG_LIFT + FLAG_DEPTH * z;
     parts.push(CastlePart {
         image: None,
         tint: WALL_COLOR,
@@ -521,6 +555,16 @@ pub struct Held {
     owner: u8,
 }
 
+/// A castle (or a piece under one) drawn `scale` times its size across the
+/// sand, and never in depth.
+///
+/// A scale in depth would scale its pieces' depths with it: the flags,
+/// lifted to [`z::FLAG`] from the castle's own layer, rose over the
+/// cursors on a castle swelling with a bank or in a swap's flight.
+fn swell(scale: f32) -> Vec3 {
+    Vec3::new(scale, scale, 1.0)
+}
+
 /// Where a castle is, and how big it looks, `progress` of the way from
 /// `from` to `home`.
 ///
@@ -618,7 +662,7 @@ pub fn fly_castles(
         let (at, scale) = hop(from, home, progress);
         transform.translation.x = at.x;
         transform.translation.y = at.y;
-        transform.scale = Vec3::splat(scale);
+        transform.scale = swell(scale);
     }
     if flight.left == 0.0 {
         // Landed: hand the transform back exactly as it was found, so
@@ -704,21 +748,41 @@ fn gained_at(gained: &[(Vec2, i32)], at: Vec2) -> i32 {
         .map_or(0, |(_, points)| *points)
 }
 
-/// Bounce a castle on every gain and float the points its banks made (or
-/// cost) over the keep, in the owner's colour.
+/// Bounce the castle whose keep is at `keep`: a crab has just landed in
+/// it. Sent from the hop that carries the crab in (`effects::advance_hops`)
+/// rather than from the bank, which the sim reports while the crab is
+/// still on the doorstep.
+pub(crate) fn kick_keep(
+    board: &crate::sim::Board,
+    castles: &mut Query<(&CastleSprite, &mut CastleKick)>,
+    keep: Vec2,
+) {
+    for (sprite, mut kick) in castles.iter_mut() {
+        if on_board(board, sprite.x, sprite.y)
+            && same_keep(layout::tile_center(board, sprite.x, sprite.y), keep)
+        {
+            kick.0 = 1.0;
+        }
+    }
+}
+
+/// Float the points a castle's banks made (or cost) over its keep, in the
+/// owner's colour, the moment the sim scores them, and play out the bounce
+/// [`kick_keep`] starts when each crab lands. The bounce holds still under
+/// a pause card, with the rest of the round.
 pub fn kick_castles(
     mut commands: Commands,
     mut events: MessageReader<crate::app::sim_events::SimEvent>,
     sim: Res<Sim>,
     time: Res<Time>,
-    settings: Res<crate::app::settings::GameSettings>,
+    round: crate::app::round_state::RoundState,
     mut castles: Query<(&CastleSprite, &mut CastleKick, &mut Transform)>,
 ) {
     let board = &sim.0;
-    // Reduced motion keeps the floating points and drops the bounce.
-    let calm = settings.reduced_motion;
+    // Reduced motion keeps the floating points and drops the bounce, which
+    // it does by itself: no crab hops in to start one.
     let gained = gains(events.read());
-    for (sprite, mut kick, _) in &mut castles {
+    for (sprite, _, _) in &castles {
         // A stranded sprite (off this board) is `sync_castles`'s to
         // remove; it has no tile to read.
         if !on_board(board, sprite.x, sprite.y) {
@@ -732,11 +796,6 @@ pub fn kick_castles(
         if points == 0 {
             continue;
         }
-        // A bounce is a celebration; a castle that just lost points to a
-        // left claw shows the loss and stays put.
-        if points > 0 {
-            kick.0 = if calm { 0.0 } else { 1.0 };
-        }
         crate::app::effects::score_pip(
             &mut commands,
             // Signed: a left claw banked under a Right Claws call costs.
@@ -744,6 +803,9 @@ pub fn kick_castles(
             at + Vec2::new(0.0, TILE * 0.35),
             palette::player_color(owner).lighter(0.15),
         );
+    }
+    if round.held() {
+        return;
     }
     let dt = time.delta_secs();
     for (_, mut kick, mut transform) in &mut castles {
@@ -753,7 +815,176 @@ pub fn kick_castles(
         kick.0 = (kick.0 - dt * 3.2).max(0.0);
         // A quick squash-and-settle: overshoot then ease back.
         let wobble = 1.0 + 0.20 * kick.0 * (kick.0 * std::f32::consts::PI * 2.0).sin().abs();
-        transform.scale = Vec3::splat(wobble);
+        transform.scale = swell(wobble);
+    }
+}
+
+/// A piece of a castle's own colour, kept so the piece can be darkened
+/// and brought back exactly: a raid shades the whole castle for a moment.
+#[derive(Component)]
+pub struct PartTint(Color);
+
+/// A castle's flinch when a gull raids it: seconds `since` the raid while
+/// it plays, and the sway it is drawn with this frame, `lean` radians about
+/// its foot and the `offset` that keeps the foot planted.
+/// [`steady_castle_shadows`] reads both back out of the shadows.
+#[derive(Component, Default)]
+pub struct CastleFlinch {
+    since: Option<f32>,
+    lean: f32,
+    offset: Vec2,
+}
+
+/// How long a castle flinches: the sway has settled by then and the shade
+/// gone. The last crumbs it shed lie on a little after.
+const FLINCH: f32 = 1.6;
+
+/// How far a raided castle leans at most, how fast its sway dies and how
+/// often it swings, a little over twice a second.
+const SWAY_LEAN: f32 = 7.0 * std::f32::consts::PI / 180.0;
+const SWAY_DECAY: f32 = 3.4;
+const SWAY_HZ: f32 = 2.3;
+
+/// How dark a raid shades a castle at most.
+const FLINCH_SHADE: f32 = 0.34;
+
+/// Where a castle sways from, below its tile's centre: the keep's foot,
+/// where it meets the sand.
+const FOOT: f32 = 0.25;
+
+/// When the grains come off a raided castle's rim, in seconds after the
+/// raid, and how many each time: a first fall with the hit, then a few
+/// stragglers as it rocks.
+const CRUMB_WAVES: [(f32, usize); 4] = [(0.04, 5), (0.30, 3), (0.48, 2), (0.66, 2)];
+
+/// A raided castle's lean `since` seconds after the raid: a swing about
+/// its foot that dies away.
+fn sway(since: f32) -> f32 {
+    SWAY_LEAN * (-SWAY_DECAY * since).exp() * (std::f32::consts::TAU * SWAY_HZ * since).sin()
+}
+
+/// How dark a raided castle is `since` seconds after the raid: dark at
+/// once, in a few hundredths of a second, then back over most of one.
+fn flinch_shade(since: f32) -> f32 {
+    use crate::app::effects::smoothstep;
+    FLINCH_SHADE * (since / 0.06).min(1.0) * (1.0 - smoothstep((since - 0.1) / 0.85))
+}
+
+/// Where a castle leaning `lean` radians at `scale` is moved to keep its
+/// foot planted while it sways. Not swaying (settled, under reduced motion,
+/// or while a castle swap flies it, which sets its own scale), it stays on
+/// its tile's centre exactly, for the kick and the flight to scale it about
+/// as they always have, and its shadows stay put under it.
+fn planted(lean: f32, scale: f32, swaying: bool) -> Vec2 {
+    if !swaying {
+        return Vec2::ZERO;
+    }
+    let foot = Vec2::new(0.0, -FOOT * TILE);
+    foot - (Quat::from_rotation_z(lean) * (foot * scale).extend(0.0)).truncate()
+}
+
+/// A castle's part tint darkened by `shade`, its alpha kept.
+fn shaded(tint: Color, shade: f32) -> Color {
+    let c = tint.to_srgba();
+    let keep = 1.0 - shade;
+    Color::srgba(c.red * keep, c.green * keep, c.blue * keep, c.alpha)
+}
+
+/// Shake a castle when a gull raids it, on top of the raid's flash, ring
+/// and pip: it sways about its foot and swings back to rest, its flag
+/// flung the other way, it darkens for a moment, and grains of its sand
+/// fall off the rim to lie at its foot before they sink away. The castle
+/// takes the hit, rather than the tile it stands on.
+///
+/// Reduced motion keeps the darkening, which is a colour and not a motion,
+/// and drops the sway and the sand. Held under a pause like the rest of
+/// the round, and still during a castle swap's flight, which moves the
+/// castle itself.
+#[allow(clippy::too_many_arguments)]
+pub fn flinch_castles(
+    fx: crate::app::effects::Fx,
+    mut events: MessageReader<crate::app::sim_events::SimEvent>,
+    sim: Res<Sim>,
+    time: Res<Time>,
+    round: crate::app::round_state::RoundState,
+    flight: Res<CastleFlight>,
+    mut castles: Query<(&CastleSprite, &mut CastleFlinch, &mut Transform, &Children)>,
+    mut parts: Query<(&PartTint, &mut Sprite)>,
+) {
+    use crate::app::sim_events::SimEvent;
+    let crate::app::effects::Fx {
+        mut commands,
+        art,
+        mut rng,
+        settings,
+    } = fx;
+    let board = &sim.0;
+    let calm = settings.reduced_motion;
+    for event in events.read() {
+        let SimEvent::CastleRaided { pos, .. } = event else {
+            continue;
+        };
+        for (sprite, mut flinch, _, _) in &mut castles {
+            if on_board(board, sprite.x, sprite.y)
+                && same_keep(layout::tile_center(board, sprite.x, sprite.y), *pos)
+            {
+                flinch.since = Some(0.0);
+            }
+        }
+    }
+    if round.held() {
+        return;
+    }
+    let dt = time.delta_secs();
+    for (sprite, mut flinch, mut transform, children) in &mut castles {
+        let Some(before) = flinch.since else {
+            continue;
+        };
+        let since = before + dt;
+        let done = since >= FLINCH;
+        flinch.since = (!done).then_some(since);
+        let shade = if done { 0.0 } else { flinch_shade(since) };
+        for child in children {
+            if let Ok((tint, mut piece)) = parts.get_mut(*child) {
+                piece.color = shaded(tint.0, shade);
+            }
+        }
+        let still = calm || done || flight.left > 0.0 || !on_board(board, sprite.x, sprite.y);
+        flinch.lean = if still { 0.0 } else { sway(since) };
+        let lean = Quat::from_rotation_z(flinch.lean);
+        flinch.offset = planted(flinch.lean, transform.scale.x, !(done || still));
+        if flight.left <= 0.0 && on_board(board, sprite.x, sprite.y) {
+            let home = layout::tile_center(board, sprite.x, sprite.y);
+            transform.translation = (home + flinch.offset).extend(transform.translation.z);
+            transform.rotation = lean;
+        }
+        if calm {
+            continue;
+        }
+        let keep = keep(sprite.tier);
+        let center = layout::tile_center(board, sprite.x, sprite.y);
+        for (at, count) in CRUMB_WAVES {
+            if before < at && at <= since {
+                crate::app::effects::crumbs(
+                    &mut commands,
+                    &mut rng,
+                    &art,
+                    &crate::app::effects::Crumbs {
+                        // Off the rim as it leans: the top swings out
+                        // further than the foot.
+                        rim: center
+                            + Vec2::new(
+                                -flinch.lean.sin() * TILE * 0.33,
+                                (keep.at.y + keep.size * 0.30) * TILE,
+                            ),
+                        foot: center.y - FOOT * TILE,
+                        body: castle_body(palette::player_color(sprite.owner)),
+                        count,
+                        life: 1.5 - at,
+                    },
+                );
+            }
+        }
     }
 }
 
@@ -766,6 +997,12 @@ pub fn kick_castles(
 /// Runs after [`sync_castles`], and must: the sprite being cheered is the
 /// one built at the *new* tier, and the events reaching this frame are the
 /// previous frame's (see the `Frame` sets), so it is already standing.
+///
+/// The ring and the sand go up at once, with the new shape they mark,
+/// which the castle takes on the frame the score crosses. The bounce waits
+/// for the crab: a keep a crab banked into this frame bounces when that
+/// crab lands in it ([`kick_keep`]), as every bank does, and bounced here
+/// as well it celebrated while the crab still stood on the doorstep.
 pub fn cheer_tier_ups(
     fx: crate::app::effects::Fx,
     mut events: MessageReader<crate::app::sim_events::SimEvent>,
@@ -782,7 +1019,18 @@ pub fn cheer_tier_ups(
     } = fx;
     use crate::app::sim_events::SimEvent;
     let board = &sim.0;
-    for event in events.read() {
+    let events: Vec<&SimEvent> = events.read().collect();
+    // The keeps a crab is on its way into, which bounce as it lands.
+    let landing: Vec<Vec2> = events
+        .iter()
+        .filter_map(|event| {
+            let SimEvent::CrabBanked { keep, points, .. } = event else {
+                return None;
+            };
+            (*points > 0).then_some(*keep)
+        })
+        .collect();
+    for event in &events {
         let SimEvent::TierUp { owner } = event else {
             continue;
         };
@@ -837,7 +1085,9 @@ pub fn cheer_tier_ups(
             for _ in 0..4 {
                 crate::app::effects::glint(&mut commands, &mut rng, &art, at, color.lighter(0.4));
             }
-            kick.0 = 1.0;
+            if !landing.iter().any(|keep| same_keep(*keep, at)) {
+                kick.0 = 1.0;
+            }
         }
         trauma.add(0.2);
     }
@@ -849,10 +1099,15 @@ pub fn cheer_tier_ups(
 pub fn wave_pennants(
     time: Res<Time>,
     settings: Res<crate::app::settings::GameSettings>,
-    mut flags: Query<(Entity, &mut Transform), With<Pennant>>,
+    castles: Query<&CastleFlinch>,
+    mut flags: Query<(Entity, &mut Transform, &ChildOf), With<Pennant>>,
 ) {
     let t = time.elapsed_secs();
-    for (entity, mut transform) in &mut flags {
+    for (entity, mut transform, castle) in &mut flags {
+        // A castle swaying after a raid flings its flag the other way.
+        let fling = castles
+            .get(castle.parent())
+            .map_or(0.0, |flinch| -2.0 * flinch.lean);
         let (stretch, tilt) = if settings.reduced_motion {
             (1.0, 0.0)
         } else {
@@ -863,13 +1118,42 @@ pub fn wave_pennants(
             )
         };
         transform.scale.x = stretch;
-        transform.rotation = Quat::from_rotation_z(tilt);
+        transform.rotation = Quat::from_rotation_z(tilt + fling);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{castle_body, castle_parts, gained_at, gains, hop, keep, turrets};
+    use super::{
+        FLINCH, FLINCH_SHADE, SWAY_LEAN, castle_body, castle_parts, flinch_shade, gained_at, gains,
+        hop, keep, sway, turrets,
+    };
+
+    /// A raided castle darkens at once and comes back, and sways about its
+    /// foot in a swing that dies away: upright at the hit, never past its
+    /// lean, all but still by the end of the flinch, and not darkened then.
+    #[test]
+    fn a_raided_castle_darkens_and_sways_back_to_rest() {
+        assert_eq!(sway(0.0), 0.0, "upright at the hit");
+        assert_eq!(flinch_shade(0.0), 0.0);
+        assert!(
+            (flinch_shade(0.08) - FLINCH_SHADE).abs() < 1e-6,
+            "dark at once"
+        );
+        assert_eq!(flinch_shade(1.0), 0.0, "and back within the second");
+        let mut swung = (0.0f32, 0.0f32);
+        for frame in 0..100 {
+            let since = frame as f32 / 60.0;
+            let lean = sway(since);
+            assert!(lean.abs() <= SWAY_LEAN, "{lean} at {since}");
+            swung = (swung.0.min(lean), swung.1.max(lean));
+        }
+        assert!(
+            swung.0 < -0.02 && swung.1 > 0.02,
+            "it swings both ways: {swung:?}"
+        );
+        assert!(sway(FLINCH).abs() < 0.01, "and has all but settled");
+    }
 
     /// A new leader's crown starts small and above its place and comes to
     /// rest at full size exactly on it, and it floats clear of the keep's
@@ -920,47 +1204,67 @@ mod tests {
         }
     }
 
-    /// A castle swelling with a bank leaves its shadows lying where they
-    /// were, at their own size: the ground does not swell.
+    /// A castle swelling with a bank, or leaning over its foot after a
+    /// raid, leaves its shadows lying where they were, at their own size
+    /// and square to the sun: the ground does not swell or sway.
     #[test]
-    fn a_swelling_castle_leaves_its_shadow_on_the_ground() {
-        use super::{CastleShadow, CastleSprite, steady_castle_shadows};
+    fn a_swelling_or_swaying_castle_leaves_its_shadow_on_the_ground() {
+        use super::{CastleFlinch, CastleShadow, CastleSprite, steady_castle_shadows};
         use bevy::prelude::*;
-        let mut app = App::new();
         let at = Vec3::new(15.0, -21.0, -0.41);
-        let castle = app
-            .world_mut()
-            .spawn((
-                CastleSprite {
-                    x: 0,
-                    y: 0,
-                    tier: 3,
-                    owner: 0,
-                },
-                Transform::from_scale(Vec3::splat(1.25)),
-            ))
-            .id();
-        let shadow = app
-            .world_mut()
-            .spawn((
-                CastleShadow { at },
-                Transform::from_translation(at),
-                ChildOf(castle),
-            ))
-            .id();
-        app.add_systems(Update, steady_castle_shadows);
-        app.update();
-        let place = app.world().get::<Transform>(shadow).expect("the shadow");
-        let drawn = place.translation.truncate() * 1.25;
-        assert!(
-            (drawn - at.truncate()).length() < 1e-4,
-            "it lunged to {drawn}"
-        );
-        assert!(
-            (place.scale.x * 1.25 - 1.0).abs() < 1e-4,
-            "it grew to {}",
-            place.scale.x
-        );
+        for lean in [0.0f32, 0.1, -0.12] {
+            let mut app = App::new();
+            let scale = 1.25;
+            let turn = Quat::from_rotation_z(lean);
+            let offset = Vec2::new(4.0, -1.5);
+            let castle = app
+                .world_mut()
+                .spawn((
+                    CastleSprite {
+                        x: 0,
+                        y: 0,
+                        tier: 3,
+                        owner: 0,
+                    },
+                    CastleFlinch {
+                        since: Some(0.2),
+                        lean,
+                        offset,
+                    },
+                    Transform::from_translation(offset.extend(0.0))
+                        .with_rotation(turn)
+                        .with_scale(Vec3::splat(scale)),
+                ))
+                .id();
+            let shadow = app
+                .world_mut()
+                .spawn((
+                    CastleShadow { at },
+                    Transform::from_translation(at),
+                    ChildOf(castle),
+                ))
+                .id();
+            app.add_systems(Update, steady_castle_shadows);
+            app.update();
+            let place = *app.world().get::<Transform>(shadow).expect("the shadow");
+            // Where the parent puts it, on a castle whose resting place is
+            // the origin.
+            let drawn =
+                offset + (turn * (place.translation.truncate() * scale).extend(0.0)).truncate();
+            assert!(
+                (drawn - at.truncate()).length() < 1e-3,
+                "lean {lean}: it lunged to {drawn}"
+            );
+            assert!(
+                (place.scale.x * scale - 1.0).abs() < 1e-4,
+                "it grew to {}",
+                place.scale.x
+            );
+            assert!(
+                (turn * place.rotation).angle_between(Quat::IDENTITY) < 1e-4,
+                "lean {lean}: it turned with the castle"
+            );
+        }
     }
     use crate::app::art::Art;
     use crate::app::palette;
@@ -991,6 +1295,74 @@ mod tests {
             let pennants = parts(tier).iter().filter(|p| p.pennant).count();
             assert_eq!(pennants, turrets(tier).len() + 1, "tier {tier}");
         }
+    }
+
+    /// Every flag, pole and pennant, of every tier is drawn over the fences
+    /// and their corner posts, the posts and creatures in the row above
+    /// and a gull flying in over the beach's edge excepted, and under the
+    /// crown; every other piece stays under the posts and creatures.
+    #[test]
+    fn the_flags_fly_over_the_fences() {
+        use crate::app::layout::z;
+        for tier in 0..=3 {
+            let parts = parts(tier);
+            let flags: Vec<&super::CastlePart> =
+                parts.iter().filter(|p| p.image.is_none()).collect();
+            assert_eq!(flags.len(), 2 * (turrets(tier).len() + 1), "tier {tier}");
+            for flag in flags {
+                let drawn = z::CASTLE + flag.z;
+                assert!(
+                    drawn > z::WALL + 0.1 && drawn < z::CROWN,
+                    "tier {tier}: a flag at {drawn}"
+                );
+            }
+            for piece in parts.iter().filter(|p| p.image.is_some()) {
+                assert!(
+                    z::CASTLE + piece.z < z::SIGNPOST,
+                    "tier {tier}: a piece at {}",
+                    z::CASTLE + piece.z
+                );
+            }
+        }
+    }
+
+    /// A castle swelling with a bank or at the top of a swap's flight keeps
+    /// its flags on their layer: grown across the sand, never in depth.
+    #[test]
+    fn a_swollen_castle_keeps_its_flags_on_their_layer() {
+        use super::{Pennant, RISE, build_castle, swell};
+        use crate::app::layout::z;
+        use bevy::ecs::system::RunSystemOnce;
+        for scale in [1.0, 1.0 + RISE, 1.2, 1.0 / (1.0 + RISE)] {
+            let mut app = App::new();
+            app.add_plugins(TransformPlugin);
+            app.world_mut()
+                .run_system_once(move |mut commands: Commands| {
+                    commands
+                        .spawn(
+                            Transform::from_translation(Vec3::new(0.0, 0.0, z::CASTLE))
+                                .with_scale(swell(scale)),
+                        )
+                        .with_children(|castle| {
+                            build_castle(castle, &Art::blank(), 3, palette::player_color(0));
+                        });
+                })
+                .expect("a castle");
+            app.update();
+            let world = app.world_mut();
+            let mut pennants = world.query_filtered::<&GlobalTransform, With<Pennant>>();
+            let depths: Vec<f32> = pennants.iter(world).map(|at| at.translation().z).collect();
+            assert_eq!(depths.len(), turrets(3).len() + 1);
+            for drawn in depths {
+                assert!(
+                    drawn > z::WALL + 0.1 && drawn < z::CROWN,
+                    "at {scale}x a flag at {drawn}"
+                );
+            }
+        }
+        // The flight is what reaches the largest of those scales.
+        let (_, top) = hop(Vec2::ZERO, Vec2::X, 0.5);
+        assert!((top - (1.0 + RISE)).abs() < 1e-5);
     }
 
     /// The parts come back to front: the order the results card draws them
@@ -1174,5 +1546,95 @@ mod tests {
         // And it is off the ground in between, which is the only thing
         // saying it is flying rather than sliding.
         assert!(hop(from, home, 0.5).1 > 1.0);
+    }
+
+    /// A board with seat 0's castle at (1, 1), and an app holding it.
+    fn castle_stage() -> (App, Vec2) {
+        let mut board = crate::sim::Board::new(5, 5, 1);
+        board.set_tile(1, 1, crate::sim::TileKind::Castle(0));
+        let keep = crate::app::layout::tile_center(&board, 1, 1);
+        let mut app = App::new();
+        app.insert_resource(crate::app::Sim(board));
+        app.insert_resource(Art::blank());
+        app.init_resource::<crate::app::effects::VisualRng>();
+        app.init_resource::<crate::app::effects::Trauma>();
+        app.init_resource::<crate::app::settings::GameSettings>();
+        app.init_resource::<Time>();
+        app.add_message::<SimEvent>();
+        (app, keep)
+    }
+
+    fn castle_at_one_one() -> super::CastleSprite {
+        super::CastleSprite {
+            x: 1,
+            y: 1,
+            tier: 1,
+            owner: 0,
+        }
+    }
+
+    /// A bank that crosses a tier grows the castle at once, and the castle
+    /// bounces when the crab lands in it, not before: on the bank, it
+    /// bounced while the crab was still cheering on its doorstep. A tier
+    /// crossed with no crab on its way in still bounces at once.
+    #[test]
+    fn a_tier_up_bounces_the_castle_when_its_crab_lands() {
+        use super::{CastleKick, cheer_tier_ups};
+        for crab in [true, false] {
+            let (mut app, keep) = castle_stage();
+            app.add_systems(Update, cheer_tier_ups);
+            let castle = app
+                .world_mut()
+                .spawn((castle_at_one_one(), CastleKick(0.0)))
+                .id();
+            if crab {
+                app.world_mut().write_message(bank(0, keep, 1));
+            }
+            app.world_mut().write_message(SimEvent::TierUp { owner: 0 });
+            app.update();
+            let kick = app.world().get::<CastleKick>(castle).expect("a castle").0;
+            match crab {
+                true => assert_eq!(kick, 0.0, "it waits for the crab to land"),
+                false => assert_eq!(kick, 1.0, "nothing to wait for"),
+            }
+        }
+    }
+
+    /// A raided castle that a castle swap is flying keeps its foot where
+    /// the flight puts it: the flight swells it, and taken for a sway the
+    /// swell moved it off its place and its shadows with it.
+    #[test]
+    fn a_flying_castle_is_not_moved_to_plant_its_foot() {
+        use super::{CastleFlight, CastleFlinch, flinch_castles};
+        use crate::app::{Screen, VersusPhase};
+        let (mut app, _) = castle_stage();
+        app.insert_resource(CastleFlight {
+            left: 0.5,
+            from: Vec::new(),
+        });
+        app.insert_resource(State::new(Screen::Versus));
+        app.insert_resource(State::new(VersusPhase::Running));
+        app.init_resource::<crate::app::Paused>();
+        app.init_resource::<crate::app::pause::PauseMenu>();
+        app.init_resource::<crate::app::net::Online>();
+        app.add_systems(Update, flinch_castles);
+        let castle = app
+            .world_mut()
+            .spawn((
+                castle_at_one_one(),
+                CastleFlinch {
+                    since: Some(0.2),
+                    lean: 0.0,
+                    offset: Vec2::ZERO,
+                },
+                Transform::from_scale(Vec3::splat(1.3)),
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Transform::default(), ChildOf(castle)));
+        app.update();
+        let flinch = app.world().get::<CastleFlinch>(castle).expect("a castle");
+        assert!(flinch.since.is_some(), "still flinching");
+        assert_eq!(flinch.offset, Vec2::ZERO);
     }
 }

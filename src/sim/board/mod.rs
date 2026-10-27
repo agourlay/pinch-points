@@ -1,8 +1,8 @@
 use crate::sim::crab::{Crab, CrabKind, Handedness};
 use crate::sim::direction::Direction;
 use crate::sim::gull::{
-    EAT_RANGE, FLIGHT_MAX, FLIGHT_MIN, GULL_FLY_SPEED, GULL_WALK_SPEED, Gull, GullState,
-    TAKEOFF_MAX, TAKEOFF_MIN,
+    EAT_RANGE, FLIGHT_MAX, FLIGHT_MIN, GULL_FLY_SPEED, GULL_LEAD, GULL_WALK_SPEED, Gull, GullState,
+    IncomingGull, TAKEOFF_MAX, TAKEOFF_MIN,
 };
 use crate::sim::hash::Fnv;
 use crate::sim::pose::Pose;
@@ -14,10 +14,19 @@ pub const TIER_FLOORS: [u32; 4] = [0, 10, 25, 50];
 /// score still drops a full tier (spec §3.4's legible loss); crabs beyond the
 /// cap are lost to the flock rather than flooding the board.
 pub const SPILL_CAP: u32 = 8;
-/// Molting-crab lure duration: 10 s at 30 Hz (spec §3.2).
-pub const LURE_TICKS: u32 = 300;
-/// Quiet spell after a lure ends before another may start: 20 s, twice the
-/// lure itself.
+/// Molting-crab lure duration: 5 s at 30 Hz (spec §3.2).
+///
+/// Balance: at 10 s the banker took 19-34 points from one lure, 15-33% of
+/// everything banked came in during the banker's own lure, and a fifth to
+/// nearly a third of the lead changes that decided a round were lures. At
+/// 5 s (with the [`LURE_COOLDOWN`] below) that is 9-16% of the points and
+/// 8-17% of the deciding lead changes over 1500 bot rounds a table size,
+/// and the owner still wins well above a fair share: 39% at four seats.
+pub const LURE_TICKS: u32 = 150;
+/// [`LURE_TICKS`] in whole seconds, rounded up: the one figure every line
+/// that tells a player how long a lure runs reads.
+pub const LURE_SECONDS: u32 = LURE_TICKS.div_ceil(TICKS_PER_SECOND);
+/// Quiet spell after a lure ends before another may start: 30 s.
 ///
 /// Balance: the lure pulls *every* loose crab to one castle, and the crabs it
 /// delivers include the next molting crab, so an unguarded lure re-arms
@@ -26,12 +35,16 @@ pub const LURE_TICKS: u32 = 300;
 ///
 /// At 10 s, matching the lure, a measured six-player round ran lures 22.9,
 /// 25.8, 27.2 and 23.3 s apart with one castle holding 50 of the 60 lured
-/// seconds. Doubling the spell puts the floor at 30 s and the uptime
-/// ceiling at a third of a round rather than half.
-pub const LURE_COOLDOWN: u32 = 600;
+/// seconds. With the 5 s lure, 30 s rather than 20 s took the lure share of
+/// the classic arena's points from 18% to 16%, and of a three-seat table's
+/// from 17% to 15%, for about one lure in eight fewer.
+pub const LURE_COOLDOWN: u32 = 900;
+/// [`LURE_COOLDOWN`] in whole seconds, rounded up, for the lines that tell
+/// a player how long the quiet spell lasts.
+pub const LURE_COOLDOWN_SECONDS: u32 = LURE_COOLDOWN.div_ceil(TICKS_PER_SECOND);
 /// Ticks after any tide event before the roulette may spin again.
 ///
-/// The roulette fires when a Sparkling crab banks, and Sparkling is 2% of
+/// The roulette fires when a Sparkling crab banks, and Sparkling is 4% of
 /// what the *spawners* produce, so the events that raise the crab supply
 /// raise their own rate: Crab Mania floods the spawners and Speed Up banks
 /// everything faster, and both spin the wheel that rolled them. Unvalved,
@@ -58,10 +71,10 @@ pub const EVENT_TICKS: u32 = 300;
 /// doubles in rate when this many ticks remain (spec §3.6: 30 s).
 ///
 /// Measured from the end, so a round no longer than this is in the surge
-/// from its first tick. Every timed level in the game is one: the Beach
-/// Day challenges run exactly 900 ticks and the timed campaign puzzles
-/// less, so for them the "final" scramble is the whole round and its
-/// doubled rate is their baseline, tuned as such. Only the versus round
+/// from its first tick. Every timed level in the game is one: the timed
+/// campaign puzzles run less than 900 ticks, so for them the "final"
+/// scramble is the whole round and its doubled rate is their baseline,
+/// tuned as such. Only the versus round
 /// lengths are long enough to have a calm stretch before it.
 pub const SURGE_TICKS: u32 = 900;
 
@@ -262,9 +275,9 @@ pub struct Rules {
     pub cap_policy: CapPolicy,
     /// Auto-spawn a gull at a PRNG edge tile every this many ticks; 0 = off.
     /// Halved (the rate doubled) during the final-scramble surge of a
-    /// timed round, which on a round no longer than [`SURGE_TICKS`], every
-    /// Beach Day challenge among them, is the whole round: there the
-    /// period a level states is never the one it plays at.
+    /// timed round, which on a round no longer than [`SURGE_TICKS`] is the
+    /// whole round: there the period a level states is never the one it
+    /// plays at.
     pub gull_period: u32,
     /// How many gulls the ambient spawner allows on the beach at once.
     /// [`GULL_CAP`] unless a versus beach bigger than the classic one asked
@@ -348,14 +361,13 @@ pub struct Rules {
     /// holes on a beach at the cap all round gave the top-left one 14%
     /// more crabs than the bottom-right one, and its castle the extra
     /// points. With this on, a tick that leaves a hole out tries them
-    /// from one drawn at random. On for versus only: Beach Day's stages
-    /// were tuned on reading order, and a file that does not say so keeps
-    /// it.
+    /// from one drawn at random. On for versus only: a level file that
+    /// does not say so (`fair_spawns:`) keeps reading order.
     pub fair_spawns: bool,
     /// Round length in ticks (the tide, spec §3.6). None = untimed. When it
     /// reaches zero the sim freezes: scores are locked at the wave.
     pub round_length: Option<u32>,
-    /// Whether a gull reaching a castle carries off half its bank
+    /// Whether a gull reaching a castle carries off a third of its bank
     /// (spec §3.4). True on a versus beach, where robbing a rival is the
     /// point.
     ///
@@ -370,6 +382,38 @@ pub struct Rules {
     /// a gull off the sand, and shutting the door instead left Two Giants
     /// with no two-post solution at all.
     pub castle_raids: bool,
+    /// Claw-keyed arrows, the co-op stage's rule: `Some([left, right])`
+    /// gives P1 (seat 0) `left` arrows that turn only left-clawed crabs and
+    /// P2 (seat 1) `right` arrows that turn only right-clawed ones (see
+    /// [`claw_of`]). Every other seat has none, and a gull turns on any
+    /// arrow, whoever placed it.
+    ///
+    /// Each half of the beach's crowd then answers to one player, and a
+    /// tile still holds one arrow: the two plans meet on the sand, which is
+    /// what makes a co-op stage need both of them rather than a second
+    /// pair of hands on a solo puzzle. `None` everywhere else, where every
+    /// arrow turns every crab and [`Rules::signpost_cap`] is each seat's.
+    pub claw_hands: Option<[u8; 2]>,
+}
+
+/// The claw a seat's arrows turn under claw-keyed arrows
+/// ([`Rules::claw_hands`]): P1's the left, P2's the right, the left player
+/// owning the left claw. `None` for a seat that places none there.
+pub fn claw_of(player: PlayerId) -> Option<Handedness> {
+    match player {
+        0 => Some(Handedness::Left),
+        1 => Some(Handedness::Right),
+        _ => None,
+    }
+}
+
+/// The seat whose arrows turn crabs of `claw` under claw-keyed arrows:
+/// [`claw_of`] read backwards.
+pub fn seat_of_claw(claw: Handedness) -> PlayerId {
+    match claw {
+        Handedness::Left => 0,
+        Handedness::Right => 1,
+    }
 }
 
 /// The rules of a board nobody has set any on: the versus signpost rule,
@@ -392,6 +436,7 @@ impl Default for Rules {
             fair_spawns: false,
             round_length: None,
             castle_raids: true,
+            claw_hands: None,
         }
     }
 }
@@ -428,6 +473,9 @@ pub struct Board {
     next_crab_id: u32,
     gulls: Vec<Gull>,
     next_gull_id: u32,
+    /// Gulls the edge spawner has sent for and that have not landed yet,
+    /// in the order they land.
+    incoming: Vec<IncomingGull>,
     /// Active molting-crab lure: all loose crabs path toward this player's
     /// castle for the remaining ticks (spec §3.2).
     lure: Option<(PlayerId, u32)>,
@@ -437,7 +485,7 @@ pub struct Board {
     /// `next_crab_id` (crabs ever spawned) this distinguishes "every crab is
     /// safe" from "the gulls got some" (spec §5.1 win condition).
     crabs_banked: u32,
-    /// Golden crabs banked (challenge goals).
+    /// Golden crabs banked (the `golden` goal).
     golden_banked: u32,
     /// The golden crab called and not yet out, as the tick and the
     /// spawner tile (see [`Rules::golden_every`]).
@@ -450,12 +498,62 @@ pub struct Board {
     pub(crate) tide: events::Tide,
     /// Crab Monopoly's crabs, in the air and just landed.
     sweeps: Sweeps,
+    /// The molts banked lately that started no lure, and why.
+    ///
+    /// The render layer reads them between frames, and a frame can span
+    /// several ticks: a lure that ends inside one leaves its end state
+    /// saying "quiet spell" for a molt banked while it still ran. So the
+    /// reason is written down on the bank tick, kept for as long as the
+    /// swept-home record ([`SWEEP_MEMORY`]) and for the same reason. Never
+    /// read back by the sim, so it stays out of the fingerprint.
+    refused_lures: Vec<RefusedLure>,
+    /// The crabs that walked into a castle lately: which seat banked each,
+    /// and on which tile.
+    ///
+    /// The render layer's answer to "banked or eaten?" for a crab gone
+    /// since the last frame. Read off the map instead (a crab on or facing
+    /// a castle), a gull taking a crab one tile short of a castle was a
+    /// bank, sound, points and all. Kept as long as the swept-home record
+    /// ([`SWEEP_MEMORY`]), since a frame can span several ticks; never
+    /// read back by the sim, so it stays out of the fingerprint. The
+    /// tide's banks are in the swept-home record ([`Board::swept_home`]).
+    walked_home: Vec<WalkedHome>,
     /// Where each seat last put a signpost down, as the tile and the tick:
     /// the anchor an AI seat's hand walks from to its next placement (see
     /// [`Board::last_placement_of`]). Kept apart from the posts, because a
     /// post can go (Fresh Sand, a gull wearing it out, its owner picking it
     /// up) while the hand that put it there stays where it was.
     hands: [Option<(u16, u64)>; MAX_PLAYERS],
+    /// Who steered each gull, and what the steered gulls took: see
+    /// [`steering::Steering`].
+    steering: steering::Steering,
+}
+
+/// A molting crab banked while no lure could start ([`Board::lure_ready`]
+/// false), for the render layer to find.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct RefusedLure {
+    crab: u32,
+    /// Whether a lure was running, rather than the quiet spell after one.
+    running: bool,
+    /// The tick it banked on, for pruning.
+    at: u64,
+}
+
+/// A crab that walked into a castle, for the render layer to find (see
+/// [`Board::walked_home`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct WalkedHome {
+    crab: u32,
+    /// The seat the castle belongs to.
+    owner: PlayerId,
+    /// The castle's tile.
+    tile: u16,
+    /// What it paid, before the floor at nothing (see
+    /// [`Board::credit_bank`]).
+    points: i32,
+    /// The tick it banked on, for pruning.
+    at: u64,
 }
 
 /// Replace `dst`'s contents with `src`'s, keeping `dst`'s buffer. The one
@@ -490,6 +588,7 @@ impl Board {
             next_crab_id: 0,
             gulls: Vec::new(),
             next_gull_id: 0,
+            incoming: Vec::new(),
             lure: None,
             lure_cooldown: 0,
             crabs_banked: 0,
@@ -498,7 +597,10 @@ impl Board {
             wrap: false,
             tide: events::Tide::default(),
             sweeps: Sweeps::default(),
+            refused_lures: Vec::new(),
+            walked_home: Vec::new(),
             hands: [None; MAX_PLAYERS],
+            steering: steering::Steering::default(),
         };
         // The border walls are the wrap rule with wrap off; the border
         // indices are stated once, in set_wrap.
@@ -533,6 +635,7 @@ impl Board {
             next_crab_id,
             gulls,
             next_gull_id,
+            incoming,
             lure,
             lure_cooldown,
             crabs_banked,
@@ -541,7 +644,10 @@ impl Board {
             wrap,
             tide,
             sweeps,
+            refused_lures,
+            walked_home,
             hands,
+            steering,
         } = other;
         self.grid.copy_from(grid);
         self.seed = *seed;
@@ -555,6 +661,7 @@ impl Board {
         self.next_crab_id = *next_crab_id;
         refill(&mut self.gulls, gulls);
         self.next_gull_id = *next_gull_id;
+        refill(&mut self.incoming, incoming);
         self.lure = *lure;
         self.lure_cooldown = *lure_cooldown;
         self.crabs_banked = *crabs_banked;
@@ -563,7 +670,10 @@ impl Board {
         self.wrap = *wrap;
         self.tide.copy_from(tide);
         self.sweeps.copy_from(sweeps);
+        refill(&mut self.refused_lures, refused_lures);
+        refill(&mut self.walked_home, walked_home);
         self.hands = *hands;
+        self.steering.copy_from(steering);
     }
 
     // --- level authoring -------------------------------------------------
@@ -628,6 +738,24 @@ impl Board {
         &mut self.rules
     }
 
+    /// How many signposts `player` may have standing: their hand's count
+    /// under claw-keyed arrows ([`Rules::claw_hands`]), none for a seat
+    /// past the two hands there, and [`Rules::signpost_cap`] elsewhere.
+    pub fn signpost_cap_of(&self, player: PlayerId) -> u8 {
+        match self.rules.claw_hands {
+            Some(hands) => hands.get(usize::from(player)).copied().unwrap_or(0),
+            None => self.rules.signpost_cap,
+        }
+    }
+
+    /// Whether signpost `post` turns a crab of `handed` claw arriving on
+    /// it: always, unless claw-keyed arrows are on and it is the other
+    /// hand's ([`Rules::claw_hands`]). Gulls never ask: every arrow turns
+    /// a gull.
+    pub fn turns_crab(&self, post: &Signpost, handed: Handedness) -> bool {
+        self.rules.claw_hands.is_none() || claw_of(post.owner) == Some(handed)
+    }
+
     /// Change the signpost cap and what happens at it. Versus keeps the
     /// default (3, evict-oldest); puzzle mode sets (inventory, reject).
     pub fn set_signpost_rule(&mut self, cap: u8, policy: CapPolicy) {
@@ -647,7 +775,7 @@ impl Board {
     }
 
     /// Enable tide events (the sparkling crab's roulette). Off by default:
-    /// puzzles and goal-checked challenges stay predictable.
+    /// puzzles stay predictable.
     pub fn events_enabled(&self) -> bool {
         self.tide.enabled
     }
@@ -702,6 +830,11 @@ impl Board {
         // rather than cleared outright: the only reader runs between
         // frames, and a frame can cover more than one tick.
         self.sweeps.forget_before(self.tick);
+        let tick = self.tick;
+        self.refused_lures
+            .retain(|refused| refused.at + SWEEP_MEMORY > tick);
+        self.walked_home
+            .retain(|walked| walked.at + SWEEP_MEMORY > tick);
         for player in self.action_order() {
             self.apply_action(player, actions[player as usize]);
         }
@@ -752,7 +885,9 @@ impl Board {
     ///   takes one, and its sequence number is behind the counter, or the
     ///   cap would evict the wrong post first;
     /// - no seat holds more posts than the cap;
-    /// - every creature is on the board, which the tile indexing assumes;
+    /// - every creature is on the board, which the tile indexing assumes,
+    ///   and so is every gull on its way in, due on a tick still to come
+    ///   and no further off than the spawner sends for one;
     /// - the golden crabs banked are some of the crabs banked;
     /// - an open-ocean board has no wall on its rim (see
     ///   [`Board::on_open_rim`]).
@@ -799,6 +934,14 @@ impl Board {
         debug_assert!(
             self.gulls.iter().all(|gull| usize::from(gull.tile) < tiles),
             "a gull off the board"
+        );
+        debug_assert!(
+            self.incoming
+                .iter()
+                .all(|gull| usize::from(gull.tile) < tiles
+                    && gull.at >= self.tick
+                    && gull.at <= self.tick + u64::from(GULL_LEAD)),
+            "a gull on its way in off the board or off the clock"
         );
         debug_assert!(self.golden_banked <= self.crabs_banked);
         debug_assert!(
@@ -887,8 +1030,8 @@ impl Board {
             // it down is the surge's worst case, not its exception.
             //
             // Only on a beach whose wheel turns at all, though: never on a
-            // puzzle, a challenge or a handmade beach played online, where
-            // the wheel is off. The `enabled` flag says where events fire,
+            // puzzle, or a versus round replayed from before every round
+            // turned it, where the wheel is off. The `enabled` flag says where events fire,
             // and a call is an event firing.
             PlayerAction::CallEvent(event) if self.tide.enabled => {
                 self.force_tide_event(self.surge_safe(event), player);
@@ -976,6 +1119,12 @@ impl Board {
         &self.gulls
     }
 
+    /// The gulls flying in, which land in this order: each one's tick, the
+    /// tile it comes down on and the way it faces (see [`IncomingGull`]).
+    pub fn incoming_gulls(&self) -> &[IncomingGull] {
+        &self.incoming
+    }
+
     /// The golden crab the board has called, once the call is public: the
     /// tick it comes out on and the spawner hole it comes out of, from
     /// [`GOLDEN_NOTICE`] ticks before it does.
@@ -1023,7 +1172,39 @@ impl Board {
             "gull off the board"
         );
         let tile = self.index(i32::from(x), i32::from(y));
-        self.gulls.retain(|g| g.tile != tile);
+        self.drop_gulls(|gull| gull.tile == tile);
+    }
+
+    /// Turn every crab and gull to face the way its counterpart on
+    /// `settled` does, matched by order (editor use).
+    ///
+    /// A creature turns away from a wall when it is put down, so one put
+    /// down first and walled in afterwards faces the wall until its level
+    /// is read back, where it turns on the spot. The editor settles its
+    /// bench against that reading after every edit, so the facing drawn,
+    /// the one saved and the one played are one facing.
+    pub fn face_as(&mut self, settled: &Board) {
+        for (crab, twin) in self.crabs.iter_mut().zip(&settled.crabs) {
+            crab.dir = twin.dir;
+            crab.prev.dir = twin.dir;
+        }
+        for (gull, twin) in self.gulls.iter_mut().zip(&settled.gulls) {
+            gull.dir = twin.dir;
+            gull.prev.dir = twin.dir;
+        }
+    }
+
+    /// Whether crabs come onto this beach at all: one standing on it at the
+    /// start, or a hole to come out of. A versus beach without either has
+    /// nothing to fight over, so the map dial leaves it out and the editor
+    /// says so on its check and its save.
+    pub fn feeds_crabs(&self) -> bool {
+        !self.crabs.is_empty()
+            || self
+                .grid
+                .tiles
+                .iter()
+                .any(|tile| matches!(tile, TileKind::Spawner(_)))
     }
 
     /// Active molting lure, if any: (luring player, ticks left).
@@ -1035,6 +1216,36 @@ impl Board {
     /// starts none. Public: anyone who watched the lure end can count it.
     pub fn lure_cooldown(&self) -> u32 {
         self.lure_cooldown
+    }
+
+    /// Whether a molting crab banked now would start a lure: no lure is
+    /// running and the quiet spell after the last one is over. The one
+    /// rule the bank reads, and what the board's dimmed molts and the AI's
+    /// worth of a molt read too.
+    pub fn lure_ready(&self) -> bool {
+        self.lure.is_none() && self.lure_cooldown == 0
+    }
+
+    /// For a molting crab banked lately that started no lure, whether a
+    /// lure was running on the tick it banked (`false`: the quiet spell
+    /// after one). `None` for any other crab, a molt the tide swept home
+    /// among them, since that path never starts a lure on any rule.
+    pub fn lure_refused(&self, crab: u32) -> Option<bool> {
+        self.refused_lures
+            .iter()
+            .find(|refused| refused.crab == crab)
+            .map(|refused| refused.running)
+    }
+
+    /// For a crab that walked into a castle lately, the seat it banked for,
+    /// the castle's tile and what it paid, before the floor at nothing.
+    /// `None` for any other crab: one a gull took, however close to a
+    /// castle, and one the tide swept home (see [`Self::swept_home`]).
+    pub fn walked_home(&self, crab: u32) -> Option<(PlayerId, u16, i32)> {
+        self.walked_home
+            .iter()
+            .find(|walked| walked.crab == crab)
+            .map(|walked| (walked.owner, walked.tile, walked.points))
     }
 
     /// Whether Right Claws is running: a right-clawed crab banks double
@@ -1208,12 +1419,14 @@ mod hashing;
 mod lookahead;
 mod signposts;
 mod snapshot;
+mod steering;
 mod sweep;
 #[cfg(test)]
 mod tests;
 
 pub use events::{Mania, Tempo, TideEvent};
 pub use signposts::Refusal;
+pub use steering::raid_loss;
 use sweep::Sweeps;
 pub use sweep::{SWEEP_MEMORY, Sweeping};
 

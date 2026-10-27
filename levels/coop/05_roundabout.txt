@@ -1,0 +1,20 @@
+# Two crabs circle a rock and pass both doors on every lap. Each door
+# suits one claw, and an arrow that turned every crab would take both
+# out by the first door they reach.
+name: Roundabout
+hands: 1 1
+crab: 3,0 R L common
+crab: 2,0 R R common
+solution: 7,2 D L; 2,2 D R
+map:
++-+-+-+-+-+-+-+-+-+-+
+|. . . . . . . . . .|
++ + + + + + + + + + +
+|.|# # # # # # # #|.|
++ + + + + + + + + + +
+|. . . . . . . . . .|
++-+-+ +-+-+-+-+ +-+-+
+|# #|.|K K|K K|.|# #|
++ + + + + + + + + + +
+|# 0 ~ K K|K K ~ 0 #|
++-+-+-+-+-+-+-+-+-+-+

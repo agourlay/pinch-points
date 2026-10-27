@@ -2,9 +2,10 @@
 //! sprites and letters, and the line saying what the cursor stands on.
 
 use super::EditorState;
-use super::brush::{Brush, standing_on};
+use super::brush::{Brush, describe};
 use crate::app::Sim;
 use crate::app::cursor::Cursor;
+use crate::app::gamepad::LastDevice;
 use crate::app::i18n::fill;
 use crate::app::menu_ui;
 use crate::app::settings::GameSettings;
@@ -14,12 +15,33 @@ use bevy::prelude::*;
 #[derive(Component)]
 pub struct EditorUi;
 
+/// The width of the editor's two cards, the palette and the settings.
+pub const CARD_W: f32 = 226.0;
+/// How far each card stands in from the window's side.
+pub const CARD_MARGIN: f32 = 16.0;
+/// A card's padding inside its border.
+pub(super) const CARD_PAD: f32 = 10.0;
+/// A row's padding inside its lit background.
+pub(super) const ROW_PAD: f32 = 6.0;
+/// The gap between a row's cells: icon and name, label and value.
+pub(super) const CELL_GAP: f32 = 8.0;
+/// The side of a brush's icon.
+const ICON_PX: f32 = 22.0;
+/// The room a card's row has for its text: the card less its border, its
+/// padding and the row's own, which the width guards measure against.
+#[cfg(test)]
+pub(super) const ROW_ROOM: f32 = CARD_W - 2.0 * 2.0 - 2.0 * CARD_PAD - 2.0 * ROW_PAD;
+
 /// One row of the palette, by its place in [`Brush::ALL`].
 #[derive(Component)]
 pub struct PaletteRow(usize);
 
 #[derive(Component)]
 pub struct PaletteLabel(usize);
+
+/// The line over the kind toggle, which names the key that flips it.
+#[derive(Component)]
+pub struct KindLabel;
 
 /// One of the two rows of the kind toggle, by what it selects.
 #[derive(Component)]
@@ -29,6 +51,11 @@ pub struct KindRow(LevelKind);
 /// a keypress is about to do.
 #[derive(Component)]
 pub struct UnderCursor;
+
+/// What the loaded brush would make of the cursor's tile, for the brushes
+/// that step through seats, ways and kinds: said only when it differs.
+#[derive(Component)]
+pub struct NextUnder;
 
 /// The brush palette: every paintable thing, its sprite, and the letter
 /// that loads it.
@@ -42,17 +69,19 @@ pub fn spawn_editor_ui(
     settings: Res<GameSettings>,
 ) {
     let tr = settings.tr();
+    super::card::spawn_settings_card(&mut commands, tr);
+    super::playtest::spawn_banner(&mut commands);
     commands
         .spawn((
             EditorUi,
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(70.0),
-                right: Val::Px(16.0),
-                width: Val::Px(190.0),
+                right: Val::Px(CARD_MARGIN),
+                width: Val::Px(CARD_W),
                 flex_direction: FlexDirection::Column,
                 row_gap: Val::Px(2.0),
-                padding: UiRect::all(Val::Px(10.0)),
+                padding: UiRect::all(Val::Px(CARD_PAD)),
                 border: UiRect::all(Val::Px(2.0)),
                 border_radius: BorderRadius::all(Val::Px(12.0)),
                 ..default()
@@ -66,6 +95,7 @@ pub fn spawn_editor_ui(
             // choice decides which list the level joins, and a toggle you
             // cannot see the state of is a toggle you press to find out.
             panel.spawn((
+                KindLabel,
                 Text::new(tr.ed_kind_row.to_string()),
                 TextFont {
                     font_size: FontSize::Px(menu_ui::type_scale::FINE),
@@ -114,25 +144,18 @@ pub fn spawn_editor_ui(
                         PaletteRow(i),
                         Node {
                             align_items: AlignItems::Center,
-                            column_gap: Val::Px(8.0),
-                            padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+                            column_gap: Val::Px(CELL_GAP),
+                            padding: UiRect::axes(Val::Px(ROW_PAD), Val::Px(3.0)),
                             border_radius: BorderRadius::all(Val::Px(6.0)),
                             ..default()
                         },
                         BackgroundColor(Color::NONE),
                     ))
                     .with_children(|row| {
-                        row.spawn((
-                            ImageNode::new(brush.icon(&art)),
-                            Node {
-                                width: Val::Px(22.0),
-                                height: Val::Px(22.0),
-                                ..default()
-                            },
-                        ));
+                        spawn_icon(row, *brush, &art);
                         row.spawn((
                             PaletteLabel(i),
-                            Text::new(format!("{}  {}", brush.letter(), brush.label(tr))),
+                            Text::new(brush_line(tr, *brush, LastDevice::Keyboard)),
                             TextFont {
                                 font_size: FontSize::Px(menu_ui::type_scale::BODY),
                                 ..default()
@@ -141,20 +164,67 @@ pub fn spawn_editor_ui(
                         ));
                     });
             }
-            panel.spawn((
-                UnderCursor,
-                Text::new(String::new()),
-                TextFont {
-                    font_size: FontSize::Px(menu_ui::type_scale::BODY),
-                    ..default()
-                },
-                TextColor(crate::app::palette::IDLE_ROW),
-                Node {
-                    margin: UiRect::top(Val::Px(8.0)),
-                    ..default()
-                },
-            ));
+            for (line, top) in [(true, 8.0), (false, 0.0)] {
+                let mut text = panel.spawn((
+                    Text::new(String::new()),
+                    TextFont {
+                        font_size: FontSize::Px(menu_ui::type_scale::FINE),
+                        ..default()
+                    },
+                    TextColor(crate::app::palette::IDLE_ROW),
+                    Node {
+                        margin: UiRect::top(Val::Px(top)),
+                        ..default()
+                    },
+                ));
+                match line {
+                    true => text.insert(UnderCursor),
+                    false => text.insert(NextUnder),
+                };
+            }
         });
+}
+
+/// A brush's icon on its row. The crab's sprite is drawn to be tinted and
+/// to stand on sand: white, with a dark outline, it was a pale blob on the
+/// dark card. It stands on a coin of sand in a common crab's colours, as
+/// the field guide draws its crabs.
+fn spawn_icon(row: &mut ChildSpawnerCommands, brush: Brush, art: &crate::app::art::Art) {
+    let size = Node {
+        width: Val::Px(ICON_PX),
+        height: Val::Px(ICON_PX),
+        ..default()
+    };
+    if brush != Brush::Crab {
+        row.spawn((ImageNode::new(brush.icon(art)), size));
+        return;
+    }
+    let layer = |image: &Handle<Image>, color: Color| {
+        (
+            ImageNode::new(image.clone()).with_color(color),
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+        )
+    };
+    let kind = crate::sim::CrabKind::Common;
+    row.spawn((
+        Node {
+            border_radius: BorderRadius::MAX,
+            ..size
+        },
+        BackgroundColor(crate::app::palette::LEGEND_SAND),
+    ))
+    .with_children(|coin| {
+        coin.spawn(layer(&art.crab, crate::app::creatures::body_color(kind)));
+        coin.spawn(layer(
+            &art.claw,
+            crate::app::creatures::claw_color(crate::sim::Handedness::Right, false),
+        ));
+    });
 }
 
 /// The palette's rows that light up for what is chosen: the brushes,
@@ -163,18 +233,64 @@ pub fn spawn_editor_ui(
 pub struct PaletteRows<'w, 's> {
     brushes: Query<'w, 's, (&'static PaletteRow, &'static mut BackgroundColor)>,
     kinds: Query<'w, 's, (&'static KindRow, &'static mut BackgroundColor), Without<PaletteRow>>,
-    labels: Query<'w, 's, (&'static PaletteLabel, &'static mut TextColor)>,
+    labels: BrushLabels<'w, 's>,
 }
+
+/// A brush's row on the palette: the letter that loads it, then its name.
+/// A pad's player loads brushes with the bumpers and has no letters, and
+/// a letter beside the name would read as the pad button of the same
+/// letter, so their row is the name alone.
+fn brush_line(tr: &crate::app::i18n::Tr, brush: Brush, device: LastDevice) -> String {
+    match device {
+        LastDevice::Keyboard => format!("{}  {}", brush.letter(), brush.label(tr)),
+        LastDevice::Pad => brush.label(tr).to_string(),
+    }
+}
+
+/// The line over the kind toggle. Every language opens it with the key,
+/// "F6", which a pad's player is told as the editor table's button for it.
+fn kind_line(tr: &crate::app::i18n::Tr, device: LastDevice) -> String {
+    use crate::app::gamepad::scheme::{Does, button_name};
+    let face = crate::app::gamepad::Face::Editor { layer: true };
+    match (device, button_name(&face, Does::Kind, tr)) {
+        (LastDevice::Pad, Some(button)) => tr.ed_kind_row.replacen("F6", &button, 1),
+        _ => tr.ed_kind_row.to_string(),
+    }
+}
+
+/// The brushes' names on the palette, apart from the panel's other lines.
+type BrushLabels<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static PaletteLabel,
+        &'static mut Text,
+        &'static mut TextColor,
+    ),
+    (Without<UnderCursor>, Without<KindLabel>, Without<NextUnder>),
+>;
+
+/// The panel's lines of its own: what the cursor stands on, what the
+/// brush would make of it, and the one over the kind toggle.
+type PanelLines<'w, 's> = ParamSet<
+    'w,
+    's,
+    (
+        Query<'static, 'static, &'static mut Text, With<UnderCursor>>,
+        Query<'static, 'static, &'static mut Text, With<KindLabel>>,
+        Query<'static, 'static, (&'static mut Text, &'static mut Node), With<NextUnder>>,
+    ),
+>;
 
 /// Light the loaded brush and the chosen kind, and say what the cursor is
 /// standing on.
 pub fn update_editor_palette(
     state: Res<EditorState>,
     sim: Res<Sim>,
-    settings: Res<GameSettings>,
+    (settings, device): (Res<GameSettings>, Res<LastDevice>),
     cursors: Query<&Cursor>,
     palette_rows: PaletteRows,
-    mut under: Query<&mut Text, With<UnderCursor>>,
+    mut lines: PanelLines,
 ) {
     let PaletteRows {
         brushes: mut rows,
@@ -182,6 +298,9 @@ pub fn update_editor_palette(
         mut labels,
     } = palette_rows;
     let tr = settings.tr();
+    for mut text in &mut lines.p1() {
+        menu_ui::set_text(&mut text, &kind_line(tr, *device));
+    }
     for (row, mut fill) in &mut kinds {
         let want = match row.0 == state.kind {
             true => crate::app::palette::SELECTED_ROW.with_alpha(0.22),
@@ -197,19 +316,172 @@ pub fn update_editor_palette(
         };
         menu_ui::set_bg(&mut fill, want);
     }
-    for (label, mut color) in &mut labels {
+    for (label, mut text, mut color) in &mut labels {
         let want = match Some(label.0) == at {
             true => crate::app::palette::SELECTED_ROW,
             false => crate::app::palette::PARCHMENT,
         };
         menu_ui::set_color(&mut color, want);
+        menu_ui::set_text(&mut text, &brush_line(tr, Brush::ALL[label.0], *device));
     }
     let Some(cursor) = cursors.iter().next() else {
         return;
     };
     let board = &sim.0;
-    let standing = standing_on(board, cursor.x, cursor.y).label(tr);
-    for mut text in &mut under {
-        menu_ui::set_text(&mut text, &fill(tr.ed_under, &[("t", standing)]));
+    let (under, next) = under_and_next(board, cursor.x, cursor.y, &state, tr);
+    for mut text in &mut lines.p0() {
+        menu_ui::set_text(&mut text, &under);
+    }
+    for (mut text, mut node) in &mut lines.p2() {
+        menu_ui::set_shown(&mut node, next.is_some());
+        menu_ui::set_text(&mut text, next.as_deref().unwrap_or_default());
+    }
+}
+
+/// `text` broken onto lines the card's width holds, at its spaces and
+/// nowhere else. Left to the shaper, a line broke before the arrow at its
+/// end however the arrow was glued to the word before it, and set it on a
+/// line of its own; the readout's words are joined by no-break spaces
+/// where they belong together, which this leaves whole.
+fn fit_lines(text: &str) -> String {
+    let room = CARD_W - 2.0 * 2.0 - 2.0 * CARD_PAD;
+    let mut lines: Vec<String> = Vec::new();
+    for word in text.split(' ') {
+        match lines.last_mut() {
+            Some(line) if readout_px(&format!("{line} {word}")) <= room => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            Some(_) | None => lines.push(word.to_string()),
+        }
+    }
+    lines.join("\n")
+}
+
+/// How wide `line` draws in the readout's face and size: the UI face is
+/// monospaced, every character it has one advance wide, and what it lacks
+/// (kana and kanji) falls back to the Japanese subset at a full em. The
+/// font files are not read at run time, so this counts as
+/// `i18n::metrics::text_px` measures, which a test holds it to.
+fn readout_px(line: &str) -> f32 {
+    const UI_ADVANCE: f32 = 1233.0 / 2048.0;
+    line.chars()
+        .map(|ch| match ch {
+            crate::app::i18n::WORD_JOINER => 0.0,
+            '\u{2e80}'.. => 1.0,
+            _ => UI_ADVANCE,
+        })
+        .sum::<f32>()
+        * menu_ui::type_scale::FINE
+}
+
+/// The readout's two lines: what is on the tile, and what one press of
+/// the loaded brush would make of it when that is something else. Read by
+/// pressing the brush on a copy of the board with the very function the
+/// press uses, the mirror's refusals included ([`super::press_fairly`]),
+/// so the line cannot promise what the key does not do.
+pub(super) fn under_and_next(
+    board: &crate::sim::Board,
+    x: u8,
+    y: u8,
+    state: &EditorState,
+    tr: &crate::app::i18n::Tr,
+) -> (String, Option<String>) {
+    if x >= board.width() || y >= board.height() {
+        return (String::new(), None);
+    }
+    let here = describe(board, x, y, tr);
+    let mut after = board.clone();
+    let period = super::setting::hole_period(state);
+    let _ = super::press_fairly(state, &mut after, (x, y), period);
+    let next = describe(&after, x, y, tr);
+    let under = fit_lines(&fill(tr.ed_under, &[("t", &here)]));
+    (
+        under,
+        (next != here).then(|| fit_lines(&fill(tr.ed_next, &[("t", &next)]))),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::i18n::metrics::text_px;
+    use crate::sim::{Board, CrabKind, Direction, Handedness, TileKind};
+
+    /// Every brush's row fits beside its icon on one line, in every
+    /// language and both hands: "Sand (erases)" wrapped onto two lines.
+    #[test]
+    fn every_brush_fits_its_row_in_every_language() {
+        let room = ROW_ROOM - ICON_PX - CELL_GAP;
+        let mut over = Vec::new();
+        for lang in crate::app::i18n::ALL_LANGS {
+            let tr = lang.tr();
+            for brush in Brush::ALL {
+                for device in [LastDevice::Keyboard, LastDevice::Pad] {
+                    let line = brush_line(tr, brush, device);
+                    let used = text_px(&line, menu_ui::type_scale::BODY);
+                    if used > room {
+                        over.push(format!("{lang:?}: {used:.0}px {line}"));
+                    }
+                }
+            }
+            for kind in [tr.ed_kind_puzzle, tr.ed_kind_arena] {
+                let used = text_px(kind, menu_ui::type_scale::BODY);
+                if used > ROW_ROOM {
+                    over.push(format!("{lang:?}: {used:.0}px {kind}"));
+                }
+            }
+        }
+        assert!(over.is_empty(), "past {room:.0}px:\n{}", over.join("\n"));
+    }
+
+    /// The readout says what is on the tile, a crab by its kind, claw and
+    /// facing and a castle by its seat, and what the loaded brush would
+    /// make of it, read off the press itself.
+    #[test]
+    fn the_readout_says_what_is_there_and_what_comes_next() {
+        use crate::app::i18n::EN;
+        let mut board = Board::new(6, 5, 1);
+        board.spawn_crab(1, 1, Direction::Right, Handedness::Left, CrabKind::Giant);
+        board.set_tile(3, 3, TileKind::Castle(2));
+        let mut state = EditorState {
+            brush: Brush::Crab,
+            ..EditorState::default()
+        };
+        let (under, next) = under_and_next(&board, 1, 1, &state, &EN);
+        // Broken onto the card's lines at a space, never before the arrow.
+        assert_eq!(under, "under: giant crab,\nleft claw\u{a0}\u{2060}→");
+        assert_eq!(
+            next.as_deref(),
+            Some("next: giant crab,\nright claw\u{a0}\u{2060}→")
+        );
+        for line in under.lines() {
+            let room = CARD_W - 2.0 * 2.0 - 2.0 * CARD_PAD;
+            assert!(text_px(line, menu_ui::type_scale::FINE) <= room, "{line}");
+        }
+        // The run-time count of a line's width is the one the guards use,
+        // in every language's readout.
+        for lang in crate::app::i18n::ALL_LANGS {
+            let tr = lang.tr();
+            let said = [
+                tr.ed_crab_kinds.join(" "),
+                tr.ed_claws.join(" "),
+                tr.ed_sand.into(),
+            ];
+            for line in said {
+                let want = text_px(&line, menu_ui::type_scale::FINE);
+                assert!((readout_px(&line) - want).abs() < 0.01, "{lang:?}: {line}");
+            }
+        }
+        state.brush = Brush::Castle;
+        let (under, next) = under_and_next(&board, 3, 3, &state, &EN);
+        assert_eq!(under, "under: Castle P3");
+        assert_eq!(next.as_deref(), Some("next: Castle P4"));
+        let (under, next) = under_and_next(&board, 0, 0, &state, &EN);
+        assert_eq!(under, "under: Sand");
+        assert_eq!(next.as_deref(), Some("next: Castle P1"));
+        // A brush that leaves the tile as it is has nothing to add.
+        state.brush = Brush::Sand;
+        assert_eq!(under_and_next(&board, 0, 0, &state, &EN).1, None);
     }
 }

@@ -1029,7 +1029,7 @@ mod tests {
                 assert!(respelled.contains("Z/S"), "{lang:?}: {respelled:?}");
                 assert!(!respelled.contains("W/S"), "{lang:?}: {respelled:?}");
             }
-            for prompt in [tr.prompt_settings, tr.prompt_match_setup] {
+            for prompt in [tr.prompt_settings, tr.prompt_setup_game] {
                 assert!(prompt.contains("A/D"), "{lang:?}: {prompt:?}");
                 let respelled = azerty.legend(prompt);
                 assert!(respelled.contains("Q/D"), "{lang:?}: {respelled:?}");

@@ -1,0 +1,22 @@
+# A log turns the first crab to cross it one way and the next the
+# other. The crabs arrive in the wrong order: the front one has to take
+# a detour and let the other cross first.
+name: The Log
+hands: 1 1
+crab: 1,2 R L common
+crab: 0,2 R R common
+solution: 2,2 U L; 5,3 R R
+map:
++-+-+-+-+-+-+-+-+-+
+|# # # # 0 K K K K|
++-+-+-+-+-+ + +-+ +
+|# # . . .|.|K K K|
++-+-+ +-+ + +-+-+-+
+|. . . . . T # # #|
++-+-+-+-+-+ +-+-+-+
+|# # # # #|. 0 # #|
++-+-+-+-+-+ +-+-+-+
+|K K K K K|.|K K K|
++ +-+-+-+ + + +-+ +
+|K K K K K K K K K|
++-+-+-+-+-+-+-+-+-+

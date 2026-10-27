@@ -97,6 +97,9 @@ impl Board {
         if !self.rules.castle_raids {
             let _ = writeln!(out, "raids: off");
         }
+        if let Some([left, right]) = self.rules.claw_hands {
+            let _ = writeln!(out, "claw_hands: {left} {right}");
+        }
         if self.tide.enabled {
             let _ = writeln!(out, "events: on");
         }
@@ -198,6 +201,38 @@ impl Board {
                 gull.takeoff_in
             );
         }
+        // A gull on its way in: the tick it lands, its tile, its facing.
+        for gull in &self.incoming {
+            let _ = writeln!(
+                out,
+                "incoming: {} {} {}",
+                gull.at,
+                gull.tile,
+                gull.dir.letter()
+            );
+        }
+        // Who steered which gull, and what the steered gulls took from
+        // whom: the raids' credit, which the rules never read but every
+        // screen tells. Only gulls on the sand, the rule the parser holds a
+        // snapshot to: [`Board::drop_gulls`] keeps the list that way, and
+        // the filter keeps a slip there from writing a file nobody can
+        // read back.
+        let on_the_sand = |gull: &u32| self.gulls.iter().any(|g| g.id == *gull);
+        for (gull, by) in self
+            .steering
+            .by_gull
+            .iter()
+            .filter(|(gull, _)| on_the_sand(gull))
+        {
+            let _ = writeln!(out, "steered: {gull} {by}");
+        }
+        for (by, row) in self.steering.taken.iter().enumerate() {
+            for (victim, &points) in row.iter().enumerate() {
+                if points > 0 {
+                    let _ = writeln!(out, "stolen: {by} {victim} {points}");
+                }
+            }
+        }
         out
     }
 
@@ -256,6 +291,7 @@ struct Fields {
     /// that is *on* by default, so a `castle_raids: bool` deriving `false`
     /// would turn them off in every snapshot that omitted the line.
     no_castle_raids: bool,
+    claw_hands: Option<[u8; 2]>,
     events_enabled: bool,
     lure: Option<(PlayerId, u32)>,
     lure_cooldown: u32,
@@ -271,6 +307,8 @@ struct Fields {
     posts: Vec<(usize, Signpost)>,
     crabs: Vec<Crab>,
     gulls: Vec<Gull>,
+    incoming: Vec<IncomingGull>,
+    steering: steering::Steering,
 }
 
 impl Fields {
@@ -340,6 +378,12 @@ impl Fields {
             "round" => self.round_length = Some(next_num(&mut words, "round")?),
             "wrap" => self.wrap = value == "on",
             "raids" => self.no_castle_raids = value == "off",
+            "claw_hands" => {
+                self.claw_hands = Some([
+                    next_num(&mut words, "claw_hands left")?,
+                    next_num(&mut words, "claw_hands right")?,
+                ]);
+            }
             "events" => self.events_enabled = value == "on",
             "lure" => {
                 // A seat, like every other owner the snapshot names: the
@@ -429,11 +473,40 @@ impl Fields {
                 });
             }
             "gull" => self.gulls.push(parse_gull(&mut words)?),
+            "incoming" => self.incoming.push(IncomingGull {
+                at: next_num(&mut words, "incoming tick")?,
+                tile: next_num(&mut words, "incoming tile")?,
+                dir: next_dir(&mut words, "incoming direction")?,
+            }),
+            "steered" => {
+                let gull = next_num(&mut words, "steered gull")?;
+                let by: PlayerId = next_num(&mut words, "steered seat")?;
+                if seat(by).is_none() {
+                    return Err(format!("steered: no seat {by}"));
+                }
+                if self.steering.steerer(gull).is_some() {
+                    return Err(format!("steered: gull {gull} twice"));
+                }
+                if self.steering.by_gull.len() >= MAX_CREATURES {
+                    return Err(format!("more than {MAX_CREATURES} steered gulls"));
+                }
+                self.steering.steer(gull, by);
+            }
+            "stolen" => {
+                let by: PlayerId = next_num(&mut words, "stolen seat")?;
+                let victim: PlayerId = next_num(&mut words, "stolen victim")?;
+                let (Some(by), Some(victim)) = (seat(by), seat(victim)) else {
+                    return Err(format!("stolen: no seats {by} and {victim}"));
+                };
+                self.steering.taken[by][victim] = next_num(&mut words, "stolen points")?;
+            }
             other => return Err(format!("unknown key {other:?}")),
         }
         // Counted as they come, so a code with a hundred thousand of them
         // is turned away at the first one too many rather than read whole.
-        if self.crabs.len() + self.gulls.len() + self.sweeping.len() > MAX_CREATURES {
+        if self.crabs.len() + self.gulls.len() + self.sweeping.len() + self.incoming.len()
+            > MAX_CREATURES
+        {
             return Err(format!("more than {MAX_CREATURES} crabs and gulls"));
         }
         Ok(())
@@ -553,6 +626,25 @@ impl Fields {
             poses("gull", gull.tile, gull.progress, &gull.prev)?;
         }
 
+        // A gull on its way in comes down on sand of this beach, on a tick
+        // still to come and no further off than the spawner sends for one,
+        // in the order the spawner sent: the sim lands them first to last
+        // and never looks past the first.
+        let mut last_at = tick;
+        for gull in &self.incoming {
+            let tile = usize::from(gull.tile);
+            if tile >= w * h || matches!(grid.tiles[tile], TileKind::Rock | TileKind::Kelp) {
+                return Err(format!("incoming: tile {tile} cannot take a gull"));
+            }
+            if gull.at < last_at || gull.at > tick + u64::from(GULL_LEAD) {
+                return Err(format!(
+                    "incoming: tick {} is out of turn (now {tick})",
+                    gull.at
+                ));
+            }
+            last_at = gull.at;
+        }
+
         // A hand stands on this beach, and put its post down on a tick
         // already played.
         for (tile, at) in self.hands.iter().flatten() {
@@ -561,6 +653,14 @@ impl Fields {
             }
             if *at > tick {
                 return Err(format!("hand: tick {at} is still to come ({tick})"));
+            }
+        }
+
+        // A steered gull is one on the sand: the list forgets a gull on the
+        // tick it leaves.
+        for (gull, _) in &self.steering.by_gull {
+            if !self.gulls.iter().any(|g| g.id == *gull) {
+                return Err(format!("steered: no gull {gull}"));
             }
         }
 
@@ -610,6 +710,7 @@ impl Fields {
                 fair_spawns: self.fair_spawns,
                 round_length: self.round_length,
                 castle_raids: !self.no_castle_raids,
+                claw_hands: self.claw_hands,
             },
             crabs: self.crabs,
             scores,
@@ -619,6 +720,7 @@ impl Fields {
             next_crab_id,
             gulls: self.gulls,
             next_gull_id,
+            incoming: self.incoming,
             lure: self.lure,
             lure_cooldown: self.lure_cooldown,
             crabs_banked,
@@ -645,7 +747,11 @@ impl Fields {
                 // frame: a round picked back up has no sweep to report.
                 landed: Vec::new(),
             },
+            // News for its own frame, like the landings above.
+            refused_lures: Vec::new(),
+            walked_home: Vec::new(),
             hands: self.hands,
+            steering: self.steering,
         })
     }
 }
@@ -930,6 +1036,7 @@ mod tests {
         board.rules_mut().whole_flock = true;
         board.rules_mut().sweep_keeps_worth = true;
         board.rules_mut().fair_spawns = true;
+        board.rules_mut().claw_hands = Some([2, 1]);
         board.set_events_enabled(true);
         board.rules_mut().round_length = Some(1234);
         board.rules_mut().gull_period = 97;
@@ -1137,6 +1244,7 @@ mod tests {
                 "round:",
                 "wrap:",
                 "raids:",
+                "claw_hands:",
                 "events:",
                 "lure:",
                 "cooldown:",

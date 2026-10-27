@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["pillow"]
+# ///
 """Procedural sprite sheet for Pinch Points.
 
 Draws at 4x the output size and downsamples for smooth edges. White/light
@@ -339,11 +342,25 @@ def gull_in_flight(span, sweep, name):
     d.polygon(teardrop(18, 76, 48, 9.5, 3), fill=GULL_WHITE)
     gull_head(d, 72, 9.5)
     save(img, name)
+    return img
 
 
-gull_in_flight(1.0, 0, "gull_fly")
+def wing_shadow(img, name):
+    """A flying gull's shadow: its spread-wing silhouette, softened, in
+    the warm dark of shade on sand. Drawn on the beach under a gull flying
+    in, it reaches the sand ahead of the bird, so it has to read as wings
+    rather than as the walking gull's oval."""
+    alpha = img.resize((OUT, OUT), Image.LANCZOS).getchannel("A")
+    alpha = alpha.filter(ImageFilter.GaussianBlur(5)).point(lambda v: int(v * 0.55))
+    out = Image.new("RGBA", (OUT, OUT), (58, 46, 32, 255))
+    out.putalpha(alpha)
+    out.save(f"assets/sprites/{name}.png")
+    print(name)
+
+
+wing_shadow(gull_in_flight(1.0, 0, "gull_fly"), "gull_shadow")
 # the upstroke: wings raised, so from above they span less and reach forward
-gull_in_flight(0.62, 10, "gull_fly_b")
+wing_shadow(gull_in_flight(0.62, 10, "gull_fly_b"), "gull_shadow_b")
 
 # --- rock: faceted boulder, baked -------------------------------------------
 # Lit from the upper left, the way every shadow on the beach falls to the

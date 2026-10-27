@@ -5,6 +5,8 @@ use crate::sim::MAX_PLAYERS;
 use crate::sim::{Board, CrabKind, Direction, Handedness, Spawner, TileKind};
 use bevy::prelude::*;
 
+/// The rate a hole lets crabs out at until the settings card says
+/// otherwise: one every two seconds.
 pub(super) const SPAWNER_PERIOD: u32 = 60;
 
 /// What the brush paints. One name for each thing the sand can hold, so the
@@ -128,7 +130,10 @@ pub(super) fn cycle_castle(board: &mut Board, x: u8, y: u8) {
 /// is a palette that cannot be dragged across a row. `Sand` is the eraser,
 /// and it is the only way to clear a tile without first knowing what is on
 /// it.
-pub(super) fn paint(board: &mut Board, x: u8, y: u8, brush: Brush) {
+///
+/// A new hole is dug at `hole_period`, the rate the settings card shows;
+/// a hole turned keeps its own.
+pub(super) fn paint(board: &mut Board, x: u8, y: u8, brush: Brush, hole_period: u32) {
     // Two of them cycle rather than replace, because they carry a value the
     // player has to be able to reach: which seat a castle belongs to, and
     // which way a hole faces.
@@ -137,10 +142,7 @@ pub(super) fn paint(board: &mut Board, x: u8, y: u8, brush: Brush) {
         Brush::Hole => {
             let kind = match board.tile_at(x, y) {
                 TileKind::Spawner(s) => match next_dir(s.dir) {
-                    Some(dir) => TileKind::Spawner(Spawner {
-                        dir,
-                        period: SPAWNER_PERIOD,
-                    }),
+                    Some(dir) => TileKind::Spawner(Spawner { dir, ..s }),
                     None => TileKind::Empty,
                 },
                 TileKind::Empty
@@ -153,7 +155,7 @@ pub(super) fn paint(board: &mut Board, x: u8, y: u8, brush: Brush) {
                     board.remove_gulls_at(x, y);
                     TileKind::Spawner(Spawner {
                         dir: Direction::Right,
-                        period: SPAWNER_PERIOD,
+                        period: hole_period,
                     })
                 }
             };
@@ -241,31 +243,216 @@ fn cycle_crab(board: &mut Board, x: u8, y: u8) {
     }
 }
 
-/// Which brush would have drawn what is on this tile. Creatures win over
-/// the ground they stand on, because that is what the player put there
-/// last and what another press would take away.
-pub(super) fn standing_on(board: &Board, x: u8, y: u8) -> Brush {
+/// Make the tile at `to` what a stroke of `brush` begun at `from` made
+/// there: the same castle, hole or crab, the same gull or none, or the
+/// plain ground. A drag copies the stroke's first tile rather than
+/// pressing the brush again on each one, which for the brushes that cycle
+/// would step each tile on to the next seat, way or kind, and for the gull
+/// would take every other bird away.
+pub(super) fn stroke_onto(board: &mut Board, from: (u8, u8), to: (u8, u8), brush: Brush) {
+    let ((fx, fy), (x, y)) = (from, to);
+    let inside = |(x, y): (u8, u8)| x < board.width() && y < board.height();
+    if from == to || !inside(from) || !inside(to) {
+        return;
+    }
+    let sweep = |board: &mut Board| {
+        board.remove_crabs_at(x, y);
+        board.remove_gulls_at(x, y);
+    };
+    match brush {
+        Brush::Castle | Brush::Hole => {
+            let start = board.tile_at(fx, fy);
+            let same_layer = |kind: TileKind| match brush == Brush::Castle {
+                true => matches!(kind, TileKind::Castle(_)),
+                false => matches!(kind, TileKind::Spawner(_)),
+            };
+            if same_layer(start) {
+                sweep(board);
+                board.set_tile(x, y, start);
+            } else if same_layer(board.tile_at(x, y)) {
+                board.set_tile(x, y, TileKind::Empty);
+            }
+        }
+        Brush::Crab => {
+            let start = board.index_of(fx, fy);
+            let crab = board.crabs().iter().find(|c| c.tile == start).copied();
+            match crab {
+                Some(crab) if board.tile_at(x, y) == TileKind::Empty => {
+                    board.remove_crabs_at(x, y);
+                    board.spawn_crab(x, y, crab.dir, crab.handed, crab.kind);
+                }
+                Some(_) => {}
+                None => board.remove_crabs_at(x, y),
+            }
+        }
+        Brush::Gull => {
+            let start = board.index_of(fx, fy);
+            let here = board.index_of(x, y);
+            let gull = board
+                .gulls()
+                .iter()
+                .find(|g| g.tile == start)
+                .map(|g| g.dir);
+            let standing = board.gulls().iter().any(|g| g.tile == here);
+            match gull {
+                Some(dir) if !standing && board.gull_may_stand(x, y) => board.spawn_gull(x, y, dir),
+                Some(_) => {}
+                None => board.remove_gulls_at(x, y),
+            }
+        }
+        Brush::Sand | Brush::Rock | Brush::Log | Brush::Weed | Brush::Pool => {
+            paint(board, x, y, brush, SPAWNER_PERIOD);
+        }
+    }
+}
+
+/// The way the creature or hole on a tile faces: a gull's first, as the
+/// one drawn on top, then a crab's, then a hole's.
+pub(super) fn facing(board: &Board, x: u8, y: u8) -> Option<Direction> {
+    let tile = board.index_of(x, y);
+    if let Some(gull) = board.gulls().iter().find(|g| g.tile == tile) {
+        return Some(gull.dir);
+    }
+    if let Some(crab) = board.crabs().iter().find(|c| c.tile == tile) {
+        return Some(crab.dir);
+    }
+    if let TileKind::Spawner(s) = board.tile_at(x, y) {
+        return Some(s.dir);
+    }
+    None
+}
+
+/// Whether what [`facing`] reads on the tile is a creature, a gull or a
+/// crab, rather than the hole under it.
+pub(super) fn creature_at(board: &Board, x: u8, y: u8) -> bool {
+    let tile = board.index_of(x, y);
+    board.gulls().iter().any(|g| g.tile == tile) || board.crabs().iter().any(|c| c.tile == tile)
+}
+
+/// Put the thing [`facing`] reads back down facing `dir`, and say whether
+/// there was one. A creature is set down afresh, so the sim turns it away
+/// from a wall as it turns any creature put down; the caller reads
+/// [`facing`] again to see where it ended up.
+pub(super) fn face(board: &mut Board, x: u8, y: u8, dir: Direction) -> bool {
     let tile = board.index_of(x, y);
     if board.gulls().iter().any(|g| g.tile == tile) {
-        return Brush::Gull;
+        board.remove_gulls_at(x, y);
+        board.spawn_gull(x, y, dir);
+        return true;
     }
-    if board.crabs().iter().any(|c| c.tile == tile) {
-        return Brush::Crab;
+    // Every crab on the tile, as a pasted level may stand two on one:
+    // set down afresh, the first alone came back.
+    let crabs: Vec<_> = board
+        .crabs()
+        .iter()
+        .filter(|c| c.tile == tile)
+        .copied()
+        .collect();
+    if !crabs.is_empty() {
+        board.remove_crabs_at(x, y);
+        for crab in crabs {
+            board.spawn_crab(x, y, dir, crab.handed, crab.kind);
+        }
+        return true;
     }
-    match board.tile_at(x, y) {
-        TileKind::Rock => Brush::Rock,
-        TileKind::Castle(_) => Brush::Castle,
-        TileKind::Spawner(_) => Brush::Hole,
-        TileKind::Turnstile { .. } => Brush::Log,
-        TileKind::Kelp => Brush::Weed,
-        TileKind::Pool => Brush::Pool,
-        TileKind::Empty => Brush::Sand,
+    if let TileKind::Spawner(s) = board.tile_at(x, y) {
+        board.set_tile(x, y, TileKind::Spawner(Spawner { dir, ..s }));
+        return true;
+    }
+    false
+}
+
+/// What is on a tile, as the editor's readout says it: a gull and the way
+/// it faces, a crab by its kind, its claw and its facing, and the ground
+/// (a castle by its seat, a hole by its way), each part of what one press
+/// of a brush would change. An arrow is held to the word before it by a
+/// no-break space, so a line that wraps does not leave it on its own.
+pub(super) fn describe(board: &Board, x: u8, y: u8, tr: &crate::app::i18n::Tr) -> String {
+    // The no-break space alone let the shaper set the arrow on a line of
+    // its own; the word joiner, as the prompt line uses it, holds it.
+    let arrow = |dir| {
+        format!(
+            "{}{}",
+            crate::app::i18n::WORD_JOINER,
+            super::validate::arrow(dir)
+        )
+    };
+    let tile = board.index_of(x, y);
+    let mut parts = Vec::new();
+    if let Some(gull) = board.gulls().iter().find(|g| g.tile == tile) {
+        parts.push(format!(
+            "{}\u{a0}{}",
+            Brush::Gull.label(tr),
+            arrow(gull.dir)
+        ));
+    }
+    if let Some(crab) = board.crabs().iter().find(|c| c.tile == tile) {
+        let kind = tr.ed_crab_kinds[crab_index(crab.kind)];
+        let claw = match crab.handed {
+            Handedness::Left => tr.ed_claws[0],
+            Handedness::Right => tr.ed_claws[1],
+        };
+        let dir = arrow(crab.dir);
+        parts.push(crate::app::i18n::fill(
+            tr.ed_crab_desc,
+            &[("k", kind), ("c", claw), ("d", &dir)],
+        ));
+    }
+    let ground = match board.tile_at(x, y) {
+        TileKind::Empty if parts.is_empty() => Some(tr.ed_sand.to_string()),
+        TileKind::Empty => None,
+        TileKind::Castle(owner) => {
+            let seat = crate::app::i18n::fill(tr.player_label, &[("p", &(owner + 1).to_string())]);
+            Some(format!("{} {seat}", Brush::Castle.label(tr)))
+        }
+        TileKind::Spawner(s) => Some(format!("{}\u{a0}{}", Brush::Hole.label(tr), arrow(s.dir))),
+        TileKind::Rock => Some(Brush::Rock.label(tr).to_string()),
+        TileKind::Turnstile { .. } => Some(Brush::Log.label(tr).to_string()),
+        TileKind::Kelp => Some(Brush::Weed.label(tr).to_string()),
+        TileKind::Pool => Some(Brush::Pool.label(tr).to_string()),
+    };
+    parts.extend(ground);
+    parts.join(" + ")
+}
+
+/// A crab kind's place in the editor's list of their names
+/// (`Tr::ed_crab_kinds`).
+fn crab_index(kind: CrabKind) -> usize {
+    match kind {
+        CrabKind::Common => 0,
+        CrabKind::Juvenile => 1,
+        CrabKind::Giant => 2,
+        CrabKind::Molting => 3,
+        CrabKind::Golden => 4,
+        CrabKind::Sparkling => 5,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Turned, every crab on a tile turns: a pasted level may stand two on
+    /// one, and the second used to go.
+    #[test]
+    fn turning_turns_every_crab_on_the_tile() {
+        let mut board = Board::new(6, 5, 1);
+        board.spawn_crab(2, 2, Direction::Right, Handedness::Left, CrabKind::Common);
+        board.spawn_crab(2, 2, Direction::Right, Handedness::Right, CrabKind::Giant);
+        assert!(face(&mut board, 2, 2, Direction::Down));
+        let crabs: Vec<_> = board
+            .crabs()
+            .iter()
+            .map(|c| (c.dir, c.handed, c.kind))
+            .collect();
+        assert_eq!(
+            crabs,
+            [
+                (Direction::Down, Handedness::Left, CrabKind::Common),
+                (Direction::Down, Handedness::Right, CrabKind::Giant),
+            ]
+        );
+    }
 
     /// The editor moves on P1's stock bindings and paints with letters, so
     /// a brush on one of those does two things at once (a rebinding onto a
@@ -281,6 +468,8 @@ mod tests {
             KeyCode::KeyK,   // gull period
             KeyCode::KeyO,   // wrapping edges
             KeyCode::KeyV,   // validate
+            KeyCode::KeyT,   // turn
+            KeyCode::KeyN,   // next setting
             KeyCode::Tab,    // next brush
             KeyCode::Space,  // paint
             KeyCode::Enter,  // playtest
@@ -329,10 +518,10 @@ mod tests {
         let mut board = sand();
         board.set_tile(1, 1, TileKind::Rock);
         board.set_tile(2, 2, TileKind::Kelp);
-        paint(&mut board, 1, 1, Brush::Gull);
-        paint(&mut board, 2, 2, Brush::Gull);
+        paint(&mut board, 1, 1, Brush::Gull, SPAWNER_PERIOD);
+        paint(&mut board, 2, 2, Brush::Gull, SPAWNER_PERIOD);
         assert!(board.gulls().is_empty(), "nowhere for a gull to stand");
-        paint(&mut board, 3, 3, Brush::Gull);
+        paint(&mut board, 3, 3, Brush::Gull, SPAWNER_PERIOD);
         assert_eq!(board.gulls().len(), 1, "sand takes one");
     }
 
@@ -361,19 +550,19 @@ mod tests {
     #[test]
     fn a_brush_replaces_and_sand_erases() {
         let mut board = sand();
-        paint(&mut board, 1, 1, Brush::Weed);
+        paint(&mut board, 1, 1, Brush::Weed, SPAWNER_PERIOD);
         assert_eq!(board.tile_at(1, 1), TileKind::Kelp);
-        paint(&mut board, 1, 1, Brush::Weed);
+        paint(&mut board, 1, 1, Brush::Weed, SPAWNER_PERIOD);
         assert_eq!(board.tile_at(1, 1), TileKind::Kelp, "and again is the same");
-        paint(&mut board, 1, 1, Brush::Pool);
+        paint(&mut board, 1, 1, Brush::Pool, SPAWNER_PERIOD);
         assert_eq!(board.tile_at(1, 1), TileKind::Pool, "another replaces it");
-        paint(&mut board, 1, 1, Brush::Sand);
+        paint(&mut board, 1, 1, Brush::Sand, SPAWNER_PERIOD);
         assert_eq!(board.tile_at(1, 1), TileKind::Empty, "and sand clears it");
 
         // Whatever was standing there goes with the ground: a crab inside a
         // rock is not a thing the sim has a rule for.
         board.spawn_crab(3, 3, Direction::Right, Handedness::Left, CrabKind::Common);
-        paint(&mut board, 3, 3, Brush::Rock);
+        paint(&mut board, 3, 3, Brush::Rock, SPAWNER_PERIOD);
         assert_eq!(board.tile_at(3, 3), TileKind::Rock);
         assert!(board.crabs().is_empty());
     }

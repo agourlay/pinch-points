@@ -1,0 +1,25 @@
+# Crossing with a gull walking up the left crab's way out. P2 has a
+# second arrow to turn the gull back, into the left crab's castle, where
+# it leaves the beach.
+name: Busy Crossing
+hands: 1 2
+kind: puzzle
+seed: 2125266945
+crab: 5,0 D L common
+crab: 0,2 R R common
+gull: 8,3 L
+solution: 5,3 R L; 5,2 U R; 7,3 R R
+map:
++-+-+-+-+-+-+-+-+-+-+-+
+|K K K K K ~ 0|# # # #|
++ +-+-+-+ + + + + + + +
+|K K K K K|.|# # # # #|
++-+-+-+-+-+ +-+-+-+-+-+
+|. . . . . .|# # # 0 #|
++-+-+-+-+-+ + + + + + +
+|# # # # #|. . . . ~ #|
++ + + + + + +-+-+-+ + +
+|K K K K K|~|K K K K K|
++ +-+-+-+ + + +-+-+-+ +
+|K K K K K K K K K K K|
++-+-+-+-+-+-+-+-+-+-+-+

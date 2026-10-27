@@ -6,7 +6,7 @@
 //! ship with a solution the tests already replay, so the game knows the
 //! answer whether or not it says so.
 
-use crate::app::campaign::CampaignKind;
+use crate::app::i18n::fill;
 use crate::app::{Campaign, Phase, Sim, art, layout, palette};
 use crate::sim::Placement;
 use bevy::prelude::*;
@@ -18,11 +18,9 @@ pub const STUCK_AFTER: u32 = 3;
 /// been shown.
 #[derive(Resource, Default)]
 pub struct Hints {
-    /// The level these counts belong to, so switching levels starts fresh.
-    /// The list as well as the index: Tide Pool and Beach Day both have a
-    /// fourth level, and being stuck on one is not being stuck on the
-    /// other. `None` before any level has been played.
-    level: Option<(CampaignKind, usize)>,
+    /// The index of the level these counts belong to, so switching levels
+    /// starts fresh. `None` before any level has been played.
+    level: Option<usize>,
     /// Failed runs on it.
     losses: u32,
     /// Whether the level carries a solution to take a step from. A
@@ -47,17 +45,12 @@ impl Hints {
     /// A whole struct literal, so a new field cannot survive a reset unseen.
     fn reset(&mut self, campaign: &Campaign) {
         *self = Hints {
-            level: Some(level_of(campaign)),
+            level: Some(campaign.index),
             losses: 0,
             answerable: !campaign.current().solution.is_empty(),
             shown: None,
         };
     }
-}
-
-/// The level the campaign is on, as the hint counts it.
-fn level_of(campaign: &Campaign) -> (CampaignKind, usize) {
-    (campaign.kind, campaign.index)
 }
 
 /// The dimmed arrow.
@@ -75,12 +68,14 @@ const DENIED_SECS: f32 = 2.5;
 #[derive(Resource, Default)]
 pub struct DeniedNote(f32);
 
-/// Catch the denials worth explaining and start the countdown.
+/// Catch the denials worth explaining and start the countdown: any
+/// cursor's, as on a co-op stage each places for its own seat and P2's
+/// hand runs out as P1's does.
 pub fn note_denials(
     mut denials: MessageReader<crate::app::PlacementDenied>,
     mut note: ResMut<DeniedNote>,
 ) {
-    if denials.read().any(|d| d.player == 0 && d.out_of_signposts) {
+    if denials.read().any(|d| d.out_of_signposts) {
         note.0 = DENIED_SECS;
     }
 }
@@ -97,7 +92,7 @@ pub fn tick_denied_note(time: Res<Time>, campaign: Res<Campaign>, mut note: ResM
 
 /// Count a failed run, and start over when the level changes.
 pub fn record_loss(campaign: Res<Campaign>, mut hints: ResMut<Hints>) {
-    if hints.level != Some(level_of(&campaign)) {
+    if hints.level != Some(campaign.index) {
         hints.reset(&campaign);
     }
     hints.losses += 1;
@@ -121,7 +116,7 @@ pub fn reset_on_level(
     mut hints: ResMut<Hints>,
 ) {
     let cleared = loads.read().any(|load| !load.keep_posts);
-    if hints.level != Some(level_of(&campaign)) {
+    if hints.level != Some(campaign.index) {
         hints.reset(&campaign);
     } else if cleared {
         hints.shown = None;
@@ -139,17 +134,24 @@ fn next_step(campaign: &Campaign, sim: &Sim) -> Option<Placement> {
         .solution
         .iter()
         .copied()
-        .find(|&(x, y, dir)| sim.0.signpost_at(x, y).is_none_or(|sp| sp.dir != dir))
+        .find(|&(x, y, dir, seat)| {
+            sim.0
+                .signpost_at(x, y)
+                .is_none_or(|sp| sp.dir != dir || sp.owner != seat)
+        })
 }
 
-/// H, once the player has failed enough, reveals one signpost.
+/// H (or the face's pad button for it), once the player has failed
+/// enough, reveals one signpost.
 pub fn hint_input(
     keyboard: crate::app::keycaps::Keyboard,
+    pads: crate::app::gamepad::face::PadsOnFace,
     campaign: Res<Campaign>,
     sim: Res<Sim>,
     mut hints: ResMut<Hints>,
 ) {
-    if !keyboard.global('H') || !hints.offered() {
+    let asked = keyboard.global('H') || pads.pressed(crate::app::gamepad::scheme::Does::Hint);
+    if !asked || !hints.offered() {
         return;
     }
     hints.shown = next_step(&campaign, &sim);
@@ -177,12 +179,17 @@ pub fn draw_hint(
     for ghost in &ghosts {
         commands.entity(ghost).despawn();
     }
-    let Some((x, y, dir)) = hints.shown else {
+    let Some((x, y, dir, seat)) = hints.shown else {
         return;
     };
     let pos = layout::tile_center(&sim.0, x, y);
     // The signpost that goes here, as a ghost: the board's outline faint
-    // and its arrow a little less so, in no seat's colour.
+    // and its arrow a little less so, in no seat's colour, except on a
+    // co-op stage, where whose hand places it is half the answer.
+    let paint = match sim.0.rules().claw_hands {
+        Some(_) => palette::seat_paint(seat).with_alpha(0.6),
+        None => palette::PARCHMENT.with_alpha(0.45),
+    };
     let size = Some(Vec2::splat(layout::SIGN_SIZE));
     commands
         .spawn((
@@ -199,7 +206,7 @@ pub fn draw_hint(
         .with_child((
             Sprite {
                 image: art.sign_paint.clone(),
-                color: palette::PARCHMENT.with_alpha(0.45),
+                color: paint,
                 custom_size: size,
                 ..default()
             },
@@ -214,11 +221,14 @@ pub fn clear_hint_ghosts(mut commands: Commands, ghosts: Query<Entity, With<Hint
 }
 
 /// The line under the header while the hint is available or showing.
+/// `pad` is the pad button that asks for it, for a pad's player, who is
+/// told that button rather than the key.
 pub fn hint_line(
     tr: &crate::app::i18n::Tr,
     hints: &Hints,
     denied: &DeniedNote,
     phase: &Phase,
+    pad: Option<&str>,
 ) -> Option<String> {
     // The denial answers the key that was just pressed, so it outranks both
     // the stuck-hint and the level's lesson for as long as it lasts.
@@ -228,17 +238,17 @@ pub fn hint_line(
     if !hints.offered() || !matches!(phase, Phase::Setup | Phase::Lost) {
         return None;
     }
-    Some(if hints.showing() {
-        tr.hint_showing.to_string()
-    } else {
-        tr.hint_offer.to_string()
+    Some(match (pad, hints.showing()) {
+        (Some(button), true) => fill(tr.pad.hint_showing, &[("b", button)]),
+        (Some(button), false) => fill(tr.pad.hint_offer, &[("b", button)]),
+        (None, true) => tr.hint_showing.to_string(),
+        (None, false) => tr.hint_offer.to_string(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::CampaignKind;
     use crate::sim::Level;
 
     fn campaign_at(index: usize) -> Campaign {
@@ -259,7 +269,7 @@ mod tests {
         let mut sim = Sim(level.board());
         assert_eq!(next_step(&campaign, &sim), Some(level.solution[0]));
 
-        let (x, y, dir) = level.solution[0];
+        let (x, y, dir, _) = level.solution[0];
         assert!(sim.0.place_signpost(0, x, y, dir));
         assert_eq!(
             next_step(&campaign, &sim),
@@ -267,13 +277,13 @@ mod tests {
             "the first step is done, so show the second"
         );
 
-        let (x, y, dir) = level.solution[1];
+        let (x, y, dir, _) = level.solution[1];
         assert!(sim.0.place_signpost(0, x, y, dir));
         assert_eq!(next_step(&campaign, &sim), None, "nothing left to show");
 
         // A post pointing the wrong way is not the step.
         let mut wrong = Sim(level.board());
-        let (x, y, dir) = level.solution[0];
+        let (x, y, dir, _) = level.solution[0];
         assert!(wrong.0.place_signpost(0, x, y, dir.right()));
         assert_eq!(next_step(&campaign, &wrong), Some(level.solution[0]));
     }
@@ -286,6 +296,8 @@ mod tests {
 
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.init_resource::<Hints>();
@@ -321,7 +333,7 @@ mod tests {
         );
 
         // Placing that one and asking again moves the hint along.
-        let (x, y, dir) = level.solution[0];
+        let (x, y, dir, _) = level.solution[0];
         assert!(
             app.world_mut()
                 .resource_mut::<Sim>()
@@ -349,11 +361,11 @@ mod tests {
         assert!(!hints.offered(), "not stuck: no line of its own to compete");
 
         assert_eq!(
-            hint_line(&EN, &hints, &DeniedNote(0.0), &Phase::Setup),
+            hint_line(&EN, &hints, &DeniedNote(0.0), &Phase::Setup, None),
             None
         );
         assert_eq!(
-            hint_line(&EN, &hints, &DeniedNote(1.0), &Phase::Setup).as_deref(),
+            hint_line(&EN, &hints, &DeniedNote(1.0), &Phase::Setup, None).as_deref(),
             Some(EN.denied_no_posts),
         );
         // It outranks the stuck-hint, which is about the level rather than
@@ -364,11 +376,11 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            hint_line(&EN, &stuck, &DeniedNote(0.0), &Phase::Setup).as_deref(),
+            hint_line(&EN, &stuck, &DeniedNote(0.0), &Phase::Setup, None).as_deref(),
             Some(EN.hint_offer),
         );
         assert_eq!(
-            hint_line(&EN, &stuck, &DeniedNote(1.0), &Phase::Setup).as_deref(),
+            hint_line(&EN, &stuck, &DeniedNote(1.0), &Phase::Setup, None).as_deref(),
             Some(EN.denied_no_posts),
         );
     }
@@ -400,6 +412,21 @@ mod tests {
             app.world().resource::<DeniedNote>().0 > 0.0,
             "a spent inventory"
         );
+
+        // P2's hand on a co-op stage, which places for seat 1.
+        app.insert_resource(DeniedNote(0.0));
+        app.world_mut()
+            .resource_mut::<Messages<PlacementDenied>>()
+            .clear();
+        app.world_mut().write_message(PlacementDenied {
+            player: 1,
+            out_of_signposts: true,
+        });
+        let _ = app.world_mut().run_system_once(note_denials);
+        assert!(
+            app.world().resource::<DeniedNote>().0 > 0.0,
+            "P2's spent hand"
+        );
     }
 
     /// Losses only count toward the level they happened on.
@@ -410,7 +437,7 @@ mod tests {
             ..Hints::default()
         };
         for _ in 0..STUCK_AFTER {
-            hints.level = Some((CampaignKind::TidePool, 4));
+            hints.level = Some(4);
             hints.losses += 1;
         }
         assert!(hints.offered());
@@ -436,36 +463,13 @@ mod tests {
         assert!(!hints.offered());
     }
 
-    /// The same index in the other list is a different level: three
-    /// losses on Tide Pool's sixth do not open a hint on Beach Day's.
-    #[test]
-    fn the_other_list_at_the_same_index_is_another_level() {
-        use bevy::ecs::system::RunSystemOnce;
-
-        let mut app = App::new();
-        app.init_resource::<Hints>();
-        app.add_message::<crate::app::LoadLevel>();
-        app.insert_resource(Sim(campaign_at(5).current().board()));
-        app.insert_resource(campaign_at(5));
-        for _ in 0..STUCK_AFTER {
-            let _ = app.world_mut().run_system_once(record_loss);
-        }
-        assert!(app.world().resource::<Hints>().offered());
-        app.world_mut().resource_mut::<Campaign>().kind = CampaignKind::BeachDay;
-        let _ = app.world_mut().run_system_once(reset_on_level);
-        assert!(
-            !app.world().resource::<Hints>().offered(),
-            "Beach Day's sixth level is not the one they were stuck on"
-        );
-    }
-
     /// Hints for the level `campaign` is on, stuck on it and showing a step.
     fn stuck_and_showing(campaign: &Campaign) -> Hints {
         Hints {
-            level: Some(level_of(campaign)),
+            level: Some(campaign.index),
             losses: STUCK_AFTER,
             answerable: true,
-            shown: Some((1, 1, crate::sim::Direction::Up)),
+            shown: Some((1, 1, crate::sim::Direction::Up, 0)),
         }
     }
 
@@ -478,15 +482,19 @@ mod tests {
         let hints = stuck_and_showing(&campaign_at(3));
         let quiet = DeniedNote(0.0);
         assert_eq!(
-            hint_line(&EN, &hints, &quiet, &Phase::Setup).as_deref(),
+            hint_line(&EN, &hints, &quiet, &Phase::Setup, None).as_deref(),
             Some(EN.hint_showing)
         );
         assert_eq!(
-            hint_line(&EN, &hints, &quiet, &Phase::Lost).as_deref(),
+            hint_line(&EN, &hints, &quiet, &Phase::Lost, None).as_deref(),
             Some(EN.hint_showing)
         );
         for phase in [Phase::Running, Phase::Won] {
-            assert_eq!(hint_line(&EN, &hints, &quiet, &phase), None, "{phase:?}");
+            assert_eq!(
+                hint_line(&EN, &hints, &quiet, &phase, None),
+                None,
+                "{phase:?}"
+            );
         }
     }
 
@@ -501,7 +509,7 @@ mod tests {
         let campaign = campaign_at(27);
         let solution = campaign.current().solution.clone();
         let mut retried = campaign.current().board();
-        let (x, y, dir) = solution[0];
+        let (x, y, dir, _) = solution[0];
         assert!(retried.place_signpost(0, x, y, dir));
         let mut app = App::new();
         let mut hints = stuck_and_showing(&campaign);

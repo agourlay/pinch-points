@@ -18,7 +18,10 @@
 //! see [`BotLevel::acts_on`]) and simply retries next window if a placement
 //! was rejected.
 
-use crate::sim::board::{Board, PlayerAction, PlayerId, TileKind};
+use crate::sim::board::{
+    Board, LURE_COOLDOWN, LURE_TICKS, PlayerAction, PlayerId, SUBUNITS_PER_TILE, TICKS_PER_SECOND,
+    TileKind,
+};
 use crate::sim::crab::{CrabKind, Handedness};
 use crate::sim::direction::Direction;
 use crate::sim::gull::GullState;
@@ -35,6 +38,26 @@ pub enum BotLevel {
 }
 
 impl BotLevel {
+    /// The level's word in a save file or a replay: the English name the
+    /// match setup shows, so a file read by hand says what was played.
+    pub fn token(self) -> &'static str {
+        match self {
+            BotLevel::Easy => "easy",
+            BotLevel::Normal => "normal",
+            BotLevel::Hard => "fierce",
+        }
+    }
+
+    /// The level a [`token`](Self::token) names, if it names one.
+    pub fn from_token(token: &str) -> Option<BotLevel> {
+        match token {
+            "easy" => Some(BotLevel::Easy),
+            "normal" => Some(BotLevel::Normal),
+            "fierce" => Some(BotLevel::Hard),
+            _ => None,
+        }
+    }
+
     /// Ticks between decisions, staggered per seat.
     fn cadence(self) -> u64 {
         match self {
@@ -179,7 +202,7 @@ pub enum Hand {
 }
 
 /// Why the bot wants this tile. A gull bearing down on your castle is worth
-/// spending your last signpost on, since it carries off half the bank,
+/// spending your last signpost on, since it carries off a third of the bank,
 /// where a wayward crab is not.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Intent {
@@ -294,9 +317,13 @@ fn slips(ticks: u64, player: PlayerId, seed: u64, every: u64) -> bool {
 
 /// Whether this placement is worth the trip.
 ///
-/// Defending is always worth it: a gull reaching a castle carries off half
-/// the bank. Chasing a rival across the board is not: the walk is dead time
+/// Defending is always worth it: a gull reaching a castle carries off a
+/// third of the bank. Chasing a rival across the board is not: the walk is dead time
 /// that costs more than the raid pays. Offence has to be on the way.
+///
+/// The walk is measured on the flat grid even on an open beach: it is the
+/// hand's walk, and a cursor does not wrap at the screen's edge the way a
+/// creature does at the seam.
 ///
 /// Deliberately not a rule about evicting its own posts: a crab walks a
 /// tile every twenty ticks, so a post aimed where one was four seconds ago
@@ -347,7 +374,7 @@ fn hand_arrived(board: &Board, player: PlayerId, x: u8, y: u8) -> bool {
 /// What the bot wants to do this tick.
 ///
 /// Four strategies in order of what a round is won and lost on: a gull about
-/// to raid you costs half your bank, a jackpot is worth crossing the beach
+/// to raid you costs a third of your bank, a jackpot is worth crossing the beach
 /// for, a wayward crab is bread and butter, and shoving a gull at the leader
 /// is the luxury you buy last. Each answers `None` when it has nothing to say.
 fn decide(board: &Board, player: PlayerId, level: BotLevel) -> (PlayerAction, Intent) {
@@ -423,7 +450,7 @@ fn chase_jackpot(
     for crab in board.crabs() {
         let worth = match crab.kind {
             CrabKind::Golden => board.crab_value(CrabKind::Golden),
-            CrabKind::Molting => 30, // 5 points, and then the lure
+            CrabKind::Molting => molt_worth(board, crab, castle),
             CrabKind::Giant => 10,
             CrabKind::Common | CrabKind::Juvenile | CrabKind::Sparkling => continue,
         };
@@ -442,6 +469,41 @@ fn chase_jackpot(
     }
     let (_, _, tile, dir) = best?;
     turn_home(board, player, level, castle, (tile, dir))
+}
+
+/// What a lure is worth to the AI on top of the molt's own points, per
+/// second it runs: 2.5, the 25 a 10 s lure was once counted at.
+const LURE_POINTS_PER_SECOND_X2: u32 = 5;
+
+/// What turning `crab`, a molt, home to `castle` is worth: its points, its
+/// lure when one could start by the time it gets there, and what banking
+/// it keeps from the rivals.
+///
+/// A molt banked while a lure runs or in the quiet spell after one starts
+/// none (`Board::lure_ready`), so the AI's own lure counts only for a molt
+/// that will arrive after that spell, and for as long as a lure lasts
+/// ([`LURE_TICKS`]).
+///
+/// Banked now, the molt is gone; left on the beach, it waits for whoever
+/// turns it home once a lure is ready again, since a molt does not leave
+/// the beach of its own accord. Against one rival that is a wash: the lure
+/// left behind is as likely to be the AI's own later. Each rival past the
+/// first is one more seat that could bank it first, and its lure is counted
+/// in full for each. That denial is what puts a molt ahead of a giant
+/// during the rest from three seats, and ahead of a called golden crab
+/// once it is ready from four.
+fn molt_worth(board: &Board, crab: &crate::sim::Crab, castle: u16) -> u32 {
+    let points = board.crab_value(CrabKind::Molting);
+    let lure = LURE_TICKS * LURE_POINTS_PER_SECOND_X2 / (2 * TICKS_PER_SECOND);
+    let resting_for = match board.lure() {
+        Some((_, left)) => left + LURE_COOLDOWN,
+        None => board.lure_cooldown(),
+    };
+    let ticks_per_tile = u32::from(SUBUNITS_PER_TILE).div_ceil(u32::from(crab.kind.speed()));
+    let arrives_in = manhattan(board, crab.tile, castle).unsigned_abs() * ticks_per_tile;
+    let ours = if resting_for > arrives_in { 0 } else { lure };
+    let denied = lure * u32::from(board.seats_in_play().saturating_sub(2));
+    points + ours + denied
 }
 
 /// Put an arrow in front of the crab at `tile` walking `dir`, pointing it
@@ -544,25 +606,28 @@ fn castle_of(board: &Board, player: PlayerId) -> Option<u16> {
     board.castle_of(player).map(|(x, y)| board.index_of(x, y))
 }
 
+/// Tiles a creature walks between `a` and `b`, the short way: through the
+/// seam on an open beach ([`Board::displacement`]). Measured across the
+/// flat grid there, a crab two tiles from home over the seam read as the
+/// width of the beach away, and the AI left the castles by the seam to
+/// fend for themselves (on Round the World the middle strip's castles won
+/// 14% at six seats against the 17.5% of the others).
 fn manhattan(board: &Board, a: u16, b: u16) -> i32 {
-    let (ax, ay) = board.coords(a);
-    let (bx, by) = board.coords(b);
-    (ax - bx).abs() + (ay - by).abs()
+    let (dx, dy) = board.displacement(a, b);
+    dx.abs() + dy.abs()
 }
 
-/// Greedy direction from `from` toward `to` (the sim's lure tiebreak).
+/// Greedy direction from `from` toward `to` (the sim's lure tiebreak),
+/// through the seam when that is the short way, as the lure goes.
 fn toward(board: &Board, from: u16, to: u16) -> Direction {
-    let (fx, fy) = board.coords(from);
-    let (tx, ty) = board.coords(to);
-    Direction::toward(tx - fx, ty - fy)
+    let (dx, dy) = board.displacement(from, to);
+    Direction::toward(dx, dy)
 }
 
 /// The other axis's direction toward `to`, when that axis has ground left
 /// to cover. Straight lines have no second option.
 fn cross_toward(board: &Board, from: u16, to: u16) -> Option<Direction> {
-    let (fx, fy) = board.coords(from);
-    let (tx, ty) = board.coords(to);
-    let (dx, dy) = (tx - fx, ty - fy);
+    let (dx, dy) = board.displacement(from, to);
     match toward(board, from, to) {
         Direction::Left | Direction::Right => (dy != 0).then(|| Direction::toward(0, dy)),
         Direction::Up | Direction::Down => (dx != 0).then(|| Direction::toward(dx, 0)),

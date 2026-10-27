@@ -44,6 +44,26 @@ impl Gull {
     }
 }
 
+/// A gull on its way in from beyond the beach: the edge spawner has picked
+/// the tile it lands on, `tile`, and it lands there facing `dir` on tick
+/// `at`, a [`GULL_LEAD`] after the pick.
+///
+/// Part of the board's state, hashed and written into every snapshot, and
+/// public: the bird is in the sky over the sand, so every player sees
+/// where it will come down, and a bot is told as much as they are.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct IncomingGull {
+    pub at: u64,
+    pub tile: u16,
+    pub dir: Direction,
+}
+
+/// Ticks between the edge spawner picking a gull's landing tile and the
+/// gull landing on it: the 1.2 s the render layer flies it in over, its
+/// shadow reaching the sand ahead of it. A warning a player can act on is
+/// one that comes before the bird, not with it.
+pub const GULL_LEAD: u32 = 36;
+
 /// Walking speed in subunits per tick (spec §4.2: slower than a common crab).
 pub const GULL_WALK_SPEED: u16 = 8;
 /// Flying speed in subunits per tick.

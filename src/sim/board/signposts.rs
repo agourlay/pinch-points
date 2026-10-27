@@ -88,7 +88,7 @@ impl Board {
             // Your own signpost re-points in place; a rival's blocks.
             Some(sp) => (sp.owner != player).then_some(Refusal::RivalPost),
             // Empty tile: at the cap, only the evicting rule still places.
-            None => (self.signpost_count(player) >= self.rules.signpost_cap as usize
+            None => (self.signpost_count(player) >= usize::from(self.signpost_cap_of(player))
                 && self.rules.cap_policy != CapPolicy::Evict)
                 .then_some(Refusal::OutOfPosts),
         }
@@ -138,7 +138,7 @@ impl Board {
         // your newest for cap eviction; the count is unchanged so the cap
         // never triggers.
         if self.signposts[t].is_none()
-            && self.signpost_count(player) >= self.rules.signpost_cap as usize
+            && self.signpost_count(player) >= usize::from(self.signpost_cap_of(player))
         {
             // CapPolicy::Evict (Reject was filtered above): drop the oldest.
             // At the cap there is one to evict, unless the cap is zero,
@@ -230,7 +230,7 @@ impl Board {
     /// slot the eviction takes, so the mark cannot point at the wrong one.
     pub fn next_to_go(&self, player: PlayerId) -> Option<(u8, u8)> {
         if self.rules.cap_policy != CapPolicy::Evict
-            || self.signpost_count(player) < usize::from(self.rules.signpost_cap)
+            || self.signpost_count(player) < usize::from(self.signpost_cap_of(player))
         {
             return None;
         }

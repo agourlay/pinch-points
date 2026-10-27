@@ -42,7 +42,6 @@ pub(super) fn to_text(stats: &Stats, unlocked: &Unlocked, unknown: &Unknown) -> 
         daily_days,
         levels_built,
         campaign_done,
-        beach_done,
         hosted,
         crowd,
         seats_won,
@@ -65,7 +64,7 @@ pub(super) fn to_text(stats: &Stats, unlocked: &Unlocked, unknown: &Unknown) -> 
          raids_taken: {}\nrounds: {}\nwins: {}\npuzzles: {}\ndry_wins: {}\n\
          daily_day: {}\ndaily_best: {}\ngiants: {}\nevents_seen: {}\n\
          best_round: {}\nseries_wins: {}\nonline_wins: {}\ndaily_days: {}\n\
-         levels_built: {}\ncampaign_done: {}\nbeach_done: {}\nhosted: {}\n\
+         levels_built: {}\ncampaign_done: {}\nhosted: {}\n\
          crowd: {}\nseats_won: {}\nunder_par: {}\nclean_solves: {}\n\
          deep_solves: {}\ndaily_record: {}\ncodes_shared: {}\n\
          codes_taken: {}\nunlocked: {}\n",
@@ -89,7 +88,6 @@ pub(super) fn to_text(stats: &Stats, unlocked: &Unlocked, unknown: &Unknown) -> 
         daily_days,
         levels_built,
         campaign_done,
-        beach_done,
         hosted,
         crowd,
         seats_won,
@@ -146,7 +144,6 @@ pub(super) fn read(text: &str) -> (Stats, Unlocked, Unknown) {
             "daily_days" => stats.daily_days = num,
             "levels_built" => stats.levels_built = num,
             "campaign_done" => stats.campaign_done = num,
-            "beach_done" => stats.beach_done = num,
             "hosted" => stats.hosted = num,
             "crowd" => stats.crowd = num,
             // A bitmask, so anything past a byte is not ours.
@@ -252,7 +249,6 @@ fn merge(stats: &mut Stats, other: &Stats) {
         daily_days,
         levels_built,
         campaign_done,
-        beach_done,
         hosted,
         crowd,
         seats_won,
@@ -281,7 +277,6 @@ fn merge(stats: &mut Stats, other: &Stats) {
         (&mut stats.daily_days, daily_days),
         (&mut stats.levels_built, levels_built),
         (&mut stats.campaign_done, campaign_done),
-        (&mut stats.beach_done, beach_done),
         (&mut stats.hosted, hosted),
         (&mut stats.crowd, crowd),
         (&mut stats.under_par, under_par),
@@ -429,6 +424,32 @@ mod tests {
         let lines: Vec<&str> = unknown.lines.iter().collect();
         assert_eq!(lines, ["some_stat_nobody_here_knows: 9"], "{back}");
         assert_eq!(parse(&back).0.banked, 13, "and this build's own news");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A file from a build that had the score-attack challenges still
+    /// loads: their trophies and counts name nothing here, so they are
+    /// neither lit nor lost, and the next save writes them back as they
+    /// stood, the convention for anything this build cannot read.
+    #[test]
+    fn the_challenge_trophies_of_an_older_build_are_kept_unlit() {
+        let dir = crate::app::paths::test_dir("trophies-challenges");
+        let path = dir.join("achievements.txt");
+        let text = "banked: 7\nbeach_done: 1\nchallenge_golds: 8\nunder_par: 2\n\
+                    unlocked: beach_done,gold_1,gold_all,under_par_1,under_par_10\n";
+        crate::app::paths::write_atomic(&path, text).expect("written");
+        let (mut stats, mut unlocked) = parse(text);
+        assert_eq!((stats.banked, stats.under_par), (7, 2));
+        let mut lit: Vec<&str> = unlocked.0.iter().copied().collect();
+        lit.sort_unstable();
+        assert_eq!(lit, ["first_bank", "under_par_1"], "only what is here");
+        save_in(&path, &mut stats, &mut unlocked).expect("saved");
+        let back = std::fs::read_to_string(&path).expect("read back");
+        let (_, _, unknown) = read(&back);
+        let ids: Vec<&str> = unknown.ids.iter().collect();
+        assert_eq!(ids, ["beach_done", "gold_1", "gold_all", "under_par_10"]);
+        let lines: Vec<&str> = unknown.lines.iter().collect();
+        assert_eq!(lines, ["beach_done: 1", "challenge_golds: 8"], "{back}");
         let _ = std::fs::remove_dir_all(dir);
     }
 

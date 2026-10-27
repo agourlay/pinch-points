@@ -52,6 +52,10 @@ pub struct ControlsMenu {
     pub capturing: Option<Action>,
     /// Transient line under the list: "press a key", "that key is taken".
     pub feedback: String,
+    /// A reset asked for and waiting for its second press. Every binding
+    /// of both seats goes at once, and X on a pad is one thumb away from
+    /// A, so one press only asks.
+    pub reset: menu_ui::SecondPress,
 }
 
 #[derive(Component)]
@@ -109,6 +113,7 @@ pub fn enter_controls(
     menu.selected = 0;
     menu.capturing = None;
     menu.feedback.clear();
+    menu.reset = menu_ui::SecondPress::default();
     let tr = settings.tr();
     commands
         .spawn((ControlsUi, menu_ui::between_bars()))
@@ -162,15 +167,45 @@ pub(crate) fn rebind(
     }
 }
 
+/// The line a first reset press puts up: the key that takes it up, or
+/// for a pad's player the controls table's button for it.
+fn reset_question(tr: &crate::app::i18n::Tr, device: crate::app::gamepad::LastDevice) -> String {
+    fill(tr.ctl_reset_confirm, &[("k", &reset_control(tr, device))])
+}
+
+/// What resets every binding, as the player's hands know it: the key at
+/// a keyboard, the controls table's button on a pad. The reset row and
+/// the question it asks both name it.
+fn reset_control(tr: &crate::app::i18n::Tr, device: crate::app::gamepad::LastDevice) -> String {
+    use crate::app::gamepad::{Face, scheme};
+    scheme::spelled(
+        tr,
+        device,
+        &Face::Controls,
+        scheme::Does::Defaults,
+        tr.ctl_reset_key,
+    )
+}
+
 pub fn controls_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<ControlsMenu>,
     mut settings: ResMut<GameSettings>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
+    (caps, device, time): (
+        Res<crate::app::keycaps::KeyCaps>,
+        Res<crate::app::gamepad::LastDevice>,
+        Res<Time>,
+    ),
     bridged: Res<crate::app::gamepad::Bridged>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
     let tr = settings.tr();
+    let now = time.elapsed_secs();
+    // A reset asked and not taken up in time is dropped, and its question
+    // with it.
+    if menu.reset.lapse(now) {
+        menu.feedback.clear();
+    }
     // A running capture swallows everything: the next bindable key lands on
     // the selected action, and Escape backs out. A key the pad bridge
     // pressed is not one: the d-pad comes through as W/S/A/D, and a pad
@@ -205,17 +240,28 @@ pub fn controls_input(
         next_screen.set(Screen::Settings);
         return;
     }
-    if keys.just_pressed(KeyCode::Backspace) {
-        settings.binds = binds::default_binds();
-        menu.feedback.clear();
-        return;
-    }
-    if menu_ui::enter(&keys) {
-        match ControlsLine::at(menu.selected) {
-            ControlsLine::Reset => {
+    // Backspace anywhere, or Enter on the reset row: asked once, done on
+    // a second press inside the window.
+    let resets = keys.just_pressed(KeyCode::Backspace)
+        || (menu_ui::enter(&keys) && ControlsLine::at(menu.selected) == ControlsLine::Reset);
+    if resets {
+        match menu.reset.press(now, ()) {
+            true => {
                 settings.binds = binds::default_binds();
                 menu.feedback.clear();
             }
+            false => menu.feedback = reset_question(tr, *device),
+        }
+        return;
+    }
+    // Anything else pressed takes the question back.
+    if keys.get_just_pressed().next().is_some() && menu.reset.take_back() {
+        menu.feedback.clear();
+    }
+    if menu_ui::enter(&keys) {
+        match ControlsLine::at(menu.selected) {
+            // Taken above, as the second of two presses.
+            ControlsLine::Reset => {}
             ControlsLine::Seat => menu.seat = (menu.seat + 1) % BOUND_SEATS,
             ControlsLine::Bind(action) => {
                 menu.capturing = Some(action);
@@ -237,7 +283,7 @@ pub fn controls_input(
 }
 
 pub fn update_controls_ui(
-    settings: Res<GameSettings>,
+    (settings, device): (Res<GameSettings>, Res<crate::app::gamepad::LastDevice>),
     caps: Res<crate::app::keycaps::KeyCaps>,
     menu: Res<ControlsMenu>,
     mut cells: Query<(&ControlsCell, &mut Text, &mut TextColor)>,
@@ -257,7 +303,9 @@ pub fn update_controls_ui(
                     seat_label.clone()
                 },
             ),
-            ControlsLine::Reset => (tr.ctl_reset.to_string(), tr.ctl_reset_key.to_string()),
+            // The key that resets, or for a pad's player the controls
+            // table's button for it: what the question it asks names.
+            ControlsLine::Reset => (tr.ctl_reset.to_string(), reset_control(tr, *device)),
             ControlsLine::Bind(action) => {
                 let key = settings.binds[menu.seat].key(action);
                 // The row being captured shows the prompt in place of its
@@ -301,6 +349,12 @@ mod tests {
         app.insert_resource(State::new(Screen::Controls));
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::app::gamepad::Bridged>();
+        app.init_resource::<crate::app::gamepad::PadPick>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
+        app.init_resource::<Time>();
+        app.insert_resource(crate::app::gamepad::PadFace(
+            crate::app::gamepad::Face::Controls,
+        ));
         app.init_resource::<GameSettings>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.insert_resource(ControlsMenu {
@@ -322,6 +376,113 @@ mod tests {
             binds::default_binds(),
             "nothing bound"
         );
+    }
+
+    /// Backspace, or a pad's X through the bridge, only asks: the second
+    /// press inside the window resets every binding, one after it asks
+    /// again, and the question names the hands' own control.
+    #[test]
+    fn a_reset_asks_before_it_wipes_the_bindings() {
+        use crate::app::gamepad::{Bridged, Face, LastDevice, PadFace, PadPick};
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Controls));
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<Bridged>();
+        app.init_resource::<PadPick>();
+        app.init_resource::<Time>();
+        app.init_resource::<LastDevice>();
+        app.insert_resource(PadFace(Face::Controls));
+        app.init_resource::<GameSettings>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<ControlsMenu>();
+        let pad = app.world_mut().spawn(Gamepad::default()).id();
+        app.add_systems(
+            Update,
+            (
+                crate::app::gamepad::pad_menu_bridge,
+                controls_input,
+                crate::app::gamepad::pad_bridge_release,
+            )
+                .chain(),
+        );
+        let rebound = |app: &mut App| {
+            let mut settings = app.world_mut().resource_mut::<GameSettings>();
+            settings.binds[0].set(Action::MoveUp, KeyCode::KeyT);
+        };
+        let wiped =
+            |app: &App| app.world().resource::<GameSettings>().binds == binds::default_binds();
+        let feedback = |app: &App| app.world().resource::<ControlsMenu>().feedback.clone();
+        let tap = |app: &mut App, key: KeyCode| {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+            app.update();
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(key);
+            keys.clear();
+        };
+        let wait = |app: &mut App, secs: f32| {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(secs));
+        };
+
+        rebound(&mut app);
+        tap(&mut app, KeyCode::Backspace);
+        assert!(!wiped(&app), "one press only asks");
+        assert_eq!(
+            feedback(&app),
+            fill(
+                crate::app::i18n::EN.ctl_reset_confirm,
+                &[("k", "Backspace")]
+            )
+        );
+        wait(&mut app, 1.0);
+        tap(&mut app, KeyCode::Backspace);
+        assert!(wiped(&app), "the second, soon after, resets");
+        assert!(feedback(&app).is_empty());
+
+        rebound(&mut app);
+        tap(&mut app, KeyCode::Backspace);
+        wait(&mut app, menu_ui::SECOND_PRESS_SECS + 1.0);
+        app.update();
+        assert!(feedback(&app).is_empty(), "the question lapses");
+        tap(&mut app, KeyCode::Backspace);
+        assert!(!wiped(&app), "a late second press only asks again");
+
+        // Anything else between the two takes the question back.
+        tap(&mut app, KeyCode::KeyS);
+        tap(&mut app, KeyCode::Backspace);
+        assert!(!wiped(&app));
+
+        // A pad's X, through the bridge, the same way; named as X.
+        tap(&mut app, KeyCode::KeyW);
+        app.insert_resource(LastDevice::Pad);
+        let press_x = |app: &mut App| {
+            let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
+            gamepad.digital_mut().press(GamepadButton::West);
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .clear();
+            let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
+            gamepad.digital_mut().release(GamepadButton::West);
+            gamepad.digital_mut().clear();
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .clear();
+        };
+        press_x(&mut app);
+        assert!(!wiped(&app), "X only asks");
+        assert_eq!(
+            feedback(&app),
+            fill(crate::app::i18n::EN.ctl_reset_confirm, &[("k", "X")])
+        );
+        press_x(&mut app);
+        assert!(wiped(&app), "and X again resets");
     }
 
     #[test]

@@ -95,21 +95,13 @@ impl Suspended {
 
 /// `-` for a human seat, otherwise the level's own name.
 fn bot_token(level: Option<BotLevel>) -> &'static str {
-    match level {
-        None => "-",
-        Some(BotLevel::Easy) => "easy",
-        Some(BotLevel::Normal) => "normal",
-        Some(BotLevel::Hard) => "fierce",
-    }
+    level.map_or("-", BotLevel::token)
 }
 
 fn bot_from_token(token: &str) -> Option<Option<BotLevel>> {
     match token {
         "-" => Some(None),
-        "easy" => Some(Some(BotLevel::Easy)),
-        "normal" => Some(Some(BotLevel::Normal)),
-        "fierce" => Some(Some(BotLevel::Hard)),
-        _ => None,
+        token => BotLevel::from_token(token).map(Some),
     }
 }
 

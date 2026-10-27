@@ -99,7 +99,8 @@ impl Board {
     /// turns two at a time. Every hole every 8 ticks made the flood as big
     /// as the beach had holes, and a four-player table, with a hole for all
     /// but one of them, flooded three times as fast as the two-hole beaches
-    /// the mania was sized on.
+    /// the mania was sized on. Otherwise each hole keeps its own cadence,
+    /// at [`Self::hole_period`].
     fn holes_opening(&self) -> Vec<usize> {
         let holes = (0..self.grid.tiles.len())
             .filter(|&t| matches!(self.grid.tiles[t], TileKind::Spawner(_)));
@@ -120,9 +121,22 @@ impl Board {
             None => holes
                 .filter(|&t| {
                     matches!(self.grid.tiles[t], TileKind::Spawner(s)
-                        if self.tick.is_multiple_of(u64::from(s.period)))
+                        if self.tick.is_multiple_of(u64::from(self.hole_period(s.period))))
                 })
                 .collect(),
+        }
+    }
+
+    /// How many ticks apart a hole of cadence `period` opens right now:
+    /// twice as often while Speed Up runs. Walking faster alone changed
+    /// nothing a table could feel, since how much the beach scores is set
+    /// by how fast the holes fill it, not how fast it empties; doubling
+    /// the holes too gives the event its rush of crabs. The crab cap still
+    /// holds, so a full beach waits as it always does.
+    pub fn hole_period(&self, period: u32) -> u32 {
+        match self.tide.tempo {
+            Some((Tempo::Fast, _)) => (period / 2).max(1),
+            Some((Tempo::Slow, _)) | None => period,
         }
     }
 
@@ -183,15 +197,19 @@ impl Board {
             // rate and `LURE_COOLDOWN` set lure uptime together, and one in
             // twenty-five kept the beach under a lure for a third of a
             // round.
+            //
+            // Sparkling is 4%, up from 2%, the points coming from the
+            // commons: at one in fifty a round saw about two tide events,
+            // too few for the wheel to be a thing players play around.
             let kind = match self.rng.next_u32() % 100 {
-                0..=69 => CrabKind::Common,
-                70..=84 => CrabKind::Juvenile,
-                85..=92 => CrabKind::Giant,
-                93..=95 => CrabKind::Molting,
+                0..=67 => CrabKind::Common,
+                68..=82 => CrabKind::Juvenile,
+                83..=90 => CrabKind::Giant,
+                91..=93 => CrabKind::Molting,
                 // A board that calls its golden crabs never rolls one.
-                96..=97 if self.rules.golden_every > 0 => CrabKind::Common,
-                96..=97 => CrabKind::Golden,
-                98.. => CrabKind::Sparkling,
+                94..=95 if self.rules.golden_every > 0 => CrabKind::Common,
+                94..=95 => CrabKind::Golden,
+                96.. => CrabKind::Sparkling,
             };
             let id = self.next_crab_id;
             self.next_crab_id += 1;
@@ -279,13 +297,26 @@ impl Board {
     pub(super) fn resolve_arrival(&mut self, crab: &mut Crab, lure_target: Option<u16>) -> bool {
         let t = crab.tile as usize;
         if let TileKind::Castle(owner) = self.grid.tiles[t] {
-            self.credit_bank(owner, crab);
+            let points = self.credit_bank(owner, crab);
+            self.walked_home.push(WalkedHome {
+                crab: crab.id,
+                owner,
+                tile: crab.tile,
+                points,
+                at: self.tick,
+            });
             match crab.kind {
                 // A molt banked during a lure (anyone's) or in the quiet
                 // spell after one banks for its points and nothing more.
                 CrabKind::Molting => {
-                    if self.lure.is_none() && self.lure_cooldown == 0 {
+                    if self.lure_ready() {
                         self.lure = Some((owner, LURE_TICKS));
+                    } else {
+                        self.refused_lures.push(RefusedLure {
+                            crab: crab.id,
+                            running: self.lure.is_some(),
+                            at: self.tick,
+                        });
                     }
                 }
                 CrabKind::Sparkling => self.tide.queue.push(owner),
@@ -298,7 +329,9 @@ impl Board {
         }
         if let Some(dir) = self.lure_step(crab.tile, lure_target) {
             crab.dir = dir;
-        } else if let Some(sp) = self.signposts[t] {
+        } else if let Some(sp) = self.signposts[t]
+            && self.turns_crab(&sp, crab.handed)
+        {
             crab.dir = sp.dir;
         }
         self.resolve_walls(crab);
@@ -329,21 +362,10 @@ impl Board {
     /// Greedy step direction from `from` toward the cached lure target.
     pub(super) fn lure_step(&self, from: u16, lure_target: Option<u16>) -> Option<Direction> {
         let castle = lure_target?;
-        let (fx, fy) = self.coords(from);
-        let (cx, cy) = self.coords(castle);
-        let (mut dx, mut dy) = (cx - fx, cy - fy);
+        // On a wrapping board the short way may be through the seam.
+        let (dx, dy) = self.displacement(from, castle);
         if dx == 0 && dy == 0 {
             return None;
-        }
-        // On a wrapping board the short way may be through the seam.
-        if self.wrap {
-            let (w, h) = (i32::from(self.width()), i32::from(self.height()));
-            if dx.abs() * 2 > w {
-                dx -= dx.signum() * w;
-            }
-            if dy.abs() * 2 > h {
-                dy -= dy.signum() * h;
-            }
         }
         Some(Direction::toward(dx, dy))
     }

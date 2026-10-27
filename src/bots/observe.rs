@@ -1,4 +1,6 @@
-//! A board rebuilt from what a bot is shown: `hello` and one `tick`.
+//! A board rebuilt from what a bot is shown: `hello` and one `tick`, whole
+//! (under protocol 2, the tick [`apply_delta`](super::protocol::apply_delta)
+//! makes of a diff).
 //!
 //! This is the Rust starter kit's way in. A Rust bot links the crate and
 //! runs the sim forward itself, from a [`Board`] built here, and the board
@@ -403,6 +405,17 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
             crate::sim::TICKS_PER_SECOND * 5,
         );
     }
+    // Absent from a listener older than the gulls' lead, which sends none.
+    for g in tick
+        .get("incoming_gulls")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let tile = at(num(g, "x")?, num(g, "y")?);
+        let dir = letter(text(g, "dir")?)?;
+        let _ = writeln!(out, "incoming: {} {tile} {dir}", num(g, "tick")?);
+    }
     Ok(Board::parse_snapshot(&out)?.lookahead(LOOKAHEAD_SEED))
 }
 
@@ -619,6 +632,20 @@ mod tests {
                 && !theirs.rules().sweep_flight
                 && !theirs.rules().whole_flock
         );
+    }
+
+    /// A gull on its way in is on the screen, so a bot is shown it and the
+    /// board it rebuilds lands it where and when the real one does.
+    #[test]
+    fn a_gull_on_its_way_in_rebuilds() {
+        let mut board = versus_beach();
+        while board.incoming_gulls().is_empty() {
+            board.tick_idle();
+        }
+        let (hello, tick) = shown(&board);
+        assert_eq!(tick["incoming_gulls"].as_array().map(Vec::len), Some(1));
+        let theirs = board_from(&hello, &tick).expect("rebuilds");
+        assert_eq!(theirs.incoming_gulls(), board.incoming_gulls());
     }
 
     #[test]

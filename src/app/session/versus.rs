@@ -5,8 +5,8 @@
 use super::*;
 use std::sync::{Arc, OnceLock};
 
-/// Who decides for each seat this round, by this machine's setup. The
-/// people take P1 upward and whatever is not played here the top seats.
+/// Who decides for each seat this round, by this machine's setup: seat by
+/// seat, as step 3 of the setup left it.
 pub(in crate::app) fn bot_seats(config: &match_setup::MatchConfig) -> Controllers {
     let mut table = Controllers::default();
     if config.armed {
@@ -63,34 +63,16 @@ impl RoundOrigin<'_> {
             // arena at the chosen size, with gull pressure and round length
             // overrides. Fresh seed per round (recorded via the board's
             // seed, so replays are exact).
+            // A configured local match, on the seed its map card was drawn
+            // with when it was launched from the setup steps, else a fresh
+            // one per round (recorded via the board's seed, so replays are
+            // exact). Online keeps the canonical seed so peers agree.
             RoundOrigin::Configured(config) => {
-                let seed = daily.map_or_else(clock::fresh_seed, Daily::seed_for);
-                // The last word on a table too big for its beach, whatever
-                // let it get there: the four-castle arenas clamp a table of
-                // five to four castles, and the fifth player plays the
-                // whole match with nothing to defend. [`match_setup::reseat`]
-                // keeps the dial from reading such a map; this keeps the
-                // launch from building one if anything else ever does.
-                let map = match match_setup::holds(config.map, config.seats) {
-                    true => config.map,
-                    false => match_setup::sized_for(config.seats),
-                };
-                // A beach somebody built. Locally there is nobody to send
-                // it to, so it is read off the shelf, and built on this
-                // round's seed. Anything else is the map dial's own beach:
-                // the handcrafted classic gets a fresh random stream too, so
-                // one seed's luck (gull entry points, spawn kinds) does not
-                // colour every round, where online keeps the canonical seed
-                // so peers agree.
-                let shelved = (map == match_setup::MapChoice::Custom)
-                    .then(|| beaches.fitting(config.seats).into_iter().nth(config.custom))
-                    .flatten();
-                let mut board = match shelved {
-                    Some(beach) => beach.level.table_board(seed, config.seats),
-                    None => match_setup::versus_board(map, seed, config.seats),
-                };
-                match_setup::apply_terms(&mut board, config.gulls, config.round, config.posts);
-                board
+                let seed = daily.map_or_else(
+                    || config.seed.unwrap_or_else(clock::fresh_seed),
+                    Daily::seed_for,
+                );
+                match_setup::local_board(config, beaches, seed)
             }
             RoundOrigin::Unconfigured => classic_arena(sandbox, pads.max(2)),
         }
@@ -141,6 +123,22 @@ impl RoundOrigin<'_> {
         self.recorded()
     }
 
+    /// Whether the round opens on the line-up before its count, `set_here`
+    /// for a table set up on this machine (not the daily's). Every online
+    /// round does: the map was picked for it, the first by the lobby's
+    /// page and every one after by the host's between rounds, so every
+    /// peer is shown it. So does every round of a table set up here, where
+    /// the friends on the couch find their seats, colours and teams before
+    /// the count. A round that does not count in opens on neither.
+    pub(super) fn opens_on_lineup(&self, set_here: bool) -> bool {
+        let lineup = match self {
+            RoundOrigin::Online(_) => true,
+            RoundOrigin::Configured(_) => set_here,
+            RoundOrigin::Resumed(_) | RoundOrigin::Replay(_) | RoundOrigin::Unconfigured => false,
+        };
+        lineup && self.counts_in()
+    }
+
     /// Whether the round is recorded as it is played. A replay is a
     /// recording already, and a round picked back up or caught up with
     /// mid-round has no first tick to record from: the board arrives as it
@@ -183,7 +181,7 @@ pub(super) fn online_controllers(session: &net::OnlineSession) -> Controllers {
 /// The seats a recorded round had, read off its board: a replay carries
 /// no seat count, and the castles are the record of who played. A
 /// handmade beach's spare castles were put away before it was recorded
-/// ([`crate::sim::Level::table_board`]), so they count only the seats the
+/// ([`Level::table_board`]), so they count only the seats the
 /// round had. Watching a replay and filing a pasted one both ask this.
 pub(in crate::app) fn replay_seats(board: &Board) -> u8 {
     clamp_seats(board.seats_in_play())
@@ -212,6 +210,10 @@ pub(in crate::app) struct RoundSource<'w, 's> {
     pub(in crate::app) beaches: Res<'w, match_setup::CustomBeaches>,
     pub(in crate::app) daily: ResMut<'w, Daily>,
     pub(in crate::app) resuming: ResMut<'w, Resuming>,
+    /// Whether the round is one set up here, noted for a rematch, and
+    /// the series it belongs to.
+    pub(in crate::app) table: ResMut<'w, rematch::LocalTable>,
+    pub(in crate::app) tournament: Res<'w, tournament::Tournament>,
 }
 
 /// Boot the versus arena: fresh board, sprites, running phase. Online
@@ -240,6 +242,8 @@ pub(in crate::app) fn load_versus(
         beaches,
         daily,
         resuming,
+        table,
+        tournament,
     } = &mut source;
     // The daily plays on a table of its own rather than the player's.
     let daily_config = match_setup::MatchConfig::daily();
@@ -263,6 +267,9 @@ pub(in crate::app) fn load_versus(
     if let Some(day) = daily_day {
         daily.day = day;
     }
+    // A table set up here can be played again; the daily's cannot.
+    let set_here = matches!(origin, RoundOrigin::Configured(_)) && daily_day.is_none();
+    table.note_round(set_here, config, tournament);
     sim.0 = origin.board(daily_day, beaches, sandbox.0, pad_count);
     (*controllers, seats.0) = origin.table(config, &sim.0, pad_count);
     // Every per-seat array is indexed by this, and every table needs two.
@@ -281,7 +288,7 @@ pub(in crate::app) fn load_versus(
         transform.translation = layout::tile_center(&sim.0, cur.x, cur.y).extend(layout::z::CURSOR);
     }
     paused.0 = false;
-    opening.open(origin.counts_in());
+    opening.open(origin.counts_in(), origin.opens_on_lineup(set_here));
 }
 
 /// Forget what was asked of a round that was never entered.
@@ -301,6 +308,7 @@ pub(in crate::app) fn forget_a_round_not_entered(
     mut resuming: ResMut<Resuming>,
     mut playback: ResMut<Playback>,
     mut daily: ResMut<Daily>,
+    mut again: rematch::PlayAgain,
 ) {
     let Some(entered) = transitions.read().last().map(|t| t.entered) else {
         return;
@@ -309,31 +317,40 @@ pub(in crate::app) fn forget_a_round_not_entered(
         resuming.0 = None;
         playback.0 = None;
         daily.active = false;
+        again.let_go();
     }
 }
 
-/// What a round leaves behind: its recording, and the highlight reel
-/// being cut from it.
+/// What a round leaves behind: its recording, the highlight reel being
+/// cut from it, and the offer to keep it on the replay shelf.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(in crate::app) struct RoundLog<'w> {
     recorder: ResMut<'w, Recorder>,
     reel_thread: ResMut<'w, ReelThread>,
+    keep: ResMut<'w, replays::RoundToKeep>,
 }
 
 /// Tear down per-round versus resources when leaving the mode.
 pub(in crate::app) fn end_versus(
+    screen: Res<State<Screen>>,
     mut online: ResMut<net::Online>,
     mut playback: ResMut<Playback>,
     log: RoundLog,
     mut pending: ResMut<PendingActions>,
-    mut config: ResMut<match_setup::MatchConfig>,
     mut controllers: ResMut<Controllers>,
-    mut next_vphase: ResMut<NextState<VersusPhase>>,
+    again: rematch::PlayAgain,
 ) {
     let RoundLog {
         mut recorder,
         mut reel_thread,
+        mut keep,
     } = log;
+    let rematch::PlayAgain {
+        table,
+        mut config,
+        mut next_vphase,
+        beaches: _,
+    } = again;
     // A session armed for another round outlives the screen: the interlude
     // is a doorway between rounds, not the end of the match. Everything
     // else is torn down and rebuilt as it is between local rounds.
@@ -342,10 +359,20 @@ pub(in crate::app) fn end_versus(
     }
     playback.0 = None;
     recorder.0 = None;
+    // The results card is left: a round not kept from it is let go
+    // (`replays::keep`), unless the way on is the interlude before the
+    // next round of a series, which holds the offer until that round
+    // starts. Read off the screen entered, which the state already is
+    // as this one is left.
+    if *screen.get() != Screen::Interlude {
+        *keep = replays::RoundToKeep::Nothing;
+    }
     // A reel still being written finishes on disk; its news is for a card
     // that is gone.
     reel_thread.0 = None;
-    config.armed = false;
+    // Disarmed, unless the same table is being played again: the arena's
+    // build reads the match it is armed with as it comes back in.
+    config.armed = table.keeps_the_table();
     *controllers = Controllers::default();
     // Never leak a queued action or a stale Over phase into the next round
     // or another mode. The phase goes back to where a round is entered.
@@ -356,9 +383,12 @@ pub(in crate::app) fn end_versus(
 /// Resolve what each seat is called this round; chained right after
 /// `load_versus`. Online, the handshake's table is the only truth, since
 /// the local couch names must never label a rival; offline they are just
-/// what the player typed for their table.
+/// what the player typed for their table, each seat named after the person
+/// partner picks put there ([`match_setup::MatchConfig::seat_names`]),
+/// except at the daily's own table.
 pub(in crate::app) fn resolve_seat_names(
     scoring: teams::Scoring,
+    config: Res<match_setup::MatchConfig>,
     controllers: Res<Controllers>,
     seats: Res<Seats>,
     mut recorder: ResMut<Recorder>,
@@ -371,13 +401,25 @@ pub(in crate::app) fn resolve_seat_names(
         playback,
     } = &scoring;
     let settings = &local.settings;
-    names.0 = match (&playback.0, &online.0) {
+    let couch;
+    let given = match (&playback.0, &online.0) {
         // A replay is watched, not played: the names belong to the round on
         // screen, not to whoever is sitting here now.
-        (Some((replay, _)), _) => replay.names.clone(),
-        (None, Some(session)) => session.names.clone(),
-        (None, None) => settings.names.clone(),
+        (Some((replay, _)), _) => &replay.names,
+        (None, Some(session)) => &session.names,
+        (None, None) if local.daily.active => &settings.names,
+        (None, None) => {
+            couch = config.seat_names(&settings.names);
+            &couch
+        }
     };
+    // Spelled as the recording spells them ([`crate::sim::seat_name`]), so
+    // the card, the file the round is kept under and the shelf reading that
+    // file back name a seat alike by construction: one spelling in one
+    // place, rather than a promise that every way a name arrives (typed,
+    // read from the settings file, sent over the wire, read off a replay)
+    // was tidied the same way before it got here.
+    names.0 = given.each_ref().map(|name| crate::sim::seat_name(name));
     // And stamp them onto the round being recorded, created one system
     // earlier before anybody knew who was playing. Now rather than at save
     // time, by when an online round's names have gone with its session.
@@ -392,6 +434,11 @@ pub(in crate::app) fn resolve_seat_names(
     if let Some(replay) = &mut recorder.0 {
         replay.names = names.0.clone();
         replay.kinds = kinds.0;
+        // The level each AI seat plays at, from whoever decides for it
+        // here: the couch's dials, the online terms' level, the daily's
+        // fierce AI. Every peer of an online round computes the AI, so
+        // every peer's recording says the same.
+        replay.ai = controllers.0.map(SeatController::ai);
         // And how it is scored, so the round is crowned the same when it
         // is watched again, whatever the watcher's own setting by then.
         replay.teams = scoring.mode(seats.0).index() as u8;
@@ -427,7 +474,7 @@ pub(super) fn winner_name(
     seats: &Seats,
     mode: teams::TeamMode,
     names: &SeatNames,
-    tr: &crate::app::i18n::Tr,
+    tr: &i18n::Tr,
 ) -> Option<String> {
     teams::winner_label(sim.0.scores(), seats.0, mode, |seat| names.label(tr, seat))
 }
@@ -449,23 +496,27 @@ pub(in crate::app) fn check_versus_over(
     let RoundLog {
         mut recorder,
         mut reel_thread,
+        mut keep,
     } = log;
     if sim.0.round_over() {
         // Spec §7.7: a finished round is a shareable replay.
         highlight.0 = None;
         reel_thread.0 = None;
-        if let Some(replay) = recorder.0.take() {
-            let library = replays::library_dir();
+        if let Some(mut replay) = recorder.0.take() {
+            // The board the results card shows, so the shelf can say what
+            // the round was won with without playing it through.
+            replay.scores = Some(*sim.0.scores());
             let text = replay.to_text();
-            // `last.txt` is still the newest round, for the menu's Replay
-            // entry and the dev hook; the library keeps every round beside
-            // it under a name that says when it was and who took it.
+            // `last.txt` is the newest round, kept or not, for the
+            // `PINCH_REPLAY` dev hook.
             let last = replay_path();
             match paths::write_atomic(&last, &text) {
                 Ok(()) => info!("replay saved to {}", last.display()),
                 Err(e) => warn!("could not save replay: {e}"),
             }
-            let stamp = clock::now_secs();
+            // The shelf holds only the rounds a player keeps: the results
+            // card offers this one, filed under when it ended and who
+            // took it, if the key is pressed before the card is left.
             let winner = winner_name(
                 &sim,
                 &seats,
@@ -473,12 +524,11 @@ pub(in crate::app) fn check_versus_over(
                 &seat_names,
                 settings.tr(),
             );
-            let kept = replays::free_path(&library, stamp, winner.as_deref());
-            if let Err(e) = paths::write_atomic(&kept, &text) {
-                warn!("could not file the replay: {e}");
-            }
-            // Trimmed here, the one moment the shelf can have grown.
-            replays::prune(settings.replay_cap);
+            *keep = replays::RoundToKeep::Offered(Box::new(replays::Unkept {
+                text,
+                stamp: clock::now_secs(),
+                winner,
+            }));
             // The reel re-simulates the whole round twice and encodes 150
             // frames, so it goes on its own thread: the results card should
             // appear the instant the tide comes in, not after the GIF. The

@@ -114,14 +114,16 @@ pub fn drift_cloud_shadows(
 /// are the only ones that hold still while it does. The sea alone follows
 /// the view: sized from the board, it sat off the window on most boards.
 pub(super) fn spawn_beach(commands: &mut Commands, board: &Board, art: &Art) {
-    commands.spawn((
-        BoardStatic,
-        art.shaded.quad(
-            &art.shaded.sand,
-            Transform::from_translation(Vec3::new(0.0, 0.0, z::SAND - 10.0)),
-            Vec2::splat(REACH),
-        ),
-    ));
+    for (center, size) in beach_strips(layout::board_extent(board)) {
+        commands.spawn((
+            BoardStatic,
+            art.shaded.quad(
+                &art.shaded.sand,
+                Transform::from_translation(center.extend(z::SAND - 10.0)),
+                size,
+            ),
+        ));
+    }
     commands.spawn((
         BoardStatic,
         Sea,
@@ -136,6 +138,32 @@ pub(super) fn spawn_beach(commands: &mut Commands, board: &Board, art: &Art) {
         Visibility::Hidden,
     ));
     furnish_the_margin(commands, board, art);
+}
+
+/// How far the beach's strips reach in under the board's own sand, world
+/// units: enough that no rounding of the two quads' edges leaves a crack of
+/// clear colour between them.
+const BEACH_TUCK: f32 = 4.0;
+
+/// The beach round a board of `extent`, as four strips framing it, each a
+/// centre and a size: left and right the full height of the world, above
+/// and below between them. One plane under the board shaded every pixel of
+/// the board twice, since the 2D opaque pass draws in no particular depth
+/// order and the board's own sand was as likely to come second as first;
+/// the sand shader works in world space, so the strips meet without a seam.
+fn beach_strips(extent: Vec2) -> [(Vec2, Vec2); 4] {
+    let inner = extent / 2.0 - Vec2::splat(BEACH_TUCK);
+    let outer = REACH / 2.0;
+    let side = outer - inner.x;
+    let cap = outer - inner.y;
+    let x = (inner.x + outer) / 2.0;
+    let y = (inner.y + outer) / 2.0;
+    [
+        (Vec2::new(-x, 0.0), Vec2::new(side, REACH)),
+        (Vec2::new(x, 0.0), Vec2::new(side, REACH)),
+        (Vec2::new(0.0, y), Vec2::new(2.0 * inner.x, cap)),
+        (Vec2::new(0.0, -y), Vec2::new(2.0 * inner.x, cap)),
+    ]
 }
 
 /// The sea along the bottom of the view.
@@ -224,7 +252,12 @@ type SeaQuad = (&'static mut Transform, &'static mut Visibility);
 pub struct SeaView<'w, 's> {
     ui_scale: Res<'w, UiScale>,
     windows: Query<'w, 's, &'static Window>,
-    cameras: Query<'w, 's, (&'static Projection, &'static Transform), With<Camera2d>>,
+    cameras: Query<
+        'w,
+        's,
+        (&'static Projection, &'static Transform),
+        crate::app::match_setup::GameCamera,
+    >,
 }
 
 /// What the sea's climb reads: the round's state, the round's clock the
@@ -382,6 +415,37 @@ fn furnish_the_margin(commands: &mut Commands, board: &Board, art: &Art) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The beach's strips cover the whole world but the board's middle,
+    /// once each: every point outside the board is under exactly one strip,
+    /// a point just inside its edge too (the tuck), and the board's middle
+    /// under none, since its own sand is drawn there.
+    #[test]
+    fn the_beach_frames_the_board_without_covering_it() {
+        let extent = Vec2::new(16.0 * TILE, 11.0 * TILE);
+        let strips = beach_strips(extent);
+        let under = |p: Vec2| {
+            strips
+                .iter()
+                .filter(|(c, size)| (p - *c).abs().cmplt(*size / 2.0).all())
+                .count()
+        };
+        let half = extent / 2.0;
+        let probes = [
+            Vec2::new(half.x + 1.0, 0.0),
+            Vec2::new(-half.x - 1.0, half.y + 1.0),
+            Vec2::new(0.0, -half.y - 1.0),
+            Vec2::new(0.0, half.y - 1.0),
+            Vec2::new(half.x - 1.0, -half.y + 1.0),
+            Vec2::new(REACH / 2.0 - 1.0, -REACH / 2.0 + 1.0),
+            Vec2::new(-REACH / 2.0 + 1.0, 0.0),
+        ];
+        for p in probes {
+            assert_eq!(under(p), 1, "{p} is under {} strips", under(p));
+        }
+        assert_eq!(under(Vec2::ZERO), 0);
+        assert_eq!(under(half - Vec2::splat(BEACH_TUCK + 1.0)), 0);
+    }
 
     /// The sea takes the bottom of the view and never comes up onto the
     /// board or its frame: on a short window the sea shrinks or goes, the

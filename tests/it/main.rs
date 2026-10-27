@@ -11,9 +11,12 @@
 
 mod bots;
 mod campaign;
+mod coop;
 mod determinism;
+mod fixtures;
 mod format;
 mod invariants;
+mod maps;
 mod online;
 mod shelves;
 mod tide;

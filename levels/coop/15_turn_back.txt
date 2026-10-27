@@ -1,0 +1,23 @@
+# Both crabs start walking away from their doors and turn back at the
+# ends of the corridor. A gull walks ahead of the left crab, and P2's
+# second arrow sends it off the beach by a door of its own.
+name: Turn Back
+hands: 1 2
+kind: puzzle
+seed: 2125266945
+crab: 7,2 R L common
+crab: 4,2 L R common
+gull: 8,2 R
+solution: 2,2 D L; 6,2 U R; 9,2 D R
+map:
++-+-+-+-+-+-+-+-+-+-+-+
+|# # # # K K ~ 0 # # #|
++ + + + + + + + + + + +
+|# # # # K K|. # # # #|
++ + + + +-+-+ + + + + +
+|. . . . . . . . . . .|
++-+-+ + + + + +-+-+ + +
+|K K|. # # # # K K|. #|
++ + + + + + + + + + + +
+|K K ~ 0 # # # K K ~ 0|
++-+-+-+-+-+-+-+-+-+-+-+

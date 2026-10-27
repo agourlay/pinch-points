@@ -394,7 +394,7 @@ mod tests {
             if board.crabs().is_empty() {
                 // The swap a sparkling crab spins comes after the banks in
                 // the same tick: done here by hand, in that order.
-                board.force_tide_event(crate::sim::TideEvent::CastleSwap, 1);
+                board.force_spun_tide_event(crate::sim::TideEvent::CastleSwap, 1);
                 assert_eq!(board.tile_at(4, 0), TileKind::Castle(0));
                 before.diff(&board, &mut seen);
                 break;

@@ -50,20 +50,6 @@ pub enum Nav {
     Stay,
 }
 
-/// Navigation over a list where some rows are hidden (a setting that does
-/// not apply right now): the cursor steps over them instead of landing on
-/// a blank line. With nothing live it stays put.
-pub fn nav_live(keys: &ButtonInput<KeyCode>, selected: usize, live: &[bool]) -> usize {
-    let nav = if keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) {
-        Nav::Up
-    } else if keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown) {
-        Nav::Down
-    } else {
-        Nav::Stay
-    };
-    nav_live_steps(nav, selected, live)
-}
-
 /// Plain movement over `len` rows from an explicit [`Nav`], for input that
 /// cannot ride the keyboard resource: the pause card runs during play, where
 /// bridging the d-pad into synthetic key presses would also steer the round.
@@ -73,33 +59,6 @@ pub fn step(nav: Nav, selected: usize, len: usize) -> usize {
         Nav::Down => (selected + 1) % len,
         Nav::Stay => selected,
     }
-}
-
-/// The same walk as [`nav_live`], from an explicit [`Nav`] rather than the
-/// keyboard.
-fn nav_live_steps(nav: Nav, selected: usize, live: &[bool]) -> usize {
-    let len = live.len();
-    let step = match nav {
-        Nav::Up => len - 1, // one backwards, modulo len
-        Nav::Down => 1,
-        // Not moving, but the row under the cursor may have just gone dark.
-        Nav::Stay => return first_live(selected, live).unwrap_or(selected),
-    };
-    let mut at = selected;
-    for _ in 0..len {
-        at = (at + step) % len;
-        if live[at] {
-            return at;
-        }
-    }
-    selected
-}
-
-/// `from` if it is live, else the next live row after it.
-fn first_live(from: usize, live: &[bool]) -> Option<usize> {
-    (0..live.len())
-        .map(|offset| (from + offset) % live.len())
-        .find(|&row| live[row])
 }
 
 /// Whether something earlier this frame has already said where the game
@@ -146,44 +105,18 @@ pub fn left_right(keys: &ButtonInput<KeyCode>) -> Option<Turn> {
     }
 }
 
-/// Every button a menu answers to: the keyboard, and the pads.
+/// Every button a menu answers to: the keyboard, and the pads with the
+/// face whose table says what their buttons do.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Buttons<'w, 's> {
     pub keys: Res<'w, ButtonInput<KeyCode>>,
     pub pads: Query<'w, 's, &'static Gamepad>,
-}
-
-impl Buttons<'_, '_> {
-    /// Whether any pad pressed `button` this frame.
-    pub fn pad(&self, button: GamepadButton) -> bool {
-        self.pads.iter().any(|pad| pad.just_pressed(button))
-    }
+    pub face: Res<'w, crate::app::gamepad::PadFace>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Hidden rows are stepped over in both directions, and a cursor left
-    /// standing on a row that just went dark slides to the next live one.
-    #[test]
-    fn nav_live_skips_hidden_rows() {
-        let live = [true, false, false, true, false];
-        let mut down = ButtonInput::<KeyCode>::default();
-        down.press(KeyCode::KeyS);
-        assert_eq!(nav_live(&down, 0, &live), 3);
-        assert_eq!(nav_live(&down, 3, &live), 0, "wraps past the dark tail");
-        let mut up = ButtonInput::<KeyCode>::default();
-        up.press(KeyCode::KeyW);
-        assert_eq!(nav_live(&up, 3, &live), 0);
-        assert_eq!(nav_live(&up, 0, &live), 3);
-        // Standing still on a row that went dark: slide to the next live one.
-        let idle = ButtonInput::<KeyCode>::default();
-        assert_eq!(nav_live(&idle, 1, &live), 3);
-        assert_eq!(nav_live(&idle, 3, &live), 3);
-        // Nothing live at all: stay put rather than spin.
-        assert_eq!(nav_live(&down, 2, &[false, false, false]), 2);
-    }
 
     #[test]
     fn nav_wraps_both_ways() {
@@ -193,87 +126,6 @@ mod tests {
         let mut keys = ButtonInput::<KeyCode>::default();
         keys.press(KeyCode::KeyS);
         assert_eq!(nav(&keys, 4, 5), 0, "down from the bottom wraps to the top");
-    }
-
-    /// A row that is not there to pick is stepped over, not landed on.
-    ///
-    /// Every list with rows that come and go reads this: the settings that
-    /// only apply in one mode, the stage list's locked levels, the match
-    /// dials that a chosen map has no use for. Landing on one puts the
-    /// cursor on a blank line where Enter does nothing.
-    #[test]
-    fn the_cursor_steps_over_a_row_that_is_not_there_to_pick() {
-        let live = [true, false, false, true, true];
-        assert_eq!(
-            nav_live_steps(Nav::Down, 0, &live),
-            3,
-            "over the two dark ones"
-        );
-        assert_eq!(nav_live_steps(Nav::Up, 3, &live), 0, "and back over them");
-        assert_eq!(nav_live_steps(Nav::Down, 3, &live), 4, "the next one along");
-    }
-
-    /// The ends of the list join up, which is the only way to reach the
-    /// last row from the first without walking the whole list.
-    #[test]
-    fn the_ends_of_the_list_join_up() {
-        let all = [true, true, true];
-        assert_eq!(
-            nav_live_steps(Nav::Up, 0, &all),
-            2,
-            "off the top to the bottom"
-        );
-        assert_eq!(
-            nav_live_steps(Nav::Down, 2, &all),
-            0,
-            "and off the bottom to the top"
-        );
-
-        // With dark rows at the seam, the wrap keeps walking past them.
-        let live = [true, false, false];
-        assert_eq!(
-            nav_live_steps(Nav::Down, 0, &live),
-            0,
-            "the only row there is"
-        );
-        assert_eq!(nav_live_steps(Nav::Up, 0, &live), 0);
-    }
-
-    /// A list with nothing live leaves the cursor exactly where it was.
-    /// The walk gives up after one lap rather than spinning, which is what
-    /// an empty custom-beach shelf looks like from here.
-    #[test]
-    fn a_list_with_nothing_to_pick_leaves_the_cursor_alone() {
-        let none = [false, false, false];
-        for nav in [Nav::Up, Nav::Down, Nav::Stay] {
-            assert_eq!(
-                nav_live_steps(nav, 1, &none),
-                1,
-                "the cursor moved to nowhere"
-            );
-        }
-    }
-
-    /// Standing still still moves, when the row underneath has just gone
-    /// dark: a dial answered somewhere else can take the row the cursor is
-    /// on out of the list, and the cursor has to come off it without
-    /// anybody pressing anything.
-    #[test]
-    fn standing_still_comes_off_a_row_that_has_just_gone_dark() {
-        let live = [false, false, true, true];
-        assert_eq!(
-            nav_live_steps(Nav::Stay, 0, &live),
-            2,
-            "the next one that is there"
-        );
-        assert_eq!(
-            nav_live_steps(Nav::Stay, 2, &live),
-            2,
-            "and a live row stays put"
-        );
-        // Past the end, the search wraps like the walk does.
-        let live = [true, false, false];
-        assert_eq!(nav_live_steps(Nav::Stay, 2, &live), 0);
     }
 
     /// The plain walk, for a list with no dark rows in it at all: up and

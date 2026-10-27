@@ -23,7 +23,7 @@ pub(super) fn run_with(watching: watch::Watch) {
             .as_ref()
             .map_or(&settings::GameSettings::default(), |(settings, _)| settings),
     );
-    app.add_plugins(
+    app.add_plugins(trim_unused_plugins(
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
@@ -37,6 +37,7 @@ pub(super) fn run_with(watching: watch::Watch) {
                     } else {
                         default()
                     },
+                    present_mode: dev::present_mode().unwrap_or_default(),
                     ..default()
                 }),
                 ..default()
@@ -66,7 +67,8 @@ pub(super) fn run_with(watching: watch::Watch) {
                     // about 18% of samples.
                     //
                     // Swept on that machine with `PINCH_THREADS`, 30 s of
-                    // that round each, CPU seconds (user + sys):
+                    // that round each on the parallel executor, CPU
+                    // seconds (user + sys):
                     //
                     //     cap  1     8.8     cap  4    13.3
                     //     cap  2     9.2     cap  6    15.9
@@ -76,17 +78,29 @@ pub(super) fn run_with(watching: watch::Watch) {
                     // fixed tick exactly, and the round clock reads 2:30 in
                     // all of them.
                     //
-                    // Two rather than one, because the machines this has to
-                    // be right on are not this one: the second worker costs
-                    // 0.4 CPU-seconds here and is the one that absorbs a
-                    // heavy frame on a slow laptop. A two-core machine gets
-                    // what its own core count allows either way.
+                    // One, now that the main world runs single-threaded
+                    // (below) and the pool works only for the render world
+                    // and the engine's parallel queries. CPU time a frame
+                    // and the uncapped frame time, cap 2 against cap 1:
+                    //
+                    //                          cap 2          cap 1
+                    //   title screen, vsync    3.2 ms         2.5 ms
+                    //   six-seat XL, vsync     4.7 ms         3.5 ms
+                    //   six-seat XL, uncapped  2.26 ms frame  2.19 ms
+                    //   same, four slow cores  2.90 ms frame  2.90 ms
+                    //   lobby, four slow cores 2.86 ms frame  2.51 ms
+                    //
+                    // The second worker was kept for a slow laptop's heavy
+                    // frame; on four of this laptop's 3.3 GHz cores pinned
+                    // with `taskset` (a Steam Deck's count) it shortens no
+                    // frame, the slow ones included (95th percentile 3.35
+                    // and 3.36 ms on the XL round).
                     compute: TaskPoolThreadAssignmentPolicy {
                         // `PINCH_THREADS=n` sweeps the cap, and `=0` puts
                         // Bevy's own default back, which is how the table
                         // above was measured and how to re-measure it on a
                         // machine that is not this one.
-                        max_threads: dev::compute_threads().unwrap_or(2),
+                        max_threads: dev::compute_threads().unwrap_or(1),
                         ..TaskPoolOptions::default().compute
                     },
                     ..TaskPoolOptions::default()
@@ -116,28 +130,45 @@ pub(super) fn run_with(watching: watch::Watch) {
                 synchronous_pipeline_compilation: true,
                 ..RenderPlugin::default()
             }),
-    );
+    ));
     materials::install(&mut app);
+    dev::install_profiling(&mut app);
     insert_resources(&mut app, saved);
     failsafe::install(&mut app);
     add_startup(&mut app);
     add_screen_transitions(&mut app);
     add_phase_transitions(&mut app);
     add_frame_systems(&mut app);
-    // Dev hook: `PINCH_ST_EXEC=1` swaps every main-world schedule to the
-    // single-threaded executor, for the backlog's CPU measurement. The
-    // render sub-app keeps its own schedules and its parallelism. `new()`
-    // rather than `default()`: the derived default leaves
+    // Every main-world schedule on the single-threaded executor; the render
+    // sub-app keeps its own schedules and its parallelism. This game's main
+    // world is a hundred-odd small systems, and handing each to a worker
+    // costs more than the system does: a `perf` profile of the parallel
+    // executor is mostly its queues, atomics and wake-ups. With pipelined
+    // rendering the main world already runs beside the render world, so the
+    // parallel one bought nothing back. Measured on release builds, CPU
+    // time a frame (all threads) and the uncapped frame time:
+    //
+    //                            parallel       single-threaded
+    //   title screen, vsync      3.6 ms         2.8 ms
+    //   six-seat XL, vsync       5.2 ms         4.1 ms
+    //   six-seat XL, uncapped    2.31 ms frame  2.12 ms frame
+    //   same, on four slow cores 3.35 ms frame  2.90 ms (95th: 3.83, 3.32)
+    //   same, on two slow cores  4.97 ms frame  3.27 ms (95th: 5.48, 4.43)
+    //
+    // The slow cores are this laptop's 3.3 GHz efficiency cores pinned with
+    // `taskset`, four standing in for a Steam Deck: the frames a slow
+    // machine takes are shorter, not longer, and so are the slow ones.
+    //
+    // `PINCH_MT_EXEC=1` puts the parallel executor back, to measure it
+    // again. `new()` rather than `default()`: the derived default leaves
     // `apply_final_deferred` false, and the app dies on the first frame
     // missing every command-queued resource.
-    if dev::single_threaded_executor() {
+    if !dev::multi_threaded_executor() {
         use bevy::ecs::schedule::{Schedules, SingleThreadedExecutor};
         let mut schedules = app.world_mut().resource_mut::<Schedules>();
-        let swapped = schedules
-            .iter_mut()
-            .map(|(_, schedule)| schedule.set_executor(SingleThreadedExecutor::new()))
-            .count();
-        info!("single-threaded executor on {swapped} main-world schedules");
+        for (_, schedule) in schedules.iter_mut() {
+            schedule.set_executor(SingleThreadedExecutor::new());
+        }
     }
     // Dev hook: `PINCH_SHUFFLE=<seed>` (with `--features shuffle`) shuffles
     // the unordered systems of every main-world schedule. See
@@ -159,25 +190,65 @@ pub(super) fn run_with(watching: watch::Watch) {
     app.run();
 }
 
+/// Take out the default plugins this game draws nothing with: no 3D
+/// (meshes, lights, glTF, scenes, animation), no gizmos, no post-process
+/// or screen-space anti-aliasing passes (the only anti-aliasing here is
+/// MSAA, which is the core pipeline's), and no ready-made UI widgets (every
+/// card here is plain nodes read from the keyboard and pads).
+///
+/// Each one still adds its systems to every frame, in the main world and in
+/// the render world, and a system that finds nothing to do still costs the
+/// executor a slot: they came to a quarter of the CPU time a frame took on
+/// the title screen and a fifth on a six-seat round. `PINCH_ALL_PLUGINS=1`
+/// puts them back, for measuring what they cost.
+fn trim_unused_plugins(plugins: bevy::app::PluginGroupBuilder) -> bevy::app::PluginGroupBuilder {
+    if dev::all_plugins() {
+        return plugins;
+    }
+    use bevy::ui_widgets::{
+        ButtonPlugin, CheckboxPlugin, DialogPlugin, ListBoxPlugin, MenuPlugin, ModalDialogPlugin,
+        RadioGroupPlugin, ScrollAreaPlugin, ScrollbarPlugin, SliderPlugin, TabPlugin,
+        TextInputPlugin,
+    };
+    plugins
+        .disable::<bevy::pbr::PbrPlugin>()
+        .disable::<bevy::gltf::GltfPlugin>()
+        .disable::<bevy::scene::ScenePlugin>()
+        .disable::<bevy::world_serialization::WorldSerializationPlugin>()
+        .disable::<AnimationPlugin>()
+        .disable::<bevy::gizmos::GizmoPlugin>()
+        .disable::<bevy::gizmos_render::GizmoRenderPlugin>()
+        .disable::<bevy::anti_alias::AntiAliasPlugin>()
+        .disable::<bevy::post_process::PostProcessPlugin>()
+        .disable::<bevy::light::LightPlugin>()
+        .disable::<ButtonPlugin>()
+        .disable::<CheckboxPlugin>()
+        .disable::<TextInputPlugin>()
+        .disable::<ListBoxPlugin>()
+        .disable::<MenuPlugin>()
+        .disable::<DialogPlugin>()
+        .disable::<ModalDialogPlugin>()
+        .disable::<RadioGroupPlugin>()
+        .disable::<ScrollAreaPlugin>()
+        .disable::<ScrollbarPlugin>()
+        .disable::<SliderPlugin>()
+        .disable::<TabPlugin>()
+}
+
 /// The resources, states and message types the whole shell shares.
 fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycaps::KeyCaps)>) {
     app.insert_resource(Time::<Fixed>::from_hz(f64::from(
         crate::sim::TICKS_PER_SECOND,
     )));
     app.insert_resource(Sandbox(dev::sandbox()));
-    let (levels, builtins) = campaign::tide_pool_levels();
     app.insert_resource(Coop(dev::coop()));
-    app.insert_resource(Campaign {
-        kind: CampaignKind::TidePool,
-        levels,
-        index: 0,
-        builtins,
-    });
+    app.insert_resource(campaign::stage_list());
     // Replaced on mode entry; a 1x1 board just keeps the resource non-null.
     app.insert_resource(Sim(Board::new(1, 1, 0)));
     app.init_resource::<PendingActions>();
     app.init_resource::<Paused>();
     app.init_resource::<editor::EditorState>();
+    app.init_resource::<editor::EditorOpening>();
     app.init_resource::<Recorder>();
     app.init_resource::<awards::RoundTally>();
     app.init_resource::<Highlight>();
@@ -190,6 +261,9 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.init_resource::<board_render::CastleFlight>();
     app.init_resource::<sim_events::BoardGeneration>();
     app.init_resource::<match_setup::MatchMenu>();
+    app.init_resource::<next_map::NextMap>();
+    app.init_resource::<match_setup::MapPreviews>();
+    match_setup::watch_preview_pipelines(app);
     app.init_resource::<Playback>();
     app.init_resource::<net::Online>();
     app.init_resource::<lobby::LobbyState>();
@@ -198,14 +272,22 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.init_resource::<Resuming>();
     app.init_resource::<RoundNotice>();
     app.init_resource::<menu_scene::MenuList>();
+    app.init_resource::<menu_scene::QuitCard>();
+    app.init_resource::<menu_scene::LevelCard>();
     app.init_resource::<stage_select::StageList>();
     app.init_resource::<hint::Hints>();
     app.init_resource::<hint::DeniedNote>();
     app.init_resource::<replays::Library>();
+    app.init_resource::<replays::RoundToKeep>();
     app.init_resource::<replays::PlaybackSpeed>();
     app.init_resource::<round_state::RoundClock>();
     app.init_resource::<gamepad::PadSeats>();
     app.init_resource::<gamepad::Bridged>();
+    app.init_resource::<gamepad::PadFace>();
+    app.init_resource::<gamepad::LastDevice>();
+    app.init_resource::<gamepad::LastPad>();
+    app.init_resource::<gamepad::PadPick>();
+    app.add_systems(Startup, gamepad::pad_prompts_from_env);
     app.init_resource::<effects::VisualRng>();
     app.init_resource::<effects::Trauma>();
     app.init_resource::<pause::PauseMenu>();
@@ -218,6 +300,7 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.init_resource::<SeatNames>();
     app.init_resource::<SeatKinds>();
     app.init_resource::<tournament::Tournament>();
+    app.init_resource::<rematch::LocalTable>();
     app.init_resource::<side_panels::EventLog>();
     app.init_resource::<announce::Announcer>();
     app.init_resource::<update::UpdateCheck>();
@@ -247,6 +330,7 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.add_message::<CodeShared>();
     app.add_message::<CodeTaken>();
     app.add_message::<sim_events::SimEvent>();
+    app.add_message::<countdown::CountBeat>();
     app.init_resource::<achievements::PuzzleAttempt>();
     app.init_resource::<achievements::StagesRun>();
 }
@@ -263,10 +347,25 @@ fn add_startup(app: &mut App) {
             achievements::load,
             progress::load,
             dev::kickoff,
+            dev::slow_motion,
             watch::begin,
             // Off-thread; the menu polls for the answer.
             update::start_check,
         ),
+    );
+}
+
+/// A board one person plays alone follows the first pad, not a claim a
+/// friend made for a couch match: the puzzles (co-op's two cursors share
+/// one seat's arrows), the editor, and a versus round with one cursor
+/// here, the daily among them. Read before the round's cursors are
+/// spawned, while the source they are spawned from is still whole.
+pub(super) fn add_claim_release(app: &mut App) {
+    app.add_systems(OnEnter(Screen::Puzzle), gamepad::let_claims_go);
+    app.add_systems(OnEnter(Screen::Editor), gamepad::let_claims_go);
+    app.add_systems(
+        OnEnter(Screen::Versus),
+        gamepad::let_a_lone_players_claims_go.before(cursor::spawn_versus_cursors),
     );
 }
 
@@ -283,6 +382,7 @@ fn add_screen_transitions(app: &mut App) {
         )
             .chain(),
     );
+    add_claim_release(app);
     app.add_systems(
         OnEnter(Screen::Achievements),
         achievements::enter_achievements,
@@ -293,7 +393,10 @@ fn add_screen_transitions(app: &mut App) {
     );
     app.add_systems(
         OnExit(Screen::StageSelect),
-        menu_ui::despawn_marked::<stage_select::StageSelectUi>,
+        (
+            menu_ui::despawn_marked::<stage_select::StageSelectUi>,
+            stage_select::exit_stage_select,
+        ),
     );
     app.add_systems(OnEnter(Screen::Language), language::enter_language);
     app.add_systems(OnEnter(Screen::NewVersion), update::enter_new_version);
@@ -302,7 +405,10 @@ fn add_screen_transitions(app: &mut App) {
         OnExit(Screen::Language),
         menu_ui::despawn_marked::<language::LanguageUi>,
     );
-    app.add_systems(OnEnter(Screen::Replays), replays::enter_library);
+    app.add_systems(
+        OnEnter(Screen::Replays),
+        (replays::enter_library, dev::debug_library_cursor).chain(),
+    );
     app.add_systems(
         OnExit(Screen::Replays),
         menu_ui::despawn_marked::<replays::LibraryUi>,
@@ -350,6 +456,7 @@ fn add_screen_transitions(app: &mut App) {
             menu_scene::enter_menu,
             tournament::reset_on_menu,
             bot_seats::close_door,
+            gamepad::forget_the_pilot,
             // Whatever kept a session alive between rounds, the menu is the
             // end of it: the socket closes and the beach comes off the air.
             |mut online: ResMut<net::Online>| online.0 = None,
@@ -359,6 +466,8 @@ fn add_screen_transitions(app: &mut App) {
         OnExit(Screen::Menu),
         (
             menu_ui::despawn_marked::<menu_scene::MenuArt>,
+            menu_scene::close_quit_card,
+            menu_scene::close_level_card,
             despawn_board_sprites,
             // The notice is news about one round; it is read on the menu and
             // does not follow the player into the next thing they pick.
@@ -371,33 +480,58 @@ fn add_screen_transitions(app: &mut App) {
     );
     app.add_systems(
         OnExit(Screen::Lobby),
-        (lobby::exit_lobby, menu_ui::despawn_marked::<lobby::LobbyUi>),
+        (
+            lobby::exit_lobby,
+            menu_ui::despawn_marked::<lobby::LobbyUi>,
+            menu_ui::despawn_marked::<match_setup::MatchUi>,
+            match_setup::release_previews,
+        ),
     );
-    app.add_systems(OnEnter(Screen::Settings), settings::screen::enter_settings);
+    app.add_systems(
+        OnEnter(Screen::Settings),
+        (
+            settings::screen::note_replay_cap,
+            settings::screen::enter_settings,
+        ),
+    );
     app.add_systems(
         OnExit(Screen::Settings),
-        menu_ui::save_and_despawn::<settings::screen::SettingsUi>,
+        (
+            menu_ui::save_and_despawn::<settings::screen::SettingsUi>,
+            settings::screen::apply_replay_cap,
+        ),
     );
     app.add_systems(OnEnter(Screen::Controls), controls::enter_controls);
     app.add_systems(
         OnExit(Screen::Controls),
-        menu_ui::save_and_despawn::<controls::ControlsUi>,
+        (
+            menu_ui::save_and_despawn::<controls::ControlsUi>,
+            settings::screen::apply_replay_cap,
+        ),
     );
     app.add_systems(
         OnEnter(Screen::MatchSetup),
         (
             match_setup::refresh_custom_beaches,
             match_setup::enter_match_setup,
-        ),
+        )
+            .chain(),
     );
     app.add_systems(
         OnExit(Screen::MatchSetup),
-        menu_ui::save_and_despawn::<match_setup::MatchUi>,
+        (
+            menu_ui::save_and_despawn::<match_setup::MatchUi>,
+            match_setup::leave_match_setup,
+            match_setup::release_previews,
+        ),
     );
     app.add_systems(OnEnter(Screen::Interlude), tournament::enter_interlude);
     app.add_systems(
         OnExit(Screen::Interlude),
-        menu_ui::despawn_marked::<tournament::InterludeUi>,
+        (
+            menu_ui::despawn_marked::<tournament::InterludeUi>,
+            replays::let_the_round_go,
+        ),
     );
     app.add_systems(
         OnExit(Screen::Editor),
@@ -434,6 +568,10 @@ fn add_screen_transitions(app: &mut App) {
             menu_ui::despawn_marked::<results::ResultsPanel>,
             menu_ui::despawn_marked::<side_panels::SidePanelRoot>,
             menu_ui::despawn_marked::<countdown::CountdownText>,
+            menu_ui::despawn_marked::<lineup::LineupUi>,
+            next_map::put_the_page_away,
+            menu_ui::despawn_marked::<match_setup::MatchUi>,
+            match_setup::release_previews,
             announce::clear_announcements,
             pause::reset_pause,
             spectators::forget_spectating,
@@ -540,9 +678,21 @@ fn clear_banners_between_runs(app: &mut App) {
 /// The fixed-timestep sim driver: a tick while the game is playing, and
 /// none past the one that decides a puzzle (`puzzle_undecided`).
 fn add_sim_driver(app: &mut App) {
+    app.init_resource::<countdown::FirstStep>();
     app.add_systems(
         FixedUpdate,
-        advance_sim.run_if(sim_should_run.and_then(puzzle_undecided)),
+        (
+            countdown::hold_the_opening_step,
+            advance_sim.run_if(
+                sim_should_run
+                    .and_then(puzzle_undecided)
+                    .and_then(countdown::past_the_opening_step),
+            ),
+            // An online round's network, from the host's call to its
+            // first frame, when no sim tick carries it.
+            net::listen_before_the_round.run_if(versus_before_the_round),
+        )
+            .chain(),
     );
 }
 
@@ -562,6 +712,29 @@ fn add_frame_systems(app: &mut App) {
     add_sim_driver(app);
     add_round_forgetting(app);
     app.add_systems(Update, watch::pump);
+    app.add_systems(
+        Update,
+        dev::debug_delete
+            .run_if(in_state(Screen::Replays))
+            .before(replays::library_input),
+    );
+    app.add_systems(
+        Update,
+        dev::debug_lobby_cursor
+            .run_if(in_state(Screen::Lobby))
+            .after(lobby::lobby_input)
+            .before(lobby::update_lobby_list),
+    );
+    app.add_systems(
+        Update,
+        dev::debug_keep.run_if(versus_over).before(replays::KeepKey),
+    );
+    app.add_systems(
+        Update,
+        dev::debug_editor_press
+            .run_if(in_state(Screen::Editor))
+            .before(editor::editor_input),
+    );
     app.add_systems(
         Update,
         watch::dropped_replays
@@ -631,23 +804,13 @@ fn add_ui_systems(app: &mut App) {
         (
             (
                 gamepad::keep_pad_order,
-                gamepad::pad_menu_bridge.run_if(
-                    in_state(Screen::Menu)
-                        .or_else(in_state(Screen::Settings))
-                        .or_else(in_state(Screen::Controls))
-                        .or_else(in_state(Screen::MatchSetup))
-                        .or_else(in_state(Screen::Lobby))
-                        .or_else(in_state(Screen::StageSelect))
-                        .or_else(in_state(Screen::Language))
-                        .or_else(in_state(Screen::NewVersion))
-                        .or_else(in_state(Screen::Replays))
-                        .or_else(in_state(Screen::Achievements))
-                        .or_else(versus_over)
-                        .or_else(
-                            in_state(Screen::Puzzle)
-                                .and_then(in_state(Phase::Won).or_else(in_state(Phase::Lost))),
-                        ),
-                ),
+                // The face first: the bridge presses what its table says,
+                // and the hands last used are not counted mid-round.
+                gamepad::read_face,
+                gamepad::track_last_device,
+                // On every screen: the face's table decides what it presses,
+                // which in a round is nothing.
+                gamepad::pad_menu_bridge,
                 // On every screen: a press lets go wherever its finger comes
                 // off, which is often a screen the bridge does not run on.
                 gamepad::pad_bridge_release,
@@ -659,9 +822,14 @@ fn add_ui_systems(app: &mut App) {
             (
                 update::poll_check,
                 menu_scene::menu_input,
+                // After the menu's own input, which stands down while the
+                // card is up, so its Esc is the card's and not a quit.
+                menu_scene::answer_level_card,
                 // After the menu's own choice, which it gives way to.
                 menu_scene::paste_round,
                 menu_scene::update_menu_rows,
+                menu_scene::show_quit_card,
+                menu_scene::show_level_card,
             )
                 .chain()
                 .run_if(in_state(Screen::Menu)),
@@ -669,17 +837,24 @@ fn add_ui_systems(app: &mut App) {
                 .chain()
                 .run_if(in_state(Screen::NewVersion)),
             (
+                lobby::fit_lobby_list,
                 lobby::discover,
                 lobby::host_tick,
                 lobby::join_tick,
                 lobby::lobby_input,
                 lobby::update_lobby_list,
+                menu_ui::scroll_bar::follow::<lobby::LobbyState>,
                 lobby::update_lobby_view,
                 lobby::update_lobby_players,
                 lobby::update_lobby_robots,
                 lobby::update_lobby_terms,
                 lobby::update_lobby_beach_note,
                 lobby::update_lobby_chat,
+                // The host's map page, over the lobby while it picks.
+                match_setup::update_host_map_ui,
+                (match_setup::paint_map_step, match_setup::follow_map_bar),
+                match_setup::retire_previews,
+                match_setup::render_previews,
             )
                 .chain()
                 .run_if(in_state(Screen::Lobby)),
@@ -698,7 +873,11 @@ fn add_ui_systems(app: &mut App) {
             )
                 .chain()
                 .run_if(in_state(Screen::StageSelect)),
-            (replays::library_input, replays::update_library)
+            (
+                replays::library_input,
+                replays::update_library,
+                menu_ui::scroll_bar::follow::<replays::Library>,
+            )
                 .chain()
                 .run_if(in_state(Screen::Replays)),
             (language::language_input, language::update_language_ui)
@@ -716,10 +895,20 @@ fn add_ui_systems(app: &mut App) {
                 .run_if(in_state(Screen::Versus).and_then(keys_are_free)),
             bot_seats::announce.run_if(in_state(Screen::Versus)),
             (
+                gamepad::follow_the_setup_hands,
                 gamepad::pad_claim_seats,
                 match_setup::match_setup_input,
                 match_setup::update_match_ui,
-                match_setup::update_match_pad_info,
+                (
+                    match_setup::paint_game_step,
+                    match_setup::paint_map_step,
+                    match_setup::follow_map_bar,
+                    match_setup::paint_players_step,
+                    match_setup::paint_start_button,
+                    match_setup::paint_teams,
+                ),
+                match_setup::retire_previews,
+                match_setup::render_previews,
             )
                 .chain()
                 .run_if(in_state(Screen::MatchSetup)),
@@ -767,11 +956,7 @@ fn add_play_systems(app: &mut App) {
             )
                 .run_if(on_message::<LoadLevel>)
                 .after(handle_load_level),
-            cursor::move_cursor.run_if(
-                not(in_state(Screen::Menu))
-                    .and_then(not(editor::editor_naming))
-                    .and_then(keys_are_free),
-            ),
+            cursor::move_cursor.run_if(board_cursor_free),
             (play_input::setup_input, play_input::browse_levels)
                 .chain()
                 .run_if(puzzle_setup.and_then(keys_are_free)),
@@ -841,6 +1026,9 @@ fn add_play_systems(app: &mut App) {
             // watch goes last in the chain.
             (
                 net::poll_between_rounds,
+                // Before the card's door, so a keep and an Enter on one
+                // frame keep the round on the way out.
+                replays::keep_input.in_set(replays::KeepKey),
                 play_input::versus_over_input,
                 net::leave_a_hostless_round,
             )
@@ -849,9 +1037,14 @@ fn add_play_systems(app: &mut App) {
             // `editor_input` is what types the name, so it runs while naming;
             // the command keys do not, or the letters of a name would flip
             // wrap and start the solver, and Enter would begin a playtest.
+            // "My levels" has the keys the same way while it is up, and so
+            // does a card, read first so the key that puts it away is not
+            // also read as a brush (`editor::editor_card_input`).
             (
+                editor::editor_card_input.run_if(editor::editor_on_card),
                 editor::editor_input,
-                editor::editor_commands.run_if(not(editor::editor_naming)),
+                editor::editor_levels_input.run_if(editor::editor_on_levels),
+                editor::editor_commands.run_if(not(editor::editor_has_keys)),
             )
                 .chain()
                 .run_if(in_state(Screen::Editor).and_then(not(editor::editor_testing))),
@@ -862,7 +1055,13 @@ fn add_play_systems(app: &mut App) {
             (
                 editor::poll_solver,
                 editor::update_editor_palette,
+                editor::update_settings_card,
                 editor::rebuild_statics,
+                editor::seat_test_bots,
+                editor::seat_test_partner,
+                editor::update_test_banner,
+                editor::show_level_list,
+                editor::show_editor_card,
             )
                 .run_if(in_state(Screen::Editor)),
         )
@@ -874,21 +1073,27 @@ fn add_play_systems(app: &mut App) {
         (
             // The pad walks the card's rows with the same stick the board
             // cursor answers to, so it needs the gate as much as the keys.
-            gamepad::pad_move_cursor.run_if(
-                not(in_state(Screen::Menu))
-                    .and_then(not(editor::editor_naming))
-                    .and_then(keys_are_free),
-            ),
+            gamepad::pad_move_cursor.run_if(board_cursor_free),
             gamepad::pad_setup_input.run_if(puzzle_setup.and_then(keys_are_free)),
             gamepad::pad_versus_input.run_if(versus_running.and_then(keys_are_free)),
-            (pause::pause_input, pause::update_pause_rows)
-                .chain()
-                .run_if(play_screens),
+            pause_card_systems(),
         )
             .chain()
             .in_set(Frame::Play)
             .after(editor::rebuild_statics),
     );
+}
+
+/// The pause card's keys and rows, on the play screens, after the play
+/// keys in the frame. Not over the host's map page between rounds, whose
+/// Esc is the page's own: the page spends the key that puts it away
+/// (`versus_over_input`), since by the time this condition is read the
+/// page is down. Its own function so a test runs it as the game does.
+pub(super) fn pause_card_systems()
+-> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    (pause::pause_input, pause::update_pause_rows)
+        .chain()
+        .run_if(play_screens.and_then(next_map::no_page_up))
 }
 
 /// Everything that redraws the board from sim state.
@@ -914,6 +1119,7 @@ fn add_render_systems(app: &mut App) {
             // the same frame as a swap must not fight the flight.
             (
                 board_render::fly_castles,
+                board_render::flinch_castles,
                 board_render::steady_castle_shadows,
                 board_render::crown_the_leader,
             )
@@ -923,7 +1129,9 @@ fn add_render_systems(app: &mut App) {
             (creatures::sync_crab_sprites, creatures::draw_sweeps),
             creatures::sync_gull_sprites,
             creatures::interpolate_crabs,
-            creatures::interpolate_gulls,
+            // Paired for the twenty-element limit: the gulls on the sand
+            // and the ones flying in to it.
+            (creatures::interpolate_gulls, creatures::fly_in_gulls),
             board_render::pulse_spawners,
             // Paired for the same twenty-element limit: pools and logs are
             // the terrain that moves.
@@ -958,6 +1166,10 @@ fn add_event_systems(app: &mut App) {
         (
             sim_events::observe_sim.run_if(board_screens),
             audio::play_events,
+            (
+                audio::play_count,
+                audio::play_final_seconds.run_if(play_screens),
+            ),
             gamepad::rumble_on_raid.run_if(play_screens.and_then(not_watching)),
             achievements::track_events.run_if(play_screens.and_then(not_watching)),
             (
@@ -967,7 +1179,10 @@ fn add_event_systems(app: &mut App) {
                 .chain()
                 .run_if(play_screens),
             achievements::record_level_built.run_if(in_state(Screen::Editor)),
-            achievements::record_codes.run_if(in_state(Screen::Editor)),
+            // On every screen: codes are copied from the stage list and
+            // taken in on the menu's level card as well as the editor, and
+            // a message no reader runs for is gone two frames later.
+            achievements::record_codes,
             achievements::update_toasts,
             (
                 achievements::achievements_input,
@@ -975,7 +1190,13 @@ fn add_event_systems(app: &mut App) {
             )
                 .chain()
                 .run_if(in_state(Screen::Achievements)),
-            tournament::interlude_tick.run_if(in_state(Screen::Interlude)),
+            // The round before the interlude can still be kept there.
+            (
+                replays::keep_input.in_set(replays::KeepKey),
+                tournament::interlude_tick,
+            )
+                .chain()
+                .run_if(in_state(Screen::Interlude)),
             menu_scene::menu_ambience.run_if(postcard_screens),
             menu_scene::refit_shore.run_if(postcard_screens),
             menu_scene::tend_backdrop,
@@ -991,7 +1212,8 @@ fn add_chrome_systems(app: &mut App) {
     app.add_systems(
         Update,
         (
-            hud::update_hud,
+            // Again, so a face that changed this frame is named this frame.
+            (gamepad::read_face, hud::update_hud).chain(),
             (hud::header_backdrop, hud::fade_prompt),
             hud::field_guide_visibility,
             hud::update_field_guide,
@@ -1001,20 +1223,38 @@ fn add_chrome_systems(app: &mut App) {
             (side_panels::collect_log, side_panels::collect_chat)
                 .chain()
                 .run_if(in_state(Screen::Versus)),
-            side_panels::update_log,
+            (side_panels::update_log, side_panels::update_event_timer),
+            side_panels::reach_the_board,
             hud::update_tide_clock,
             hud::update_hint,
             (
                 countdown::run_countdown
                     .run_if(in_state(Screen::Versus).and_then(in_state(VersusPhase::Countdown))),
                 countdown::draw_countdown.run_if(any_with_component::<countdown::CountdownText>),
+                // The line-up before an online match's count, and its
+                // picture of the map, drawn as the map cards' are.
+                // And the host's map page between the rounds of a series,
+                // drawn as the lobby's is.
+                (
+                    lineup::show_lineup,
+                    lineup::lineup_picture,
+                    match_setup::update_host_map_ui,
+                    (match_setup::paint_map_step, match_setup::follow_map_bar),
+                    match_setup::retire_previews,
+                    match_setup::render_previews,
+                )
+                    .chain()
+                    .run_if(in_state(Screen::Versus)),
             )
                 .chain(),
             (replays::tend_replay_bar, replays::update_replay_bar).chain(),
             // The reel lands after the card is up; the card's line waits.
-            (poll_reel, results::update_highlight_line)
-                .chain()
-                .run_if(versus_over),
+            (
+                (poll_reel, results::update_highlight_line)
+                    .chain()
+                    .run_if(versus_over),
+                (results::refresh_over_keys, results::swap_card_keys).chain(),
+            ),
         )
             .chain()
             .in_set(Frame::Chrome),
@@ -1065,6 +1305,31 @@ use session::*;
 mod tests {
     use super::*;
 
+    /// Every schedule the shell adds builds: no system ordered against one
+    /// scheduled twice, no cycle. A build error is a panic on the first
+    /// frame of the real game, which no test of a system on its own sees.
+    #[test]
+    fn every_schedule_builds() {
+        use bevy::ecs::schedule::Schedules;
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::state::app::StatesPlugin,
+            bevy::input::InputPlugin,
+        ));
+        add_startup(&mut app);
+        add_screen_transitions(&mut app);
+        add_phase_transitions(&mut app);
+        add_frame_systems(&mut app);
+        let world = app.world_mut();
+        let mut schedules = world.remove_resource::<Schedules>().expect("schedules");
+        for (label, schedule) in schedules.iter_mut() {
+            if let Err(e) = schedule.initialize(world) {
+                panic!("{label:?}: {e}");
+            }
+        }
+    }
+
     /// A pasted code, a replay to watch and the daily wait for the arena
     /// beside the request for it. When another screen is entered instead,
     /// they go: left behind, the next way into the arena of any kind (an
@@ -1077,20 +1342,19 @@ mod tests {
         app.init_resource::<Resuming>();
         app.init_resource::<Playback>();
         app.init_resource::<Daily>();
+        app.init_resource::<rematch::LocalTable>();
+        app.init_resource::<match_setup::MatchConfig>();
+        app.init_state::<VersusPhase>();
         add_round_forgetting(&mut app);
         app.update();
         let ask = |app: &mut App, screen: Screen| {
             let world = app.world_mut();
-            world.resource_mut::<Resuming>().0 = Some(crate::app::suspend::Suspended {
+            world.resource_mut::<Resuming>().0 = Some(suspend::Suspended {
                 seats: 2,
-                bots: [None; crate::sim::MAX_PLAYERS],
-                board: crate::sim::classic_arena(false, 2),
+                bots: [None; MAX_PLAYERS],
+                board: classic_arena(false, 2),
             });
-            let replay = crate::sim::Replay::new(crate::sim::Level::from_board(
-                "T",
-                3,
-                crate::sim::classic_arena(false, 2),
-            ));
+            let replay = Replay::new(Level::from_board("T", 3, classic_arena(false, 2)));
             world.resource_mut::<Playback>().0 = Some((replay, 0));
             world.resource_mut::<Daily>().active = true;
             world.resource_mut::<NextState<Screen>>().set(screen);
@@ -1127,10 +1391,10 @@ mod tests {
         app.init_state::<VersusPhase>();
         app.init_resource::<editor::EditorState>();
         app.insert_resource(Campaign {
-            kind: campaign::CampaignKind::TidePool,
             levels: vec![level.clone()],
             index: 0,
             builtins: 1,
+            coop: 0,
         });
         app.init_resource::<PendingActions>();
         app.init_resource::<Paused>();
@@ -1141,6 +1405,7 @@ mod tests {
         app.init_resource::<Controllers>();
         app.init_resource::<bot_seats::BotSeats>();
         app.init_resource::<awards::RoundTally>();
+        app.init_resource::<Time<Fixed>>();
         add_sim_driver(&mut app);
         app.update();
         let mut board = level.board();
@@ -1157,6 +1422,61 @@ mod tests {
         );
         app.world_mut().run_schedule(FixedUpdate);
         assert_eq!(ticks(&app), PUZZLE_TICK_LIMIT, "and nothing past it");
+    }
+
+    /// A round resumed from a code opens at once, on its saved tick: the
+    /// first fixed step plays no tick and lets go of the time the clock
+    /// banked while the board was built, and the next plays the saved
+    /// tick. A round played on from there ticks every step.
+    #[test]
+    fn a_resumed_round_starts_at_its_saved_tick() {
+        use std::time::Duration;
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_state(Screen::Versus);
+        app.insert_state(VersusPhase::Running);
+        app.init_state::<Phase>();
+        app.init_resource::<editor::EditorState>();
+        app.insert_resource(Campaign {
+            levels: Vec::new(),
+            index: 0,
+            builtins: 0,
+            coop: 0,
+        });
+        app.init_resource::<PendingActions>();
+        app.init_resource::<Paused>();
+        app.init_resource::<net::Online>();
+        app.init_resource::<Recorder>();
+        app.init_resource::<Playback>();
+        app.init_resource::<replays::PlaybackSpeed>();
+        app.init_resource::<Controllers>();
+        app.init_resource::<bot_seats::BotSeats>();
+        app.init_resource::<awards::RoundTally>();
+        app.init_resource::<Time<Fixed>>();
+        add_sim_driver(&mut app);
+        app.update();
+        let mut board = classic_arena(false, 2);
+        for _ in 0..300 {
+            board.tick_idle();
+        }
+        app.insert_resource(Sim(board));
+        app.insert_resource(countdown::FirstStep::waiting());
+        // The long frame that built the board, banked by the fixed clock.
+        app.world_mut()
+            .resource_mut::<Time<Fixed>>()
+            .accumulate_overstep(Duration::from_millis(70));
+        let ticks = |app: &App| app.world().resource::<Sim>().0.ticks();
+        app.world_mut().run_schedule(FixedUpdate);
+        assert_eq!(ticks(&app), 300, "the first step plays no tick");
+        assert_eq!(
+            app.world().resource::<Time<Fixed>>().overstep(),
+            Duration::ZERO,
+            "and the build's time is let go"
+        );
+        app.world_mut().run_schedule(FixedUpdate);
+        assert_eq!(ticks(&app), 301, "the saved tick is the next one played");
+        app.world_mut().run_schedule(FixedUpdate);
+        assert_eq!(ticks(&app), 302);
     }
 
     /// A stage reloaded mid-run is back at its setup, on a fresh beach,

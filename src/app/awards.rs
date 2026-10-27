@@ -1,6 +1,7 @@
 //! The round's awards: a line or two under the standings for something
 //! other than winning. Who came back from furthest behind, whose lure paid
-//! most, who planted the most arrows, who lost the most.
+//! most, whose steered gulls stole most, who planted the most arrows, who
+//! lost the most.
 //!
 //! Taken tick by tick rather than from the [`SimEvent`] stream, because the
 //! events are gathered a frame at a time and frames fall differently on
@@ -35,6 +36,23 @@ pub struct SeatTally {
     pub best_lure: u32,
     /// The furthest this seat trailed the leader at any tick.
     pub worst_deficit: u32,
+    /// Points the gulls this seat steered took from each castle, by
+    /// victim ([`Board::stolen`]), its own included: which of them were
+    /// stolen depends on the teams ([`SeatTally::stolen_from_rivals`]).
+    pub stolen: [u32; MAX_PLAYERS],
+}
+
+impl SeatTally {
+    /// What the gulls `seat` steered took from rival castles under `mode`:
+    /// every castle but its own team's, which in free-for-all is its own
+    /// alone. A gull walked into a teammate's keep cost the team, and is
+    /// no theft to be crowned for.
+    pub fn stolen_from_rivals(&self, seat: u8, mode: TeamMode) -> u32 {
+        (0..MAX_PLAYERS as u8)
+            .filter(|&victim| mode.team_of(victim) != mode.team_of(seat))
+            .map(|victim| self.stolen[usize::from(victim)])
+            .sum()
+    }
 }
 
 /// The board as it stood before or after one tick, as much of it as the
@@ -45,6 +63,9 @@ pub struct Reading {
     pub scores: [u32; MAX_PLAYERS],
     /// Whose lure is running.
     pub lure: Option<PlayerId>,
+    /// What each seat's steered gulls have taken from each castle so far
+    /// this round, as `stolen[steerer][victim]`.
+    pub stolen: [[u32; MAX_PLAYERS]; MAX_PLAYERS],
 }
 
 impl Reading {
@@ -53,6 +74,9 @@ impl Reading {
             ticks: board.ticks(),
             scores: *board.scores(),
             lure: board.lure().map(|(owner, _)| owner),
+            stolen: std::array::from_fn(|by| {
+                std::array::from_fn(|victim| board.stolen(by as PlayerId, victim as PlayerId))
+            }),
         }
     }
 }
@@ -115,6 +139,13 @@ impl RoundTally {
             let (was, now) = (before.scores[seat], after.scores[seat]);
             tally.lost += was.saturating_sub(now);
             tally.placed += u32::from(placed[seat]);
+            for (taken, (now, was)) in tally
+                .stolen
+                .iter_mut()
+                .zip(after.stolen[seat].iter().zip(&before.stolen[seat]))
+            {
+                *taken += now.saturating_sub(*was);
+            }
             if let Some((owner, gained)) = &mut self.lure
                 && usize::from(*owner) == seat
             {
@@ -171,12 +202,13 @@ impl RoundTally {
         for (kind, figure) in [
             (
                 AwardKind::Lure,
-                (|t: &SeatTally| t.best_lure) as fn(&SeatTally) -> u32,
+                (|t: &SeatTally, _, _| t.best_lure) as fn(&SeatTally, u8, TeamMode) -> u32,
             ),
-            (AwardKind::Arrows, |t| t.placed),
-            (AwardKind::Hit, |t| t.lost),
+            (AwardKind::Stolen, SeatTally::stolen_from_rivals),
+            (AwardKind::Arrows, |t, _, _| t.placed),
+            (AwardKind::Hit, |t, _, _| t.lost),
         ] {
-            let of = |seat: usize| Some(figure(&seats[seat]));
+            let of = |seat: usize| Some(figure(&seats[seat], seat as u8, mode));
             out.extend(top(seats.len(), of, 1).map(|(who, n)| Award { kind, who, n }));
         }
         out
@@ -199,6 +231,9 @@ fn top(seats: usize, figure: impl Fn(usize) -> Option<u32>, floor: u32) -> Optio
 pub enum AwardKind {
     Comeback,
     Lure,
+    /// The most points taken by gulls a seat's arrows steered into rival
+    /// castles ([`SeatTally::stolen_from_rivals`]).
+    Stolen,
     Arrows,
     Hit,
 }
@@ -218,6 +253,7 @@ impl Award {
         let template = match self.kind {
             AwardKind::Comeback => tr.award_comeback,
             AwardKind::Lure => tr.award_lure,
+            AwardKind::Stolen => tr.award_stolen,
             AwardKind::Arrows => tr.award_arrows,
             AwardKind::Hit => tr.award_hit,
         };
@@ -240,6 +276,7 @@ mod tests {
             ticks,
             scores,
             lure,
+            stolen: [[0; MAX_PLAYERS]; MAX_PLAYERS],
         }
     }
 
@@ -437,5 +474,65 @@ mod tests {
             "the bots planted arrows: {:?}",
             tally.seats
         );
+    }
+
+    /// The thief's line: what each seat's steered gulls took from the
+    /// other castles over the round, read off the board tick by tick.
+    #[test]
+    fn the_most_stolen_is_the_steerer_whose_gulls_took_most() {
+        let mut tally = RoundTally::default();
+        let mut before = reading(0, [0, 20, 0, 0, 0, 0], None);
+        for (tick, by_steerer) in [[0, 0, 0, 0, 0, 0], [0, 0, 10, 0, 0, 0], [3, 0, 10, 0, 0, 0]]
+            .into_iter()
+            .enumerate()
+        {
+            // Every raid on P2's castle.
+            let stolen = by_steerer.map(|took| [0, took, 0, 0, 0, 0]);
+            let after = Reading {
+                stolen,
+                ..reading(tick as u64 + 1, [0, 20, 0, 0, 0, 0], None)
+            };
+            tally.fold(before, after, [false; MAX_PLAYERS]);
+            before = after;
+        }
+        let stolen = tally
+            .awards(
+                3,
+                TeamMode::Solo,
+                &[false, true, false, false, false, false],
+            )
+            .into_iter()
+            .find(|a| a.kind == AwardKind::Stolen)
+            .expect("a thief");
+        assert_eq!((stolen.who.clone(), stolen.n), (vec![2], 10));
+        let line = stolen.line(&EN, |seat| format!("P{}", seat + 1));
+        assert_eq!(line, "Most stolen: P3, 10");
+    }
+
+    /// In teams a gull walked into a teammate's castle is no theft: P1
+    /// raiding partner P2 for 20 tops the free-for-all line, and under
+    /// pairs the line goes to P3, whose 5 came off the other team.
+    #[test]
+    fn a_raid_on_a_teammate_is_not_stolen() {
+        let mut tally = RoundTally::default();
+        let before = reading(0, [0; MAX_PLAYERS], None);
+        let mut stolen = [[0; MAX_PLAYERS]; MAX_PLAYERS];
+        stolen[0][1] = 20;
+        stolen[2][0] = 5;
+        let after = Reading {
+            stolen,
+            ..reading(1, [0; MAX_PLAYERS], None)
+        };
+        tally.fold(before, after, [false; MAX_PLAYERS]);
+        let thief = |mode| {
+            tally
+                .awards(4, mode, &[false, false, true, true, false, false])
+                .into_iter()
+                .find(|a| a.kind == AwardKind::Stolen)
+                .map(|a| (a.who, a.n))
+        };
+        assert_eq!(thief(TeamMode::Solo), Some((vec![0], 20)));
+        assert_eq!(thief(TeamMode::Pairs), Some((vec![2], 5)));
+        assert_eq!(tally.seats[0].stolen_from_rivals(0, TeamMode::Pairs), 0);
     }
 }

@@ -1,0 +1,23 @@
+# The left crab bounces off the end of the corridor before it can reach
+# its door, and the right crab walks behind a gull it would catch up
+# with. P1's second arrow shoos the gull out by a side door.
+name: Shoo
+hands: 2 1
+kind: puzzle
+seed: 2125266945
+crab: 1,2 L L common
+crab: 9,2 L R common
+gull: 8,2 L
+solution: 2,2 D R; 3,2 U L; 7,2 D L
+map:
++-+-+-+-+-+-+-+-+-+-+
+|# # 0 ~ K K # # # #|
++ + + + + + + + + + +
+|# # # .|K K # # # #|
++ + + + +-+-+ + + + +
+|. . . . . . . . . .|
++ + + +-+-+ + + +-+-+
+|# # .|K K # # .|K K|
++ + + + + + + + + + +
+|# 0 ~ K K # 0 ~ K K|
++-+-+-+-+-+-+-+-+-+-+

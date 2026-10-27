@@ -19,8 +19,14 @@ pub struct DoorLine(usize);
 /// feedback, the keys.
 const DOOR_LINES: usize = 3 + MAX_PLAYERS + 1;
 
-/// What the card says, line by line, as it stands.
-fn door_lines(bots: &BotSeats, tr: &crate::app::i18n::Tr, beach: &str) -> Vec<(String, Color)> {
+/// What the card says, line by line, as it stands. Its last line names
+/// the keys, or for a pad's player the card's own pad table.
+fn door_lines(
+    bots: &BotSeats,
+    tr: &crate::app::i18n::Tr,
+    beach: &str,
+    device: crate::app::gamepad::LastDevice,
+) -> Vec<(String, Color)> {
     let mut lines = vec![(String::new(), Color::NONE); DOOR_LINES];
     let Some(door) = &bots.door else {
         return lines;
@@ -53,7 +59,7 @@ fn door_lines(bots: &BotSeats, tr: &crate::app::i18n::Tr, beach: &str) -> Vec<(S
             None => format!("{who}  {}   {}", door.string(chair), tr.door_waiting),
         };
         let ink = match chair.bot {
-            Some(_) => crate::app::palette::player_color(chair.seat).lighter(0.2),
+            Some(_) => crate::app::palette::seat_text(chair.seat),
             None => Color::WHITE,
         };
         lines[2 + i] = (line, ink);
@@ -62,14 +68,14 @@ fn door_lines(bots: &BotSeats, tr: &crate::app::i18n::Tr, beach: &str) -> Vec<(S
         bots.feedback.clone(),
         crate::app::palette::PARCHMENT.with_alpha(0.8),
     );
-    let keys = match door.showing_lan {
-        true => tr.door_prompt_lan,
-        false => tr.door_prompt,
+    let keys = match (device, door.showing_lan) {
+        (crate::app::gamepad::LastDevice::Pad, lan) => {
+            crate::app::gamepad::scheme::legend(tr, &crate::app::gamepad::Face::Door { lan })
+        }
+        (crate::app::gamepad::LastDevice::Keyboard, true) => tr.door_prompt_lan.to_string(),
+        (crate::app::gamepad::LastDevice::Keyboard, false) => tr.door_prompt.to_string(),
     };
-    lines[DOOR_LINES - 1] = (
-        keys.to_string(),
-        crate::app::palette::PARCHMENT.with_alpha(0.7),
-    );
+    lines[DOOR_LINES - 1] = (keys, crate::app::palette::PARCHMENT.with_alpha(0.7));
     lines
 }
 
@@ -80,6 +86,7 @@ pub fn door_card(
     bots: Res<BotSeats>,
     settings: Res<crate::app::settings::GameSettings>,
     lobby: Res<crate::app::lobby::LobbyState>,
+    device: Res<crate::app::gamepad::LastDevice>,
     cards: Query<Entity, With<DoorCard>>,
     mut lines: Query<(&DoorLine, &mut Text, &mut TextColor, &mut Node)>,
 ) {
@@ -129,7 +136,7 @@ pub fn door_card(
         return;
     }
     let beach = lobby.joining_beach().unwrap_or_default();
-    let said = door_lines(&bots, settings.tr(), &beach);
+    let said = door_lines(&bots, settings.tr(), &beach, *device);
     for (line, mut text, mut ink, mut node) in &mut lines {
         let (words, color) = &said[line.0];
         crate::app::menu_ui::set_text(&mut text, words);

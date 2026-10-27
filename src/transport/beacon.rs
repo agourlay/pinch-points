@@ -53,8 +53,8 @@ pub enum Beacon {
         /// False from a build that never said, which predates bots.
         bots: bool,
         /// The host's socket has taken every peer it can, watchers
-        /// included, and drops the next without a word: no room to play
-        /// *or* to watch. False from a build that never said.
+        /// included, and answers the next with `NetMsg::Full`: no room to
+        /// play *or* to watch. False from a build that never said.
         full: bool,
     },
     /// Going away for good: the host is leaving the lobby. Lobbies drop the
@@ -337,10 +337,19 @@ pub struct Discovery {
 }
 
 impl Discovery {
+    /// Listen on the first of the [`LOBBY_PORTS`] that is free.
     pub fn bind() -> io::Result<Discovery> {
+        Discovery::bind_on(&LOBBY_PORTS)
+    }
+
+    /// Listen on the first of `ports` that is free. Tests listen on ports
+    /// of their own (0 for one the system picks), so that they hear only
+    /// the announcers they aim at them ([`Air::loopback`]) and leave the
+    /// real ladder to whatever else is running.
+    pub fn bind_on(ports: &[u16]) -> io::Result<Discovery> {
         let mut last_err = io::Error::new(io::ErrorKind::AddrInUse, "no lobby port free");
-        for port in LOBBY_PORTS {
-            match UdpSocket::bind(("0.0.0.0", port)) {
+        for &port in ports {
+            match super::bind_udp(port) {
                 Ok(socket) => {
                     socket.set_nonblocking(true)?;
                     return Ok(Discovery { socket });
@@ -385,9 +394,43 @@ impl Discovery {
     }
 }
 
+/// Where an announcer's beacons go.
+///
+/// On a real lobby that is the whole LAN and this machine's own loopback,
+/// on every one of the [`LOBBY_PORTS`] ([`Air::lan`]). A test stands up
+/// hosts and listeners by the dozen in one process, and aims its beacons at
+/// its own listeners' ports on loopback alone ([`Air::loopback`]): heard by
+/// nothing else, and hearing nothing from anything else on the machine.
+pub struct Air {
+    ports: Vec<u16>,
+    /// Shout at the broadcast addresses too, not only at loopback.
+    broadcast: bool,
+}
+
+impl Air {
+    /// The real thing: the LAN and loopback, on the whole lobby ladder.
+    pub fn lan() -> Air {
+        Air {
+            ports: LOBBY_PORTS.to_vec(),
+            broadcast: true,
+        }
+    }
+
+    /// Loopback alone, to these ports and no others.
+    #[cfg(test)]
+    pub fn loopback(ports: &[u16]) -> Air {
+        Air {
+            ports: ports.to_vec(),
+            broadcast: false,
+        }
+    }
+}
+
 /// Broadcasts "there is a game at this port" for a hosting player.
 pub struct Announcer {
     socket: UdpSocket,
+    /// Where the beacons go: [`Air::lan`] but in a test.
+    air: Air,
     /// This host's own number, drawn once and repeated in every beacon.
     /// See [`Beacon::id`] for what it is for.
     id: u64,
@@ -463,12 +506,18 @@ impl Announcer {
     /// into a single row. An ephemeral port is the one thing the OS
     /// promises not to hand out twice at once.
     pub fn new(id: u64) -> io::Result<Announcer> {
-        let socket = UdpSocket::bind(("0.0.0.0", 0))?;
+        Announcer::on(id, Air::lan())
+    }
+
+    /// [`Announcer::new`], sending where `air` says.
+    pub fn on(id: u64, air: Air) -> io::Result<Announcer> {
+        let socket = super::bind_udp(0)?;
         socket.set_broadcast(true)?;
         socket.set_nonblocking(true)?;
         let port = u64::from(socket.local_addr()?.port());
         Ok(Announcer {
             socket,
+            air,
             id: id.rotate_left(16) ^ port,
             subnet: std::sync::atomic::AtomicU32::new(bits_of(
                 local_ip().and_then(subnet_broadcast),
@@ -516,8 +565,8 @@ impl Announcer {
         let wide = wide_ports(round, times > 1);
         let subnet = self.subnet(round);
         for _ in 0..times {
-            for port in LOBBY_PORTS {
-                if wide.contains(&port) {
+            for &port in &self.air.ports {
+                if self.air.broadcast && wide.contains(&port) {
                     let _ = self.socket.send_to(&packet, ("255.255.255.255", port));
                     if let Some(subnet) = subnet {
                         let _ = self.socket.send_to(&packet, (subnet, port));

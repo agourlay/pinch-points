@@ -229,7 +229,7 @@ pub fn ripple_pools(
         // shallows' edge.
         transform.scale = Vec3::splat(0.12 + 0.5 * t);
         let strength = (t * std::f32::consts::PI).sin();
-        sprite.color = Color::srgba(0.88, 0.95, 0.98, 0.42 * strength);
+        layout::tint(&mut sprite, Color::srgba(0.88, 0.95, 0.98, 0.42 * strength));
     }
 }
 

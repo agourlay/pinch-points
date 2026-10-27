@@ -1,29 +1,69 @@
 //! Gamepad input (spec §8.1). The face buttons form a diamond of four
 //! directions, so placement maps them directly: top places Up, bottom Down,
-//! left Left, right Right. D-pad or left stick moves the cursor, L1 removes,
-//! R1 clears own signposts, Start pauses.
+//! left Left, right Right. D-pad or left stick moves the cursor, LB removes,
+//! RB clears own signposts, Start pauses. What every other button does, on
+//! every screen, is in [`scheme`]'s tables.
 //!
-//! Pads fill the human seats **from the highest seat downward**, so every
+//! Pads fill the human seats **from P2 upwards, P1 last**, so every
 //! two-player setup works without configuration: one pad drives P2 beside
 //! a P1 keyboard, two pads drive P2 and P1, and no pads leaves both
-//! keyboard layouts. With four humans, pads land on P4 and P3; with six,
-//! on P6 down to P3. The keyboard always stays usable for seats 1-2; both
-//! feed the identical commit paths as §8.2.
+//! keyboard layouts. A setup worked with a pad makes that pad P1's, so a
+//! Steam Deck alone plays P1 against the AI. On the setup screen a pad's
+//! Start claims the next seat above P1 and keeps it (see [`PadSeats`]). The keyboard always
+//! stays usable for seats 1-2; both feed the identical commit paths as
+//! §8.2.
 
 mod bridge;
+pub mod face;
 mod rumble;
+pub mod scheme;
 mod seats;
 
 pub use bridge::{Bridged, pad_bridge_release, pad_menu_bridge};
+pub use face::{
+    LastPad, PadFace, hands_at_the_menu, pad_prompts_from_env, read_face, track_last_device,
+};
 pub use rumble::rumble_on_raid;
-pub use seats::{PadSeats, keep_pad_order, pad_claim_seats, seat_of_claim};
+pub use scheme::{Face, LastDevice, PadPick};
+pub use seats::{
+    PadSeats, SeatPad, follow_the_setup_hands, forget_the_pilot, keep_pad_order,
+    let_a_lone_players_claims_go, let_claims_go, pad_claim_seats,
+};
 
 use crate::app::cursor::{Cursor, HoldRepeat};
 use crate::app::play_input::{SeatCommand, apply_setup, queue_versus};
 use crate::app::settings::GameSettings;
 use crate::app::{PendingActions, Phase, PlacementDenied, Sim};
-use crate::sim::Direction;
 use bevy::prelude::*;
+
+/// The pads by the seats they drive, on the face their buttons are read
+/// by: for a system outside this module that places for each cursor with
+/// the pad that moves it ([`pad_move_cursor`]), as [`pad_setup_input`]
+/// does.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct SeatPads<'w, 's> {
+    pads: Query<'w, 's, (Entity, &'static Gamepad)>,
+    face: Res<'w, PadFace>,
+    seats: Res<'w, PadSeats>,
+}
+
+impl SeatPads<'_, '_> {
+    /// Whether the pad `player`'s cursor answers to, among the seats with
+    /// a cursor (`players`), pressed the button that does `does` on this
+    /// face.
+    pub fn pressed(
+        &self,
+        settings: &GameSettings,
+        players: &[u8],
+        player: u8,
+        does: scheme::Does,
+    ) -> bool {
+        let players = seats::seated(players.iter().copied());
+        self.seats
+            .pad_for(&self.pads, settings, &players, player)
+            .is_some_and(|pad| scheme::pressed_on(&self.face.0, does, pad))
+    }
+}
 
 /// Per-cursor hold-to-repeat for held pad directions, and whether a
 /// direction was held last frame, which makes this frame's a fresh press
@@ -51,24 +91,19 @@ fn fresh_press(was_held: bool, held: bool, dpad_just: bool) -> bool {
     held && (!was_held || dpad_just)
 }
 
-/// The four commit directions in face-button diamond order.
-const PLACES: [(GamepadButton, Direction); 4] = [
-    (GamepadButton::North, Direction::Up),
-    (GamepadButton::South, Direction::Down),
-    (GamepadButton::West, Direction::Left),
-    (GamepadButton::East, Direction::Right),
-];
-
-/// The pad's fresh presses that mean the same in setup and in versus: a
-/// face button places, L1 removes. R1 and Start are read by each mode.
-fn pad_commands(pad: &Gamepad) -> impl Iterator<Item = SeatCommand> + '_ {
-    let places = PLACES
+/// The pad's fresh presses on `face` that place and remove, which mean
+/// the same in setup and in versus: the rows of its table that do. Clear
+/// and start are read by each mode.
+fn pad_commands<'a>(face: &'a Face, pad: &'a Gamepad) -> impl Iterator<Item = SeatCommand> + 'a {
+    scheme::binds(face)
         .into_iter()
-        .filter(|(button, _)| pad.just_pressed(*button));
-    places.map(|(_, dir)| SeatCommand::Place(dir)).chain(
-        pad.just_pressed(GamepadButton::LeftTrigger)
-            .then_some(SeatCommand::Remove),
-    )
+        .filter(|row| row.pad.button().is_some_and(|b| pad.just_pressed(b)))
+        .filter_map(|row| {
+            if let scheme::Does::Place(dir) = row.does {
+                return Some(SeatCommand::Place(dir));
+            }
+            (row.does == scheme::Does::Remove).then_some(SeatCommand::Remove)
+        })
 }
 
 fn held_direction(pad: &Gamepad, deadzone: f32) -> (i16, i16) {
@@ -146,7 +181,7 @@ pub fn pad_move_cursor(
 /// keyboard uses.
 pub fn pad_versus_input(
     pads: Query<(Entity, &Gamepad)>,
-    seats: Res<PadSeats>,
+    (face, seats): (Res<PadFace>, Res<PadSeats>),
     settings: Res<GameSettings>,
     sim: Res<Sim>,
     mut pending: ResMut<PendingActions>,
@@ -159,11 +194,10 @@ pub fn pad_versus_input(
         let Some(pad) = seats.pad_for(&pads, &settings, &players, cursor.player) else {
             continue;
         };
-        // R1 clears held, as the keyboard's clear-all does: one removal
+        // RB clears held, as the keyboard's clear-all does: one removal
         // a tick for as long as it is down.
-        let commands = pad_commands(pad).chain(
-            pad.pressed(GamepadButton::RightTrigger)
-                .then_some(SeatCommand::ClearAll),
+        let commands = pad_commands(&face.0, pad).chain(
+            scheme::held_on(&face.0, scheme::Does::Clear, pad).then_some(SeatCommand::ClearAll),
         );
         for command in commands {
             queue_versus(command, &mut cursor, board, &mut pending, &mut denied);
@@ -172,13 +206,13 @@ pub fn pad_versus_input(
 }
 
 /// Puzzle setup commits from P1's pad: place/remove directly, Start begins
-/// the run (mirrors the keyboard Enter). P1's pad is whichever one
-/// [`PadSeats::pad_for`] hands the seat - the one it named in settings, or the
-/// first unclaimed one - the same answer `pad_move_cursor` gives, so the
+/// the run (mirrors the keyboard Enter), as the setup's table says. P1's pad is whichever one
+/// [`PadSeats::pad_for`] hands the seat (the one it named in settings, or the
+/// first pad plugged in), the same answer `pad_move_cursor` gives, so the
 /// pad that moves the cursor is the pad that places.
 pub fn pad_setup_input(
     pads: Query<(Entity, &Gamepad)>,
-    seats: Res<PadSeats>,
+    (face, seats): (Res<PadFace>, Res<PadSeats>),
     settings: Res<GameSettings>,
     mut sim: ResMut<Sim>,
     mut next_phase: ResMut<NextState<Phase>>,
@@ -192,15 +226,13 @@ pub fn pad_setup_input(
         let Some(pad) = seats.pad_for(&pads, &settings, &players, cursor.player) else {
             continue;
         };
-        // The board is still, so R1 clears on the press, all at once.
-        let commands = pad_commands(pad)
+        // The board is still, so RB clears on the press, all at once.
+        let face = &face.0;
+        let on = |does| scheme::pressed_on(face, does, pad);
+        let commands = pad_commands(face, pad)
+            .chain(on(scheme::Does::Clear).then_some(SeatCommand::ClearAll))
             .chain(
-                pad.just_pressed(GamepadButton::RightTrigger)
-                    .then_some(SeatCommand::ClearAll),
-            )
-            .chain(
-                pad.just_pressed(GamepadButton::Start)
-                    .then_some(SeatCommand::Start),
+                (on(scheme::Does::Start) || on(scheme::Does::Run)).then_some(SeatCommand::Start),
             );
         for command in commands {
             apply_setup(command, &mut cursor, &mut sim, &mut next_phase, &mut denied);

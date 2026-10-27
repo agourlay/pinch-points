@@ -196,6 +196,9 @@ pub struct SettingsMenu {
     pub selected: usize,
     /// State of the reset row; cleared whenever the cursor leaves it.
     pub reset: ResetPrompt,
+    /// "Rounds kept" as the settings flow was entered, so leaving it knows
+    /// whether the cap went down ([`apply_replay_cap`]).
+    pub replay_cap_was: u8,
 }
 
 #[derive(Component)]
@@ -293,8 +296,14 @@ pub fn enter_settings(
                         });
                     }
                 });
-            // Read-only controller mapping reference, under the card.
-            for line in [tr.pad_help1, tr.pad_help2] {
+            // Read-only controller reference, under the card: a round's
+            // controls and the menus', written from their own tables.
+            use crate::app::gamepad::{Face, scheme};
+            for (lead, face) in [
+                (tr.pad.help_round, Face::Round),
+                (tr.pad.help_menus, Face::Settings),
+            ] {
+                let line = format!("{lead} {}", scheme::legend(tr, &face));
                 wrap.spawn(menu_ui::footnote(line));
             }
         });
@@ -472,6 +481,58 @@ pub fn settings_input(
     }
 }
 
+/// Note "Rounds kept" as the settings flow is entered, for
+/// [`apply_replay_cap`] to measure a lowered dial from. Back from the key
+/// bindings is the same visit, and keeps the cap it began with.
+pub fn note_replay_cap(
+    settings: Res<GameSettings>,
+    mut menu: ResMut<SettingsMenu>,
+    previous: Option<Res<PreviousState<Screen>>>,
+) {
+    if !previous.is_some_and(|previous| in_settings_flow(**previous)) {
+        menu.replay_cap_was = settings.replay_cap;
+    }
+}
+
+/// Whether `screen` is part of the settings flow: Settings itself, and the
+/// key bindings it opens a door to, which hand back to it.
+pub fn in_settings_flow(screen: Screen) -> bool {
+    match screen {
+        Screen::Settings | Screen::Controls => true,
+        Screen::Menu
+        | Screen::Puzzle
+        | Screen::Versus
+        | Screen::Editor
+        | Screen::Lobby
+        | Screen::MatchSetup
+        | Screen::Achievements
+        | Screen::StageSelect
+        | Screen::Replays
+        | Screen::Interlude
+        | Screen::Language
+        | Screen::NewVersion => false,
+    }
+}
+
+/// "Rounds kept" lowered on this visit is applied to the shelf as the
+/// settings flow is left, with the rest of the settings saved. At the dial
+/// it would be applied on every step, and a player stepping 20 down past
+/// 10 on the way to 15 would lose five rounds to the overshoot. A visit to
+/// the key bindings and back is still the same visit: run as Settings or
+/// Controls is left, it does nothing while the screen entered is the
+/// other one ([`in_settings_flow`]).
+pub fn apply_replay_cap(
+    screen: Res<State<Screen>>,
+    settings: Res<GameSettings>,
+    menu: Res<SettingsMenu>,
+    library: Res<crate::app::replays::Library>,
+) {
+    if in_settings_flow(*screen.get()) {
+        return;
+    }
+    crate::app::replays::cap_changed_in(&library.dir, menu.replay_cap_was, settings.replay_cap);
+}
+
 /// Whether the cursor puts `< >` around this row's value. Doors do not step
 /// through anything, so they wear none, and the widest a value ever draws
 /// depends on the answer: one rule rather than one in the screen and
@@ -485,12 +546,28 @@ fn has_arrows(row: Row) -> bool {
 /// on this row" rather than as part of every value.
 ///
 /// Pure, so the wording of every setting can be checked without a window.
+/// The button the card's doors name for a pad's player: the settings
+/// table's for Enter, which the bridge presses for it. `None` at a
+/// keyboard, whose doors name Enter in their own words.
+fn door_button(
+    tr: &crate::app::i18n::Tr,
+    device: crate::app::gamepad::LastDevice,
+) -> Option<String> {
+    crate::app::gamepad::scheme::button_name(
+        &crate::app::gamepad::Face::Settings,
+        crate::app::gamepad::scheme::Does::Confirm,
+        tr,
+    )
+    .filter(|_| device == crate::app::gamepad::LastDevice::Pad)
+}
+
 pub(super) fn row_text(
     tr: &crate::app::i18n::Tr,
     settings: &GameSettings,
     caps: &crate::app::keycaps::KeyCaps,
     row: Row,
     reset: ResetPrompt,
+    device: crate::app::gamepad::LastDevice,
 ) -> (String, String) {
     let on_off = |on: bool| if on { tr.val_on } else { tr.val_off }.to_string();
     let (label, value) = match row {
@@ -559,22 +636,33 @@ pub(super) fn row_text(
         Row::UpdateCheck => (tr.set_update_check, on_off(settings.check_updates)),
         // Doors, not dials: no `< value >` decoration.
         Row::KeyBindings => {
-            return (tr.set_key_bindings.to_string(), tr.val_open.to_string());
+            let open = match door_button(tr, device) {
+                Some(button) => fill(tr.pad.val_open, &[("b", &button)]),
+                None => tr.val_open.to_string(),
+            };
+            return (tr.set_key_bindings.to_string(), open);
         }
         Row::ResetProgress => {
-            let state = match reset {
-                ResetPrompt::Idle => tr.val_reset,
-                ResetPrompt::Armed => tr.val_reset_confirm,
-                ResetPrompt::Done => tr.val_reset_done,
+            let (idle, armed) = match door_button(tr, device) {
+                Some(button) => (
+                    fill(tr.pad.val_reset, &[("b", &button)]),
+                    fill(tr.pad.reset_confirm, &[("b", &button)]),
+                ),
+                None => (tr.val_reset.to_string(), tr.val_reset_confirm.to_string()),
             };
-            return (tr.set_reset_progress.to_string(), state.to_string());
+            let state = match reset {
+                ResetPrompt::Idle => idle,
+                ResetPrompt::Armed => armed,
+                ResetPrompt::Done => tr.val_reset_done.to_string(),
+            };
+            return (tr.set_reset_progress.to_string(), state);
         }
     };
     (label.to_string(), value)
 }
 
 pub fn update_settings_ui(
-    settings: Res<GameSettings>,
+    (settings, device): (Res<GameSettings>, Res<crate::app::gamepad::LastDevice>),
     caps: Res<crate::app::keycaps::KeyCaps>,
     menu: Res<SettingsMenu>,
     art: Res<crate::app::art::Art>,
@@ -595,7 +683,7 @@ pub fn update_settings_ui(
     for (cell, mut text, mut color) in &mut cells {
         let row = Row::ALL[cell.0];
         let picked = cell.0 == menu.selected;
-        let (label, value) = row_text(tr, &settings, &caps, row, menu.reset);
+        let (label, value) = row_text(tr, &settings, &caps, row, menu.reset, *device);
         let line = match cell.1 {
             Half::Label => label,
             Half::Value if picked && has_arrows(row) => format!("< {value} >"),
@@ -618,6 +706,7 @@ pub fn update_settings_ui(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::gamepad::LastDevice;
     use crate::app::i18n::EN;
 
     /// The card is built by walking [`SECTIONS`] with a running index, and
@@ -650,6 +739,7 @@ mod tests {
                     &crate::app::keycaps::KeyCaps::default(),
                     row,
                     ResetPrompt::Idle,
+                    LastDevice::Keyboard,
                 );
                 assert!(!label.trim().is_empty(), "{row:?} in {lang:?} has no name");
                 assert!(!value.trim().is_empty(), "{row:?} in {lang:?} has no value");
@@ -694,7 +784,12 @@ mod tests {
             };
             let tr = settings.tr();
             for row in Row::ALL {
-                for reset in [ResetPrompt::Idle, ResetPrompt::Armed, ResetPrompt::Done] {
+                for (reset, device) in [ResetPrompt::Idle, ResetPrompt::Armed, ResetPrompt::Done]
+                    .into_iter()
+                    .flat_map(|reset| {
+                        [LastDevice::Keyboard, LastDevice::Pad].map(|device| (reset, device))
+                    })
+                {
                     for team_mode in crate::app::teams::TeamMode::ALL {
                         // Every layout by name, since "Auto" is
                         // the short one and nobody leaves a dial
@@ -711,6 +806,7 @@ mod tests {
                                 &crate::app::keycaps::KeyCaps::default(),
                                 row,
                                 reset,
+                                device,
                             );
                             let label_w = text_px(&label, ROW_FONT);
                             assert!(
@@ -771,7 +867,9 @@ mod tests {
             ..GameSettings::default()
         };
         let caps = crate::app::keycaps::KeyCaps::default();
-        let at = |s: &GameSettings, row| row_text(&EN, s, &caps, row, ResetPrompt::Idle).1;
+        let at = |s: &GameSettings, row| {
+            row_text(&EN, s, &caps, row, ResetPrompt::Idle, LastDevice::Keyboard).1
+        };
         assert!(at(&settings, Row::Music).contains("42%"));
         settings.ui_scale = 70;
         assert!(at(&settings, Row::UiScale).contains("70%"));
@@ -793,7 +891,17 @@ mod tests {
 
         let settings = GameSettings::default();
         let caps = crate::app::keycaps::KeyCaps::default();
-        let line = |reset| row_text(&EN, &settings, &caps, Row::ResetProgress, reset).1;
+        let line = |reset| {
+            row_text(
+                &EN,
+                &settings,
+                &caps,
+                Row::ResetProgress,
+                reset,
+                LastDevice::Keyboard,
+            )
+            .1
+        };
         assert!(line(ResetPrompt::Idle).contains(EN.val_reset));
         assert!(line(ResetPrompt::Armed).contains(EN.val_reset_confirm));
         assert!(line(ResetPrompt::Done).contains(EN.val_reset_done));
@@ -805,9 +913,12 @@ mod tests {
                 language: lang,
                 ..GameSettings::default()
             };
-            let say = |reset| row_text(tr, &settings, &caps, Row::ResetProgress, reset).1;
-            assert_ne!(say(ResetPrompt::Idle), say(ResetPrompt::Armed), "{lang:?}");
-            assert_ne!(say(ResetPrompt::Armed), say(ResetPrompt::Done), "{lang:?}");
+            for device in [LastDevice::Keyboard, LastDevice::Pad] {
+                let say =
+                    |reset| row_text(tr, &settings, &caps, Row::ResetProgress, reset, device).1;
+                assert_ne!(say(ResetPrompt::Idle), say(ResetPrompt::Armed), "{lang:?}");
+                assert_ne!(say(ResetPrompt::Armed), say(ResetPrompt::Done), "{lang:?}");
+            }
         }
     }
 
@@ -821,11 +932,10 @@ mod tests {
     /// over the real `progress.txt`. The seeded mark below is the tripwire.
     #[test]
     fn arming_the_reset_does_not_leave_the_screen() {
-        use crate::app::CampaignKind;
         use crate::app::progress::Progress;
 
         let mut progress = Progress::default();
-        progress.mark(CampaignKind::TidePool, "Welcome Ashore");
+        progress.mark("Welcome Ashore");
 
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin);
@@ -860,23 +970,67 @@ mod tests {
         assert!(
             app.world()
                 .resource::<Progress>()
-                .is_cleared(CampaignKind::TidePool, "Welcome Ashore"),
+                .is_cleared("Welcome Ashore"),
             "arming alone must not clear anything"
         );
     }
 
-    /// The reset clears both lists, since they share one record.
+    /// The reset clears every stage, and the lines kept for other builds
+    /// with them.
     #[test]
-    fn resetting_progress_clears_both_campaigns() {
-        use crate::app::CampaignKind;
+    fn resetting_progress_clears_the_record() {
         use crate::app::progress::Progress;
 
-        let mut progress = Progress::default();
-        progress.mark(CampaignKind::TidePool, "Welcome Ashore");
-        progress.mark(CampaignKind::BeachDay, "First Flood");
+        let mut progress = Progress::parse("cleared: beach:First Flood\n");
+        progress.mark("Welcome Ashore");
+        progress.mark("Undertow");
         progress.clear_all();
-        assert!(!progress.is_cleared(CampaignKind::TidePool, "Welcome Ashore"));
-        assert!(!progress.is_cleared(CampaignKind::BeachDay, "First Flood"));
+        assert!(!progress.is_cleared("Welcome Ashore"));
+        assert!(!progress.is_cleared("Undertow"));
         assert!(progress.to_text().is_empty(), "and nothing to write back");
+    }
+
+    /// "Rounds kept" lowered and then the key bindings visited: the shelf
+    /// keeps every round while the player is in there and on the way back,
+    /// and is trimmed once, to the lowered cap, as Settings is left for
+    /// the menu.
+    #[test]
+    fn a_visit_to_the_key_bindings_keeps_the_shelf_until_settings_is_left() {
+        use crate::app::replays::{Library, file_name, shelf_in};
+        let dir = crate::app::paths::test_dir("cap-through-controls");
+        for n in 0..5u64 {
+            std::fs::write(dir.join(file_name(1_751_328_000 + 60 * n, Some("P1"))), "x")
+                .expect("stocked");
+        }
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_state(Screen::Menu);
+        app.init_resource::<GameSettings>();
+        app.init_resource::<SettingsMenu>();
+        app.insert_resource(Library {
+            dir: dir.clone(),
+            ..Library::default()
+        });
+        app.add_systems(OnEnter(Screen::Settings), note_replay_cap);
+        app.add_systems(OnExit(Screen::Settings), apply_replay_cap);
+        app.add_systems(OnExit(Screen::Controls), apply_replay_cap);
+        let go = |app: &mut App, to: Screen| {
+            app.world_mut().resource_mut::<NextState<Screen>>().set(to);
+            app.update();
+        };
+        app.world_mut().resource_mut::<GameSettings>().replay_cap = 20;
+        go(&mut app, Screen::Settings);
+        app.world_mut().resource_mut::<GameSettings>().replay_cap = 2;
+        go(&mut app, Screen::Controls);
+        assert_eq!(
+            shelf_in(&dir).len(),
+            5,
+            "not on the way to the key bindings"
+        );
+        go(&mut app, Screen::Settings);
+        assert_eq!(shelf_in(&dir).len(), 5, "nor on the way back");
+        go(&mut app, Screen::Menu);
+        assert_eq!(shelf_in(&dir).len(), 2, "trimmed as Settings is left");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

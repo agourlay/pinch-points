@@ -100,6 +100,18 @@ const TICKS: u64 = 10_000;
 ///
 /// Why it has moved, most recent first:
 ///
+/// - 2026-10-26: a gull raid takes a third of the bank instead of half, so
+///   every raid leaves a different score and spills fewer crabs.
+/// - 2026-10-24: sparkling crabs went from 2% of spawns to 4%, taken from
+///   the commons. The kind bands shifted, so the same draw rolls a
+///   different kind and the round moved.
+/// - 2026-10-22: the lure went from 10 s to 5 s and its quiet spell from
+///   20 s to 30 s. The board's molting crab banks and lures here, so the
+///   crabs walk home on their own sooner and the round moved.
+/// - 2026-10-22: the edge spawner started sending for each ambient gull
+///   `GULL_LEAD` ticks before it lands, and the gulls on their way in
+///   joined the fingerprint. Every gull lands later and the PRNG is drawn
+///   in a different order, so the round itself moved.
 /// - 2026-10-15: each seat's last placement joined the fingerprint, the
 ///   tile and tick an AI seat's hand walks from, kept on the board so a
 ///   hand outlives the post it put down. The round plays as before; only
@@ -156,7 +168,7 @@ const TICKS: u64 = 10_000;
 ///   rules moved that day too: the lure stopped stacking, the roulette
 ///   stopped rolling gull events into the surge, and the spawners took a
 ///   crab cap.
-const EXPECTED_HASH: u64 = 0x9d5d_d832_7b81_d8ba;
+const EXPECTED_HASH: u64 = 0x1343_82f1_34b7_4ef7;
 
 #[test]
 fn ten_thousand_ticks_reproduce_exactly() {
@@ -265,4 +277,67 @@ fn a_replay_reloaded_from_text_ends_on_the_same_board() {
             "seed {seed}: the round came back off the shelf and played out differently"
         );
     }
+}
+
+/// Anchor for an open beach (the edges wrap) played out by bots: the
+/// generated open ocean at a table of four, every seat a Hard bot, a
+/// standard round. The crabs, gulls and lures walking round the seam, and
+/// the bots aiming across it, are the paths `EXPECTED_HASH`'s walled board
+/// never takes, so they are pinned here. Same rules for moving it: rerun
+/// and update on a deliberate change, with a line saying why.
+///
+/// Why it has moved, most recent first:
+///
+/// - 2026-10-26: Speed Up opens the holes twice as often while it runs,
+///   so a round with one in it spawns more crabs.
+/// - 2026-10-26: a Castle Swap spun at this table of four leaves the
+///   spinner's castle out of the rotation, so the castles change hands
+///   differently from the first swap on.
+/// - 2026-10-26: a gull raid takes a third of the bank instead of half.
+/// - 2026-10-24: the Hard AI counts what banking a molt keeps from the
+///   rivals, a full lure for each rival past the first, so at this table
+///   of four its jackpot chases pick other crabs. They pick what the flat
+///   30 of before the line below picked, and the hash is that one again.
+/// - 2026-10-24: the Hard AI values a molt's lure for as long as a lure
+///   runs, and a molt that will get home while a lure runs or rests at its
+///   points alone, so its jackpot chases pick other crabs.
+/// - 2026-10-24: sparkling crabs went from 2% of spawns to 4%, taken from
+///   the commons, so the same draws roll different kinds.
+const OPEN_BEACH_HASH: u64 = 0x059b_00f2_84a2_99b3;
+
+#[test]
+fn an_open_beach_under_bots_reproduces_exactly() {
+    use pinch_points::app::match_setup::{
+        GullPressure, MapChoice, RoundLength, apply_terms, versus_board,
+    };
+    use pinch_points::sim::{BotLevel, MAX_SIGNPOSTS_PER_PLAYER, bot_action};
+    let build = || {
+        let mut board = versus_board(MapChoice::GenOcean, 0x000C_EA17, 4);
+        apply_terms(
+            &mut board,
+            GullPressure::Normal,
+            RoundLength::Standard,
+            MAX_SIGNPOSTS_PER_PLAYER as u8,
+        );
+        board
+    };
+    let (mut a, mut b) = (build(), build());
+    assert!(a.wrap(), "an open beach");
+    let mut ticks = 0u64;
+    while !a.round_over() {
+        let mut actions = [PlayerAction::None; MAX_PLAYERS];
+        for seat in 0..4u8 {
+            actions[usize::from(seat)] = bot_action(&a, seat, BotLevel::Hard);
+        }
+        a.tick(&actions);
+        b.tick(&actions);
+        ticks += 1;
+        assert_eq!(a.state_hash(), b.state_hash(), "diverged at tick {ticks}");
+    }
+    assert!(a.scores().iter().any(|&s| s > 0), "nobody banked a crab");
+    let final_hash = a.state_hash();
+    assert_eq!(
+        final_hash, OPEN_BEACH_HASH,
+        "state hash after {ticks} ticks was {final_hash:#018x}, expected {OPEN_BEACH_HASH:#018x}"
+    );
 }

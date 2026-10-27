@@ -7,10 +7,10 @@
 //! would race every other test in this binary, which all run in one
 //! process.
 
+use pinch_points::app::Campaign;
 use pinch_points::app::campaign::{custom_arenas, custom_puzzles, load_custom_levels_in};
 use pinch_points::app::progress::{Progress, load_in, save_in};
 use pinch_points::app::replays::{file_name, prune_in, shelf_in};
-use pinch_points::app::{Campaign, CampaignKind};
 use pinch_points::sim::{
     CapPolicy, Direction, Level, LevelKind, MAX_PLAYERS, PlayerAction, Replay, campaign_levels,
     classic_arena,
@@ -79,8 +79,13 @@ fn a_kept_round_comes_off_the_shelf_and_replays() {
         "four rounds, newest first, and nothing else"
     );
     assert!(
-        kept.iter().all(|k| !k.label.is_empty()),
+        kept.iter()
+            .all(|k| !k.when.is_empty() && !k.winner.is_empty()),
         "every kept round has something to call it on screen"
+    );
+    assert!(
+        kept.iter().all(|k| k.seats.is_some()),
+        "and says how many played it, from the file itself"
     );
 
     prune_in(&dir, 2);
@@ -182,10 +187,10 @@ fn an_editor_saved_puzzle_keeps_its_signpost_rule() {
 fn tide_pool(levels: Vec<Level>) -> Campaign {
     let builtins = levels.len();
     Campaign {
-        kind: CampaignKind::TidePool,
         levels,
         index: 0,
         builtins,
+        coop: 0,
     }
 }
 
@@ -205,7 +210,7 @@ fn progress_survives_a_restart_and_a_level_inserted_ahead_of_it() {
 
     let mut progress = Progress::default();
     for name in &cleared {
-        assert!(progress.mark(CampaignKind::TidePool, name));
+        assert!(progress.mark(name));
     }
     save_in(&path, &mut progress).expect("the record writes");
     let before = progress.furthest_open(&campaign);
@@ -213,10 +218,7 @@ fn progress_survives_a_restart_and_a_level_inserted_ahead_of_it() {
 
     let restarted = load_in(&path);
     for name in &cleared {
-        assert!(
-            restarted.is_cleared(CampaignKind::TidePool, name),
-            "{name} lost"
-        );
+        assert!(restarted.is_cleared(name), "{name} lost");
     }
     assert_eq!(restarted.cleared_in(&campaign, 0..campaign.levels.len()), 5);
 
@@ -230,10 +232,10 @@ fn progress_survives_a_restart_and_a_level_inserted_ahead_of_it() {
             restarted.unlocked(&shifted, at),
             "{name} re-locked by the insert"
         );
-        assert!(restarted.is_cleared(CampaignKind::TidePool, name));
+        assert!(restarted.is_cleared(name));
     }
     assert_eq!(restarted.furthest_open(&shifted), before + 1);
-    assert!(!restarted.is_cleared(CampaignKind::TidePool, "Slid In"));
+    assert!(!restarted.is_cleared("Slid In"));
     assert!(
         restarted.unlocked(&shifted, 2),
         "the classic rule opens the stage after a cleared one, newcomer or not"

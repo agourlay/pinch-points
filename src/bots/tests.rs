@@ -258,13 +258,13 @@ fn three_wrong_keys_turn_the_address_away_and_not_the_key() {
 fn a_protocol_this_build_does_not_speak_is_refused_by_number() {
     let (listener, _events) = listen(Admission::Open);
     let mut client = Client::connect(listener.local_addr());
-    client.send(&json!({"type": "register", "protocol": 2, "name": "Future"}));
+    client.send(&json!({"type": "register", "protocol": 3, "name": "Future"}));
     let answer = client.next().expect("answer");
     assert_eq!(answer["type"], "error");
     assert!(
         answer["message"]
             .as_str()
-            .is_some_and(|m| m.contains("protocol 1"))
+            .is_some_and(|m| m.contains("protocol 1 to 2"))
     );
 }
 
@@ -760,8 +760,14 @@ fn a_bot_that_asks_for_replays_and_never_reads_is_dropped() {
             break;
         }
     }
+    // How soon is not the point, and is slow under load: every answer is a
+    // 200 KB string written out as JSON in a debug build. Six suites side
+    // by side took longer than five seconds to fill the queue.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
     let mut dropped = false;
-    while let Ok(event) = events.recv_timeout(Duration::from_secs(5)) {
+    while let Some(left) = deadline.checked_duration_since(std::time::Instant::now())
+        && let Ok(event) = events.recv_timeout(left)
+    {
         if matches!(event, Event::Dropped(gone) if gone == id) {
             dropped = true;
             break;
@@ -1396,4 +1402,162 @@ fn a_placement_far_off_the_beach_is_refused_and_not_a_crash() {
         assert_eq!(refused, Some(json!("off_board")), "fair cursor: {fair}");
         assert_eq!(result.replay.inputs.len(), 40, "the round played out");
     }
+}
+
+/// A bot registered with protocol 2 is sent each tick as what changed, and
+/// holds, diff by diff, the board a protocol 1 bot at the same table is
+/// sent whole: compared tick by tick, everything but the seat's own
+/// `you`. It is sent a whole tick first, every `FULL_EVERY` ticks after,
+/// and next whenever it asks with `resync`, which is how it recovers from
+/// a diff it lost.
+#[test]
+fn a_protocol_2_bot_holds_by_diffs_what_a_protocol_1_bot_is_sent_whole() {
+    use super::protocol::{FULL_EVERY, apply_delta};
+    const TICKS: u32 = 400;
+    let (listener, events) = listen(Admission::Open);
+    let addr = listener.local_addr();
+    let registered = |events: &Receiver<Event>| {
+        let Ok(Event::Registered(id)) = events.recv_timeout(Duration::from_secs(5)) else {
+            panic!("no registration event");
+        };
+        id
+    };
+    let (mut whole, _) = Client::register(addr, "Whole", None);
+    let whole_id = registered(&events);
+    let mut diffing = Client::connect(addr);
+    diffing.send(&json!({"type": "register", "protocol": 2, "name": "Diffing"}));
+    assert_eq!(diffing.next().expect("answer")["type"], "registered");
+    let diffing_id = registered(&events);
+    // Seat 0 is sent every tick whole, and places a post now and then so
+    // the posts come and go.
+    let whole_player = std::thread::spawn(move || {
+        let mut seen = Vec::new();
+        let mut sand = Vec::new();
+        while let Some(msg) = whole.next() {
+            match msg["type"].as_str() {
+                Some("hello") => {
+                    for (y, row) in msg["board"]["tiles"]
+                        .as_array()
+                        .expect("tiles")
+                        .iter()
+                        .enumerate()
+                    {
+                        for (x, c) in row.as_str().expect("row").chars().enumerate() {
+                            if c == '.' {
+                                sand.push((x, y));
+                            }
+                        }
+                    }
+                    whole.send(&json!({"type": "ready", "game": 7}));
+                }
+                Some("tick") => {
+                    let t = msg["tick"].as_u64().expect("tick");
+                    assert!(msg.get("base").is_none(), "protocol 1 is sent no diff");
+                    let mut reply = json!({"game": 7, "tick": t, "act": "none"});
+                    if t % 9 == 0 {
+                        let (x, y) = sand[(t as usize * 7) % sand.len()];
+                        reply = json!({"game": 7, "tick": t, "act": "place", "x": x, "y": y, "dir": "up"});
+                    }
+                    whole.send(&reply);
+                    seen.push(msg);
+                }
+                Some("end") => return seen,
+                _ => {}
+            }
+        }
+        panic!("the connection closed before the end");
+    });
+    // Seat 1 applies every diff, but asks for a whole tick at 40, and
+    // drops the diff for 100 as a bot that misread it would.
+    let diffing_player = std::thread::spawn(move || {
+        let mut held: Option<Value> = None;
+        let mut seen = Vec::new();
+        let mut whole_at = Vec::new();
+        let mut refused = Vec::new();
+        while let Some(msg) = diffing.next() {
+            match msg["type"].as_str() {
+                Some("hello") => diffing.send(&json!({"type": "ready", "game": 7})),
+                Some("tick") => {
+                    let t = msg["tick"].as_u64().expect("tick");
+                    if msg.get("base").is_none() {
+                        whole_at.push(t);
+                    }
+                    let lost = match (t == 100, apply_delta(held.as_ref(), &msg)) {
+                        (true, _) => false,
+                        (false, Some(state)) => {
+                            seen.push(state.clone());
+                            held = Some(state);
+                            false
+                        }
+                        (false, None) => {
+                            refused.push(t);
+                            true
+                        }
+                    };
+                    // Asked before this tick's act goes: the game deals
+                    // the next tick the moment both acts are in, and a
+                    // `resync` sent after the act raced it, the next tick
+                    // shaped as a diff when it lost.
+                    if lost || t == 40 {
+                        diffing.send(&json!({"type": "resync", "game": 7}));
+                    }
+                    diffing.send(&json!({"game": 7, "tick": t, "act": "none"}));
+                }
+                Some("end") => return (seen, whole_at, refused),
+                _ => {}
+            }
+        }
+        panic!("the connection closed before the end");
+    });
+    let mut board = crate::sim::generate_arena(7, 2, 12, 9);
+    crate::sim::set_versus_rules(&mut board, 240);
+    board.rules_mut().round_length = Some(TICKS);
+    let (result, _) = play(
+        &listener,
+        spec(
+            board,
+            vec![Seat::Bot(whole_id), Seat::Bot(diffing_id)],
+            1000,
+        ),
+    );
+    let sent_whole = whole_player.join().expect("whole");
+    let (held, whole_at, refused) = diffing_player.join().expect("diffing");
+    assert_eq!(result.replay.inputs.len(), TICKS as usize);
+    // The tick after the one it asked at, the tick after the diff it
+    // could not apply, and the first and every `FULL_EVERY` between.
+    assert_eq!(refused, vec![101], "the diff after the one it dropped");
+    assert!(whole_at.starts_with(&[0, 41, 102]), "whole at {whole_at:?}");
+    assert!(
+        whole_at.contains(&(102 + FULL_EVERY)),
+        "whole at {whole_at:?}"
+    );
+    let mut compared = 0;
+    for state in &held {
+        let t = &state["tick"];
+        let sent = sent_whole
+            .iter()
+            .find(|s| &s["tick"] == t)
+            .expect("both seats are sent every tick");
+        for (field, value) in sent.as_object().expect("a tick") {
+            if field == "you" {
+                continue;
+            }
+            let mut a = value.clone();
+            let mut b = state[field].clone();
+            for list in [&mut a, &mut b] {
+                if let Some(entries) = list.as_array_mut() {
+                    entries.sort_by_key(|e| e.to_string());
+                }
+            }
+            assert_eq!(a, b, "{field} at tick {t}");
+        }
+        compared += 1;
+    }
+    assert_eq!(compared, TICKS as usize - 2, "all but 100 and 101");
+    assert!(
+        sent_whole
+            .iter()
+            .any(|s| !s["signposts"].as_array().expect("posts").is_empty()),
+        "posts stood"
+    );
 }

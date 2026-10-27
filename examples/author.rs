@@ -26,8 +26,20 @@
 mod common;
 
 use pinch_points::sim::{
-    DEFAULT_NODE_BUDGET, Effort, Level, PuzzleOutcome, SolveOutcome, solve_with,
+    DEFAULT_NODE_BUDGET, Deal, Effort, Level, Placement, PuzzleOutcome, SolveOutcome, solve_with,
 };
+
+/// Placements as the report prints them, with the hand on a co-op stage.
+fn spelled(placements: &[Placement], coop: bool) -> String {
+    let text: Vec<String> = placements
+        .iter()
+        .map(|&(x, y, d, seat)| match coop {
+            true => format!("{x},{y} {d:?} P{}", seat + 1),
+            false => format!("{x},{y} {d:?}"),
+        })
+        .collect();
+    text.join(" | ")
+}
 
 fn unposted_outcome(level: &Level) -> (PuzzleOutcome, u64) {
     level.play_out(&mut level.board())
@@ -102,15 +114,11 @@ fn report(path: &str, effort: Effort) -> String {
     let _ = writeln!(out, "{path}: unposted -> {outcome:?} after {ticks} ticks");
     match solve_with(&level, effort) {
         SolveOutcome::Found(placements) => {
-            let text: Vec<String> = placements
-                .iter()
-                .map(|(x, y, d)| format!("{x},{y} {d:?}"))
-                .collect();
             let _ = writeln!(
                 out,
                 "  solver ({} posts): {}",
                 placements.len(),
-                text.join(" | ")
+                spelled(&placements, level.is_coop())
             );
         }
         SolveOutcome::Unsolvable => {
@@ -125,6 +133,21 @@ fn report(path: &str, effort: Effort) -> String {
                 out,
                 "  solver: gave up at {DEFAULT_NODE_BUDGET} simulations, too big to ship"
             );
+        }
+    }
+    // A co-op stage is also tried with its arrows dealt every other way,
+    // and a keeper loses all of them: each hand minimal, neither player
+    // alone enough, and ordinary arrows no answer either.
+    if let Some(hands) = level.hands() {
+        for deal in Deal::all(hands) {
+            let verdict = match solve_with(&deal.level(&level), effort) {
+                SolveOutcome::Found(found) => {
+                    format!("WINS ({})", spelled(&found, true))
+                }
+                SolveOutcome::Unsolvable => "loses".to_string(),
+                SolveOutcome::GaveUp => "GAVE UP".to_string(),
+            };
+            let _ = writeln!(out, "  {deal:?}: {verdict}");
         }
     }
     out

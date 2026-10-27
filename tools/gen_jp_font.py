@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# dependencies = ["fonttools"]
+# ///
 """The Japanese face, cut down to the characters the game actually says.
 
 DejaVu Sans Mono draws every other language the game speaks and has no

@@ -147,7 +147,7 @@ fn spawn_pick_card(
         let name = crate::app::name_or_label(&session.names, tr, seat);
         (
             format!("{}  {name}", seat + 1),
-            crate::app::palette::player_color(seat),
+            crate::app::palette::seat_text(seat),
         )
     });
     spawn_list_card(commands, PickCardUi, tr.spectator_pick_title, rows);

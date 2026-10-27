@@ -1,0 +1,28 @@
+# Each crab has a gull just ahead of it in its own lane. The arrow that
+# sends a gull out of a lane would turn that lane's crab too, so each
+# player covers the other one's crab.
+name: Cover Each Other
+hands: 2 2
+kind: puzzle
+seed: 2125266945
+crab: 0,2 R L common
+crab: 0,4 R R common
+gull: 2,2 R
+gull: 2,4 R
+solution: 7,2 U L; 7,4 D R; 3,2 U R; 3,4 D L
+map:
++-+-+-+-+-+-+-+-+-+-+
+|# K K ~ 0 # # 0 # #|
++-+ + + + +-+-+ +-+-+
+|# K K|.|# # #|.|# #|
++-+-+-+ +-+-+-+ +-+-+
+|. . . . . . . . . .|
++-+-+-+-+-+-+-+-+-+-+
+|# # # # # # # # # #|
++-+-+-+-+-+-+-+-+-+-+
+|. . . . . . . . . .|
++-+-+-+ +-+-+-+ +-+-+
+|# K K|.|# # #|.|# #|
++-+ + + + +-+-+ +-+-+
+|# K K ~ 0 # # 0 # #|
++-+-+-+-+-+-+-+-+-+-+

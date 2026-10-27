@@ -784,7 +784,8 @@ mod tests {
         assert!(!card_open(&app), "and does not come back");
     }
 
-    /// A beach whose wheel is off, a handmade one played online, has
+    /// A beach whose wheel is off, a handmade one replayed from before
+    /// every versus round turned it, has
     /// nothing a call could fire, so the list is not offered on it, and a
     /// vote that reaches the host anyway never settles into a call.
     #[test]

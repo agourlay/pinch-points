@@ -1,0 +1,23 @@
+# The left crab's castle is walled off from the top row: P1 needs a
+# second arrow to bring it down. The right crab has a door of its own
+# beside the left crab's.
+name: Up and Over
+posts: 3
+hands: 2 1
+kind: puzzle
+seed: 2125266945
+crab: 1,2 R L common
+crab: 0,2 R R common
+solution: 3,2 U L; 2,0 D L; 4,2 U R
+map:
++-+-+-+-+-+-+-+-+-+
+|0|. . K K K K K K|
++ + + + +-+-+-+-+ +
+|. . .|K K K K K K|
++-+-+-+ + +-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+ +-+-+-+
+|. . . . .|K K K K|
++ + + + + + +-+-+ +
+|0 . .|. . K K K K|
++-+-+-+-+-+-+-+-+-+

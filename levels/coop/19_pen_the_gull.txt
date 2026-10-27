@@ -1,0 +1,24 @@
+# A gull waits in a short lane under the corridor, with a way out at
+# each end where a crab will walk past. It takes an arrow from each
+# player, one at each end of the lane, to keep it there until both crabs
+# are home.
+name: Pen the Gull
+hands: 2 2
+kind: puzzle
+seed: 23
+crab: 2,2 L L common
+crab: 3,2 R R common
+gull: 5,3 R
+solution: 7,2 U L; 9,2 D R; 6,3 L L; 4,3 R R
+map:
++-+-+-+-+-+-+-+-+-+-+-+-+
+|# # # # # # 0 ~ K K # #|
++-+-+-+-+-+-+-+ + + +-+-+
+|# # # # # # #|.|K K|# #|
++-+-+-+-+-+-+-+ +-+-+-+-+
+|K K . . ~ . ~ . . . . #|
++-+-+-+-+ +-+ +-+-+ +-+-+
+|# # # #|. . .|# #|.|K K|
++-+-+-+-+-+-+-+-+-+ + + +
+|# # # # # # # # 0 ~ K K|
++-+-+-+-+-+-+-+-+-+-+-+-+

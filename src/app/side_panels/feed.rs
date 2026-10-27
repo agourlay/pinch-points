@@ -73,7 +73,9 @@ impl EventLog {
     }
 }
 
-const LOG_LINES: usize = 9;
+/// How many entries the feed keeps: more than the shortest card shows, so
+/// a card reaching down beside a tall board has lines to fill it with.
+const LOG_LINES: usize = 16;
 
 /// Fold what the spectators said into the same feed the round's own events use.
 ///
@@ -98,6 +100,47 @@ pub fn collect_chat(mut online: ResMut<crate::app::net::Online>, mut log: ResMut
     }
 }
 
+/// The feed's line for a raid on `owner` for `lost`: who steered the gull
+/// when an arrow did, said plainly when it was the victim's own, and the
+/// bare raid for a wild gull.
+pub fn raid_line(
+    tr: &crate::app::i18n::Tr,
+    owner: u8,
+    lost: u32,
+    by: Option<u8>,
+    seat_label: &impl Fn(u8) -> String,
+) -> String {
+    let n = lost.to_string();
+    let victim = seat_label(owner);
+    match by {
+        None => fill(tr.log_raid, &[("p", &victim), ("n", &n)]),
+        Some(by) if by == owner => fill(tr.log_raid_own, &[("p", &victim), ("n", &n)]),
+        Some(by) => fill(
+            tr.log_raid_by,
+            &[("a", &seat_label(by)), ("p", &victim), ("n", &n)],
+        ),
+    }
+}
+
+/// The feed's line for a tide event and its ink: who started it, in their
+/// seat's colour, when a sparkling crab spun it, and the bare name in the
+/// tide's ink for one called down, which nobody at the table spun.
+pub fn event_line(
+    tr: &crate::app::i18n::Tr,
+    event: crate::sim::TideEvent,
+    by: Option<u8>,
+    seat_label: &impl Fn(u8) -> String,
+) -> (String, Color) {
+    let name = crate::app::hud::event_name(tr, event);
+    match by {
+        Some(seat) => (
+            fill(tr.log_event_by, &[("p", &seat_label(seat)), ("e", name)]),
+            palette::seat_text(seat),
+        ),
+        None => (name.to_string(), palette::INK_TIDE),
+    }
+}
+
 /// Fold notable sim events into the log: raids, gold, lures, tier-ups,
 /// tide events, gull arrivals, and the surge. Common banks are too chatty
 /// to list.
@@ -111,11 +154,10 @@ pub fn collect_log(
     let seat_label = |seat: u8| names.label(tr, seat);
     for event in events.read() {
         let line = match event {
-            SimEvent::CastleRaided { owner, lost, .. } => Some((
-                fill(
-                    tr.log_raid,
-                    &[("p", &seat_label(*owner)), ("n", &lost.to_string())],
-                ),
+            SimEvent::CastleRaided {
+                owner, lost, by, ..
+            } => Some((
+                raid_line(tr, *owner, *lost, *by, &seat_label),
                 palette::INK_RAID,
             )),
             SimEvent::CrabBanked {
@@ -136,16 +178,30 @@ pub fn collect_log(
             )),
             SimEvent::TierUp { owner } => Some((
                 fill(tr.log_tier, &[("p", &seat_label(*owner))]),
-                palette::player_color(*owner).lighter(0.15),
+                palette::seat_text(*owner),
             )),
-            SimEvent::TideEventFired { event, .. } => Some((
-                crate::app::hud::event_name(tr, *event).to_string(),
-                palette::INK_TIDE,
-            )),
+            SimEvent::TideEventFired { event, by } => {
+                Some(event_line(tr, *event, *by, &seat_label))
+            }
             SimEvent::WheelLocked { owner } => Some((
                 fill(tr.log_wheel_locked, &[("p", &seat_label(*owner))]),
                 palette::INK_TIDE,
             )),
+            SimEvent::LureRefused { owner, running } => Some((
+                fill(
+                    if *running {
+                        tr.log_lure_running
+                    } else {
+                        tr.log_lure_resting
+                    },
+                    &[("p", &seat_label(*owner))],
+                ),
+                palette::INK_LURE,
+            )),
+            // One line per gull, written when it lands: its shadow on the
+            // sand is the notice, and a line for each half of one arrival
+            // is two lines for one bird.
+            SimEvent::GullIncoming { .. } => None,
             SimEvent::GullArrived => Some((tr.log_gull.to_string(), palette::GULL_INK)),
             SimEvent::SurgeStarted => Some((tr.log_surge.to_string(), palette::INK_SURGE)),
             SimEvent::GoldenCalled { .. } => Some((tr.log_golden_call.to_string(), palette::GOLD)),
@@ -221,7 +277,7 @@ pub fn update_log(
             // height is what says whether it fits, and an emptied line would
             // measure as fitting next frame and flicker back.
             Some(entry) => {
-                let fade = 1.0 - line.0 as f32 * 0.09;
+                let fade = (1.0 - line.0 as f32 * 0.09).max(LOG_FADE_FLOOR);
                 entry.render_into(&mut value);
                 if line.0 < shown {
                     entry.color.with_alpha(fade)
@@ -247,19 +303,27 @@ const LOG_ROWS: f32 = 8.0;
 /// The gap between two entries.
 const LOG_GAP: f32 = 6.0;
 
-/// The feed card's height: its rows, the frame's room at the top and the
-/// foot, and the card's own border at each, which Bevy counts inside the
-/// height: without it the lines' box is 4 px short and the eighth entry
+/// The dimmest an old entry is drawn: far down a tall card the fade would
+/// otherwise run out before the lines do.
+const LOG_FADE_FLOOR: f32 = 0.3;
+
+/// The feed card's least height: its rows, the frame's room at the top and
+/// the foot, and the card's own border at each, which Bevy counts inside
+/// the height: without it the lines' box is 4 px short and the eighth entry
 /// never fits.
 const LOG_H: f32 = LOG_ROWS * menu_ui::type_scale::BODY * menu_ui::LINE_HEIGHT
     + (LOG_ROWS - 1.0) * LOG_GAP
     + 2.0 * menu_ui::CARD_PAD
     + 2.0 * CARD_BORDER;
 
-/// Spawn the feed card below the clock, in the menus' driftwood frame, at
-/// one fixed size: a card that grew with each new line drew the eye every
-/// time something happened, and one filling the sidebar to the prompt line
-/// was a tall slab, mostly empty for most of a round.
+/// The feed card, whose foot [`reach_the_board`] keeps level with the
+/// board's.
+#[derive(Component)]
+pub struct FeedCard;
+
+/// Spawn the feed card below the clock, in the menus' driftwood frame. Its
+/// height follows the board, never what is written in it: a card that grew
+/// with each new line drew the eye every time something happened.
 pub(super) fn spawn_feed(root: &mut ChildSpawnerCommands) {
     let (mut node, edge, fill, shadow) = card(LOG_TOP, Some(LOG_H));
     // Its rows stack from the top, so it drops the clock card's centring.
@@ -268,7 +332,7 @@ pub(super) fn spawn_feed(root: &mut ChildSpawnerCommands) {
     node.justify_content = JustifyContent::default();
     // The frame holds the top and the sides clear of its wood; the foot is
     // ours to keep clear, or the last line runs under the bottom band.
-    node.padding = UiRect::axes(Val::Px(12.0), Val::Px(10.0));
+    node.padding = UiRect::axes(Val::Px(super::event_timer::FEED_PAD_X), Val::Px(10.0));
     node.padding.bottom = Val::Px(menu_ui::CARD_PAD);
     // The lines sit in a box of their own that does the clipping, inside
     // the padding: clipped by the card itself, a line running past the
@@ -286,8 +350,9 @@ pub(super) fn spawn_feed(root: &mut ChildSpawnerCommands) {
     // the sidebar comes through and the feed reads as a different material
     // from the clock card touching it above, (36, 34, 33) against the
     // clock's (18, 20, 28).
-    root.spawn((node, edge, fill, shadow, menu_ui::Framed))
+    root.spawn((FeedCard, node, edge, fill, shadow, menu_ui::Framed))
         .with_children(|card| {
+            super::event_timer::spawn_event_timer(card);
             card.spawn((LogLines, lines)).with_children(|list| {
                 for index in 0..LOG_LINES {
                     list.spawn((
@@ -304,9 +369,59 @@ pub(super) fn spawn_feed(root: &mut ChildSpawnerCommands) {
         });
 }
 
+/// The feed card's height for a board whose fence stands `foot` interface
+/// pixels down the window: from the card's top to there, never shorter than
+/// its rows need and never past the sidebar's own foot, `room` down.
+fn feed_height(foot: f32, room: f32) -> f32 {
+    let top = menu_ui::UNDER_HEADER + LOG_TOP;
+    (foot - top).min(room - top).max(LOG_H)
+}
+
+/// Keep the feed card's foot level with the foot of the board's fence, so
+/// the right-hand column ends where the beach does, whatever the board and
+/// the window.
+pub fn reach_the_board(
+    sim: Res<crate::app::Sim>,
+    screen: Res<State<crate::app::Screen>>,
+    ui_scale: Res<UiScale>,
+    windows: Query<&Window>,
+    mut cards: Query<&mut Node, With<FeedCard>>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let ui = ui_scale.0.max(f32::EPSILON);
+    let foot = crate::app::boot::board_foot(window, ui, *screen.get(), &sim.0);
+    let room = window.height() / ui - super::SIDEBAR_FOOT;
+    let height = Val::Px(feed_height(foot, room));
+    for mut node in &mut cards {
+        if node.height != height {
+            node.height = height;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The card reaches the fence's foot, but keeps its rows on a short
+    /// board and stops at the sidebar's foot on a tall one.
+    #[test]
+    fn the_feed_reaches_down_to_the_board() {
+        let top = menu_ui::UNDER_HEADER + LOG_TOP;
+        assert_eq!(feed_height(top + 500.0, top + 600.0), 500.0);
+        assert_eq!(
+            feed_height(top + 10.0, top + 600.0),
+            LOG_H,
+            "never under its rows"
+        );
+        assert_eq!(
+            feed_height(top + 900.0, top + 600.0),
+            600.0,
+            "never past the sidebar"
+        );
+    }
 
     /// Lines fit while they fit whole, gaps included; the first that would
     /// run past the foot is dropped, and so is everything after it.
@@ -346,5 +461,22 @@ mod tests {
         }
         assert_eq!(log.0.len(), LOG_LINES);
         assert_eq!(log.0[0].rendered(), format!("line {}", LOG_LINES + 4));
+    }
+
+    /// A raid says whose gull it was: a rival's arrow names the thief, the
+    /// victim's own arrow says so plainly, and a wild gull is the bare raid.
+    #[test]
+    fn a_raid_line_names_the_steerer() {
+        let tr = &crate::app::i18n::EN;
+        let name = |seat: u8| ["Maya", "Bob"][usize::from(seat)].to_string();
+        assert_eq!(
+            raid_line(tr, 1, 23, Some(0), &name),
+            "Maya's gull raided Bob! -23"
+        );
+        assert_eq!(
+            raid_line(tr, 1, 23, Some(1), &name),
+            "Bob steered a gull into their own castle! -23"
+        );
+        assert_eq!(raid_line(tr, 1, 23, None, &name), "Bob raided! -23");
     }
 }

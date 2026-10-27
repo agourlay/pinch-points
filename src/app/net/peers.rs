@@ -60,6 +60,92 @@ pub struct Peer {
     /// table's pause while that one is in flight (see
     /// `OnlineSession::release_a_departed_pause`).
     pub pause: Option<u32>,
+    /// Host: how long its last few answers to a `Ping` took, which picks
+    /// the input delay of the next round it is dealt a chair in.
+    pub round_trips: RoundTrips,
+    /// Host: the newest frame it has committed in this round, as far as
+    /// its inputs have arrived: what keeps its clock against the host's
+    /// (`NetMsg::Clock`). `None` until its first inputs, which is also
+    /// what says its `Start` got there; until then the host sends the
+    /// `Start` again every few ticks.
+    pub newest: Option<u32>,
+    /// Host: the frames it last said it was missing, per seat
+    /// (`transport::Batch::wants`), which what it is sent each tick is cut
+    /// from. `None` until it says, and sent the whole resend tail till then.
+    pub wants: Option<[u32; crate::sim::MAX_PLAYERS]>,
+    /// Host, in the lobby: frozen at the table the host is picking the map
+    /// for (`lobby::pick`), which the launch seats. On the row so it moves
+    /// with the peer when one before it is forgotten, and goes with it when
+    /// it leaves. Written afresh each time the map page opens, and read
+    /// only while it is up.
+    pub frozen: bool,
+    /// Host: the seat the host's partner picks put it in
+    /// ([`super::order`]), which every deal puts it back in while that
+    /// seat is at the table. On the row so it moves with the peer.
+    pub seat_wish: Option<u8>,
+}
+
+/// How many round trips a peer's row remembers: a few seconds of pings.
+const ROUND_TRIPS: usize = 5;
+
+/// How old a round trip may be, in seconds, and still say how the link
+/// is now: a few pings' worth.
+const FRESH_FOR: f32 = 8.0;
+
+/// The last few round trips the host measured to one peer, in seconds,
+/// each with how long ago it was measured.
+///
+/// What counts is the slow end, not a mean: an input that misses its frame
+/// stalls the whole table, so a link that is quick most of the time and
+/// slow now and then has to be played as the slow one. But not the one
+/// slowest answer of a few: a single hitch (a busy frame on either
+/// machine, one Wi-Fi retry) set the whole next round to the longest delay
+/// there is. So the second slowest, once there are three to choose from,
+/// of the answers still fresh ([`FRESH_FOR`]): the pings stop while a
+/// round is played, and what the link did before it says little about it
+/// on the results card a few minutes later, once the card's own pings are
+/// in.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct RoundTrips {
+    samples: [(f32, f32); ROUND_TRIPS],
+    taken: usize,
+}
+
+impl RoundTrips {
+    /// One more answer, `seconds` after its ping went out. The oldest is
+    /// forgotten once there are more than [`ROUND_TRIPS`].
+    pub fn note(&mut self, seconds: f32) {
+        self.samples[self.taken % ROUND_TRIPS] = (seconds, 0.0);
+        self.taken += 1;
+    }
+
+    /// `delta` seconds more since every answer remembered.
+    pub fn age(&mut self, delta: f32) {
+        for (_, age) in &mut self.samples {
+            *age += delta;
+        }
+    }
+
+    /// The round trip to play this link as, or `None` before its first
+    /// answer: the second slowest of the fresh answers, or the slowest of
+    /// one or two. With none fresh, the same of the answers there are,
+    /// stale as they are: a link last heard a while ago is still better
+    /// known than one never heard.
+    pub fn telling(&self) -> Option<f32> {
+        let remembered = &self.samples[..self.taken.min(ROUND_TRIPS)];
+        let fresh: Vec<f32> = remembered
+            .iter()
+            .filter(|(_, age)| *age <= FRESH_FOR)
+            .map(|(seconds, _)| *seconds)
+            .collect();
+        let mut chosen = match fresh.is_empty() {
+            true => remembered.iter().map(|(seconds, _)| *seconds).collect(),
+            false => fresh,
+        };
+        chosen.sort_by(f32::total_cmp);
+        let hitch = usize::from(chosen.len() >= 3);
+        chosen.iter().rev().nth(hitch).copied()
+    }
 }
 
 impl Peer {
@@ -254,6 +340,14 @@ impl PeerBook {
         row.goodbye.heard();
     }
 
+    /// The peer answered a `Ping` stamped `stamp`: one more round trip for
+    /// its row, unless the stamp is none this machine wrote lately.
+    pub fn answered(&mut self, peer: usize, stamp: u32) {
+        if let Some(seconds) = crate::transport::round_trip_since(stamp) {
+            self.row(peer).round_trips.note(seconds);
+        }
+    }
+
     /// The peer said it is going (`NetMsg::Leaving`): its silence is
     /// already as long as any patience, so every rule that forgets a quiet
     /// peer (the lobby's, the results card's, a watcher's) forgets this one
@@ -268,11 +362,12 @@ impl PeerBook {
         row.goodbye.spoke();
     }
 
-    /// Age every silence by a frame, and every goodbye.
+    /// Age every silence by a frame, every goodbye, and every round trip.
     pub fn age(&mut self, delta: f32) {
         for peer in &mut self.0 {
             peer.silence += delta;
             peer.goodbye.age(delta);
+            peer.round_trips.age(delta);
         }
     }
 
@@ -290,6 +385,8 @@ impl PeerBook {
     pub fn deal(&mut self, plan: &[Option<u8>]) {
         self.fit(plan.len());
         for (peer, slot) in self.0.iter_mut().zip(plan) {
+            peer.newest = None;
+            peer.wants = None;
             peer.place = match slot {
                 Some(seat) => Place::Seated(*seat),
                 None => Place::Watching,
@@ -306,8 +403,8 @@ impl PeerBook {
     /// [`MAX_PLAYERS`](crate::sim::MAX_PLAYERS) chairs, one of them the
     /// host's. The surplus is seated as onlookers rather than handed a seat
     /// number the sim has no slot for, so a beach holds the host and
-    /// sixteen others in any mix: five rivals and eleven watching, or one
-    /// AI and sixteen watching.
+    /// `MAX_PEERS` others in any mix: five rivals and the rest watching, or
+    /// one AI and all of them watching.
     ///
     /// A watcher keeps no chair: one that asked, at the launch or since.
     /// One that sat the last round out for want of a chair is dealt one
@@ -321,6 +418,40 @@ impl PeerBook {
             .map(|peer| {
                 let watches = self.get(peer).is_some_and(Peer::watches);
                 if watches || usize::from(next) >= crate::sim::MAX_PLAYERS {
+                    return None;
+                }
+                let seat = next;
+                next += 1;
+                Some(seat)
+            })
+            .collect()
+    }
+
+    /// Freeze the table `plan` seats: each peer it gives a chair marked
+    /// frozen on its row, and everyone else not, rows grown to cover the
+    /// plan. What a host picking a map freezes, in the lobby and between
+    /// rounds, for [`Self::frozen_plan`] to deal from.
+    pub fn freeze(&mut self, plan: &[Option<u8>]) {
+        self.reach(plan.len());
+        for (row, seat) in self.0.iter_mut().zip(plan) {
+            row.frozen = seat.is_some();
+        }
+    }
+
+    /// The seat plan for the first `peers` peers while the table is frozen
+    /// ([`Self::freeze`]): a chair, in peer order, for each peer frozen at
+    /// it that still wants to play, and none for anybody else, who turned
+    /// up while the host picked the map and watches the round it was
+    /// picked for, as a player past the last chair does. It is dealt one
+    /// the round after, which [`Self::seat_plan`] deals.
+    pub fn frozen_plan(&self, peers: usize) -> Vec<Option<u8>> {
+        let mut next = 1u8; // seat 0 is the host's
+        (0..peers)
+            .map(|peer| {
+                let sits = self
+                    .get(peer)
+                    .is_some_and(|row| row.frozen && !row.watches());
+                if !sits {
                     return None;
                 }
                 let seat = next;

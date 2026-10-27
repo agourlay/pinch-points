@@ -57,9 +57,19 @@ pub mod z {
     /// Pool water sits under features and wading creatures.
     pub const POOL: f32 = 0.5;
     pub const TILE_FEATURE: f32 = 1.0;
+    /// A castle on its tile, and everything of it but its flags, which a
+    /// castle's pieces lift to [`FLAG`].
+    pub const CASTLE: f32 = TILE_FEATURE + 0.2;
     pub const SIGNPOST: f32 = 2.0;
     pub const CREATURE: f32 = 3.0;
     pub const WALL: f32 = 4.0;
+    /// A castle's flags. A pole sticks up out of its tile into the row
+    /// above, where fences, their corner posts, signposts and creatures
+    /// stand, and a pole is taller than any of them: drawn under a fence
+    /// the flag was cut off by it. Over every one of them, the fences'
+    /// corner posts (`WALL + 0.1`) included, and under the crown that
+    /// floats over the flag and the tide that covers the beach.
+    pub const FLAG: f32 = 4.15;
     /// The leader's crown, floating in the row above its castle where
     /// posts, creatures and fences stand: over them, under the tide.
     pub const CROWN: f32 = 4.2;
@@ -67,6 +77,9 @@ pub mod z {
     pub const WATER: f32 = 4.5;
     /// The foam lip riding the water's inner edge.
     pub const FOAM: f32 = 4.6;
+    /// A gull flying in from beyond the beach: in the air over the fence
+    /// and the tide it crosses, under the cursors.
+    pub const ARRIVING_GULL: f32 = 4.8;
     pub const CURSOR: f32 = 5.0;
     /// Confetti under the flash/pip layers.
     pub const CONFETTI: f32 = 5.4;
@@ -76,6 +89,19 @@ pub mod z {
     pub const PARTICLE: f32 = 5.5;
     /// Floating score text tops everything on the board.
     pub const PIP: f32 = 5.7;
+}
+
+/// Give a sprite `color`, writing only when that changes it.
+///
+/// Bevy draws each distinct look a sprite has with a material of its own,
+/// and any write to a sprite, even of the colour it already has, sends it
+/// back to find its material and its mesh to be extracted for the renderer
+/// again. Systems that restate a sprite's colour every frame go through
+/// here, so a sprite whose colour holds costs nothing.
+pub fn tint(sprite: &mut impl std::ops::DerefMut<Target = Sprite>, color: Color) {
+    if sprite.color != color {
+        sprite.color = color;
+    }
 }
 
 /// A tinted sprite at a fixed size: the shape almost every sprite in the
@@ -146,6 +172,44 @@ pub fn dir_rotation(dir: Direction) -> Quat {
 mod tests {
     use super::*;
     use crate::sim::Direction::{Down, Left, Right, Up};
+
+    /// A sprite given the colour it already has is not touched, so the
+    /// renderer is not sent to redo it; a new colour still lands.
+    #[test]
+    fn tinting_a_sprite_its_own_colour_leaves_it_untouched() {
+        #[derive(Resource)]
+        struct Want(Color);
+        #[derive(Resource, Default)]
+        struct Seen(Vec<bool>);
+        let mut app = App::new();
+        app.insert_resource(Want(Color::WHITE));
+        app.init_resource::<Seen>();
+        app.add_systems(
+            Update,
+            (
+                |want: Res<Want>, mut sprites: Query<&mut Sprite>| {
+                    for mut sprite in &mut sprites {
+                        tint(&mut sprite, want.0);
+                    }
+                },
+                |sprites: Query<Ref<Sprite>>, mut seen: ResMut<Seen>| {
+                    seen.0.extend(sprites.iter().map(|s| s.is_changed()));
+                },
+            )
+                .chain(),
+        );
+        app.world_mut()
+            .spawn(Sprite::from_color(Color::WHITE, Vec2::ONE));
+        app.update();
+        app.update();
+        app.world_mut().resource_mut::<Want>().0 = Color::BLACK;
+        app.update();
+        app.update();
+        // Spawned, held, recoloured, held.
+        assert_eq!(app.world().resource::<Seen>().0, [true, false, true, false]);
+        let sprite = app.world_mut().query::<&Sprite>().single(app.world());
+        assert_eq!(sprite.expect("one sprite").color, Color::BLACK);
+    }
 
     #[test]
     fn tile_centers_round_trip_through_nearest_tile() {

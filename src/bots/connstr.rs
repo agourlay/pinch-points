@@ -197,21 +197,54 @@ impl fmt::Display for ConnString {
 /// listens on every interface, when it is this machine's address on the
 /// LAN, found by asking the routing table which interface would carry a
 /// packet out (no packet is sent).
+///
+/// The routing table's answer is kept for [`LAN_ADDRESS_KEPT`]: a hosting
+/// lobby shows its doorway's string every frame, and asking afresh opened
+/// and closed a socket each time. Kept that long, a machine that moves to
+/// another network still shows its new address within a second.
 pub fn reachable_host(bound: SocketAddr) -> String {
+    use std::sync::Mutex;
+    use std::time::Instant;
+    static KEPT: Mutex<Option<(Instant, String)>> = Mutex::new(None);
     if !bound.ip().is_unspecified() {
         return bound.ip().to_string();
     }
-    std::net::UdpSocket::bind("0.0.0.0:0")
+    let mut kept = KEPT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((at, host)) = &*kept
+        && at.elapsed() < LAN_ADDRESS_KEPT
+    {
+        return host.clone();
+    }
+    let host = std::net::UdpSocket::bind("0.0.0.0:0")
         .and_then(|socket| {
             socket.connect("192.0.2.1:9")?;
             socket.local_addr()
         })
-        .map_or_else(|_| "127.0.0.1".to_string(), |addr| addr.ip().to_string())
+        .map_or_else(|_| "127.0.0.1".to_string(), |addr| addr.ip().to_string());
+    *kept = Some((Instant::now(), host.clone()));
+    host
 }
+
+/// How long [`reachable_host`] keeps this machine's LAN address.
+const LAN_ADDRESS_KEPT: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A listener on one address prints that address; one on every
+    /// interface prints this machine's, the same one while it is kept.
+    #[test]
+    fn a_listener_prints_where_it_can_be_reached() {
+        let bound: SocketAddr = "10.1.2.3:47710".parse().expect("an address");
+        assert_eq!(reachable_host(bound), "10.1.2.3");
+        let every: SocketAddr = "0.0.0.0:47710".parse().expect("an address");
+        let first = reachable_host(every);
+        assert!(first.parse::<std::net::IpAddr>().is_ok(), "{first}");
+        assert_eq!(reachable_host(every), first);
+    }
 
     #[test]
     fn a_connection_string_reads_back_as_it_was_written() {

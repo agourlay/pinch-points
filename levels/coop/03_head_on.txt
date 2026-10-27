@@ -1,0 +1,20 @@
+# The two crabs walk at each other down one corridor, and each passes the
+# other's door first. An arrow that turned every crab would send the
+# first one by into the wrong door.
+name: Head On
+hands: 1 1
+crab: 0,2 R L common
+crab: 8,2 L R common
+solution: 6,2 U L; 2,2 D R
+map:
++-+-+-+-+-+-+-+-+-+
+|0 . . . . . K K K|
++-+-+-+-+-+-+ + + +
+|# # # # # #|K|K K|
++-+-+-+-+-+-+ +-+-+
+|. . . . . . . . .|
++-+-+ +-+-+-+-+-+-+
+|# #|K|K K|# # # #|
++-+-+ + + +-+-+-+-+
+|0 . K K K|# # # #|
++-+-+-+-+-+-+-+-+-+

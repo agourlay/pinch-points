@@ -1,0 +1,22 @@
+# A rock blocks the right crab's way along the bottom, so P2 needs a
+# second arrow to send it round to the other castle.
+name: Round the Rock
+posts: 3
+hands: 1 2
+kind: puzzle
+seed: 2125266945
+crab: 1,2 R L common
+crab: 0,2 R R common
+solution: 3,2 U L; 5,2 D R; 3,3 L R
+map:
++-+-+-+-+-+-+-+-+-+
+|0 . . K K K K K K|
++ + + + +-+-+-+-+ +
+|. . .|K K K K K K|
++-+-+-+ +-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+-+-+ +-+-+-+
+|. . . . .|K K K K|
++ + + + + + +-+-+ +
+|0 0 # . . K K K K|
++-+-+-+-+-+-+-+-+-+

@@ -5,8 +5,8 @@
 
 use crate::app::{Sim, layout};
 use crate::sim::{
-    Crab, CrabKind, Direction, GullState, Handedness, MAX_PLAYERS, PlayerId, TideEvent, TileKind,
-    castle_tier,
+    Crab, CrabKind, Direction, GullState, Handedness, IncomingGull, MAX_PLAYERS, PlayerId,
+    TideEvent, TileKind, castle_tier,
 };
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -43,11 +43,23 @@ pub enum SimEvent {
     CrabEaten { pos: Vec2 },
     /// A crab appeared from a spawner hole.
     CrabSpawned { pos: Vec2 },
-    /// A gull raided `owner`'s castle for `lost` banked crabs.
+    /// A gull raided `owner`'s castle for `lost` banked crabs. `by` is
+    /// the seat whose arrow last turned it (`owner` itself when a player
+    /// walked a gull home), `None` for a wild gull no arrow turned.
     CastleRaided {
         owner: PlayerId,
         pos: Vec2,
         lost: u32,
+        by: Option<PlayerId>,
+    },
+    /// The edge spawner sent for a gull: it lands on `tile`, facing `dir`,
+    /// on tick `at` (see [`IncomingGull`]). Its own event,
+    /// ahead of [`SimEvent::GullArrived`], because the whole point of the
+    /// lead is that the beach hears of the bird before it is on the sand.
+    GullIncoming {
+        tile: (u8, u8),
+        dir: Direction,
+        at: u64,
     },
     /// A new gull walked onto the beach.
     GullArrived,
@@ -92,7 +104,7 @@ pub enum SimEvent {
     /// `owner` was at the cap under [`crate::sim::CapPolicy::Evict`] and
     /// placed anyway, so their oldest went. `pos` is where it stood.
     ///
-    /// The versus and Beach Day rule, never the campaign's, which refuses
+    /// The versus rule, never the campaign's, which refuses
     /// the placement instead. The one way a player loses a signpost by
     /// their own hand without asking to.
     SignpostEvicted {
@@ -119,6 +131,12 @@ pub enum SimEvent {
     /// during a lure or the quiet spell after), so it is its own event
     /// rather than read off `CrabBanked`, which named a lure for each.
     LureStarted { owner: PlayerId },
+    /// `owner` banked a molting crab and no lure began
+    /// (`Board::lure_ready` was false): `running` when a lure was still on,
+    /// otherwise the quiet spell after one. Its own event for the same
+    /// reason as [`SimEvent::WheelLocked`]: the molt banks for its points
+    /// and nothing on the beach says why the crabs did not come running.
+    LureRefused { owner: PlayerId, running: bool },
     /// The final-scramble surge began.
     SurgeStarted,
     /// A golden crab was called: it comes out of the spawner hole at `pos`
@@ -304,7 +322,7 @@ impl BoardStamp {
 /// namesake stood presses a footprint halfway between.
 pub struct BoardMemory<K, V> {
     filled_on: BoardStamp,
-    by_id: bevy::platform::collections::HashMap<K, V>,
+    by_id: HashMap<K, V>,
 }
 
 impl<K, V> Default for BoardMemory<K, V> {
@@ -319,10 +337,7 @@ impl<K, V> Default for BoardMemory<K, V> {
 impl<K, V> BoardMemory<K, V> {
     /// The memory for the board on the table: emptied first if it was
     /// filled on another one.
-    pub fn of(
-        &mut self,
-        current: &CurrentBoard,
-    ) -> &mut bevy::platform::collections::HashMap<K, V> {
+    pub fn of(&mut self, current: &CurrentBoard) -> &mut HashMap<K, V> {
         let Self { filled_on, by_id } = self;
         if filled_on.is_new(current) {
             by_id.clear();
@@ -355,6 +370,10 @@ pub struct Watch {
     /// re-pointing one in place keeps the seat and changes the direction;
     /// the direction is kept to draw the ghost of a post already gone.
     posts_at: HashMap<(u8, u8), (PlayerId, Direction)>,
+    /// What each seat's steered gulls have taken from each castle, as
+    /// `stolen[steerer][victim]` ([`crate::sim::Board::stolen`]): the
+    /// growth of a victim's column names who steered the raid on it.
+    stolen: [[u32; MAX_PLAYERS]; MAX_PLAYERS],
     /// The most recent tide event and the tick it fired on.
     tide_event: Option<(TideEvent, u64)>,
     spun_by: Option<PlayerId>,
@@ -375,6 +394,8 @@ pub struct Watch {
     /// Every gull on the beach, by id: by its keys which gulls were
     /// already here, for the one that is new.
     gulls: HashMap<u32, SeenGull>,
+    /// The gulls on their way in, for the one newly sent for.
+    incoming: Vec<IncomingGull>,
 }
 
 /// One gull as the last look saw it.
@@ -420,6 +441,9 @@ impl Watch {
                     Some(((x, y), (sp.owner, sp.dir)))
                 })
                 .collect(),
+            stolen: std::array::from_fn(|by| {
+                std::array::from_fn(|victim| board.stolen(by as PlayerId, victim as PlayerId))
+            }),
             tide_event: board.last_event(),
             spun_by: board.event_spun_by(),
             lure: board.lure().map(|(owner, _)| owner),
@@ -445,6 +469,7 @@ impl Watch {
                     (g.id, seen)
                 })
                 .collect(),
+            incoming: board.incoming_gulls().to_vec(),
         }
     }
 }
@@ -499,18 +524,10 @@ fn settle_banks(before: &[u32; MAX_PLAYERS], events: &mut [SimEvent]) -> [i64; M
 /// notice) an asserting `tile_at` would take the game down at level start.
 fn crab_departure(board: &crate::sim::Board, prev: &Crab, claw: bool) -> SimEvent {
     let pos = layout::creature_pos(board, prev.tile, prev.dir, prev.progress);
-    let (x, y) = board.coords_u8(prev.tile);
-    let tile_or_empty = |x: i32, y: i32| {
-        if x >= 0 && y >= 0 && x < i32::from(board.width()) && y < i32::from(board.height()) {
-            board.tile_at(x as u8, y as u8)
-        } else {
-            TileKind::Empty
-        }
-    };
     let priced = || prev.bank_points(board.crab_value(prev.kind), claw);
     // The tide's own doing, which no tile records. Its keep is where the
     // crab is flown to, and a banker with no castle to fly it to is not a
-    // thing the sim makes, so the tiles have the last word if it happens.
+    // thing the sim makes, so it reads as eaten if it ever happens.
     let swept = board
         .swept_home(prev.id)
         .and_then(|owner| Some((owner, board.castle_of(owner)?)));
@@ -522,34 +539,18 @@ fn crab_departure(board: &crate::sim::Board, prev: &Crab, claw: bool) -> SimEven
             layout::tile_center(board, kx, ky),
             board.swept_paid(prev.id).unwrap_or_else(priced),
         ),
-        None => {
-            let here = (i32::from(x), i32::from(y));
-            // The board's own step, seam and all: on a wrapping beach a
-            // crab leaving the last column walks into a castle on the
-            // first, and the plain offset read that as off the board and
-            // the crab as eaten.
-            let ahead = board
-                .step(prev.tile, prev.dir)
-                .map_or((-1, -1), |tile| board.coords(tile));
-            // Which of the two tiles is the castle is also *where* it is,
-            // and this is the only moment anybody knows: the board it was
-            // read from is this frame's, and the event is consumed on the
-            // next.
-            let castle = match (
-                tile_or_empty(here.0, here.1),
-                tile_or_empty(ahead.0, ahead.1),
-            ) {
-                (TileKind::Castle(owner), _) => (owner, here),
-                (_, TileKind::Castle(owner)) => (owner, ahead),
-                _ => return SimEvent::CrabEaten { pos },
-            };
-            let (owner, (kx, ky)) = castle;
-            (
-                owner,
-                layout::tile_center(board, kx as u8, ky as u8),
-                priced(),
-            )
-        }
+        // What the sim banked and paid, never a guess off the map: a gull taking a
+        // crab one tile short of a castle leaves it facing the castle, and
+        // read off the tiles that was a bank, sound, points and all. The
+        // castle's tile is also *where* the bank is, which nothing else
+        // records once the crab is gone.
+        None => match board.walked_home(prev.id) {
+            Some((owner, tile, paid)) => {
+                let (kx, ky) = board.coords_u8(tile);
+                (owner, layout::tile_center(board, kx, ky), paid)
+            }
+            None => return SimEvent::CrabEaten { pos },
+        },
     };
     SimEvent::CrabBanked {
         id: prev.id,
@@ -689,6 +690,23 @@ pub fn diff(board: &crate::sim::Board, watch: &mut Watch) -> Vec<SimEvent> {
     events
 }
 
+/// Who steered the raid on `victim` between two looks: the seat whose
+/// steered gulls' take from that castle grew the most, or nobody when it
+/// did not grow (a wild gull). Two raids on one castle inside one look
+/// are one line, and it names the bigger thief.
+fn raider(prev: &Watch, next: &Watch, victim: usize) -> Option<PlayerId> {
+    (0..MAX_PLAYERS)
+        .map(|by| {
+            (
+                by,
+                next.stolen[by][victim].saturating_sub(prev.stolen[by][victim]),
+            )
+        })
+        .filter(|&(_, took)| took > 0)
+        .max_by_key(|&(by, took)| (took, std::cmp::Reverse(by)))
+        .map(|(by, _)| by as PlayerId)
+}
+
 /// What changed between two readings of the same board.
 fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEvent> {
     let mut events = Vec::new();
@@ -709,6 +727,7 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
                 owner: seat as PlayerId,
                 pos: layout::tile_center(board, x, y),
                 lost: (expected - i64::from(now)) as u32,
+                by: raider(prev, next, seat),
             });
         }
     }
@@ -717,6 +736,15 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
     // one gull off and brings one on in the same tick, and a raider can
     // leave on the tick another lands, so the count holds and the new
     // bird came in without a screech or a feed line.
+    for gull in &next.incoming {
+        if !prev.incoming.contains(gull) {
+            events.push(SimEvent::GullIncoming {
+                tile: board.coords_u8(gull.tile),
+                dir: gull.dir,
+                at: gull.at,
+            });
+        }
+    }
     if next.gulls.keys().any(|id| !prev.gulls.contains_key(id)) {
         events.push(SimEvent::GullArrived);
     }
@@ -816,6 +844,28 @@ fn changes(board: &crate::sim::Board, prev: &Watch, next: &Watch) -> Vec<SimEven
     {
         events.push(SimEvent::LureStarted { owner });
     }
+    // Read off the board's record, written on the bank tick: a look can
+    // span several ticks, and a lure that ended inside it leaves the end
+    // state saying "quiet spell" for a molt banked while it still ran. A
+    // molt that started a lure, or that the tide swept home, has no record.
+    let refused: Vec<(PlayerId, bool)> = events
+        .iter()
+        .filter_map(|event| {
+            let SimEvent::CrabBanked {
+                id,
+                owner,
+                kind: CrabKind::Molting,
+                ..
+            } = event
+            else {
+                return None;
+            };
+            board.lure_refused(*id).map(|running| (*owner, running))
+        })
+        .collect();
+    for (owner, running) in refused {
+        events.push(SimEvent::LureRefused { owner, running });
+    }
     if next.surging && !prev.surging {
         events.push(SimEvent::SurgeStarted);
     }
@@ -841,6 +891,38 @@ mod tests {
         let mut watch = Watch::default();
         diff(board, &mut watch);
         watch
+    }
+
+    /// The raid's event names whose arrow steered the gull, read at any
+    /// frame rate: a replay at speed folds many ticks into one look, and
+    /// the credit is the board's own tally rather than a sighting of the
+    /// gull on the arrow. A wild gull names nobody.
+    #[test]
+    fn a_raid_names_the_seat_that_steered_it() {
+        for (arrow, every) in [(Some(0), 1), (Some(0), 40), (Some(1), 1), (None, 7)] {
+            let mut board = Board::new(7, 5, 0);
+            board.set_tile(4, 2, TileKind::Castle(1));
+            board.set_tile(6, 4, TileKind::Castle(0));
+            board.set_score(1, 30);
+            if let Some(seat) = arrow {
+                assert!(board.place_signpost(seat, 1, 2, Direction::Right));
+            }
+            board.spawn_gull(0, 2, Direction::Right);
+            let mut watch = synced(&board);
+            let mut raids = Vec::new();
+            for tick in 1..=200 {
+                board.tick_idle();
+                if tick % every == 0 {
+                    raids.extend(diff(&board, &mut watch).into_iter().filter_map(|e| {
+                        let SimEvent::CastleRaided { owner, by, .. } = e else {
+                            return None;
+                        };
+                        Some((owner, by))
+                    }));
+                }
+            }
+            assert_eq!(raids, [(1, arrow)], "{arrow:?} every {every}");
+        }
     }
 
     /// A sweep's landing records outlast the most ticks one drawn frame can
@@ -953,6 +1035,109 @@ mod tests {
         assert!(bank_on(false, false).is_empty());
     }
 
+    /// A molt banked with its lure not ready says so, naming whose it was
+    /// and whether a lure was still on or resting; one that starts a lure
+    /// says only that.
+    #[test]
+    fn a_molt_that_starts_no_lure_is_told() {
+        // `before` ticks after a lure for seat 0 starts, a molt walks into
+        // seat 2's castle; what the look it banked in says of lures.
+        let bank_after = |before: Option<u32>| {
+            let mut board = Board::new(6, 4, 7);
+            board.set_tile(3, 1, TileKind::Castle(2));
+            if let Some(before) = before {
+                board.force_lure(0);
+                for _ in 0..before {
+                    board.tick_idle();
+                }
+            }
+            board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Molting);
+            let mut watch = synced(&board);
+            for _ in 0..600 {
+                board.tick_idle();
+                let events = diff(&board, &mut watch);
+                if events
+                    .iter()
+                    .any(|e| matches!(e, SimEvent::CrabBanked { .. }))
+                {
+                    return events
+                        .into_iter()
+                        .filter(|e| {
+                            matches!(
+                                e,
+                                SimEvent::LureRefused { .. } | SimEvent::LureStarted { .. }
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                }
+            }
+            panic!("the crab never banked");
+        };
+        assert!(matches!(
+            bank_after(None)[..],
+            [SimEvent::LureStarted { owner: 2 }]
+        ));
+        assert!(matches!(
+            bank_after(Some(0))[..],
+            [SimEvent::LureRefused {
+                owner: 2,
+                running: true
+            }]
+        ));
+        assert!(matches!(
+            bank_after(Some(crate::sim::LURE_TICKS))[..],
+            [SimEvent::LureRefused {
+                owner: 2,
+                running: false
+            }]
+        ));
+    }
+
+    /// Whether a lure was on is read at the tick the molt banked, not at
+    /// the end of the look: one look spanning a molt banked mid-lure and
+    /// the lure's end still says the lure was running.
+    #[test]
+    fn a_molt_refused_mid_lure_says_running_across_a_long_look() {
+        let mut board = Board::new(6, 4, 7);
+        board.set_tile(3, 1, TileKind::Castle(2));
+        // How long the molt takes to bank, so it can be sent in near the
+        // lure's end and the look stays as short as a slow frame's.
+        let mut probe = board.clone();
+        probe.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Molting);
+        let mut walk = 0;
+        while probe.crabs_banked() == 0 {
+            probe.tick_idle();
+            walk += 1;
+        }
+        board.force_lure(0);
+        while board.lure().is_some_and(|(_, left)| left > walk + 4) {
+            board.tick_idle();
+        }
+        board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Molting);
+        let mut watch = synced(&board);
+        while board.crabs_banked() == 0 {
+            board.tick_idle();
+        }
+        assert!(board.lure().is_some(), "banked while the lure ran");
+        while board.lure().is_some() {
+            board.tick_idle();
+        }
+        let refused: Vec<_> = diff(&board, &mut watch)
+            .into_iter()
+            .filter(|e| matches!(e, SimEvent::LureRefused { .. }))
+            .collect();
+        assert!(
+            matches!(
+                refused[..],
+                [SimEvent::LureRefused {
+                    owner: 2,
+                    running: true
+                }]
+            ),
+            "{refused:?}"
+        );
+    }
+
     /// A lure is news once, when it begins, and says whose it is; a tide
     /// event called rather than spun names nobody as its spinner.
     #[test]
@@ -1043,6 +1228,81 @@ mod tests {
         assert!(eaten, "the gull never registered its meal");
     }
 
+    /// A gull taking a crab one tile short of a castle, the crab facing
+    /// it, is a gull's dinner: nobody banked it. Read off the map, it was
+    /// a bank for the castle's owner, with the sound, the points, and for
+    /// a sparkling crab a wheel that never turned.
+    #[test]
+    fn a_crab_eaten_in_front_of_a_castle_is_eaten() {
+        let mut board = Board::new(6, 4, 7);
+        board.rules_mut().castle_raids = false;
+        board.set_tile(3, 1, TileKind::Castle(2));
+        board.spawn_crab(
+            2,
+            1,
+            Direction::Right,
+            Handedness::Left,
+            CrabKind::Sparkling,
+        );
+        let mut watch = synced(&board);
+        board.spawn_gull(2, 1, Direction::Right);
+        board.tick_idle();
+        assert!(board.crabs().is_empty(), "the gull took it");
+        assert_eq!(board.scores()[2], 0, "and nobody banked it");
+        let events = diff(&board, &mut watch);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::CrabEaten { .. })),
+            "{events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, SimEvent::CrabBanked { .. })),
+            "{events:?}"
+        );
+    }
+
+    /// A frame that spans several ticks still sees a crab that walked in
+    /// early in it as banked, at its castle, for what the sim paid.
+    #[test]
+    fn a_bank_inside_a_long_frame_is_a_bank() {
+        let mut board = Board::new(6, 4, 7);
+        board.set_tile(3, 1, TileKind::Castle(2));
+        board.spawn_crab(2, 1, Direction::Right, Handedness::Left, CrabKind::Giant);
+        let mut watch = synced(&board);
+        while !board.crabs().is_empty() {
+            board.tick_idle();
+        }
+        for _ in 0..10 {
+            board.tick_idle();
+        }
+        let events = diff(&board, &mut watch);
+        let banked: Vec<_> = events
+            .iter()
+            .filter_map(|e| {
+                if let SimEvent::CrabBanked {
+                    owner,
+                    keep,
+                    points,
+                    ..
+                } = e
+                {
+                    Some((*owner, *keep, *points))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(
+            banked,
+            vec![(2, layout::tile_center(&board, 3, 1), 10)],
+            "{events:?}"
+        );
+        assert_eq!(board.scores()[2], 10);
+    }
+
     /// A gull a puzzle's castle turns away is seen leaving, from where it
     /// was, beside the castle that sent it. With raids on the same walk is
     /// a raid, whose own event is the news, and nothing is shooed.
@@ -1131,29 +1391,61 @@ mod tests {
         );
     }
 
-    /// A full flock turning over sends one gull off and brings one on in
-    /// the same tick. The headcount holds, and the newcomer still arrives.
+    /// A full flock turning over sends one gull off as it sends for the
+    /// next, and the newcomer is news twice: when it is sent for, with the
+    /// tile and tick it lands on, and when it lands there, on that tick.
     #[test]
-    fn a_gull_that_takes_a_turned_over_place_still_arrives() {
+    fn a_gull_that_takes_a_turned_over_place_is_heard_coming_and_arriving() {
         let mut board = Board::new(12, 9, 7);
         board.set_tile(1, 1, TileKind::Castle(0));
         board.spawn_gull(10, 7, Direction::Up);
-        for _ in 0..3 {
+        while board.ticks() < 50 {
             board.tick_idle();
         }
         let mut watch = synced(&board);
-        board.rules_mut().gull_period = 1;
+        board.rules_mut().gull_period = 50;
         board.rules_mut().gull_cap = 1;
         board.rules_mut().gull_turnover = true;
         board.tick_idle();
         let events = diff(&board, &mut watch);
-        assert_eq!(board.gulls().len(), 1, "one off and one on");
+        assert!(board.gulls().is_empty(), "the old one is off");
         assert!(
             events
                 .iter()
                 .any(|e| matches!(e, SimEvent::GullFlewOff { .. })),
             "{events:?}"
         );
+        let due = 50 + u64::from(crate::sim::GULL_LEAD);
+        let [incoming] = board.incoming_gulls() else {
+            panic!("one sent for: {:?}", board.incoming_gulls());
+        };
+        let tile = board.coords_u8(incoming.tile);
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SimEvent::GullIncoming { tile: at_tile, at, .. } if *at == due && *at_tile == tile
+            )),
+            "the new gull was not heard coming: {events:?}"
+        );
+        // Nothing more until it lands, and then it lands on its tick.
+        while board.ticks() <= due {
+            assert!(
+                board.gulls().is_empty(),
+                "landed early, at {}",
+                board.ticks()
+            );
+            let events = diff(&board, &mut watch);
+            assert!(
+                !events
+                    .iter()
+                    .any(|e| matches!(e, SimEvent::GullArrived | SimEvent::GullIncoming { .. })),
+                "{events:?}"
+            );
+            board.tick_idle();
+        }
+        let events = diff(&board, &mut watch);
+        assert_eq!(board.gulls().len(), 1, "landed on the tick it was due");
+        assert_eq!(board.coords_u8(board.gulls()[0].tile), tile);
         assert!(
             events.iter().any(|e| matches!(e, SimEvent::GullArrived)),
             "the new gull came in unannounced: {events:?}"
@@ -1345,6 +1637,7 @@ mod tests {
                 | SimEvent::CrabEaten { .. }
                 | SimEvent::CrabSpawned { .. }
                 | SimEvent::CastleRaided { .. }
+                | SimEvent::GullIncoming { .. }
                 | SimEvent::GullArrived
                 | SimEvent::GullTookOff
                 | SimEvent::GullLanded { .. }
@@ -1355,6 +1648,7 @@ mod tests {
                 | SimEvent::TierUp { .. }
                 | SimEvent::TideEventFired { .. }
                 | SimEvent::LureStarted { .. }
+                | SimEvent::LureRefused { .. }
                 | SimEvent::SurgeStarted
                 | SimEvent::GoldenCalled { .. }
                 | SimEvent::GoldenOut { .. }

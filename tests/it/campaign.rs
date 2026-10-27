@@ -1,10 +1,8 @@
 //! Solvability proof for every shipped level: replay the authored solution
-//! and require a win within the puzzle tick limit (spec §5.4's validation
+//! and require a win within the puzzle tick limit (spec §5.3's validation
 //! idea, applied to the §5.1 campaign).
 
-use pinch_points::sim::{
-    Direction, Goal, PuzzleOutcome, TileKind, campaign_levels, challenge_levels,
-};
+use pinch_points::sim::{Direction, Goal, PuzzleOutcome, TileKind, campaign_levels};
 
 #[test]
 fn every_campaign_level_is_solvable_with_its_solution() {
@@ -22,7 +20,7 @@ fn every_campaign_level_is_solvable_with_its_solution() {
             "level {n} {:?}: solution uses more posts than the inventory",
             level.name
         );
-        let mut board = level.solved_board().unwrap_or_else(|(x, y, _)| {
+        let mut board = level.solved_board().unwrap_or_else(|(x, y, _, _)| {
             panic!(
                 "level {n} {:?}: solution placement at ({x},{y}) rejected",
                 level.name
@@ -130,15 +128,11 @@ fn granted_signposts_are_necessary() {
 /// is a property of where the wall is, and a level can be built to teach it.
 #[test]
 fn no_level_is_beaten_by_a_pair_of_signposts_facing_each_other() {
-    for (i, level) in campaign_levels()
-        .iter()
-        .chain(challenge_levels().iter())
-        .enumerate()
-    {
+    for (i, level) in campaign_levels().iter().enumerate() {
         let posts: std::collections::HashMap<(u8, u8), Direction> = level
             .solution
             .iter()
-            .map(|&(x, y, dir)| ((x, y), dir))
+            .map(|&(x, y, dir, _)| ((x, y), dir))
             .collect();
         for (&(x, y), &dir) in &posts {
             let (dx, dy) = dir.offset();
@@ -155,57 +149,6 @@ fn no_level_is_beaten_by_a_pair_of_signposts_facing_each_other() {
                 level.name,
             );
         }
-    }
-}
-
-/// A challenge stage has to ask something of the player. A stage whose goal
-/// the board meets on its own is beaten by pressing Enter and watching,
-/// which is not a score attack.
-///
-/// The campaign has had this guard from the start
-/// (`granted_signposts_are_necessary`); Beach Day never did, and four of its
-/// eight stages were winnable with no input at all.
-#[test]
-fn every_challenge_stage_asks_something_of_the_player() {
-    for (i, stage) in challenge_levels().iter().enumerate() {
-        let mut board = stage.board();
-        let (outcome, _) = stage.play_out(&mut board);
-        assert_ne!(
-            outcome,
-            PuzzleOutcome::Won,
-            "stage {} {:?} is won without placing anything: it banked {} on its own",
-            i + 1,
-            stage.name,
-            board.crabs_banked(),
-        );
-    }
-}
-
-/// Beach Day stages must be beatable with their authored solutions before
-/// the tide (goal-aware outcome).
-#[test]
-fn every_challenge_stage_is_beatable() {
-    let stages = challenge_levels();
-    assert!(stages.len() >= 8, "Beach Day ships at least 8 stages");
-    for (i, stage) in stages.iter().enumerate() {
-        let n = i + 1;
-        let mut board = stage.solved_board().unwrap_or_else(|(x, y, _)| {
-            panic!(
-                "stage {n} {:?}: solution placement at ({x},{y}) rejected",
-                stage.name
-            )
-        });
-        let (outcome, ticks) = stage.play_out(&mut board);
-        assert_eq!(
-            outcome,
-            PuzzleOutcome::Won,
-            "stage {n} {:?} not beaten: banked {} of spawned {}, golden {}, alive {}, tick {ticks}",
-            stage.name,
-            board.crabs_banked(),
-            board.crabs_spawned(),
-            board.golden_banked(),
-            board.crabs().len(),
-        );
     }
 }
 
@@ -230,32 +173,27 @@ fn no_shipped_level_starts_a_creature_where_it_cannot_stand() {
     // slowly, and a crab wading one is half the point of the later
     // levels - so a creature standing in either is fine.
     let blocking = |kind: TileKind| matches!(kind, TileKind::Rock);
-    for (list, what) in [
-        (campaign_levels(), "campaign"),
-        (challenge_levels(), "challenge"),
-    ] {
-        for (i, level) in list.iter().enumerate() {
-            let board = level.board();
-            for crab in board.crabs() {
-                let (x, y) = board.coords_u8(crab.tile);
-                assert!(
-                    !blocking(board.tile_at(x, y)),
-                    "{what} {} {:?}: a crab starts on {:?} at ({x},{y})",
-                    i + 1,
-                    level.name,
-                    board.tile_at(x, y)
-                );
-            }
-            for gull in board.gulls() {
-                let (x, y) = board.coords_u8(gull.tile);
-                assert!(
-                    !blocking(board.tile_at(x, y)),
-                    "{what} {} {:?}: a gull starts on {:?} at ({x},{y})",
-                    i + 1,
-                    level.name,
-                    board.tile_at(x, y)
-                );
-            }
+    for (i, level) in campaign_levels().iter().enumerate() {
+        let board = level.board();
+        for crab in board.crabs() {
+            let (x, y) = board.coords_u8(crab.tile);
+            assert!(
+                !blocking(board.tile_at(x, y)),
+                "campaign {} {:?}: a crab starts on {:?} at ({x},{y})",
+                i + 1,
+                level.name,
+                board.tile_at(x, y)
+            );
+        }
+        for gull in board.gulls() {
+            let (x, y) = board.coords_u8(gull.tile);
+            assert!(
+                !blocking(board.tile_at(x, y)),
+                "campaign {} {:?}: a gull starts on {:?} at ({x},{y})",
+                i + 1,
+                level.name,
+                board.tile_at(x, y)
+            );
         }
     }
 }
@@ -273,27 +211,22 @@ fn no_shipped_level_starts_a_creature_where_it_cannot_stand() {
 /// put them.
 #[test]
 fn every_level_that_asks_for_a_bank_has_one() {
-    for (list, what) in [
-        (campaign_levels(), "campaign"),
-        (challenge_levels(), "challenge"),
-    ] {
-        for (i, level) in list.iter().enumerate() {
-            if level.goal == Goal::Survive {
-                continue;
-            }
-            let board = level.board();
-            let castles = board
-                .tiles()
-                .filter(|(_, _, kind)| matches!(kind, TileKind::Castle(_)))
-                .count();
-            assert!(
-                castles > 0,
-                "{what} {} {:?} wants {:?} and has no castle on it",
-                i + 1,
-                level.name,
-                level.goal
-            );
+    for (i, level) in campaign_levels().iter().enumerate() {
+        if level.goal == Goal::Survive {
+            continue;
         }
+        let board = level.board();
+        let castles = board
+            .tiles()
+            .filter(|(_, _, kind)| matches!(kind, TileKind::Castle(_)))
+            .count();
+        assert!(
+            castles > 0,
+            "campaign {} {:?} wants {:?} and has no castle on it",
+            i + 1,
+            level.name,
+            level.goal
+        );
     }
 }
 

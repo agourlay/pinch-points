@@ -1,12 +1,15 @@
 //! The versus sidebars: on the left, score chips sorted by rank (the
 //! leader's chip is biggest and wears the crown); on the right, the big
-//! tide clock over a running log of the round's notable events.
+//! tide clock over a running log of the round's notable events, with the
+//! tide event still running pinned at its top.
 
 mod clock;
+mod event_timer;
 mod feed;
 
 pub use clock::update_side_clock;
-pub use feed::{EventLog, collect_chat, collect_log, update_log};
+pub use event_timer::update_event_timer;
+pub use feed::{EventLog, collect_chat, collect_log, reach_the_board, update_log};
 
 use crate::app::seating::{Seating, beside_the_robot, robot_inline};
 use crate::app::settings::GameSettings;
@@ -19,6 +22,10 @@ use bevy::prelude::*;
 /// Width of each sidebar in px; `fit_camera` reserves this much on both
 /// sides.
 pub const SIDEBAR_W: f32 = 250.0;
+
+/// How far above the window's foot the sidebars stop, clear of the prompt
+/// line.
+const SIDEBAR_FOOT: f32 = 44.0;
 
 /// The sidebar root; despawning it takes everything with it.
 #[derive(Component)]
@@ -36,9 +43,11 @@ pub struct SideScore {
     bump: f32,
 }
 
-/// One arrow slot on a chip, oldest first: an outline, filled for an
-/// arrow standing and drained by how much of its life is gone. One per
-/// arrow the rules allow, so the row is the cap, read at a glance.
+/// One arrow slot on a chip, oldest first: a faint pip while the arrow is
+/// in hand, and for an arrow standing an outline, filled and drained by
+/// how much of its life is gone. One per arrow the rules allow, so the
+/// row is the cap, read at a glance. Not an empty outline in hand: a row
+/// of hollow boxes under a name reads as characters the font cannot draw.
 #[derive(Component)]
 pub struct ArrowDot {
     seat: u8,
@@ -67,6 +76,38 @@ pub struct RankMedal(pub u8);
 /// The digit inside the rank medal.
 #[derive(Component)]
 pub struct RankDigit(pub u8);
+
+/// Text written on seat `.0`'s chip, in [`palette::ink_on`] its fill: the
+/// score at full strength, the name and its tag (`.1`) a touch under.
+#[derive(Component)]
+pub struct ChipInk(pub u8, pub bool);
+
+/// A chip's fill: the seat's own colour while it leads, a darker shade
+/// while it trails, either one its text reads on.
+pub fn chip_fill(seat: u8, leading: bool) -> Color {
+    match leading {
+        true => palette::leader_chip(seat),
+        false => palette::seat_chip(seat),
+    }
+}
+
+/// An arrow slot's ink on a chip in `fill`: the fill of an arrow standing,
+/// and the outline of a free slot, in the chip's own [`palette::ink_on`].
+fn pip_on(fill: Color) -> Color {
+    palette::ink_on(fill).with_alpha(0.95)
+}
+
+fn pip_off(fill: Color) -> Color {
+    palette::ink_on(fill).with_alpha(0.25)
+}
+
+/// The ink text `named` (a name, else the score) is written in on `fill`.
+fn chip_ink(fill: Color, named: bool) -> Color {
+    match named {
+        true => palette::name_ink_on(fill),
+        false => palette::ink_on(fill),
+    }
+}
 
 /// Chip geometry by rank: the leader gets the tall card and the huge
 /// number; the rest shrink with their standing, with a gap between cards.
@@ -126,7 +167,7 @@ fn sidebar(left: bool) -> (SidePanelRoot, Node) {
             left: if left { Val::Px(0.0) } else { Val::Auto },
             right: if left { Val::Auto } else { Val::Px(0.0) },
             top: Val::Px(menu_ui::UNDER_HEADER),
-            bottom: Val::Px(44.0),
+            bottom: Val::Px(SIDEBAR_FOOT),
             width: Val::Px(SIDEBAR_W),
             ..default()
         },
@@ -188,7 +229,7 @@ fn spawn_score_chip(
             ..default()
         },
         BorderColor::all(palette::seat_paint(seat)),
-        BackgroundColor(palette::player_color(seat).darker(0.22)),
+        BackgroundColor(chip_fill(seat, false)),
     ))
     .with_children(|chip| {
         // Rank medal on the left edge.
@@ -213,9 +254,10 @@ fn spawn_score_chip(
                     font_size: FontSize::Px(menu_ui::type_scale::BODY),
                     ..default()
                 },
-                TextColor(palette::MEDAL_DIGIT),
+                TextColor(palette::ink_on(MEDALS[seat as usize])),
             ));
         });
+        let fill = chip_fill(seat, false);
         // Name, and the arrows under it.
         chip.spawn(Node {
             flex_direction: FlexDirection::Column,
@@ -251,7 +293,8 @@ fn spawn_score_chip(
                         Text::new(""),
                         font.clone(),
                         TextLayout::no_wrap(),
-                        TextColor(palette::CHIP_NAME),
+                        ChipInk(seat, true),
+                        TextColor(chip_ink(fill, true)),
                     ))
                     .with_children(|text| {
                         if bot {
@@ -260,7 +303,8 @@ fn spawn_score_chip(
                         text.spawn((
                             TextSpan::new(beside_the_robot(bot, &name)),
                             font.clone(),
-                            TextColor(palette::CHIP_NAME),
+                            ChipInk(seat, true),
+                            TextColor(chip_ink(fill, true)),
                         ));
                     });
                 });
@@ -269,7 +313,8 @@ fn spawn_score_chip(
                         Text::new(tag.trim_start()),
                         font,
                         TextLayout::no_wrap(),
-                        TextColor(palette::CHIP_NAME),
+                        ChipInk(seat, true),
+                        TextColor(chip_ink(fill, true)),
                         Node {
                             flex_shrink: 0.0,
                             ..default()
@@ -295,8 +340,8 @@ fn spawn_score_chip(
                             overflow: Overflow::clip(),
                             ..default()
                         },
-                        BorderColor::all(palette::PIP_OFF),
-                        BackgroundColor(Color::NONE),
+                        BorderColor::all(Color::NONE),
+                        BackgroundColor(pip_off(fill)),
                     ))
                     .with_children(|dot| {
                         dot.spawn((
@@ -306,7 +351,7 @@ fn spawn_score_chip(
                                 height: Val::Percent(0.0),
                                 ..default()
                             },
-                            BackgroundColor(palette::PIP_ON),
+                            BackgroundColor(pip_on(fill)),
                         ));
                     });
                 }
@@ -317,7 +362,8 @@ fn spawn_score_chip(
             SideScore { seat, bump: 0.0 },
             Text::new("0"),
             menu_ui::display_font(SCORE_PX[seat as usize]),
-            TextColor(palette::HUD_INK),
+            ChipInk(seat, false),
+            TextColor(chip_ink(fill, false)),
         ));
         // The crown perches on the card's top-right corner.
         chip.spawn((
@@ -396,6 +442,13 @@ type ChipScore = (
     &'static mut UiTransform,
 );
 
+/// A chip's rank digit and its ink.
+type ChipDigit = (
+    &'static RankDigit,
+    &'static mut Text,
+    &'static mut TextColor,
+);
+
 /// Every part of the score chips that follows the standings.
 #[derive(SystemParam)]
 pub struct Chips<'w, 's> {
@@ -403,7 +456,8 @@ pub struct Chips<'w, 's> {
     scores: Query<'w, 's, ChipScore>,
     crowns: Query<'w, 's, (&'static LeaderCrown, &'static mut Visibility)>,
     medals: Query<'w, 's, (&'static RankMedal, &'static mut BackgroundColor), Without<SidePanel>>,
-    digits: Query<'w, 's, (&'static RankDigit, &'static mut Text), Without<SideScore>>,
+    digits: Query<'w, 's, ChipDigit, (Without<SideScore>, Without<ChipInk>)>,
+    inks: Query<'w, 's, (&'static ChipInk, &'static mut TextColor)>,
 }
 
 /// Keep the chips sorted and sized by rank, the numbers current, and the
@@ -422,6 +476,7 @@ pub fn update_side_panels(
         crowns,
         medals,
         digits,
+        inks,
     } = &mut chips;
     let board_scores = sim.0.scores();
     let leaders = scoring.leaders(board_scores, seats.0);
@@ -436,12 +491,7 @@ pub fn update_side_panels(
         if node.height != height {
             node.height = height;
         }
-        let color = if leaders[seat] {
-            palette::player_color(panel.0)
-        } else {
-            palette::player_color(panel.0).darker(0.22)
-        };
-        menu_ui::set_bg(&mut bg, color);
+        menu_ui::set_bg(&mut bg, chip_fill(panel.0, leaders[seat]));
         let edge = if leaders[seat] {
             LEADER_BORDER
         } else {
@@ -453,8 +503,14 @@ pub fn update_side_panels(
     for (medal, mut bg) in medals {
         menu_ui::set_bg(&mut bg, MEDALS[rank[medal.0 as usize]]);
     }
-    for (digit, mut text) in digits {
-        menu_ui::set_text(&mut text, PLACES[rank[digit.0 as usize]]);
+    for (digit, mut text, mut ink) in digits {
+        let r = rank[digit.0 as usize];
+        menu_ui::set_text(&mut text, PLACES[r]);
+        menu_ui::set_color(&mut ink, palette::ink_on(MEDALS[r]));
+    }
+    for (chip, mut ink) in inks {
+        let fill = chip_fill(chip.0, leaders[usize::from(chip.0)]);
+        menu_ui::set_color(&mut ink, chip_ink(fill, chip.1));
     }
     for (mut chip, mut text, mut font, mut transform) in scores {
         use std::fmt::Write;
@@ -497,6 +553,31 @@ pub fn update_side_panels(
     }
 }
 
+/// The arrow slots on the chips, and the chips' fills they are inked for.
+#[derive(SystemParam)]
+pub struct ArrowSlots<'w, 's> {
+    chips: Query<'w, 's, ChipFill, (Without<ArrowFill>, Without<ArrowDot>)>,
+    dots: Query<'w, 's, SlotDot, (Without<ArrowFill>, Without<SidePanel>)>,
+    fills: Query<'w, 's, SlotFill, (Without<SidePanel>, Without<ArrowDot>)>,
+}
+
+/// A chip and its fill, which its slots are inked for.
+type ChipFill = (&'static SidePanel, &'static BackgroundColor);
+
+/// An arrow slot: its outline and its in-hand pip.
+type SlotDot = (
+    &'static ArrowDot,
+    &'static mut BorderColor,
+    &'static mut BackgroundColor,
+);
+
+/// An arrow slot's fill: how full it is, and its ink.
+type SlotFill = (
+    &'static ArrowFill,
+    &'static mut Node,
+    &'static mut BackgroundColor,
+);
+
 /// Keep every chip's arrow row current: a slot filled per arrow standing,
 /// oldest on the left and drained by its age, and the oldest picked out
 /// in gold, pulsing with its post on the beach, while planting another
@@ -506,11 +587,20 @@ pub fn update_arrow_dots(
     seating: Seating,
     settings: Res<GameSettings>,
     clock: Res<crate::app::round_state::RoundClock>,
-    mut dots: Query<(&ArrowDot, &mut BorderColor)>,
-    mut fills: Query<(&ArrowFill, &mut Node, &mut BackgroundColor)>,
+    slots: ArrowSlots,
     mut lives: Local<[Vec<f32>; MAX_PLAYERS]>,
 ) {
+    let ArrowSlots {
+        chips,
+        mut dots,
+        mut fills,
+    } = slots;
     let board = &sim.0;
+    // Each chip's fill as it is painted, which its slots are inked for.
+    let mut chip = [Color::WHITE; MAX_PLAYERS];
+    for (panel, fill) in &chips {
+        chip[usize::from(panel.0)] = fill.0;
+    }
     let mut marked = [false; MAX_PLAYERS];
     for (seat, out) in lives.iter_mut().enumerate() {
         board.signpost_lives(seat as u8, out);
@@ -520,19 +610,28 @@ pub fn update_arrow_dots(
     let pulse = next_to_go_pulse(clock.0, settings.reduced_motion);
     // The next to go is the oldest by definition, so the first slot.
     let is_next = |seat: u8, index: u8| index == 0 && marked[usize::from(seat)];
-    for (dot, mut border) in &mut dots {
-        // The outline says whether an arrow stands there and the fill how
-        // long it has left. Told by the fill alone, an arrow about to run
-        // out was an empty slot to look at, and three standing read as one.
+    for (dot, mut border, mut pip) in &mut dots {
+        // The outline says an arrow stands there and the fill how long it
+        // has left; an arrow in hand is a faint pip with no outline. Told
+        // by the fill alone, an arrow about to run out was an empty slot
+        // to look at, and three standing read as one.
+        let ink = chip[usize::from(dot.seat)];
         let standing = usize::from(dot.index) < lives[usize::from(dot.seat)].len();
         let edge = BorderColor::all(if is_next(dot.seat, dot.index) {
             palette::GOLD
         } else if standing {
-            palette::PIP_ON
+            pip_on(ink)
         } else {
-            palette::PIP_OFF
+            Color::NONE
         });
         border.set_if_neq(edge);
+        menu_ui::set_bg(
+            &mut pip,
+            match standing {
+                true => Color::NONE,
+                false => pip_off(ink),
+            },
+        );
     }
     for (fill, mut node, mut bg) in &mut fills {
         let life = lives[usize::from(fill.seat)]
@@ -545,7 +644,7 @@ pub fn update_arrow_dots(
         }
         let ink = match is_next(fill.seat, fill.index) {
             true => palette::GOLD.with_alpha(pulse),
-            false => palette::PIP_ON,
+            false => pip_on(chip[usize::from(fill.seat)]),
         };
         menu_ui::set_bg(&mut bg, ink);
     }
@@ -554,6 +653,44 @@ pub fn update_arrow_dots(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Everything a score chip writes is drawn by the fonts it is written
+    /// in, in every language: the tag after a name, the medal's digit and
+    /// the score. The rows' face draws what DejaVu carries and the
+    /// Japanese subset the rest; the score is the display face. Its arrow
+    /// slots are drawn, not written, so no glyph there can go missing.
+    #[test]
+    fn every_character_a_chip_writes_is_in_its_font() {
+        use crate::app::i18n::metrics::{characters_in_font, display_covers};
+        let mut rows =
+            characters_in_font(include_bytes!("../../../assets/fonts/DejaVuSansMono.ttf"));
+        rows.extend(characters_in_font(include_bytes!(
+            "../../../assets/fonts/NotoSansMonoCJKjp-Subset.otf"
+        )));
+        let display = display_covers();
+        for lang in crate::app::i18n::ALL_LANGS {
+            let tr = lang.tr();
+            let mut written: String = [tr.tag_you, tr.tag_ai].concat();
+            written.push_str(&crate::app::seat_label(tr, 5));
+            written.push_str("0123456789");
+            for ch in written.chars().filter(|ch| !ch.is_whitespace()) {
+                assert!(rows.contains(&ch), "{lang:?}: {ch:?} has no glyph");
+            }
+        }
+        for ch in "0123456789".chars() {
+            assert!(display.contains(&ch), "{ch:?}");
+        }
+    }
+
+    /// Every rank's medal digit reads on its disc, the driftwood of the
+    /// lower places as well as the gold.
+    #[test]
+    fn every_medal_digit_reads() {
+        for (rank, disc) in MEDALS.iter().enumerate() {
+            let seen = palette::contrast(palette::ink_on(*disc), *disc);
+            assert!(seen >= palette::TEXT_CONTRAST, "rank {rank}: {seen:.2}");
+        }
+    }
 
     /// The score chip pops by *scale*, never by font size.
     ///

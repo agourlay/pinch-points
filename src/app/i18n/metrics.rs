@@ -165,7 +165,9 @@ static JP: LazyLock<Face> = LazyLock::new(|| Face {
 pub fn text_px(line: &str, font_px: f32) -> f32 {
     line.chars()
         .map(|ch| {
-            if UI.covers.contains(&ch) || !JP.covers.contains(&ch) {
+            if ch == super::WORD_JOINER {
+                0.0
+            } else if UI.covers.contains(&ch) || !JP.covers.contains(&ch) {
                 UI.advance
             } else {
                 JP.advance
@@ -186,6 +188,7 @@ pub fn text_px(line: &str, font_px: f32) -> f32 {
 pub fn display_px(line: &str, font_px: f32) -> f32 {
     line.chars()
         .map(|ch| match DISPLAY.advance.get(&ch) {
+            _ if ch == super::WORD_JOINER => 0.0,
             Some(&advance) => advance,
             None if JP.covers.contains(&ch) => JP.advance,
             None => UI.advance,

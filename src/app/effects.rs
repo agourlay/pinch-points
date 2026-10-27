@@ -5,6 +5,7 @@
 
 use crate::app::art::Art;
 use crate::app::layout::{self, TILE};
+use crate::app::materials::PRINT;
 use crate::app::palette;
 use crate::app::sim_events::{BoardMemory, CurrentBoard, SimEvent};
 use crate::sim::TileKind;
@@ -53,6 +54,14 @@ pub struct Fx<'w, 's> {
     pub art: Res<'w, Art>,
     pub rng: ResMut<'w, VisualRng>,
     pub settings: Res<'w, crate::app::settings::GameSettings>,
+}
+
+/// Smoothstep: 0 below 0, 1 above 1, and an S between that leaves and
+/// arrives at rest. The easing every flourish on the beach starts and
+/// stops by.
+pub fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// A cheap LCG for visual variety only. Never seed gameplay from this.
@@ -165,6 +174,13 @@ pub struct Particle {
     /// than 60%, so a caller that wants full strength asks for 1.0. See
     /// [`Particle::shade`] for why it is read once and kept.
     peak: Option<f32>,
+    /// The height it comes to rest at, falling: a grain of sand off a
+    /// castle lies on the beach at the castle's foot rather than falling
+    /// through it. `None` falls for ever.
+    floor: Option<f32>,
+    /// Fraction of life held at full strength before the fade begins, for
+    /// a piece that lies a moment before it goes. Zero fades all the way.
+    hold: f32,
     age: f32,
     life: f32,
 }
@@ -181,6 +197,8 @@ impl Default for Particle {
             ramp: None,
             fade_in: 0.09,
             peak: None,
+            floor: None,
+            hold: 0.0,
             age: 0.0,
             life: 0.5,
         }
@@ -193,6 +211,13 @@ impl Particle {
     /// straight `1 - age/life` ramp it has always been.
     fn strength(&self) -> f32 {
         let rise = self.fade_in * self.life;
+        let held = self.hold * self.life;
+        if held > 0.0 {
+            return match self.age < held {
+                true => 1.0,
+                false => 1.0 - (self.age - held) / (self.life - held).max(f32::EPSILON),
+            };
+        }
         if self.age < rise {
             self.age / rise.max(f32::EPSILON)
         } else {
@@ -272,6 +297,60 @@ pub fn burst(commands: &mut Commands, rng: &mut VisualRng, spec: &Burst) {
                 Vec2::splat(spec.size * rng.range(0.7, 1.3)),
             ),
             Transform::from_translation(spec.pos.extend(layout::z::PARTICLE)),
+        ));
+    }
+}
+
+/// A handful of grains knocked off a raided castle (see [`crumbs`]).
+#[derive(Clone, Copy)]
+pub(crate) struct Crumbs {
+    /// Where they fall from: the keep's rim, over its middle.
+    pub rim: Vec2,
+    /// The height of the castle's foot, where they come to rest.
+    pub foot: f32,
+    /// The castle's own sand, which they are a little darker than.
+    pub body: Color,
+    pub count: usize,
+    /// Seconds from falling to gone.
+    pub life: f32,
+}
+
+/// Grains of sand knocked off a raided castle's rim: they drop from it,
+/// scattered a little either side and tossed up, fall to the castle's
+/// foot, lie there a moment and sink away, each a piece of the castle's
+/// own sand.
+pub(crate) fn crumbs(commands: &mut Commands, rng: &mut VisualRng, art: &Art, spec: &Crumbs) {
+    let Crumbs {
+        rim,
+        foot,
+        body,
+        count,
+        life,
+    } = *spec;
+    let body = body.to_srgba();
+    for _ in 0..count {
+        let side = if rng.range(0.0, 1.0) < 0.5 { -1.0 } else { 1.0 };
+        let from = rim + Vec2::new(side * rng.range(4.3, 13.9), -rng.range(0.0, 5.3));
+        let dark = rng.range(0.70, 0.86);
+        commands.spawn((
+            Particle {
+                velocity: Vec2::new(side * rng.range(10.7, 32.0), rng.range(10.7, 37.3)),
+                gravity: Vec2::new(0.0, -363.0),
+                spin: rng.range(-3.0, 3.0),
+                fade_in: 0.0,
+                floor: Some(foot + rng.range(-8.5, 3.2)),
+                hold: 0.55,
+                life,
+                ..default()
+            },
+            layout::image_sprite(
+                &art.puff,
+                Color::srgb(body.red * dark, body.green * dark, body.blue * dark),
+                Vec2::splat(rng.range(4.5, 6.6)),
+            ),
+            // On the castle's tile, in front of it, under whatever walks
+            // past.
+            Transform::from_translation(from.extend(layout::z::TILE_FEATURE + 0.7)),
         ));
     }
 }
@@ -496,7 +575,102 @@ pub struct Hop {
     /// Which way it goes home, which sets how long it is in the air and
     /// the arc it flies.
     path: HopPath,
+    /// Whether it pumps its claws on the doorstep before it hops in (see
+    /// [`Homeward::Cheer`]): its age starts [`CHEER`] below zero.
+    cheer: bool,
+    /// Which side its big claw is on, which way the pump swings it.
+    handed: crate::sim::Handedness,
+    /// Whether its keep bounces when it lands: a crab that cost its owner
+    /// points (a left claw under Right Claws) lands without a celebration.
+    kicks: bool,
 }
+
+/// One of a hopping crab's claws, its body's child: the big one it always
+/// has, or the small one it raises only while it cheers.
+#[derive(Component)]
+pub struct HopClaw {
+    big: bool,
+}
+
+/// How a banked crab goes into its keep.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Homeward {
+    /// Walked to the door and the first to bank there: it pumps both claws
+    /// twice, bracing, before the hop.
+    Cheer,
+    /// Banked for nothing, or flown home by the tide and already at the
+    /// gate: straight over the wall.
+    Hop,
+    /// Walked to the door behind one still waiting there to go in: it waits
+    /// this many seconds on the doorstep, then goes straight over the wall,
+    /// landing after the crab ahead of it. The sim has scored it already,
+    /// so it does not cheer, and a castle bounces as each crab lands in it,
+    /// so it must not land first.
+    Behind(f32),
+    /// Thrown home from across the beach by the tide, setting off this many
+    /// slots after the first of its sweep.
+    Swept(usize),
+}
+
+/// How long a crab cheers on the doorstep, and how many times it pumps
+/// its claws in that time. Short, and the score pip is already up: the
+/// cheer is the crab's, not the news.
+const CHEER: f32 = 0.45;
+const CHEER_PUMPS: f32 = 2.0;
+
+/// How far a cheering crab's big claw swings out, in radians, how much it
+/// grows, how far it pushes forward (world units), and how much the body
+/// braces under it, all at the top of a pump.
+const CHEER_SWING: f32 = 24.0 * std::f32::consts::PI / 180.0;
+const CHEER_CLAW_GROW: f32 = 0.28;
+const CHEER_PUSH: f32 = 3.2;
+const CHEER_BRACE: f32 = 0.05;
+
+/// Where a crab's claw roots on its body, as a fraction of its sprite's
+/// side: forward and to the claw's side (the art's shoulder). The pump
+/// swings and scales the claw about this point, so it stays on the crab.
+const CLAW_ROOT: Vec2 = Vec2::new(0.22, 0.24);
+
+/// How hard a cheering crab is pumping `cheered` seconds into its cheer:
+/// 0 at rest, 1 at the top of a pump, [`CHEER_PUMPS`] humps over
+/// [`CHEER`], each sharpened so the claws snap up and hang a moment.
+fn pump(cheered: f32) -> f32 {
+    if !(0.0..CHEER).contains(&cheered) {
+        return 0.0;
+    }
+    let u = cheered / CHEER;
+    (u * CHEER_PUMPS * std::f32::consts::PI)
+        .sin()
+        .abs()
+        .powf(0.7)
+}
+
+/// Where a hopping crab's claw sits on its body at `pump`: swung out about
+/// its root, grown and pushed forward, in the body's own frame (x along
+/// its heading). `big` is the hand's claw; the small one is the other side
+/// at 0.62 of the size, swinging the other way. `mirror` is a left hand.
+fn claw_pose(side: f32, big: bool, mirror: bool, pump: f32) -> Transform {
+    // Which side of the body it is on: the big claw is on the crab's
+    // right (y down in its frame) unless it is mirrored, the small one on
+    // the other side. Each swings out away from the body.
+    let across = if big != mirror { -1.0 } else { 1.0 };
+    let root = Vec2::new(CLAW_ROOT.x, CLAW_ROOT.y * across) * side;
+    let swing = CHEER_SWING * pump * across;
+    let (grow, push) = if big {
+        (1.0 + CHEER_CLAW_GROW * pump, CHEER_PUSH * pump)
+    } else {
+        (0.62 * (1.0 + 0.25 * pump), CHEER_PUSH * 0.8 * pump)
+    };
+    let turn = Quat::from_rotation_z(swing);
+    let held = root + (turn * (-root * grow).extend(0.0)).truncate() + Vec2::new(push, 0.0);
+    Transform::from_translation(held.extend(CLAW_LIFT))
+        .with_rotation(turn)
+        .with_scale(Vec3::splat(grow))
+}
+
+/// How far over its body a hopping crab's claws are drawn, as
+/// `creatures::crab_claw` lifts a walking crab's.
+const CLAW_LIFT: f32 = 0.01;
 
 /// How a banked crab gets into its keep.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -574,6 +748,47 @@ const SWEEP_MAX_HOLD: f32 = 8.0;
 /// bank from here was the tide's doing.
 const SWEPT_FROM: f32 = TILE * 1.5;
 
+/// Farther than this from its keep, a banked crab is on the doorstep, a
+/// tile out: nearer, the tide has already flown it to the gate, and it has
+/// no doorstep to cheer on.
+const ON_THE_DOORSTEP: f32 = TILE * 0.25;
+
+/// How long after the crab ahead of it sets off over the wall a crab
+/// queued at the same door sets off: under a hop, so the two land in turn.
+const QUEUE_GAP: f32 = 0.12;
+
+/// How a crab the sim banked from `pos` into `keep`, worth `points`, goes
+/// in. `sweeps` counts the crabs the tide has thrown home so far this
+/// frame, and `doorsteps` holds, per keep, how long until the last crab
+/// waiting at its door sets off; both are brought up to date.
+///
+/// The first crab at a door cheers there if it walked to the doorstep and
+/// scored. One arriving while another still waits at that door queues
+/// behind it and goes in after it: the castle bounces as each lands, and
+/// it must not bounce for the second while the first is still outside.
+fn homeward(
+    pos: Vec2,
+    keep: Vec2,
+    points: i32,
+    sweeps: &mut usize,
+    doorsteps: &mut Vec<(Vec2, f32)>,
+) -> Homeward {
+    let out = pos.distance(keep);
+    if out > SWEPT_FROM {
+        *sweeps += 1;
+        return Homeward::Swept(*sweeps - 1);
+    }
+    if let Some((_, wait)) = doorsteps.iter_mut().find(|(at, _)| at.distance(keep) < 1.0) {
+        *wait += QUEUE_GAP;
+        return Homeward::Behind(*wait);
+    }
+    if points > 0 && out > ON_THE_DOORSTEP {
+        doorsteps.push((keep, CHEER));
+        return Homeward::Cheer;
+    }
+    Homeward::Hop
+}
+
 /// A crab the sim has just banked, as its hop home needs it: which crab,
 /// from the tile it vanished on to the keep it vanished into.
 pub struct BankedCrab {
@@ -582,44 +797,86 @@ pub struct BankedCrab {
     pub to: Vec2,
     pub kind: crate::sim::CrabKind,
     pub handed: crate::sim::Handedness,
+    /// Whether its claw wears the seat colour of a co-op stage
+    /// ([`crate::app::creatures::claw_color`]), as it did walking there.
+    pub coop: bool,
+    /// What it did to its owner's score.
+    pub points: i32,
 }
 
 /// Send a banked crab home over the wall: the crab that walked there, big
-/// claw and all, on the side it was on. One the tide swept home from
-/// across the beach is flung there instead, setting off `swept` slots
-/// after the first of its sweep.
-pub fn bank_hop(commands: &mut Commands, art: &Art, crab: &BankedCrab, swept: Option<usize>) {
-    use crate::app::creatures::{crab_body, crab_claw, shade_of, shell_color, sprite_side};
+/// claw and all, on the side it was on, facing the keep. The first at its
+/// door cheers there first ([`Homeward`]); one the tide swept home from
+/// across the beach is flung there instead.
+pub fn bank_hop(commands: &mut Commands, art: &Art, crab: &BankedCrab, way: Homeward) {
+    use crate::app::creatures::{
+        claw_color, crab_body, mirrored, shade_of, shell_color, sprite_side,
+    };
     let BankedCrab {
         id,
         from,
         to,
         kind,
         handed,
+        coop,
+        points,
     } = *crab;
     let shell = shell_color(kind, shade_of(id));
-    let (age, path, z) = match swept {
-        None => (0.0, HopPath::OverWall, layout::z::CREATURE + 0.1),
-        Some(slot) => (
+    let (age, path, z) = match way {
+        Homeward::Cheer => (-CHEER, HopPath::OverWall, layout::z::CREATURE + 0.1),
+        Homeward::Hop => (0.0, HopPath::OverWall, layout::z::CREATURE + 0.1),
+        // Under the one ahead of it, which it stands behind.
+        Homeward::Behind(wait) => (-wait, HopPath::OverWall, layout::z::CREATURE + 0.05),
+        Homeward::Swept(slot) => (
             -SWEEP_STAGGER * slot as f32,
             HopPath::Swept { waiting: Some(0.0) },
             SWEEP_WAIT_Z,
         ),
     };
+    let cheer = way == Homeward::Cheer;
     let hop = Hop {
         from,
         to,
         age,
         shell,
         path,
+        cheer,
+        handed,
+        kicks: points > 0,
     };
-    commands
-        .spawn((
-            hop,
-            crab_body(art, kind, handed, shell),
-            Transform::from_translation(from.extend(z)),
-        ))
-        .with_child(crab_claw(art, handed, Vec2::splat(sprite_side(kind))));
+    // Facing the keep it walked to, as it walked: drawn square to the
+    // board, a crab that came in from the right turned its back on its
+    // own castle for the hop.
+    let toward = to - from;
+    let facing = match toward.length_squared() > 1.0 {
+        true => Quat::from_rotation_z(toward.to_angle()),
+        false => Quat::IDENTITY,
+    };
+    let side = sprite_side(kind);
+    let mirror = mirrored(handed);
+    let claw = |big: bool, color: Color| {
+        (
+            HopClaw { big },
+            Sprite {
+                image: art.claw.clone(),
+                color,
+                custom_size: Some(Vec2::splat(side)),
+                // The small claw is the big one's art on the other side.
+                flip_y: mirror == big,
+                ..default()
+            },
+            claw_pose(side, big, mirror, 0.0),
+        )
+    };
+    let mut body = commands.spawn((
+        hop,
+        crab_body(art, kind, handed, shell),
+        Transform::from_translation(from.extend(z)).with_rotation(facing),
+    ));
+    body.with_child(claw(true, claw_color(handed, coop)));
+    if cheer {
+        body.with_child(claw(false, shell.with_alpha(0.0)));
+    }
 }
 
 /// A banked crab under reduced motion: no hop over the wall, but not gone
@@ -637,6 +894,8 @@ fn bank_fade(commands: &mut Commands, art: &Art, crab: &BankedCrab) {
         to: _,
         kind,
         handed,
+        coop,
+        points: _,
     } = *crab;
     let shell = shell_color(kind, shade_of(id));
     let z = layout::z::CREATURE + 0.1;
@@ -645,7 +904,7 @@ fn bank_fade(commands: &mut Commands, art: &Art, crab: &BankedCrab) {
         crab_body(art, kind, handed, shell),
         Transform::from_translation(from.extend(z)),
     ));
-    let (claw, lift) = crab_claw(art, handed, Vec2::splat(sprite_side(kind)));
+    let (claw, lift) = crab_claw(art, handed, coop, Vec2::splat(sprite_side(kind)));
     commands.spawn((
         standing_fade(),
         claw,
@@ -700,11 +959,15 @@ pub(crate) fn arc(from: Vec2, to: Vec2, lift: f32, progress: f32) -> (Vec2, f32)
     )
 }
 
-/// Carry the hopping crabs over the wall and puff them out of sight.
+/// Carry the hopping crabs over the wall and puff them out of sight, the
+/// first at its door cheering there first, and bounce each keep as its
+/// crab lands in it: a castle that bounced while its crab still stood on
+/// the doorstep celebrated a crab that had not come in yet.
 ///
 /// Held, not run, under a pause card: a crab does not go on over the wall
 /// of a frozen beach. The round's end does not hold them: the crab banked
 /// on the last tick still lands under the card.
+#[allow(clippy::too_many_arguments)]
 pub fn advance_hops(
     time: Res<Time>,
     mut commands: Commands,
@@ -712,13 +975,19 @@ pub fn advance_hops(
     mut rng: ResMut<VisualRng>,
     announcer: Res<crate::app::announce::Announcer>,
     round: crate::app::round_state::RoundState,
-    mut hops: Query<(Entity, &mut Hop, &mut Transform, &mut Sprite)>,
+    sim: Res<crate::app::Sim>,
+    mut hops: Query<(Entity, &mut Hop, &mut Transform, &mut Sprite, &Children)>,
+    mut claws: Query<(&HopClaw, &mut Transform, &mut Sprite), Without<Hop>>,
+    mut castles: Query<(
+        &crate::app::board_render::CastleSprite,
+        &mut crate::app::board_render::CastleKick,
+    )>,
 ) {
     if round.held() {
         return;
     }
     let dt = time.delta_secs();
-    for (entity, mut hop, mut transform, mut sprite) in &mut hops {
+    for (entity, mut hop, mut transform, mut sprite, children) in &mut hops {
         let hop = &mut *hop;
         if let HopPath::Swept {
             waiting: Some(waited),
@@ -726,7 +995,7 @@ pub fn advance_hops(
         {
             // Picked out while the banner says what is about to happen.
             let glow = 0.45 + 0.35 * (*waited * 9.0).sin();
-            sprite.color = hop.shell.mix(&palette::GOLD, glow);
+            layout::tint(&mut sprite, hop.shell.mix(&palette::GOLD, glow));
             let held = *waited < SWEEP_MIN_HOLD || announcer.holds_the_board();
             if held && *waited < SWEEP_MAX_HOLD {
                 *waited += dt;
@@ -738,7 +1007,7 @@ pub fn advance_hops(
                 continue;
             }
             hop.path = HopPath::Swept { waiting: None };
-            sprite.color = hop.shell;
+            layout::tint(&mut sprite, hop.shell);
             burst(
                 &mut commands,
                 &mut rng,
@@ -758,6 +1027,9 @@ pub fn advance_hops(
         let progress = (hop.age / hop.path.span()).clamp(0.0, 1.0);
         if progress >= 1.0 {
             commands.entity(entity).despawn();
+            if hop.kicks {
+                crate::app::board_render::kick_keep(&sim.0, &mut castles, hop.to);
+            }
             // The sand it kicks up going over the wall, landing where it
             // landed rather than where it left.
             burst(
@@ -787,6 +1059,39 @@ pub fn advance_hops(
                 transform.translation.y = at.y;
                 transform.scale = Vec3::splat(scale);
             }
+        }
+        if hop.cheer {
+            cheer(hop, &mut transform, children, &mut claws);
+        }
+    }
+}
+
+/// Pose a cheering crab on its doorstep: both claws up and out on each
+/// pump, the body bracing under them, and everything back at rest, the
+/// small claw gone, once the hop begins.
+fn cheer(
+    hop: &Hop,
+    body: &mut Transform,
+    children: &Children,
+    claws: &mut Query<(&HopClaw, &mut Transform, &mut Sprite), Without<Hop>>,
+) {
+    let pumping = pump(hop.age + CHEER);
+    if hop.age < 0.0 {
+        body.scale = Vec3::splat(1.0 + CHEER_BRACE * pumping);
+    }
+    let mirror = crate::app::creatures::mirrored(hop.handed);
+    for child in children {
+        let Ok((claw, mut place, mut sprite)) = claws.get_mut(*child) else {
+            continue;
+        };
+        let side = sprite.custom_size.map_or(TILE, |size| size.x);
+        let pose = claw_pose(side, claw.big, mirror, pumping);
+        place.translation = pose.translation;
+        place.rotation = pose.rotation;
+        place.scale = pose.scale;
+        if !claw.big {
+            let pumped = sprite.color.with_alpha(pumping);
+            layout::tint(&mut sprite, pumped);
         }
     }
 }
@@ -963,23 +1268,27 @@ pub fn crab_trails(
         if board.tile_at(x, y) != TileKind::Empty {
             continue; // prints only show on dry sand
         }
+        let life = rng.range(1.4, 2.2);
+        let size = rng.range(3.0, 4.2);
         commands.spawn((
             Particle {
-                life: rng.range(1.4, 2.2),
+                life,
                 // A print is pressed into the sand, not dropped on it: it
                 // arrives over a moment as the weight goes on.
                 fade_in: 0.05,
+                // Its size is its quad's scale, which the particle keeps.
+                size,
+                // The spawn alpha is honoured (see `Particle::shade`), so
+                // a lighter print dims every print in the game.
+                peak: Some(PRINT.alpha()),
                 ..default()
             },
-            Sprite::from_color(
-                // Near-opaque: the prints are tuned to read at this
-                // strength against the beach, and the spawn alpha is
-                // honoured (see `Particle::shade`), so a lighter one dims
-                // every print in the game.
-                Color::srgba(0.45, 0.36, 0.24, 0.9),
-                Vec2::splat(rng.range(3.0, 4.2)),
+            art.shaded.quad(
+                &art.shaded.prints,
+                Transform::from_translation((pos + side).extend(layout::z::WET + 0.05)),
+                Vec2::splat(size),
             ),
-            Transform::from_translation((pos + side).extend(layout::z::WET + 0.05)),
+            crate::app::materials::fade_tag(PRINT.alpha()),
         ));
         // Now and then a grain of sand kicks up behind the crab.
         if rng.range(0.0, 1.0) < 0.3 {
@@ -1005,24 +1314,34 @@ pub fn crab_trails(
     footfalls.retain(|id, _| seen.contains(id));
 }
 
-/// A particle and whichever of the two ways it is drawn: a sprite, or a
-/// floating number.
+/// A particle and whichever of the three ways it is drawn: a sprite, a
+/// floating number, or a quad of a shared fading colour
+/// ([`crate::app::materials::FadeMaterial`]) whose strength is its tag.
 type ParticleParts = (
     Entity,
     &'static mut Particle,
     &'static mut Transform,
     Option<&'static mut Sprite>,
     Option<&'static mut TextColor>,
+    Option<&'static mut bevy::mesh::MeshTag>,
 );
 
 /// Advance and expire particles: drift, fall, spin, grow, fade out.
+///
+/// Held, not run, under a pause card, like everything else the round
+/// draws: a puff, a crumb or a floating score stands still over a frozen
+/// beach and carries on when it starts again.
 pub fn update_particles(
     time: Res<Time>,
+    round: crate::app::round_state::RoundState,
     mut commands: Commands,
     mut particles: Query<ParticleParts>,
 ) {
+    if round.held() {
+        return;
+    }
     let dt = time.delta_secs();
-    for (entity, mut particle, mut transform, sprite, text_color) in &mut particles {
+    for (entity, mut particle, mut transform, sprite, text_color, tag) in &mut particles {
         particle.age += dt;
         if particle.age >= particle.life {
             commands.entity(entity).despawn();
@@ -1038,12 +1357,24 @@ pub fn update_particles(
         transform.translation.x += particle.velocity.x * dt;
         transform.translation.y += particle.velocity.y * dt;
         transform.rotation *= Quat::from_rotation_z(particle.spin * dt);
+        // Come to rest on the floor, falling onto it: it stays where it
+        // lands, and only fades from there.
+        if let Some(floor) = particle.floor
+            && particle.velocity.y < 0.0
+            && transform.translation.y <= floor
+        {
+            transform.translation.y = floor;
+            particle.velocity = Vec2::ZERO;
+            particle.gravity = Vec2::ZERO;
+            particle.spin = 0.0;
+        }
         let scale = (1.0 + particle.grow * particle.age).max(0.05);
         transform.scale = Vec3::splat(particle.size * scale);
         if let Some(mut sprite) = sprite {
             // The colour spawned with is the peak, alpha included: a piece
             // asked for at 60% never draws stronger than 60%.
-            sprite.color = particle.shade(sprite.color);
+            let shaded = particle.shade(sprite.color);
+            layout::tint(&mut sprite, shaded);
         }
         if let Some(mut color) = text_color {
             // Through the same ceiling the sprites go through. It read the
@@ -1054,6 +1385,12 @@ pub fn update_particles(
             // only reason nobody has seen it.
             color.0 = particle.shade(color.0);
         }
+        if let Some(mut tag) = tag {
+            // The colour is the material's; only the strength is the
+            // quad's, and its peak was set at spawn.
+            let alpha = particle.shade(Color::WHITE).alpha();
+            tag.set_if_neq(crate::app::materials::fade_tag(alpha));
+        }
     }
 }
 
@@ -1063,7 +1400,9 @@ pub fn moment_effects(
     fx: Fx,
     mut events: MessageReader<SimEvent>,
     cursors: Query<&crate::app::cursor::Cursor>,
+    hops: Query<&Hop>,
     mut trauma: ResMut<Trauma>,
+    sim: Res<crate::app::Sim>,
 ) {
     let Fx {
         mut commands,
@@ -1080,6 +1419,21 @@ pub fn moment_effects(
     let calm = settings.reduced_motion;
     // Crabs swept home so far this frame, so each sets off after the last.
     let mut sweeps = 0usize;
+    // The keeps with a crab still waiting at the door, from an earlier
+    // frame or this one, and how long until the last of them sets off.
+    let mut doorsteps: Vec<(Vec2, f32)> = Vec::new();
+    for hop in &hops {
+        if hop.path != HopPath::OverWall || hop.age >= 0.0 {
+            continue;
+        }
+        match doorsteps
+            .iter_mut()
+            .find(|(at, _)| at.distance(hop.to) < 1.0)
+        {
+            Some((_, wait)) => *wait = wait.max(-hop.age),
+            None => doorsteps.push((hop.to, -hop.age)),
+        }
+    }
     for event in events.read() {
         if calm && !kept_when_calm(event) {
             continue;
@@ -1094,23 +1448,23 @@ pub fn moment_effects(
                 keep,
                 kind,
                 handed,
-                ..
+                points,
+                owner: _,
             } => {
-                let swept = (pos.distance(*keep) > SWEPT_FROM).then(|| {
-                    sweeps += 1;
-                    sweeps - 1
-                });
+                let way = homeward(*pos, *keep, *points, &mut sweeps, &mut doorsteps);
                 let crab = BankedCrab {
                     id: *id,
                     from: *pos,
                     to: *keep,
                     kind: *kind,
                     handed: *handed,
+                    coop: crate::app::creatures::coop_claws(&sim.0),
+                    points: *points,
                 };
                 if calm {
                     bank_fade(&mut commands, &art, &crab);
                 } else {
-                    bank_hop(&mut commands, &art, &crab, swept);
+                    bank_hop(&mut commands, &art, &crab, way);
                 }
             }
             // A gull got one: sand, and the feathers that say what kind of
@@ -1376,12 +1730,14 @@ pub fn moment_effects(
                     0.6,
                 );
             }
-            SimEvent::GullArrived
+            SimEvent::GullIncoming { .. }
+            | SimEvent::GullArrived
             | SimEvent::GullTookOff
             | SimEvent::TierUp { .. }
             | SimEvent::TideEventFired { .. }
             | SimEvent::LureStarted { .. }
             | SimEvent::WheelLocked { .. }
+            | SimEvent::LureRefused { .. }
             | SimEvent::RoundEnded => {}
         }
     }
@@ -1439,6 +1795,11 @@ mod tests {
         });
         app.init_resource::<crate::app::sim_events::BoardGeneration>();
         app.add_message::<SimEvent>();
+        app.insert_resource(State::new(crate::app::Screen::Versus));
+        app.init_resource::<crate::app::Paused>();
+        app.init_resource::<crate::app::pause::PauseMenu>();
+        app.init_resource::<crate::app::net::Online>();
+        app.insert_resource(crate::app::Sim(crate::sim::Board::new(4, 4, 0)));
         for seat in 0..seats {
             app.world_mut()
                 .spawn(crate::app::cursor::Cursor::seated(seat));
@@ -1485,6 +1846,281 @@ mod tests {
         app.world_mut().write_message(traded(4));
         app.update();
         assert_eq!(drawn(&mut app), 1, "a watcher sees every seat's");
+    }
+
+    /// A grain falling onto a floor stops there and lies at full strength
+    /// for its hold, then fades from where it lies.
+    #[test]
+    fn a_grain_comes_to_rest_on_its_floor_and_lies_there() {
+        let mut app = stage(0, false);
+        app.init_resource::<Time>();
+        app.add_systems(Update, update_particles);
+        let grain = app
+            .world_mut()
+            .spawn((
+                Particle {
+                    velocity: Vec2::new(10.0, 20.0),
+                    gravity: Vec2::new(0.0, -400.0),
+                    fade_in: 0.0,
+                    floor: Some(-10.0),
+                    hold: 0.5,
+                    life: 2.0,
+                    ..default()
+                },
+                Sprite::default(),
+                Transform::default(),
+            ))
+            .id();
+        let mut landed = None;
+        for _ in 0..60 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(1.0 / 60.0));
+            app.update();
+            let at = app
+                .world()
+                .get::<Transform>(grain)
+                .expect("alive")
+                .translation;
+            assert!(at.y >= -10.0, "fell through the floor to {}", at.y);
+            if at.y == -10.0 {
+                match landed {
+                    None => landed = Some(at.x),
+                    Some(x) => assert_eq!(at.x, x, "it slid once it landed"),
+                }
+            }
+        }
+        assert!(landed.is_some(), "it never landed");
+        let held = app.world().get::<Particle>(grain).expect("alive");
+        assert_eq!(held.strength(), 1.0, "still lying at full strength");
+        let faded = Particle { age: 1.5, ..*held };
+        assert!((faded.strength() - 0.5).abs() < 1e-5, "halfway out");
+    }
+
+    /// A footprint drawn as a fading quad shows, frame by frame, the
+    /// alpha the same particle drawn as a sprite is given, in its tag,
+    /// while the sprite's own colour, and so its material, would change.
+    #[test]
+    fn a_fading_quad_carries_the_alpha_a_sprite_would_wear() {
+        let mut app = stage(0, false);
+        app.init_resource::<Time>();
+        app.add_systems(Update, update_particles);
+        let like = || Particle {
+            life: 1.0,
+            fade_in: 0.05,
+            peak: Some(PRINT.alpha()),
+            ..default()
+        };
+        let quad = app
+            .world_mut()
+            .spawn((
+                like(),
+                crate::app::materials::fade_tag(PRINT.alpha()),
+                Transform::default(),
+            ))
+            .id();
+        let sprite = app
+            .world_mut()
+            .spawn((
+                like(),
+                Sprite::from_color(PRINT, Vec2::ONE),
+                Transform::default(),
+            ))
+            .id();
+        for _ in 0..8 {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.1));
+            app.update();
+            let tag = app
+                .world()
+                .get::<bevy::mesh::MeshTag>(quad)
+                .expect("alive")
+                .value;
+            let worn = app.world().get::<Sprite>(sprite).expect("alive").color;
+            assert_eq!(f32::from_bits(tag), worn.alpha());
+            assert!(worn.alpha() < PRINT.alpha(), "fading");
+        }
+    }
+
+    /// Under a pause a particle holds where it is, as old as it was, and
+    /// carries on from there once the round does.
+    #[test]
+    fn a_particle_holds_still_under_a_pause() {
+        let mut app = stage(0, false);
+        app.init_resource::<Time>();
+        app.add_systems(Update, update_particles);
+        let puff = app
+            .world_mut()
+            .spawn((
+                Particle {
+                    velocity: Vec2::new(30.0, 40.0),
+                    life: 2.0,
+                    ..default()
+                },
+                Sprite::default(),
+                Transform::default(),
+            ))
+            .id();
+        let step = |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(std::time::Duration::from_secs_f32(0.1));
+            app.update();
+            let age = app.world().get::<Particle>(puff).expect("alive").age;
+            let at = app
+                .world()
+                .get::<Transform>(puff)
+                .expect("alive")
+                .translation;
+            (age, at)
+        };
+        step(&mut app);
+        app.world_mut().resource_mut::<crate::app::Paused>().0 = true;
+        let before = step(&mut app);
+        assert_eq!(step(&mut app), before, "it moved under the pause");
+        app.world_mut().resource_mut::<crate::app::Paused>().0 = false;
+        assert!(step(&mut app).0 > before.0, "and carries on after it");
+    }
+
+    /// A crab banked at `keep` from beside it, worth `points`.
+    fn banked_at(id: u32, keep: Vec2, points: i32) -> SimEvent {
+        SimEvent::CrabBanked {
+            id,
+            owner: 0,
+            pos: keep + Vec2::new(TILE * 0.5, 0.0),
+            keep,
+            points,
+            kind: crate::sim::CrabKind::Common,
+            handed: crate::sim::Handedness::Right,
+        }
+    }
+
+    /// The cheering crabs on the beach, and the ones hopping straight in.
+    fn cheers(app: &mut App) -> (usize, usize) {
+        let world = app.world_mut();
+        let hops: Vec<bool> = world.query::<&Hop>().iter(world).map(|h| h.cheer).collect();
+        let cheering = hops.iter().filter(|&&c| c).count();
+        (cheering, hops.len() - cheering)
+    }
+
+    /// Only the first crab at a door cheers there. Two banking at one keep
+    /// on one frame, or one a frame behind a crab still cheering, go
+    /// straight in; a crab at another keep cheers for its own, and one
+    /// that cost its owner points does not cheer at all.
+    #[test]
+    fn only_the_first_crab_at_a_door_cheers() {
+        let mut app = stage(1, false);
+        app.add_systems(Update, moment_effects);
+        let keep = Vec2::new(100.0, 0.0);
+        app.world_mut().write_message(banked_at(1, keep, 1));
+        app.world_mut().write_message(banked_at(2, keep, 1));
+        app.update();
+        assert_eq!(cheers(&mut app), (1, 1), "one cheers, one goes in");
+        app.world_mut().write_message(banked_at(3, keep, 1));
+        app.world_mut().write_message(banked_at(4, -keep, 1));
+        app.world_mut().write_message(banked_at(5, keep * 3.0, -2));
+        app.update();
+        assert_eq!(cheers(&mut app), (2, 3), "the other keep cheers its own");
+    }
+
+    /// How long until each crab hopping into `keep` lands, soonest first.
+    fn landings(app: &mut App, keep: Vec2) -> Vec<f32> {
+        let world = app.world_mut();
+        let mut out: Vec<f32> = world
+            .query::<&Hop>()
+            .iter(world)
+            .filter(|hop| hop.to == keep)
+            .map(|hop| hop.path.span() - hop.age)
+            .collect();
+        out.sort_by(f32::total_cmp);
+        out
+    }
+
+    /// A crab banking at a door while another still cheers on its doorstep
+    /// waits behind it and lands after it, on the same frame or a later
+    /// one, and each lands on its own beat: the castle bounces as each
+    /// crab lands, and must not for the second while the first is outside.
+    #[test]
+    fn a_crab_behind_a_cheering_one_lands_after_it() {
+        let mut app = stage(1, false);
+        app.add_systems(Update, moment_effects);
+        let keep = Vec2::new(100.0, 0.0);
+        app.world_mut().write_message(banked_at(1, keep, 1));
+        app.world_mut().write_message(banked_at(2, keep, 1));
+        app.update();
+        app.world_mut().write_message(banked_at(3, keep, 1));
+        app.update();
+        let lands = landings(&mut app, keep);
+        assert_eq!(lands.len(), 3, "{lands:?}");
+        assert!(
+            (lands[0] - (CHEER + HOP)).abs() < 1e-5,
+            "the cheering crab lands first: {lands:?}"
+        );
+        for pair in lands.windows(2) {
+            assert!(
+                pair[1] - pair[0] >= QUEUE_GAP - 1e-5,
+                "one at a time: {lands:?}"
+            );
+        }
+    }
+
+    /// A crab the tide has already flown to its gate banks there, with no
+    /// doorstep under it: it goes straight in rather than pumping its claws
+    /// on the castle's roof.
+    #[test]
+    fn a_crab_flown_to_its_gate_does_not_cheer_on_the_roof() {
+        let mut app = stage(1, false);
+        app.add_systems(Update, moment_effects);
+        let keep = Vec2::new(100.0, 0.0);
+        app.world_mut().write_message(SimEvent::CrabBanked {
+            id: 1,
+            owner: 0,
+            pos: keep,
+            keep,
+            points: 1,
+            kind: crate::sim::CrabKind::Common,
+            handed: crate::sim::Handedness::Right,
+        });
+        app.update();
+        assert_eq!(cheers(&mut app), (0, 1), "straight in");
+        app.world_mut().write_message(banked_at(2, keep, 1));
+        app.update();
+        assert_eq!(cheers(&mut app), (1, 1), "and the next walking in cheers");
+    }
+
+    /// A pump is two humps over the cheer, at rest at both ends, and the
+    /// claw it swings stays rooted on the body: the root is where it was
+    /// at rest however hard the crab pumps.
+    #[test]
+    fn a_cheer_pumps_twice_about_the_claws_root() {
+        assert_eq!(pump(0.0), 0.0);
+        assert!(pump(CHEER - 1e-4) < 0.05, "at rest as the hop begins");
+        assert_eq!(pump(CHEER + 0.1), 0.0);
+        assert!((pump(CHEER * 0.25) - 1.0).abs() < 1e-3, "the first pump");
+        assert!((pump(CHEER * 0.75) - 1.0).abs() < 1e-3, "the second");
+        assert!(pump(CHEER * 0.5) < 0.01, "and down between");
+        let side = 40.0;
+        for (big, mirror) in [(true, false), (true, true), (false, false), (false, true)] {
+            let rest = claw_pose(side, big, mirror, 0.0);
+            let up = claw_pose(side, big, mirror, 1.0);
+            let across = if big != mirror { -1.0 } else { 1.0 };
+            let root = Vec2::new(CLAW_ROOT.x, CLAW_ROOT.y * across) * side;
+            let push = if big { CHEER_PUSH } else { CHEER_PUSH * 0.8 };
+            // Where each pose puts the point of the art that is its root,
+            // less the push forward that carries the whole claw.
+            let at = |pose: Transform, local: Vec2| {
+                (pose.translation + pose.rotation * (local * pose.scale.x).extend(0.0)).truncate()
+            };
+            let rest_root = at(rest, root);
+            let up_root = at(up, root) - Vec2::new(push, 0.0);
+            assert!(
+                rest_root.distance(up_root) < 0.5,
+                "big {big} mirror {mirror}: {rest_root} vs {up_root}"
+            );
+            // Out, away from the body: the claw on the right turns clockwise.
+            assert_eq!(up.rotation.to_euler(EulerRot::XYZ).2.signum(), across);
+        }
     }
 
     /// Run `system` once on `first`, then once on `second` laid out in its

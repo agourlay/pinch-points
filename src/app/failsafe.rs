@@ -234,12 +234,12 @@ mod tests {
         // The editor stays the editor: the playtest stops, and the level
         // being built is back on the sand rather than thrown away.
         let mut app = broken_by(Screen::Editor, a_bug_that_happens_once);
-        let built = crate::sim::Board::new(9, 7, 5);
-        let mut playing = crate::sim::Board::new(12, 9, 5);
+        let built = Board::new(9, 7, 5);
+        let mut playing = Board::new(12, 9, 5);
         playing.set_wrap(true);
         app.insert_resource(Sim(playing));
         let mut state = editor::EditorState::default();
-        state.mode = editor::Mode::Testing(Box::new(built.clone()));
+        state.mode = editor::Mode::testing(built.clone());
         app.insert_resource(state);
         app.update();
         app.update();
@@ -260,7 +260,7 @@ mod tests {
         // bench put back: the second time goes to the menu rather than
         // round and round.
         let mut app = broken(Screen::Editor);
-        app.insert_resource(Sim(crate::sim::Board::new(9, 7, 5)));
+        app.insert_resource(Sim(Board::new(9, 7, 5)));
         app.insert_resource(editor::EditorState::default());
         for _ in 0..4 {
             app.update();

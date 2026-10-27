@@ -1,0 +1,20 @@
+# Both doors are at the third column, and a tile holds one arrow. The
+# left crab has no other way up; the right crab has a longer way down.
+name: Give Way
+posts: 2
+hands: 1 1
+crab: 1,2 R L common
+crab: 0,2 R R common
+solution: 3,2 U L; 7,2 D R
+map:
++-+-+-+-+-+-+-+-+-+
+|0 . . K K K K K K|
++ + + + +-+-+-+-+ +
+|. . .|K K K K K K|
++-+-+-+ +-+-+-+-+-+
+|. . . . . . . . .|
++-+-+-+ +-+-+-+ +-+
+|. . .|K K K K K K|
++ + + + +-+-+ + + +
+|0 . . K K K K K K|
++-+-+-+-+-+-+-+-+-+

@@ -30,9 +30,37 @@ impl Level {
         }
         let mut board = parse_lattice(lines, header.seed)?;
         place_entities(&mut board, &header)?;
+        check_tables(&board, &header.tables)?;
+        check_roll(&board, header.roll)?;
+        let posts = match (header.posts, header.rules.claw_hands) {
+            (Some(posts), Some([left, right]))
+                if u16::from(posts) != u16::from(left) + u16::from(right) =>
+            {
+                return Err(format!(
+                    "posts: {posts} is not the two hands together ({left} + {right})"
+                ));
+            }
+            (Some(posts), _) => posts,
+            // A co-op stage's grant is its two hands: saying it twice is
+            // allowed, saying it once is enough.
+            (None, Some([left, right])) => left
+                .checked_add(right)
+                .ok_or("hands: more arrows than a stage can grant")?,
+            (None, None) => return Err("missing posts:".to_string()),
+        };
+        if header.rules.claw_hands.is_none()
+            && let Some(&(x, y, _, _)) = header.solution.iter().find(|step| step.3 != 0)
+        {
+            return Err(format!(
+                "solution: {x},{y} names a hand, which only a co-op stage (hands:) has"
+            ));
+        }
+        if header.rules.claw_hands.is_some() && header.kind == Some(LevelKind::Arena) {
+            return Err("hands: a beach for a match has no hands".to_string());
+        }
         let level = Level {
             name: header.name.ok_or("missing name:")?,
-            posts: header.posts.ok_or("missing posts:")?,
+            posts,
             solution: header.solution,
             goal: header.goal,
             // Filled in below: a file written before the editor had a toggle
@@ -41,9 +69,15 @@ impl Level {
             crab_count: header.crabs.len() as u32,
             explicit_rule: header.explicit_rule,
             filing: None,
+            tables: header.tables,
+            roll: header.roll,
             board,
         };
-        let kind = header.kind.unwrap_or_else(|| inferred_kind(&level));
+        // A co-op stage is a stage, whatever its castles look like.
+        let kind = match level.is_coop() {
+            true => LevelKind::Puzzle,
+            false => header.kind.unwrap_or_else(|| inferred_kind(&level)),
+        };
         Ok(level.with_kind(kind))
     }
 
@@ -62,6 +96,8 @@ impl Level {
             // The board's live rule is authoritative and serialized as-is.
             explicit_rule: true,
             filing: None,
+            tables: Vec::new(),
+            roll: 0,
             board,
         };
         let kind = inferred_kind(&level);
@@ -83,6 +119,9 @@ impl Level {
         let mut out = String::new();
         let _ = writeln!(out, "name: {}", self.name);
         let _ = writeln!(out, "posts: {}", self.posts);
+        if let Some([left, right]) = rules.claw_hands {
+            let _ = writeln!(out, "hands: {left} {right}");
+        }
         // Always written, both values: what the author chose is not always
         // what the board looks like, and a file that leaves it out is read
         // by guessing at the castles.
@@ -151,6 +190,13 @@ impl Level {
         if board.wrap() {
             let _ = writeln!(out, "wrap: on");
         }
+        if !self.tables.is_empty() {
+            let tables: Vec<String> = self.tables.iter().map(u8::to_string).collect();
+            let _ = writeln!(out, "seats: {}", tables.join(" "));
+        }
+        if self.roll > 0 {
+            let _ = writeln!(out, "roll: {}", self.roll);
+        }
         // Written only when they are off, being on by default. An
         // editor-made puzzle states its rule and keeps whatever raids the
         // board had, so without this line it plays, is checked and is
@@ -179,7 +225,16 @@ impl Level {
             let parts: Vec<String> = self
                 .solution
                 .iter()
-                .map(|&(x, y, dir)| format!("{x},{y} {}", dir.letter()))
+                .map(|&(x, y, dir, seat)| match rules.claw_hands {
+                    // The hand that places it, by its claw, on a co-op stage
+                    // only: every other stage has the one.
+                    Some(_) => format!(
+                        "{x},{y} {} {}",
+                        dir.letter(),
+                        crate::sim::board::claw_of(seat).map_or("?", Handedness::token)
+                    ),
+                    None => format!("{x},{y} {}", dir.letter()),
+                })
                 .collect();
             let _ = writeln!(out, "solution: {}", parts.join("; "));
         }
@@ -264,6 +319,10 @@ struct Header {
     wrap: bool,
     /// `None` when the file predates the editor's puzzle/arena toggle.
     kind: Option<LevelKind>,
+    /// `seats:`, the tables the beach is built for (see [`Level::tables`]).
+    tables: Vec<u8>,
+    /// `roll:`, the open beach's strip (see [`Level::roll`]).
+    roll: u8,
 }
 
 impl Default for Header {
@@ -289,6 +348,8 @@ impl Default for Header {
             goal: Goal::AllCrabs,
             wrap: false,
             kind: None,
+            tables: Vec::new(),
+            roll: 0,
         }
     }
 }
@@ -385,6 +446,32 @@ impl Header {
                 );
             }
             "wrap" => self.wrap = value == "on",
+            "seats" => {
+                let mut tables = Vec::new();
+                for part in value.split_whitespace() {
+                    let seats = part.parse::<u8>().map_err(|e| format!("seats: {e}"))?;
+                    if !(2..=crate::sim::MAX_PLAYERS as u8).contains(&seats) {
+                        return Err(format!(
+                            "seats: {seats} is not a table of 2 to {}",
+                            crate::sim::MAX_PLAYERS
+                        ));
+                    }
+                    if tables.last().is_some_and(|&last| last >= seats) {
+                        return Err("seats: list each table once, smallest first".to_string());
+                    }
+                    tables.push(seats);
+                }
+                if tables.is_empty() {
+                    return Err("seats: expected the table sizes, as `seats: 2 4`".to_string());
+                }
+                self.tables = tables;
+            }
+            "roll" => {
+                self.roll = value.parse::<u8>().map_err(|e| format!("roll: {e}"))?;
+                if self.roll == 0 {
+                    return Err("roll: a strip is at least one column wide".to_string());
+                }
+            }
             "events" => self.events = value == "on",
             "rule" => {
                 let (policy, cap) = value
@@ -427,15 +514,86 @@ impl Header {
             "solution" => {
                 for placement in value.split(';') {
                     let (x, y, rest) = parse_xy(placement.trim())?;
-                    let dir = parse_dir(rest.trim())?;
-                    self.solution.push((x, y, dir));
+                    let mut words = rest.split_whitespace();
+                    let dir = parse_dir(words.next().unwrap_or(""))?;
+                    // A trailing claw names the co-op hand that places it;
+                    // none is P1's, as every solo stage's arrow is.
+                    let seat = match words.next() {
+                        None => 0,
+                        Some(claw) => crate::sim::board::seat_of_claw(
+                            Handedness::from_token(claw)
+                                .ok_or_else(|| format!("solution: bad hand {claw:?}"))?,
+                        ),
+                    };
+                    self.solution.push((x, y, dir, seat));
                 }
             }
+            "hands" => {
+                let mut counts = value
+                    .split_whitespace()
+                    .map(|n| n.parse::<u8>().map_err(|e| format!("hands: {e}")));
+                let (Some(left), Some(right), None) = (counts.next(), counts.next(), counts.next())
+                else {
+                    return Err("hands: expected P1's and P2's counts, as `hands: 1 1`".to_string());
+                };
+                self.rules.claw_hands = Some([left?, right?]);
+            }
+            // The medal lines of the timed challenges this build no longer
+            // has. A level file written for them, or hand-edited from one,
+            // still loads: the lines are read past and dropped.
+            "silver" | "gold" => {}
             "map" => return Ok(HeaderLine::MapFollows),
             other => return Err(format!("unknown key {other:?}")),
         }
         Ok(HeaderLine::Read)
     }
+}
+
+impl Level {
+    /// Whether a `seats:` line may name a table of `seats` on `board`: one
+    /// the beach has castles for, in order. A bigger table would seat a
+    /// player with nowhere to bank. The rule a file is refused by, and the
+    /// one the editor drops a carried table by once its castles go.
+    pub fn table_fits(board: &Board, seats: u8) -> bool {
+        seats <= board.table_seats().unwrap_or(0)
+    }
+
+    /// Whether `board` may roll by `roll` columns: no roll at all, or an
+    /// open beach made of whole strips that wide, which rolled by a strip
+    /// is the same beach with its castles moved round the world.
+    pub fn roll_fits(board: &Board, roll: u8) -> bool {
+        roll == 0 || (board.wrap() && board.width().is_multiple_of(roll))
+    }
+}
+
+/// A `seats:` line names only tables the beach has castles for
+/// ([`Level::table_fits`]).
+fn check_tables(board: &Board, tables: &[u8]) -> Result<(), String> {
+    let castles = board.table_seats().unwrap_or(0);
+    match tables
+        .iter()
+        .find(|&&seats| !Level::table_fits(board, seats))
+    {
+        Some(seats) => Err(format!(
+            "seats: a table of {seats} on a beach with {castles} castles in order"
+        )),
+        None => Ok(()),
+    }
+}
+
+/// A `roll:` line is for an open beach made of whole strips
+/// ([`Level::roll_fits`]).
+fn check_roll(board: &Board, roll: u8) -> Result<(), String> {
+    if Level::roll_fits(board, roll) {
+        return Ok(());
+    }
+    if !board.wrap() {
+        return Err("roll: only an open beach (`wrap: on`) rolls round".to_string());
+    }
+    Err(format!(
+        "roll: {roll} columns do not divide the beach's {}",
+        board.width()
+    ))
 }
 
 /// Stage 1: the `key: value` lines up to (and consuming) `map:`.
@@ -702,7 +860,7 @@ mod tests {
         assert_ne!(closed.crabs()[0].dir, Direction::Left);
     }
 
-    /// Every goal a challenge can set survives being written out and read
+    /// Every goal a stage can set survives being written out and read
     /// back, and `all` reads as the default it is.
     #[test]
     fn every_goal_survives_the_trip_through_text() {

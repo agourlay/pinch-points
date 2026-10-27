@@ -53,7 +53,9 @@ impl Board {
     /// crab's kind and claw, the roulette, a gull's next flight) is a fresh
     /// draw rather than the real one. The ambient gull spawner is switched
     /// off, because it lands on a tile the PRNG picks and a gull on a
-    /// guessed tile is worse than none. Each gull's takeoff countdown is
+    /// guessed tile is worse than none; a gull it has already sent for is
+    /// kept and lands on its tick, since the board shows where it comes
+    /// down from the moment it is sent for. Each gull's takeoff countdown is
     /// redrawn, since the screen never shows it. A golden crab called but
     /// not yet announced is dropped, because the call is drawn a minute
     /// ahead and told to nobody until [`GOLDEN_NOTICE`]: the copy keeps

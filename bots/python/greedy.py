@@ -12,6 +12,9 @@ a gull to its own castle). Then it rests a few ticks, so its few posts
 live long enough to do their work. How many it may have standing, and what
 happens to a placement past that, come from the rules in `hello`.
 
+It speaks protocol 2: after the first, each tick comes as what changed
+since the last one, and `apply` turns it back into the whole board.
+
 It is meant to be read and changed. The protocol is docs/bot-protocol.md.
 """
 
@@ -21,7 +24,7 @@ import sys
 from collections import deque
 
 NAME = "Greedy"
-VERSION = "1.0"
+VERSION = "1.1"
 
 DIRS = {"up": (0, -1), "right": (1, 0), "down": (0, 1), "left": (-1, 0)}
 LEFT = {"up": "left", "left": "down", "down": "right", "right": "up"}
@@ -29,8 +32,47 @@ RIGHT = {"up": "right", "right": "down", "down": "left", "left": "up"}
 REVERSE = {"up": "down", "down": "up", "left": "right", "right": "left"}
 VALUE = {"common": 1, "juvenile": 2, "giant": 10, "molting": 5, "golden": 50, "sparkling": 1}
 SPEED = {"common": 12, "juvenile": 18, "giant": 7, "molting": 12, "golden": 15, "sparkling": 12}
+# The lists a diff sends entry by entry, and the fields that name an entry.
+KEYED = {"crabs": ("id",), "sweeping": ("id",), "gulls": ("id",),
+         "signposts": ("x", "y"), "castles": ("x", "y"), "turnstiles": ("x", "y")}
 STEPS = 24  # how far ahead a path is walked, in tiles
 REST = 6  # ticks to rest after planting a post
+
+
+def apply(state, msg):
+    """The whole tick a `tick` message stands for, given `state`, the last
+    one held of that game. A whole tick (no `base`) is itself. A diff is
+    applied to `state` if it is the tick the diff names as its `base`;
+    otherwise the answer is None, and the bot asks for a `resync`."""
+    if "base" not in msg:
+        return msg
+    if state is None or state["tick"] != msg["base"] or state["game"] != msg["game"]:
+        return None
+    state = dict(state)
+    for field, value in msg.items():
+        if field == "base":
+            continue
+        if field in KEYED and isinstance(value, dict):
+            names = KEYED[field]
+
+            def key(entry):
+                return tuple(entry[n] for n in names)
+
+            gone = {key(entry) for entry in value["gone"]}
+            entries = [dict(entry) for entry in state[field] if key(entry) not in gone]
+            at = {key(entry): entry for entry in entries}
+            for part in value["set"]:
+                if key(part) in at:
+                    at[key(part)].update(part)
+                else:
+                    entries.append(dict(part))
+                    at[key(part)] = entries[-1]
+            state[field] = entries
+        else:
+            state[field] = value
+    # A diff never carries a post's age: it is the tick less its `placed`.
+    state["signposts"] = [dict(p, age=state["tick"] - p["placed"]) for p in state["signposts"]]
+    return state
 
 
 def parse_connection_string(text):
@@ -271,6 +313,15 @@ def options(argv):
 
 def main():
     opts = options(sys.argv)
+    # A game older than protocol 2 refuses it before looking at the key,
+    # and is played with protocol 1, where every tick comes whole.
+    if play(opts, 2) == "refused":
+        play(opts, 1)
+
+
+def play(opts, protocol):
+    """Register and play until the listener lets go. "refused" when it
+    turned the protocol version down."""
     host, port, key = parse_connection_string(opts["string"])
     name = opts["name"]
     sock = socket.create_connection((host, port))
@@ -283,7 +334,7 @@ def main():
         stream.write(json.dumps(msg, separators=(",", ":")) + "\n")
         stream.flush()
 
-    register = {"type": "register", "protocol": 1, "name": name, "version": VERSION,
+    register = {"type": "register", "protocol": protocol, "name": name, "version": VERSION,
                 "parallel": opts["parallel"]}
     if opts["owner"]:
         register["owner"] = opts["owner"]
@@ -291,12 +342,22 @@ def main():
         register["key"] = key
     send(register)
     beaches = {}
+    held = {}  # the last whole tick of each game
+    registered = False
     for line in stream:
         msg = json.loads(line)
         kind = msg.get("type")
         if kind == "tick":
             beach = beaches.get(msg["game"])
-            reply = beach and decide(beach, msg)
+            tick = apply(held.get(msg["game"]), msg)
+            if tick is None:
+                # A diff from a tick we do not hold: ask for the next one
+                # whole, and sit this one out.
+                held.pop(msg["game"], None)
+                send({"type": "resync", "game": msg["game"]})
+            else:
+                held[msg["game"]] = tick
+            reply = beach and tick and decide(beach, tick)
             if reply:
                 reply.update(game=msg["game"], tick=msg["tick"], wait=REST)
             else:
@@ -306,16 +367,22 @@ def main():
             send({"type": "pong", "id": msg["id"]})
         elif kind == "hello":
             beaches[msg["game"]] = Beach(msg)
+            held.pop(msg["game"], None)
             send({"type": "ready", "game": msg["game"]})
         elif kind == "end":
             beaches.pop(msg["game"], None)
+            held.pop(msg["game"], None)
             print("game %d: placed %d, scores %s" % (msg["game"], msg["placing"], msg["scores"]), flush=True)
         elif kind == "registered":
+            registered = True
             print("registered as %s" % msg["name"], flush=True)
         elif kind == "error":
+            if msg.get("fatal") and not registered and protocol > 1 and "protocol" in msg["message"]:
+                return "refused"
             print("error: %s" % msg["message"], file=sys.stderr, flush=True)
             if msg.get("fatal"):
-                return
+                return None
+    return None
 
 
 if __name__ == "__main__":

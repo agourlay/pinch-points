@@ -181,13 +181,14 @@ pub struct Committed {
 impl BotRound {
     /// Open a round for the bots in `seats`: a driver and a hand for each,
     /// their game routed to this round, and `hello` to every one that is
-    /// connected. `party` is the whole table.
+    /// connected. `party` is the whole table, and `online` the input delay
+    /// its lockstep plays with, `None` for a round on this machine.
     pub(super) fn open(
         door: &Doorway,
         board: &Board,
         seats: &[(u8, BotId)],
         party: PartyTable,
-        online: bool,
+        online: Option<u32>,
         game: u32,
     ) -> BotRound {
         let deadline = Duration::from_millis(u64::from(LIVE_DEADLINE_MS));
@@ -216,17 +217,15 @@ impl BotRound {
                 }
             })
             .collect();
-        let lockstep = online.then(Lockstep::default);
+        let lockstep = online.map(|_| Lockstep::default());
         let round = BotRound {
             // Online every seat's input is committed this far ahead for
-            // the whole table, a bot's like a person's.
+            // the whole table, a bot's like a person's: the round's own
+            // delay, which the host picks for the table it deals.
             clock: Clock {
                 live: true,
                 deadline_ms: LIVE_DEADLINE_MS,
-                input_delay: match lockstep {
-                    Some(_) => crate::sim::DEFAULT_DELAY,
-                    None => 0,
-                },
+                input_delay: online.unwrap_or(0),
             },
             lockstep,
             link,
@@ -537,6 +536,10 @@ impl BotRound {
                 let id = party_replay_id(self.game);
                 let players = self.seats.iter().map(|hand| hand.driver.id).collect();
                 let listener = door.listener();
+                // With the final scores, as a round kept from its results
+                // card is filed: the recording so far does not have them.
+                let mut replay = replay.clone();
+                replay.scores = Some(*board.scores());
                 listener.keep_replay(id.clone(), players, replay.to_text());
                 // A party plays on for as long as people stay, and every
                 // replay is a few hundred kilobytes: the oldest kept goes
@@ -600,7 +603,8 @@ mod tests {
         let id = door.chairs[0].bot.expect("seated");
         let board = beach();
         let party = PartyTable::new(names, kinds, mode);
-        let round = BotRound::open(&door, &board, &[(1, id)], party, online, 1);
+        let delay = online.then_some(crate::sim::DEFAULT_DELAY);
+        let round = BotRound::open(&door, &board, &[(1, id)], party, delay, 1);
         let bots = BotSeats {
             door: Some(door),
             round: Some(round),
@@ -657,7 +661,10 @@ mod tests {
         bot.reader.read_line(&mut answer).expect("an answer");
         let answer: serde_json::Value = serde_json::from_str(&answer).expect("json");
         assert_eq!(answer["type"], "replay", "{answer}");
-        assert_eq!(answer["text"], replay.to_text());
+        // The recording with how it ended, as a kept round has it.
+        let mut ended = replay.clone();
+        ended.scores = Some(*board.scores());
+        assert_eq!(answer["text"], ended.to_text());
         // The tide stays in; the bot has been told.
         bots.after(&board, Some(Vec::new()), Some(&replay));
         assert!(

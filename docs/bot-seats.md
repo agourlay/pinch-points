@@ -98,7 +98,7 @@ not need to. The game AI stays computed everywhere.
 - **The arena and cups.** Headless matches run by
   `pinch-points arena` and `pinch-points cup`, where every seat is a
   bot or the game AI. This is the main case (see *Cups*).
-- **Couch play.** Match setup can mark a seat as open to a bot. The screen
+- **Couch play.** Match setup's Players step can set a seat to a bot. The screen
   shows a connection string for it, the same card as "Join as bot", and
   the bot that registers with that string takes the seat. Two friends and
   two bots on one screen. The card listens on localhost, for a bot on the
@@ -280,8 +280,9 @@ ticks, never wall time.
 **Which tick a reply acts on.** A reply to tick `t` takes effect on the
 transition `input_delay` ticks later, and `hello` says what that is. In
 the arena and a cup it is 0: the reply to `t` is the action the sim takes
-from `t` to `t + 1`. On a couch it is 0 too. Online it is `DEFAULT_DELAY`
-(3), because a seat's input is committed that far ahead for the whole
+from `t` to `t + 1`. On a couch it is 0 too. Online it is the round's
+input delay (3 to 6, the host's pick from its players' round trips),
+because a seat's input is committed that far ahead for the whole
 table, a human's and a bot's alike. So the deadline is the same
 everywhere but the aim is not: a bot that places in front of a moving crab
 has to lead it by the delay, exactly as a person online does, and a bot
@@ -412,12 +413,17 @@ the protocol keeps its own overhead small and measured.
   can hold a small message for up to 40 ms, longer than the whole
   deadline. Every listener sets it, the spec tells bot authors to, and
   every example bot does, in its first lines.
-- **Full state every tick, no deltas.** A busy board (an XL beach at its
-  crab cap, `CRAB_CAP_TILES_PER_CRAB`) is about 10 KB a tick, twice that
-  while Crab Mania floods past the cap: some 300 to 600 KB a second per
-  bot, which is nothing on a LAN and a fraction of a millisecond to parse
-  in any language. In exchange a bot never has to reconcile a missed
-  update, and a stateless bot is a correct one.
+- **Diffs, with the whole board never far.** A busy board (an XL beach at
+  its crab cap, `CRAB_CAP_TILES_PER_CRAB`) is about 10 KB a tick, twice
+  that while Crab Mania floods past the cap: some 300 to 600 KB a second
+  per bot whole. Protocol 2 sends a tick as what changed since the last
+  one sent on that connection, each keyed list entry by entry and a
+  post's age left to the bot (`tick - placed`), which is about a fifth of
+  that: on a six-seat standard round, 842 B a tick against 3994. A diff
+  names its `base`, so a bot holding anything else knows it, asks for a
+  `resync`, and is sent the next tick whole; the listener sends one whole
+  every 150 ticks besides, and after every `hello`. Protocol 1, every tick
+  whole and a stateless bot a correct one, is still spoken.
 - **Measured at the listener.** Every reply's time from tick sent to reply
   read is logged, and each bot's median and 99th percentile go in the
   standings. Those two numbers are what an author optimises, and the 99th
@@ -493,7 +499,7 @@ is the entrant that registered earlier, and that is as far as it goes.
 The first thing a bot sends, on every connection:
 
 ```json
-{"type": "register", "protocol": 1, "name": "Alice's crab herder",
+{"type": "register", "protocol": 2, "name": "Alice's crab herder",
  "version": "0.3", "owner": "Alice", "parallel": 4}
 ```
 
@@ -570,6 +576,7 @@ Everything a player can see on the screen, and nothing they cannot:
             "kind": "giant", "claw": "right"}],
  "gulls": [{"id": 4, "x": 9, "y": 2, "dir": "down", "progress": 0,
             "state": "flying", "hops_left": 2, "claw": "left"}],
+ "incoming_gulls": [{"x": 11, "y": 0, "dir": "down", "tick": 1260}],
  "signposts": [{"x": 5, "y": 2, "dir": "up", "owner": 2, "worn": false,
                 "age": 41}],
  "castles": [{"x": 1, "y": 1, "owner": 0}],
@@ -577,6 +584,14 @@ Everything a player can see on the screen, and nothing they cannot:
  "event": {"name": "gull_mania", "ticks_left": 120},
  "lure": null, "claw_call": false, "surge": false}
 ```
+
+`incoming_gulls` are the ambient gulls on their way in: the edge spawner
+picks a gull's landing tile `GULL_LEAD` ticks (1.2 s) before it lands,
+and the screen draws it from that tick: its shadow sweeps in over the edge
+onto the landing tile within the first half of the lead and lies there
+until the bird lands on it (with reduced motion on, the shadow fades in on
+that tile from the start). So a bot is told the tile, the way it will face
+and the tick it lands on as soon as a player could see it.
 
 `remaining` is `null` on an untimed beach. `surge` is the closing stretch
 the HUD already draws (`Board::in_surge`), when the gull rate doubles.
@@ -705,9 +720,11 @@ public, it is kept:
   a crab appears is something a player can count. What it is, its kind
   and its claw, comes from the reseeded draw, and it is marked
   `"predicted": true`.
-- **Ambient gulls are left out.** They arrive on `gull_period`, which is
-  public, but land on an edge tile the PRNG picks, and a gull on a guessed
-  tile is worse than none.
+- **Ambient gulls are left out until they are on their way.** They are
+  sent for on `gull_period`, which is public, but land on an edge tile the
+  PRNG picks, and a gull on a guessed tile is worse than none. A gull
+  already sent for (`incoming_gulls`) is kept and lands on its tick, since
+  its tile is on the screen.
 - **Gull takeoffs** come from the reseeded draw.
 - **A golden crab call** is kept only once it is public (the tick
   message's `golden_call`, five seconds ahead). The board draws the call
@@ -849,7 +866,7 @@ the string in advance.
 | `--open N` | 0 | seats left for bots to connect to |
 | `--listen ADDR` | `127.0.0.1:47710` | where to wait; `0.0.0.0:47710` to let a friend's bot in |
 | `--key KEY` | drawn fresh | a fixed join key, for scripts that start the arena and the bot together |
-| `--map classic\|generated\|FILE` | `classic` | the beach |
+| `--map classic\|generated\|NAME\|FILE` | `classic` | the beach: any built-in map by the name `docs/bot-protocol.md` lists (handmade maps and `surprise` included), mirrored from the seed as the game deals it, or a level file as drawn |
 | `--seats N` | seats given | table size on a generated beach |
 | `--seed S` | random, printed | the same beach again after a change, for a fair before and after |
 | `--round quick\|short\|standard\|long` | `standard` | round length |

@@ -7,7 +7,7 @@
 //! is the complete inventory of the dev surface.
 
 use crate::app::{Campaign, PendingActions, Phase, Screen, Sim, announce, match_setup, net};
-use crate::sim::{Direction, PlayerAction, TideEvent};
+use crate::sim::{Direction, PlayerAction, PlayerId, TideEvent};
 use bevy::prelude::*;
 
 /// `PINCH_WINDOW=WxH`: open at a given size instead of the default, so a
@@ -38,6 +38,31 @@ pub(super) fn auto_host_quota() -> Option<usize> {
     std::env::var("PINCH_LOBBY_HOST")
         .ok()
         .map(|quota| quota.parse().unwrap_or(1))
+}
+
+/// `PINCH_LOBBY_PARTNERS=S@N`: once `N` rivals are aboard, a host whose
+/// table plays a team mode picks the next partners for seat `S` (counted
+/// from 1) once, as P and then `S` on its lobby card do: before the
+/// unattended launch of `PINCH_LOBBY_HOST=N`, for a match played in the
+/// teams picked.
+pub(super) fn lobby_partners() -> Option<(u8, usize)> {
+    let value = std::env::var("PINCH_LOBBY_PARTNERS").ok()?;
+    let (seat, rivals) = value.split_once('@')?;
+    Some((seat.parse().ok()?, rivals.parse().ok()?))
+}
+
+/// `PINCH_LOBBY_PICK`: a host with somebody aboard presses start once,
+/// unattended, which opens the map page for a screenshot of it; and on a
+/// series' results card, goes on once, to the page for the next round.
+pub(super) fn lobby_pick() -> bool {
+    std::env::var("PINCH_LOBBY_PICK").is_ok()
+}
+
+/// `PINCH_LOBBY_PICK=go`: and on the map page, at the start and between
+/// rounds, picks the card under the cursor a second later, so an
+/// unattended match plays on.
+pub(super) fn lobby_pick_go() -> bool {
+    std::env::var("PINCH_LOBBY_PICK").is_ok_and(|value| value == "go")
 }
 
 /// `PINCH_LOBBY_JOIN`: join the first LAN host the lobby hears, unattended.
@@ -101,6 +126,13 @@ pub(super) fn compute_threads() -> Option<usize> {
     Some(if n == 0 { usize::MAX } else { n })
 }
 
+/// `PINCH_ALL_PLUGINS`: keep every one of Bevy's default plugins, the
+/// ones this game draws nothing with included (see
+/// `schedule::trim_unused_plugins`), for measuring what they cost.
+pub(super) fn all_plugins() -> bool {
+    std::env::var("PINCH_ALL_PLUGINS").is_ok()
+}
+
 /// `PINCH_SEATS=n`: how many seats a skirmish sets the table for.
 fn seats() -> Option<u8> {
     std::env::var("PINCH_SEATS").ok()?.parse().ok()
@@ -117,18 +149,20 @@ pub(super) fn sandbox() -> bool {
     std::env::var("PINCH_SANDBOX").is_ok()
 }
 
-/// `PINCH_ST_EXEC`: every main-world schedule on the single-threaded
-/// executor, for the backlog's CPU measurement.
-pub(super) fn single_threaded_executor() -> bool {
-    std::env::var("PINCH_ST_EXEC").is_ok()
+/// `PINCH_MT_EXEC`: every main-world schedule back on Bevy's parallel
+/// executor, for measuring it against the single-threaded one the game
+/// runs on (see `schedule::run_with`).
+pub(super) fn multi_threaded_executor() -> bool {
+    std::env::var("PINCH_MT_EXEC").is_ok()
 }
 
 /// `PINCH_SHUFFLE=<seed>`: put every main-world schedule's unordered systems
 /// in a shuffled order, seeded, so an ordering bug shows itself instead of
 /// hiding behind whichever order the graph happens to settle on. Only in a
-/// build with the `shuffle` feature (`cargo run --features shuffle`); add
-/// `PINCH_ST_EXEC=1` for one fixed order per seed, since the parallel
-/// executor still starts whatever system is ready first.
+/// build with the `shuffle` feature (`cargo run --features shuffle`). The
+/// game's single-threaded executor runs one fixed order per seed; with
+/// `PINCH_MT_EXEC=1` the parallel one starts whatever system is ready
+/// first.
 ///
 /// The bug class it is for is the one that kept recurring here: two
 /// systems reading the same key in the same frame with no order between
@@ -155,6 +189,39 @@ pub(super) fn no_update_check() -> bool {
     std::env::var("PINCH_NO_UPDATE").is_ok()
 }
 
+/// `PINCH_PAD_PROMPTS`: start as if a pad had just been pressed, so the
+/// controller's prompts are up from the first frame, for a screenshot of
+/// them without a pad to press.
+pub(crate) fn pad_prompts() -> bool {
+    std::env::var("PINCH_PAD_PROMPTS").is_ok()
+}
+
+/// `PINCH_QUIT_CARD`: open the main menu with its quit card up, as a
+/// pad's Start raises it, for a screenshot of the card: its keyboard keys,
+/// or with `PINCH_PAD_PROMPTS` its pad buttons.
+pub(crate) fn quit_card() -> bool {
+    std::env::var("PINCH_QUIT_CARD").is_ok()
+}
+
+/// `PINCH_PADS=<n>`: that many controllers plugged in from the start,
+/// pads with nobody's hands on them, for screenshots of how the seats are
+/// dealt without a pad to plug in. With `PINCH_PAD_PROMPTS` the first is
+/// the pad the hands last used, the one that works the setup.
+pub(crate) fn virtual_pads() -> usize {
+    std::env::var("PINCH_PADS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+        .min(crate::sim::MAX_PLAYERS)
+}
+
+/// `PINCH_EDITOR_LEVEL=<path>`: open the editor with the level in that
+/// file on the bench, as a pasted code would put it there, for a picture
+/// of the editor over a level of its own.
+pub fn editor_level() -> Option<std::path::PathBuf> {
+    std::env::var_os("PINCH_EDITOR_LEVEL").map(std::path::PathBuf::from)
+}
+
 /// `PINCH_UPDATE_DEMO`: offer a made-up newer release on the menu without
 /// asking GitHub, so the update card can be looked at before there is a
 /// release to look at (and, once there is, whenever the wording changes).
@@ -168,7 +235,8 @@ pub(super) fn update_demo() -> bool {
 /// (which hook wins when two are set) is explicit and testable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum DevHook {
-    /// `PINCH_LOBBY_HOST` / `PINCH_LOBBY_JOIN`: the LAN lobby screen.
+    /// `PINCH_LOBBY_HOST` / `PINCH_LOBBY_JOIN`: the LAN lobby screen, and
+    /// `PINCH_LOBBY_BROWSE` for its list of games with nothing pressed.
     Lobby,
     /// `PINCH_HOST` / `PINCH_JOIN`: straight into an online round.
     Online,
@@ -186,19 +254,23 @@ pub(super) enum DevHook {
     Achievements,
     /// `PINCH_LANGUAGE`: the language picker.
     Language,
-    /// `PINCH_STAGES=tide|beach`: the stage list for either puzzle list.
-    StageSelect {
-        beach: bool,
-    },
-    /// `PINCH_SKIRMISH=classic|arena|large|xl|ocean|custom`, plus
-    /// `PINCH_SERIES=3|5` for a series: four seats, three of them AI. Any
-    /// unrecognised value is the generated beach at the classic size.
+    /// `PINCH_STAGES`: the campaign's stage list.
+    StageSelect,
+    /// `PINCH_SKIRMISH=classic|arena|<map>`: `classic` the generated 12x9,
+    /// `arena` the handmade arena, else any map by its `--map` name
+    /// ([`skirmish_map`]); plus `PINCH_SERIES=3|5` for a series: four
+    /// seats, three of them AI. Any unrecognised value is the generated
+    /// beach at the classic size.
     Skirmish {
         map: match_setup::MapChoice,
         series: crate::app::tournament::SeriesLength,
     },
-    /// `PINCH_MATCH`: the match-setup screen.
-    MatchSetup,
+    /// `PINCH_MATCH=1|2|3`: match setup, on that step (the first for any
+    /// other value). `PINCH_MATCH_MAP=small|arena|...|random` picks step
+    /// 2's card first.
+    MatchSetup {
+        step: match_setup::Step,
+    },
     /// `PINCH_REPLAY`: watch the last saved round.
     Replay,
     /// `PINCH_LIBRARY`: the kept rounds.
@@ -215,6 +287,7 @@ impl DevHook {
             || set("PINCH_LOBBY_JOIN")
             || set("PINCH_LOBBY_JOIN_BOT")
             || set("PINCH_LOBBY_WATCH")
+            || set("PINCH_LOBBY_BROWSE")
         {
             return Some(DevHook::Lobby);
         }
@@ -232,24 +305,21 @@ impl DevHook {
         }
         for (name, hook) in [
             ("PINCH_EDITOR", DevHook::Editor),
+            ("PINCH_EDITOR_LEVEL", DevHook::Editor),
             ("PINCH_SETTINGS", DevHook::Settings),
             ("PINCH_CONTROLS", DevHook::Controls),
             ("PINCH_ACHIEVEMENTS", DevHook::Achievements),
             ("PINCH_LANGUAGE", DevHook::Language),
             ("PINCH_LIBRARY", DevHook::Replays),
+            ("PINCH_STAGES", DevHook::StageSelect),
         ] {
             if set(name) {
                 return Some(hook);
             }
         }
-        if let Some(list) = var("PINCH_STAGES") {
-            return Some(DevHook::StageSelect {
-                beach: list == "beach",
-            });
-        }
         if let Some(size) = var("PINCH_SKIRMISH") {
             return Some(DevHook::Skirmish {
-                map: skirmish_map(&size),
+                map: skirmish_map("PINCH_SKIRMISH", &size),
                 // Bare `PINCH_SERIES=1` still means the long series it
                 // always meant; `=3` asks for the short one.
                 series: match var("PINCH_SERIES").as_deref() {
@@ -259,8 +329,14 @@ impl DevHook {
                 },
             });
         }
-        if set("PINCH_MATCH") {
-            return Some(DevHook::MatchSetup);
+        if let Some(step) = var("PINCH_MATCH") {
+            return Some(DevHook::MatchSetup {
+                step: match step.as_str() {
+                    "2" => match_setup::Step::Map,
+                    "3" => match_setup::Step::Players,
+                    _ => match_setup::Step::Game,
+                },
+            });
         }
         set("PINCH_REPLAY").then_some(DevHook::Replay)
     }
@@ -274,6 +350,7 @@ pub(super) fn kickoff(
     mut tournament: ResMut<crate::app::tournament::Tournament>,
     mut playback: ResMut<crate::app::Playback>,
     mut next_screen: ResMut<NextState<Screen>>,
+    mut setup: ResMut<match_setup::MatchMenu>,
 ) {
     let Some(hook) = DevHook::from_env(|name| std::env::var(name).ok()) else {
         return;
@@ -283,7 +360,13 @@ pub(super) fn kickoff(
             // The lobby sends the host's match terms, so the same hooks that
             // configure a local skirmish configure a hosted one.
             config.map = debug_map().unwrap_or(config.map);
-            config.bots = bots().unwrap_or(config.bots);
+            config.lobby_bots = bots().unwrap_or(config.lobby_bots);
+            // `PINCH_SERIES` hosts a series, as it plays one locally.
+            match std::env::var("PINCH_SERIES").as_deref() {
+                Ok("3") => config.series = crate::app::tournament::SeriesLength::BestOfThree,
+                Ok(_) => config.series = crate::app::tournament::SeriesLength::BestOfFive,
+                Err(_) => {}
+            }
             next_screen.set(Screen::Lobby);
         }
         DevHook::Online => {
@@ -307,39 +390,46 @@ pub(super) fn kickoff(
         DevHook::Achievements => next_screen.set(Screen::Achievements),
         DevHook::Language => next_screen.set(Screen::Language),
         DevHook::Replays => next_screen.set(Screen::Replays),
-        DevHook::StageSelect { beach } => {
-            if beach {
-                let levels = crate::sim::challenge_levels();
-                let builtins = levels.len();
-                campaign.reset(crate::app::CampaignKind::BeachDay, levels, builtins);
-            }
-            next_screen.set(Screen::StageSelect);
-        }
+        DevHook::StageSelect => next_screen.set(Screen::StageSelect),
         DevHook::Skirmish { map, series } => {
-            config.seats = seats().unwrap_or(4).clamp(2, crate::sim::MAX_PLAYERS as u8);
+            let seats = seats().unwrap_or(4);
+            // A hand-typed PINCH_BOTS is not trusted to leave a human seat:
+            // `with_ai` keeps one.
+            let table = match_setup::MatchConfig::with_ai(seats, bots().unwrap_or(seats - 1));
+            config.seats = table.seats;
+            config.controllers = table.controllers;
             config.map = map;
             config.series = series;
-            // A hand-typed PINCH_BOTS is not trusted to leave a human seat.
-            config.bots = bots().unwrap_or(config.seats - 1);
-            config.clamp_bots();
             if series.is_series() {
                 *tournament = crate::app::tournament::Tournament::start(series);
             }
             config.armed = true;
             next_screen.set(Screen::Versus);
         }
-        DevHook::MatchSetup => {
-            // `PINCH_SEATS`/`PINCH_BOTS` apply here too, so the screen can
-            // be seen with a full table rather than only the default pair.
-            config.seats = seats()
-                .unwrap_or(config.seats)
-                .clamp(2, crate::sim::MAX_PLAYERS as u8);
-            config.bots = bots().unwrap_or(config.bots);
-            config.clamp_bots();
-            for slot in 0..bot_seats().unwrap_or(0).min(config.bots) {
+        DevHook::MatchSetup { step } => {
+            // `PINCH_SEATS`/`PINCH_BOTS` apply here too, so the steps can
+            // be seen with a full table rather than only the default pair:
+            // the top PINCH_BOTS seats to the AI, the top PINCH_BOT_SEATS
+            // of those to bots.
+            let seats = seats().unwrap_or(config.seats);
+            let ai = bots().unwrap_or(0);
+            let table = match_setup::MatchConfig::with_ai(seats, ai);
+            config.seats = table.seats;
+            config.controllers = table.controllers;
+            for slot in 0..bot_seats().unwrap_or(0).min(table.ai_seats()) {
                 let seat = usize::from(config.seats - 1 - slot);
                 config.controllers[seat] = crate::app::SeatController::Bot;
             }
+            match std::env::var("PINCH_MATCH_MAP").ok().as_deref() {
+                Some("random") => config.random = true,
+                Some(name) => {
+                    config.map = skirmish_map("PINCH_MATCH_MAP", name);
+                    config.random = false;
+                    match_setup::pick_the_map_in_force(&mut config);
+                }
+                None => {}
+            }
+            setup.step = step;
             next_screen.set(Screen::MatchSetup);
         }
         DevHook::Replay => {
@@ -357,25 +447,33 @@ pub(super) fn kickoff(
     }
 }
 
-/// Dev hook: `PINCH_SKIRMISH=classic|arena|large|xl|ocean|custom` also
+/// Dev hook: `PINCH_SKIRMISH=classic|arena|<map>` ([`skirmish_map`]) also
 /// names the map for a hosted lobby match.
 fn debug_map() -> Option<match_setup::MapChoice> {
-    Some(skirmish_map(&std::env::var("PINCH_SKIRMISH").ok()?))
+    Some(skirmish_map(
+        "PINCH_SKIRMISH",
+        &std::env::var("PINCH_SKIRMISH").ok()?,
+    ))
 }
 
 /// The map a `PINCH_SKIRMISH` value names, for a bots match and a hosted
-/// lobby alike. `classic` is the generated beach at the classic size and
-/// `arena` the handmade one a new player's Versus starts on.
-fn skirmish_map(value: &str) -> match_setup::MapChoice {
+/// lobby alike. `classic` is the generated beach at the classic size, as
+/// it always was for these hooks (the bots' `--map` names that one
+/// `generated` and the handmade arena `classic`), and `arena` the handmade
+/// one a new player's Versus starts on. A name no map has falls back to
+/// `classic` and says so in the log under `var`, the hook it came from,
+/// rather than quietly playing a beach nobody asked for.
+fn skirmish_map(var: &str, value: &str) -> match_setup::MapChoice {
+    // `custom` takes the first handmade beach with castles enough, which
+    // is how the wire path gets exercised without a menu; every other map
+    // goes by the name the bots' `--map` gives it.
     match value {
+        "classic" => match_setup::MapChoice::GenClassic,
         "arena" => match_setup::MapChoice::Classic,
-        "large" => match_setup::MapChoice::GenLarge,
-        "xl" => match_setup::MapChoice::GenXl,
-        "ocean" => match_setup::MapChoice::GenOcean,
-        // `custom` takes the first handmade beach with castles enough,
-        // which is how the wire path gets exercised without a menu.
-        "custom" => match_setup::MapChoice::Custom,
-        _ => match_setup::MapChoice::GenClassic,
+        name => match_setup::MapChoice::from_token(name).unwrap_or_else(|| {
+            warn!("{var}: no map called {name:?}, playing the classic generated beach");
+            match_setup::MapChoice::GenClassic
+        }),
     }
 }
 
@@ -407,7 +505,9 @@ fn only_off_the_wire(online: &net::Online, var: &str) -> bool {
 /// Dev hook: `PINCH_TIDE=<0-8>` fires a real tide event a few seconds in
 /// (or `PINCH_TIDE_AT` seconds in),
 /// rather than the banner alone, so what the event *does* can be watched.
-/// Seven is the castle swap.
+/// Seven is the castle swap. With `PINCH_TIDE_BY=<seat>` it lands as that
+/// seat's spin, as a sparkling crab banked there would, rather than as a
+/// call nobody spun.
 pub(super) fn debug_tide(mut sim: ResMut<Sim>, online: Res<net::Online>, mut hook: Local<OneShot>) {
     let Some(which) = hook.due("PINCH_TIDE", sim.0.ticks()) else {
         return;
@@ -415,8 +515,14 @@ pub(super) fn debug_tide(mut sim: ResMut<Sim>, online: Res<net::Online>, mut hoo
     if only_off_the_wire(&online, "PINCH_TIDE") {
         return;
     }
-    let index = which.parse::<usize>().unwrap_or(0) % TideEvent::ALL.len();
-    sim.0.force_tide_event(TideEvent::ALL[index], 0);
+    let event = TideEvent::ALL[which.parse::<usize>().unwrap_or(0) % TideEvent::ALL.len()];
+    match std::env::var("PINCH_TIDE_BY")
+        .ok()
+        .and_then(|seat| seat.parse::<PlayerId>().ok())
+    {
+        Some(seat) => sim.0.force_spun_tide_event(event, seat),
+        None => sim.0.force_tide_event(event, 0),
+    }
 }
 
 /// The mid-round moments a screenshot can be taken of, each fired once.
@@ -582,9 +688,11 @@ pub(super) fn debug_banner(
     announcer.push(match which.as_str() {
         "lure" => announce::Announcement::Lure(0),
         "surge" => announce::Announcement::Surge,
-        index => announce::Announcement::Tide(
-            TideEvent::ALL[index.parse::<usize>().unwrap_or(0) % TideEvent::ALL.len()],
-        ),
+        index => announce::Announcement::Tide {
+            event: TideEvent::ALL[index.parse::<usize>().unwrap_or(0) % TideEvent::ALL.len()],
+            by: None,
+            keeper: None,
+        },
     });
 }
 
@@ -600,36 +708,92 @@ pub(super) fn screenshotting() -> bool {
 /// Dev hook: with `PINCH_SCREENSHOT=/path/out.png`, saves a frame after
 /// `PINCH_SCREENSHOT_AT` seconds (default 2) and exits shortly after. Used to
 /// verify rendering headlessly; harmless otherwise.
+///
+/// `PINCH_SCREENSHOT_TICK=<n>` waits for the board's clock to reach tick
+/// `n` instead, which on a deterministic beach is the same moment of play
+/// every run, and `PINCH_SCREENSHOT_BURST=<count>` takes that many, one
+/// every `PINCH_SCREENSHOT_EVERY` ticks (default 3), as `out_00.png`,
+/// `out_01.png` and on: a short animation, read frame by frame.
 pub(super) fn debug_screenshot(
     mut commands: Commands,
     time: Res<Time>,
-    mut fired: Local<bool>,
-    mut config: Local<Option<Option<(String, f32)>>>,
+    sim: Res<Sim>,
+    mut taken: Local<u32>,
+    mut done_at: Local<Option<f32>>,
+    mut config: Local<Option<Option<ShotPlan>>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     // Env lookups allocate; resolve them once, not every frame.
-    let config = config.get_or_insert_with(|| {
-        std::env::var("PINCH_SCREENSHOT").ok().map(|path| {
-            let at = std::env::var("PINCH_SCREENSHOT_AT")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(2.0);
-            (path, at)
-        })
-    });
-    let Some((path, at)) = config else {
+    let config = config.get_or_insert_with(ShotPlan::from_env);
+    let Some(plan) = config else {
         return;
     };
-    let (path, at) = (path.clone(), *at);
     use bevy::render::view::screenshot::{Screenshot, save_to_disk};
-    if !*fired && time.elapsed_secs() > at {
-        *fired = true;
-        commands
-            .spawn(Screenshot::primary_window())
-            .observe(save_to_disk(path));
+    if let Some(done) = *done_at {
+        if time.elapsed_secs() > done + 1.5 {
+            exit.write(AppExit::Success);
+        }
+        return;
     }
-    if *fired && time.elapsed_secs() > at + 1.5 {
-        exit.write(AppExit::Success);
+    let due = match plan.tick {
+        Some(tick) => sim.0.ticks() >= tick + u64::from(*taken * plan.every),
+        None => time.elapsed_secs() > plan.at,
+    };
+    if !due {
+        return;
+    }
+    let path = match plan.burst {
+        1 => plan.path.clone(),
+        _ => {
+            let stem = plan.path.strip_suffix(".png").unwrap_or(&plan.path);
+            format!("{stem}_{:02}.png", *taken)
+        }
+    };
+    commands
+        .spawn(Screenshot::primary_window())
+        .observe(save_to_disk(path));
+    *taken += 1;
+    if *taken >= plan.burst {
+        *done_at = Some(time.elapsed_secs());
+    }
+}
+
+/// Dev hook: `PINCH_SLOWMO=<speed>` runs the whole game at that fraction
+/// of real time, the round's clock and every animation with it. With a
+/// screenshot burst it films a moment a few frames apart where a burst at
+/// full speed, each shot costing a fraction of a second, would catch it
+/// once.
+pub(super) fn slow_motion(mut time: ResMut<Time<Virtual>>) {
+    if let Some(speed) = std::env::var("PINCH_SLOWMO")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok())
+        .filter(|s| *s > 0.0)
+    {
+        time.set_relative_speed(speed);
+    }
+}
+
+/// What [`debug_screenshot`] was asked to take.
+pub(super) struct ShotPlan {
+    path: String,
+    at: f32,
+    tick: Option<u64>,
+    burst: u32,
+    every: u32,
+}
+
+impl ShotPlan {
+    fn from_env() -> Option<ShotPlan> {
+        fn num<T: std::str::FromStr>(key: &str) -> Option<T> {
+            std::env::var(key).ok()?.parse().ok()
+        }
+        Some(ShotPlan {
+            path: std::env::var("PINCH_SCREENSHOT").ok()?,
+            at: num("PINCH_SCREENSHOT_AT").unwrap_or(2.0),
+            tick: num("PINCH_SCREENSHOT_TICK"),
+            burst: num("PINCH_SCREENSHOT_BURST").unwrap_or(1).max(1),
+            every: num("PINCH_SCREENSHOT_EVERY").unwrap_or(3).max(1),
+        })
     }
 }
 
@@ -669,10 +833,159 @@ pub(super) fn frame_times(
     *since = 0.0;
 }
 
+/// Dev hook: `PINCH_LIBRARY=<n>` opens the replay shelf with the cursor on
+/// its `n`th round (from 1, so the historical `=1` is the top), and the
+/// window scrolled to it as a walk down would leave it, so the middle and
+/// the foot of a long shelf can be shot.
+pub(super) fn debug_library_cursor(mut library: ResMut<crate::app::replays::Library>) {
+    let Some(round) = std::env::var("PINCH_LIBRARY")
+        .ok()
+        .and_then(|n| n.parse::<usize>().ok())
+    else {
+        return;
+    };
+    library.selected = round.saturating_sub(1);
+    library.settle();
+}
+
+/// Dev hook: `PINCH_LOBBY_BROWSE=<n>` holds the join list's cursor on its
+/// `n`th beach (from 1, so the historical `=1` is the top) once that many
+/// are on the air, the window scrolled to it as a walk down would leave
+/// it, so the foot of a long list can be shot.
+pub(super) fn debug_lobby_cursor(mut state: ResMut<crate::app::lobby::LobbyState>) {
+    let Some(beach) = std::env::var("PINCH_LOBBY_BROWSE")
+        .ok()
+        .and_then(|n| n.parse::<usize>().ok())
+        .and_then(|n| n.checked_sub(1))
+    else {
+        return;
+    };
+    if beach < state.hosts.len() && state.selected_index() != Some(beach) {
+        state.point_at(Some(beach));
+    }
+}
+
+/// Dev hook: `PINCH_DELETE=1` presses the replay shelf's delete once, a
+/// second after the shelf opens, so the question it asks can be shot.
+/// Pressed and let go at once, as [`debug_moments`] presses its Escape.
+pub(super) fn debug_delete(
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
+    time: Res<Time>,
+    mut opened: Local<Option<f32>>,
+    mut fired: Local<bool>,
+) {
+    if *fired || std::env::var("PINCH_DELETE").is_err() {
+        return;
+    }
+    let now = time.elapsed_secs();
+    if now - *opened.get_or_insert(now) < 1.0 {
+        return;
+    }
+    *fired = true;
+    if let Some(key) = caps.key_for(crate::app::replays::DELETE_CAP) {
+        keys.press(key);
+        keys.release(key);
+    }
+}
+
+/// Dev hook: `PINCH_EDITOR_PRESS=F2,F2` presses those keys in the editor,
+/// one a second, the first a second after it opens: a picture of what a
+/// key says (F2's question over another level's file, the line after a
+/// save) without a hand at the keyboard. Keys by Bevy's names, the
+/// function keys as `F1`..`F12`, and `Shift+` in front of one holds Shift
+/// with it until the next press (`Shift+F1`, the card of every key).
+pub(super) fn debug_editor_press(
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut opened: Local<Option<f32>>,
+    mut pressed: Local<usize>,
+) {
+    let Ok(list) = std::env::var("PINCH_EDITOR_PRESS") else {
+        return;
+    };
+    let now = time.elapsed_secs();
+    let since = now - *opened.get_or_insert(now);
+    let Some(name) = list.split(',').nth(*pressed) else {
+        return;
+    };
+    if since < (*pressed + 1) as f32 {
+        return;
+    }
+    *pressed += 1;
+    keys.release(KeyCode::ShiftLeft);
+    let (shift, name) = match name.trim().strip_prefix("Shift+") {
+        Some(name) => (true, name),
+        None => (false, name.trim()),
+    };
+    match key_named(name) {
+        Some(key) => {
+            if shift {
+                keys.press(KeyCode::ShiftLeft);
+            }
+            keys.press(key);
+            keys.release(key);
+        }
+        None => warn!("PINCH_EDITOR_PRESS: no key called {name:?}"),
+    }
+}
+
+/// A key by the name a dev hook gives it: Bevy's spelling ("KeyV",
+/// "Escape"), the function keys among them.
+fn key_named(name: &str) -> Option<KeyCode> {
+    const NAMED: [KeyCode; 15] = [
+        KeyCode::F1,
+        KeyCode::F2,
+        KeyCode::F3,
+        KeyCode::F4,
+        KeyCode::F5,
+        KeyCode::F6,
+        KeyCode::F7,
+        KeyCode::F8,
+        KeyCode::F9,
+        KeyCode::F10,
+        KeyCode::F11,
+        KeyCode::F12,
+        KeyCode::Escape,
+        KeyCode::Enter,
+        KeyCode::Tab,
+    ];
+    NAMED
+        .into_iter()
+        .find(|&key| crate::app::binds::key_name(key) == name)
+        .or_else(|| crate::app::binds::any_key_from_name(name))
+}
+
+/// Dev hook: `PINCH_KEEP=1` presses the results card's keep key once, a
+/// second after the card goes up, so the card can be shot before and
+/// after the round is kept.
+pub(super) fn debug_keep(
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    caps: Res<crate::app::keycaps::KeyCaps>,
+    time: Res<Time>,
+    mut opened: Local<Option<f32>>,
+    mut fired: Local<bool>,
+) {
+    if *fired || std::env::var("PINCH_KEEP").is_err() {
+        return;
+    }
+    let now = time.elapsed_secs();
+    if now - *opened.get_or_insert(now) < 1.0 {
+        return;
+    }
+    *fired = true;
+    if let Some(key) = caps.key_for(crate::app::replays::KEEP_CAP) {
+        keys.press(key);
+        keys.release(key);
+    }
+}
+
 /// Dev hook: mid-round moments for screenshots. `PINCH_PAUSE=1` raises the
 /// pause card a couple of seconds into a versus round; `PINCH_OVER=1` calls
-/// the round over so the results card can be shot; `PINCH_INTERLUDE=1`
-/// leaves for the series interlude with a mid-series tally on the card.
+/// the round over so the results card can be shot, offering the round as
+/// it stands to the shelf as a finished one would be; `PINCH_INTERLUDE=1`
+/// leaves for the series interlude with a mid-series tally on the card,
+/// and the round offered there the same way.
 /// All inert unless set, like every hook here.
 pub(super) fn debug_moments(
     sim: Res<Sim>,
@@ -680,7 +993,11 @@ pub(super) fn debug_moments(
     mut tournament: ResMut<crate::app::tournament::Tournament>,
     screen: Res<State<Screen>>,
     mut next_screen: ResMut<NextState<Screen>>,
-    mut next_vphase: ResMut<NextState<crate::app::VersusPhase>>,
+    (mut next_vphase, recorder, mut keep): (
+        ResMut<NextState<crate::app::VersusPhase>>,
+        Res<crate::app::Recorder>,
+        ResMut<crate::app::replays::RoundToKeep>,
+    ),
     mut hooks: Local<MomentHooks>,
 ) {
     let MomentHooks {
@@ -707,6 +1024,7 @@ pub(super) fn debug_moments(
         .is_some()
     {
         next_vphase.set(crate::app::VersusPhase::Over);
+        offer_as_finished(&recorder, &mut keep);
     }
     if interlude_hook
         .due_after("PINCH_INTERLUDE", sim.0.ticks(), 2)
@@ -730,7 +1048,23 @@ pub(super) fn debug_moments(
         // round on the way in and this screen is being entered.
         let round = 3.min(length.rounds()) - 1;
         *tournament = Tournament::taken_up(length, round, wins);
+        // The round left offered, as a finished one leaves it for the
+        // interlude, so the card can be shot with the keep key on it.
+        offer_as_finished(&recorder, &mut keep);
         next_screen.set(Screen::Interlude);
+    }
+}
+
+/// Offer the round being recorded to the shelf as a finished one would be.
+/// Filed as a draw: the hooks call the round over without asking who was
+/// ahead.
+fn offer_as_finished(recorder: &crate::app::Recorder, keep: &mut crate::app::replays::RoundToKeep) {
+    if let Some(replay) = &recorder.0 {
+        *keep = crate::app::replays::RoundToKeep::Offered(Box::new(crate::app::replays::Unkept {
+            text: replay.to_text(),
+            stamp: crate::app::clock::now_secs(),
+            winner: None,
+        }));
     }
 }
 
@@ -742,18 +1076,33 @@ pub(super) fn debug_moments(
 /// level plays itself out and loses. That is the only way to reach the end
 /// of a round unattended: every other path out of a level is a win, and a
 /// win stops the clock before it can run out.
+///
+/// `PINCH_STAY=1` opens the level and leaves it in its setup, nothing
+/// placed and nothing started, for a picture of the setup's own lines;
+/// `PINCH_STAY=placed` puts the authored solution down and stays in the
+/// setup, for a picture of the arrows as they stand before the run.
 pub(super) fn debug_autoplay(
     mut sim: ResMut<Sim>,
     campaign: Res<Campaign>,
     mut enabled: Local<Option<bool>>,
     mut next_phase: ResMut<NextState<Phase>>,
 ) {
-    if !*enabled.get_or_insert_with(|| std::env::var("PINCH_AUTOPLAY").is_ok()) {
+    let stay = std::env::var("PINCH_STAY").ok();
+    let placed = stay.as_deref() == Some("placed");
+    let wanted = || std::env::var("PINCH_AUTOPLAY").is_ok() && (stay.is_none() || placed);
+    if !*enabled.get_or_insert_with(wanted) {
+        return;
+    }
+    if placed {
+        *enabled = Some(false);
+        if let Err((x, y, _, _)) = campaign.current().place_solution(&mut sim.0) {
+            warn!("PINCH_STAY=placed: refused at ({x},{y})");
+        }
         return;
     }
     if std::env::var("PINCH_NOSOLVE").is_err() {
         let level = campaign.current();
-        if let Err((x, y, _)) = level.place_solution(&mut sim.0) {
+        if let Err((x, y, _, _)) = level.place_solution(&mut sim.0) {
             warn!(
                 "PINCH_AUTOPLAY: {:?} refused its own solution at ({x},{y})",
                 level.name
@@ -851,6 +1200,16 @@ pub(super) fn debug_net_probe(
 mod tests {
     use super::*;
 
+    /// The Gates' old name still picks it in the hooks, and a name no map
+    /// has falls back to the classic generated beach.
+    #[test]
+    fn the_old_kelp_keep_name_still_picks_the_gates() {
+        use match_setup::MapChoice;
+        assert_eq!(skirmish_map("T", "kelp-keep"), MapChoice::TheGates);
+        assert_eq!(skirmish_map("T", "gates"), MapChoice::TheGates);
+        assert_eq!(skirmish_map("T", "no-such-beach"), MapChoice::GenClassic);
+    }
+
     /// A lookup over a fixed list, standing in for the environment.
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |name| {
@@ -873,18 +1232,25 @@ mod tests {
             ("PINCH_LOBBY_HOST", DevHook::Lobby),
             ("PINCH_LOBBY_JOIN", DevHook::Lobby),
             ("PINCH_LOBBY_JOIN_BOT", DevHook::Lobby),
+            ("PINCH_LOBBY_BROWSE", DevHook::Lobby),
             ("PINCH_HOST", DevHook::Online),
             ("PINCH_JOIN", DevHook::Online),
             ("PINCH_SANDBOX", DevHook::Sandbox),
             ("PINCH_EDITOR", DevHook::Editor),
+            ("PINCH_EDITOR_LEVEL", DevHook::Editor),
             ("PINCH_SETTINGS", DevHook::Settings),
             ("PINCH_CONTROLS", DevHook::Controls),
             ("PINCH_ACHIEVEMENTS", DevHook::Achievements),
             ("PINCH_LANGUAGE", DevHook::Language),
             ("PINCH_LIBRARY", DevHook::Replays),
-            ("PINCH_STAGES", DevHook::StageSelect { beach: false }),
+            ("PINCH_STAGES", DevHook::StageSelect),
             ("PINCH_AUTOPLAY", DevHook::Autoplay { level: 0 }),
-            ("PINCH_MATCH", DevHook::MatchSetup),
+            (
+                "PINCH_MATCH",
+                DevHook::MatchSetup {
+                    step: match_setup::Step::Game,
+                },
+            ),
             ("PINCH_REPLAY", DevHook::Replay),
         ] {
             assert_eq!(
@@ -910,6 +1276,20 @@ mod tests {
                 series: SeriesLength::Single
             })
         );
+        // `classic` the generated 12x9, `arena` the handmade one.
+        for (token, map) in [
+            ("classic", MapChoice::GenClassic),
+            ("arena", MapChoice::Classic),
+        ] {
+            assert_eq!(
+                skirmish(&[("PINCH_SKIRMISH", token)]),
+                Some(DevHook::Skirmish {
+                    map,
+                    series: SeriesLength::Single
+                }),
+                "{token}"
+            );
+        }
         assert_eq!(
             skirmish(&[("PINCH_SKIRMISH", "xl"), ("PINCH_SERIES", "1")]),
             Some(DevHook::Skirmish {
@@ -941,12 +1321,6 @@ mod tests {
         assert_eq!(
             DevHook::from_env(env(&[("PINCH_AUTOPLAY", "25")])),
             Some(DevHook::Autoplay { level: 24 })
-        );
-
-        // The stage list takes which of the two puzzle lists to show.
-        assert_eq!(
-            DevHook::from_env(env(&[("PINCH_STAGES", "beach")])),
-            Some(DevHook::StageSelect { beach: true })
         );
 
         // PINCH_SERIES alone is not a shortcut; it only qualifies one.
@@ -987,4 +1361,477 @@ mod tests {
             })
         );
     }
+}
+
+/// `PINCH_PRESENT=immediate|mailbox|novsync|vsync`: how the window presents,
+/// for measuring a screen uncapped. Profiling only: tearing and a busy GPU
+/// are the price of seeing past the display's refresh.
+pub(super) fn present_mode() -> Option<bevy::window::PresentMode> {
+    use bevy::window::PresentMode;
+    Some(match std::env::var("PINCH_PRESENT").ok()?.as_str() {
+        "immediate" => PresentMode::Immediate,
+        "mailbox" => PresentMode::Mailbox,
+        "novsync" => PresentMode::AutoNoVsync,
+        _ => PresentMode::AutoVsync,
+    })
+}
+
+/// `PINCH_PROFILE=<secs>`: a GPU profile of whatever screen the other hooks
+/// open. After `PINCH_PROFILE_WARMUP` seconds (default 8), sample every
+/// render pass's GPU time (wgpu timestamp queries, through Bevy's render
+/// diagnostics), the frame time and the process's CPU time for `<secs>`
+/// seconds, print each pass's mean and 95th percentile, append them to
+/// `PINCH_PROFILE_OUT` (if set) under the label `PINCH_PROFILE_LABEL`, and
+/// exit. Pair it with `PINCH_PRESENT=immediate` to see past vsync.
+///
+/// `PINCH_HIDE` (a comma list of `sand`, `board`, `sea`, `pools`,
+/// `shadows`, `particles`, `sprites`, `ui`, `boxshadows`) hides one kind of
+/// thing, and `PINCH_GFX` (`nohdr`, `nograde`, `msaa0`, `msaa4`,
+/// `shadowsamples<n>`) changes one stage of the camera, so each cost can be
+/// measured by its absence.
+///
+/// `PINCH_PROFILE_CPU=1` leaves the GPU timestamp queries out (they cost CPU
+/// time of their own every frame) and reports the frame time, the process's
+/// CPU time and each thread's share of it.
+#[derive(Resource, Clone, Debug, Default)]
+pub(super) struct Profile {
+    warmup: f32,
+    span: f32,
+    hide: Vec<String>,
+    gfx: Vec<String>,
+    cpu_only: bool,
+}
+
+impl Profile {
+    pub(super) fn from_env() -> Option<Profile> {
+        let span = std::env::var("PINCH_PROFILE").ok()?.parse().ok()?;
+        let list = |key: &str| -> Vec<String> {
+            std::env::var(key)
+                .unwrap_or_default()
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect()
+        };
+        Some(Profile {
+            warmup: std::env::var("PINCH_PROFILE_WARMUP")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(8.0),
+            span,
+            hide: list("PINCH_HIDE"),
+            gfx: list("PINCH_GFX"),
+            cpu_only: std::env::var("PINCH_PROFILE_CPU").is_ok(),
+        })
+    }
+
+    fn hides(&self, what: &str) -> bool {
+        self.hide.iter().any(|h| h == what)
+    }
+
+    fn takes_off(&self, what: &str) -> bool {
+        self.gfx.iter().any(|g| g == what)
+    }
+}
+
+/// `PINCH_GFX=msaa0|msaa4`: the anti-aliasing a profile run forces, over
+/// the settings.
+/// Read once: it is asked every frame.
+pub(super) fn msaa_override() -> Option<bool> {
+    static SAID: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *SAID.get_or_init(|| {
+        let gfx = std::env::var("PINCH_GFX").ok()?;
+        let mut said = None;
+        for g in gfx.split(',') {
+            match g {
+                "msaa0" => said = Some(false),
+                "msaa4" => said = Some(true),
+                _ => {}
+            }
+        }
+        said
+    })
+}
+
+/// Install the profiler when `PINCH_PROFILE` asks for it.
+pub(super) fn install_profiling(app: &mut App) {
+    let Some(profile) = Profile::from_env() else {
+        return;
+    };
+    if !profile.cpu_only {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+    app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
+        .insert_resource(profile)
+        .init_resource::<Churn>()
+        .add_systems(
+            Last,
+            (profile_camera, profile_hide, profile_churn, profile_sample).chain(),
+        );
+}
+
+/// What changed each frame that the renderer pays for again: sprites
+/// (each distinct look is its own material in Bevy's sprite meshes), sprite
+/// materials made, texts and UI nodes, summed over the sample window.
+#[derive(Resource, Default)]
+struct Churn {
+    frames: u32,
+    sprites: u64,
+    sprites_changed: u64,
+    materials_added: u64,
+    texts_changed: u64,
+    nodes_changed: u64,
+    by_image: std::collections::HashMap<AssetId<Image>, u64>,
+}
+
+type SpriteMaterial = SpriteMeshMaterial;
+
+fn profile_churn(
+    mut churn: ResMut<Churn>,
+    profile: Res<Profile>,
+    time: Res<Time<Real>>,
+    sprites: Query<Ref<Sprite>>,
+    texts: Query<(), Changed<Text>>,
+    nodes: Query<(), Changed<Node>>,
+    mut materials: MessageReader<AssetEvent<SpriteMaterial>>,
+) {
+    let added = materials
+        .read()
+        .filter(|e| matches!(e, AssetEvent::Added { .. }))
+        .count() as u64;
+    if time.elapsed_secs() < profile.warmup {
+        return;
+    }
+    churn.frames += 1;
+    churn.sprites += sprites.iter().count() as u64;
+    for sprite in sprites.iter().filter(Ref::is_changed) {
+        churn.sprites_changed += 1;
+        *churn.by_image.entry(sprite.image.id()).or_default() += 1;
+    }
+    churn.materials_added += added;
+    churn.texts_changed += texts.iter().count() as u64;
+    churn.nodes_changed += nodes.iter().count() as u64;
+}
+
+/// [`Churn`] as the line [`profile_sample`] prints, the images of the
+/// sprites changed most often named.
+#[derive(bevy::ecs::system::SystemParam)]
+struct ChurnLine<'w> {
+    churn: Res<'w, Churn>,
+    assets: Res<'w, AssetServer>,
+}
+
+impl ChurnLine<'_> {
+    fn line(&self) -> String {
+        let churn = &*self.churn;
+        let n = f64::from(churn.frames.max(1));
+        let mut top: Vec<_> = churn.by_image.iter().collect();
+        top.sort_by(|a, b| b.1.cmp(a.1));
+        let top: Vec<String> = top
+            .into_iter()
+            .take(8)
+            .map(|(id, count)| {
+                let name = self
+                    .assets
+                    .get_path(*id)
+                    .map_or_else(|| format!("{id:?}"), |p| p.to_string());
+                format!("{name} {:.1}", *count as f64 / n)
+            })
+            .collect();
+        format!(
+            "sprites {:.0}, sprites changed {:.1}, sprite materials added {:.1}, texts changed {:.1}, nodes changed {:.1} (per frame); changed by image: {}",
+            churn.sprites as f64 / n,
+            churn.sprites_changed as f64 / n,
+            churn.materials_added as f64 / n,
+            churn.texts_changed as f64 / n,
+            churn.nodes_changed as f64 / n,
+            top.join(", "),
+        )
+    }
+}
+
+/// Change the camera and the cards as `PINCH_GFX` and `PINCH_HIDE=boxshadows`
+/// say, every frame, since screens spawn new cards all along.
+fn profile_camera(
+    mut commands: Commands,
+    profile: Res<Profile>,
+    cameras: Query<Entity, With<Camera2d>>,
+    box_shadows: Query<Entity, With<BoxShadow>>,
+) {
+    for camera in &cameras {
+        let mut entity = commands.entity(camera);
+        if profile.takes_off("nohdr") {
+            entity.remove::<bevy::camera::Hdr>();
+        }
+        if profile.takes_off("nograde") {
+            entity.insert(bevy::render::view::ColorGrading::default());
+        }
+        if let Some(n) = profile
+            .gfx
+            .iter()
+            .find_map(|g| g.strip_prefix("shadowsamples")?.parse().ok())
+        {
+            entity.insert(BoxShadowSamples(n));
+        }
+    }
+    if profile.hides("boxshadows") {
+        for card in &box_shadows {
+            commands.entity(card).remove::<BoxShadow>();
+        }
+    }
+}
+
+type SandQuad = MeshMaterial2d<crate::app::materials::SandMaterial>;
+type WaterQuad = MeshMaterial2d<crate::app::materials::WaterMaterial>;
+type WaterOnly = (Without<Sprite>, Without<SandQuad>);
+type FadeQuad = MeshMaterial2d<crate::app::materials::FadeMaterial>;
+type FadeOnly = (
+    With<FadeQuad>,
+    Without<Sprite>,
+    Without<SandQuad>,
+    Without<WaterQuad>,
+    Without<Node>,
+);
+type UiRoot = (
+    With<Node>,
+    Without<ChildOf>,
+    Without<Sprite>,
+    Without<SandQuad>,
+    Without<WaterQuad>,
+);
+
+/// Hide what `PINCH_HIDE` names, every frame, since rounds spawn new
+/// things all along.
+fn profile_hide(
+    profile: Res<Profile>,
+    art: Option<Res<crate::app::art::Art>>,
+    mut sand: Query<(&mut Visibility, &SandQuad), Without<Sprite>>,
+    mut water: Query<(&mut Visibility, &WaterQuad), WaterOnly>,
+    mut sprites: Query<(&mut Visibility, &Sprite, Has<crate::app::effects::Particle>)>,
+    mut roots: Query<&mut Visibility, UiRoot>,
+    mut fades: Query<&mut Visibility, FadeOnly>,
+) {
+    let Some(art) = art else {
+        return;
+    };
+    if profile.hide.is_empty() {
+        return;
+    }
+    let shaded = &art.shaded;
+    for (mut visibility, material) in &mut sand {
+        let board = material.0 == shaded.board_sand;
+        if (board && profile.hides("board")) || (!board && profile.hides("sand")) {
+            visibility.set_if_neq(Visibility::Hidden);
+        }
+    }
+    for (mut visibility, material) in &mut water {
+        let sea = material.0 == shaded.sea || material.0 == shaded.ocean;
+        if (sea && profile.hides("sea")) || (!sea && profile.hides("pools")) {
+            visibility.set_if_neq(Visibility::Hidden);
+        }
+    }
+    let shadows = [
+        &art.shadow,
+        &art.gull_shadow,
+        &art.gull_shadow_b,
+        &art.cloud,
+    ];
+    for (mut visibility, sprite, particle) in &mut sprites {
+        let shadow = shadows.contains(&&sprite.image);
+        if profile.hides("sprites")
+            || (particle && profile.hides("particles"))
+            || (shadow && profile.hides("shadows"))
+        {
+            visibility.set_if_neq(Visibility::Hidden);
+        }
+    }
+    // Every fading quad is a particle (the footprints).
+    if profile.hides("sprites") || profile.hides("particles") {
+        for mut visibility in &mut fades {
+            visibility.set_if_neq(Visibility::Hidden);
+        }
+    }
+    if profile.hides("ui") {
+        for mut visibility in &mut roots {
+            visibility.set_if_neq(Visibility::Hidden);
+        }
+    }
+}
+
+/// What [`profile_sample`] has gathered: per diagnostic path, one value a
+/// frame, and the last measurement read so none is counted twice.
+#[derive(Default)]
+struct ProfileSamples {
+    started: Option<(f32, f64)>,
+    threads: std::collections::BTreeMap<u32, (String, f64)>,
+    seen: std::collections::HashMap<String, std::time::Instant>,
+    values: std::collections::BTreeMap<String, Vec<f64>>,
+    frames: u32,
+}
+
+/// The process's CPU time so far, user and system, in seconds (Linux).
+fn process_cpu_secs() -> f64 {
+    let Ok(stat) = std::fs::read_to_string("/proc/self/stat") else {
+        return 0.0;
+    };
+    // Fields after the command's closing parenthesis; utime and stime are
+    // the 12th and 13th of those.
+    let rest = stat.rsplit_once(')').map_or("", |(_, r)| r);
+    let fields: Vec<&str> = rest.split_whitespace().collect();
+    let ticks: f64 = fields.get(11..13).map_or(0.0, |f| {
+        f.iter().filter_map(|v| v.parse::<f64>().ok()).sum()
+    });
+    ticks / 100.0
+}
+
+/// Each thread's CPU time so far, user and system, in seconds, by thread id
+/// with its name (Linux).
+fn thread_cpu_secs() -> std::collections::BTreeMap<u32, (String, f64)> {
+    let mut out = std::collections::BTreeMap::new();
+    let Ok(tasks) = std::fs::read_dir("/proc/self/task") else {
+        return out;
+    };
+    for task in tasks.flatten() {
+        let Some(tid) = task.file_name().to_str().and_then(|t| t.parse().ok()) else {
+            continue;
+        };
+        let Ok(stat) = std::fs::read_to_string(task.path().join("stat")) else {
+            continue;
+        };
+        let name = stat
+            .split_once('(')
+            .and_then(|(_, r)| r.rsplit_once(')'))
+            .map_or(String::new(), |(n, _)| n.to_owned());
+        let rest = stat.rsplit_once(')').map_or("", |(_, r)| r);
+        let fields: Vec<&str> = rest.split_whitespace().collect();
+        let ticks: f64 = fields.get(11..13).map_or(0.0, |f| {
+            f.iter().filter_map(|v| v.parse::<f64>().ok()).sum()
+        });
+        out.insert(tid, (name, ticks / 100.0));
+    }
+    out
+}
+
+fn profile_sample(
+    profile: Res<Profile>,
+    time: Res<Time<Real>>,
+    store: Res<bevy::diagnostic::DiagnosticsStore>,
+    windows: Query<&Window>,
+    mut samples: Local<ProfileSamples>,
+    mut exit: MessageWriter<AppExit>,
+    churn: ChurnLine,
+) {
+    let now = time.elapsed_secs();
+    if now < profile.warmup {
+        return;
+    }
+    if samples.started.is_none() {
+        samples.threads = thread_cpu_secs();
+    }
+    let (start, cpu_start) = *samples
+        .started
+        .get_or_insert_with(|| (now, process_cpu_secs()));
+    // Mark everything already in the store as seen on the first frame, so
+    // the warm-up's measurements stay out.
+    let first = samples.frames == 0;
+    samples.frames += 1;
+    for diagnostic in store.iter() {
+        let path = diagnostic.path().as_str().to_owned();
+        let last = samples.seen.get(&path).copied();
+        let mut per_frame: Vec<(std::time::Instant, f64)> = Vec::new();
+        for m in diagnostic.measurements() {
+            if last.is_some_and(|l| m.time <= l) {
+                continue;
+            }
+            // Spans sharing a path in one frame arrive with one timestamp:
+            // they add up to that frame's cost.
+            match per_frame.last_mut() {
+                Some((t, v)) if *t == m.time => *v += m.value,
+                _ => per_frame.push((m.time, m.value)),
+            }
+        }
+        if let Some((t, _)) = per_frame.last() {
+            samples.seen.insert(path.clone(), *t);
+        }
+        if !first {
+            samples
+                .values
+                .entry(path)
+                .or_default()
+                .extend(per_frame.into_iter().map(|(_, v)| v));
+        }
+    }
+    if now - start < profile.span {
+        return;
+    }
+    let cpu = process_cpu_secs() - cpu_start;
+    let frames = samples.frames.saturating_sub(1).max(1);
+    let size = windows.iter().next().map_or(String::new(), |w| {
+        format!("{}x{}", w.physical_width(), w.physical_height())
+    });
+    let label = std::env::var("PINCH_PROFILE_LABEL").unwrap_or_default();
+    let mut lines = vec![format!(
+        "# {label} {size} frames {frames} in {:.1}s, cpu {:.2} ms/frame (all threads)",
+        now - start,
+        cpu * 1000.0 / f64::from(frames),
+    )];
+    // Per thread name (Bevy's pool workers share one name each), CPU ms per
+    // frame and cores busy over the window.
+    let mut by_name: std::collections::BTreeMap<String, (f64, u32)> = Default::default();
+    for (tid, (name, secs)) in thread_cpu_secs() {
+        let before = samples.threads.get(&tid).map_or(0.0, |(_, s)| *s);
+        let entry = by_name.entry(name).or_default();
+        entry.0 += secs - before;
+        entry.1 += 1;
+    }
+    let wall = f64::from(now - start).max(1e-6);
+    let mut named: Vec<_> = by_name.into_iter().filter(|(_, (s, _))| *s > 0.0).collect();
+    named.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
+    for (name, (secs, count)) in named {
+        lines.push(format!(
+            "{label}\t{size}\tthread/{name} x{count}\t{:.3}\t{:.2}\t0",
+            secs * 1000.0 / f64::from(frames),
+            secs / wall,
+        ));
+    }
+    lines.push(format!("# {label} churn: {}", churn.line()));
+    lines.push(format!(
+        "{label}\t{size}\tcpu_ms_per_frame\t{:.3}\t{:.2}\t{frames}",
+        cpu * 1000.0 / f64::from(frames),
+        cpu / wall,
+    ));
+    let stat = |v: &[f64]| -> (f64, f64) {
+        let mut sorted = v.to_vec();
+        sorted.sort_by(f64::total_cmp);
+        let n = sorted.len();
+        let mean = sorted.iter().sum::<f64>() / n as f64;
+        (mean, sorted[(n * 95 / 100).min(n - 1)])
+    };
+    for (path, values) in &samples.values {
+        let keep = path.ends_with("elapsed_gpu")
+            || path.ends_with("elapsed_cpu")
+            || path.starts_with("fps")
+            || path.starts_with("frame_time");
+        if !keep || values.is_empty() {
+            continue;
+        }
+        let (mean, p95) = stat(values);
+        lines.push(format!(
+            "{label}\t{size}\t{path}\t{mean:.3}\t{p95:.3}\t{}",
+            values.len()
+        ));
+    }
+    let text = lines.join("\n");
+    eprintln!("{text}");
+    if let Ok(out) = std::env::var("PINCH_PROFILE_OUT") {
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(out)
+        {
+            let _ = writeln!(file, "{text}");
+        }
+    }
+    exit.write(AppExit::Success);
 }

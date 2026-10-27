@@ -117,16 +117,30 @@ impl IntoArena<'_> {
 /// onlookers), and launch on Enter (or once the auto-host quota fills).
 pub fn host_tick(
     time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    settings: Res<GameSettings>,
-    config: Res<MatchConfig>,
+    (keys, mut hooked, mut held, mut partnered): (
+        Res<ButtonInput<KeyCode>>,
+        Local<bool>,
+        Local<u32>,
+        Local<bool>,
+    ),
+    (settings, device): (Res<GameSettings>, Res<crate::app::gamepad::LastDevice>),
+    (mut config, mut menu): (
+        ResMut<MatchConfig>,
+        ResMut<crate::app::match_setup::MatchMenu>,
+    ),
     beaches: Res<crate::app::match_setup::CustomBeaches>,
     mut state: ResMut<LobbyState>,
     mut arena: IntoArena,
 ) {
     let tr = settings.tr();
-    let game_name = state.game_name.clone();
-    let Some(hosted) = state.hosted_mut() else {
+    // Split, so the beacon borrows the beach's name while the socket works
+    // rather than copying it every frame.
+    let LobbyState {
+        standing,
+        game_name,
+        ..
+    } = &mut *state;
+    let Standing::Hosting(hosted) = standing else {
         return;
     };
     // The occupancy is a frame stale by the time the beacon goes out,
@@ -147,15 +161,14 @@ pub fn host_tick(
     );
     let taken = chairs_taken(1 + hosted.players_aboard() as u8, arrived.len());
     let on_air = crate::transport::OnAir {
-        name: &game_name,
+        name: game_name,
         host: &settings.names[0],
         taken,
         seats: MAX_PLAYERS as u8,
         bots: config.bots_welcome,
-        // The socket has room for `MAX_PEERS` and drops every sender past
-        // that without a word, watchers counted. A beach whose socket is
-        // full says so, or the next arrival is listed a place, dials, and
-        // hears nothing until "no answer - check the address".
+        // The socket has room for `MAX_PEERS`, watchers counted, and
+        // answers every greeting past that with `Full`. Said on the air
+        // too, so the list shows the beach full before anyone dials it.
         full: hosted.transport.peer_count() >= crate::transport::MAX_PEERS,
     };
     let picked = work_the_socket(hosted, time.delta_secs(), on_air);
@@ -176,9 +189,18 @@ pub fn host_tick(
     // The host's own view of the table, and the peers': the same list,
     // sent on every beacon tick so a lost one costs a second, not a screen
     // that stays wrong until somebody joins or leaves.
+    //
+    // Built every frame: it is six names at most, and building it only
+    // when something looked changed was wrong both ways. Every peer greets
+    // once a second, so a greeting said nothing about a change and a
+    // crowded beach rebuilt it forty times a second anyway, while a place
+    // swapped for another in one frame (a seated peer leaving as one
+    // without a chair slid in, a bot for a bot) kept the old table on
+    // screen for up to a second.
     state.table = state.roster(tr, &crate::transport::name_as_sent(&settings.names[0]));
     state.table_kinds = state.roster_kinds();
     seat_door_bots(&mut state, &arrived);
+    state.seated = super::partners::host_seated(&state, &config, settings.team_mode, &arrived);
     if let Some(hosted) = state.hosted_mut() {
         hosted.bot_string = arena
             .bots
@@ -202,8 +224,16 @@ pub fn host_tick(
     let rivals = joined + arrived.len();
     if rivals > 0 {
         let aboard = players_aboard + arrived.len();
-        let ai = super::terms::hosts_dealt(&state, &config).map_or(0, |dealt| dealt.bots);
-        state.feedback = gathering_feedback(tr, aboard, watchers_aboard, ai);
+        let ai = hosts_dealt(&state, &config).map_or(0, |dealt| dealt.bots);
+        // The key that starts the match, as the hands last used know it.
+        let start = crate::app::gamepad::scheme::spelled(
+            tr,
+            *device,
+            &crate::app::gamepad::Face::Hosting { partners: false },
+            crate::app::gamepad::scheme::Does::StartMatch,
+            tr.key_enter,
+        );
+        state.feedback = gathering_feedback(tr, aboard, watchers_aboard, ai, &start);
     } else {
         // The last peer timed out: without this the line kept saying "1
         // rival aboard" over an empty table until somebody else turned up,
@@ -213,19 +243,157 @@ pub fn host_tick(
             None => tr.lobby_hosting_noport.to_string(),
         };
     }
+    // The host is on the map page: the table it froze is watched, and the
+    // match goes on once a card is picked.
+    if state
+        .hosted()
+        .is_some_and(|hosted| hosted.picking.is_some())
+    {
+        // The page's own heading names the table it picks for; said here
+        // too, it was said twice.
+        state.feedback.clear();
+        // `PINCH_LOBBY_PICK=go`: the card under the cursor is picked a
+        // second after the page opens, for an unattended run that plays on.
+        *held += 1;
+        if crate::app::dev::lobby_pick_go() && *held == 30 {
+            pick::pick_the_card_here(&mut state, &mut config, &menu, &beaches);
+        }
+        let mut pick = Pick {
+            config: &mut config,
+            menu: &mut menu,
+            beaches: &beaches,
+        };
+        tend_the_pick(
+            &mut state, &settings, &mut pick, joined, &arrived, &mut arena,
+        );
+        return;
+    }
+    *held = 0;
+    // `PINCH_LOBBY_PARTNERS`: the host's partner pick, unattended, once.
+    if let Some((seat, at)) = crate::app::dev::lobby_partners()
+        && rivals >= at
+        && !std::mem::replace(&mut *partnered, true)
+        && super::partners::partners_open(&state)
+    {
+        super::partners::pick_partners(&mut state, &arrived, seat.saturating_sub(1));
+        send_roster(&state, &config, settings.team_mode, &beaches);
+    }
     let quota = crate::app::dev::auto_host_quota();
     let launch = should_launch(
         rivals,
         // Picking whom to ask to leave holds the keyboard as typing does:
         // the host runs before the lobby's keys, so an Enter pressed at the
         // "pick a number" prompt used to start the match.
-        state.typing.is_some() || state.hosted().is_some_and(|hosted| hosted.kicking),
+        state.typing.is_some()
+            || state
+                .hosted()
+                .is_some_and(|hosted| hosted.kicking.is_some() || hosted.partnering),
         crate::app::menu_ui::enter(&keys),
         quota,
     );
-    if launch {
-        launch_the_match(&mut state, &settings, &config, &beaches, joined, &mut arena);
+    // The dev hook's start, pressed once somebody is aboard.
+    let hook =
+        rivals > 0 && crate::app::dev::lobby_pick() && !std::mem::replace(&mut *hooked, true);
+    if !launch && !hook {
+        return;
     }
+    // Unattended, the match goes on on the map already set: there is
+    // nobody at the screen to pick one.
+    if quota.is_some_and(|quota| rivals >= quota) {
+        launch_the_match(
+            &mut state, &settings, &config, &beaches, joined, &mut arena, None,
+        );
+        return;
+    }
+    pick::open_the_pick(&mut state, &mut config, &mut menu, &beaches, &arrived);
+    // At once rather than on the next beacon tick, so the table hears
+    // the host is picking.
+    send_roster(&state, &config, settings.team_mode, &beaches);
+}
+
+/// What the map page reads and sets: the host's setup, the page's cursor,
+/// the shelf.
+struct Pick<'a> {
+    config: &'a mut MatchConfig,
+    menu: &'a mut crate::app::match_setup::MatchMenu,
+    beaches: &'a crate::app::match_setup::CustomBeaches,
+}
+
+/// One host tick with the map page up: a card picked starts the match on
+/// the table as frozen, and anyone frozen at it leaving calls the start
+/// off, back to the lobby card with the room told who went. Anybody new
+/// is no change: they watch this match.
+fn tend_the_pick(
+    state: &mut LobbyState,
+    settings: &GameSettings,
+    pick: &mut Pick,
+    joined: usize,
+    door: &[(crate::bots::listener::BotId, String)],
+    arena: &mut IntoArena,
+) {
+    let Some((gone, chosen)) = state.hosted().and_then(|hosted| {
+        let picking = hosted.picking.as_ref()?;
+        Some((
+            pick::gone_from_the_table(picking, &hosted.peers, door),
+            picking.chosen,
+        ))
+    }) else {
+        return;
+    };
+    if gone.is_none() && !chosen {
+        return;
+    }
+    let Some(picking) = state.hosted_mut().and_then(|hosted| hosted.picking.take()) else {
+        return;
+    };
+    if let Some(gone) = gone {
+        pick::close_the_pick(
+            picking,
+            pick::Close::PutBack,
+            pick.config,
+            pick.menu,
+            pick.beaches,
+        );
+        let tr = settings.tr();
+        tell_the_room(
+            state,
+            match gone {
+                pick::Gone::Player => tr.lobby_pick_called_off,
+                pick::Gone::Bot => tr.lobby_pick_called_off_bot,
+            },
+        );
+        send_roster(state, pick.config, settings.team_mode, pick.beaches);
+        return;
+    }
+    let frozen = Frozen {
+        bots: picking.bots.clone(),
+        seed: pick.menu.seed,
+    };
+    launch_the_match(
+        state,
+        settings,
+        pick.config,
+        pick.beaches,
+        joined,
+        arena,
+        Some(frozen),
+    );
+    pick::close_the_pick(
+        picking,
+        pick::Close::Keep,
+        pick.config,
+        pick.menu,
+        pick.beaches,
+    );
+}
+
+/// The table the host froze to pick the map, which the launch seats (the
+/// peers frozen on their rows, these bots by who they are), and the seed
+/// the map page's pictures were drawn with, which it is played on.
+#[derive(Clone, Debug)]
+struct Frozen {
+    bots: Vec<crate::bots::listener::BotId>,
+    seed: u64,
 }
 
 /// Seat the bots that came straight to this beach (route 2) after the
@@ -241,17 +409,17 @@ fn seat_door_bots(state: &mut LobbyState, arrived: &[(crate::bots::listener::Bot
 
 /// Send the host's table to every peer: who sits where, and the dials as
 /// the launch would deal this table, so a joiner's terms card shows the
-/// match it is joining. The lobby's half of
-/// [`crate::app::net::OnlineSession`]'s own roster, which a round sends
+/// match it is joining, and to each whether there is a chair for it
+/// (`NetMsg::Roster::chair`). The lobby's half of
+/// [`OnlineSession`]'s own roster, which a round sends
 /// from its copy of both.
-fn send_roster(
+pub(super) fn send_roster(
     state: &LobbyState,
     config: &MatchConfig,
     teams: crate::app::teams::TeamMode,
     beaches: &crate::app::match_setup::CustomBeaches,
 ) {
-    let (Some(hosted), Some(dealt)) = (state.hosted(), super::terms::hosts_dealt(state, config))
-    else {
+    let (Some(hosted), Some(dealt)) = (state.hosted(), hosts_dealt(state, config)) else {
         return;
     };
     // The AI and the map as the launch would deal this table, which the
@@ -261,16 +429,47 @@ fn send_roster(
     let terms = MatchTerms {
         bots: dealt.bots,
         map: dealt.map.index() as u8,
+        order: state.seated.order,
         ..crate::app::match_setup::terms(config, teams, 0)
     };
-    hosted.transport.send(NetMsg::Roster {
-        seats: super::terms::humans_here(state),
+    let roster = |chair| NetMsg::Roster {
+        seats: humans_here(state),
         names: crate::transport::wire_table(&state.table),
         terms,
         kinds: crate::transport::wire_kinds(&state.table_kinds),
         // Named only if the table as it now sits would play it.
-        beach: super::terms::roster_beach(config, dealt.seats, beaches),
-    });
+        beach: roster_beach(config, dealt.seats, beaches),
+        chair: Some(chair),
+        picking: hosted.picking.is_some(),
+    };
+    // A peer that came to play past the table's last chair has none: the
+    // launch seats it watching ([`PeerBook::seat_plan`]), and its line has
+    // to say so before then. While the host picks the map, the launch
+    // seats the table it froze and nobody else ([`pick::frozen_plan`]), so
+    // one that sat down since has none either, whoever it is.
+    let chairless: Vec<usize> = match hosted.picking {
+        Some(_) => {
+            let plan = pick::frozen_plan(&hosted.peers);
+            hosted
+                .peers
+                .iter()
+                .enumerate()
+                .filter(|(peer, row)| row.wants_a_chair() && plan[*peer].is_none())
+                .map(|(peer, _)| peer)
+                .collect()
+        }
+        None => hosted
+            .peers
+            .off_the_table()
+            .filter(|(_, row)| row.wants_a_chair())
+            .map(|(peer, _)| peer)
+            .collect(),
+    };
+    for peer in 0..hosted.transport.peer_count() {
+        hosted
+            .transport
+            .send_to(peer, roster(!chairless.contains(&peer)));
+    }
 }
 
 /// The chairs a beacon says are taken, with `people` seated (the host
@@ -343,6 +542,7 @@ fn launch_the_match(
     beaches: &crate::app::match_setup::CustomBeaches,
     joined: usize,
     arena: &mut IntoArena,
+    frozen: Option<Frozen>,
 ) {
     // The beacon does not stop at launch, it changes what it says: a
     // running beach cannot be joined, since lockstep has nothing to
@@ -358,12 +558,21 @@ fn launch_the_match(
         bot_string: _,
         tail: _,
         rounds_dealt,
+        picking: _,
+        partnering: _,
+        mut arranged,
     }) = std::mem::take(&mut state.standing)
     else {
         unreachable!("launching a match from a lobby that is not hosting");
     };
+    let mut peers = peers;
     debug_assert_eq!(joined, peers.len());
-    let plan = peers.seat_plan(peers.len());
+    // A player who sat down while the host picked the map watches this
+    // match: the map was picked for the table without them.
+    let mut plan = match frozen {
+        Some(_) => pick::frozen_plan(&peers),
+        None => peers.seat_plan(peers.len()),
+    };
     let people = 1 + plan.iter().filter(|seat| seat.is_some()).count() as u8;
     // The bots that came straight here (route 2) sit after the people, as
     // many as there are chairs for; the host speaks for each of them.
@@ -374,6 +583,11 @@ fn launch_the_match(
         .map(|door| door.arrived(settings.tr()))
         .unwrap_or_default()
         .into_iter()
+        .filter(|(id, _)| {
+            frozen
+                .as_ref()
+                .is_none_or(|frozen| frozen.bots.contains(id))
+        })
         .map(|(id, name)| HostedBot { seat: 0, id, name })
         .collect();
     crate::app::net::seat_the_hosts_bots(&mut bots_here, people);
@@ -386,29 +600,63 @@ fn launch_the_match(
     // seats when only onlookers turned up (every peer a watcher, or a lone
     // watcher aboard): a one-seat `Start` would leave the host playing an
     // empty beach.
-    let dealt = super::terms::dealt(config, humans);
+    let dealt = dealt(config, humans);
     let (bots, seats) = (dealt.bots, dealt.seats);
-    let seed = crate::app::clock::fresh_seed();
+    // On the seed the map page drew its pictures with, so the beach
+    // previewed is the beach played.
+    let seed = frozen
+        .as_ref()
+        .map_or_else(crate::app::clock::fresh_seed, |frozen| frozen.seed);
+    // The Random card draws now, from the maps that seat this table and
+    // can travel to it, and the terms name the map it landed on.
+    let drawn;
+    let config = match config.random {
+        true => {
+            let mut table = MatchConfig {
+                seats,
+                ..config.clone()
+            };
+            crate::app::match_setup::draw_online_map(
+                &mut table,
+                beaches,
+                crate::app::clock::fresh_seed(),
+            );
+            drawn = table;
+            &drawn
+        }
+        false => config,
+    };
     // A beach the host built travels with the invitation; a generated one
     // is already described by the seed in the terms.
     let beach = crate::app::match_setup::beach_bytes(config, seats, beaches);
-    let terms = MatchTerms {
+    let mut terms = MatchTerms {
         bots,
         // The beach has to hold everyone who turned up, which the host
         // could not have known when it picked one.
-        map: dealt.map.index() as u8,
+        map: map_for(config, seats).index() as u8,
         ..crate::app::match_setup::terms(config, settings.team_mode, seed)
     };
+    // Everybody in the seat the host's partner picks put them in.
+    crate::app::net::arrange_the_deal(
+        (&mut plan, &mut bots_here),
+        &mut peers,
+        arranged.as_mut(),
+        &mut terms,
+        seats,
+    );
     let names = seat_names(&settings.names[0], &plan, &peers, &bots_here);
-    let kinds = crate::app::net::seat_kinds(&plan, &peers, &bots_here, humans, seats);
+    let kinds = crate::app::net::seat_kinds(&plan, &peers, &bots_here, terms, seats);
     // A series begins at round one with an empty tally; a single round
     // carries no standing at all.
     let standing = terms
         .is_series()
         .then(crate::transport::SeriesStanding::opening);
+    // The input delay from how quickly the people about to be seated
+    // have been answering the host's pings.
+    let delay = crate::app::net::input_delay(&peers, &plan);
     let mut session = OnlineSession::new(
         transport,
-        crate::app::net::lockstep_for(Some(0), humans),
+        crate::app::net::lockstep_for(Some(0), terms.player_seats(seats), delay),
         seats,
         terms,
     );
@@ -418,6 +666,7 @@ fn launch_the_match(
     session.beach = beach;
     session.peers = peers;
     session.names = names;
+    session.arranged = arranged;
     // Counted on from the match before on this socket, so its first round
     // is dealt after every round a joiner may still be sitting over.
     session.rounds_dealt = rounds_dealt;
@@ -551,6 +800,9 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
         bot_string: _,
         tail,
         rounds_dealt: _,
+        picking: _,
+        partnering: _,
+        arranged: _,
     } = hosted;
     let mut picked = Picked {
         announced: once_a_second(announce_in, delta),
@@ -561,6 +813,10 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
         && let Ok(addr) = transport.local_addr()
     {
         announcer.announce(addr.port(), on_air);
+    }
+    // And how quickly each peer answers, once a second with the beacon.
+    if picked.announced {
+        transport.send(NetMsg::ping());
     }
     // Peers still playing the round this table walked back from.
     let mut still_playing = Vec::new();
@@ -624,7 +880,10 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             }
             // A peer still in the round the table walked back from,
             // resending its commits: it may be short of the last frames.
-            NetMsg::Inputs(_) => still_playing.push(from),
+            NetMsg::Inputs(batch) => still_playing.push((from, batch)),
+            // How long the round trip to it takes, for the input delay
+            // the launch picks (`input_delay`).
+            NetMsg::Pong { stamp } => peers.answered(from, stamp),
             NetMsg::Hash { .. }
             | NetMsg::Start(_)
             | NetMsg::Pause { .. }
@@ -636,8 +895,11 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             | NetMsg::SpectatorPick { .. }
             | NetMsg::CrowdPicks { .. }
             | NetMsg::Incompatible { .. }
+            | NetMsg::Ping { .. }
+            | NetMsg::Clock { .. }
             | NetMsg::Kicked
-            | NetMsg::NoBots => {}
+            | NetMsg::NoBots
+            | NetMsg::Full => {}
             // Gone, and said so: swept with the silent this same tick
             // (`note_arrivals_and_departures`), with the same word in the
             // feed, rather than counted aboard for four more seconds and
@@ -680,7 +942,8 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
 
 /// The line under the title while gathering: who is aboard, who is only
 /// watching, and the `ai` seats the launch deals in behind them
-/// ([`super::terms::hosts_dealt`]).
+/// ([`hosts_dealt`]), and `start`, the key or button that
+/// starts the match.
 ///
 /// Pure, so what a host reads while waiting is checkable without a socket.
 pub(super) fn gathering_feedback(
@@ -688,15 +951,16 @@ pub(super) fn gathering_feedback(
     players_aboard: usize,
     watching: usize,
     ai: u8,
+    start: &str,
 ) -> String {
     let mut line = match players_aboard {
         // Only watchers aboard, which is a table Enter starts all the same:
         // the AI takes the chairs (`terms::dealt` raises it to two seats),
         // and its count follows below. "0 players joined" read as though
         // the watchers had been counted as players and then lost.
-        0 => tr.lobby_rivals_none.to_string(),
-        1 => tr.lobby_rivals_one.to_string(),
-        n => fill(tr.lobby_rivals_many, &[("n", &n.to_string())]),
+        0 => fill(tr.lobby_rivals_none, &[("k", start)]),
+        1 => fill(tr.lobby_rivals_one, &[("k", start)]),
+        n => fill(tr.lobby_rivals_many, &[("n", &n.to_string()), ("k", start)]),
     };
     if watching > 0 {
         line += &fill(tr.lobby_watchers, &[("n", &watching.to_string())]);
@@ -754,28 +1018,44 @@ fn catch_up_on_the_feed(state: &LobbyState, peer: usize) {
     }
 }
 
-/// The peers off the table ([`PeerBook::off_the_table`]) by the K number
-/// each is asked to leave with: on from the card's last row, as far as the
-/// number keys go. The prompt lists these and [`ask_to_leave`] reads them,
-/// so the number shown beside a name is the number that sends it away.
+/// How many of the peers off the table one page of K numbers reaches: the
+/// number keys past the card's last row.
+const KICK_PAGE: usize = crate::app::menu_ui::NUMBER_KEYS.len() - MAX_PLAYERS;
+
+/// How many pages of K numbers the peers off the table take, at least one:
+/// what Tab turns through while the host picks whom to ask to leave.
+pub(crate) fn kick_pages(peers: &PeerBook) -> usize {
+    peers.off_the_table().count().div_ceil(KICK_PAGE).max(1)
+}
+
+/// The peers off the table ([`PeerBook::off_the_table`]) on page `page`,
+/// by the K number each is asked to leave with: on from the card's last
+/// row, as far as the number keys go. The prompt lists these and
+/// [`ask_to_leave`] reads them, so the number shown beside a name is the
+/// number that sends it away. A page past the last is the first again.
 pub(crate) fn numbered_off_the_table(
     peers: &PeerBook,
+    page: usize,
 ) -> impl Iterator<Item = (usize, usize, &crate::app::net::Peer)> {
     let numbers = MAX_PLAYERS + 1..=crate::app::menu_ui::NUMBER_KEYS.len();
+    let skip = page % kick_pages(peers) * KICK_PAGE;
     peers
         .off_the_table()
+        .skip(skip)
         .zip(numbers)
         .map(|((peer, row), at)| (at, peer, row))
 }
 
 /// What the host is shown while picking whom to ask to leave: how, and
 /// past the card's rows, the onlookers and would-be players the card has
-/// no row for, each by the number that asks it. A watcher spamming the
+/// no row for on page `page`, each by the number that asks it, and which
+/// page of how many when there is more than one. A watcher spamming the
 /// chat, or a sixth player who dialled a full beach by its address, sat
-/// on no row, and no number reached them.
-pub fn kick_prompt(tr: &crate::app::i18n::Tr, peers: &PeerBook) -> String {
+/// on no row, and no number reached them; a beach holds forty peers, and
+/// the number keys past the card three.
+pub fn kick_prompt(tr: &crate::app::i18n::Tr, peers: &PeerBook, page: usize) -> String {
     let mut prompt = tr.lobby_kick_ask.to_string();
-    for (at, _, peer) in numbered_off_the_table(peers) {
+    for (at, _, peer) in numbered_off_the_table(peers, page) {
         // A peer that has not said what to call it yet is still somebody
         // to send away; its number alone has to do.
         let who = match peer.name.is_empty() {
@@ -788,15 +1068,60 @@ pub fn kick_prompt(tr: &crate::app::i18n::Tr, peers: &PeerBook) -> String {
         };
         prompt.push_str(&format!("{sep}{at}. {who}"));
     }
+    let pages = kick_pages(peers);
+    if pages > 1 {
+        let shown = (page % pages + 1).to_string();
+        prompt.push_str(" | ");
+        prompt.push_str(&fill(
+            tr.lobby_kick_more,
+            &[("p", &shown), ("n", &pages.to_string())],
+        ));
+    }
     prompt
+}
+
+/// Everyone the host could ask to leave right now, by the K number that
+/// asks them and the name they go by, in the order [`ask_to_leave`] reads
+/// the numbers: the people at the table from 2 (the host is 1), the bots
+/// that came straight here after them, and past the card's last row the
+/// page of peers it has no row for. The list a pad picks from, where a
+/// keyboard presses the number.
+pub(crate) fn kick_rows(
+    hosted: &Hosted,
+    bots: &crate::app::bot_seats::BotSeats,
+    tr: &crate::app::i18n::Tr,
+) -> Vec<(u8, String)> {
+    let page = hosted.kicking.unwrap_or(0);
+    let called = |peer: &crate::app::net::Peer| match peer.name.is_empty() {
+        true => "?".to_string(),
+        false => peer.name.clone(),
+    };
+    let people: Vec<String> = hosted
+        .peers
+        .at_the_table()
+        .map(|(_, p)| called(p))
+        .collect();
+    let arrived = bots
+        .door
+        .as_ref()
+        .map_or_else(Vec::new, |door| door.arrived(tr));
+    let at_table = people
+        .into_iter()
+        .chain(arrived.into_iter().map(|(_, who)| who))
+        .zip(2..=MAX_PLAYERS);
+    let off = numbered_off_the_table(&hosted.peers, page).map(|(at, _, peer)| (called(peer), at));
+    at_table
+        .chain(off)
+        .map(|(who, at)| (at as u8, who))
+        .collect()
 }
 
 /// The host asks the peer K number `at` to leave: it is told, and
 /// forgotten, and everyone else hears why the chair is empty. The first
 /// numbers are the table, the host (1) and the peers who came to play, in
 /// order, which is how the AT THIS BEACH card numbers them; past its last
-/// row, the peers it has no row for, as the prompt numbers them
-/// ([`kick_prompt`]).
+/// row, the peers it has no row for on the page the prompt shows, as it
+/// numbers them ([`kick_prompt`]). Either way the pick is over.
 pub(super) fn ask_to_leave(
     state: &mut LobbyState,
     bots: &mut crate::app::bot_seats::BotSeats,
@@ -806,6 +1131,7 @@ pub(super) fn ask_to_leave(
     let Some(hosted) = state.hosted_mut() else {
         return;
     };
+    let page = hosted.kicking.take().unwrap_or(0);
     // The same people the card lists, numbered as it numbers them.
     let people: Vec<usize> = hosted.peers.at_the_table().map(|(peer, _)| peer).collect();
     // Past the people sit the bots that came straight here, as far as the
@@ -820,7 +1146,7 @@ pub(super) fn ask_to_leave(
         return;
     }
     let peer = match at > MAX_PLAYERS {
-        true => numbered_off_the_table(&hosted.peers)
+        true => numbered_off_the_table(&hosted.peers, page)
             .find(|&(number, _, _)| number == at)
             .map(|(_, peer, _)| peer),
         false => people.get(at.wrapping_sub(2)).copied(),
@@ -900,7 +1226,7 @@ mod tests {
         let prompt = |state: &LobbyState| {
             state
                 .hosted()
-                .map(|hosted| kick_prompt(tr, &hosted.peers))
+                .map(|hosted| kick_prompt(tr, &hosted.peers, 0))
                 .unwrap_or_default()
         };
         assert_eq!(
@@ -918,6 +1244,67 @@ mod tests {
             prompt(&state),
             tr.lobby_kick_ask,
             "and nobody left off the card"
+        );
+    }
+
+    /// A beach holds forty peers and the number keys past the card reach
+    /// three of them; Tab turns the page, the prompt names the page's
+    /// three by the numbers that ask them, and those numbers ask exactly
+    /// them. Past the last page is the first again.
+    #[test]
+    fn tab_turns_the_k_numbers_through_everybody_off_the_table() {
+        let mut state = LobbyState {
+            standing: hosting_lobby(),
+            ..LobbyState::default()
+        };
+        // Five at the table and eleven watching.
+        let names: Vec<String> = (0..16).map(|n| format!("P{n}")).collect();
+        let named: Vec<&str> = names.iter().map(String::as_str).collect();
+        let watching: Vec<usize> = (5..16).collect();
+        if let Standing::Hosting(hosted) = &mut state.standing {
+            hosted.peers = peers_named(&named, &watching);
+        }
+        let tr = &crate::app::i18n::EN;
+        let pages = state.hosted().map_or(0, |hosted| kick_pages(&hosted.peers));
+        assert_eq!(pages, 4, "eleven, three a page");
+        let prompt = |state: &LobbyState, page| {
+            state
+                .hosted()
+                .map(|hosted| kick_prompt(tr, &hosted.peers, page))
+                .unwrap_or_default()
+        };
+        let more = |page: usize| fill(tr.lobby_kick_more, &[("p", &page.to_string()), ("n", "4")]);
+        assert_eq!(
+            prompt(&state, 2),
+            format!(
+                "{} | 7. P11  8. P12  9. P13 | {}",
+                tr.lobby_kick_ask,
+                more(3)
+            )
+        );
+        assert_eq!(
+            prompt(&state, 3),
+            format!("{} | 7. P14  8. P15 | {}", tr.lobby_kick_ask, more(4))
+        );
+        assert_eq!(prompt(&state, 4), prompt(&state, 0), "round again");
+        // K, Tab twice, 8: the second of the third page.
+        if let Some(hosted) = state.hosted_mut() {
+            hosted.kicking = Some(2);
+        }
+        let mut bots = crate::app::bot_seats::BotSeats::default();
+        ask_to_leave(&mut state, &mut bots, tr, MAX_PLAYERS + 2);
+        let left: Vec<String> = state.hosted().map_or_else(Vec::new, |hosted| {
+            hosted.peers.iter().map(|peer| peer.name.clone()).collect()
+        });
+        assert_eq!(left.len(), 15);
+        assert!(
+            !left.contains(&"P12".to_string()),
+            "P12 was asked: {left:?}"
+        );
+        assert_eq!(
+            state.hosted().map(|hosted| hosted.kicking),
+            Some(None),
+            "and the pick is over"
         );
     }
 
@@ -1689,7 +2076,7 @@ mod tests {
         // The joiner, still reading the scores of the third.
         let mut on_the_card = OnlineSession::new(
             joiner,
-            crate::app::net::lockstep_for(Some(1), 2),
+            crate::app::net::lockstep_for(Some(1), (0..2).collect(), crate::sim::DEFAULT_DELAY),
             2,
             MatchTerms::default(),
         );
@@ -1712,7 +2099,9 @@ mod tests {
                  config: Res<MatchConfig>,
                  beaches: Res<crate::app::match_setup::CustomBeaches>,
                  mut arena: IntoArena| {
-                    launch_the_match(&mut state, &settings, &config, &beaches, 1, &mut arena);
+                    launch_the_match(
+                        &mut state, &settings, &config, &beaches, 1, &mut arena, None,
+                    );
                 },
             )
             .expect("the launch ran");
@@ -1742,7 +2131,7 @@ mod tests {
             on_the_card.rounds_dealt
         );
         // And a stale answer from the match before is still refused.
-        let stale = crate::app::net::Invitation {
+        let stale = Invitation {
             deal: 3,
             ..start.clone()
         };

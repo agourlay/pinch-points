@@ -51,15 +51,29 @@ fn tile(rows: usize, heading: f32) -> f32 {
 /// own levels in decades of their own. The two lists never share a row, so
 /// the seam is visible without counting, and a fifth custom level cannot
 /// end up sitting next to the last shipped one.
+#[cfg(test)]
 pub fn rows(builtins: usize, total: usize) -> Vec<std::ops::Range<usize>> {
     let builtins = builtins.min(total);
+    rows_of(&[0..builtins, builtins..total])
+}
+
+/// [`rows`] over any run of sections, each starting a row of its own: the
+/// Tide Pool, the co-op stages and the player's own levels.
+pub fn rows_of(sections: &[std::ops::Range<usize>]) -> Vec<std::ops::Range<usize>> {
     let mut out = Vec::new();
-    for (start, end) in [(0, builtins), (builtins, total)] {
-        for first in (start..end).step_by(COLS) {
-            out.push(first..(first + COLS).min(end));
+    for section in sections {
+        for first in section.clone().step_by(COLS) {
+            out.push(first..(first + COLS).min(section.end));
         }
     }
     out
+}
+
+/// The grid's sections in the order drawn, each with the heading over it
+/// (none over the Tide Pool, which the header names).
+fn sections(campaign: &Campaign) -> [(crate::app::campaign::Section, std::ops::Range<usize>); 3] {
+    use crate::app::campaign::Section;
+    [Section::TidePool, Section::Coop, Section::Custom].map(|s| (s, campaign.section(s)))
 }
 
 /// Is this one of the player's own levels rather than a shipped stage?
@@ -71,11 +85,7 @@ pub fn is_custom(campaign: &Campaign, index: usize) -> bool {
 /// player's own levels count from one again: they are a shelf of their own,
 /// not stages eighty-three onward.
 pub fn tile_number(campaign: &Campaign, index: usize) -> usize {
-    if is_custom(campaign, index) {
-        index - campaign.builtins + 1
-    } else {
-        index + 1
-    }
+    campaign.place_of(index).at
 }
 
 #[derive(Resource, Default)]
@@ -147,7 +157,7 @@ pub const KEY_POSTS: std::ops::RangeInclusive<u8> = 1..=5;
 
 impl TileState {
     fn of(progress: &Progress, campaign: &Campaign, index: usize) -> TileState {
-        if progress.level_cleared(campaign.kind, &campaign.levels[index]) {
+        if progress.level_cleared(&campaign.levels[index]) {
             TileState::Cleared
         } else if progress.unlocked(campaign, index) {
             TileState::Open
@@ -235,16 +245,21 @@ pub fn caption(
         // A no-signpost stage is a watch-it-happen stage; saying
         // "signposts: 0" would read as a missing number.
         TileState::Open if level.posts == 0 => tr.stage_free.to_string(),
+        // A co-op stage says it is for two, and what each hand holds.
+        TileState::Open if let Some([left, right]) = level.hands() => fill(
+            &crate::app::name_the_pair(tr, tr.stage_open_hands),
+            &[("a", &left.to_string()), ("b", &right.to_string())],
+        ),
         TileState::Open => fill(tr.stage_open, &[("n", &level.posts.to_string())]),
-        TileState::Locked => fill(tr.stage_locked, &[("n", &index.to_string())]),
+        TileState::Locked => locked_tail(tr, campaign, index),
     };
     // Both shelves count from one, so the caption says which shelf it is
     // reading: the heading that says so on the grid is too far from this
     // line to carry it.
-    let shelf = if is_custom(campaign, index) {
-        format!("{} ", tr.stage_custom)
-    } else {
-        String::new()
+    let shelf = match campaign.section_of(index) {
+        crate::app::campaign::Section::Custom => format!("{} ", tr.stage_custom),
+        crate::app::campaign::Section::Coop => format!("{} ", tr.stage_coop),
+        crate::app::campaign::Section::TidePool => String::new(),
     };
     format!(
         "{shelf}{}. {} - {tail}",
@@ -253,13 +268,37 @@ pub fn caption(
     )
 }
 
+/// What a locked stage says stands in its way: the stage before it on its
+/// own shelf ([`Progress::unlocked`] opens a stage on the clear of the one
+/// at `index - 1`), by the number that shelf gives it, and on the co-op
+/// shelf the shelf too, as the stage list's tiles number it.
+fn locked_tail(tr: &i18n::Tr, campaign: &Campaign, index: usize) -> String {
+    use crate::app::campaign::Section;
+    let before = campaign.place_of(index.saturating_sub(1));
+    let template = match before.section {
+        Section::Coop => tr.stage_locked_coop,
+        Section::TidePool | Section::Custom => tr.stage_locked,
+    };
+    fill(template, &[("n", &before.at.to_string())])
+}
+
 pub fn enter_stage_select(
     mut commands: Commands,
-    campaign: Res<Campaign>,
+    mut campaign: ResMut<Campaign>,
     mut progress: ResMut<Progress>,
     settings: Res<GameSettings>,
     mut list: ResMut<StageList>,
+    mut notice: ResMut<crate::app::RoundNotice>,
 ) {
+    // Whatever the menu last said is about the menu.
+    notice.0.clear();
+    // A stage played from a pasted code was put on the list for its one
+    // go, and is no stage of the list's: the list is the shelf as it is
+    // filed. Left on, it was offered as the player's own, with an Edit and
+    // a Copy that found no file.
+    if campaign.holds_a_code() {
+        campaign.reset(crate::app::campaign::stage_list());
+    }
     // A tick an older build filed under a level's name is filed under its
     // file before the list is drawn, and kept there: a later file of the
     // same name would leave the name meaning neither.
@@ -268,7 +307,7 @@ pub fn enter_stage_select(
     }
     // Land the cursor where the player left off, not back at stage one.
     list.selected = progress.furthest_open(&campaign);
-    list.rows = rows(campaign.builtins, campaign.levels.len());
+    list.rows = rows_of(&sections(&campaign).map(|(_, range)| range));
     let tr = settings.tr();
     commands
         .spawn((
@@ -301,7 +340,7 @@ pub fn enter_stage_select(
                         // the thing that can be finished. Levels the player keeps
                         // adding would make the denominator a moving target, and
                         // "82 of 93" would read as an unfinished campaign forever.
-                        let shipped = 0..campaign.builtins;
+                        let shipped = campaign.section(crate::app::campaign::Section::TidePool);
                         let total = shipped.len();
                         let done = progress.cleared_in(&campaign, shipped);
                         column.spawn((
@@ -344,10 +383,17 @@ pub fn enter_stage_select(
                         // The same rows the cursor will walk, drawn from the one
                         // layout the screen agreed on above.
                         let layout = &list.rows;
-                        // The player's own levels are a shelf under the campaign,
-                        // with a label of their own: they are not stage eighty-three.
-                        let has_custom = campaign.builtins < campaign.levels.len();
-                        let heading = if has_custom { HEADING_ROOM } else { 0.0 };
+                        // The co-op stages and the player's own levels are
+                        // shelves under the campaign, each with a label of its
+                        // own: they are not stage a hundred and one.
+                        let shelves: Vec<_> = sections(&campaign)
+                            .into_iter()
+                            .filter(|(section, range)| {
+                                *section != crate::app::campaign::Section::TidePool
+                                    && !range.is_empty()
+                            })
+                            .collect();
+                        let heading = HEADING_ROOM * shelves.len() as f32;
                         let edge = tile(layout.len(), heading);
                         column
                             .spawn(Node {
@@ -358,8 +404,29 @@ pub fn enter_stage_select(
                             })
                             .with_children(|grid| {
                                 for row in layout {
-                                    if has_custom && row.start == campaign.builtins {
-                                        spawn_shelf_heading(grid, tr, &campaign, &progress);
+                                    if let Some((section, range)) =
+                                        shelves.iter().find(|(_, range)| range.start == row.start)
+                                    {
+                                        let label = match section {
+                                            crate::app::campaign::Section::Coop => tr.stage_coop,
+                                            crate::app::campaign::Section::Custom
+                                            | crate::app::campaign::Section::TidePool => {
+                                                tr.stage_custom
+                                            }
+                                        };
+                                        let count = fill(
+                                            tr.stage_progress,
+                                            &[
+                                                (
+                                                    "a",
+                                                    &progress
+                                                        .cleared_in(&campaign, range.clone())
+                                                        .to_string(),
+                                                ),
+                                                ("b", &range.len().to_string()),
+                                            ],
+                                        );
+                                        spawn_shelf_heading(grid, label, count);
                                     }
                                     grid.spawn(Node {
                                         column_gap: Val::Px(GAP),
@@ -485,26 +552,11 @@ pub fn enter_stage_select(
         });
 }
 
-/// The label between the two shelves: a rule, the name of the shelf, and
-/// how much of it is cleared. Without it the custom levels read as more
-/// campaign - which is what the numbering said before they got their own.
-fn spawn_shelf_heading(
-    grid: &mut ChildSpawnerCommands,
-    tr: &i18n::Tr,
-    campaign: &Campaign,
-    progress: &Progress,
-) {
-    let mine = campaign.builtins..campaign.levels.len();
-    let count = fill(
-        tr.stage_progress,
-        &[
-            (
-                "a",
-                &progress.cleared_in(campaign, mine.clone()).to_string(),
-            ),
-            ("b", &mine.len().to_string()),
-        ],
-    );
+/// The label over a shelf: a rule, the name of the shelf, and how much of
+/// it is cleared. Without it the co-op stages and the custom levels read as
+/// more campaign - which is what the numbering said before they got their
+/// own.
+fn spawn_shelf_heading(grid: &mut ChildSpawnerCommands, label: &str, count: String) {
     grid.spawn(Node {
         width: Val::Percent(100.0),
         flex_direction: FlexDirection::Column,
@@ -530,7 +582,7 @@ fn spawn_shelf_heading(
             })
             .with_children(|line| {
                 line.spawn((
-                    Text::new(tr.stage_custom.to_string()),
+                    Text::new(label.to_string()),
                     TextFont {
                         font_size: FontSize::Px(menu_ui::type_scale::FINE),
                         ..default()
@@ -559,12 +611,17 @@ fn spawn_tile(
     let state = TileState::of(progress, campaign, index);
     let (fill, ink) = state.colors();
     let border = difficulty_ink(campaign.levels[index].posts).with_alpha(state.edge_alpha());
+    let mark = campaign.levels[index].is_coop().then(|| CoopMark::on(size));
     line.spawn((
         StageTile(index),
         Node {
             width: Val::Px(size),
             height: Val::Px(size),
-            border: UiRect::all(Val::Px(2.0)),
+            border: UiRect::all(Val::Px(TILE_BORDER)),
+            // The badge's corner is kept clear of the number: on a small
+            // tile a two-digit number reaches the corner, so the number is
+            // centred in what is left under the badge.
+            padding: UiRect::top(Val::Px(mark.map_or(0.0, CoopMark::room))),
             border_radius: BorderRadius::all(Val::Px(size * 0.17)),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
@@ -578,15 +635,105 @@ fn spawn_tile(
             StageNumber(index),
             Text::new(tile_number(campaign, index).to_string()),
             TextFont {
-                // The number has to stay legible in whatever the tile
-                // shrank to, so it shrinks with it rather than by itself.
-                font_size: FontSize::Px((size * 0.4).min(20.0)),
+                font_size: FontSize::Px(number_px(size)),
                 ..default()
             },
             TextColor(ink),
         ));
+        // A stage for two wears it at the top, wherever it is shelved:
+        // a co-op stage of the player's own sits among solo ones.
+        let paint = palette::seat_paint(1).with_alpha(0.95);
+        match mark {
+            Some(CoopMark::Badge(px)) => {
+                tile.spawn((
+                    Text::new(COOP_BADGE),
+                    TextFont {
+                        font_size: FontSize::Px(px),
+                        ..default()
+                    },
+                    TextColor(paint),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        top: Val::Px(0.0),
+                        right: Val::Px(2.0),
+                        ..default()
+                    },
+                ));
+            }
+            Some(CoopMark::Strip(height)) => {
+                tile.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        top: Val::Px(0.0),
+                        left: Val::Percent(20.0),
+                        width: Val::Percent(60.0),
+                        height: Val::Px(height),
+                        ..default()
+                    },
+                    BackgroundColor(paint),
+                ));
+            }
+            None => {}
+        }
     });
 }
+
+/// The border every stage tile is drawn with, inside its edge.
+const TILE_BORDER: f32 = 2.0;
+
+/// How much of a font size a line of text stands in: Bevy's default line
+/// height.
+const LINE: f32 = 1.2;
+
+/// The smallest the 2P badge is drawn: below this it is not read as text.
+const BADGE_MIN_PX: f32 = 8.0;
+
+/// A tile too small for the badge wears a bar this tall instead, or as
+/// tall as the gap over its number allows.
+const STRIP_PX: f32 = 2.0;
+
+/// The size a tile's number is drawn at. It has to stay legible in
+/// whatever the tile shrank to, so it shrinks with it rather than by
+/// itself.
+fn number_px(size: f32) -> f32 {
+    (size * 0.4).min(20.0)
+}
+
+/// What marks a co-op stage's tile at a given size: the 2P badge while the
+/// badge and the number both fit, one over the other, inside the border;
+/// on a tile too small for that (a long shelf of the player's own levels
+/// shrinks every tile), a bar in P2's colour along the top edge, which
+/// still says "two players" and never touches the number.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CoopMark {
+    Badge(f32),
+    Strip(f32),
+}
+
+impl CoopMark {
+    fn on(size: f32) -> CoopMark {
+        let badge = (size * 0.24).clamp(BADGE_MIN_PX, 12.0);
+        let inner = size - 2.0 * TILE_BORDER;
+        let number = LINE * number_px(size);
+        match LINE * badge + number <= inner {
+            true => CoopMark::Badge(badge),
+            false => CoopMark::Strip(((inner - number) / 2.0).clamp(0.0, STRIP_PX)),
+        }
+    }
+
+    /// The room kept at the top of the tile for the mark, which the number
+    /// is centred below.
+    fn room(self) -> f32 {
+        match self {
+            CoopMark::Badge(px) => LINE * px,
+            CoopMark::Strip(_) => 0.0,
+        }
+    }
+}
+
+/// The corner mark on a co-op stage's tile: two players, in the words every
+/// language's couch games already use.
+pub const COOP_BADGE: &str = "2P";
 
 /// What the stage list draws: the tiles and their numbers, the caption
 /// under the grid, and the hint line.
@@ -614,7 +761,10 @@ pub fn update_stage_tiles(
     progress: Res<Progress>,
     settings: Res<GameSettings>,
     coop: Res<crate::app::Coop>,
-    caps: Res<crate::app::keycaps::KeyCaps>,
+    (caps, device): (
+        Res<crate::app::keycaps::KeyCaps>,
+        Res<crate::app::gamepad::LastDevice>,
+    ),
     ui: StageUi,
 ) {
     let StageUi {
@@ -676,9 +826,9 @@ pub fn update_stage_tiles(
             // Asked as the puzzle's own line asks it: the key lesson is
             // kept back under keys it does not describe.
             TileState::Cleared | TileState::Open => caps.legend(
-                campaign
-                    .shown_hint(list.selected, &settings, *coop)
-                    .unwrap_or(""),
+                &campaign
+                    .shown_hint(list.selected, &settings, *coop, *device)
+                    .unwrap_or_default(),
             ),
         };
         menu_ui::set_text(&mut text, &hint);
@@ -686,34 +836,78 @@ pub fn update_stage_tiles(
     }
 }
 
+/// Where a stage of the player's own goes from the stage list: into the
+/// editor, or onto the clipboard as a code. Said in the header's status
+/// slot (`RoundNotice`).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct OwnStage<'w> {
+    opening: ResMut<'w, crate::app::editor::EditorOpening>,
+    clipboard: ResMut<'w, Clipboard>,
+    notice: ResMut<'w, crate::app::RoundNotice>,
+    settings: Res<'w, GameSettings>,
+    shared: MessageWriter<'w, crate::app::CodeShared>,
+}
+
+/// Leaving the list takes what it said with it: the notice is the list's
+/// status line there and the menu's after it, so "a co-op stage needs two"
+/// otherwise greeted the player back on the menu after Esc.
+pub fn exit_stage_select(mut notice: ResMut<crate::app::RoundNotice>) {
+    notice.0.clear();
+}
+
 /// Arrows move, Enter plays an open stage, a locked one just says no, and
-/// on the Tide Pool's list C (or a pad's North) turns co-op on and off.
+/// C turns co-op on and off. On a stage of the player's own, E opens it in
+/// the editor and F3 copies its code, as F3 does there. A pad's buttons
+/// come through the bridge as these keys (`gamepad::scheme`).
 pub fn stage_select_input(
     keyboard: crate::app::keycaps::Keyboard,
-    pads: Query<&Gamepad>,
     mut ladder: crate::app::progress::Ladder,
     mut coop: ResMut<crate::app::Coop>,
     mut list: ResMut<StageList>,
     mut denied: MessageWriter<PlacementDenied>,
     mut next_screen: ResMut<NextState<Screen>>,
+    mut own: OwnStage,
 ) {
     let keys = &keyboard.keys;
     // Read the layout, then move: the rows are settled and the cursor is
     // the only thing this system changes.
     let at = step(list.selected, &list.rows, keys);
+    if at != list.selected {
+        // What was said was about the stage left.
+        own.notice.0.clear();
+    }
     list.selected = at;
-    let toggled = keyboard.global('C')
-        || pads
-            .iter()
-            .any(|pad| pad.just_pressed(GamepadButton::North));
-    if toggled && ladder.campaign.kind == crate::app::CampaignKind::TidePool {
+    if keyboard.global('C') {
         coop.0 = !coop.0;
+        // Whatever was said, "a co-op stage needs two" above all, was said
+        // to the table as it was seated.
+        own.notice.0.clear();
     }
     if keys.just_pressed(KeyCode::Escape) {
         next_screen.set(Screen::Menu);
         return;
     }
+    let edit = keyboard.just('E');
+    let copy = keys.just_pressed(KeyCode::F3);
+    if (edit || copy) && is_custom(&ladder.campaign, at) {
+        own_stage(
+            &ladder.campaign.levels[at],
+            (edit, copy),
+            own,
+            &mut next_screen,
+        );
+        return;
+    }
     if !menu_ui::enter(keys) {
+        return;
+    }
+    if ladder.campaign.needs_partner(list.selected, *coop) {
+        let tr = own.settings.tr();
+        own.notice.0 = crate::app::name_the_pair(tr, tr.stage_needs_two);
+        denied.write(PlacementDenied {
+            player: 0,
+            out_of_signposts: false,
+        });
         return;
     }
     if ladder.climb_to(list.selected) {
@@ -726,10 +920,50 @@ pub fn stage_select_input(
     }
 }
 
+/// E or F3 on a stage of the player's own: the editor opened on its file,
+/// read afresh (the list may show it renamed beside a namesake), or its
+/// code copied.
+fn own_stage(
+    level: &crate::sim::Level,
+    (edit, copy): (bool, bool),
+    own: OwnStage,
+    next_screen: &mut NextState<Screen>,
+) {
+    let OwnStage {
+        mut opening,
+        mut clipboard,
+        mut notice,
+        settings,
+        mut shared,
+    } = own;
+    let tr = settings.tr();
+    let opened = crate::app::campaign::filed_path(level)
+        .and_then(|path| crate::app::editor::opening_from_file(&path));
+    let Some(opened) = opened else {
+        notice.0 = fill(tr.code_level_bad, &[("e", &level.name)]);
+        return;
+    };
+    if edit {
+        opening.0 = Some(opened);
+        next_screen.set(Screen::Editor);
+    } else if copy {
+        let (said, took) = crate::app::codes::copy_counted(
+            &mut clipboard,
+            tr,
+            crate::share::Kind::Level,
+            opened.level.to_text().as_bytes(),
+            tr.code_copied,
+        );
+        notice.0 = said;
+        if took {
+            shared.write(crate::app::CodeShared);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::CampaignKind;
     use crate::app::i18n::EN;
 
     fn campaign() -> Campaign {
@@ -843,40 +1077,187 @@ mod tests {
         assert!(shipped.starts_with("1. Welcome Ashore"), "{shipped}");
     }
 
-    /// The wiring, end to end in a headless App: Enter on a locked stage is
-    /// refused (and says so), Enter on an open one loads that stage.
-    /// C turns co-op on and off on the Tide Pool's list, and does nothing
-    /// on Beach Day's, whose rule has no shared pool to offer.
+    /// A stage played from a code pasted on the menu is gone from the list
+    /// when the list comes back up: it is on no shelf, and offered as the
+    /// player's own it had an Edit and a Copy with no file behind them.
     #[test]
-    fn c_toggles_coop_on_the_tide_pool_only() {
-        for (kind, flips) in [
-            (CampaignKind::TidePool, true),
-            (CampaignKind::BeachDay, false),
-        ] {
-            let mut app = App::new();
-            app.add_plugins(bevy::state::app::StatesPlugin);
-            app.init_state::<Screen>();
-            app.insert_resource(Campaign { kind, ..campaign() });
-            app.init_resource::<Progress>();
-            app.init_resource::<StageList>();
-            app.init_resource::<ButtonInput<KeyCode>>();
-            app.init_resource::<crate::app::keycaps::KeyCaps>();
-            app.init_resource::<crate::app::cursor::LiveSeatKeys>();
-            app.init_resource::<crate::app::Coop>();
-            app.add_message::<PlacementDenied>();
-            app.add_systems(Update, stage_select_input);
-            app.world_mut()
-                .resource_mut::<ButtonInput<KeyCode>>()
-                .press(KeyCode::KeyC);
-            app.update();
-            assert_eq!(
-                app.world().resource::<crate::app::Coop>().0,
-                flips,
-                "{kind:?}"
-            );
-        }
+    fn a_stage_from_a_code_leaves_the_list() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut campaign = campaign();
+        let mut pasted = campaign.levels[0].clone();
+        pasted.name = "Pasted Probe".into();
+        pasted.filing = None;
+        campaign.levels.push(pasted);
+        campaign.index = campaign.levels.len() - 1;
+        assert!(campaign.holds_a_code());
+        let mut app = App::new();
+        app.insert_resource(campaign);
+        app.init_resource::<Progress>();
+        app.init_resource::<StageList>();
+        app.init_resource::<GameSettings>();
+        app.init_resource::<crate::app::RoundNotice>();
+        let _ = app.world_mut().run_system_once(enter_stage_select);
+        let campaign = app.world().resource::<Campaign>();
+        assert!(!campaign.holds_a_code());
+        assert!(
+            campaign
+                .levels
+                .iter()
+                .all(|level| level.name != "Pasted Probe")
+        );
     }
 
+    /// What a stage of the player's own goes to: the editor, the
+    /// clipboard and the line that says how that went.
+    fn own_stage_resources(app: &mut App) {
+        app.init_resource::<crate::app::editor::EditorOpening>();
+        app.init_resource::<Clipboard>();
+        app.init_resource::<crate::app::RoundNotice>();
+        app.init_resource::<GameSettings>();
+        app.add_message::<crate::app::CodeShared>();
+    }
+
+    /// E on a stage of the player's own opens its file in the editor; on a
+    /// shipped stage it does nothing.
+    #[test]
+    fn e_edits_a_stage_of_the_players_own() {
+        let path = crate::app::editor::custom_dir().join("stage-edit-probe.txt");
+        let mut board = crate::sim::Board::new(6, 5, 2);
+        board.set_tile(4, 2, crate::sim::TileKind::Castle(0));
+        board.spawn_crab(
+            1,
+            2,
+            crate::sim::Direction::Right,
+            crate::sim::Handedness::Left,
+            crate::sim::CrabKind::Common,
+        );
+        let mut level = crate::sim::Level::from_board("Stage Edit Probe", 1, board);
+        crate::app::paths::write_atomic(&path, level.to_text()).expect("wrote");
+        level.name = "Stage Edit Probe (2)".into();
+        level.filing = Some(crate::sim::Filing {
+            key: "file:custom/stage-edit-probe.txt".into(),
+            legacy: None,
+        });
+        let mut campaign = campaign();
+        campaign.levels.truncate(3);
+        campaign.builtins = 3;
+        campaign.levels.push(level);
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(campaign);
+        app.init_resource::<Progress>();
+        app.init_resource::<StageList>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
+        app.init_resource::<crate::app::Coop>();
+        own_stage_resources(&mut app);
+        app.add_message::<PlacementDenied>();
+        app.add_systems(Update, stage_select_input);
+        let press_e = |app: &mut App, at: usize| {
+            app.world_mut().resource_mut::<StageList>().selected = at;
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(KeyCode::KeyE);
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+            app.update();
+        };
+        press_e(&mut app, 0);
+        let screen = |app: &App| *app.world().resource::<State<Screen>>().get();
+        assert_eq!(screen(&app), Screen::Menu, "a shipped stage is not edited");
+        press_e(&mut app, 3);
+        assert_eq!(screen(&app), Screen::Editor);
+        let opening = app.world().resource::<crate::app::editor::EditorOpening>();
+        let opened = opening.0.as_ref().expect("the editor opens on it");
+        assert_eq!(
+            opened.level.name, "Stage Edit Probe",
+            "as its file names it"
+        );
+        assert_eq!(opened.path.as_deref(), Some(path.as_path()));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// C on the stage list turns co-op on, and the stage list's prompt
+    /// says so.
+    #[test]
+    fn c_toggles_coop() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(campaign());
+        app.init_resource::<Progress>();
+        app.init_resource::<StageList>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
+        app.init_resource::<crate::app::Coop>();
+        own_stage_resources(&mut app);
+        app.add_message::<PlacementDenied>();
+        app.add_systems(Update, stage_select_input);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyC);
+        app.update();
+        assert!(app.world().resource::<crate::app::Coop>().0);
+        assert!(EN.prompt_stages.contains("C: co-op"));
+    }
+
+    /// "A co-op stage needs two" is about the table as it was seated: C
+    /// seating P2 takes it down, and so does leaving the list, whose notice
+    /// the menu's status line would otherwise go on showing.
+    #[test]
+    fn the_needs_two_notice_goes_when_p2_sits_down_or_the_list_is_left() {
+        let mut campaign = campaign();
+        let first = campaign.levels.len();
+        let coop = crate::sim::coop_levels();
+        campaign.coop = coop.len();
+        campaign.levels.extend(coop);
+        campaign.builtins = campaign.levels.len();
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_state(Screen::StageSelect);
+        app.insert_resource(campaign);
+        app.init_resource::<Progress>();
+        app.init_resource::<StageList>();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<crate::app::cursor::LiveSeatKeys>();
+        app.init_resource::<crate::app::Coop>();
+        own_stage_resources(&mut app);
+        app.add_message::<PlacementDenied>();
+        app.add_systems(Update, stage_select_input);
+        app.add_systems(OnExit(Screen::StageSelect), exit_stage_select);
+        app.world_mut().resource_mut::<StageList>().selected = first;
+        let tap = |app: &mut App, key: KeyCode| {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+            app.update();
+        };
+        let notice = |app: &App| app.world().resource::<crate::app::RoundNotice>().0.clone();
+        tap(&mut app, KeyCode::Enter);
+        assert!(!notice(&app).is_empty(), "the stage needs two");
+        tap(&mut app, KeyCode::KeyC);
+        assert!(app.world().resource::<crate::app::Coop>().0);
+        assert_eq!(notice(&app), "", "P2 is seated now");
+        tap(&mut app, KeyCode::KeyC);
+        tap(&mut app, KeyCode::Enter);
+        assert!(!notice(&app).is_empty(), "alone again");
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
+        assert_eq!(notice(&app), "", "not carried onto the menu");
+    }
+
+    /// The wiring, end to end in a headless App: Enter on a locked stage is
+    /// refused (and says so), Enter on an open one loads that stage.
     #[test]
     fn enter_plays_an_open_stage_and_refuses_a_locked_one() {
         let mut app = App::new();
@@ -890,6 +1271,7 @@ mod tests {
         app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.init_resource::<crate::app::Coop>();
+        own_stage_resources(&mut app);
         app.add_systems(Update, stage_select_input);
 
         let enter = |app: &mut App, at: usize| {
@@ -944,7 +1326,7 @@ mod tests {
         assert_eq!(campaign.levels[4].posts, 0, "stage 5 is the watch level");
         assert!(watch.ends_with(EN.stage_free), "{watch}");
 
-        progress.mark(campaign.kind, &campaign.levels[0].name);
+        progress.mark(&campaign.levels[0].name);
         let state = TileState::of(&progress, &campaign, 0);
         assert_eq!(state, TileState::Cleared);
         assert_eq!(TileState::of(&progress, &campaign, 1), TileState::Open);
@@ -953,11 +1335,62 @@ mod tests {
         assert!(cleared.ends_with(EN.stage_cleared), "{cleared}");
     }
 
+    /// A locked co-op stage names the co-op stage before it, by the number
+    /// its own shelf gives it, not by its place in the whole list.
+    #[test]
+    fn a_locked_coop_stage_names_the_coop_stage_before_it() {
+        let mut campaign = campaign();
+        let first = campaign.levels.len();
+        let coop = crate::sim::coop_levels();
+        campaign.coop = coop.len();
+        campaign.levels.extend(coop);
+        campaign.builtins = campaign.levels.len();
+        let locked = caption(&EN, i18n::Lang::En, &campaign, TileState::Locked, first + 1);
+        assert!(locked.starts_with("Co-op 2. "), "{locked}");
+        assert!(
+            locked.ends_with("locked - clear co-op stage 1 first"),
+            "{locked}"
+        );
+    }
+
     /// The key under the grid must explain every edge the grid can draw.
     /// `difficulty_ink` falls through to one colour for anything above its
     /// last named arm, so a harder tier than the key knows about ships in
     /// the colour of the tier below: the first five-signpost levels
     /// appeared tagged as four.
+    /// The co-op mark never touches a tile's number, at any size the grid
+    /// can draw a tile, down to the worst case: the shipped shelves and a
+    /// hundred levels of the player's own. Where the badge would, the tile
+    /// wears the bar instead, which the number always clears.
+    #[test]
+    fn the_coop_mark_clears_the_number_at_every_tile_size() {
+        let shipped = rows_of(&[0..100, 100..120]).len();
+        let worst = tile(shipped + 10, 2.0 * HEADING_ROOM);
+        assert!(worst < 20.0, "the worst case is a small tile: {worst}");
+        let mut size = worst;
+        while size <= 52.0 {
+            let inner = size - 2.0 * TILE_BORDER;
+            let number = LINE * number_px(size);
+            match CoopMark::on(size) {
+                CoopMark::Badge(px) => {
+                    assert!(px >= BADGE_MIN_PX);
+                    assert!(LINE * px + number <= inner, "badge on number at {size}");
+                }
+                CoopMark::Strip(height) => {
+                    assert!(
+                        height > 0.0 && height <= (inner - number) / 2.0,
+                        "bar at {size}"
+                    );
+                }
+            }
+            size += 0.25;
+        }
+        // The shipped list, two co-op rows and no levels of the player's
+        // own, still reads 2P.
+        let shelf = tile(shipped, HEADING_ROOM);
+        assert!(matches!(CoopMark::on(shelf), CoopMark::Badge(_)), "{shelf}");
+    }
+
     #[test]
     fn the_key_reaches_the_hardest_stage() {
         let hardest = campaign().levels.iter().map(|l| l.posts).max().unwrap();

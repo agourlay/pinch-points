@@ -182,7 +182,7 @@ pub(in crate::app) fn advance_sim(
                     sim_board.ticks(),
                     net.session.frame()
                 );
-                net.after_frame(sim_board.state_hash());
+                net.after_frame(|| sim_board.state_hash());
                 advanced = true;
             }
         });
