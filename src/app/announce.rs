@@ -320,6 +320,9 @@ pub fn drive_announcements(
     spawn_banner(&mut commands, next, &settings, &names);
 }
 
+/// How much of the board an event banner's panel hides at its fullest.
+const BANNER_FILL_ALPHA: f32 = 0.9;
+
 fn spawn_banner(
     commands: &mut Commands,
     announcement: Announcement,
@@ -328,10 +331,10 @@ fn spawn_banner(
 ) {
     let (headline, blurb, ink) = announcement.lines(settings, names);
     let kicker = announcement.kicker(settings, names);
-    // Opaque, like the pause card: a translucent panel over a busy board
-    // showed the crabs through the letters, which is the opposite of the
-    // point. It only holds the middle for two seconds.
-    let card_fill = palette::CARD_BG;
+    // Mostly opaque: the board shows through enough that the round reads
+    // as still going on under the news, and not so much that the crabs
+    // run through the letters, which a lighter panel once let them do.
+    let card_fill = palette::CARD_BG.with_alpha(BANNER_FILL_ALPHA);
     commands
         .spawn((
             Banner,
