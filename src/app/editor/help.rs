@@ -145,8 +145,7 @@ impl Spell<'_> {
     }
 
     fn moves(&self) -> String {
-        let [up, down, left, right] = self.keys.moves;
-        super::spell_block(self.caps, [up, left, down, right])
+        self.keys.spell_moves(self.tr, self.caps)
     }
 
     /// The key a row of a pad table presses, as the keyboard's line for
@@ -624,11 +623,7 @@ mod tests {
                 .map(|line| line.keys.clone())
                 .unwrap_or_default()
         };
-        let [up, down, left, right] = keys.moves;
-        assert_eq!(
-            said(Does::Move.label(tr)),
-            super::super::spell_block(&caps, [up, left, down, right])
-        );
+        assert_eq!(said(Does::Move.label(tr)), "arrow keys");
         assert_eq!(said(Does::Walls.label(tr)), "WAKD");
         assert_eq!(said(Does::Place(Direction::Up).label(tr)), "WAKD");
         assert_eq!(said(Does::Remove.label(tr)), "X");
@@ -647,6 +642,7 @@ mod tests {
             let tr = lang.tr();
             for commit in [
                 crate::app::settings::CommitScheme::default(),
+                crate::app::settings::CommitScheme::Wasd,
                 crate::app::settings::CommitScheme::Ijkl,
             ] {
                 let settings = GameSettings {

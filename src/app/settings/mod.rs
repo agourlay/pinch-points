@@ -80,14 +80,20 @@ pub enum SeatInput {
 /// How many controllers a seat may name: the stops the dial offers.
 pub const NAMED_PADS: u8 = 4;
 
-/// Where player 1's four commit keys live: the stock arrows, or the §8.2
-/// one-hand preset on IJKL. A dial, like the seat inputs beside it, and a
-/// token in settings.txt that an unknown word falls back from rather than
-/// silently reading as "arrows".
+/// Where player 1's four commit keys live: the stock arrows, the mirror of
+/// the stock layout, or the §8.2 one-hand preset on IJKL. A dial, like the
+/// seat inputs beside it, and a token in settings.txt that an unknown word
+/// falls back from rather than silently reading as "arrows".
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum CommitScheme {
     #[default]
     Arrows,
+    /// P1's move and place keys trade jobs: at the stock bindings the
+    /// arrow keys move and WASD places. It uses P1's own keys and no
+    /// others, so it never reaches for a key the second seat holds (the
+    /// Controls screen keeps the two seats' keys apart), and it stays on
+    /// with the keyboard shared ([`GameSettings::commit_in_play`]).
+    Wasd,
     Ijkl,
 }
 
@@ -95,6 +101,7 @@ impl CommitScheme {
     pub fn key(self) -> &'static str {
         match self {
             CommitScheme::Arrows => "arrows",
+            CommitScheme::Wasd => "wasd",
             CommitScheme::Ijkl => "ijkl",
         }
     }
@@ -110,7 +117,21 @@ impl CommitScheme {
 }
 
 impl crate::app::cycle::Cycle for CommitScheme {
-    const VARIANTS: &'static [CommitScheme] = &[CommitScheme::Arrows, CommitScheme::Ijkl];
+    const VARIANTS: &'static [CommitScheme] =
+        &[CommitScheme::Arrows, CommitScheme::Wasd, CommitScheme::Ijkl];
+}
+
+/// Which key legend tells the truth about P1's keys right now
+/// ([`GameSettings::key_legend`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeyLegend {
+    /// The stock lines: WASD moves, the arrow keys place.
+    Stock,
+    /// Their mirror: the arrow keys move, WASD places.
+    Swapped,
+    /// Neither: a key is rebound, or placement is on IJKL. The legends
+    /// point at Settings instead of teaching the wrong keys.
+    Own,
 }
 
 impl crate::app::cycle::Cycle for SeatInput {
@@ -335,31 +356,38 @@ impl GameSettings {
     }
 
     /// The commit scheme the keyboard is read with: the one set, unless
-    /// the keyboard is `shared`. Versus seats a rival on the second seat's
-    /// keys, and a co-op puzzle a partner (a cursor for player 1), so
-    /// either way IJKL is somebody else's and the one-hand preset stands
-    /// down.
+    /// the keyboard is `shared` and the set one is the one-hand preset.
+    /// Versus seats a rival on the second seat's keys, and a co-op puzzle
+    /// a partner (a cursor for player 1), so either way IJKL is somebody
+    /// else's and the preset stands down to the stock arrows. The mirrored
+    /// scheme stays: it only trades P1's own move and place keys, none of
+    /// which the second seat can hold.
     ///
     /// One rule for every reader of those keys: the cursor, a puzzle's
     /// setup, the seat keys a global letter yields to
     /// ([`crate::app::cursor::LiveSeatKeys`]), and the legends that
-    /// teach them ([`Self::stock_legend`]).
+    /// teach them ([`Self::key_legend`]).
     pub fn commit_in_play(&self, shared: bool) -> CommitScheme {
-        if shared {
-            CommitScheme::Arrows
-        } else {
-            self.commit
+        match self.commit {
+            CommitScheme::Ijkl if shared => CommitScheme::Arrows,
+            CommitScheme::Arrows | CommitScheme::Wasd | CommitScheme::Ijkl => self.commit,
         }
     }
 
-    /// Whether the stock key legends ("WASD move, arrows place") describe
-    /// what the keys do right now, with the keyboard `shared` or not (see
-    /// [`Self::commit_in_play`]): they do not once a key is rebound, and
-    /// not under the one-hand preset either, which puts placement on IJKL
-    /// whatever the bindings say. Anything that teaches keys asks this
-    /// rather than [`Self::custom_binds`] alone.
-    pub fn stock_legend(&self, shared: bool) -> bool {
-        !self.custom_binds() && self.commit_in_play(shared) == CommitScheme::Arrows
+    /// Which key legend describes what the keys do right now, with the
+    /// keyboard `shared` or not (see [`Self::commit_in_play`]): the stock
+    /// one ("WASD move, arrows place"), its mirror, or neither once a key
+    /// is rebound or placement is on IJKL. Anything that teaches keys asks
+    /// this rather than [`Self::custom_binds`] alone.
+    pub fn key_legend(&self, shared: bool) -> KeyLegend {
+        if self.custom_binds() {
+            return KeyLegend::Own;
+        }
+        match self.commit_in_play(shared) {
+            CommitScheme::Arrows => KeyLegend::Stock,
+            CommitScheme::Wasd => KeyLegend::Swapped,
+            CommitScheme::Ijkl => KeyLegend::Own,
+        }
     }
 
     /// Sound-effect gain, 0.0 to [`SFX_TRIM`], with the on/off switch folded in. Zero

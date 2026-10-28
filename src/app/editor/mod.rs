@@ -75,7 +75,8 @@ pub(crate) struct EditorKeys {
 
 impl EditorKeys {
     pub(crate) fn of(settings: &GameSettings) -> Self {
-        let map = crate::app::cursor::keymap(settings, 0, settings.commit);
+        // The editor seats nobody else at the keyboard: P1's scheme as set.
+        let map = crate::app::cursor::keymap(settings, 0, settings.commit_in_play(false));
         let moves = map.move_keys();
         let walls = match ARROWS.iter().any(|(key, _)| moves.contains(key)) {
             true => map.places,
@@ -86,6 +87,17 @@ impl EditorKeys {
             walls,
             place: map.places,
             remove: map.remove,
+        }
+    }
+
+    /// P1's movement keys as the prompts name them: "arrow keys" when they
+    /// are the arrows (the mirrored placing scheme puts them there), else
+    /// the four caps in the order "WASD" spells a block.
+    pub(crate) fn spell_moves(&self, tr: &Tr, caps: &crate::app::keycaps::KeyCaps) -> String {
+        let [up, down, left, right] = self.moves;
+        match self.moves == ARROWS.map(|(key, _)| key) {
+            true => tr.ed_arrow_keys.to_string(),
+            false => spell_block(caps, [up, left, down, right]),
         }
     }
 
@@ -267,8 +279,7 @@ pub(crate) fn spell_editor_keys(
             false => spell_block(caps, block_order(group)),
         }
     };
-    let [up, down, left, right] = keys.moves;
-    let moves = spell_block(caps, [up, left, down, right]);
+    let moves = keys.spell_moves(tr, caps);
     let remove = if keys.remove == KeyCode::Space {
         tr.ed_space_key.to_string()
     } else {
@@ -2930,7 +2941,7 @@ mod tests {
             "{moves}"
         );
         let moves = spell_editor_keys(&painting, &EN, &caps, &settings);
-        assert!(moves.starts_with("Up/Left/Down/Right move |"), "{moves}");
+        assert!(moves.starts_with("arrow keys move |"), "{moves}");
 
         let mut app = bench_app();
         let mut board = sand();
@@ -3007,7 +3018,17 @@ mod tests {
         }
         let mut undo_taken = GameSettings::default();
         undo_taken.binds[0].set(Action::MoveUp, KeyCode::KeyZ);
-        for settings in [GameSettings::default(), ijkl.clone(), letters, undo_taken] {
+        let wasd = GameSettings {
+            commit: crate::app::settings::CommitScheme::Wasd,
+            ..GameSettings::default()
+        };
+        for settings in [
+            GameSettings::default(),
+            ijkl.clone(),
+            wasd,
+            letters,
+            undo_taken,
+        ] {
             let keys = EditorKeys::of(&settings);
             let prompt = spell_editor_keys(EN.ed_prompt, &EN, &caps, &settings);
             for command in Command::ALL {

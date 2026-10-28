@@ -302,6 +302,85 @@ mod tests {
         assert_eq!(frame(&mut app, 0.01), 5, "and a new press steps at once");
     }
 
+    /// The d-pad moves P1's cursor one tile and places nothing, under
+    /// every placing scheme. A board's table reads the d-pad off the pad
+    /// and presses no key for it, so the mirrored scheme, whose place keys
+    /// are W/A/S/D, never turns a pad's move into a placement.
+    #[test]
+    fn the_d_pad_moves_under_every_placing_scheme() {
+        use crate::app::Screen;
+        use crate::app::cycle::Cycle;
+        use crate::app::settings::CommitScheme;
+        let levels = crate::sim::campaign_levels();
+        let level = levels
+            .iter()
+            .find(|level| level.posts >= 1)
+            .expect("a stage with an arrow");
+        let board = level.board();
+        // A tile that takes an arrow with one above that does too: had a
+        // bridged W placed after the step, the board would show it.
+        let (x, y) = board
+            .tiles()
+            .map(|(x, y, _)| (x, y))
+            .find(|&(x, y)| {
+                y > 0 && board.can_place_signpost(0, x, y) && board.can_place_signpost(0, x, y - 1)
+            })
+            .expect("two open tiles, one above the other");
+        for &commit in CommitScheme::VARIANTS {
+            let mut app = App::new();
+            app.add_plugins(bevy::state::app::StatesPlugin);
+            app.init_state::<Screen>();
+            app.insert_resource(State::new(Screen::Puzzle));
+            app.init_state::<Phase>();
+            app.insert_resource(Sim(board.clone()));
+            app.insert_resource(GameSettings {
+                commit,
+                ..GameSettings::default()
+            });
+            app.insert_resource(PadFace(Face::PuzzleSetup {
+                posts: true,
+                hint: false,
+            }));
+            app.init_resource::<PadSeats>();
+            app.init_resource::<PadPick>();
+            app.init_resource::<Bridged>();
+            app.init_resource::<crate::app::keycaps::KeyCaps>();
+            app.init_resource::<crate::app::net::Online>();
+            app.init_resource::<ButtonInput<KeyCode>>();
+            app.init_resource::<Time>();
+            app.add_message::<PlacementDenied>();
+            app.add_systems(
+                Update,
+                (
+                    pad_menu_bridge,
+                    pad_move_cursor,
+                    crate::app::cursor::move_cursor,
+                    crate::app::play_input::setup_input,
+                    pad_setup_input,
+                    pad_bridge_release,
+                )
+                    .chain(),
+            );
+            let mut cursor = Cursor::seated(0);
+            (cursor.x, cursor.y) = (x, y);
+            app.world_mut().spawn(cursor);
+            let pad = app.world_mut().spawn(Gamepad::default()).id();
+            // The first frame only fits the cursor with its repeat state.
+            app.update();
+            app.world_mut()
+                .get_mut::<Gamepad>(pad)
+                .expect("the pad")
+                .digital_mut()
+                .press(GamepadButton::DPadUp);
+            app.update();
+            let world = app.world_mut();
+            let cursor = world.query::<&Cursor>().single(world).expect("one cursor");
+            assert_eq!((cursor.x, cursor.y), (x, y - 1), "{commit:?}: one step up");
+            let board = &app.world().resource::<Sim>().0;
+            assert_eq!(board.signpost_count(0), 0, "{commit:?}: and no arrow");
+        }
+    }
+
     /// A d-pad button pressed while another direction is held is a press
     /// of its own, as a second move key is on the keyboard. The stick's
     /// second axis flickering on near the deadzone is not.

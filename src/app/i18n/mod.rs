@@ -307,8 +307,13 @@ struct Tr {
     pub goal_golden: &'static str,
     // Prompts
     pub prompt_setup: &'static str,
+    /// [`Tr::prompt_setup`] under the mirrored placing keys
+    /// (`CommitScheme::Wasd`): the arrow keys move, WASD places.
+    pub prompt_setup_swapped: &'static str,
     /// The setup prompt in co-op: both players' keys, one line.
     pub prompt_setup_coop: &'static str,
+    /// [`Tr::prompt_setup_coop`] with P1 on the mirrored placing keys.
+    pub prompt_setup_coop_swapped: &'static str,
     pub prompt_setup_full: &'static str,
     /// Shown for a moment when a placement is refused because the level's
     /// signposts are all out, which every other refusal is not.
@@ -324,6 +329,9 @@ struct Tr {
     pub prompt_lost_goal: &'static str,
     pub prompt_versus_short: &'static str,
     pub prompt_versus_local: &'static str,
+    /// The two versus legends with P1 on the mirrored placing keys.
+    pub prompt_versus_short_swapped: &'static str,
+    pub prompt_versus_local_swapped: &'static str,
     /// Shown instead of the key legend once the player has rebound keys.
     pub prompt_setup_custom: &'static str,
     pub prompt_versus_custom: &'static str,
@@ -591,6 +599,8 @@ struct Tr {
     pub bind_actions: [&'static str; 10],
     pub val_arrows: &'static str,
     pub val_ijkl: &'static str,
+    /// The mirrored placing keys: WASD places, the arrow keys move.
+    pub val_wasd: &'static str,
     pub val_on: &'static str,
     pub val_off: &'static str,
     /// Team modes in `TeamMode::ALL` order: free-for-all, pairs, trios.
@@ -1025,6 +1035,9 @@ struct Tr {
     /// [`Tr::ed_test_setup`] on a co-op stage, with both players' keys
     /// as the stage's own line names them ([`Tr::prompt_setup_coop`]).
     pub ed_test_setup_coop: &'static str,
+    /// [`Tr::ed_test_setup_coop`] with P1 on the mirrored placing keys
+    /// ([`Tr::prompt_setup_coop_swapped`]).
+    pub ed_test_setup_coop_swapped: &'static str,
     /// [`Tr::ed_test_setup_coop`] with any key rebound, where the stock
     /// names would be wrong ([`Tr::prompt_setup_custom`]).
     pub ed_test_setup_coop_custom: &'static str,
@@ -1488,11 +1501,17 @@ mod tests {
         for lang in ALL_LANGS {
             let tr = lang.tr();
             let (one, two) = (crate::app::seat_label(tr, 0), crate::app::seat_label(tr, 1));
-            let coop = crate::app::name_the_pair(tr, tr.prompt_setup_coop);
-            assert!(
-                coop.contains(&one) && coop.contains(&two),
-                "{lang:?}: {coop}"
-            );
+            for line in [
+                tr.prompt_setup_coop,
+                tr.prompt_setup_coop_swapped,
+                tr.ed_test_setup_coop_swapped,
+            ] {
+                let coop = crate::app::name_the_pair(tr, line);
+                assert!(
+                    coop.contains(&one) && coop.contains(&two),
+                    "{lang:?}: {coop}"
+                );
+            }
             let open = crate::app::name_the_pair(tr, tr.setup_by_open_keys);
             assert!(open.contains(&two), "{lang:?}: {open}");
         }

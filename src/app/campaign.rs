@@ -157,9 +157,11 @@ impl Campaign {
     /// Level `at`'s hint as this player may be shown it, wherever it is
     /// shown: the stage list and the puzzle's own line ask the same thing.
     /// The first level's lesson names the stock keys, so with the keys
-    /// rebound or the one-hand preset on it would teach the wrong ones, and
-    /// it is kept back. Asked as the prompt asks it: a co-op partner sets
-    /// the preset aside. Kept back from a pad's player too, whose prompt
+    /// rebound, mirrored or on the one-hand preset it would teach the wrong
+    /// ones, and it is kept back: the setup prompt under it still names the
+    /// keys in play. Asked as the prompt asks it
+    /// ([`crate::app::settings::GameSettings::key_legend`]): a co-op partner
+    /// sets the one-hand preset aside. Kept back from a pad's player too, whose prompt
     /// names the pad's buttons in its place.
     pub fn shown_hint(
         &self,
@@ -170,8 +172,8 @@ impl Campaign {
     ) -> Option<String> {
         let hint = self.hint(at, settings.language)?;
         let names_keys = self.levels[at].name == KEY_LESSON_LEVEL;
-        let keys_as_named =
-            settings.stock_legend(coop.0) && device == crate::app::gamepad::LastDevice::Keyboard;
+        let keys_as_named = settings.key_legend(coop.0) == crate::app::settings::KeyLegend::Stock
+            && device == crate::app::gamepad::LastDevice::Keyboard;
         (!names_keys || keys_as_named).then_some(hint)
     }
 

@@ -229,38 +229,54 @@ pub fn track_live_seat_keys(
 /// Keyboard layout for a seat, as bound in settings (spec §8.2 defaults:
 /// seat 1 on WASD + arrows, seat 2 on IJKL + numpad).
 ///
-/// `commit` is the §8.2 scheme in force: the one-hand preset overrides
-/// seat 1's four commit keys with IJKL whatever they are bound to. It
-/// exists for solo play, where the second seat's keys are free, so a
-/// caller with the keyboard shared asks [`GameSettings::commit_in_play`],
-/// which sets it aside.
+/// `commit` is the §8.2 scheme in force, and only seat 1 has one. The
+/// one-hand preset overrides its four commit keys with IJKL whatever they
+/// are bound to; it exists for solo play, where the second seat's keys are
+/// free, so a caller with the keyboard shared asks
+/// [`GameSettings::commit_in_play`], which sets it aside. The mirrored
+/// scheme trades seat 1's move keys and place keys, whatever they are
+/// bound to: the same keys, so nobody else's.
 pub fn keymap(settings: &GameSettings, player: u8, commit: CommitScheme) -> KeyMap {
     use crate::app::binds::Action;
     let seat = usize::from(player).min(crate::app::binds::BOUND_SEATS - 1);
     let binds = &settings.binds[seat];
-    let places = if player == 0 && commit == CommitScheme::Ijkl {
-        [
-            (KeyCode::KeyI, Direction::Up),
-            (KeyCode::KeyK, Direction::Down),
-            (KeyCode::KeyJ, Direction::Left),
-            (KeyCode::KeyL, Direction::Right),
-        ]
+    let commit = if player == 0 {
+        commit
     } else {
-        [
-            (binds.key(Action::PlaceUp), Direction::Up),
-            (binds.key(Action::PlaceDown), Direction::Down),
-            (binds.key(Action::PlaceLeft), Direction::Left),
-            (binds.key(Action::PlaceRight), Direction::Right),
-        ]
+        CommitScheme::Arrows
     };
+    let bound_moves = [
+        Action::MoveUp,
+        Action::MoveDown,
+        Action::MoveLeft,
+        Action::MoveRight,
+    ]
+    .map(|action| binds.key(action));
+    let bound_places = [
+        Action::PlaceUp,
+        Action::PlaceDown,
+        Action::PlaceLeft,
+        Action::PlaceRight,
+    ]
+    .map(|action| binds.key(action));
+    let (moves, places) = match commit {
+        CommitScheme::Arrows => (bound_moves, bound_places),
+        CommitScheme::Wasd => (bound_places, bound_moves),
+        CommitScheme::Ijkl => (
+            bound_moves,
+            [KeyCode::KeyI, KeyCode::KeyK, KeyCode::KeyJ, KeyCode::KeyL],
+        ),
+    };
+    let [up, down, left, right] = moves;
+    let [place_up, place_down, place_left, place_right] = places;
     KeyMap {
-        moves: [
-            (binds.key(Action::MoveUp), 0, -1),
-            (binds.key(Action::MoveDown), 0, 1),
-            (binds.key(Action::MoveLeft), -1, 0),
-            (binds.key(Action::MoveRight), 1, 0),
+        moves: [(up, 0, -1), (down, 0, 1), (left, -1, 0), (right, 1, 0)],
+        places: [
+            (place_up, Direction::Up),
+            (place_down, Direction::Down),
+            (place_left, Direction::Left),
+            (place_right, Direction::Right),
         ],
-        places,
         remove: binds.key(Action::Remove),
         clear_all: binds.key(Action::ClearAll),
     }
@@ -822,6 +838,88 @@ mod tests {
                 "{hands} hand(s): IJKL commits for P1 only when nobody else has it"
             );
         }
+    }
+
+    /// Under the mirrored keys P1's arrow keys walk the cursor and W/A/S/D
+    /// place, alone and with a co-op partner: the scheme only trades P1's
+    /// own keys, so it stays on with the partner, whose IJKL still moves
+    /// the partner and nobody else.
+    #[test]
+    fn the_mirrored_keys_move_on_the_arrows_and_place_on_wasd() {
+        for hands in [1, 2] {
+            let mut app = stage(hands);
+            app.init_resource::<Time>();
+            app.init_resource::<crate::app::net::Online>();
+            app.add_systems(Update, move_cursor.before(setup_input));
+            app.world_mut().resource_mut::<GameSettings>().commit = CommitScheme::Wasd;
+            let [a, b] = two_sand_tiles(&app);
+            park(&mut app, 0, a);
+            park(&mut app, 1, b);
+            let width = app.world().resource::<Sim>().0.width();
+            let count = |app: &App| app.world().resource::<Sim>().0.signpost_count(0);
+
+            let (dx, key) = if a.0 + 1 < width {
+                (1, KeyCode::ArrowRight)
+            } else {
+                (-1, KeyCode::ArrowLeft)
+            };
+            tap(&mut app, key);
+            let moved = ((i16::from(a.0) + dx) as u8, a.1);
+            assert_eq!(cursor_at(&mut app, 0), moved, "{hands}: an arrow key moves");
+            assert_eq!(count(&app), 0, "{hands}: and places nothing");
+
+            park(&mut app, 0, a);
+            tap(&mut app, KeyCode::KeyW);
+            assert_eq!(cursor_at(&mut app, 0), a, "{hands}: W does not move");
+            let post = app
+                .world()
+                .resource::<Sim>()
+                .0
+                .signpost_at(a.0, a.1)
+                .expect("W places");
+            assert_eq!(post.dir, Direction::Up, "{hands}");
+
+            if hands == 2 {
+                tap(&mut app, KeyCode::KeyI);
+                assert_eq!(cursor_at(&mut app, 0), a, "IJKL is not P1's");
+                assert_ne!(cursor_at(&mut app, 1), b, "but moves the partner");
+            }
+        }
+    }
+
+    /// In a versus round, with a rival on the second seat's keys, the
+    /// mirrored keys stay on: P1 moves on the arrows and queues on WASD,
+    /// and P2's IJKL and numpad still answer for P2 alone.
+    #[test]
+    fn the_mirrored_keys_hold_in_a_versus_round() {
+        let mut app = beach(2);
+        app.world_mut().resource_mut::<GameSettings>().commit = CommitScheme::Wasd;
+        app.add_systems(Update, (move_cursor, versus_input).chain());
+        app.world_mut()
+            .resource_mut::<Sim>()
+            .0
+            .set_tile(5, 3, TileKind::Empty);
+        let pending = |app: &App, seat: usize| app.world().resource::<PendingActions>().0[seat];
+
+        tap(&mut app, KeyCode::ArrowUp);
+        assert_eq!(cursor_at(&mut app, 0), (5, 3), "the arrow key moves P1");
+        assert_eq!(cursor_at(&mut app, 1), (5, 4), "and only P1");
+        assert_eq!(pending(&app, 0), PlayerAction::None, "and queues nothing");
+
+        tap(&mut app, KeyCode::KeyW);
+        assert_eq!(cursor_at(&mut app, 0), (5, 3), "W does not move");
+        assert_eq!(
+            pending(&app, 0),
+            PlayerAction::Place {
+                x: 5,
+                y: 3,
+                dir: Direction::Up
+            }
+        );
+
+        tap(&mut app, KeyCode::KeyI);
+        assert_eq!(cursor_at(&mut app, 1), (5, 3), "P2 still walks on IJKL");
+        assert_eq!(cursor_at(&mut app, 0), (5, 3));
     }
 
     fn tap(app: &mut App, key: KeyCode) {

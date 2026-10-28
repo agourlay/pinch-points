@@ -7,7 +7,7 @@
 use super::{BoardSwap, EditorState, Mode, level_here, swap_board};
 use crate::app::gamepad::scheme::Does;
 use crate::app::i18n::{Tr, fill};
-use crate::app::settings::GameSettings;
+use crate::app::settings::{GameSettings, KeyLegend};
 use crate::app::{Controllers, SeatController, Sim};
 use crate::sim::{Board, BotLevel, Level, LevelKind, PuzzleOutcome, TICKS_PER_SECOND};
 use bevy::prelude::*;
@@ -377,12 +377,13 @@ pub(crate) fn status(tr: &Tr, test: &Playtest, board: &Board) -> String {
 /// players' keys, read as [`editor_test_input`] reads them: with the
 /// partner seated ([`seat_test_partner`]) the one-hand preset stands down
 /// ([`GameSettings::commit_in_play`]), so the stock names hold unless a
-/// key is rebound.
+/// key is rebound or P1's keys are mirrored ([`GameSettings::key_legend`]).
 pub(crate) fn prompt(tr: &Tr, test: &Playtest, settings: &GameSettings) -> String {
     match test.phase {
-        TestPhase::Setup if test.level.is_coop() => match settings.stock_legend(true) {
-            true => crate::app::name_the_pair(tr, tr.ed_test_setup_coop),
-            false => tr.ed_test_setup_coop_custom.to_string(),
+        TestPhase::Setup if test.level.is_coop() => match settings.key_legend(true) {
+            KeyLegend::Stock => crate::app::name_the_pair(tr, tr.ed_test_setup_coop),
+            KeyLegend::Swapped => crate::app::name_the_pair(tr, tr.ed_test_setup_coop_swapped),
+            KeyLegend::Own => tr.ed_test_setup_coop_custom.to_string(),
         },
         phase @ (TestPhase::Setup
         | TestPhase::Running

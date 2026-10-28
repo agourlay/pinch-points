@@ -969,6 +969,12 @@ mod tests {
                 tr.prompt_setup,
                 tr.prompt_versus_short,
                 tr.prompt_versus_local,
+                tr.prompt_setup_swapped,
+                tr.prompt_versus_short_swapped,
+                tr.prompt_versus_local_swapped,
+                tr.prompt_setup_coop_swapped,
+                tr.ed_test_setup_coop_swapped,
+                tr.val_wasd,
                 tr.ed_prompt,
                 lang.level_hint(crate::app::campaign::KEY_LESSON_LEVEL)
                     .unwrap(),
@@ -980,6 +986,7 @@ mod tests {
             }
             assert!(tr.prompt_versus_local.contains("IJKL"), "{lang:?}");
             assert!(tr.val_ijkl.contains("IJKL"), "{lang:?}");
+            assert!(tr.prompt_versus_local_swapped.contains("IJKL"), "{lang:?}");
         }
     }
 

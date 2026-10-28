@@ -10,7 +10,7 @@ use crate::app::i18n::{Tr, fill};
 use crate::app::lobby::LobbyState;
 use crate::app::net::Online;
 use crate::app::seating::Viewer;
-use crate::app::settings::GameSettings;
+use crate::app::settings::{GameSettings, KeyLegend};
 use crate::app::teams::TeamMode;
 use crate::app::{Campaign, Controllers, Phase, Playback, Screen, Seats, Sim, VersusPhase};
 use crate::sim::{Goal, LURE_TICKS, TICKS_PER_SECOND, TideEvent};
@@ -293,7 +293,7 @@ pub(super) fn puzzle_text(
     coop: bool,
     sim: &Sim,
     phase: &State<Phase>,
-    custom_keys: bool,
+    keys: KeyLegend,
 ) -> HudText {
     let level = campaign.current();
     // The player's own levels take the stage list's own label for them in
@@ -314,9 +314,15 @@ pub(super) fn puzzle_text(
     let status = puzzle_status(tr, level, &sim.0);
     let prompt = match phase.get() {
         Phase::Setup if level.posts == 0 => tr.prompt_setup_no_posts.to_string(),
-        Phase::Setup if custom_keys => tr.prompt_setup_custom.to_string(),
+        Phase::Setup if keys == KeyLegend::Own => tr.prompt_setup_custom.to_string(),
         // Two sets of hands, so both sets of keys: the solo line names one.
-        Phase::Setup if coop => crate::app::name_the_pair(tr, tr.prompt_setup_coop),
+        Phase::Setup if coop => crate::app::name_the_pair(
+            tr,
+            match keys {
+                KeyLegend::Swapped => tr.prompt_setup_coop_swapped,
+                KeyLegend::Stock | KeyLegend::Own => tr.prompt_setup_coop,
+            },
+        ),
         // Full is only full under a fixed inventory. A player's level file
         // may state an evicting rule (`rule: evict`), where the next arrow
         // replaces the oldest, so "remove one first" would be wrong there.
@@ -324,7 +330,11 @@ pub(super) fn puzzle_text(
         // above, because this line names the stock key, and neither a
         // rebound key nor the second pair of hands is Space.
         Phase::Setup if arrows_all_down(level, &sim.0) => tr.prompt_setup_full.to_string(),
-        Phase::Setup => tr.prompt_setup.to_string(),
+        Phase::Setup => match keys {
+            KeyLegend::Swapped => tr.prompt_setup_swapped,
+            KeyLegend::Stock | KeyLegend::Own => tr.prompt_setup,
+        }
+        .to_string(),
         Phase::Running => tr.prompt_running.to_string(),
         // On the last level the card says the run is over and Enter goes
         // home; a prompt line still offering "next level" under it is the
@@ -557,11 +567,13 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
             }
         }
         // Rebound keys first: the short legend against the AI or online
-        // names the stock keys too, and input reads the player's own. The
-        // bindings and not `stock_legend`: versus plays the arrows whatever
-        // the one-hand preset says (`versus_input`), so the stock legend
-        // is the true one under the preset.
-        VersusPhase::Countdown | VersusPhase::Running if settings.custom_binds() => {
+        // names the stock keys too, and input reads the player's own.
+        // Asked with the keyboard shared, as `versus_input` reads it: the
+        // one-hand preset stands down to the stock legend, and the mirrored
+        // keys keep their own.
+        VersusPhase::Countdown | VersusPhase::Running
+            if settings.key_legend(true) == KeyLegend::Own =>
+        {
             tr.prompt_versus_custom.to_string()
         }
         // The short legend names P1's keys alone, so it is for a table
@@ -572,9 +584,17 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         VersusPhase::Countdown | VersusPhase::Running
             if online.0.is_some() || controllers.local_count(seats.0) <= 1 =>
         {
-            tr.prompt_versus_short.to_string()
+            match settings.key_legend(true) {
+                KeyLegend::Swapped => tr.prompt_versus_short_swapped,
+                KeyLegend::Stock | KeyLegend::Own => tr.prompt_versus_short,
+            }
+            .to_string()
         }
-        VersusPhase::Countdown | VersusPhase::Running => tr.prompt_versus_local.to_string(),
+        VersusPhase::Countdown | VersusPhase::Running => match settings.key_legend(true) {
+            KeyLegend::Swapped => tr.prompt_versus_local_swapped,
+            KeyLegend::Stock | KeyLegend::Own => tr.prompt_versus_local,
+        }
+        .to_string(),
         // Whatever Enter actually does here, named by the one function the
         // key itself reads: a finished lobby match goes back to the lobby
         // together, a series plays on, and the prompt must not promise a
@@ -890,7 +910,7 @@ pub(super) fn screen_text_for(screen: Screen, r: &Readout) -> HudText {
             r.phase,
             // Co-op sets the one-hand preset aside (the partner has IJKL),
             // so there only a rebinding makes the keys the player's own.
-            !r.settings.stock_legend(r.coop),
+            r.settings.key_legend(r.coop),
         ),
         // Both lines are already in the language under the cursor: moving
         // it sets the language, so the header and the prompt preview
@@ -1710,6 +1730,65 @@ mod tests {
         }
     }
 
+    /// Under the mirrored placing keys every legend that teaches the keys
+    /// names the mirror: a stage's setup alone and in co-op, and both
+    /// versus lines. Never the stock line, which teaches the opposite, and
+    /// not the "your keys" line either, the right words being cheap.
+    #[test]
+    fn the_mirrored_keys_have_their_own_legend() {
+        use crate::app::settings::CommitScheme;
+        use crate::app::{Controllers, SeatController};
+        let fx = Fixture::default();
+        assert!(
+            fx.campaign.current().posts > 0,
+            "a stage with arrows to place"
+        );
+        let wasd = GameSettings {
+            commit: CommitScheme::Wasd,
+            ..GameSettings::default()
+        };
+        assert_eq!(wasd.key_legend(false), KeyLegend::Swapped);
+        assert_eq!(
+            wasd.key_legend(true),
+            KeyLegend::Swapped,
+            "kept when shared"
+        );
+
+        let puzzle = |coop| {
+            screen_text(
+                Screen::Puzzle,
+                &Readout {
+                    settings: &wasd,
+                    coop,
+                    ..fx.readout()
+                },
+            )
+            .prompt
+        };
+        let solo = puzzle(false);
+        assert!(solo.starts_with(EN.prompt_setup_swapped), "{solo}");
+        assert!(solo.starts_with("arrow keys move | WASD place"), "{solo}");
+        let pair = puzzle(true);
+        let coop = crate::app::name_the_pair(&EN, EN.prompt_setup_coop_swapped);
+        assert!(pair.starts_with(&coop), "{pair}");
+
+        let versus = |controllers: &Controllers| {
+            versus_text(&Readout {
+                settings: &wasd,
+                controllers,
+                ..fx.readout()
+            })
+            .prompt
+        };
+        let mut against_ai = Controllers::default();
+        against_ai.0[1] = SeatController::Ai(crate::sim::BotLevel::Normal);
+        assert_eq!(versus(&against_ai), EN.prompt_versus_short_swapped);
+        assert_eq!(
+            versus(&Controllers::default()),
+            EN.prompt_versus_local_swapped
+        );
+    }
+
     /// P1 against a bot has one cursor, like P1 against the AI: the
     /// prompt names P1's keys alone, not a P2 whose keys drive nothing.
     #[test]
@@ -1815,7 +1894,7 @@ mod tests {
                 false,
                 &sim,
                 &State::new(phase),
-                false,
+                KeyLegend::Stock,
             )
         };
 
@@ -1856,8 +1935,15 @@ mod tests {
         let mut sim = Sim(level.board());
         let phase = State::new(Phase::Setup);
 
-        let HudText { title, prompt, .. } =
-            puzzle_text(&EN, Lang::En, &campaign, false, &sim, &phase, false);
+        let HudText { title, prompt, .. } = puzzle_text(
+            &EN,
+            Lang::En,
+            &campaign,
+            false,
+            &sim,
+            &phase,
+            KeyLegend::Stock,
+        );
         assert!(title.starts_with(EN.title_tide_pool), "{title}");
         assert!(
             title.contains("1/"),
@@ -1885,7 +1971,16 @@ mod tests {
                     }
                 }
             }
-            let prompt = puzzle_text(&EN, Lang::En, &campaign, false, &sim, &phase, false).prompt;
+            let prompt = puzzle_text(
+                &EN,
+                Lang::En,
+                &campaign,
+                false,
+                &sim,
+                &phase,
+                KeyLegend::Stock,
+            )
+            .prompt;
             assert_eq!(prompt, EN.prompt_setup_full);
         }
 
@@ -1897,13 +1992,13 @@ mod tests {
             false,
             &Sim(level.board()),
             &phase,
-            true,
+            KeyLegend::Own,
         )
         .prompt;
         assert_eq!(prompt, EN.prompt_setup_custom);
         // In co-op the stock line names both players' keys, and rebound
         // keys still win: the pair's keys are the settings' then.
-        let coop = |custom| {
+        let coop = |keys| {
             puzzle_text(
                 &EN,
                 Lang::En,
@@ -1911,27 +2006,27 @@ mod tests {
                 true,
                 &Sim(level.board()),
                 &phase,
-                custom,
+                keys,
             )
             .prompt
         };
         if posts > 0 {
             assert_eq!(
-                coop(false),
+                coop(KeyLegend::Stock),
                 crate::app::name_the_pair(&EN, EN.prompt_setup_coop)
             );
         }
-        assert_eq!(coop(true), EN.prompt_setup_custom);
+        assert_eq!(coop(KeyLegend::Own), EN.prompt_setup_custom);
         // And so does the one-hand preset: placement is on IJKL then, not
         // the arrows the stock legend names.
         let one_hand = GameSettings {
             commit: crate::app::settings::CommitScheme::Ijkl,
             ..GameSettings::default()
         };
-        assert!(!one_hand.stock_legend(false));
-        assert!(GameSettings::default().stock_legend(false));
+        assert_eq!(one_hand.key_legend(false), KeyLegend::Own);
+        assert_eq!(GameSettings::default().key_legend(false), KeyLegend::Stock);
         // Unless a partner has IJKL, which puts the pair on the arrows.
-        assert!(one_hand.stock_legend(true));
+        assert_eq!(one_hand.key_legend(true), KeyLegend::Stock);
     }
 
     /// Every tide event maps to a distinct, non-empty localized name; an
@@ -2321,6 +2416,10 @@ mod tests {
             spell(tr.ed_playtest_prompt),
             spell(tr.ed_test_setup),
             spell(&crate::app::name_the_pair(tr, tr.ed_test_setup_coop)),
+            spell(&crate::app::name_the_pair(
+                tr,
+                tr.ed_test_setup_coop_swapped,
+            )),
             spell(tr.ed_test_setup_coop_custom),
             spell(tr.ed_test_retry),
             tr.ed_levels_keys.to_string(),
@@ -2361,8 +2460,10 @@ mod tests {
             tr.prompt_setup_no_posts.to_string(),
             tr.prompt_setup_custom.to_string(),
             crate::app::name_the_pair(tr, tr.prompt_setup_coop),
+            crate::app::name_the_pair(tr, tr.prompt_setup_coop_swapped),
             tr.prompt_setup_full.to_string(),
             tr.prompt_setup.to_string(),
+            tr.prompt_setup_swapped.to_string(),
             tr.prompt_running.to_string(),
             tr.last_level.to_string(),
             tr.prompt_won.to_string(),
@@ -2377,6 +2478,8 @@ mod tests {
             tr.prompt_versus_custom.to_string(),
             tr.prompt_versus_short.to_string(),
             tr.prompt_versus_local.to_string(),
+            tr.prompt_versus_short_swapped.to_string(),
+            tr.prompt_versus_local_swapped.to_string(),
             tr.prompt_paused.to_string(),
         ];
         let rest = format!("{} | {}", tr.lobby_chat_hint, tr.prompt_esc_menu);

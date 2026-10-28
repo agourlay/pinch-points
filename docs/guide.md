@@ -336,6 +336,13 @@ score lost, so the rest of the table has something to point at too.
 | P2 | IJKL | numpad 8/5/4/6 | numpad 0 | numpad . |
 | any seat | gamepad d-pad/stick | A/B/X/Y | LB | RB |
 
+Settings' **P1 placing keys** row has three choices: the arrow keys (the
+table above), **WASD**, the mirror for players who move with the arrows
+and place with WASD, and **IJKL**, a one-hand preset that places on IJKL.
+WASD stays on in versus and co-op, since it only trades P1's own keys;
+IJKL gives way to the arrows whenever P2 is at the keyboard, IJKL being
+P2's keys. Pads play the same under all three.
+
 Pads are plug-and-play and fill seats from P2 up, P1 last, so
 keyboard-plus-pad and two pads play with no setup, and two at one
 keyboard once P2 presses one of their keys (a pad then goes to P3). A
@@ -371,7 +378,7 @@ the calm track out under a dance one.
 
 Settings is grouped into controls, sound, the round, presentation and the
 game itself: what plays each of the first two seats, per-key rebinding, a
-single-hand preset, cursor tuning, puzzle speed assist, rumble and
+choice of P1's placing keys (arrows, WASD or one-hand IJKL), cursor tuning, puzzle speed assist, rumble and
 deadzone, versus scoring, how many kept rounds the shelf holds, a
 colour-vision-safe palette, fullscreen, UI scaling, reduced motion, the update check,
 a progress reset, and the UI language: **English, Français, Deutsch,

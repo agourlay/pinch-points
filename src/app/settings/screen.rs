@@ -586,6 +586,7 @@ pub(super) fn row_text(
             tr.set_commit_keys,
             match settings.commit {
                 CommitScheme::Ijkl => caps.legend(tr.val_ijkl),
+                CommitScheme::Wasd => caps.legend(tr.val_wasd),
                 CommitScheme::Arrows => tr.val_arrows.to_string(),
             },
         ),
@@ -794,10 +795,16 @@ mod tests {
                         // Every layout by name, since "Auto" is
                         // the short one and nobody leaves a dial
                         // on its default because it was there.
-                        for keyboard in <Option<crate::app::keycaps::Layout> as Cycle>::VARIANTS {
+                        // And every placing scheme, each its own words.
+                        for (keyboard, commit) in
+                            <Option<crate::app::keycaps::Layout> as Cycle>::VARIANTS
+                                .iter()
+                                .flat_map(|k| CommitScheme::VARIANTS.iter().map(move |c| (k, c)))
+                        {
                             let settings = GameSettings {
                                 team_mode,
                                 keyboard: *keyboard,
+                                commit: *commit,
                                 ..settings.clone()
                             };
                             let (label, value) = row_text(

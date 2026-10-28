@@ -315,6 +315,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// Every placing scheme survives the file under its own word, the
+    /// mirrored one as `wasd`; the words older files wrote still read as
+    /// they did, and a word this build does not know falls back to the
+    /// stock arrows.
+    #[test]
+    fn every_commit_scheme_round_trips_through_the_file() {
+        use crate::app::cycle::Cycle;
+        let caps = crate::app::keycaps::KeyCaps::default();
+        for &commit in CommitScheme::VARIANTS {
+            let settings = GameSettings {
+                commit,
+                ..GameSettings::default()
+            };
+            let text = settings.to_text(&caps);
+            assert_eq!(GameSettings::parse(&text).0.commit, commit, "{text}");
+        }
+        let wasd = GameSettings {
+            commit: CommitScheme::Wasd,
+            ..GameSettings::default()
+        };
+        assert!(wasd.to_text(&caps).contains("commit_scheme: wasd\n"));
+        for (word, commit) in [
+            ("arrows", CommitScheme::Arrows),
+            ("ijkl", CommitScheme::Ijkl),
+            ("wasd", CommitScheme::Wasd),
+            ("esdf", CommitScheme::Arrows),
+        ] {
+            let text = format!("commit_scheme: {word}\n");
+            assert_eq!(GameSettings::parse(&text).0.commit, commit, "{word}");
+        }
+    }
+
     #[test]
     fn settings_round_trip_through_text() {
         let settings = GameSettings {
