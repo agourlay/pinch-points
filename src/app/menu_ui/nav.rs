@@ -28,6 +28,20 @@ pub fn number_pressed(keys: &ButtonInput<KeyCode>, count: usize) -> Option<usize
         .position(|&key| keys.just_pressed(key))
 }
 
+/// The keys a menu walks with, whatever the bindings say: W/A/S/D and
+/// the arrows, as [`nav`] and [`left_right`] read them. A key bound to a
+/// seat may be one, and on a menu the press is the hands working it.
+pub const NAV_KEYS: [KeyCode; 8] = [
+    KeyCode::KeyW,
+    KeyCode::KeyA,
+    KeyCode::KeyS,
+    KeyCode::KeyD,
+    KeyCode::ArrowUp,
+    KeyCode::ArrowLeft,
+    KeyCode::ArrowDown,
+    KeyCode::ArrowRight,
+];
+
 /// W/S (or arrow) navigation over `len` rows, wrapping at the ends.
 pub fn nav(keys: &ButtonInput<KeyCode>, selected: usize, len: usize) -> usize {
     let mut at = selected;

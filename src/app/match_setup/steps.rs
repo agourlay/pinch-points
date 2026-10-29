@@ -7,7 +7,8 @@
 //! the line on screen reads the same function the key does.
 
 use super::*;
-use crate::app::gamepad::{LastDevice, PadSeats, SeatPad};
+use crate::app::gamepad::scheme::Pad;
+use crate::app::gamepad::{Bridged, LastDevice, PadFamily, PadSeats, SeatPad};
 use crate::app::menu_ui;
 use crate::app::settings::{GameSettings, SeatInput};
 
@@ -580,16 +581,21 @@ pub fn open_seats(
         .collect()
 }
 
-/// What step 3's "played by" cell says.
-pub fn played_by_text(tr: &crate::app::i18n::Tr, by: PlayedBy) -> String {
+/// What step 3's "played by" cell says, an open seat's Start named as a
+/// pad of `family` has it.
+pub fn played_by_text(tr: &crate::app::i18n::Tr, by: PlayedBy, family: PadFamily) -> String {
+    let start = || Pad::Start.name(tr, family);
     match by {
         PlayedBy::Keys(seat) => fill(
             tr.setup_by_keys,
             &[("p", &crate::app::seat_label(tr, seat))],
         ),
         PlayedBy::Pad { number, .. } => fill(tr.setup_by_pad, &[("n", &number.to_string())]),
-        PlayedBy::Open { keys: false } => tr.setup_by_open.to_string(),
-        PlayedBy::Open { keys: true } => crate::app::name_the_pair(tr, tr.setup_by_open_keys),
+        PlayedBy::Open { keys: false } => fill(tr.setup_by_open, &[("start", start())]),
+        PlayedBy::Open { keys: true } => fill(
+            &crate::app::name_the_pair(tr, tr.setup_by_open_keys),
+            &[("start", start())],
+        ),
         PlayedBy::Ai(level) => fill(tr.setup_by_ai, &[("l", tr.bot_levels[level.index()])]),
         PlayedBy::Bot => tr.setup_by_bot.to_string(),
     }
@@ -608,13 +614,14 @@ pub fn status_text(tr: &crate::app::i18n::Tr, by: PlayedBy) -> &'static str {
 }
 
 /// The line under step 3's seats: which seats are open and what fills
-/// them, else how a friend joins when a pad here could, else nothing.
-/// The second half says whether it is the warning.
+/// them, else how a friend joins when a pad here could (its Start named
+/// as a pad of `family` has it), else nothing. The second half says
+/// whether it is the warning.
 pub fn seats_line(
     tr: &crate::app::i18n::Tr,
     open: &[u8],
     level: BotLevel,
-    pad_to_join: bool,
+    (pad_to_join, family): (bool, PadFamily),
 ) -> (String, bool) {
     if !open.is_empty() {
         let list: Vec<String> = open
@@ -633,7 +640,13 @@ pub fn seats_line(
         );
     }
     match pad_to_join {
-        true => (tr.setup_join_hint.to_string(), false),
+        true => (
+            fill(
+                tr.setup_join_hint,
+                &[("start", Pad::Start.name(tr, family))],
+            ),
+            false,
+        ),
         false => (String::new(), false),
     }
 }
@@ -647,7 +660,9 @@ pub fn seat_hint(tr: &crate::app::i18n::Tr, device: LastDevice, seat: u8) -> Str
     }
     let keys = match device {
         LastDevice::Keyboard => "A/D".to_string(),
-        LastDevice::Pad => crate::app::gamepad::scheme::Pad::Left.name(tr).to_string(),
+        LastDevice::Pad(family) => crate::app::gamepad::scheme::Pad::Left
+            .name(tr, family)
+            .to_string(),
     };
     fill(tr.setup_seat_hint, &[("k", &keys)])
 }
@@ -662,8 +677,11 @@ pub fn unnamed(tr: &crate::app::i18n::Tr, device: LastDevice) -> String {
         join: true,
         partners: false,
     };
-    match (device, button_name(&face, Does::Rename, tr)) {
-        (LastDevice::Pad, Some(button)) => tr.match_name_empty.replacen("Tab", &button, 1),
+    match (
+        device,
+        button_name(&face, Does::Rename, tr, device.family()),
+    ) {
+        (LastDevice::Pad(_), Some(button)) => tr.match_name_empty.replacen("Tab", &button, 1),
         _ => tr.match_name_empty.to_string(),
     }
 }
@@ -676,16 +694,23 @@ pub fn unnamed(tr: &crate::app::i18n::Tr, device: LastDevice) -> String {
 /// ([`GameSettings::commit_in_play`], keyboard shared): a versus round puts
 /// P1's placement on the arrows whatever the preset, so IJKL is P2's here
 /// too, and the one-hand preset must not hide the keys P2 will play with.
-pub fn p2_pressed(keys: &ButtonInput<KeyCode>, settings: &GameSettings) -> bool {
+///
+/// Not a key a pad's button holds down ([`Bridged`]): a pad's button is
+/// no one at the keyboard, though it presses a key. The setup's own keys
+/// (the d-pad's W/A/S/D among them) are already left out of
+/// [`p2_only_keys`]; this keeps any other a pad's table presses out too.
+pub fn p2_pressed(keys: &ButtonInput<KeyCode>, bridged: &Bridged, settings: &GameSettings) -> bool {
     p2_only_keys(settings)
         .into_iter()
-        .any(|key| keys.just_pressed(key))
+        .any(|key| keys.just_pressed(key) && !bridged.holds(key))
 }
 
 /// P2's own keys, as [`p2_pressed`] reads them: bound to the second
 /// keyboard seat, and used by neither player 1 nor the menu. Every other
 /// key is the hands of whoever works the setup
-/// ([`crate::app::gamepad::follow_the_setup_hands`]).
+/// ([`crate::app::gamepad::follow_the_setup_hands`]). The menu's keys
+/// include the ones it walks with ([`menu_ui::NAV_KEYS`]): with P1 moved
+/// off W and P2 bound to it, walking up the steps sat P2 down.
 pub fn p2_only_keys(settings: &GameSettings) -> Vec<KeyCode> {
     use crate::app::cursor::keymap;
     let menu = [
@@ -694,7 +719,10 @@ pub fn p2_only_keys(settings: &GameSettings) -> Vec<KeyCode> {
         KeyCode::Escape,
         KeyCode::Tab,
         KeyCode::Backspace,
-    ];
+    ]
+    .into_iter()
+    .chain(menu_ui::NAV_KEYS)
+    .collect::<Vec<_>>();
     let commit = settings.commit_in_play(true);
     let p1: Vec<KeyCode> = keymap(settings, 0, commit).keys().collect();
     keymap(settings, 1, commit)
@@ -794,6 +822,8 @@ pub fn seat_the_match(
 pub struct SetupPads<'w, 's> {
     pub seats: ResMut<'w, PadSeats>,
     pub live: Query<'w, 's, Entity, With<Gamepad>>,
+    /// The keys pads hold down, which are no keyboard player's.
+    pub bridged: Res<'w, Bridged>,
 }
 
 impl SetupPads<'_, '_> {
@@ -856,7 +886,7 @@ pub fn match_setup_input(
     // Nothing typed while not naming, but the reader must still be drained
     // or the first keystroke of a rename arrives with a backlog.
     typed.clear();
-    let p2 = p2_pressed(&keys, &settings);
+    let p2 = p2_pressed(&keys, &pads.bridged, &settings);
     if p2 {
         pads.seats.p2_sat_down();
     }

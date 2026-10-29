@@ -378,8 +378,8 @@ pub struct QuitKeys;
 pub fn quit_card_keys(tr: &crate::app::i18n::Tr, device: LastDevice) -> String {
     match device {
         LastDevice::Keyboard => tr.prompt_quitting.to_string(),
-        LastDevice::Pad => {
-            crate::app::gamepad::scheme::legend(tr, &crate::app::gamepad::Face::Quitting)
+        LastDevice::Pad(family) => {
+            crate::app::gamepad::scheme::legend(tr, family, &crate::app::gamepad::Face::Quitting)
         }
     }
 }
@@ -609,7 +609,9 @@ mod tests {
     fn a_pads_start_asks_before_leaving() {
         use crate::app::gamepad::scheme::{Face, legend};
         let tr = &crate::app::i18n::EN;
-        assert!(legend(tr, &Face::Menu).contains("Start: quit"));
+        assert!(
+            legend(tr, crate::app::gamepad::PadFamily::Xbox, &Face::Menu).contains("Start: quit")
+        );
         let (mut app, pad) = menu_app();
         app.update();
         tap(&mut app, pad, GamepadButton::Start);
@@ -659,7 +661,7 @@ mod tests {
             "Esc: back | Enter: quit"
         );
         assert_eq!(
-            quit_card_keys(tr, LastDevice::Pad),
+            quit_card_keys(tr, LastDevice::PAD),
             "A: quit | B/Start: back"
         );
         let (mut app, pad) = menu_app();
@@ -686,7 +688,7 @@ mod tests {
         app.insert_resource(LastDevice::Keyboard);
         app.update();
         assert_eq!(line(&mut app), "Esc: back | Enter: quit");
-        app.insert_resource(LastDevice::Pad);
+        app.insert_resource(LastDevice::PAD);
         app.update();
         assert_eq!(line(&mut app), "A: quit | B/Start: back");
         key(&mut app, KeyCode::Escape);

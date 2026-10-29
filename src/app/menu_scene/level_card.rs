@@ -172,8 +172,11 @@ pub fn answer_level_card(
 /// What S says over a file that holds a level already, naming the key that
 /// replaces it: S, or the pad's button for it.
 fn taken_line(tr: &Tr, device: LastDevice, name: &str) -> String {
-    match (device, button_name(&Face::LevelCard, Does::Save, tr)) {
-        (LastDevice::Pad, Some(button)) => {
+    match (
+        device,
+        button_name(&Face::LevelCard, Does::Save, tr, device.family()),
+    ) {
+        (LastDevice::Pad(_), Some(button)) => {
             fill(tr.pad.level_card_taken, &[("name", name), ("b", &button)])
         }
         _ => fill(tr.level_card_taken, &[("name", name)]),
@@ -192,7 +195,7 @@ pub struct LevelCardKeys;
 pub fn level_card_keys(tr: &Tr, device: LastDevice) -> String {
     match device {
         LastDevice::Keyboard => tr.level_card_keys.to_string(),
-        LastDevice::Pad => legend(tr, &Face::LevelCard),
+        LastDevice::Pad(family) => legend(tr, family, &Face::LevelCard),
     }
 }
 

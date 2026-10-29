@@ -142,7 +142,7 @@ impl Row {
         caps: &crate::app::keycaps::KeyCaps,
     ) -> String {
         match (self, device) {
-            (_, LastDevice::Pad) => String::new(),
+            (_, LastDevice::Pad(_)) => String::new(),
             (Row::Size, LastDevice::Keyboard) => caps.label(KeyCode::F5),
             (Row::Setting(Setting::Gulls), LastDevice::Keyboard) => {
                 caps.label(keys.command(Command::Gulls))
@@ -170,14 +170,15 @@ pub(super) fn goal_value(tr: &Tr, goal: Goal) -> String {
 pub(super) fn hint(tr: &Tr, device: LastDevice, caps: &crate::app::keycaps::KeyCaps) -> String {
     match device {
         LastDevice::Keyboard => fill(tr.ed_settings_keys, &[("next", &caps.label(NEXT_SETTING))]),
-        LastDevice::Pad => {
+        LastDevice::Pad(_) => {
             let face = Face::Editor { layer: true };
             let names: Vec<&str> = scheme::binds(&face)
                 .into_iter()
                 .filter(|row| matches!(row.does, Does::PrevSetting | Does::NextSetting))
-                .map(|row| row.pad.name(tr))
+                .map(|row| row.pad.name(tr, device.family()))
                 .collect();
-            let button = format!("{}+{}", scheme::Pad::Select.name(tr), names.join("/"));
+            let select = scheme::Pad::Select.name(tr, device.family());
+            let button = format!("{select}+{}", names.join("/"));
             fill(tr.pad.settings_card, &[("b", &button)])
         }
     }
@@ -422,7 +423,7 @@ mod tests {
             // The foot wraps onto a second line at most.
             for foot in [
                 hint(tr, LastDevice::Keyboard, &Default::default()),
-                hint(tr, LastDevice::Pad, &Default::default()),
+                hint(tr, LastDevice::PAD, &Default::default()),
             ] {
                 let used = text_px(&foot, font);
                 if used > 2.0 * (room + 2.0 * super::super::palette::ROW_PAD) {

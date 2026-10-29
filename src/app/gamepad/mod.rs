@@ -21,10 +21,11 @@ mod seats;
 
 pub use bridge::{Bridged, pad_bridge_release, pad_menu_bridge};
 pub use face::{
-    LastPad, PadFace, hands_at_the_menu, pad_prompts_from_env, read_face, track_last_device,
+    LastPad, PadFace, hands_at_the_menu, pad_prompts_from_env, read_face, reference_family,
+    track_last_device,
 };
 pub use rumble::rumble_on_raid;
-pub use scheme::{Face, LastDevice, PadPick};
+pub use scheme::{Face, LastDevice, PadFamily, PadPick};
 pub use seats::{
     PadSeats, SeatPad, follow_the_setup_hands, forget_the_pilot, keep_pad_order,
     let_a_lone_players_claims_go, let_claims_go, pad_claim_seats,
@@ -157,11 +158,16 @@ pub fn pad_move_cursor(
             continue;
         };
         let (dx, dy) = held_direction(pad, deadzone);
+        let held = dx != 0 || dy != 0;
+        // A direction already held when the cursor first meets its pad was
+        // pressed on the screen before: it is no fresh press here.
         let Some(mut repeat) = repeat else {
-            commands.entity(entity).insert(PadRepeat::default());
+            commands.entity(entity).insert(PadRepeat {
+                held,
+                ..PadRepeat::default()
+            });
             continue;
         };
-        let held = dx != 0 || dy != 0;
         let dpad_just = DPAD.iter().any(|&button| pad.just_pressed(button));
         let just = fresh_press(repeat.held, held, dpad_just);
         repeat.held = held;
@@ -300,6 +306,49 @@ mod tests {
         assert_eq!(frame(&mut app, 0.1), 4, "let go, it stops");
         dpad(&mut app, true);
         assert_eq!(frame(&mut app, 0.01), 5, "and a new press steps at once");
+    }
+
+    /// A direction held as the cursor arrives was pressed on the screen
+    /// before: the cursor stays put however long it is held, and the next
+    /// press steps as any does.
+    #[test]
+    fn a_direction_held_into_the_screen_is_no_press() {
+        let mut app = App::new();
+        app.insert_resource(Sim(crate::sim::Board::new(12, 9, 1)));
+        app.init_resource::<GameSettings>();
+        app.init_resource::<PadSeats>();
+        app.init_resource::<Time>();
+        app.world_mut().spawn(Cursor::seated(0));
+        let mut gamepad = Gamepad::default();
+        gamepad.digital_mut().press(GamepadButton::DPadRight);
+        let pad = app.world_mut().spawn(gamepad).id();
+        app.add_systems(Update, pad_move_cursor);
+        let frame = |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_secs_f32(0.2));
+            app.update();
+            app.world_mut()
+                .get_mut::<Gamepad>(pad)
+                .expect("the pad")
+                .digital_mut()
+                .clear();
+            let world = app.world_mut();
+            world
+                .query::<&Cursor>()
+                .single(world)
+                .expect("one cursor")
+                .x
+        };
+        for _ in 0..6 {
+            assert_eq!(frame(&mut app), 0, "held from before");
+        }
+        let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("the pad");
+        gamepad.digital_mut().release(GamepadButton::DPadRight);
+        frame(&mut app);
+        let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("the pad");
+        gamepad.digital_mut().press(GamepadButton::DPadRight);
+        assert_eq!(frame(&mut app), 1, "a press of its own steps");
     }
 
     /// The d-pad moves P1's cursor one tile and places nothing, under

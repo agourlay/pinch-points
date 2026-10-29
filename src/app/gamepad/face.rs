@@ -5,7 +5,7 @@
 //! force, so the bridge pressing keys, a screen reading the pad itself and
 //! the prompt naming the buttons are always reading the same table.
 
-use super::scheme::{Face, LastDevice, PickList, Picks, TextBox};
+use super::scheme::{Face, LastDevice, PadFamily, PickList, Picks, TextBox};
 use crate::app::bot_seats::BotSeats;
 use crate::app::editor::EditorState;
 use crate::app::lobby::{LobbyState, Standing};
@@ -38,6 +38,7 @@ pub struct Modes<'w> {
     quit: Res<'w, crate::app::menu_scene::QuitCard>,
     stages: Res<'w, crate::app::stage_select::StageList>,
     level_card: Res<'w, crate::app::menu_scene::LevelCard>,
+    settings_menu: Res<'w, crate::app::settings::screen::SettingsMenu>,
 }
 
 /// What a round on the board is, and who is looking at it.
@@ -99,7 +100,10 @@ impl FaceSources<'_, '_> {
         };
         match modes.screen.get() {
             Screen::Menu => menu_face(&modes.quit, &modes.level_card),
-            Screen::Settings => Face::Settings,
+            Screen::Settings => Face::Settings {
+                dial: crate::app::settings::screen::Row::ALL[modes.settings_menu.selected]
+                    .is_dial(),
+            },
             Screen::Controls => Face::Controls,
             Screen::Achievements => Face::Achievements,
             Screen::Language => Face::Language,
@@ -159,7 +163,9 @@ impl FaceSources<'_, '_> {
                     Phase::Lost => Face::PuzzleLost { hint },
                 }
             }
-            Screen::Versus if modes.pause.is_open() => Face::Paused,
+            // A spectator's line open under a peer's pause keeps the keys,
+            // a pad's A included, until it is said or dropped.
+            Screen::Versus if modes.pause.is_open() && !board.chat.open() => Face::Paused,
             // The host's map page for the next round of a series.
             Screen::Versus if crate::app::next_map::page_up(&modes.match_menu) => {
                 Face::NextMap { pick: map_pick() }
@@ -403,8 +409,13 @@ pub fn track_last_device(
         || pads
             .iter()
             .any(|(_, pad)| pad.get_just_pressed().next().is_some());
+    // Named as the pad pressed has its buttons printed.
+    let family = reached
+        .and_then(|entity| pads.get(entity).ok())
+        .map(|(_, pad)| PadFamily::of(pad))
+        .unwrap_or_default();
     let now = match (typed, pressed) {
-        (_, true) => LastDevice::Pad,
+        (_, true) => LastDevice::Pad(family),
         (true, false) => LastDevice::Keyboard,
         (false, false) => return,
     };
@@ -423,11 +434,26 @@ pub fn track_last_device(
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct LastPad(pub Option<Entity>);
 
+/// Whose labels a line names the buttons by when it names them whatever
+/// the hands are on (a reference card, read at a keyboard too): the pad's
+/// in hand, else the pad's last reached with, else Xbox's. At the
+/// keyboard [`LastDevice`] has no family to tell.
+pub fn reference_family(last: LastDevice, pad: LastPad, pads: &Query<&Gamepad>) -> PadFamily {
+    match last {
+        LastDevice::Pad(family) => family,
+        LastDevice::Keyboard => pad
+            .0
+            .and_then(|entity| pads.get(entity).ok())
+            .map(PadFamily::of)
+            .unwrap_or_default(),
+    }
+}
+
 /// The pad working the setup as it opens: the pad last reached with when
 /// the hands last used are a pad's, else none, the keyboard's.
 pub fn hands_at_the_menu(last: LastDevice, pad: LastPad) -> Option<Entity> {
     match last {
-        LastDevice::Pad => pad.0,
+        LastDevice::Pad(_) => pad.0,
         LastDevice::Keyboard => None,
     }
 }
@@ -442,7 +468,7 @@ fn a_couch_shares_the_board(face: &Face, cursors: usize) -> bool {
         Face::PuzzleSetup { .. } | Face::PuzzleRunning => cursors > 1,
         Face::Menu
         | Face::Quitting
-        | Face::Settings
+        | Face::Settings { .. }
         | Face::Controls
         | Face::MatchSetup { .. }
         | Face::StageSelect { .. }
@@ -488,7 +514,7 @@ pub fn pad_prompts_from_env(
         .map(|_| commands.spawn(Gamepad::default()).id())
         .collect();
     if crate::app::dev::pad_prompts() {
-        *last = LastDevice::Pad;
+        *last = LastDevice::Pad(crate::app::dev::pad_family());
         last_pad.0 = pads.first().copied();
     }
     // `PINCH_QUIT_CARD`: the card a pad's Start raises, up from the start.
@@ -506,7 +532,8 @@ pub fn every_face() -> Vec<Face> {
     let mut faces = vec![
         Face::Menu,
         Face::Quitting,
-        Face::Settings,
+        Face::Settings { dial: false },
+        Face::Settings { dial: true },
         Face::Controls,
         Face::Replays,
         Face::Achievements,
@@ -702,15 +729,23 @@ mod tests {
     fn the_map_pages_a_says_what_it_does_there() {
         use crate::app::gamepad::scheme::legend;
         use crate::app::i18n::EN;
-        let between = legend(&EN, &Face::NextMap { pick: true });
+        let between = legend(
+            &EN,
+            crate::app::gamepad::PadFamily::Xbox,
+            &Face::NextMap { pick: true },
+        );
         assert!(between.contains(EN.pad.next_round), "{between}");
         assert!(!between.contains(EN.pad.start_match), "{between}");
         assert!(between.contains(EN.pad.back), "{between}");
-        let lobby = legend(&EN, &Face::HostMap { pick: true });
+        let lobby = legend(
+            &EN,
+            crate::app::gamepad::PadFamily::Xbox,
+            &Face::HostMap { pick: true },
+        );
         assert!(lobby.contains(EN.pad.start_match), "{lobby}");
         // On a card A picks nothing from, A is not offered.
         for face in [Face::HostMap { pick: false }, Face::NextMap { pick: false }] {
-            let said = legend(&EN, &face);
+            let said = legend(&EN, crate::app::gamepad::PadFamily::Xbox, &face);
             assert!(!said.contains(EN.pad.start_match), "{said}");
             assert!(!said.contains(EN.pad.next_round), "{said}");
             assert!(said.contains(EN.pad.back), "{said}");
@@ -726,11 +761,44 @@ mod tests {
         app.update();
         assert_eq!(last(&app), LastDevice::Keyboard, "a keyboard to begin");
         press_a_button(&mut app);
-        assert_eq!(last(&app), LastDevice::Pad);
+        assert_eq!(last(&app), LastDevice::PAD);
         app.update();
-        assert_eq!(last(&app), LastDevice::Pad, "and a pad until a key");
+        assert_eq!(last(&app), LastDevice::PAD, "and a pad until a key");
         type_a_key(&mut app);
         assert_eq!(last(&app), LastDevice::Keyboard);
+    }
+
+    /// The hands on a pad carry its maker's labels, told by the vendor id
+    /// it was plugged in with: a DualSense's prompts name ✕, not A.
+    #[test]
+    fn a_pad_is_named_by_its_makers_labels() {
+        use bevy::input::gamepad::{
+            GamepadConnection, GamepadConnectionEvent, gamepad_connection_system,
+        };
+        let mut app = hands();
+        app.add_message::<GamepadConnectionEvent>();
+        app.add_systems(PreUpdate, gamepad_connection_system);
+        let pad = app
+            .world_mut()
+            .query_filtered::<Entity, With<Gamepad>>()
+            .single(app.world())
+            .expect("one pad");
+        app.world_mut().write_message(GamepadConnectionEvent::new(
+            pad,
+            GamepadConnection::Connected {
+                name: "DualSense Wireless Controller".into(),
+                vendor_id: Some(0x054C),
+                product_id: Some(0x0CE6),
+            },
+        ));
+        app.update();
+        press_a_button(&mut app);
+        let last = *app.world().resource::<LastDevice>();
+        assert_eq!(last, LastDevice::Pad(PadFamily::DualSense));
+        assert!(
+            super::super::scheme::legend(&crate::app::i18n::EN, last.family(), &Face::Quitting)
+                .starts_with("✕: quit"),
+        );
     }
 
     /// A key the bridge pressed for a pad is not the keyboard: the bridge
@@ -744,7 +812,7 @@ mod tests {
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::Enter);
         app.update();
-        assert_eq!(*app.world().resource::<LastDevice>(), LastDevice::Pad);
+        assert_eq!(*app.world().resource::<LastDevice>(), LastDevice::PAD);
     }
 
     /// A versus round keeps the hands it began with, so a couch with a
@@ -758,7 +826,7 @@ mod tests {
         assert_eq!(*app.world().resource::<LastDevice>(), LastDevice::Keyboard);
         app.insert_resource(PadFace(Face::Paused));
         press_a_button(&mut app);
-        assert_eq!(*app.world().resource::<LastDevice>(), LastDevice::Pad);
+        assert_eq!(*app.world().resource::<LastDevice>(), LastDevice::PAD);
     }
 
     /// A puzzle in co-op is a shared board as a round is: P2 on a pad
@@ -779,7 +847,7 @@ mod tests {
             app.insert_resource(LastDevice::Keyboard);
             let one = app.world_mut().spawn(Cursor::seated(0)).id();
             press_a_button(&mut app);
-            assert_eq!(last(&app), LastDevice::Pad, "alone: {face:?}");
+            assert_eq!(last(&app), LastDevice::PAD, "alone: {face:?}");
             app.insert_resource(LastDevice::Keyboard);
             let two = app.world_mut().spawn(Cursor::seated(1)).id();
             press_a_button(&mut app);
@@ -804,7 +872,7 @@ mod tests {
         let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("the pad");
         gamepad.analog_mut().set(GamepadAxis::LeftStickX, 0.9);
         app.update();
-        assert_eq!(last(&app), LastDevice::Pad, "the push counts");
+        assert_eq!(last(&app), LastDevice::PAD, "the push counts");
         type_a_key(&mut app);
         assert_eq!(last(&app), LastDevice::Keyboard, "the key, over the drift");
         app.update();
@@ -815,6 +883,6 @@ mod tests {
         let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("the pad");
         gamepad.analog_mut().set(GamepadAxis::LeftStickX, -0.9);
         app.update();
-        assert_eq!(last(&app), LastDevice::Pad, "a fresh push counts again");
+        assert_eq!(last(&app), LastDevice::PAD, "a fresh push counts again");
     }
 }

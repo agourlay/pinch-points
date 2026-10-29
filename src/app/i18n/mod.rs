@@ -591,8 +591,13 @@ struct Tr {
     pub ctl_reset_key: &'static str,
     pub ctl_press_key: &'static str,
     pub ctl_taken: &'static str,
-    /// Under the list when a row's key is set by P1's placing-keys
-    /// scheme rather than bound here: `{s}` is that setting's name.
+    /// [`Self::ctl_taken`] for a key the other seat holds, which the page
+    /// being edited does not list: `{p}` is that seat's label.
+    pub ctl_taken_by: &'static str,
+    /// Under the list on a place row while P1's placing keys are the
+    /// one-hand preset, which takes over from the row's key when P1 plays
+    /// alone: `{k}` is the preset's key, `{a}` the row's action and `{s}`
+    /// that setting's name.
     pub ctl_preset: &'static str,
     pub ctl_reset: &'static str,
     /// The first press of a reset, waiting for the second: `{k}` is the
@@ -719,7 +724,8 @@ struct Tr {
     /// Step 3's column heads: seat, name, played by.
     pub setup_columns: [&'static str; 3],
     /// Who plays a seat: `{p}`'s keys, controller `{n}`, nobody yet, `{p2}`
-    /// or a pad, the AI at `{l}`, a bot.
+    /// or a pad, the AI at `{l}`, a bot. `{start}` is the pad's Start
+    /// button as its maker labels it.
     pub setup_by_keys: &'static str,
     pub setup_by_pad: &'static str,
     pub setup_by_open: &'static str,
@@ -750,7 +756,7 @@ struct Tr {
     pub setup_kept_pad: &'static str,
     /// The open seats `{list}`, which the AI at `{l}` takes at the start.
     pub setup_open_line: &'static str,
-    /// How a friend sits down, when a pad here could.
+    /// How a friend sits down, when a pad here could: `{start}` as above.
     pub setup_join_hint: &'static str,
     /// Step 3's button, with `{k}` the key that presses it in the hands
     /// last used ([`crate::app::match_setup::start_button_label`]).
@@ -826,6 +832,9 @@ struct Tr {
     pub lobby_watching: &'static str,
     /// Shown once W has armed the next join to be a watch.
     pub lobby_watch_armed: &'static str,
+    /// The same with no beach on the list: Enter has nothing to watch, so
+    /// the line says so and offers J alone.
+    pub lobby_watch_armed_none: &'static str,
     /// The header while watching someone else's match.
     pub title_watching: &'static str,
     pub lobby_listening: &'static str,

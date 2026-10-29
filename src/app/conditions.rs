@@ -55,6 +55,21 @@ pub(super) fn keys_are_free(menu: Res<crate::app::pause::PauseMenu>) -> bool {
     !menu.is_open()
 }
 
+/// Whether a spectator's chat line reads the keyboard: as [`keys_are_free`]
+/// has it, and also under a card while a line is open.
+///
+/// A peer's pause raises the card on a spectator mid-line, and the hands
+/// typing it do not stop: the letters went to the card instead, each S
+/// walking it down and the Enter meant to send the line taking "To menu"
+/// or "Quit". The line keeps the keys until it is said or dropped, and the
+/// card stands down meanwhile (`pause_input`).
+pub(super) fn chat_keys_free(
+    menu: Res<crate::app::pause::PauseMenu>,
+    chat: Res<crate::app::spectators::SpectatorChat>,
+) -> bool {
+    !menu.is_open() || chat.open()
+}
+
 /// Whether a player is typing words rather than pressing keys: a seat's
 /// name, a beach's name, an address, a line of chat.
 ///

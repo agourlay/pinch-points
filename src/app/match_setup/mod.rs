@@ -1172,7 +1172,7 @@ mod tests {
         let pressed = |key: KeyCode, settings: &GameSettings| {
             let mut keys = ButtonInput::<KeyCode>::default();
             keys.press(key);
-            p2_pressed(&keys, settings)
+            p2_pressed(&keys, &crate::app::gamepad::Bridged::default(), settings)
         };
         let stock = GameSettings::default();
         assert!(pressed(KeyCode::KeyI, &stock), "P2's up");
@@ -1192,6 +1192,15 @@ mod tests {
             !pressed(KeyCode::ArrowUp, &one_hand),
             "P1's placement under the preset, as the round plays it"
         );
+
+        // The menu walks on W/A/S/D and the arrows whoever holds them: with
+        // P1's up moved to E and W given to P2, walking up is no arrival,
+        // but P2's other keys still are.
+        let mut walked = GameSettings::default();
+        walked.binds[0].set(crate::app::binds::Action::MoveUp, KeyCode::KeyE);
+        walked.binds[1].set(crate::app::binds::Action::Remove, KeyCode::KeyW);
+        assert!(!pressed(KeyCode::KeyW, &walked), "the menu's up");
+        assert!(pressed(KeyCode::KeyI, &walked), "P2's up");
     }
 
     /// The point of sending the beach at all: a level the joiner has never

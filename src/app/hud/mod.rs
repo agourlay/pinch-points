@@ -561,11 +561,14 @@ pub fn update_hint(
         // A pad's player is told the pad's button for the hint, as the
         // face's table has it.
         let button = match *lesson.device {
-            crate::app::gamepad::LastDevice::Pad => crate::app::gamepad::scheme::button_name(
-                &lesson.face.0,
-                crate::app::gamepad::scheme::Does::Hint,
-                tr,
-            ),
+            crate::app::gamepad::LastDevice::Pad(family) => {
+                crate::app::gamepad::scheme::button_name(
+                    &lesson.face.0,
+                    crate::app::gamepad::scheme::Does::Hint,
+                    tr,
+                    family,
+                )
+            }
             crate::app::gamepad::LastDevice::Keyboard => None,
         };
         crate::app::hint::hint_line(tr, &stuck, &denied, phase.get(), button.as_deref())
@@ -1122,6 +1125,7 @@ mod tests {
                 &crate::app::gamepad::Face::Editor { layer: true },
                 crate::app::gamepad::scheme::Does::Save,
                 tr,
+                crate::app::gamepad::PadFamily::Xbox,
             )
             .expect("a button saves");
             let pad = fill(tr.pad.save_taken, &[("name", &fresh), ("b", &save)]);

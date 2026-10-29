@@ -886,13 +886,17 @@ fn add_ui_systems(app: &mut App) {
             (replays::playback_speed_input, replays::playback_pause_input)
                 .run_if(in_state(Screen::Versus).and_then(keys_are_free)),
             (
-                spectators::spectator_chat_input,
-                spectators::spectator_vote_input,
-                spectators::spectator_pick_input,
-                spectators::settle_spectator_vote,
+                spectators::spectator_chat_input.run_if(chat_keys_free),
+                (
+                    spectators::spectator_vote_input,
+                    spectators::spectator_pick_input,
+                    spectators::settle_spectator_vote,
+                )
+                    .chain()
+                    .run_if(keys_are_free),
             )
                 .chain()
-                .run_if(in_state(Screen::Versus).and_then(keys_are_free)),
+                .run_if(in_state(Screen::Versus)),
             bot_seats::announce.run_if(in_state(Screen::Versus)),
             (
                 gamepad::follow_the_setup_hands,

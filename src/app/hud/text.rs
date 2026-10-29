@@ -100,7 +100,12 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState, map_pick: bool) -> HudText
     let prompt = match lobby.standing() {
         // W armed is the one bit of lobby state a player has to be told
         // about, since it changes what picking a beach does.
-        Standing::Choosing { watching: true } => tr.lobby_watch_armed.to_string(),
+        // With no beach on the list Enter has nothing to watch, and only
+        // J (an address) does.
+        Standing::Choosing { watching: true } => match lobby.hosts.is_empty() {
+            true => tr.lobby_watch_armed_none.to_string(),
+            false => tr.lobby_watch_armed.to_string(),
+        },
         // A peer in line is not waiting for a launch either: the round it
         // is queued for is the one already being played without it. And
         // one that came to watch is not in line for a chair, so it is not
@@ -431,9 +436,9 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         // table's, as the transport reads it.
         let template = match (
             r.device,
-            scheme::button_name(r.face, scheme::Does::Speed, tr),
+            scheme::button_name(r.face, scheme::Does::Speed, tr, r.device.family()),
         ) {
-            (LastDevice::Pad, Some(button)) => fill(tr.pad.replay_speed, &[("b", &button)]),
+            (LastDevice::Pad(_), Some(button)) => fill(tr.pad.replay_speed, &[("b", &button)]),
             _ => tr.replay_speed.to_string(),
         };
         fill(
@@ -687,7 +692,7 @@ pub(super) fn screen_text(screen: Screen, r: &Readout) -> HudText {
     let mut said = screen_text_for(screen, r);
     // A pad's player is told the pad's buttons, from the table the bridge
     // and the screens read. None of the keyboard's spelling applies.
-    if r.device == LastDevice::Pad {
+    if r.device.is_pad() {
         said.prompt = pad_prompt(r);
         return said;
     }
@@ -697,7 +702,9 @@ pub(super) fn screen_text(screen: Screen, r: &Readout) -> HudText {
         // there, not the way to a pause the player is already in. The
         // card is an overlay and not a screen of its own, which is why
         // this is a coat of paint over the screen's own answer.
-        if r.paused {
+        // Except to a spectator's open line, which keeps the keys under
+        // a peer's pause and is shown as it is typed.
+        if r.paused && r.spectator_typing.is_none() {
             said.prompt = r.tr.prompt_paused.to_string();
         }
         said.prompt = format!("{} | {}", said.prompt, r.tr.prompt_mute);
@@ -729,7 +736,16 @@ pub(super) fn pad_prompt(r: &Readout) -> String {
             Some(line) => format!("> {line}_ | {}", p.steam_keyboard),
             None => p.steam_keyboard.to_string(),
         }),
-        Face::Browse { watching: true, .. } => Some(p.watch_armed.to_string()),
+        Face::Browse {
+            watching: true,
+            hosts: true,
+        } => Some(p.watch_armed.to_string()),
+        // Nothing to watch on the list: A is not offered, and the line
+        // says why.
+        Face::Browse {
+            watching: true,
+            hosts: false,
+        } => Some(format!("{} | {}", p.watch_armed, p.none_yet)),
         Face::Browse {
             watching: false, ..
         } => Some(match r.lobby.hosts.len() {
@@ -784,10 +800,12 @@ pub(super) fn pad_prompt(r: &Readout) -> String {
             crate::app::replays::kept_lead(tr, *keep).map(String::from)
         }
         // Held, the second layer's buttons are Select and each of them.
-        Face::Editor { layer: true } => Some(format!("{} +", Pad::Select.name(tr))),
+        Face::Editor { layer: true } => {
+            Some(format!("{} +", Pad::Select.name(tr, r.device.family())))
+        }
         Face::Menu
         | Face::Quitting
-        | Face::Settings
+        | Face::Settings { .. }
         | Face::Controls
         | Face::MatchSetup { .. }
         | Face::StageSelect { .. }
@@ -805,7 +823,7 @@ pub(super) fn pad_prompt(r: &Readout) -> String {
         | Face::LevelCard
         | Face::Playtest(_) => None,
     };
-    let controls = scheme::legend(tr, r.face);
+    let controls = scheme::legend(tr, r.device.family(), r.face);
     match (lead, r.face) {
         (Some(lead), Face::Editor { layer: true }) => format!("{lead} {controls}"),
         (Some(lead), _) => format!("{lead} | {controls}"),
@@ -1063,7 +1081,7 @@ mod tests {
         let pad = |fx: &Fixture| {
             pad_prompt(&Readout {
                 face: &face,
-                device: LastDevice::Pad,
+                device: LastDevice::PAD,
                 ..fx.readout()
             })
         };
@@ -1159,12 +1177,12 @@ mod tests {
         );
         let pad = Readout {
             face: &Face::Quitting,
-            device: LastDevice::Pad,
+            device: LastDevice::PAD,
             ..fx.readout()
         };
         assert_eq!(
             screen_text(Screen::Menu, &pad).prompt,
-            crate::app::menu_scene::quit_card_keys(tr, LastDevice::Pad)
+            crate::app::menu_scene::quit_card_keys(tr, LastDevice::PAD)
         );
     }
 
@@ -1270,6 +1288,18 @@ mod tests {
         // rows should not look like it has only as many as fit.
         let prompt = lobby_text(&EN, &lobby, true).prompt;
         assert!(prompt.contains('3'), "how many are out there: {prompt}");
+
+        // W armed: Enter watches the beach under the cursor, and with no
+        // beach on the list it has none, so only J is offered.
+        lobby.standing = crate::app::lobby::Standing::Choosing { watching: true };
+        assert_eq!(lobby_text(&EN, &lobby, true).prompt, EN.lobby_watch_armed);
+        let hosts = std::mem::take(&mut lobby.hosts);
+        assert_eq!(
+            lobby_text(&EN, &lobby, true).prompt,
+            EN.lobby_watch_armed_none
+        );
+        lobby.hosts = hosts;
+        lobby.standing = crate::app::lobby::Standing::Choosing { watching: false };
 
         lobby.feedback = "hosting on port 47777".into();
         assert_eq!(
@@ -1566,9 +1596,9 @@ mod tests {
         };
         let keys = said(KeepOffer::Offered, LastDevice::Keyboard);
         assert!(keys.contains("G: keep replay"), "{keys}");
-        let pad = said(KeepOffer::Offered, LastDevice::Pad);
+        let pad = said(KeepOffer::Offered, LastDevice::PAD);
         assert!(pad.contains("X: keep replay"), "{pad}");
-        for device in [LastDevice::Keyboard, LastDevice::Pad] {
+        for device in [LastDevice::Keyboard, LastDevice::PAD] {
             let kept = said(KeepOffer::Kept, device);
             assert!(kept.contains(EN.replay_kept), "{device:?}: {kept}");
             assert!(!kept.contains("keep replay"), "{device:?}: {kept}");
@@ -1602,9 +1632,9 @@ mod tests {
             said(KeepOffer::Offered, LastDevice::Keyboard),
             "G: keep replay"
         );
-        let pad = said(KeepOffer::Offered, LastDevice::Pad);
+        let pad = said(KeepOffer::Offered, LastDevice::PAD);
         assert!(pad.contains("X: keep replay"), "{pad}");
-        for device in [LastDevice::Keyboard, LastDevice::Pad] {
+        for device in [LastDevice::Keyboard, LastDevice::PAD] {
             let kept = said(KeepOffer::Kept, device);
             assert!(kept.contains(EN.replay_kept), "{device:?}: {kept}");
             assert!(!kept.contains("keep replay"), "{device:?}: {kept}");
@@ -2058,13 +2088,16 @@ mod tests {
         let fx = Fixture::default();
         let keys = fx.readout();
         let pad = Readout {
-            device: LastDevice::Pad,
+            device: LastDevice::PAD,
             ..fx.readout()
         };
         let said = screen_text(Screen::Menu, &keys);
         assert!(said.prompt.contains("Enter: play"), "{}", said.prompt);
         let said = screen_text(Screen::Menu, &pad);
-        assert_eq!(said.prompt, scheme::legend(&EN, &Face::Menu));
+        assert_eq!(
+            said.prompt,
+            scheme::legend(&EN, crate::app::gamepad::PadFamily::Xbox, &Face::Menu)
+        );
         assert!(said.prompt.contains("A: play"), "{}", said.prompt);
         // Each screen with the face it shows at rest, and the pad's line
         // there ends on that face's own legend: a screen whose prompt came
@@ -2073,7 +2106,7 @@ mod tests {
         for screen in Screen::ALL {
             let face = match screen {
                 Screen::Menu => Face::Menu,
-                Screen::Settings => Face::Settings,
+                Screen::Settings => Face::Settings { dial: true },
                 Screen::Controls => Face::Controls,
                 Screen::MatchSetup => Face::MatchSetup {
                     step: crate::app::match_setup::Step::Game,
@@ -2110,11 +2143,11 @@ mod tests {
                 screen,
                 &Readout {
                     face: &face,
-                    device: LastDevice::Pad,
+                    device: LastDevice::PAD,
                     ..fx.readout()
                 },
             );
-            let legend = scheme::legend(&EN, &face);
+            let legend = scheme::legend(&EN, crate::app::gamepad::PadFamily::Xbox, &face);
             assert_eq!(keyboard.title, pads.title, "{screen:?}");
             assert!(
                 pads.prompt.ends_with(&legend),
@@ -2141,7 +2174,7 @@ mod tests {
         let pad = |face: &Face| {
             pad_prompt(&Readout {
                 face,
-                device: LastDevice::Pad,
+                device: LastDevice::PAD,
                 ..fx.readout()
             })
         };
@@ -2157,7 +2190,11 @@ mod tests {
             pad(&Face::Editor { layer: true }),
             format!(
                 "Select + {}",
-                scheme::legend(&EN, &Face::Editor { layer: true })
+                scheme::legend(
+                    &EN,
+                    crate::app::gamepad::PadFamily::Xbox,
+                    &Face::Editor { layer: true }
+                )
             )
         );
         let picks = scheme::Picks {
@@ -2184,7 +2221,7 @@ mod tests {
             Screen::Versus,
             &Readout {
                 face: &face,
-                device: LastDevice::Pad,
+                device: LastDevice::PAD,
                 spectator_typing: Some("nice save"),
                 ..fx.readout()
             },
@@ -2194,7 +2231,7 @@ mod tests {
             format!(
                 "> nice save_ | {} | {}",
                 EN.pad.steam_keyboard,
-                scheme::legend(&EN, &face)
+                scheme::legend(&EN, crate::app::gamepad::PadFamily::Xbox, &face)
             )
         );
     }
@@ -2211,7 +2248,7 @@ mod tests {
         let live = |screen| vec![(screen, false)];
         match face {
             Face::Menu | Face::Quitting | Face::LevelCard => live(Screen::Menu),
-            Face::Settings => live(Screen::Settings),
+            Face::Settings { .. } => live(Screen::Settings),
             Face::Controls => live(Screen::Controls),
             Face::MatchSetup { .. } | Face::Typing(TextBox::Keeps) => live(Screen::MatchSetup),
             Face::StageSelect { .. } => live(Screen::StageSelect),
@@ -2262,12 +2299,22 @@ mod tests {
             .copied()
             .unwrap_or("");
         let mut out = Vec::new();
-        for face in crate::app::gamepad::face::every_face() {
+        // Every maker's names: a PlayStation pad's Start is "Options".
+        let faces = crate::app::gamepad::face::every_face()
+            .into_iter()
+            .flat_map(|face| {
+                crate::app::gamepad::PadFamily::ALL.map(|family| (face.clone(), family))
+            });
+        for (face, family) in faces {
             let leads: Vec<String> = match &face {
                 Face::Typing(_) => vec![p.steam_keyboard.to_string()],
-                Face::Browse { .. } => [p.watch_armed, p.none_yet, p.open_game, p.open_games]
-                    .map(n)
-                    .to_vec(),
+                Face::Browse { .. } => {
+                    let mut leads = [p.watch_armed, p.none_yet, p.open_game, p.open_games]
+                        .map(n)
+                        .to_vec();
+                    leads.push(format!("{} | {}", p.watch_armed, p.none_yet));
+                    leads
+                }
                 Face::Hosting { .. } => vec![p.hosting.to_string()],
                 Face::HostMap { .. } | Face::NextMap { .. } => vec![String::new()],
                 Face::Kicking { .. } => vec![n(p.kick_who)],
@@ -2292,7 +2339,7 @@ mod tests {
                 ]
                 .map(n)
                 .to_vec(),
-                Face::Editor { layer: true } => vec![format!("{} +", Pad::Select.name(tr))],
+                Face::Editor { layer: true } => vec![format!("{} +", Pad::Select.name(tr, family))],
                 Face::Results { keep, .. } | Face::Interlude { keep } => {
                     vec![
                         crate::app::replays::kept_lead(tr, *keep)
@@ -2301,7 +2348,7 @@ mod tests {
                 }
                 Face::Menu
                 | Face::Quitting
-                | Face::Settings
+                | Face::Settings { .. }
                 | Face::Controls
                 | Face::MatchSetup { .. }
                 | Face::StageSelect { .. }
@@ -2319,7 +2366,7 @@ mod tests {
                 | Face::LevelCard
                 | Face::Playtest(_) => vec![String::new()],
             };
-            let controls = scheme::legend(tr, &face);
+            let controls = scheme::legend(tr, family, &face);
             for lead in leads {
                 let line = match (lead.is_empty(), &face) {
                     (true, _) => controls.clone(),
@@ -2434,6 +2481,7 @@ mod tests {
         for line in [
             typing_prompt(tr, true),
             tr.lobby_watch_armed.to_string(),
+            tr.lobby_watch_armed_none.to_string(),
             tr.lobby_queued_watch_prompt.to_string(),
             tr.lobby_queued_prompt.to_string(),
             tr.lobby_watching_prompt.to_string(),

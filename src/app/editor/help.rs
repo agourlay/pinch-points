@@ -13,8 +13,8 @@
 use super::brush::Brush;
 use super::card::{self, Row};
 use super::{ARROWS, EditorCard, EditorKeys, EditorState, HELP_KEY, Mode, block_order, shifted};
-use crate::app::gamepad::LastDevice;
 use crate::app::gamepad::scheme::{self, Bind, Does, Face, Key, Pad};
+use crate::app::gamepad::{LastDevice, PadFamily};
 use crate::app::i18n::{Tr, fill};
 use crate::app::keycaps::KeyCaps;
 use crate::app::menu_ui;
@@ -116,6 +116,8 @@ struct Spell<'a> {
     tr: &'a Tr,
     caps: &'a KeyCaps,
     keys: &'a EditorKeys,
+    /// Whose labels the buttons are named by.
+    family: PadFamily,
 }
 
 impl Spell<'_> {
@@ -200,9 +202,9 @@ fn gather_face(gather: &mut Gather, spell: &Spell, face: &Face, keep: impl Fn(Do
             | Pad::Right
             | Pad::Move => None,
         };
-        let name = row.pad.name(tr).to_string();
+        let name = row.pad.name(tr, spell.family).to_string();
         let name = match layer {
-            true => format!("{}+{name}", Pad::Select.name(tr)),
+            true => format!("{}+{name}", Pad::Select.name(tr, spell.family)),
             false => name,
         };
         gather.add(
@@ -216,15 +218,31 @@ fn gather_face(gather: &mut Gather, spell: &Spell, face: &Face, keep: impl Fn(Do
 /// Every key and button the editor answers to, in two columns of
 /// sections: building on the bench in the first; "My levels", the
 /// playtest and a custom stage's keys on the stage list in the second.
-pub(super) fn sections(tr: &Tr, keys: &EditorKeys, caps: &KeyCaps) -> [Vec<Section>; 2] {
-    let spell = Spell { tr, caps, keys };
+/// The buttons are named as a pad of `family` has them printed.
+pub(super) fn sections(
+    tr: &Tr,
+    keys: &EditorKeys,
+    caps: &KeyCaps,
+    family: PadFamily,
+) -> [Vec<Section>; 2] {
+    let spell = Spell {
+        tr,
+        caps,
+        keys,
+        family,
+    };
     let any = |_: Does| true;
 
     let mut bench = Gather::default();
     gather_face(&mut bench, &spell, &Face::Editor { layer: false }, any);
     gather_face(&mut bench, &spell, &Face::Editor { layer: true }, any);
-    // The brushes' letters, which paint as they choose.
-    let letters: Vec<String> = Brush::ALL.iter().map(|b| caps.label(b.key())).collect();
+    // The brushes' letters, which paint as they choose: those P1's
+    // movement and wall keys have left them ([`EditorKeys::brush`]).
+    let letters: Vec<String> = Brush::ALL
+        .iter()
+        .filter_map(|&b| keys.brush(b))
+        .map(|key| caps.label(key))
+        .collect();
     bench.add(
         tr.ed_help_brushes.to_string(),
         Some(letters.join(" ")),
@@ -335,6 +353,7 @@ pub fn show_editor_card(
     mut commands: Commands,
     state: Res<EditorState>,
     (settings, device, caps): (Res<GameSettings>, Res<LastDevice>, Res<KeyCaps>),
+    (last_pad, pads): (Res<crate::app::gamepad::LastPad>, Query<&Gamepad>),
     shown: Query<(Entity, &CardShown)>,
 ) {
     let want = state.card();
@@ -401,7 +420,10 @@ pub fn show_editor_card(
             },
         ));
         match card {
-            EditorCard::Help => spawn_help(card_body, tr, &keys, &caps),
+            EditorCard::Help => {
+                let family = crate::app::gamepad::reference_family(*device, *last_pad, &pads);
+                spawn_help(card_body, tr, &keys, &caps, family);
+            }
             EditorCard::Tips => {
                 for tip in tips(tr, *device, &caps) {
                     card_body.spawn((
@@ -440,8 +462,14 @@ fn fine(text: String, color: Color, width: f32) -> impl Bundle {
 
 /// The help card's two columns of sections, each line what is done, its
 /// keys and its buttons, under a head naming the hands.
-fn spawn_help(body: &mut ChildSpawnerCommands, tr: &Tr, keys: &EditorKeys, caps: &KeyCaps) {
-    let columns = sections(tr, keys, caps);
+fn spawn_help(
+    body: &mut ChildSpawnerCommands,
+    tr: &Tr,
+    keys: &EditorKeys,
+    caps: &KeyCaps,
+    family: PadFamily,
+) {
+    let columns = sections(tr, keys, caps, family);
     body.spawn(Node {
         column_gap: Val::Px(COLUMN_GAP),
         align_items: AlignItems::FlexStart,
@@ -530,7 +558,7 @@ mod tests {
     fn the_card_lists_every_control_of_the_editors_faces() {
         let tr = &crate::app::i18n::EN;
         let (keys, caps) = stock();
-        let lines = all_lines(&sections(tr, &keys, &caps));
+        let lines = all_lines(&sections(tr, &keys, &caps, PadFamily::Xbox));
         let mut faces = vec![
             Face::Editor { layer: false },
             Face::Editor { layer: true },
@@ -549,7 +577,8 @@ mod tests {
                     .unwrap_or_else(|| panic!("{face:?}: no line for {row:?}"));
                 assert_ne!(line.keys, "-", "{face:?}: {row:?} has no key");
                 assert!(
-                    line.pad.contains(row.pad.name(tr)),
+                    line.pad
+                        .contains(row.pad.name(tr, crate::app::gamepad::PadFamily::Xbox)),
                     "{face:?}: {row:?} not on {line:?}"
                 );
             }
@@ -579,7 +608,7 @@ mod tests {
         assert_eq!(said(tr.ed_set_gulls), "K");
         assert_eq!(said(tr.ed_set_wrap), "O");
         // The stage list's keys for a level of the player's own.
-        let columns = sections(tr, &keys, &caps);
+        let columns = sections(tr, &keys, &caps, PadFamily::Xbox);
         let stages: Vec<(String, String)> = columns[1][2]
             .lines
             .iter()
@@ -615,7 +644,7 @@ mod tests {
         }
         let keys = EditorKeys::of(&settings);
         let caps = KeyCaps::default();
-        let lines = all_lines(&sections(tr, &keys, &caps));
+        let lines = all_lines(&sections(tr, &keys, &caps, PadFamily::Xbox));
         let said = |words: &str| {
             lines
                 .iter()
@@ -629,6 +658,27 @@ mod tests {
         assert_eq!(said(Does::Remove.label(tr)), "X");
         assert_eq!(said(tr.ed_set_gulls), "F7", "K is a wall now");
         assert_eq!(said(Does::Turn.label(tr)), "T");
+    }
+
+    /// The brushes' line names only the letters that load one: with P1
+    /// moving up on E, E walks the cursor, and Weed is Tab's alone.
+    #[test]
+    fn the_brushes_line_leaves_out_a_taken_letter() {
+        use crate::app::binds::Action;
+        let tr = &crate::app::i18n::EN;
+        let caps = KeyCaps::default();
+        let brushes = |settings: &GameSettings| {
+            let keys = EditorKeys::of(settings);
+            all_lines(&sections(tr, &keys, &caps, PadFamily::Xbox))
+                .into_iter()
+                .find(|line| line.does == tr.ed_help_brushes)
+                .map(|line| line.keys)
+                .unwrap_or_default()
+        };
+        let mut settings = GameSettings::default();
+        assert_eq!(brushes(&settings), "X R C H L E P B G");
+        settings.binds[0].set(Action::MoveUp, KeyCode::KeyE);
+        assert_eq!(brushes(&settings), "X R C H L P B G");
     }
 
     /// Every cell fits its column in every language, at the stock keys
@@ -651,7 +701,18 @@ mod tests {
                 };
                 let keys = EditorKeys::of(&settings);
                 let caps = KeyCaps::default();
-                let columns = sections(tr, &keys, &caps);
+                // Every maker's button names: "Share+R2" is a PlayStation
+                // pad's.
+                for family in PadFamily::ALL {
+                    let columns = sections(tr, &keys, &caps, family);
+                    for line in all_lines(&columns) {
+                        let used = text_px(&line.pad, font);
+                        if used > PAD_W {
+                            over.push(format!("{lang:?}: {used:.0}px of {PAD_W:.0}: {}", line.pad));
+                        }
+                    }
+                }
+                let columns = sections(tr, &keys, &caps, PadFamily::Xbox);
                 for line in all_lines(&columns) {
                     for (cell, room) in [
                         (&line.keys, KEYS_W),
@@ -677,7 +738,7 @@ mod tests {
                     .unwrap_or(0);
                 assert!(rows <= 26, "{lang:?}: {rows} rows in a column");
             }
-            for device in [LastDevice::Keyboard, LastDevice::Pad] {
+            for device in [LastDevice::Keyboard, LastDevice::PAD] {
                 for tip in tips(tr, device, &KeyCaps::default()) {
                     let used = text_px(&tip, menu_ui::type_scale::BODY);
                     if used > 2.0 * (TIPS_W - 2.0 * CARD_PAD - 4.0) {

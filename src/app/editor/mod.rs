@@ -124,6 +124,14 @@ impl EditorKeys {
         move |key| keys.just_pressed(key) && !self.shadows(key)
     }
 
+    /// The key that loads `brush`, unless P1's movement or wall keys have
+    /// taken it: a brush has no stand-in, and is reached with Tab and
+    /// Space then. Read by the brush's press and by the palette and help
+    /// card that name it, so a taken letter is never offered.
+    pub(crate) fn brush(&self, brush: Brush) -> Option<KeyCode> {
+        Some(brush.key()).filter(|&key| !self.shadows(key))
+    }
+
     /// The key `command` is on: its letter, or its function key while P1's
     /// movement or wall keys have taken the letter. Read by the command
     /// itself, by the prompt that names it and by the pad's button for it,
@@ -356,8 +364,8 @@ impl Offer {
             Some(layer) => crate::app::gamepad::Face::Editor { layer },
             None => crate::app::gamepad::Face::LevelList,
         };
-        match (device, button_name(&face, does, tr)) {
-            (LastDevice::Pad, Some(button)) => fill(pad, &[("b", &button)]),
+        match (device, button_name(&face, does, tr, device.family())) {
+            (LastDevice::Pad(_), Some(button)) => fill(pad, &[("b", &button)]),
             _ => keys.to_string(),
         }
     }
@@ -1097,7 +1105,7 @@ pub fn editor_input(
         // A pad's player has no keys to name it with until Steam's own
         // keyboard is up, so that is what they are told.
         state.feedback = match *device {
-            LastDevice::Pad => settings.tr().pad.steam_keyboard.to_string(),
+            LastDevice::Pad(_) => settings.tr().pad.steam_keyboard.to_string(),
             LastDevice::Keyboard => settings.tr().ed_naming.to_string(),
         };
         return;
@@ -1151,7 +1159,7 @@ pub fn editor_input(
     // Either press begins a stroke, which goes on while the key is held.
     let period = setting::hole_period(&state);
     for brush in Brush::ALL {
-        if pressed(brush.key()) {
+        if editor_keys.brush(brush).is_some_and(&pressed) {
             state.brush = brush;
             press(&mut state, board, (x, y), period, tr);
         }
@@ -1355,9 +1363,10 @@ fn drag(
     here: (u8, u8),
     tr: &Tr,
 ) {
-    let letter = state.brush.key();
-    let held =
-        keys.pressed(KeyCode::Space) || (keys.pressed(letter) && !editor_keys.shadows(letter));
+    let held = keys.pressed(KeyCode::Space)
+        || editor_keys
+            .brush(state.brush)
+            .is_some_and(|letter| keys.pressed(letter));
     let Some(mut stroke) = state.stroke.take().filter(|_| held) else {
         return;
     };

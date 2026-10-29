@@ -198,9 +198,9 @@ impl Lineup {
     /// network dealt it, and plays by P1's settings row: the keyboard does
     /// (`keymap(&settings, 0, ..)` online), so the pad has to as well. Read
     /// by the dealt seat, a joiner in seat two whose P2 row said "keys" had
-    /// a dead pad all match. It takes the pad that worked the setup, else
-    /// the first claim, else the first pad not benched. (Online there is
-    /// no pilot: it goes with the setup, [`forget_the_pilot`].)
+    /// a dead pad all match. It takes the pad that worked the setup, or
+    /// the pad in the hands on the way in ([`let_claims_go`]), else the
+    /// first claim, else the first pad not benched.
     fn pads(&self, rows: Rows, players: &[u8]) -> Vec<(u8, Option<Entity>)> {
         if let [only] = players {
             let pad = match rows.choice(0) {
@@ -777,8 +777,9 @@ pub(super) fn seated(players: impl Iterator<Item = u8>) -> Vec<u8> {
 /// picked there). Gone elsewhere, the seat is owed until match setup is
 /// next opened.
 ///
-/// A claim taken over by a new pad mid-round benches the pad that held
-/// it ([`PadSeats::benched`]) until it next presses Start.
+/// A claim (or the pilot's role) taken over by a new pad mid-round
+/// benches the pad that held it ([`PadSeats::benched`]) until it next
+/// presses Start.
 pub fn keep_pad_order(
     pads: Query<Entity, With<Gamepad>>,
     screen: Res<State<Screen>>,
@@ -805,11 +806,15 @@ pub fn keep_pad_order(
         // A claimed pad gone and a new one plugged in: the new one takes
         // over the claim, and the seat the claim held. Placed after every
         // claim instead, it left that seat empty for the rest of a series
-        // and steered a keyboard player's seat besides.
+        // and steered a keyboard player's seat besides. The pilot's pad
+        // the same: only overwritten in the order, the new pad was no
+        // pilot, P1 was dealt the last spare pad, and the friend on P2
+        // and the newcomer swapped seats for the rest of the series.
         let dead = claims
             .iter_mut()
             .map(|(claimed, _)| claimed)
             .chain(own.iter_mut())
+            .chain(pilot.as_mut())
             .find(|claimed| !pads.contains(**claimed));
         if let Some(claimed) = dead {
             let gone = std::mem::replace(claimed, pad);
@@ -886,13 +891,22 @@ pub fn keep_pad_order(
 /// A lone cursor takes the first claim if there is one, and the first
 /// claim after a couch match was a friend's pad: P1's puzzle followed the
 /// friend. The benched pads are free again too, there being no claim left
-/// to keep them from, and the setup's pilot and P2 at the keys go with
-/// the couch they seated: a co-op puzzle deals its pads afresh. The
-/// chairs the claims took are owed until match setup is next opened,
+/// to keep them from, and P2 at the keys goes with the couch it seated.
+/// The chairs the claims took are owed until match setup is next opened,
 /// where the friends press Start again.
-pub fn let_claims_go(mut seats: ResMut<PadSeats>) {
+///
+/// P1's pad is the one in the hands that came in
+/// ([`super::hands_at_the_menu`]),
+/// as at the setup: with none, a lone cursor took the first pad plugged
+/// in, so a docked Deck's own pad steered while the pad in the player's
+/// hands worked every menu and then nothing on the board.
+pub fn let_claims_go(
+    mut seats: ResMut<PadSeats>,
+    last: Res<super::LastDevice>,
+    last_pad: Res<super::LastPad>,
+) {
     release_the_couch(&mut seats);
-    seats.pilot = None;
+    seats.pilot = super::hands_at_the_menu(*last, *last_pad);
 }
 
 /// The claims, the named pads picked up, the benched pads and P2 at the
@@ -927,17 +941,29 @@ pub fn forget_the_pilot(mut seats: ResMut<PadSeats>) {
 /// The claims let go as [`let_claims_go`] does, the pilot kept (it is the
 /// one person's own pad), on the way into a versus round one person here
 /// plays alone: the daily, a match against the AI, a resumed round with
-/// one human seat. Asked of the round's own cursors
+/// one human seat, an online round. Asked of the round's own cursors
 /// ([`crate::app::cursor::seats_played_here`]), so it is the round the
-/// cursors are spawned for. Online is left alone, where the claims are how
-/// the person at this machine picked their pad, and so is a couch round.
+/// cursors are spawned for. A couch round is left alone.
+///
+/// Online too: a claim is only ever made at match setup, by a friend
+/// beside P1, so a claim online is left over from a couch match. Kept,
+/// the lone cursor played on the pad lying on the couch, and the pad in
+/// the player's hands was dead.
 pub fn let_a_lone_players_claims_go(
     source: crate::app::session::RoundSource,
     mut seats: ResMut<PadSeats>,
+    last: Res<super::LastDevice>,
+    last_pad: Res<super::LastPad>,
 ) {
-    if source.online.0.is_none() && crate::app::cursor::seats_played_here(&source).len() == 1 {
-        // The pilot stays: it is P1's pad, the one person here.
+    if crate::app::cursor::seats_played_here(&source).len() == 1 {
         release_the_couch(&mut seats);
+        // P1's pad is the one in the hands that came in, as on the way
+        // into a puzzle ([`let_claims_go`]); with the keyboard's, the
+        // setup's pilot stays. The daily from the menu has no pilot, and
+        // took the first pad plugged in.
+        if let Some(pad) = super::hands_at_the_menu(*last, *last_pad) {
+            seats.pilot = Some(pad);
+        }
     }
 }
 
@@ -1236,6 +1262,7 @@ mod tests {
         app.init_resource::<super::super::LastPad>();
         app.init_resource::<super::super::Bridged>();
         app.init_resource::<super::super::PadPick>();
+        app.init_resource::<Time>();
         crate::app::schedule::add_claim_release(&mut app);
         app.add_systems(
             OnEnter(Screen::MatchSetup),
@@ -1268,7 +1295,7 @@ mod tests {
                     partners: crate::app::match_setup::setup_teams(&settings, &config)
                         != crate::app::teams::TeamMode::Solo,
                 },
-                Screen::Settings => super::super::Face::Settings,
+                Screen::Settings => super::super::Face::Settings { dial: true },
                 Screen::Puzzle
                 | Screen::Versus
                 | Screen::Editor
@@ -1793,27 +1820,79 @@ mod tests {
         assert_eq!(idle(&mut app), vec![2, 3]);
     }
 
-    /// After a couch match, a puzzle's lone cursor follows the first pad
-    /// plugged in, not the first friend's claim: the claims are let go on
-    /// the way into it.
+    /// The pad a lone cursor (P1's, the only seat here) plays on.
+    fn lone(app: &mut App) -> Option<Entity> {
+        app.world_mut()
+            .run_system_once(
+                |pads: Query<(Entity, &Gamepad)>,
+                 seats: Res<PadSeats>,
+                 settings: Res<GameSettings>| {
+                    seats.pad_entity_for(&pads, &settings, &[0], 0)
+                },
+            )
+            .expect("runs")
+    }
+
+    /// After a couch match, a puzzle's lone cursor follows the pad that
+    /// worked the menu into it, not the first friend's claim: the claims
+    /// are let go on the way into it.
     #[test]
     fn a_puzzle_after_a_couch_match_follows_the_first_pad() {
         let (mut app, pads) = setup_table(MatchConfig::default(), 2);
         press_start(&mut app, pads[1]);
-        let lone = |app: &mut App| {
-            app.world_mut()
-                .run_system_once(
-                    |pads: Query<(Entity, &Gamepad)>,
-                     seats: Res<PadSeats>,
-                     settings: Res<GameSettings>| {
-                        seats.pad_entity_for(&pads, &settings, &[0], 0)
-                    },
-                )
-                .expect("runs")
-        };
-        assert_eq!(lone(&mut app), Some(pads[1]), "online takes the claim");
+        assert_eq!(lone(&mut app), Some(pads[1]), "the claim, at the setup");
+        go(&mut app, Screen::Menu);
+        press(&mut app, pads[0], GamepadButton::DPadDown);
         go(&mut app, Screen::Puzzle);
         assert_eq!(lone(&mut app), Some(pads[0]));
+    }
+
+    /// Online after a couch match, the lone cursor plays on the pad in the
+    /// player's hands, not on the friend's claim left lying on the couch.
+    #[test]
+    fn an_online_round_after_a_couch_match_lets_the_claims_go() {
+        let (mut app, pads) = setup_table(MatchConfig::default(), 2);
+        press_start(&mut app, pads[1]);
+        go(&mut app, Screen::Menu);
+        press(&mut app, pads[0], GamepadButton::DPadDown);
+        let transport = crate::transport::UdpTransport::host(0).expect("ephemeral port");
+        let lockstep = crate::sim::Lockstep::new(1, vec![0, 1], crate::sim::DEFAULT_DELAY);
+        app.insert_resource(crate::app::net::Online(Some(
+            crate::app::net::OnlineSession::new(
+                transport,
+                lockstep,
+                2,
+                crate::transport::MatchTerms::default(),
+            ),
+        )));
+        go(&mut app, Screen::Versus);
+        assert_eq!(lone(&mut app), Some(pads[0]));
+        assert!(app.world().resource::<PadSeats>().claims.is_empty());
+    }
+
+    /// A lone cursor plays on the pad in the player's hands, not on the
+    /// first pad plugged in: a docked Deck's own pad is controller 1 and
+    /// the player holds controller 2. In a puzzle, the editor and the
+    /// daily alike, and the keyboard's hands leave the first pad.
+    #[test]
+    fn a_lone_cursor_follows_the_pad_in_the_hands() {
+        let (mut app, pads) = setup_table(MatchConfig::default(), 2);
+        for screen in [Screen::Puzzle, Screen::Editor] {
+            go(&mut app, Screen::Menu);
+            press(&mut app, pads[1], GamepadButton::DPadDown);
+            go(&mut app, screen);
+            assert_eq!(lone(&mut app), Some(pads[1]), "{screen:?}");
+        }
+        go(&mut app, Screen::Menu);
+        press(&mut app, pads[1], GamepadButton::DPadDown);
+        app.world_mut().resource_mut::<crate::app::Daily>().active = true;
+        go(&mut app, Screen::Versus);
+        assert_eq!(lone(&mut app), Some(pads[1]), "the daily");
+        app.world_mut().resource_mut::<crate::app::Daily>().active = false;
+        go(&mut app, Screen::Menu);
+        tap(&mut app, KeyCode::ArrowDown);
+        go(&mut app, Screen::Puzzle);
+        assert_eq!(lone(&mut app), Some(pads[0]), "at the keyboard");
     }
 
     /// The daily is a versus round one person plays alone: on the way into
@@ -1834,19 +1913,10 @@ mod tests {
         drives(&mut app, &[(1, pads[1])]);
 
         go(&mut app, Screen::Menu);
+        press(&mut app, pads[0], GamepadButton::DPadDown);
         app.world_mut().resource_mut::<crate::app::Daily>().active = true;
         go(&mut app, Screen::Versus);
-        let lone = app
-            .world_mut()
-            .run_system_once(
-                |pads: Query<(Entity, &Gamepad)>,
-                 seats: Res<PadSeats>,
-                 settings: Res<GameSettings>| {
-                    seats.pad_entity_for(&pads, &settings, &[0], 0)
-                },
-            )
-            .expect("runs");
-        assert_eq!(lone, Some(pads[0]), "the daily's one player");
+        assert_eq!(lone(&mut app), Some(pads[0]), "the daily's one player");
     }
 
     /// A lone pad at a keyboard-run setup where P1 is the only person is
@@ -2035,6 +2105,52 @@ mod tests {
         press_start(&mut app, pads[0]);
         assert_eq!(told(&mut app), (3, 0, vec![1, 2]));
         drives(&mut app, &[(1, spare), (2, pads[0])]);
+    }
+
+    /// The d-pad presses W on the setup steps. With P2 rebound onto W, a
+    /// pad's d-pad is still no P2 at the keys, nor is the keyboard's W,
+    /// which walks the setup; P2's other keys still are.
+    #[test]
+    fn a_pads_bridged_key_does_not_seat_p2_at_the_keys() {
+        use crate::app::binds::Action;
+        let (mut app, pads) = setup_table(MatchConfig::default(), 1);
+        {
+            let mut settings = app.world_mut().resource_mut::<GameSettings>();
+            settings.binds[0].set(Action::MoveUp, KeyCode::KeyT);
+            settings.binds[1].set(Action::PlaceUp, KeyCode::KeyW);
+        }
+        into_the_setup_by(&mut app, Some(pads[0]));
+        press(&mut app, pads[0], GamepadButton::DPadUp);
+        assert!(!app.world().resource::<PadSeats>().p2_at_keys(), "the pad");
+        tap(&mut app, KeyCode::KeyW);
+        assert!(
+            !app.world().resource::<PadSeats>().p2_at_keys(),
+            "the menu's W"
+        );
+        tap(&mut app, KeyCode::KeyI);
+        assert!(app.world().resource::<PadSeats>().p2_at_keys(), "P2's key");
+    }
+
+    /// The pilot's pad dies mid-round and another is plugged in: the new
+    /// pad takes P1, and the friend's pad dealt P2 stays on P2. It used
+    /// to swap the two for the rest of the series.
+    #[test]
+    fn a_new_pad_takes_over_a_dead_pilots_seat() {
+        let (mut app, pads) = setup_table(MatchConfig::default(), 2);
+        into_the_setup_by(&mut app, Some(pads[0]));
+        tap(&mut app, KeyCode::Enter);
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Versus
+        );
+        assert_eq!(driving(&mut app, 0), Some(pads[0]));
+        assert_eq!(driving(&mut app, 1), Some(pads[1]));
+        app.world_mut().entity_mut(pads[0]).remove::<Gamepad>();
+        let new = app.world_mut().spawn(Gamepad::default()).id();
+        app.update();
+        assert_eq!(driving(&mut app, 0), Some(new));
+        assert_eq!(driving(&mut app, 1), Some(pads[1]));
     }
 
     /// The table is also an online host's terms: a pad that drops out in

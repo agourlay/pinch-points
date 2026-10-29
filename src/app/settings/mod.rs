@@ -106,6 +106,15 @@ impl CommitScheme {
         }
     }
 
+    /// This scheme as the keyboard is read with it, `shared` or not
+    /// ([`GameSettings::commit_in_play`]).
+    pub fn in_play(self, shared: bool) -> CommitScheme {
+        match self {
+            CommitScheme::Ijkl if shared => CommitScheme::Arrows,
+            CommitScheme::Arrows | CommitScheme::Wasd | CommitScheme::Ijkl => self,
+        }
+    }
+
     pub fn from_key(key: &str) -> CommitScheme {
         use crate::app::cycle::Cycle;
         Self::VARIANTS
@@ -365,13 +374,11 @@ impl GameSettings {
     ///
     /// One rule for every reader of those keys: the cursor, a puzzle's
     /// setup, the seat keys a global letter yields to
-    /// ([`crate::app::cursor::LiveSeatKeys`]), and the legends that
-    /// teach them ([`Self::key_legend`]).
+    /// ([`crate::app::cursor::LiveSeatKeys`]), the legends that teach
+    /// them ([`Self::key_legend`]), and the Controls screen's rows, which
+    /// list the keys a shared keyboard reads.
     pub fn commit_in_play(&self, shared: bool) -> CommitScheme {
-        match self.commit {
-            CommitScheme::Ijkl if shared => CommitScheme::Arrows,
-            CommitScheme::Arrows | CommitScheme::Wasd | CommitScheme::Ijkl => self.commit,
-        }
+        self.commit.in_play(shared)
     }
 
     /// Which key legend describes what the keys do right now, with the

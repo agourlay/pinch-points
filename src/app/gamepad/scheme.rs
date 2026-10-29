@@ -20,21 +20,93 @@ use crate::app::play_input::AfterRound;
 use crate::sim::Direction;
 use bevy::prelude::*;
 
-/// Which hands the player last reached with: the keyboard, or a pad.
+/// Which hands the player last reached with: the keyboard, or a pad and
+/// whose labels it wears.
 ///
 /// The prompts follow it, naming the buttons of whichever was touched
 /// last, so a Steam Deck player sees A and B where a desk player sees
-/// Enter and Esc. One resource for the whole game, since one person at a
-/// time reads a prompt line.
+/// Enter and Esc, and a DualSense player sees ✕ and ○. One resource for
+/// the whole game, since one person at a time reads a prompt line.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum LastDevice {
     #[default]
     Keyboard,
-    Pad,
+    Pad(PadFamily),
+}
+
+impl LastDevice {
+    /// A pad with Xbox's labels, the stock one the tests read prompts on.
+    #[cfg(test)]
+    pub const PAD: LastDevice = LastDevice::Pad(PadFamily::Xbox);
+
+    /// Whether the hands are on a pad, of whatever family.
+    pub fn is_pad(self) -> bool {
+        matches!(self, LastDevice::Pad(_))
+    }
+
+    /// Whose button names a prompt uses: the pad's, and Xbox's at the
+    /// keyboard, where no button is named.
+    pub fn family(self) -> PadFamily {
+        match self {
+            LastDevice::Pad(family) => family,
+            LastDevice::Keyboard => PadFamily::Xbox,
+        }
+    }
+}
+
+/// Whose labels a pad wears, which is what its buttons are called. The
+/// game reads every pad by position (the bottom face button is the one
+/// that plays, whatever is printed on it), so a family changes the names
+/// in the prompts and nothing else. Told by the maker's USB vendor id:
+/// every pad that is neither Sony's nor Nintendo's (Steam's own, the
+/// Deck's, Xbox pads and their many lookalikes) wears Xbox's.
+///
+/// Carried by [`LastDevice`]: the family of the pad last reached with
+/// ([`super::LastPad`]), whose hands read the prompt line.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum PadFamily {
+    #[default]
+    Xbox,
+    /// A DualShock and older: ✕○□△, L1/R1, Options and Share.
+    PlayStation,
+    /// A DualSense, whose Share button was renamed Create.
+    DualSense,
+    /// Nintendo's own, and pads in Switch mode: A and B swapped from where
+    /// Xbox has them, and X and Y too.
+    Nintendo,
+}
+
+impl PadFamily {
+    /// Every family, in the order a line spelled for each is kept in.
+    pub const ALL: [PadFamily; 4] = [
+        PadFamily::Xbox,
+        PadFamily::PlayStation,
+        PadFamily::DualSense,
+        PadFamily::Nintendo,
+    ];
+
+    /// The family of `pad`, by the ids it reported when it was plugged in.
+    pub fn of(pad: &Gamepad) -> PadFamily {
+        PadFamily::from_ids(pad.vendor_id(), pad.product_id())
+    }
+
+    /// The family a USB vendor and product id say: Sony's 0x054C,
+    /// Nintendo's 0x057E, and the DualSense and DualSense Edge among
+    /// Sony's by their product ids.
+    pub fn from_ids(vendor: Option<u16>, product: Option<u16>) -> PadFamily {
+        match (vendor, product) {
+            (Some(0x054C), Some(0x0CE6 | 0x0DF2)) => PadFamily::DualSense,
+            (Some(0x054C), _) => PadFamily::PlayStation,
+            (Some(0x057E), _) => PadFamily::Nintendo,
+            _ => PadFamily::Xbox,
+        }
+    }
 }
 
 /// One control on an Xbox-layout pad, which is how Steam presents the
-/// Deck's own controls and nearly every pad besides.
+/// Deck's own controls and nearly every pad besides. The face buttons
+/// are by position (A the bottom one); [`Pad::name`] says what the pad
+/// in hand has printed there.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Pad {
     A,
@@ -83,23 +155,56 @@ impl Pad {
         })
     }
 
-    /// What the prompt calls it. The buttons go by the names printed on
-    /// them, the same in every language; the d-pad and the stick are words.
-    pub fn name(self, tr: &Tr) -> &'static str {
-        match self {
-            A => "A",
-            B => "B",
-            X => "X",
-            Y => "Y",
-            LB => "LB",
-            RB => "RB",
-            LT => "LT",
-            RT => "RT",
-            Start => "Start",
-            Select => "Select",
-            RS => "RS",
-            Pad::Up | Pad::Down | Pad::Left | Pad::Right | Pad::Move => tr.pad.dpad,
-            Pad::Flick(_) => tr.pad.right_stick,
+    /// What the prompt calls it on a pad of `family`: the one naming rule
+    /// every prompt and legend goes through. The buttons go by the names
+    /// printed on them, the same in every language; the d-pad and the
+    /// stick are words.
+    ///
+    /// By position: the bottom face button is A on an Xbox pad, ✕ on a
+    /// PlayStation and B on a Nintendo pad. Told "X: paste" with Xbox's
+    /// letters, a DualSense player pressed ✕, the bottom button, and
+    /// played the row instead; a Switch player told "A: play" pressed the
+    /// right-hand button, which is Back. The symbols are DejaVu Sans
+    /// Mono's, the face every line asks for first in every language.
+    pub fn name(self, tr: &Tr, family: PadFamily) -> &'static str {
+        use PadFamily::{DualSense, Nintendo, PlayStation, Xbox};
+        match (self, family) {
+            (Pad::Up | Pad::Down | Pad::Left | Pad::Right | Pad::Move, _) => tr.pad.dpad,
+            (Pad::Flick(_), _) => tr.pad.right_stick,
+            (A, Xbox) => "A",
+            (B, Xbox) => "B",
+            (X, Xbox) => "X",
+            (Y, Xbox) => "Y",
+            (LB, Xbox) => "LB",
+            (RB, Xbox) => "RB",
+            (LT, Xbox) => "LT",
+            (RT, Xbox) => "RT",
+            (Start, Xbox) => "Start",
+            (Select, Xbox) => "Select",
+            (RS, Xbox) => "RS",
+            (A, PlayStation | DualSense) => "✕",
+            (B, PlayStation | DualSense) => "○",
+            (X, PlayStation | DualSense) => "□",
+            (Y, PlayStation | DualSense) => "△",
+            (LB, PlayStation | DualSense) => "L1",
+            (RB, PlayStation | DualSense) => "R1",
+            (LT, PlayStation | DualSense) => "L2",
+            (RT, PlayStation | DualSense) => "R2",
+            (Start, PlayStation | DualSense) => "Options",
+            (Select, PlayStation) => "Share",
+            (Select, DualSense) => "Create",
+            (RS, PlayStation | DualSense) => "R3",
+            (A, Nintendo) => "B",
+            (B, Nintendo) => "A",
+            (X, Nintendo) => "Y",
+            (Y, Nintendo) => "X",
+            (LB, Nintendo) => "L",
+            (RB, Nintendo) => "R",
+            (LT, Nintendo) => "ZL",
+            (RT, Nintendo) => "ZR",
+            (Start, Nintendo) => "+",
+            (Select, Nintendo) => "−",
+            (RS, Nintendo) => "RS",
         }
     }
 
@@ -473,7 +578,12 @@ pub enum Face {
     Menu,
     /// The main menu's quit card is up ([`crate::app::menu_scene::QuitCard`]).
     Quitting,
-    Settings,
+    /// The settings screen: `dial` whether the cursor is on a dial, where
+    /// A is done here as B is, rather than on a door A works (the key
+    /// bindings, the reset).
+    Settings {
+        dial: bool,
+    },
     Controls,
     /// One of the three steps of match setup. `join`: whether the Start
     /// of the pad last reached with would seat somebody
@@ -694,9 +804,10 @@ pub fn binds(face: &Face) -> Vec<Bind> {
             bind(B, Key::Direct, Does::Back),
             bind(Start, Key::Direct, Does::Back),
         ]),
-        Face::Settings => {
+        Face::Settings { dial } => {
             out.extend(DIALS);
-            out.extend([bind(A, enter, Does::Confirm), bind(B, esc, Does::SaveBack)]);
+            let a = if *dial { Does::SaveBack } else { Does::Confirm };
+            out.extend([bind(A, enter, a), bind(B, esc, Does::SaveBack)]);
         }
         Face::Controls => {
             out.extend(DIALS);
@@ -834,10 +945,17 @@ pub fn binds(face: &Face) -> Vec<Bind> {
                 ]);
             }
             match watching {
-                true => out.extend([
-                    bind(A, enter, Does::Watch),
-                    bind(RB, Key::Cap('W'), Does::PlayInstead),
-                ]),
+                // A watches the beach under the cursor, so only with one
+                // on the list; Select dials one, as J does, either way.
+                true => {
+                    if *hosts {
+                        out.push(bind(A, enter, Does::Watch));
+                    }
+                    out.extend([
+                        bind(Select, Key::Cap('J'), Does::ByAddress),
+                        bind(RB, Key::Cap('W'), Does::PlayInstead),
+                    ]);
+                }
                 false => {
                     if *hosts {
                         out.extend([
@@ -1175,11 +1293,11 @@ pub fn pressed_on(face: &Face, does: Does, pad: &Gamepad) -> bool {
 /// The control that does `does` on `face`, as the prompt names it: on the
 /// editor's second layer with Select in front, since it is held for it.
 /// `None` where the face has no control for it.
-pub fn button_name(face: &Face, does: Does, tr: &Tr) -> Option<String> {
+pub fn button_name(face: &Face, does: Does, tr: &Tr, family: PadFamily) -> Option<String> {
     let row = binds(face).into_iter().find(|row| row.does == does)?;
     Some(match *face == (Face::Editor { layer: true }) {
-        true => format!("{}+{}", Select.name(tr), row.pad.name(tr)),
-        false => row.pad.name(tr).to_string(),
+        true => format!("{}+{}", Select.name(tr, family), row.pad.name(tr, family)),
+        false => row.pad.name(tr, family).to_string(),
     })
 }
 
@@ -1188,20 +1306,20 @@ pub fn button_name(face: &Face, does: Does, tr: &Tr) -> Option<String> {
 /// button for a pad's player, so a sentence with a key in it reads true
 /// in either hand.
 pub fn spelled(tr: &Tr, device: LastDevice, face: &Face, does: Does, keys: &str) -> String {
-    match (device, button_name(face, does, tr)) {
-        (LastDevice::Pad, Some(button)) => button,
+    match (device, button_name(face, does, tr, device.family())) {
+        (LastDevice::Pad(_), Some(button)) => button,
         _ => keys.to_string(),
     }
 }
 
-/// The controls of `face`, as the prompt line says them: "D-pad: choose |
-/// A: play". Rows that share their words share a slot, "LT/RT: level",
-/// and the d-pad's directions are one "D-pad".
-pub fn legend(tr: &Tr, face: &Face) -> String {
+/// The controls of `face`, as the prompt line says them on a pad of
+/// `family`: "D-pad: choose | A: play". Rows that share their words share
+/// a slot, "LT/RT: level", and the d-pad's directions are one "D-pad".
+pub fn legend(tr: &Tr, family: PadFamily, face: &Face) -> String {
     let mut slots: Vec<(Vec<&'static str>, &'static str)> = Vec::new();
     for row in binds(face) {
         let label = row.does.label(tr);
-        let name = row.pad.name(tr);
+        let name = row.pad.name(tr, family);
         match slots.iter_mut().find(|(_, said)| *said == label) {
             Some((names, _)) => {
                 if !names.contains(&name) {
@@ -1231,18 +1349,51 @@ mod tests {
     use super::*;
     use crate::app::i18n::EN;
 
+    /// On a settings dial A is done here, as B is, and the legend says so
+    /// rather than offering a "confirm" that leaves the screen; on a door
+    /// A is the door's.
+    #[test]
+    fn the_settings_legend_names_what_a_does_on_the_row() {
+        let xbox = crate::app::gamepad::PadFamily::Xbox;
+        let dial = legend(&EN, xbox, &Face::Settings { dial: true });
+        assert!(dial.contains("A/B: "), "{dial}");
+        assert!(!dial.contains(EN.pad.confirm), "{dial}");
+        let door = legend(&EN, xbox, &Face::Settings { dial: false });
+        assert!(door.contains(&format!("A: {}", EN.pad.confirm)), "{door}");
+    }
+
+    /// Watching armed in the lobby: A watches the beach under the cursor,
+    /// so with no beach on the list it is not offered, and Select (J, an
+    /// address) is the way to one.
+    #[test]
+    fn a_watches_only_with_a_beach_on_the_list() {
+        for hosts in [false, true] {
+            let rows = binds(&Face::Browse {
+                hosts,
+                watching: true,
+            });
+            let a = rows.iter().any(|row| row.does == Does::Watch);
+            assert_eq!(a, hosts, "hosts: {hosts}");
+            assert!(rows.iter().any(|row| row.does == Does::ByAddress));
+        }
+    }
+
     /// The legend joins a face's rows into slots by their words, so the
     /// d-pad reads once and a pair of bumpers shares one.
     #[test]
     fn the_legend_shares_a_slot_between_rows_with_the_same_words() {
         assert_eq!(
-            legend(&EN, &Face::Menu),
+            legend(&EN, crate::app::gamepad::PadFamily::Xbox, &Face::Menu),
             "D-pad: choose | A: play | X: paste a code | Y: mute | Start: quit"
         );
-        assert_eq!(legend(&EN, &Face::Quitting), "A: quit | B/Start: back");
+        assert_eq!(
+            legend(&EN, crate::app::gamepad::PadFamily::Xbox, &Face::Quitting),
+            "A: quit | B/Start: back"
+        );
         assert_eq!(
             legend(
                 &EN,
+                crate::app::gamepad::PadFamily::Xbox,
                 &Face::PuzzleSetup {
                     posts: true,
                     hint: false
@@ -1251,6 +1402,78 @@ mod tests {
             "D-pad: move | A/B/X/Y: place | LB: remove | RB: clear | Start: start \
              | LT/RT: level | Select: menu"
         );
+    }
+
+    /// A pad is told apart by its maker's USB vendor id, and every pad not
+    /// Sony's or Nintendo's wears Xbox's labels.
+    #[test]
+    fn a_pads_family_is_its_makers() {
+        let of = PadFamily::from_ids;
+        assert_eq!(of(Some(0x054C), Some(0x09CC)), PadFamily::PlayStation);
+        assert_eq!(of(Some(0x054C), Some(0x0CE6)), PadFamily::DualSense);
+        assert_eq!(of(Some(0x057E), Some(0x2009)), PadFamily::Nintendo);
+        assert_eq!(of(Some(0x045E), Some(0x0B12)), PadFamily::Xbox);
+        assert_eq!(of(Some(0x28DE), Some(0x1205)), PadFamily::Xbox, "a Deck");
+        assert_eq!(of(None, None), PadFamily::Xbox);
+    }
+
+    /// The buttons go by position and are named by what is printed there:
+    /// the bottom face button plays, ✕ on a PlayStation pad and B on a
+    /// Nintendo one, whose A is on the right, where Xbox's B is.
+    #[test]
+    fn each_maker_names_the_same_positions_its_own_way() {
+        assert_eq!(
+            legend(&EN, PadFamily::PlayStation, &Face::Menu),
+            "D-pad: choose | ✕: play | □: paste a code | △: mute | Options: quit"
+        );
+        assert_eq!(
+            legend(&EN, PadFamily::Nintendo, &Face::Menu),
+            "D-pad: choose | B: play | Y: paste a code | X: mute | +: quit"
+        );
+        assert_eq!(
+            legend(&EN, PadFamily::Nintendo, &Face::Quitting),
+            "B: quit | A/+: back"
+        );
+        let layer = Face::Editor { layer: true };
+        let save = |family| button_name(&layer, Does::Save, &EN, family);
+        assert_eq!(save(PadFamily::Xbox).as_deref(), Some("Select+A"));
+        assert_eq!(save(PadFamily::PlayStation).as_deref(), Some("Share+✕"));
+        assert_eq!(save(PadFamily::DualSense).as_deref(), Some("Create+✕"));
+        assert_eq!(save(PadFamily::Nintendo).as_deref(), Some("−+B"));
+        // At the keyboard a line names its key, whatever pad is about.
+        assert_eq!(
+            spelled(&EN, LastDevice::Keyboard, &Face::Menu, Does::Mute, "M"),
+            "M"
+        );
+        assert_eq!(
+            spelled(
+                &EN,
+                LastDevice::Pad(PadFamily::PlayStation),
+                &Face::Menu,
+                Does::Mute,
+                "M"
+            ),
+            "△"
+        );
+    }
+
+    /// Every name a pad's button goes by is drawn: by DejaVu, which every
+    /// card row asks for, and by the display face the prompt line is set
+    /// in, or else by DejaVu behind it (`boot::teach_the_kanji_fallback`).
+    #[test]
+    fn every_button_name_is_in_the_shipped_faces() {
+        let ui = crate::app::i18n::metrics::characters_in_font(include_bytes!(
+            "../../../assets/fonts/DejaVuSansMono.ttf"
+        ));
+        for family in PadFamily::ALL {
+            for face in super::super::face::every_face() {
+                for row in binds(&face) {
+                    for ch in row.pad.name(&EN, family).chars() {
+                        assert!(ui.contains(&ch), "{family:?}: {ch:?}");
+                    }
+                }
+            }
+        }
     }
 
     /// A round's table is all the pad's own: nothing in it is a key, so a

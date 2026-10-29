@@ -680,7 +680,7 @@ mod tests {
         );
         // A pad's player is not taught keys: the prompt names the pad's.
         assert_eq!(
-            campaign.shown_hint(at, &stock, Coop(false), LastDevice::Pad),
+            campaign.shown_hint(at, &stock, Coop(false), LastDevice::PAD),
             None
         );
     }

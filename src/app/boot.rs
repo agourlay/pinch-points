@@ -115,6 +115,12 @@ const JP_SCRIPTS: [Script; 3] = [
     Script::from_bytes(*b"Hani"),
 ];
 
+/// The family name DejaVu Sans Mono carries, and the other scripts the
+/// tables are written in. A symbol takes the script of the words around
+/// it, so these and the three above are every script a line here is in.
+const UI_FAMILY: &str = "DejaVu Sans Mono";
+const UI_SCRIPTS: [Script; 2] = [Script::from_bytes(*b"Latn"), Script::from_bytes(*b"Cyrl")];
+
 /// Replace Bevy's built-in default font (ASCII-only) with an embedded font
 /// that covers the glyphs seven of the eight languages need - the accented
 /// Latin ones, as far out as Spanish's inverted marks and Dutch's
@@ -174,6 +180,11 @@ pub(super) fn install_ui_font(mut fonts: ResMut<Assets<Font>>) {
 /// prompts, with their WASD and their Enter) draws each half in the face
 /// that has it.
 ///
+/// DejaVu goes behind every script last, for the display face: Nunito
+/// has no ✕, ○, □ or △, which a PlayStation pad's prompt names its face
+/// buttons by, and DejaVu has all four. A character the face lacks is
+/// looked for in the fallbacks of the script it is set in.
+///
 /// Runs until it lands rather than once: Bevy registers a font asset with
 /// the collection in its own system, and the family is not there to be
 /// named until it has.
@@ -185,13 +196,21 @@ pub(super) fn teach_the_kanji_fallback(
     if *taught {
         return;
     }
-    let Some(family) = fonts.collection.family_id(JP_FAMILY) else {
+    let (Some(family), Some(ui)) = (
+        fonts.collection.family_id(JP_FAMILY),
+        fonts.collection.family_id(UI_FAMILY),
+    ) else {
         return;
     };
     for script in JP_SCRIPTS {
         fonts
             .collection
-            .append_fallbacks(script, std::iter::once(family));
+            .append_fallbacks(script, [family, ui].into_iter());
+    }
+    for script in UI_SCRIPTS {
+        fonts
+            .collection
+            .append_fallbacks(script, std::iter::once(ui));
     }
     // Anything already on screen was shaped before the fallback existed
     // and holds a layout with holes in it - the header and the prompt are

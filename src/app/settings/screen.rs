@@ -57,6 +57,13 @@ pub enum Row {
 }
 
 impl Row {
+    /// Whether Enter on the row is done here, as Escape is: every dial.
+    /// The two doors, the key bindings screen and the reset, are the rows
+    /// it works instead. The pad's legend names A by this.
+    pub fn is_dial(self) -> bool {
+        !matches!(self, Row::KeyBindings | Row::ResetProgress)
+    }
+
     /// Display and navigation order, which is [`SECTIONS`] flattened. The
     /// rows used to run in the order they were added, which put the pad
     /// deadzone six rows below the keys it belongs with.
@@ -249,8 +256,14 @@ pub fn enter_settings(
     settings: Res<GameSettings>,
     art: Res<crate::app::art::Art>,
     mut menu: ResMut<SettingsMenu>,
+    hands: (
+        Res<crate::app::gamepad::LastDevice>,
+        Res<crate::app::gamepad::LastPad>,
+        Query<&Gamepad>,
+    ),
 ) {
     let tr = settings.tr();
+    let family = crate::app::gamepad::reference_family(*hands.0, *hands.1, &hands.2);
     menu.selected = 0;
     menu.reset = ResetPrompt::Idle;
     let mut index = 0usize;
@@ -301,12 +314,23 @@ pub fn enter_settings(
             use crate::app::gamepad::{Face, scheme};
             for (lead, face) in [
                 (tr.pad.help_round, Face::Round),
-                (tr.pad.help_menus, Face::Settings),
+                (tr.pad.help_menus, Face::Settings { dial: false }),
             ] {
-                let line = format!("{lead} {}", scheme::legend(tr, &face));
+                let line = format!("{lead} {}", scheme::legend(tr, family, &face));
                 wrap.spawn(menu_ui::footnote(line));
             }
         });
+}
+
+/// The placing scheme the dial turns to from the one set: the next one
+/// along, passing over any that would give a bound key a second job
+/// ([`crate::app::cursor::preset_clash`]). The stock arrows never do.
+fn next_commit(settings: &GameSettings, turn: crate::app::cycle::Turn) -> CommitScheme {
+    let mut next = settings.commit.cycled(turn);
+    while crate::app::cursor::preset_clash(&settings.binds, next) {
+        next = next.cycled(turn);
+    }
+    next
 }
 
 /// One dial: its name in a fixed gutter and its value in another, so every
@@ -429,7 +453,7 @@ pub fn settings_input(
             let seat = usize::from(Row::ALL[menu.selected] == Row::InputP2);
             settings.seat_input[seat] = settings.seat_input[seat].cycled(turn);
         }
-        Row::CommitKeys => settings.commit = settings.commit.cycled(turn),
+        Row::CommitKeys => settings.commit = next_commit(&settings, turn),
         Row::RepeatDelay => {
             settings.repeat_delay =
                 clamp_in(settings.repeat_delay + step * 0.05, &REPEAT_DELAY_RANGE);
@@ -554,11 +578,12 @@ fn door_button(
     device: crate::app::gamepad::LastDevice,
 ) -> Option<String> {
     crate::app::gamepad::scheme::button_name(
-        &crate::app::gamepad::Face::Settings,
+        &crate::app::gamepad::Face::Settings { dial: false },
         crate::app::gamepad::scheme::Does::Confirm,
         tr,
+        device.family(),
     )
-    .filter(|_| device == crate::app::gamepad::LastDevice::Pad)
+    .filter(|_| device.is_pad())
 }
 
 pub(super) fn row_text(
@@ -710,6 +735,25 @@ mod tests {
     use crate::app::gamepad::LastDevice;
     use crate::app::i18n::EN;
 
+    /// The placing-keys dial passes over the one-hand preset while a P1
+    /// key read alone sits on one of its keys, which would then do two
+    /// jobs, and stops on it once the keys are clear.
+    #[test]
+    fn the_dial_passes_over_a_scheme_that_would_clash() {
+        use crate::app::binds::Action;
+        use crate::app::cycle::Turn;
+        let mut settings = GameSettings {
+            commit: CommitScheme::Wasd,
+            ..GameSettings::default()
+        };
+        assert_eq!(next_commit(&settings, Turn::Right), CommitScheme::Ijkl);
+        settings.binds[1].set(Action::MoveUp, KeyCode::KeyU);
+        settings.binds[0].set(Action::Remove, KeyCode::KeyI);
+        assert_eq!(next_commit(&settings, Turn::Right), CommitScheme::Arrows);
+        settings.commit = CommitScheme::Arrows;
+        assert_eq!(next_commit(&settings, Turn::Left), CommitScheme::Wasd);
+    }
+
     /// The card is built by walking [`SECTIONS`] with a running index, and
     /// every row's label is looked up by that index in [`Row::ALL`]. If the
     /// two disagree the screen shows one dial's name over another's value,
@@ -788,7 +832,7 @@ mod tests {
                 for (reset, device) in [ResetPrompt::Idle, ResetPrompt::Armed, ResetPrompt::Done]
                     .into_iter()
                     .flat_map(|reset| {
-                        [LastDevice::Keyboard, LastDevice::Pad].map(|device| (reset, device))
+                        [LastDevice::Keyboard, LastDevice::PAD].map(|device| (reset, device))
                     })
                 {
                     for team_mode in crate::app::teams::TeamMode::ALL {
@@ -920,7 +964,7 @@ mod tests {
                 language: lang,
                 ..GameSettings::default()
             };
-            for device in [LastDevice::Keyboard, LastDevice::Pad] {
+            for device in [LastDevice::Keyboard, LastDevice::PAD] {
                 let say =
                     |reset| row_text(tr, &settings, &caps, Row::ResetProgress, reset, device).1;
                 assert_ne!(say(ResetPrompt::Idle), say(ResetPrompt::Armed), "{lang:?}");
@@ -980,6 +1024,41 @@ mod tests {
                 .is_cleared("Welcome Ashore"),
             "arming alone must not clear anything"
         );
+    }
+
+    /// Enter on a dial leaves for the menu, as the pad's legend says A does
+    /// there, and on a door it does not. The reset is left out: pressed
+    /// twice it writes over the real record (see the test above).
+    #[test]
+    fn enter_leaves_from_the_dials_only() {
+        for row in Row::ALL {
+            if row == Row::ResetProgress {
+                assert!(!row.is_dial());
+                continue;
+            }
+            let mut app = App::new();
+            app.add_plugins(bevy::state::app::StatesPlugin);
+            app.init_state::<Screen>();
+            app.init_resource::<ButtonInput<KeyCode>>();
+            app.init_resource::<SettingsMenu>();
+            app.init_resource::<crate::app::progress::Progress>();
+            app.insert_resource(GameSettings::default());
+            app.init_resource::<crate::app::keycaps::KeyCaps>();
+            app.add_systems(Update, settings_input);
+            app.insert_resource(State::new(Screen::Settings));
+            let at = Row::ALL.iter().position(|&r| r == row);
+            app.world_mut().resource_mut::<SettingsMenu>().selected = at.expect("in the ladder");
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::Enter);
+            app.update();
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(KeyCode::Enter);
+            keys.clear();
+            app.update();
+            let screen = *app.world().resource::<State<Screen>>().get();
+            assert_eq!(screen == Screen::Menu, row.is_dial(), "{row:?}: {screen:?}");
+        }
     }
 
     /// The reset clears every stage, and the lines kept for other builds

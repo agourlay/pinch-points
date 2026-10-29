@@ -207,7 +207,7 @@ fn enter_opens_the_map_page_and_esc_goes_back() {
         true,
     );
     assert_eq!(face, Face::HostMap { pick: true });
-    let pad = legend(&EN, &face);
+    let pad = legend(&EN, crate::app::gamepad::PadFamily::Xbox, &face);
     assert!(pad.contains(EN.pad.back), "{pad}");
     assert!(EN.lobby_pick_prompt.contains("Enter") && EN.lobby_pick_prompt.contains("Esc"));
     assert_eq!(joe.state().feedback, EN.lobby_host_picking);

@@ -1,8 +1,8 @@
 //! The editor's side panel: the kind toggle, the brush palette with its
 //! sprites and letters, and the line saying what the cursor stands on.
 
-use super::EditorState;
 use super::brush::{Brush, describe};
+use super::{EditorKeys, EditorState};
 use crate::app::Sim;
 use crate::app::cursor::Cursor;
 use crate::app::gamepad::LastDevice;
@@ -69,6 +69,7 @@ pub fn spawn_editor_ui(
     settings: Res<GameSettings>,
 ) {
     let tr = settings.tr();
+    let keys = EditorKeys::of(&settings);
     super::card::spawn_settings_card(&mut commands, tr);
     super::playtest::spawn_banner(&mut commands);
     commands
@@ -155,7 +156,7 @@ pub fn spawn_editor_ui(
                         spawn_icon(row, *brush, &art);
                         row.spawn((
                             PaletteLabel(i),
-                            Text::new(brush_line(tr, *brush, LastDevice::Keyboard)),
+                            Text::new(brush_line(tr, *brush, LastDevice::Keyboard, &keys)),
                             TextFont {
                                 font_size: FontSize::Px(menu_ui::type_scale::BODY),
                                 ..default()
@@ -239,11 +240,19 @@ pub struct PaletteRows<'w, 's> {
 /// A brush's row on the palette: the letter that loads it, then its name.
 /// A pad's player loads brushes with the bumpers and has no letters, and
 /// a letter beside the name would read as the pad button of the same
-/// letter, so their row is the name alone.
-fn brush_line(tr: &crate::app::i18n::Tr, brush: Brush, device: LastDevice) -> String {
-    match device {
-        LastDevice::Keyboard => format!("{}  {}", brush.letter(), brush.label(tr)),
-        LastDevice::Pad => brush.label(tr).to_string(),
+/// letter, so their row is the name alone. A letter P1's movement or wall
+/// keys have taken loads nothing ([`EditorKeys::brush`]), and a dash
+/// stands in its place: the brush is reached with Tab and Space.
+fn brush_line(
+    tr: &crate::app::i18n::Tr,
+    brush: Brush,
+    device: LastDevice,
+    keys: &EditorKeys,
+) -> String {
+    match (device, keys.brush(brush)) {
+        (LastDevice::Keyboard, Some(_)) => format!("{}  {}", brush.letter(), brush.label(tr)),
+        (LastDevice::Keyboard, None) => format!("-  {}", brush.label(tr)),
+        (LastDevice::Pad(_), _) => brush.label(tr).to_string(),
     }
 }
 
@@ -252,8 +261,8 @@ fn brush_line(tr: &crate::app::i18n::Tr, brush: Brush, device: LastDevice) -> St
 fn kind_line(tr: &crate::app::i18n::Tr, device: LastDevice) -> String {
     use crate::app::gamepad::scheme::{Does, button_name};
     let face = crate::app::gamepad::Face::Editor { layer: true };
-    match (device, button_name(&face, Does::Kind, tr)) {
-        (LastDevice::Pad, Some(button)) => tr.ed_kind_row.replacen("F6", &button, 1),
+    match (device, button_name(&face, Does::Kind, tr, device.family())) {
+        (LastDevice::Pad(_), Some(button)) => tr.ed_kind_row.replacen("F6", &button, 1),
         _ => tr.ed_kind_row.to_string(),
     }
 }
@@ -298,6 +307,7 @@ pub fn update_editor_palette(
         mut labels,
     } = palette_rows;
     let tr = settings.tr();
+    let keys = EditorKeys::of(&settings);
     for mut text in &mut lines.p1() {
         menu_ui::set_text(&mut text, &kind_line(tr, *device));
     }
@@ -322,7 +332,10 @@ pub fn update_editor_palette(
             false => crate::app::palette::PARCHMENT,
         };
         menu_ui::set_color(&mut color, want);
-        menu_ui::set_text(&mut text, &brush_line(tr, Brush::ALL[label.0], *device));
+        menu_ui::set_text(
+            &mut text,
+            &brush_line(tr, Brush::ALL[label.0], *device, &keys),
+        );
     }
     let Some(cursor) = cursors.iter().next() else {
         return;
@@ -408,17 +421,56 @@ mod tests {
     use crate::app::i18n::metrics::text_px;
     use crate::sim::{Board, CrabKind, Direction, Handedness, TileKind};
 
+    /// A brush whose letter P1's keys have taken shows a dash for it:
+    /// under the one-hand preset with P1 moving on the arrows, the walls
+    /// are on IJKL, and L toggles a wall rather than loading the log.
+    #[test]
+    fn a_taken_letter_is_not_offered() {
+        use crate::app::binds::Action;
+        let tr = &crate::app::i18n::EN;
+        let mut settings = GameSettings::default();
+        let keys = EditorKeys::of(&settings);
+        assert_eq!(
+            brush_line(tr, Brush::Log, LastDevice::Keyboard, &keys),
+            format!("L  {}", Brush::Log.label(tr))
+        );
+        settings.commit = crate::app::settings::CommitScheme::Ijkl;
+        for (action, key) in [
+            (Action::MoveUp, KeyCode::ArrowUp),
+            (Action::MoveDown, KeyCode::ArrowDown),
+            (Action::MoveLeft, KeyCode::ArrowLeft),
+            (Action::MoveRight, KeyCode::ArrowRight),
+            (Action::PlaceUp, KeyCode::KeyW),
+            (Action::PlaceDown, KeyCode::KeyS),
+            (Action::PlaceLeft, KeyCode::KeyA),
+            (Action::PlaceRight, KeyCode::KeyD),
+        ] {
+            settings.binds[0].set(action, key);
+        }
+        let keys = EditorKeys::of(&settings);
+        assert_eq!(keys.brush(Brush::Log), None);
+        assert_eq!(
+            brush_line(tr, Brush::Log, LastDevice::Keyboard, &keys),
+            format!("-  {}", Brush::Log.label(tr))
+        );
+        assert_eq!(
+            brush_line(tr, Brush::Log, LastDevice::PAD, &keys),
+            Brush::Log.label(tr)
+        );
+    }
+
     /// Every brush's row fits beside its icon on one line, in every
     /// language and both hands: "Sand (erases)" wrapped onto two lines.
     #[test]
     fn every_brush_fits_its_row_in_every_language() {
         let room = ROW_ROOM - ICON_PX - CELL_GAP;
+        let keys = EditorKeys::of(&GameSettings::default());
         let mut over = Vec::new();
         for lang in crate::app::i18n::ALL_LANGS {
             let tr = lang.tr();
             for brush in Brush::ALL {
-                for device in [LastDevice::Keyboard, LastDevice::Pad] {
-                    let line = brush_line(tr, brush, device);
+                for device in [LastDevice::Keyboard, LastDevice::PAD] {
+                    let line = brush_line(tr, brush, device, &keys);
                     let used = text_px(&line, menu_ui::type_scale::BODY);
                     if used > room {
                         over.push(format!("{lang:?}: {used:.0}px {line}"));

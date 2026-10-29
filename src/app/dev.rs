@@ -196,6 +196,19 @@ pub(crate) fn pad_prompts() -> bool {
     std::env::var("PINCH_PAD_PROMPTS").is_ok()
 }
 
+/// `PINCH_PAD_PROMPTS=playstation|dualsense|nintendo`: those prompts with
+/// that maker's button names, as a pad of theirs would have them. Any
+/// other value is an Xbox pad's.
+pub(crate) fn pad_family() -> crate::app::gamepad::PadFamily {
+    use crate::app::gamepad::PadFamily;
+    match std::env::var("PINCH_PAD_PROMPTS").as_deref() {
+        Ok("playstation") => PadFamily::PlayStation,
+        Ok("dualsense") => PadFamily::DualSense,
+        Ok("nintendo") => PadFamily::Nintendo,
+        _ => PadFamily::Xbox,
+    }
+}
+
 /// `PINCH_QUIT_CARD`: open the main menu with its quit card up, as a
 /// pad's Start raises it, for a screenshot of the card: its keyboard keys,
 /// or with `PINCH_PAD_PROMPTS` its pad buttons.

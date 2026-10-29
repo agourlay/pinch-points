@@ -236,6 +236,12 @@ impl GameSettings {
         if !crate::app::binds::all_distinct(&settings.binds) {
             settings.binds = default_binds();
         }
+        // The one-hand preset's IJKL is P1's to place with alone: a file
+        // that also binds one of them to a P1 key read alone would give
+        // that key two jobs, so the scheme goes rather than the keys.
+        if crate::app::cursor::preset_clash(&settings.binds, settings.commit) {
+            settings.commit = CommitScheme::Arrows;
+        }
         // After the loop, not in the arms that read them: the keycaps
         // line may be read after either, and the presumption is only
         // taken where the learned caps leave room for it.
@@ -345,6 +351,29 @@ mod tests {
             let text = format!("commit_scheme: {word}\n");
             assert_eq!(GameSettings::parse(&text).0.commit, commit, "{word}");
         }
+    }
+
+    /// A file that puts one of the one-hand preset's keys on a P1 key
+    /// read alone keeps the keys and drops the scheme: I placing up and
+    /// removing on one press does neither.
+    #[test]
+    fn a_file_whose_keys_clash_with_the_one_hand_preset_drops_the_scheme() {
+        use crate::app::binds::Action;
+        let caps = crate::app::keycaps::KeyCaps::default();
+        let mut settings = GameSettings {
+            commit: CommitScheme::Ijkl,
+            ..GameSettings::default()
+        };
+        settings.binds[1].set(Action::MoveUp, KeyCode::KeyU);
+        settings.binds[0].set(Action::Remove, KeyCode::KeyI);
+        let back = GameSettings::parse(&settings.to_text(&caps)).0;
+        assert_eq!(back.binds, settings.binds, "the keys stay");
+        assert_eq!(back.commit, CommitScheme::Arrows);
+        // P1's place keys are not read alone, so they may hold one.
+        settings.binds[0].set(Action::Remove, KeyCode::Space);
+        settings.binds[0].set(Action::PlaceDown, KeyCode::KeyI);
+        let back = GameSettings::parse(&settings.to_text(&caps)).0;
+        assert_eq!(back.commit, CommitScheme::Ijkl);
     }
 
     #[test]

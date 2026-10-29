@@ -221,8 +221,11 @@ pub fn editor_levels_input(
             };
             if list.deleting != Some(at) {
                 list.deleting = Some(at);
-                let key = match (*device, button_name(&Face::LevelList, Does::Delete, tr)) {
-                    (LastDevice::Pad, Some(button)) => button,
+                let key = match (
+                    *device,
+                    button_name(&Face::LevelList, Does::Delete, tr, device.family()),
+                ) {
+                    (LastDevice::Pad(_), Some(button)) => button,
                     // The cap the press is read by, whichever key wears it.
                     _ => DELETE_CAP.to_string(),
                 };

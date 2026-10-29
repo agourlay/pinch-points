@@ -14,8 +14,8 @@ mod second_press;
 
 pub use frame::{FOAM_DEPTH, FRAME_PX, Framed, ShoreCard, dress_cards, tide_line};
 pub use nav::{
-    Buttons, CLOSERS, NUMBER_KEYS, Nav, enter, left_right, nav, number_pressed, screen_chosen,
-    spend, step,
+    Buttons, CLOSERS, NAV_KEYS, NUMBER_KEYS, Nav, enter, left_right, nav, number_pressed,
+    screen_chosen, spend, step,
 };
 #[cfg(test)]
 pub use second_press::SECOND_PRESS_SECS;

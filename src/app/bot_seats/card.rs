@@ -69,9 +69,11 @@ fn door_lines(
         crate::app::palette::PARCHMENT.with_alpha(0.8),
     );
     let keys = match (device, door.showing_lan) {
-        (crate::app::gamepad::LastDevice::Pad, lan) => {
-            crate::app::gamepad::scheme::legend(tr, &crate::app::gamepad::Face::Door { lan })
-        }
+        (crate::app::gamepad::LastDevice::Pad(family), lan) => crate::app::gamepad::scheme::legend(
+            tr,
+            family,
+            &crate::app::gamepad::Face::Door { lan },
+        ),
         (crate::app::gamepad::LastDevice::Keyboard, true) => tr.door_prompt_lan.to_string(),
         (crate::app::gamepad::LastDevice::Keyboard, false) => tr.door_prompt.to_string(),
     };

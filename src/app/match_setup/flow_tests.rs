@@ -9,7 +9,7 @@ use super::ui::{
 };
 use super::ui::{HEADING_FONT, TILE_W, slot_note, slot_words};
 use super::*;
-use crate::app::gamepad::LastDevice;
+use crate::app::gamepad::{LastDevice, PadFamily};
 use crate::app::i18n::metrics::{display_px, text_px};
 use crate::app::settings::GameSettings;
 
@@ -43,6 +43,7 @@ fn setup(config: MatchConfig, shelf: CustomBeaches, step: Step) -> App {
     app.init_resource::<crate::app::gamepad::PadSeats>();
     app.init_resource::<LastDevice>();
     app.init_resource::<crate::app::gamepad::LastPad>();
+    app.init_resource::<crate::app::gamepad::Bridged>();
     app.init_resource::<crate::app::keycaps::KeyCaps>();
     app.insert_resource(GameSettings::default());
     app.add_systems(Update, match_setup_input);
@@ -403,15 +404,19 @@ fn every_line_fits_its_place_in_every_language() {
             PlayedBy::Bot,
         ] {
             long(
-                &format!("< {} >", played_by_text(tr, by)),
+                &format!("< {} >", played_by_text(tr, by, PadFamily::Xbox)),
                 ROW_FONT,
                 by_room,
             );
             long(status_text(tr, by), STATUS_FONT, STATUS_W);
         }
-        for keys in [false, true] {
+        // An open seat names the pad's Start, longest as "Options".
+        for (keys, family) in [false, true]
+            .into_iter()
+            .flat_map(|keys| PadFamily::ALL.map(|family| (keys, family)))
+        {
             long(
-                &played_by_text(tr, PlayedBy::Open { keys }),
+                &played_by_text(tr, PlayedBy::Open { keys }, family),
                 OPEN_FONT,
                 by_room,
             );
@@ -421,7 +426,7 @@ fn every_line_fits_its_place_in_every_language() {
                 STATUS_W,
             );
         }
-        for device in [LastDevice::Keyboard, LastDevice::Pad] {
+        for device in [LastDevice::Keyboard, LastDevice::PAD] {
             long(&unnamed(tr, device), STATUS_FONT, NAME_W);
             long(&seat_hint(tr, device, 1), SEAT_HINT_FONT, seats_room);
         }
@@ -437,7 +442,7 @@ fn every_line_fits_its_place_in_every_language() {
                         ..GameSettings::default()
                     };
                     for seat in 0..seats {
-                        for device in [LastDevice::Keyboard, LastDevice::Pad] {
+                        for device in [LastDevice::Keyboard, LastDevice::PAD] {
                             for pin in [
                                 None,
                                 Some(P2Pin::Keys),
@@ -455,14 +460,16 @@ fn every_line_fits_its_place_in_every_language() {
             }
         }
         let all_open: Vec<u8> = (1..MAX_PLAYERS as u8).collect();
-        let (line, warns) = seats_line(tr, &all_open, BotLevel::Normal, true);
+        let (line, warns) = seats_line(tr, &all_open, BotLevel::Normal, (true, PadFamily::Xbox));
         assert!(warns);
         long(&line, ROW_FONT - 2.0, seats_room);
-        long(
-            &seats_line(tr, &[], BotLevel::Normal, true).0,
-            ROW_FONT - 2.0,
-            seats_room,
-        );
+        for family in PadFamily::ALL {
+            long(
+                &seats_line(tr, &[], BotLevel::Normal, (true, family)).0,
+                ROW_FONT - 2.0,
+                seats_room,
+            );
+        }
     }
     let over = over.into_inner();
     assert!(over.is_empty(), "too long:\n{}", over.join("\n"));
@@ -666,6 +673,7 @@ fn step_three_says_the_map_moved_and_what_a_d_does() {
     app.insert_resource(shelf);
     app.insert_resource(GameSettings::default());
     app.init_resource::<LastDevice>();
+    app.init_resource::<crate::app::gamepad::LastPad>();
     app.insert_resource(crate::app::art::Art::blank());
     app.init_resource::<crate::app::gamepad::PadSeats>();
     app.add_systems(Update, (update_match_ui, paint_players_step).chain());
@@ -1173,6 +1181,7 @@ fn each_step_has_its_own_keys() {
     let [game, map, players] = Step::ALL.map(|step| {
         legend(
             &EN,
+            crate::app::gamepad::PadFamily::Xbox,
             &Face::MatchSetup {
                 step,
                 join: true,
@@ -1190,6 +1199,7 @@ fn each_step_has_its_own_keys() {
     }
     let seated = legend(
         &EN,
+        crate::app::gamepad::PadFamily::Xbox,
         &Face::MatchSetup {
             step: Step::Players,
             join: false,
@@ -1201,11 +1211,11 @@ fn each_step_has_its_own_keys() {
         "{seated}"
     );
     assert_eq!(
-        start_button_label(&EN, LastDevice::Pad, false),
+        start_button_label(&EN, LastDevice::PAD, false),
         "Start match (Start)"
     );
     assert_eq!(
-        start_button_label(&EN, LastDevice::Pad, true),
+        start_button_label(&EN, LastDevice::PAD, true),
         "Start match (A)"
     );
     assert_eq!(
@@ -1222,7 +1232,7 @@ fn the_start_button_names_its_key_inside_it() {
     use super::ui::{BUTTON_FONT, START_BUTTON_W};
     for lang in crate::app::i18n::ALL_LANGS {
         let tr = lang.tr();
-        for device in [LastDevice::Keyboard, LastDevice::Pad] {
+        for device in [LastDevice::Keyboard, LastDevice::PAD] {
             for join in [false, true] {
                 let label = start_button_label(tr, device, join);
                 let wide = display_px(&label, BUTTON_FONT);

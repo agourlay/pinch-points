@@ -234,10 +234,14 @@ mod tests {
             keep,
         };
         let tr = &crate::app::i18n::EN;
-        let offered = scheme::legend(tr, &results(KeepOffer::Offered));
+        let offered = scheme::legend(
+            tr,
+            crate::app::gamepad::PadFamily::Xbox,
+            &results(KeepOffer::Offered),
+        );
         assert!(offered.contains("X: keep replay"), "{offered}");
         for keep in [KeepOffer::Kept, KeepOffer::Nothing] {
-            let line = scheme::legend(tr, &results(keep));
+            let line = scheme::legend(tr, crate::app::gamepad::PadFamily::Xbox, &results(keep));
             assert!(!line.contains("X:"), "{keep:?}: {line}");
         }
         assert_eq!(kept_lead(tr, KeepOffer::Kept), Some("replay kept"));
@@ -354,6 +358,7 @@ mod tests {
             let mut app = card(&dir, offered("a round"));
             app.init_resource::<crate::app::gamepad::Bridged>();
             app.init_resource::<PadPick>();
+            app.init_resource::<Time>();
             app.insert_resource(PadFace(Face::Results {
                 door: AfterRound::Menu,
                 talk: false,

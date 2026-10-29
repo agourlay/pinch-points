@@ -197,7 +197,10 @@ pub struct Leaving<'w> {
 pub fn pause_input(
     card: PauseCard,
     buttons: menu_ui::Buttons,
-    settings: Res<GameSettings>,
+    (settings, chat): (
+        Res<GameSettings>,
+        Res<crate::app::spectators::SpectatorChat>,
+    ),
     screen: Res<State<Screen>>,
     phase: Res<State<Phase>>,
     mut online: ResMut<Online>,
@@ -287,6 +290,12 @@ pub fn pause_input(
     // on the very next frame, so "Esc: menu" could not reach the menu.
     if online.0.is_some() && !peer_paused && !open.own {
         close(&mut commands, &mut menu, &mut paused, &ui);
+        return;
+    }
+    // A spectator's line open under a peer's pause keeps the keys until it
+    // is said or dropped (`chat_keys_free`): its letters and its Enter are
+    // the line's, not the card's rows.
+    if chat.open() {
         return;
     }
     let options = open.rows().len();
@@ -413,6 +422,7 @@ mod tests {
         app.init_resource::<crate::app::gamepad::PadFace>();
         app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<PauseMenu>();
+        app.init_resource::<crate::app::spectators::SpectatorChat>();
         app.init_resource::<Paused>();
         app.init_resource::<Online>();
         app.insert_resource(GameSettings::default());
@@ -485,6 +495,7 @@ mod tests {
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<PadFace>();
         app.init_resource::<PauseMenu>();
+        app.init_resource::<crate::app::spectators::SpectatorChat>();
         app.init_resource::<Paused>();
         app.init_resource::<Online>();
         app.insert_resource(GameSettings::default());
@@ -576,6 +587,7 @@ mod tests {
         app.init_resource::<crate::app::gamepad::PadFace>();
         app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<PauseMenu>();
+        app.init_resource::<crate::app::spectators::SpectatorChat>();
         app.init_resource::<Paused>();
         app.insert_resource(GameSettings::default());
         app.add_message::<AppExit>();
@@ -601,6 +613,89 @@ mod tests {
             app.update();
         }
         assert!(app.world().resource::<PauseMenu>().is_open(), "still up");
+    }
+
+    /// A peer's pause raises the card over a spectator's open chat line,
+    /// and the line keeps the keys: the S typed next walks no row, and the
+    /// Enter says the line rather than taking one. Once it is said, the
+    /// card has the keys.
+    #[test]
+    fn a_peers_pause_leaves_a_spectators_line_its_keys() {
+        use crate::app::conditions::chat_keys_free;
+        use crate::app::net::OnlineSession;
+        use crate::app::spectators::{SpectatorChat, spectator_chat_input};
+        use crate::sim::{DEFAULT_DELAY, Lockstep};
+        use crate::transport::{MatchTerms, UdpTransport};
+
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_state::<Phase>();
+        app.insert_resource(State::new(Screen::Versus));
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::PadFace>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<PauseMenu>();
+        app.init_resource::<crate::app::spectators::SpectatorChat>();
+        app.init_resource::<Paused>();
+        app.add_message::<bevy::input::keyboard::KeyboardInput>();
+        let mut settings = GameSettings::default();
+        settings.set_name(0, "Wanda");
+        app.insert_resource(settings);
+        app.add_message::<AppExit>();
+        add_restart_sources(&mut app);
+        let mut watcher = OnlineSession::new(
+            UdpTransport::host(0).expect("socket"),
+            Lockstep::observer(vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        // A seated player's pause, relayed by the host.
+        watcher.session.receive_pause(1);
+        assert!(watcher.session.paused());
+        app.insert_resource(Online(Some(watcher)));
+        app.insert_resource(SpectatorChat(Some("yes so clo".into())));
+        app.add_systems(
+            Update,
+            (spectator_chat_input.run_if(chat_keys_free), pause_input).chain(),
+        );
+        let tap = |app: &mut App, key: KeyCode| {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset_all();
+            keys.press(key);
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+        };
+        let row = |app: &App| {
+            app.world()
+                .resource::<PauseMenu>()
+                .card
+                .expect("the card is up")
+                .chosen()
+        };
+
+        app.update();
+        assert!(app.world().resource::<PauseMenu>().is_open(), "the card");
+        tap(&mut app, KeyCode::KeyS);
+        assert_eq!(row(&app), PauseAction::Continue, "S is the line's");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.world().resource::<SpectatorChat>().0,
+            None,
+            "Enter said the line"
+        );
+        app.update();
+        assert!(app.world().resource::<PauseMenu>().is_open(), "still up");
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Versus,
+            "and nobody left the match"
+        );
+        tap(&mut app, KeyCode::KeyS);
+        assert_eq!(row(&app), PauseAction::ToMenu, "now the card has the keys");
     }
 
     /// The card takes the keyboard while it is up.
@@ -632,6 +727,7 @@ mod tests {
         app.init_resource::<Time>();
         app.init_resource::<PendingActions>();
         app.init_resource::<PauseMenu>();
+        app.init_resource::<crate::app::spectators::SpectatorChat>();
         app.init_resource::<Paused>();
         app.init_resource::<Online>();
         app.add_message::<PlacementDenied>();
@@ -715,6 +811,7 @@ mod tests {
         app.init_resource::<crate::app::gamepad::PadFace>();
         app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<PauseMenu>();
+        app.init_resource::<crate::app::spectators::SpectatorChat>();
         app.init_resource::<Paused>();
         app.init_resource::<Online>();
         app.insert_resource(GameSettings::default());
@@ -754,6 +851,7 @@ mod tests {
         app.init_resource::<crate::app::gamepad::PadFace>();
         app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<PauseMenu>();
+        app.init_resource::<crate::app::spectators::SpectatorChat>();
         app.init_resource::<Paused>();
         app.init_resource::<Online>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
@@ -822,6 +920,7 @@ mod tests {
             app.init_resource::<crate::app::gamepad::PadFace>();
             app.init_resource::<crate::app::gamepad::LastDevice>();
             app.init_resource::<PauseMenu>();
+            app.init_resource::<crate::app::spectators::SpectatorChat>();
             app.init_resource::<Paused>();
             app.init_resource::<Online>();
             app.insert_resource(GameSettings::default());

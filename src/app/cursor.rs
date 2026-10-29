@@ -55,8 +55,12 @@ impl Cursor {
 /// One rule for both inputs, each keeping its own state (the cursor keeps
 /// the keyboard's, a pad's component keeps the pad's), so a key and a
 /// stick held at once do not share a timer.
+///
+/// No timer until a press is seen: a key held into a new screen was
+/// pressed for the one before, and a zero-length timer stepped the new
+/// cursor on its first frame and kept it sliding with no press at all.
 #[derive(Default)]
-pub(crate) struct HoldRepeat(Timer);
+pub(crate) struct HoldRepeat(Option<Timer>);
 
 impl HoldRepeat {
     /// Whether to step this frame. `just` is a fresh press, `held` any
@@ -66,7 +70,8 @@ impl HoldRepeat {
     /// interval. Kept apart rather than read back off the timer: asking a
     /// finished Bevy timer whether its elapsed equals its duration says
     /// yes for every one, since Bevy clamps it, and the pad's hold once
-    /// never got past the first-step delay that way.
+    /// never got past the first-step delay that way. Letting go forgets
+    /// the press, so the next hold needs one of its own.
     pub(crate) fn advance(
         &mut self,
         just: bool,
@@ -76,17 +81,21 @@ impl HoldRepeat {
         interval: f32,
     ) -> bool {
         if just {
-            self.0 = Timer::from_seconds(delay, TimerMode::Once);
+            self.0 = Some(Timer::from_seconds(delay, TimerMode::Once));
             return true;
         }
         if !held {
+            self.0 = None;
             return false;
         }
-        self.0.tick(dt);
-        if !self.0.is_finished() {
+        let Some(timer) = &mut self.0 else {
+            return false;
+        };
+        timer.tick(dt);
+        if !timer.is_finished() {
             return false;
         }
-        self.0 = Timer::from_seconds(interval, TimerMode::Once);
+        *timer = Timer::from_seconds(interval, TimerMode::Once);
         true
     }
 }
@@ -278,6 +287,44 @@ pub fn key_doing(player: u8, commit: CommitScheme, action: crate::app::binds::Ac
             | Action::ClearAll => KeyCode::KeyI,
         }),
     }
+}
+
+/// The job the scheme `commit` fixes on `key` for `player`, if it fixes
+/// one: under the one-hand preset, P1's I places up.
+pub fn preset_job(
+    player: u8,
+    commit: CommitScheme,
+    key: KeyCode,
+) -> Option<crate::app::binds::Action> {
+    crate::app::binds::Action::ALL
+        .into_iter()
+        .find(|&action| key_doing(player, commit, action) == KeyDoing::Preset(key))
+}
+
+/// Whether some job reads `slot` of `player`'s keys under `commit`. The
+/// one-hand preset leaves P1's place slots unread, so their keys are
+/// free to share with the preset's.
+pub fn slot_read(player: u8, commit: CommitScheme, slot: crate::app::binds::Action) -> bool {
+    crate::app::binds::Action::ALL
+        .into_iter()
+        .any(|action| key_doing(player, commit, action) == KeyDoing::Bound(slot))
+}
+
+/// Whether `binds` give a key the scheme `commit` fixes a second job: a
+/// read slot holding one of the preset's keys, which would then place
+/// and move (or remove) on one press. The capture refuses such a key,
+/// a settings file that holds one sets the scheme aside, and the dial
+/// passes over a scheme that would make one.
+pub fn preset_clash(
+    binds: &[crate::app::binds::SeatBinds; crate::app::binds::BOUND_SEATS],
+    commit: CommitScheme,
+) -> bool {
+    binds.iter().enumerate().any(|(seat, keys)| {
+        crate::app::binds::Action::ALL.into_iter().any(|slot| {
+            slot_read(seat as u8, commit, slot)
+                && preset_job(seat as u8, commit, keys.key(slot)).is_some()
+        })
+    })
 }
 
 /// The key that does `action` for `player` under `commit`, read through
@@ -924,6 +971,26 @@ mod tests {
         }
     }
 
+    /// A key held into a new screen was pressed for the one before: the
+    /// new cursor's repeat waits for a press of its own, where a zero
+    /// timer stepped it on its first frame and kept it sliding.
+    #[test]
+    fn a_hold_without_a_press_never_steps() {
+        let mut repeat = HoldRepeat::default();
+        let dt = std::time::Duration::from_secs_f32(0.2);
+        for _ in 0..10 {
+            assert!(!repeat.advance(false, true, dt, 0.28, 0.09), "held over");
+        }
+        assert!(repeat.advance(true, true, dt, 0.28, 0.09), "pressed");
+        assert!(!repeat.advance(false, true, dt, 0.28, 0.09), "the delay");
+        assert!(repeat.advance(false, true, dt, 0.28, 0.09), "then repeats");
+        assert!(!repeat.advance(false, false, dt, 0.28, 0.09), "let go");
+        assert!(
+            !repeat.advance(false, true, dt, 0.28, 0.09),
+            "no press, no step"
+        );
+    }
+
     /// In a versus round, with a rival on the second seat's keys, the
     /// mirrored keys stay on: P1 moves on the arrows and queues on WASD,
     /// and P2's IJKL and numpad still answer for P2 alone.
@@ -1241,6 +1308,7 @@ mod tests {
         app.init_resource::<Tournament>();
         app.init_resource::<crate::app::lobby::Homecoming>();
         app.init_resource::<crate::app::pause::PauseMenu>();
+        app.init_resource::<crate::app::spectators::SpectatorChat>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.init_resource::<LiveSeatKeys>();
         app.init_resource::<crate::app::match_setup::MatchConfig>();

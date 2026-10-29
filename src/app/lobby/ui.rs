@@ -710,8 +710,9 @@ pub fn update_lobby_chat(
                     &face.0,
                     crate::app::gamepad::scheme::Does::Talk,
                     tr,
+                    device.family(),
                 )
-                .filter(|_| *device == crate::app::gamepad::LastDevice::Pad);
+                .filter(|_| device.is_pad());
                 let line = match pad {
                     Some(button) => fill(tr.pad.bind, &[("b", &button), ("a", tr.pad.talk)]),
                     None => tr.lobby_chat_hint.to_string(),

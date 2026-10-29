@@ -1661,7 +1661,7 @@ mod tests {
         let tr = &crate::app::i18n::EN;
         let dir = stocked("delete-pad", 2);
         let (mut app, pad) = library_app(&dir);
-        app.insert_resource(LastDevice::Pad);
+        app.insert_resource(LastDevice::PAD);
         let button = crate::app::gamepad::scheme::Pad::Select
             .button()
             .expect("a button");
@@ -1708,8 +1708,11 @@ mod tests {
         }
         let tr = &crate::app::i18n::EN;
         assert_eq!(delete_control(tr, LastDevice::Keyboard), "D");
-        assert_eq!(delete_control(tr, LastDevice::Pad), "Select");
-        assert!(scheme::legend(tr, &Face::Replays).contains("Select: delete"));
+        assert_eq!(delete_control(tr, LastDevice::PAD), "Select");
+        assert!(
+            scheme::legend(tr, crate::app::gamepad::PadFamily::Xbox, &Face::Replays)
+                .contains("Select: delete")
+        );
         // D is nobody else's on this screen: not a global letter, which
         // every screen answers, and not one the shelf walks with.
         assert!(!crate::app::binds::GLOBAL_LETTERS.contains(&DELETE_CAP));

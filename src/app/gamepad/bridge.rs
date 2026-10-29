@@ -9,6 +9,9 @@ use crate::app::settings::GameSettings;
 use crate::sim::Direction;
 use bevy::prelude::*;
 
+/// Where each pad's right stick pointed last frame, for its flicks.
+type Flicks = Vec<(Entity, Option<Direction>)>;
+
 /// Press the keys the face's table names for this frame's pad presses.
 ///
 /// Runs on every screen, and the table decides: a face whose rows are all
@@ -20,17 +23,21 @@ use bevy::prelude::*;
 /// toggle; the results cards over a board leave the d-pad alone, since the
 /// board cursor reads W/A/S/D as P1's keys; and on match setup Select is
 /// Enter while Start sits a friend down.
+///
+/// A results card that comes up over a round being played presses nothing
+/// for its first moments ([`CardGrace`]).
 pub fn pad_menu_bridge(
     pads: Query<(Entity, &Gamepad)>,
-    face: Res<PadFace>,
+    (face, time): (Res<PadFace>, Res<Time>),
     (caps, settings): (Res<crate::app::keycaps::KeyCaps>, Res<GameSettings>),
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut bridged: ResMut<Bridged>,
     mut pick: ResMut<PadPick>,
-    mut flicked: Local<Vec<(Entity, Option<Direction>)>>,
+    (mut flicked, mut grace): (Local<Flicks>, Local<CardGrace>),
 ) {
     let face = &face.0;
     let rows = scheme::binds(face);
+    let waiting = grace.waiting(face, time.elapsed_secs());
     let deadzone = settings.deadzone();
     for (entity, pad) in &pads {
         // The stick has no press of its own: a flick is a push this frame
@@ -46,6 +53,9 @@ pub fn pad_menu_bridge(
                 None
             }
         };
+        if waiting {
+            continue;
+        }
         for row in &rows {
             let just = if let Pad::Flick(dir) = row.pad {
                 now == Some(dir) && was.is_none()
@@ -73,6 +83,40 @@ pub fn pad_menu_bridge(
         }
     }
     flicked.retain(|(entity, _)| pads.contains(*entity));
+}
+
+/// How long a results card that came up over a round being played lets a
+/// pad's presses go by, in seconds.
+const CARD_GRACE: f32 = 0.5;
+
+/// The pause a results card takes before a pad's buttons mean anything
+/// on it, when it came up over a round being played.
+///
+/// A, B, X and Y place arrows in a round, and the tide comes in mid-rush:
+/// taps already on their way landed on the card's first frames as its
+/// keys, A walking out of the card (and out of an online series) before
+/// anyone had read it, Y starting a single round over, and X keeping the
+/// round. The keyboard has no such clash, since no seat key means anything
+/// on the card, and is not held back. A card brought up any other way (a
+/// spectator's, a recording's) needs no pause.
+#[derive(Default)]
+pub struct CardGrace {
+    /// The face last frame was a round being played.
+    playing: bool,
+    /// Until when the card's pause lasts, in elapsed seconds.
+    until: f32,
+}
+
+impl CardGrace {
+    /// Whether the pad's presses on `face` are let go by this frame.
+    fn waiting(&mut self, face: &scheme::Face, now: f32) -> bool {
+        let card = matches!(face, scheme::Face::Results { .. });
+        if card && self.playing {
+            self.until = now + CARD_GRACE;
+        }
+        self.playing = *face == scheme::Face::Round;
+        card && now < self.until
+    }
 }
 
 /// The keys a row of `face`'s table presses, as this keyboard and these
@@ -185,6 +229,7 @@ mod tests {
         app.init_resource::<Bridged>();
         app.init_resource::<PadPick>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.init_resource::<Time>();
         app.insert_resource(GameSettings::default());
         app.insert_resource(PadFace(face));
         app.world_mut().spawn(Gamepad::default());
@@ -319,10 +364,11 @@ mod tests {
                 );
             }
             let tr = &crate::app::i18n::EN;
-            let legend = scheme::legend(tr, &face);
+            let legend = scheme::legend(tr, crate::app::gamepad::PadFamily::Xbox, &face);
             for row in &rows {
                 assert!(
-                    legend.contains(row.pad.name(tr)) && legend.contains(row.does.label(tr)),
+                    legend.contains(row.pad.name(tr, crate::app::gamepad::PadFamily::Xbox))
+                        && legend.contains(row.does.label(tr)),
                     "{face:?}: the prompt {legend:?} leaves out {row:?}"
                 );
             }
@@ -359,7 +405,7 @@ mod tests {
             ),
             (
                 "settings",
-                vec![Face::Settings],
+                vec![Face::Settings { dial: false }],
                 vec![KeyW, KeyS, KeyA, KeyD, Enter, Escape],
             ),
             (
@@ -593,6 +639,37 @@ mod tests {
         assert!(!keys(&app).pressed(KeyCode::KeyS), "nor on a puzzle's");
     }
 
+    /// A results card that comes up over a round lets the pad's taps meant
+    /// for arrows go by, and answers a press made once it has been read.
+    #[test]
+    fn a_card_over_a_round_lets_the_rush_taps_go_by() {
+        let card = Face::Results {
+            door: AfterRound::Menu,
+            talk: false,
+            rematch: Some(crate::app::rematch::Rematch::Round),
+            keep: crate::app::replays::KeepOffer::Offered,
+        };
+        let mut app = bridged(Face::Round);
+        app.update();
+        app.insert_resource(PadFace(card));
+        for control in [Pad::A, Pad::Y, Pad::X] {
+            press(&mut app, control);
+            assert!(
+                keys(&app).get_just_pressed().next().is_none(),
+                "{control:?} tapped as the tide came in is not the card's"
+            );
+            hold(&mut app, control, false);
+        }
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f32(CARD_GRACE));
+        press(&mut app, Pad::A);
+        assert!(
+            keys(&app).just_pressed(KeyCode::Enter),
+            "a press once the card is read takes its door"
+        );
+    }
+
     /// B on the landing menu must not reach Escape, because Escape there
     /// is `AppExit` and nothing asks first: a player reaching for "back"
     /// would close the game.
@@ -612,7 +689,7 @@ mod tests {
     #[test]
     fn b_still_goes_back_from_a_sub_screen() {
         for face in [
-            Face::Settings,
+            Face::Settings { dial: true },
             Face::Controls,
             Face::StageSelect { custom: false },
         ] {
@@ -631,7 +708,7 @@ mod tests {
     /// a key it was not already holding.
     #[test]
     fn a_press_that_changes_screen_still_releases_its_key() {
-        let mut app = bridged(Face::Settings);
+        let mut app = bridged(Face::Settings { dial: true });
         press(&mut app, Pad::B);
         assert!(keys(&app).just_pressed(KeyCode::Escape));
         // The screen it asked for arrives, and only then does the finger
@@ -684,7 +761,7 @@ mod tests {
 
         let mut app = bridged(Face::Menu);
         press(&mut app, Pad::Down);
-        app.insert_resource(PadFace(Face::Settings));
+        app.insert_resource(PadFace(Face::Settings { dial: true }));
         hold(&mut app, Pad::Down, true);
         assert!(keys(&app).pressed(KeyCode::KeyS), "S is S on both faces");
     }
@@ -718,7 +795,10 @@ mod tests {
         assert_eq!(pressed_by(&setup, Pad::Start), vec![], "Start is a seat's");
         assert_eq!(pressed_by(&setup, Pad::Down), vec![KeyCode::KeyS]);
         assert_eq!(pressed_by(&setup, Pad::X), vec![KeyCode::Tab]);
-        assert_eq!(pressed_by(&Face::Settings, Pad::Select), vec![]);
+        assert_eq!(
+            pressed_by(&Face::Settings { dial: true }, Pad::Select),
+            vec![]
+        );
         for step in [Step::Game, Step::Map] {
             let face = Face::MatchSetup {
                 step,

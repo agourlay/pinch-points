@@ -1,7 +1,7 @@
 //! Round-end overlays: the tide-is-in standings card, the puzzle victory
 //! card, and the winner confetti.
 
-use crate::app::gamepad::{Face, LastDevice};
+use crate::app::gamepad::{Face, LastDevice, PadFamily};
 use crate::app::i18n::fill;
 use crate::app::menu_ui;
 use crate::app::net::Online;
@@ -167,33 +167,42 @@ fn card_text(size: f32, color: Color) -> (TextFont, TextColor) {
 }
 
 /// One line of a card: `text` at `size`, in `color`.
-/// A card's line of keys, in both its spellings: the keyboard's, and a
-/// pad's player's, from the table of the face the card stands for.
+/// A card's line of keys, in all its spellings: the keyboard's, and a
+/// pad's player's, from the table of the face the card stands for, with
+/// each family's button names ([`PadFamily::ALL`]).
 /// [`swap_card_keys`] shows whichever the hands last used want.
 #[derive(Component)]
 pub struct CardKeys {
     keys: String,
-    pad: String,
+    pads: Vec<(PadFamily, String)>,
 }
 
 impl CardKeys {
     /// The keyboard's words, and in front of the face's controls the pad's
     /// `lead`, if the line has one.
     fn new(keys: &str, lead: Option<&str>, face: &Face, tr: &crate::app::i18n::Tr) -> CardKeys {
-        let controls = crate::app::gamepad::scheme::legend(tr, face);
-        CardKeys {
-            keys: keys.to_string(),
-            pad: match lead {
+        let pads = PadFamily::ALL.map(|family| {
+            let controls = crate::app::gamepad::scheme::legend(tr, family, face);
+            let line = match lead {
                 Some(lead) => format!("{lead} | {controls}"),
                 None => controls,
-            },
+            };
+            (family, line)
+        });
+        CardKeys {
+            keys: keys.to_string(),
+            pads: pads.to_vec(),
         }
     }
 
     fn line(&self, device: LastDevice) -> &str {
         match device {
             LastDevice::Keyboard => &self.keys,
-            LastDevice::Pad => &self.pad,
+            LastDevice::Pad(family) => self
+                .pads
+                .iter()
+                .find(|(spelled, _)| *spelled == family)
+                .map_or(&self.keys, |(_, line)| line),
         }
     }
 }
@@ -1071,11 +1080,23 @@ mod tests {
         let tr = &EN;
         let offered = over_keys(tr, &online, &tournament, None, KeepOffer::Offered);
         assert_eq!(offered.keys, "Enter: menu | G: keep replay");
-        assert!(offered.pad.contains("X: keep replay"), "{}", offered.pad);
+        assert!(
+            offered.line(LastDevice::PAD).contains("X: keep replay"),
+            "{}",
+            offered.line(LastDevice::PAD)
+        );
         let kept = over_keys(tr, &online, &tournament, None, KeepOffer::Kept);
         assert_eq!(kept.keys, "Enter: menu | replay kept");
-        assert!(kept.pad.starts_with("replay kept | "), "{}", kept.pad);
-        assert!(!kept.pad.contains("X:"), "{}", kept.pad);
+        assert!(
+            kept.line(LastDevice::PAD).starts_with("replay kept | "),
+            "{}",
+            kept.line(LastDevice::PAD)
+        );
+        assert!(
+            !kept.line(LastDevice::PAD).contains("X:"),
+            "{}",
+            kept.line(LastDevice::PAD)
+        );
     }
 
     /// A spectator's card names Y for talking to the table, as the bridge
@@ -1097,10 +1118,18 @@ mod tests {
         let tr = &EN;
         let watching = at_table(Lockstep::observer(vec![0, 1], DEFAULT_DELAY));
         let card = over_keys(tr, &watching, &tournament, None, KeepOffer::Offered);
-        assert!(card.pad.contains("Y: talk"), "{}", card.pad);
+        assert!(
+            card.line(LastDevice::PAD).contains("Y: talk"),
+            "{}",
+            card.line(LastDevice::PAD)
+        );
         let seated = at_table(Lockstep::new(1, vec![0, 1], DEFAULT_DELAY));
         let card = over_keys(tr, &seated, &tournament, None, KeepOffer::Offered);
-        assert!(!card.pad.contains("Y: talk"), "{}", card.pad);
+        assert!(
+            !card.line(LastDevice::PAD).contains("Y: talk"),
+            "{}",
+            card.line(LastDevice::PAD)
+        );
     }
 
     /// The series line fits the card at its widest. A team of three with

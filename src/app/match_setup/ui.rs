@@ -1918,6 +1918,10 @@ fn pad_icon(icon: &mut ChildSpawnerCommands, seat: u8) {
 pub struct SeatsPaint<'w, 's> {
     pads: Res<'w, crate::app::gamepad::PadSeats>,
     live: Query<'w, 's, Entity, With<Gamepad>>,
+    /// The pad last reached with, whose maker's name for Start the lines
+    /// about a pad's Start say.
+    last_pad: Res<'w, crate::app::gamepad::LastPad>,
+    gamepads: Query<'w, 's, &'static Gamepad>,
 }
 
 /// What step 3's rows are painted with.
@@ -1968,6 +1972,8 @@ pub fn paint_players_step(
     let tr = paint.settings.tr();
     let config = &*paint.config;
     let live: Vec<Entity> = seated.live.iter().collect();
+    let family =
+        crate::app::gamepad::reference_family(*paint.device, *seated.last_pad, &seated.gamepads);
     let pads = seated
         .pads
         .seat_pads(&live, &paint.settings, &config.human_seats());
@@ -2021,7 +2027,7 @@ pub fn paint_players_step(
                 let (words, color, px) = match cell.1 {
                     SeatPart::Name => seat_name_cell(tr, &paint, seat, by, picked),
                     SeatPart::By => {
-                        let words = played_by_text(tr, by);
+                        let words = played_by_text(tr, by, family);
                         match (by, picked && seat > 0) {
                             (PlayedBy::Open { .. }, _) => (words, palette::GOLD, OPEN_FONT),
                             // The dial's `< >` under the cursor, on every
@@ -2085,7 +2091,7 @@ pub fn paint_players_step(
             seated
                 .pads
                 .a_start_would_seat_someone(&live, &paint.settings, &config.human_seats());
-        let (words, warns) = seats_line(tr, &open, config.ai_level, pad_to_join);
+        let (words, warns) = seats_line(tr, &open, config.ai_level, (pad_to_join, family));
         menu_ui::set_text(&mut text, &words);
         menu_ui::set_bg(
             &mut pill,
