@@ -124,8 +124,11 @@ pub fn campaign_levels() -> Vec<Level> {
 
 /// The co-op stages: each needs two players, P1's arrows turning the left
 /// claws and P2's the right (`hands:`). Embedded like the campaign, in play
-/// order, easiest first; `tests/it/coop.rs` proves each one needs both
-/// players.
+/// order: by the arrows a stage grants, fewest first, then easiest first
+/// among stages granting as many. The grant is what a tile's edge colour
+/// shows, so the colours never step back down along the shelf.
+/// `tests/it/coop.rs` proves each one needs both players and holds the
+/// order to the grant.
 ///
 /// A stage's clear is filed by its name ([`coop_progress_key`]), never by
 /// its place on the shelf or its file's number, so the shelf can be
@@ -142,14 +145,14 @@ pub const COOP: &[&str] = &[
     include_str!("../../levels/coop/08_gull_in_the_lane.txt"),
     include_str!("../../levels/coop/09_gull_ahead.txt"),
     include_str!("../../levels/coop/10_flip_the_log.txt"),
-    include_str!("../../levels/coop/11_up_and_over.txt"),
-    include_str!("../../levels/coop/12_round_the_rock.txt"),
-    include_str!("../../levels/coop/13_the_log.txt"),
+    include_str!("../../levels/coop/11_the_log.txt"),
+    include_str!("../../levels/coop/12_up_and_over.txt"),
+    include_str!("../../levels/coop/13_round_the_rock.txt"),
     include_str!("../../levels/coop/14_busy_crossing.txt"),
     include_str!("../../levels/coop/15_turn_back.txt"),
     include_str!("../../levels/coop/16_cover_me.txt"),
-    include_str!("../../levels/coop/17_middle_lane.txt"),
-    include_str!("../../levels/coop/18_shoo.txt"),
+    include_str!("../../levels/coop/17_shoo.txt"),
+    include_str!("../../levels/coop/18_middle_lane.txt"),
     include_str!("../../levels/coop/19_pen_the_gull.txt"),
     include_str!("../../levels/coop/20_cover_each_other.txt"),
 ];

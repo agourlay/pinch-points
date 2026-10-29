@@ -696,6 +696,29 @@ fn a_launched_round_seats_every_peer_on_the_same_beach() {
 #[path = "../../examples/soak/table.rs"]
 mod soak;
 
+/// The stall histogram counts what `player_stalls` counts: a freeze that
+/// ran through excused steps (the scripted hitch) and ended on an expected
+/// one bins only its expected steps, and one wholly excused bins nothing.
+#[test]
+fn the_stall_histogram_counts_only_expected_steps() {
+    let mut report = soak::Report::default();
+    let mut stalled = 0;
+    // Fifteen excused steps of hitch, one expected stall, then a move.
+    for _ in 0..15 {
+        soak::tally_stall(&mut report, &mut stalled, 0, false);
+    }
+    soak::tally_stall(&mut report, &mut stalled, 0, true);
+    soak::tally_stall(&mut report, &mut stalled, 1, true);
+    assert_eq!(report.stall_runs, [1, 0, 0, 0]);
+    assert_eq!(report.longest_stall, 1);
+    // A freeze wholly inside the hitch is not a stall at all.
+    for _ in 0..15 {
+        soak::tally_stall(&mut report, &mut stalled, 0, false);
+    }
+    soak::tally_stall(&mut report, &mut stalled, 1, true);
+    assert_eq!(report.stall_runs, [1, 0, 0, 0]);
+}
+
 /// A short soak of a full table: six players and three watchers through
 /// lossy proxies, one joiner starting late and freezing mid-round, and two
 /// players pausing at once. Every peer agrees on every hash, the table

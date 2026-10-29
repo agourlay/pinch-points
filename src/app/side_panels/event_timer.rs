@@ -1,13 +1,16 @@
-//! The running tide event, pinned at the top of the feed card: its name,
-//! the seconds it has left, and a bar draining with them.
+//! The running tide events, pinned at the top of the feed card: each one's
+//! name, the seconds it has left, and a bar draining with them, stacked
+//! when a spectators' call lands on top of a spun event.
 //!
 //! Speed Up, Slow Down and Right Claws change the rules for ten seconds
 //! and leave nothing on the beach to say so: the banner is gone in two and
 //! a half, and the header's line in three. A player banking a left claw at
 //! second eight had no way to know the call was still on. The block reads
-//! [`crate::sim::Board::running_event`], the same ticks the sim counts
+//! [`crate::sim::Board::running_events`], the same ticks the sim counts
 //! down, so it freezes with the round under a pause and ends on the tick
-//! the event does.
+//! the event does. Every running event gets its own block: the three run
+//! in separate slots, and a block naming only the first left the other
+//! running with nothing on screen.
 
 use crate::app::i18n::{Tr, fill};
 use crate::app::settings::GameSettings;
@@ -15,21 +18,26 @@ use crate::app::{Sim, menu_ui, palette};
 use crate::sim::{Board, EVENT_TICKS, TICKS_PER_SECOND};
 use bevy::prelude::*;
 
-/// The block itself, shown only while a timed event runs.
-#[derive(Component)]
-pub struct EventTimer;
+/// How many timed events can run at once, and so how many blocks there
+/// are: one per slot (the mania, the tempo, the claw call).
+const SLOTS: usize = 3;
 
-/// The running event's name.
+/// One block, shown only while its running event does: the `n`th of
+/// [`timer_lines`].
 #[derive(Component)]
-pub struct EventTimerName;
+pub struct EventTimer(usize);
+
+/// The `n`th running event's name.
+#[derive(Component)]
+pub struct EventTimerName(usize);
 
 /// "7 s left".
 #[derive(Component)]
-pub struct EventTimerLeft;
+pub struct EventTimerLeft(usize);
 
 /// The bar's fill, as wide as the share of the event still to run.
 #[derive(Component)]
-pub struct EventTimerFill;
+pub struct EventTimerFill(usize);
 
 /// The feed card's side padding, which the block shares with the lines.
 pub(super) const FEED_PAD_X: f32 = 12.0;
@@ -48,31 +56,36 @@ const LEFT_PX: f32 = menu_ui::type_scale::BODY;
 const BAR_MIN_W: f32 = 40.0;
 const BAR_H: f32 = 6.0;
 
-/// What the block says about `board`: the event's name, the seconds left
-/// as a line, and the share of the event still to run. `None` when no
+/// What the blocks say about `board`, one per running event in the order
+/// [`Board::running_events`] gives them: the event's name, the seconds
+/// left as a line, and the share of the event still to run. Empty when no
 /// timed event runs, or once the round is over (an event cut short by the
 /// whistle has nothing left to time).
 ///
 /// The seconds are rounded up, as every countdown in the game is, and
 /// `stepped` (reduced motion) holds the bar at whole seconds with them
 /// rather than sliding.
-pub fn timer_lines<'a>(tr: &'a Tr, board: &Board, stepped: bool) -> Option<(&'a str, String, f32)> {
+pub fn timer_lines<'a>(tr: &'a Tr, board: &Board, stepped: bool) -> Vec<(&'a str, String, f32)> {
     if board.round_over() {
-        return None;
+        return Vec::new();
     }
-    let (event, ticks) = board.running_event()?;
-    let secs = ticks.div_ceil(TICKS_PER_SECOND);
-    let shown = if stepped {
-        secs * TICKS_PER_SECOND
-    } else {
-        ticks
-    };
-    let share = (shown as f32 / EVENT_TICKS as f32).clamp(0.0, 1.0);
-    Some((
-        crate::app::hud::event_name(tr, event),
-        fill(tr.event_left, &[("s", &secs.to_string())]),
-        share,
-    ))
+    board
+        .running_events()
+        .map(|(event, ticks)| {
+            let secs = ticks.div_ceil(TICKS_PER_SECOND);
+            let shown = if stepped {
+                secs * TICKS_PER_SECOND
+            } else {
+                ticks
+            };
+            let share = (shown as f32 / EVENT_TICKS as f32).clamp(0.0, 1.0);
+            (
+                crate::app::hud::event_name(tr, event),
+                fill(tr.event_left, &[("s", &secs.to_string())]),
+                share,
+            )
+        })
+        .collect()
 }
 
 /// Every event [`timer_lines`] can name: the ones that last.
@@ -83,12 +96,19 @@ fn timed_events() -> impl Iterator<Item = crate::sim::TideEvent> {
         .filter(|event| event.lasts())
 }
 
-/// Spawn the block at the top of the feed card, hidden until an event
-/// runs. The lines below it give it room when it shows, as they do for
-/// every new line.
+/// Spawn the blocks at the top of the feed card, one per slot, each hidden
+/// until an event runs in it. The lines below give them room when they
+/// show, as they do for every new line.
 pub(super) fn spawn_event_timer(card: &mut ChildSpawnerCommands) {
+    for slot in 0..SLOTS {
+        spawn_block(card, slot);
+    }
+}
+
+/// One block: the name over its seconds and bar.
+fn spawn_block(card: &mut ChildSpawnerCommands, slot: usize) {
     card.spawn((
-        EventTimer,
+        EventTimer(slot),
         Node {
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(2.0),
@@ -100,7 +120,7 @@ pub(super) fn spawn_event_timer(card: &mut ChildSpawnerCommands) {
     ))
     .with_children(|block| {
         block.spawn((
-            EventTimerName,
+            EventTimerName(slot),
             Text::new(""),
             menu_ui::display_font(NAME_PX),
             TextColor(palette::INK_TIDE),
@@ -114,7 +134,7 @@ pub(super) fn spawn_event_timer(card: &mut ChildSpawnerCommands) {
             })
             .with_children(|row| {
                 row.spawn((
-                    EventTimerLeft,
+                    EventTimerLeft(slot),
                     Text::new(""),
                     TextFont {
                         font_size: FontSize::Px(LEFT_PX),
@@ -138,7 +158,7 @@ pub(super) fn spawn_event_timer(card: &mut ChildSpawnerCommands) {
                 ))
                 .with_children(|track| {
                     track.spawn((
-                        EventTimerFill,
+                        EventTimerFill(slot),
                         Node {
                             width: Val::Percent(100.0),
                             height: Val::Percent(100.0),
@@ -152,15 +172,15 @@ pub(super) fn spawn_event_timer(card: &mut ChildSpawnerCommands) {
     });
 }
 
-/// The pieces of the block a frame writes.
+/// The pieces of the blocks a frame writes.
 type TimerParts<'w, 's> = (
-    Query<'w, 's, &'static mut Node, (With<EventTimer>, Without<EventTimerFill>)>,
-    Query<'w, 's, &'static mut Text, (With<EventTimerName>, Without<EventTimerLeft>)>,
-    Query<'w, 's, &'static mut Text, (With<EventTimerLeft>, Without<EventTimerName>)>,
-    Query<'w, 's, &'static mut Node, (With<EventTimerFill>, Without<EventTimer>)>,
+    Query<'w, 's, (&'static EventTimer, &'static mut Node), Without<EventTimerFill>>,
+    Query<'w, 's, (&'static EventTimerName, &'static mut Text), Without<EventTimerLeft>>,
+    Query<'w, 's, (&'static EventTimerLeft, &'static mut Text), Without<EventTimerName>>,
+    Query<'w, 's, (&'static EventTimerFill, &'static mut Node), Without<EventTimer>>,
 );
 
-/// Show the running event and its time left, or hide the block.
+/// Show each running event and its time left, and hide the spare blocks.
 pub fn update_event_timer(
     sim: Res<Sim>,
     settings: Res<GameSettings>,
@@ -171,33 +191,36 @@ pub fn update_event_timer(
     // reading who won has no use for a clock on an event in a round that
     // is over.
     let lines = match phase.get() {
-        crate::app::VersusPhase::Over => None,
+        crate::app::VersusPhase::Over => Vec::new(),
         crate::app::VersusPhase::Countdown | crate::app::VersusPhase::Running => {
             timer_lines(settings.tr(), &sim.0, settings.reduced_motion)
         }
     };
-    let display = match lines {
-        Some(_) => Display::Flex,
-        None => Display::None,
-    };
-    for mut node in &mut parts.p0() {
+    for (block, mut node) in &mut parts.p0() {
+        let display = match lines.get(block.0) {
+            Some(_) => Display::Flex,
+            None => Display::None,
+        };
         if node.display != display {
             node.display = display;
         }
     }
-    let Some((name, left, share)) = lines else {
-        return;
-    };
-    for mut text in &mut parts.p1() {
-        menu_ui::set_text(&mut text, name);
+    for (name, mut text) in &mut parts.p1() {
+        if let Some((line, _, _)) = lines.get(name.0) {
+            menu_ui::set_text(&mut text, line);
+        }
     }
-    for mut text in &mut parts.p2() {
-        menu_ui::set_text(&mut text, &left);
+    for (left, mut text) in &mut parts.p2() {
+        if let Some((_, line, _)) = lines.get(left.0) {
+            menu_ui::set_text(&mut text, line);
+        }
     }
-    let width = Val::Percent(share * 100.0);
-    for mut node in &mut parts.p3() {
-        if node.width != width {
-            node.width = width;
+    for (bar, mut node) in &mut parts.p3() {
+        if let Some(&(_, _, share)) = lines.get(bar.0) {
+            let width = Val::Percent(share * 100.0);
+            if node.width != width {
+                node.width = width;
+            }
         }
     }
 }
@@ -216,9 +239,9 @@ mod tests {
         let mut board = Board::new(7, 5, 3);
         board.set_events_enabled(true);
         board.rules_mut().round_length = Some(10 * EVENT_TICKS);
-        assert!(timer_lines(&EN, &board, false).is_none(), "nothing runs");
+        assert!(timer_lines(&EN, &board, false).is_empty(), "nothing runs");
         board.force_tide_event(TideEvent::SpeedUp, 0);
-        let (name, left, share) = timer_lines(&EN, &board, false).expect("it runs");
+        let [(name, left, share)] = one(&board, false);
         assert_eq!(name, EN.events[TideEvent::SpeedUp.index()]);
         let full = (EVENT_TICKS / TICKS_PER_SECOND).to_string();
         assert_eq!(left, fill(EN.event_left, &[("s", &full)]));
@@ -228,25 +251,62 @@ mod tests {
         for _ in 0..TICKS_PER_SECOND / 3 {
             board.tick_idle();
         }
-        let (_, left, smooth) = timer_lines(&EN, &board, false).expect("it runs");
+        let [(_, left, smooth)] = one(&board, false);
         assert_eq!(left, fill(EN.event_left, &[("s", &full)]));
         assert!(smooth < 1.0);
-        let (_, _, stepped) = timer_lines(&EN, &board, true).expect("it runs");
+        let [(_, _, stepped)] = one(&board, true);
         assert_eq!(stepped, 1.0);
         while board.running_event().is_some() {
-            let (_, left, _) = timer_lines(&EN, &board, false).expect("it runs");
+            let [(_, left, _)] = one(&board, false);
             assert_ne!(left, fill(EN.event_left, &[("s", "0")]), "zero while on");
             board.tick_idle();
         }
-        assert!(timer_lines(&EN, &board, false).is_none(), "gone with it");
+        assert!(timer_lines(&EN, &board, false).is_empty(), "gone with it");
 
         board.force_tide_event(TideEvent::RightClaws, 0);
         board.rules_mut().round_length = Some(board.ticks() as u32);
         assert!(board.round_over() && board.running_event().is_some());
         assert!(
-            timer_lines(&EN, &board, false).is_none(),
+            timer_lines(&EN, &board, false).is_empty(),
             "the round is over"
         );
+    }
+
+    /// The one block running on `board`.
+    fn one(board: &Board, stepped: bool) -> [(&'static str, String, f32); 1] {
+        timer_lines(&EN, board, stepped)
+            .try_into()
+            .expect("exactly one event runs")
+    }
+
+    /// Speed Up spun, then a Crab Mania called by the watchers three
+    /// seconds in: both blocks show, each with its own seconds, the mania
+    /// first, as the banner names it.
+    #[test]
+    fn overlapping_events_each_get_a_block() {
+        let mut board = Board::new(7, 5, 3);
+        board.set_events_enabled(true);
+        board.rules_mut().round_length = Some(10 * EVENT_TICKS);
+        board.force_tide_event(TideEvent::SpeedUp, 0);
+        for _ in 0..3 * TICKS_PER_SECOND {
+            board.tick_idle();
+        }
+        board.force_tide_event(TideEvent::CrabMania, 0);
+        let full = EVENT_TICKS / TICKS_PER_SECOND;
+        let lines = timer_lines(&EN, &board, false);
+        let names: Vec<&str> = lines.iter().map(|line| line.0).collect();
+        assert_eq!(
+            names,
+            vec![
+                EN.events[TideEvent::CrabMania.index()],
+                EN.events[TideEvent::SpeedUp.index()]
+            ]
+        );
+        let secs = |n: u32| fill(EN.event_left, &[("s", &n.to_string())]);
+        assert_eq!(lines[0].1, secs(full));
+        assert_eq!(lines[1].1, secs(full - 3));
+        assert!(lines[1].2 < lines[0].2, "Speed Up's bar has drained more");
+        assert!(lines.len() <= SLOTS);
     }
 
     /// Both lines fit the feed card on one row each, in every language,

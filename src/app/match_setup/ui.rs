@@ -1112,11 +1112,17 @@ pub(super) fn tile_words(
                 | MapChoice::Surprise => tr.setup_badges[1],
             },
             name: map_title(tr, map),
+            // A map with no edges says so whatever its tables: crabs and
+            // gulls walking off one side come back on the other, and
+            // nothing else on the page says it.
             sub: match map.tables() {
                 // The tables it is built for, as the pill and the note
                 // say them: "2/4", never a range with an odd one inside.
                 Some(_) => fill(
-                    tr.setup_map_sub_exact,
+                    match map.wraps() {
+                        true => tr.setup_map_sub_exact_wrap,
+                        false => tr.setup_map_sub_exact,
+                    },
                     &[
                         ("w", &map.size().0.to_string()),
                         ("h", &map.size().1.to_string()),

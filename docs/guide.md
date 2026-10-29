@@ -85,8 +85,8 @@ puzzles), and sparkling
 (scoring one spins the **random event** roulette: crab/gull manias, speed
 shifts, castle swaps, fresh sand…). The banner and the event feed say
 whose crab started it. Speed Up also opens the crab holes twice as often,
-and a castle swap with three castles or more leaves the castle of whoever
-started it alone. While a timed event is still running, the top of the
+and a castle swap with castles held by three players or more leaves the
+castles of whoever started it alone. While a timed event is still running, the top of the
 event feed counts down its seconds left, the roulette is on cooldown, and
 the feed says so when a sparkling crab is scored for nothing.
 
@@ -139,7 +139,8 @@ score lost, so the rest of the table has something to point at too.
   either of you free to put one down, turn it or pick it up. Every Tide
   Pool stage plays the same with two as with one, so all hundred are open
   to it. For stages that need two, see Co-op.
-- **Co-op**: a shelf of stages for two players, easiest first, on the
+- **Co-op**: a shelf of stages for two players, fewest arrows first and
+  easiest first among those, on the
   stage list below the Tide Pool (marked **2P**). Each player has their
   own arrows, and **your
   arrows turn only crabs with your claw**: P1's turn the left-clawed

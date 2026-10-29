@@ -97,8 +97,9 @@ pub enum TideEvent {
     SlowDown,
     /// Every signpost on the beach washes away.
     FreshSand,
-    /// Castles trade owners (rockets swap places!). With three castles or
-    /// more, a spinner's own castle sits the trade out.
+    /// Castles trade owners (rockets swap places!). When three seats or
+    /// more hold castles, the spinner's own castles sit the trade out; the
+    /// count is of seats, so two seats with two castles each rotate both.
     CastleSwap,
     /// The tide calls a claw: for a while, a right-clawed crab banks for
     /// double and a left-clawed one costs what it was worth.
@@ -220,15 +221,17 @@ impl Board {
     }
 
     /// The seat whose castle sits out a Castle Swap spun by `spinner`
-    /// (`None` for a called one), if any: the spinner, when three castles
-    /// or more are in play. The swap and the banner that explains it both
-    /// read this.
+    /// (`None` for a called one), if any: the spinner, when three seats or
+    /// more hold castles. Seats and not castles: the rotation runs over
+    /// owners ([`Self::swap_owners`]), and between two owners there is
+    /// nobody else to trade with however many castles each has. The swap
+    /// and the banner that explains it both read this.
     ///
     /// Swept along with the rest, the spinner's castle went to a rival
     /// with every arrow still pointing at it, which made the swap the one
     /// face of the wheel that cost the seat that spun it (2 to 6 points of
     /// win rate at three seats and up, measured); kept out, it is neutral.
-    /// Two castles have nobody else to trade with, and a call has no
+    /// Two owners have nobody else to trade with, and a call has no
     /// spinner: both rotate everyone.
     pub fn castle_swap_keeper(&self, spinner: Option<PlayerId>) -> Option<PlayerId> {
         let spinner = spinner?;

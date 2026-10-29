@@ -669,8 +669,8 @@ mod tests {
     }
 
     /// Castle Swap's banner says whose castle stayed put when one did, read
-    /// off the same rule the swap used: three castles keep the spinner's,
-    /// two rotate both, and the blurb for a full rotation is the plain one.
+    /// off the same rule the swap used: three castle owners keep the
+    /// spinner's, two rotate both, and the blurb for a full rotation is the plain one.
     #[test]
     fn a_castle_swap_banner_says_whose_castle_stayed() {
         use crate::app::sim_events::SimEvent;

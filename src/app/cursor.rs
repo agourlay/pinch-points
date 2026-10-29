@@ -226,59 +226,96 @@ pub fn track_live_seat_keys(
     ));
 }
 
-/// Keyboard layout for a seat, as bound in settings (spec §8.2 defaults:
-/// seat 1 on WASD + arrows, seat 2 on IJKL + numpad).
+/// Where the key that does `action` for `player` comes from under the
+/// scheme `commit`: one of the seat's bound slots, or a key the scheme
+/// fixes whatever is bound.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeyDoing {
+    /// The key bound to this slot of the seat's [`SeatBinds`].
+    ///
+    /// [`SeatBinds`]: crate::app::binds::SeatBinds
+    Bound(crate::app::binds::Action),
+    /// A key the scheme sets, which no rebinding moves.
+    Preset(KeyCode),
+}
+
+/// Which key does `action` for `player` under `commit`: the one rule the
+/// cursor ([`keymap`]) and the Controls screen both read, so the screen
+/// lists and rebinds the key that really does each job.
 ///
-/// `commit` is the §8.2 scheme in force, and only seat 1 has one. The
-/// one-hand preset overrides its four commit keys with IJKL whatever they
-/// are bound to; it exists for solo play, where the second seat's keys are
-/// free, so a caller with the keyboard shared asks
-/// [`GameSettings::commit_in_play`], which sets it aside. The mirrored
-/// scheme trades seat 1's move keys and place keys, whatever they are
-/// bound to: the same keys, so nobody else's.
-pub fn keymap(settings: &GameSettings, player: u8, commit: CommitScheme) -> KeyMap {
-    use crate::app::binds::Action;
-    let seat = usize::from(player).min(crate::app::binds::BOUND_SEATS - 1);
-    let binds = &settings.binds[seat];
+/// Only seat 1 has a scheme. The mirrored scheme trades seat 1's move
+/// slots and place slots ([`Action::mirrored`]), whatever is bound to
+/// them: the same keys, so nobody else's. The one-hand preset puts the
+/// four place jobs on IJKL whatever is bound; it exists for solo play,
+/// where the second seat's keys are free, so a caller with the keyboard
+/// shared asks [`GameSettings::commit_in_play`], which sets it aside.
+///
+/// [`Action::mirrored`]: crate::app::binds::Action::mirrored
+pub fn key_doing(player: u8, commit: CommitScheme, action: crate::app::binds::Action) -> KeyDoing {
+    use crate::app::binds::{Action, ActionGroup};
     let commit = if player == 0 {
         commit
     } else {
         CommitScheme::Arrows
     };
-    let bound_moves = [
-        Action::MoveUp,
-        Action::MoveDown,
-        Action::MoveLeft,
-        Action::MoveRight,
-    ]
-    .map(|action| binds.key(action));
-    let bound_places = [
-        Action::PlaceUp,
-        Action::PlaceDown,
-        Action::PlaceLeft,
-        Action::PlaceRight,
-    ]
-    .map(|action| binds.key(action));
-    let (moves, places) = match commit {
-        CommitScheme::Arrows => (bound_moves, bound_places),
-        CommitScheme::Wasd => (bound_places, bound_moves),
-        CommitScheme::Ijkl => (
-            bound_moves,
-            [KeyCode::KeyI, KeyCode::KeyK, KeyCode::KeyJ, KeyCode::KeyL],
-        ),
-    };
-    let [up, down, left, right] = moves;
-    let [place_up, place_down, place_left, place_right] = places;
+    match (commit, action.group()) {
+        (CommitScheme::Arrows, _)
+        | (_, ActionGroup::Posts)
+        | (CommitScheme::Ijkl, ActionGroup::Move) => KeyDoing::Bound(action),
+        (CommitScheme::Wasd, ActionGroup::Move | ActionGroup::Place) => {
+            KeyDoing::Bound(action.mirrored())
+        }
+        (CommitScheme::Ijkl, ActionGroup::Place) => KeyDoing::Preset(match action {
+            Action::PlaceDown => KeyCode::KeyK,
+            Action::PlaceLeft => KeyCode::KeyJ,
+            Action::PlaceRight => KeyCode::KeyL,
+            Action::PlaceUp
+            | Action::MoveUp
+            | Action::MoveDown
+            | Action::MoveLeft
+            | Action::MoveRight
+            | Action::Remove
+            | Action::ClearAll => KeyCode::KeyI,
+        }),
+    }
+}
+
+/// The key that does `action` for `player` under `commit`, read through
+/// [`key_doing`].
+pub fn key_for(
+    settings: &GameSettings,
+    player: u8,
+    commit: CommitScheme,
+    action: crate::app::binds::Action,
+) -> KeyCode {
+    let seat = usize::from(player).min(crate::app::binds::BOUND_SEATS - 1);
+    match key_doing(player, commit, action) {
+        KeyDoing::Bound(slot) => settings.binds[seat].key(slot),
+        KeyDoing::Preset(key) => key,
+    }
+}
+
+/// Keyboard layout for a seat, as bound in settings (spec §8.2 defaults:
+/// seat 1 on WASD + arrows, seat 2 on IJKL + numpad), under the scheme
+/// `commit` as [`key_doing`] reads it.
+pub fn keymap(settings: &GameSettings, player: u8, commit: CommitScheme) -> KeyMap {
+    use crate::app::binds::Action;
+    let key = |action| key_for(settings, player, commit, action);
     KeyMap {
-        moves: [(up, 0, -1), (down, 0, 1), (left, -1, 0), (right, 1, 0)],
-        places: [
-            (place_up, Direction::Up),
-            (place_down, Direction::Down),
-            (place_left, Direction::Left),
-            (place_right, Direction::Right),
+        moves: [
+            (key(Action::MoveUp), 0, -1),
+            (key(Action::MoveDown), 0, 1),
+            (key(Action::MoveLeft), -1, 0),
+            (key(Action::MoveRight), 1, 0),
         ],
-        remove: binds.key(Action::Remove),
-        clear_all: binds.key(Action::ClearAll),
+        places: [
+            (key(Action::PlaceUp), Direction::Up),
+            (key(Action::PlaceDown), Direction::Down),
+            (key(Action::PlaceLeft), Direction::Left),
+            (key(Action::PlaceRight), Direction::Right),
+        ],
+        remove: key(Action::Remove),
+        clear_all: key(Action::ClearAll),
     }
 }
 

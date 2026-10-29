@@ -631,19 +631,13 @@ pub fn fly_castles(
         | TileKind::Pool => None,
     }));
     if swapped(&before.held, &now) && !settings.reduced_motion {
-        flight.from.clear();
-        let mut old = before.held.clone();
-        for held in now.iter() {
-            // An owner with two castles has them paired in board order,
-            // which is arbitrary but consistent, and nothing crosses.
-            if let Some(at) = old.iter().position(|was| was.owner == held.owner) {
-                let was = old.remove(at);
-                flight.from.push(Flight {
-                    tile: (held.x, held.y),
-                    from: layout::tile_center(board, was.x, was.y),
-                });
-            }
-        }
+        flight.from = journeys(&before.held, &now)
+            .into_iter()
+            .map(|(from, tile)| Flight {
+                tile,
+                from: layout::tile_center(board, from.0, from.1),
+            })
+            .collect();
         flight.left = FLIGHT;
     }
     std::mem::swap(&mut before.held, &mut now);
@@ -652,28 +646,56 @@ pub fn fly_castles(
     }
     flight.left = (flight.left - time.delta_secs()).max(0.0);
     let progress = 1.0 - flight.left / FLIGHT;
-    for (sprite, mut transform) in &mut castles {
-        let home = layout::tile_center(board, sprite.x, sprite.y);
-        let from = flight
+    let flying = |sprite: &CastleSprite| {
+        flight
             .from
             .iter()
             .find(|flight| flight.tile == (sprite.x, sprite.y))
-            .map_or(home, |flight| flight.from);
+            .map(|flight| flight.from)
+    };
+    let landed = flight.left == 0.0;
+    for (sprite, mut transform) in &mut castles {
+        // A castle that kept its owner sat the swap out, and is left to
+        // the other animations.
+        let Some(from) = flying(sprite) else {
+            continue;
+        };
+        let home = layout::tile_center(board, sprite.x, sprite.y);
+        if landed {
+            // Landed: hand the transform back exactly as it was found, so
+            // nothing downstream inherits a fraction of a scale.
+            transform.translation = home.extend(transform.translation.z);
+            transform.scale = Vec3::ONE;
+            continue;
+        }
         let (at, scale) = hop(from, home, progress);
         transform.translation.x = at.x;
         transform.translation.y = at.y;
         transform.scale = swell(scale);
     }
-    if flight.left == 0.0 {
-        // Landed: hand the transform back exactly as it was found, so
-        // nothing downstream inherits a fraction of a scale.
+    if landed {
         flight.from.clear();
-        for (sprite, mut transform) in &mut castles {
-            let home = layout::tile_center(board, sprite.x, sprite.y);
-            transform.translation = home.extend(transform.translation.z);
-            transform.scale = Vec3::ONE;
+    }
+}
+
+/// Which castles fly in a swap, as (the tile it leaves, the tile it lands
+/// on), between the castles as they stood and as they stand.
+///
+/// A castle whose tile kept its owner does not fly: a spun Castle Swap
+/// at three owners or more leaves the spinner's castles where they are,
+/// and one that hopped in place would say it took part. The rest are
+/// paired by owner, an owner with two castles in board order, which is
+/// arbitrary but consistent, and nothing crosses.
+fn journeys(before: &[Held], now: &[Held]) -> Vec<((u8, u8), (u8, u8))> {
+    let mut old: Vec<&Held> = before.iter().filter(|was| !now.contains(was)).collect();
+    let mut out = Vec::new();
+    for held in now.iter().filter(|held| !before.contains(held)) {
+        if let Some(at) = old.iter().position(|was| was.owner == held.owner) {
+            let was = old.remove(at);
+            out.push(((was.x, was.y), (held.x, held.y)));
         }
     }
+    out
 }
 
 /// Whether the castles changed hands: the same tiles holding the same
@@ -1528,6 +1550,28 @@ mod tests {
             !super::swapped(&[held(1, 1, 0)], &[held(1, 1, 1)]),
             "one castle cannot swap with itself"
         );
+    }
+
+    /// In a swap that one owner sat out, that owner's castle stays put and
+    /// only the others fly: on a 4-seat beach with P3 keeping theirs, P3's
+    /// castle did a hop on the spot as if it had traded too.
+    #[test]
+    fn a_castle_that_kept_its_owner_does_not_fly() {
+        let held = |x, y, owner| super::Held { x, y, owner };
+        let before = vec![held(1, 1, 0), held(5, 1, 1), held(9, 1, 2), held(13, 1, 3)];
+        // Every castle but P3's (seat 2) moves on one.
+        let now = vec![held(1, 1, 3), held(5, 1, 0), held(9, 1, 2), held(13, 1, 1)];
+        assert!(super::swapped(&before, &now));
+        let mut flights = super::journeys(&before, &now);
+        flights.sort_unstable();
+        assert_eq!(
+            flights,
+            vec![((1, 1), (5, 1)), ((5, 1), (13, 1)), ((13, 1), (1, 1))],
+            "P3's castle at (9, 1) stays out of the air"
+        );
+        // A full rotation flies every castle.
+        let all = vec![held(1, 1, 1), held(5, 1, 0)];
+        assert_eq!(super::journeys(&before[..2], &all).len(), 2, "both trade");
     }
 
     /// Straight between the two tiles, never off the line: a castle that

@@ -507,21 +507,46 @@ fn only_off_the_wire(online: &net::Online, var: &str) -> bool {
 /// rather than the banner alone, so what the event *does* can be watched.
 /// Seven is the castle swap. With `PINCH_TIDE_BY=<seat>` it lands as that
 /// seat's spin, as a sparkling crab banked there would, rather than as a
-/// call nobody spun.
-pub(super) fn debug_tide(mut sim: ResMut<Sim>, online: Res<net::Online>, mut hook: Local<OneShot>) {
-    let Some(which) = hook.due("PINCH_TIDE", sim.0.ticks()) else {
+/// call nobody spun. A list (`PINCH_TIDE=4,0`) fires each in turn three
+/// seconds apart, the first as that seat's spin and the rest as calls, the
+/// way a spectators' call lands on a running event.
+pub(super) fn debug_tide(
+    mut sim: ResMut<Sim>,
+    online: Res<net::Online>,
+    mut hook: Local<OneShot>,
+    mut queued: Local<std::collections::VecDeque<(u64, TideEvent)>>,
+    mut fired: Local<bool>,
+) {
+    if let Some(which) = hook.due("PINCH_TIDE", sim.0.ticks()) {
+        if only_off_the_wire(&online, "PINCH_TIDE") {
+            return;
+        }
+        let gap = 3 * u64::from(crate::sim::TICKS_PER_SECOND);
+        let now = sim.0.ticks();
+        *queued = which
+            .split(',')
+            .enumerate()
+            .map(|(n, index)| {
+                let event = TideEvent::ALL
+                    [index.trim().parse::<usize>().unwrap_or(0) % TideEvent::ALL.len()];
+                (now + gap * n as u64, event)
+            })
+            .collect();
+    }
+    let Some(&(at, event)) = queued.front() else {
         return;
     };
-    if only_off_the_wire(&online, "PINCH_TIDE") {
+    if sim.0.ticks() < at {
         return;
     }
-    let event = TideEvent::ALL[which.parse::<usize>().unwrap_or(0) % TideEvent::ALL.len()];
-    match std::env::var("PINCH_TIDE_BY")
+    queued.pop_front();
+    let first = !std::mem::replace(&mut *fired, true);
+    let spinner = std::env::var("PINCH_TIDE_BY")
         .ok()
-        .and_then(|seat| seat.parse::<PlayerId>().ok())
-    {
-        Some(seat) => sim.0.force_spun_tide_event(event, seat),
-        None => sim.0.force_tide_event(event, 0),
+        .and_then(|seat| seat.parse::<PlayerId>().ok());
+    match spinner {
+        Some(seat) if first => sim.0.force_spun_tide_event(event, seat),
+        Some(_) | None => sim.0.force_tide_event(event, 0),
     }
 }
 
@@ -1146,10 +1171,13 @@ pub(super) fn autopilot_level() -> Option<crate::sim::BotLevel> {
 /// the walk delays every placement and the measurements want the bot as
 /// quick as it is.
 pub(super) fn debug_autopilot(
-    sim: Res<Sim>,
+    current: crate::app::sim_events::CurrentBoard,
     online: Res<net::Online>,
-    time: Res<Time>,
-    settings: Res<crate::app::settings::GameSettings>,
+    (time, settings, keys): (
+        Res<Time>,
+        Res<crate::app::settings::GameSettings>,
+        Res<ButtonInput<KeyCode>>,
+    ),
     mut pending: ResMut<PendingActions>,
     mut cursors: Query<&mut crate::app::cursor::Cursor>,
     mut pilot: Local<Option<Autopilot>>,
@@ -1159,10 +1187,17 @@ pub(super) fn debug_autopilot(
         walks: std::env::var("PINCH_AUTOPILOT_WALK").is_ok(),
         heading: None,
         wait: 0.0,
+        board: crate::app::sim_events::BoardStamp::default(),
     });
     let Some(level) = walk.level else {
         return;
     };
+    // A heading belongs to the board it was picked on: a new round, a
+    // rematch or a seek starts the walk over.
+    if walk.board.is_new(&current) {
+        walk.heading = None;
+    }
+    let board = &current.sim.0;
     let seat = match online.0.as_ref() {
         Some(session) => match session.session.seat() {
             Some(seat) => seat,
@@ -1179,53 +1214,108 @@ pub(super) fn debug_autopilot(
         return;
     }
     if !walk.walks {
-        *slot = crate::sim::bot_action(&sim.0, seat, level);
+        *slot = crate::sim::bot_action(board, seat, level);
         return;
     }
     let Some(mut cursor) = cursors.iter_mut().find(|cursor| cursor.player == seat) else {
         return;
     };
-    let wanted = match walk.heading {
-        Some(action) => action,
-        None => crate::sim::bot_action(&sim.0, seat, level),
+    let commit = settings.commit_in_play(true);
+    let held = crate::app::cursor::seat_keymap(&settings, seat, online.0.is_some(), commit)
+        .is_some_and(|map| keys.any_pressed(map.move_keys()));
+    let step = Step {
+        held,
+        dt: time.delta_secs(),
+        interval: settings.repeat_interval,
     };
-    let (x, y) = match wanted {
-        PlayerAction::Place { x, y, .. } | PlayerAction::Remove { x, y } => (x, y),
-        PlayerAction::None | PlayerAction::CallEvent(_) => {
-            *slot = wanted;
-            return;
-        }
-    };
-    if (cursor.x, cursor.y) == (x, y) {
-        *slot = wanted;
-        walk.heading = None;
-        return;
-    }
-    walk.heading = Some(wanted);
-    walk.wait -= time.delta_secs();
-    if walk.wait > 0.0 {
-        return;
-    }
-    walk.wait = settings.repeat_interval;
-    // One axis at a time, the longer first, as a thumb on the keys goes.
-    let (dx, dy) = (
-        i16::from(x) - i16::from(cursor.x),
-        i16::from(y) - i16::from(cursor.y),
-    );
-    if dx.abs() >= dy.abs() {
-        cursor.x = cursor.x.saturating_add_signed(dx.signum() as i8);
-    } else {
-        cursor.y = cursor.y.saturating_add_signed(dy.signum() as i8);
+    *slot = walk.steer(board, seat, level, &mut cursor, step);
+}
+
+/// What one frame of the walk sees besides the board: whether a human
+/// holds one of the seat's move keys, the frame's length, and the key
+/// repeat interval the cursor steps at.
+#[derive(Clone, Copy)]
+pub(super) struct Step {
+    held: bool,
+    dt: f32,
+    interval: f32,
+}
+
+/// Whether `action` would still do something on `board`, by the sim's own
+/// rule: a heading picked a few steps ago can point at a tile that has
+/// since taken an arrow or lost the post it meant to lift.
+fn still_stands(board: &crate::sim::Board, seat: u8, action: PlayerAction) -> bool {
+    match action {
+        PlayerAction::Place { x, y, .. } => board.placement_refusal(seat, x, y).is_none(),
+        PlayerAction::Remove { x, y } => board.removal_refusal(seat, x, y).is_none(),
+        PlayerAction::None | PlayerAction::CallEvent(_) => true,
     }
 }
 
 /// The autopilot's level, read once, and where `PINCH_AUTOPILOT_WALK` is
-/// taking the cursor and when it next steps.
+/// taking the cursor, when it next steps, and the board it was picked on.
 pub(super) struct Autopilot {
     level: Option<crate::sim::BotLevel>,
     walks: bool,
     heading: Option<PlayerAction>,
     wait: f32,
+    board: crate::app::sim_events::BoardStamp,
+}
+
+impl Autopilot {
+    /// One frame of the walk: the action to queue (`None` while walking),
+    /// moving `cursor` a step toward the heading every key-repeat interval.
+    ///
+    /// A human holding a move key has the cursor: the walk stands aside
+    /// and forgets its heading, rather than pulling the cursor back every
+    /// interval. A heading that no longer stands ([`still_stands`]) is
+    /// dropped and picked again, and is checked once more on arrival, so
+    /// the walk never queues an action the sim would refuse.
+    fn steer(
+        &mut self,
+        board: &crate::sim::Board,
+        seat: u8,
+        level: crate::sim::BotLevel,
+        cursor: &mut crate::app::cursor::Cursor,
+        step: Step,
+    ) -> PlayerAction {
+        if step.held {
+            self.heading = None;
+            return PlayerAction::None;
+        }
+        let wanted = match self.heading {
+            Some(action) if still_stands(board, seat, action) => action,
+            Some(_) | None => crate::sim::bot_action(board, seat, level),
+        };
+        let (x, y) = match wanted {
+            PlayerAction::Place { x, y, .. } | PlayerAction::Remove { x, y } => (x, y),
+            PlayerAction::None | PlayerAction::CallEvent(_) => {
+                self.heading = None;
+                return wanted;
+            }
+        };
+        if (cursor.x, cursor.y) == (x, y) {
+            self.heading = None;
+            return wanted;
+        }
+        self.heading = Some(wanted);
+        self.wait -= step.dt;
+        if self.wait > 0.0 {
+            return PlayerAction::None;
+        }
+        self.wait = step.interval;
+        // One axis at a time, the longer first, as a thumb on the keys goes.
+        let (dx, dy) = (
+            i16::from(x) - i16::from(cursor.x),
+            i16::from(y) - i16::from(cursor.y),
+        );
+        if dx.abs() >= dy.abs() {
+            cursor.x = cursor.x.saturating_add_signed(dx.signum() as i8);
+        } else {
+            cursor.y = cursor.y.saturating_add_signed(dy.signum() as i8);
+        }
+        PlayerAction::None
+    }
 }
 
 /// Dev hook: with `PINCH_NET_PROBE=1`, submit one scripted signpost three
@@ -1263,6 +1353,57 @@ pub(super) fn debug_net_probe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The walk stands aside for a human's move keys, and never queues a
+    /// heading the board has since refused: a tile that took a rock (or a
+    /// rival's arrow) while the cursor walked to it.
+    #[test]
+    fn the_walk_yields_to_keys_and_drops_a_stale_heading() {
+        use crate::app::cursor::Cursor;
+        use crate::sim::{Board, BotLevel, TileKind};
+        let board = Board::new(7, 5, 1);
+        let target = PlayerAction::Place {
+            x: 5,
+            y: 3,
+            dir: Direction::Up,
+        };
+        let mut walk = Autopilot {
+            level: Some(BotLevel::Normal),
+            walks: true,
+            heading: Some(target),
+            wait: 0.0,
+            board: crate::app::sim_events::BoardStamp::default(),
+        };
+        let mut cursor = Cursor::seated(0);
+        let step = |held| Step {
+            held,
+            dt: 1.0,
+            interval: 0.1,
+        };
+
+        let queued = walk.steer(&board, 0, BotLevel::Normal, &mut cursor, step(true));
+        assert_eq!(queued, PlayerAction::None);
+        assert_eq!((cursor.x, cursor.y), (0, 0), "the hand has the cursor");
+        assert_eq!(walk.heading, None, "and the heading is let go");
+
+        // Walking to a tile that stands: one step, then on arrival it goes.
+        walk.heading = Some(target);
+        walk.steer(&board, 0, BotLevel::Normal, &mut cursor, step(false));
+        assert_eq!((cursor.x, cursor.y), (1, 0));
+        assert_eq!(walk.heading, Some(target));
+        (cursor.x, cursor.y) = (5, 3);
+        let queued = walk.steer(&board, 0, BotLevel::Normal, &mut cursor, step(false));
+        assert_eq!(queued, target, "it places on arrival");
+
+        // The same arrival on a tile that has since turned to rock does not.
+        let mut rocky = board.clone();
+        rocky.set_tile(5, 3, TileKind::Rock);
+        walk.heading = Some(target);
+        let queued = walk.steer(&rocky, 0, BotLevel::Normal, &mut cursor, step(false));
+        assert_ne!(queued, target, "a refused heading is never queued");
+        assert_ne!(walk.heading, Some(target), "and is dropped");
+        assert!(still_stands(&rocky, 0, queued));
+    }
 
     /// The Gates' old name still picks it in the hooks, and a name no map
     /// has falls back to the classic generated beach.

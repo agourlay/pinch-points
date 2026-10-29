@@ -674,6 +674,33 @@ fn excused(scenario: &Scenario, step: u64) -> bool {
     step < 10 + scenario.skew || hitched || pausing
 }
 
+/// One player step of round 1 into the stall histogram: `stalled` is the
+/// player's run so far, `moved` the frames the step played, `expected`
+/// whether a stall here counts ([`excused`]).
+///
+/// A run counts only its expected steps, as `player_stalls` does, so the
+/// two lines agree: a peer frozen through the scripted hitch resumes on
+/// or just after its last step, and binned whole that freeze read as a
+/// network stall of ten steps or more.
+pub fn tally_stall(report: &mut Report, stalled: &mut u32, moved: u32, expected: bool) {
+    match moved {
+        0 => *stalled += u32::from(expected),
+        _ if *stalled > 0 => {
+            let run = *stalled;
+            let bucket = match run {
+                1 => 0,
+                2..=3 => 1,
+                4..=9 => 2,
+                _ => 3,
+            };
+            report.stall_runs[bucket] += 1;
+            report.longest_stall = report.longest_stall.max(run);
+            *stalled = 0;
+        }
+        _ => {}
+    }
+}
+
 /// Whether `step` is one the leads should have settled by.
 fn settled(scenario: &Scenario, step: u64) -> bool {
     let after_skew = step >= scenario.skew + 150;
@@ -903,24 +930,7 @@ pub fn play(scenario: &Scenario) -> Report {
                                 report.player_stalls += u64::from(moved == 0);
                                 report.double_steps += u64::from(moved >= 2);
                             }
-                            match moved {
-                                0 => seat.stalled += 1,
-                                _ if seat.stalled > 0 => {
-                                    if expected {
-                                        let run = seat.stalled;
-                                        let bucket = match run {
-                                            1 => 0,
-                                            2..=3 => 1,
-                                            4..=9 => 2,
-                                            _ => 3,
-                                        };
-                                        report.stall_runs[bucket] += 1;
-                                        report.longest_stall = report.longest_stall.max(run);
-                                    }
-                                    seat.stalled = 0;
-                                }
-                                _ => {}
-                            }
+                            tally_stall(&mut report, &mut seat.stalled, moved, expected);
                         }
                         Role::Watcher => {
                             if expected {

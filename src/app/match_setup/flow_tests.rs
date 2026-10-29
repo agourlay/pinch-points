@@ -541,6 +541,17 @@ fn map_cards_grey_what_cannot_seat_the_table() {
     let words = tile_words(&EN, Card::Map(MapChoice::RoundTable), 3, &shelf, false);
     assert_eq!(words.pill.as_deref(), Some("seats 2/4/6, not 3"));
     assert!(words.sub.contains("2/4/6"), "{}", words.sub);
+    // Every map with no edges says so on its card, whatever its tables,
+    // and only those do.
+    for map in MapChoice::ALL {
+        let words = tile_words(&EN, Card::Map(map), 2, &shelf, false);
+        assert_eq!(
+            words.sub.contains("no edges"),
+            map.wraps(),
+            "{map:?}: {}",
+            words.sub
+        );
+    }
     let three = MatchConfig {
         seats: 3,
         ..MatchConfig::default()

@@ -1919,7 +1919,7 @@ fn swap_owners(board: &Board, seats: u8) -> Vec<PlayerId> {
         .collect()
 }
 
-/// With three castles or more, the seat that spun Castle Swap keeps its
+/// With three castle owners or more, the seat that spun Castle Swap keeps its
 /// castle and its score, and the others trade among themselves.
 #[test]
 fn a_spun_castle_swap_leaves_the_spinners_castle_alone() {
@@ -1955,6 +1955,30 @@ fn a_castle_swap_with_two_castles_or_no_spinner_rotates_everyone() {
     called.force_tide_event(TideEvent::CastleSwap, 0);
     assert_eq!(swap_owners(&called, 4), vec![1, 2, 3, 0]);
     assert_eq!(called.event_spun_by(), None);
+}
+
+/// The count that keeps the spinner's castles out is of owners, not of
+/// castles: two seats holding two castles each have nobody else to trade
+/// with, so a spun swap rotates all four.
+#[test]
+fn a_castle_swap_counts_owners_not_castles() {
+    let mut board = Board::new(7, 5, 11);
+    board.set_events_enabled(true);
+    for (x, owner) in [(0, 0), (1, 0), (2, 1), (3, 1)] {
+        board.set_tile(x, 0, TileKind::Castle(owner));
+    }
+    assert_eq!(board.castle_swap_keeper(Some(0)), None);
+    board.force_spun_tide_event(TideEvent::CastleSwap, 0);
+    let owners: Vec<TileKind> = (0..4).map(|x| board.tile_at(x, 0)).collect();
+    assert_eq!(
+        owners,
+        vec![
+            TileKind::Castle(1),
+            TileKind::Castle(1),
+            TileKind::Castle(0),
+            TileKind::Castle(0)
+        ]
+    );
 }
 
 /// The wheel itself passes its spinner on: a sparkling crab's roll that

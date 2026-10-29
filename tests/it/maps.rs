@@ -234,6 +234,78 @@ fn odd_tables_are_fair(level: &Level) -> bool {
         })
 }
 
+/// The symmetries of `board`'s layout: every map `(x, y) -> image` made
+/// of a roll round by any number of columns (an open beach only) and the
+/// two mirrors, under which every tile lands on its like, castles on
+/// castles whoever's and an empty tile where a castle was put away on
+/// empty, and every wall on a wall. These are what the round's transform
+/// (a roll by whole strips, then a mirror) and the seat deal lean on.
+fn layout_symmetries(board: &Board) -> Vec<impl Fn(u8, u8) -> (u8, u8)> {
+    let (w, h) = (board.width(), board.height());
+    let shifts = if board.wrap() { w } else { 1 };
+    let turned = |dir: Direction, fx: bool, fy: bool| {
+        let horizontal = matches!(dir, Direction::Left | Direction::Right);
+        match (fx && horizontal) || (fy && !horizontal) {
+            true => dir.reverse(),
+            false => dir,
+        }
+    };
+    let image = |kind: TileKind, fx: bool, fy: bool| match kind {
+        TileKind::Spawner(mut s) => {
+            s.dir = turned(s.dir, fx, fy);
+            (2, s.dir.letter())
+        }
+        // A log deals its crabs to either side in turn, so which way it
+        // deals first is let be, as the mirror check lets a log on its own
+        // image be.
+        TileKind::Turnstile { .. } => (3, ' '),
+        TileKind::Castle(_) => (6, ' '),
+        other @ (TileKind::Empty | TileKind::Rock | TileKind::Kelp | TileKind::Pool) => {
+            (what_is_at(other).0, ' ')
+        }
+    };
+    let mut out = Vec::new();
+    for shift in 0..shifts {
+        for (fx, fy) in [(false, false), (true, false), (false, true), (true, true)] {
+            let map = move |x: u8, y: u8| {
+                let mx = if fx { w - 1 - x } else { x };
+                let ix = ((u16::from(mx) + u16::from(shift)) % u16::from(w)) as u8;
+                (ix, if fy { h - 1 - y } else { y })
+            };
+            let holds = board.tiles().all(|(x, y, kind)| {
+                let (ix, iy) = map(x, y);
+                let there = board.tile_at(ix, iy);
+                image(kind, fx, fy) == image(there, false, false)
+                    && Direction::ALL.into_iter().all(|dir| {
+                        board.wall_at(x, y, dir) == board.wall_at(ix, iy, turned(dir, fx, fy))
+                    })
+            });
+            if holds {
+                out.push(map);
+            }
+        }
+    }
+    out
+}
+
+/// Whether every castle on a table's board is a copy of every other: for
+/// each two, a symmetry of the layout with the put-away castles gone
+/// ([`layout_symmetries`]) takes one to the other. That is what the
+/// round's roll and mirror and the seat deal rely on: a table of seats
+/// dealt at random to castles nobody can tell apart.
+fn castles_are_alike(board: &Board) -> bool {
+    let castles: Vec<(u8, u8)> = board
+        .tiles()
+        .filter(|(_, _, kind)| matches!(kind, TileKind::Castle(_)))
+        .map(|(x, y, _)| (x, y))
+        .collect();
+    let symmetries = layout_symmetries(board);
+    let first = castles[0];
+    castles
+        .iter()
+        .all(|&other| symmetries.iter().any(|map| map(first.0, first.1) == other))
+}
+
 /// Every handmade map reads, is an arena, names its tables, and is
 /// playable at each: mirror-symmetric both ways (Duel and the odd tables'
 /// beaches a half turn), every castle reachable and open, opposite castles
@@ -265,6 +337,14 @@ fn every_handmade_map_is_playable_at_every_table_it_seats() {
             // are what makes the castles one job.
             let half_turn = level.tables == [2] || level.tables.iter().all(|seats| seats % 2 == 1);
             assert!(mirror_symmetric(&board, !half_turn), "{name} at {seats}");
+            // On an open beach the castles kept at this table are all one
+            // castle, which the mirror check (castles aside) and the strip
+            // check (castles whoever's, but every strip alike) cannot see
+            // on their own. A beach with edges is balanced by measurement
+            // instead: Round Table's edge castles are not its corners.
+            if board.wrap() {
+                assert!(castles_are_alike(&board), "{name} at {seats}: castles");
+            }
             // Castles 2k and 2k+1 stand across the middle from each other.
             // An open beach has no middle: every castle of Round the World
             // is a copy of every other, and its pairs are a top and a
@@ -321,6 +401,28 @@ fn a_lopsided_open_beach_is_caught() {
         "Four Doors with one strip edited"
     );
     assert!(odd_tables_are_fair(&versus_map(8)));
+
+    // Back to Back with its castle moved one column within every strip:
+    // the strips are still copies and the mirror check sets castles
+    // aside, so only the castle check sees the two seats a table of two
+    // keeps no longer stand alike.
+    let back_to_back = versus_map(10);
+    assert!(castles_are_alike(&back_to_back.table_board(9, 2)));
+    let mut moved = back_to_back.board();
+    let castles: Vec<(u8, u8, TileKind)> = moved
+        .tiles()
+        .filter(|(_, _, kind)| matches!(kind, TileKind::Castle(_)))
+        .collect();
+    for (x, y, kind) in castles {
+        if y == 5 {
+            moved.set_tile(x, y, TileKind::Empty);
+            moved.set_tile(x - 1, y, kind);
+        }
+    }
+    assert!(strips_are_copies(&moved, back_to_back.roll));
+    moved.retire_castles_from(2);
+    assert!(mirror_symmetric(&moved, true));
+    assert!(!castles_are_alike(&moved), "a castle moved in every strip");
 }
 
 /// The two keys a handmade map adds to the level format read back as

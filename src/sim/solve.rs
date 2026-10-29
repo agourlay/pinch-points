@@ -133,8 +133,37 @@ pub fn solve_from(level: &Level, effort: Effort, fewest: u8) -> SolveOutcome {
     SolveOutcome::Unsolvable
 }
 
+/// Every set of exactly `level.posts` signposts that wins `level` on its
+/// own seed, each sorted, searched to the end.
+///
+/// For a guard rather than for play: one winning set says a stage can be
+/// beaten, and this says how many ways, so a test can ask each of them
+/// whether it wins by the stage's rules or by its seed's luck.
+///
+/// Searched the way [`solve_with`] searches, over the tiles a walker the
+/// arrow would turn arrives at. That finds every winning set when none
+/// smaller wins, which is what the stages' own guard proves: in a set
+/// with no post to spare, every post turns something, and taken in the
+/// order the run first reaches them each is a candidate on the board the
+/// earlier ones make.
+pub fn winning_sets(level: &Level) -> Vec<Vec<Placement>> {
+    let mut search = Search::new(level, Effort::Exhaustive);
+    search.every = Some(Vec::new());
+    let mut board = level.board();
+    let found = search.search_at(&mut board, level.posts);
+    debug_assert!(found.is_none(), "a collecting search never stops early");
+    let mut sets = search.every.take().unwrap_or_default();
+    for set in &mut sets {
+        set.sort_unstable_by_key(|&(x, y, dir, seat)| (x, y, dir.id(), seat));
+    }
+    sets
+}
+
 /// One search, and the fuel it has left.
 struct Search<'a> {
+    /// Every winning leaf, when the caller asked for all of them
+    /// ([`winning_sets`]) rather than for the first.
+    every: Option<Vec<Vec<Placement>>>,
     level: &'a Level,
     /// Simulations remaining, or `None` when the caller asked for certainty.
     fuel: Option<u32>,
@@ -218,6 +247,7 @@ fn turned_by(board: &Board, seat: PlayerId) -> u8 {
 impl<'a> Search<'a> {
     fn new(level: &'a Level, effort: Effort) -> Self {
         Search {
+            every: None,
             level,
             fuel: match effort {
                 Effort::Budget(nodes) => Some(nodes),
@@ -350,7 +380,16 @@ impl<'a> Search<'a> {
         }
         self.seen.insert(self.key.clone());
         if depth == 0 {
-            return self.wins(board).then(Vec::new);
+            if !self.wins(board) {
+                return None;
+            }
+            return match self.every.as_mut() {
+                Some(every) => {
+                    every.push(self.placed.clone());
+                    None
+                }
+                None => Some(Vec::new()),
+            };
         }
         // Borrowed for the whole loop, recursive calls included, and handed
         // back at the end: see `tile_pool`.

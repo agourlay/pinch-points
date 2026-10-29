@@ -3,7 +3,8 @@
 //! on every way of dealing the stage's arrows (`Deal`).
 
 use pinch_points::sim::{
-    Deal, Effort, PuzzleOutcome, SolveOutcome, campaign_levels, coop_levels, solve_with,
+    Deal, Effort, Placement, PuzzleOutcome, SolveOutcome, campaign_levels, coop_levels, solve_with,
+    winning_sets,
 };
 
 /// Every co-op stage is one: two hands, a stage rather than a beach, and
@@ -28,6 +29,19 @@ fn every_coop_stage_is_a_stage_for_two_with_a_name_of_its_own() {
         assert_eq!(level.kind, pinch_points::sim::LevelKind::Puzzle);
         assert!(names.insert(level.name.clone()), "{:?} twice", level.name);
     }
+}
+
+/// The shelf runs by grant, fewest arrows first: a tile's edge colour is
+/// its grant, and the key under the grid reads it as how hard the stage
+/// is, so a colour stepping back down along an easiest-first shelf said
+/// two things at once.
+#[test]
+fn the_coop_shelf_never_grants_fewer_arrows_than_the_stage_before() {
+    let grants: Vec<u8> = coop_levels().iter().map(|level| level.posts).collect();
+    assert!(
+        grants.windows(2).all(|pair| pair[0] <= pair[1]),
+        "grants along the shelf: {grants:?}"
+    );
 }
 
 /// The authored solution wins, every arrow placed by the hand it names,
@@ -174,4 +188,59 @@ fn every_coop_stage_holds_on_other_seeds() {
 #[ignore = "a thousand seeds: run it in a release build"]
 fn every_coop_stage_holds_on_a_thousand_seeds() {
     holds_on_every_seed(1000);
+}
+
+/// Whether `set` wins `level` on `seed`.
+fn set_wins(level: &pinch_points::sim::Level, set: &[Placement], seed: u64) -> bool {
+    let mut board = level.board_seeded(seed);
+    for &(x, y, dir, seat) in set {
+        assert!(
+            board.place_signpost(seat, x, y, dir),
+            "{:?}: ({x},{y}) refused on seed {seed}",
+            level.name
+        );
+    }
+    level.play_out(&mut board).0 == PuzzleOutcome::Won
+}
+
+/// Every way to win a stage on its shipped seed wins on every other seed
+/// of `seeds` too. [`holds_on_every_seed`] asks it of the authored
+/// solution alone; a second winning set that leans on the seed's hidden
+/// gull (its claw, its first takeoff) is one two players find and then
+/// cannot repeat, and the mirror of it loses for no reason they can see.
+fn every_win_holds_on_every_seed(seeds: u64) {
+    std::thread::scope(|scope| {
+        for level in coop_levels() {
+            scope.spawn(move || {
+                let seeds = match level.board().gulls().is_empty() {
+                    true => 2,
+                    false => seeds,
+                };
+                let sets = winning_sets(&level);
+                assert!(!sets.is_empty(), "{:?}: no winning set", level.name);
+                for set in &sets {
+                    let lost: Vec<u64> =
+                        (0..seeds).filter(|&s| !set_wins(&level, set, s)).collect();
+                    assert!(
+                        lost.is_empty(),
+                        "{:?}: {set:?} wins on the shipped seed and loses on seeds {lost:?} \
+                         ({} winning sets)",
+                        level.name,
+                        sets.len()
+                    );
+                }
+            });
+        }
+    });
+}
+
+/// [`every_win_holds_on_every_seed`] over two hundred seeds. Ignored in the
+/// everyday run, an exhaustive search per stage: with the exhaustive guard
+/// after editing a stage, in a release build, `CARGO_PROFILE_RELEASE_LTO=off
+/// cargo test --release --target-dir target/nolto --test it coop --
+/// --ignored`.
+#[test]
+#[ignore = "exhaustive: run it in a release build"]
+fn every_winning_set_holds_on_other_seeds() {
+    every_win_holds_on_every_seed(200);
 }

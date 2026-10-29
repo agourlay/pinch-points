@@ -11,27 +11,37 @@
 use super::*;
 
 impl Board {
-    /// The timed tide event running now and the ticks it has left, if any.
+    /// Every timed tide event running now, each with the ticks it has
+    /// left: the mania, the tempo, then the claw call, which is the order
+    /// the banner names them in.
     ///
-    /// The roulette's cooldown is as long as an event, so only one runs at
-    /// a time in play; a spectators' call can overlap one, and then the
-    /// mania is named first, as the banner names it.
-    pub fn running_event(&self) -> Option<(TideEvent, u32)> {
-        if let Some((mania, ticks)) = self.tide.mania {
+    /// The three run in their own slots, so they can overlap: the
+    /// roulette's cooldown is as long as an event, but a spectators' call
+    /// can land on top of a spun one.
+    pub fn running_events(&self) -> impl Iterator<Item = (TideEvent, u32)> + '_ {
+        let mania = self.tide.mania.map(|(mania, ticks)| {
             let event = match mania {
                 Mania::Crab => TideEvent::CrabMania,
                 Mania::Gull => TideEvent::GullMania,
             };
-            return Some((event, ticks));
-        }
-        if let Some((tempo, ticks)) = self.tide.tempo {
+            (event, ticks)
+        });
+        let tempo = self.tide.tempo.map(|(tempo, ticks)| {
             let event = match tempo {
                 Tempo::Fast => TideEvent::SpeedUp,
                 Tempo::Slow => TideEvent::SlowDown,
             };
-            return Some((event, ticks));
-        }
-        (self.tide.claw_call > 0).then_some((TideEvent::RightClaws, self.tide.claw_call))
+            (event, ticks)
+        });
+        let claws =
+            (self.tide.claw_call > 0).then_some((TideEvent::RightClaws, self.tide.claw_call));
+        [mania, tempo, claws].into_iter().flatten()
+    }
+
+    /// The first of [`Self::running_events`]: the mania over the others,
+    /// as the banner names it.
+    pub fn running_event(&self) -> Option<(TideEvent, u32)> {
+        self.running_events().next()
     }
 
     /// Every standing signpost with its tile, in reading order.
@@ -167,6 +177,15 @@ mod tests {
         assert_eq!(
             board.running_event(),
             Some((TideEvent::SpeedUp, EVENT_TICKS - 1))
+        );
+        board.force_tide_event(TideEvent::CrabMania, 0);
+        assert_eq!(
+            board.running_events().collect::<Vec<_>>(),
+            vec![
+                (TideEvent::CrabMania, EVENT_TICKS),
+                (TideEvent::SpeedUp, EVENT_TICKS - 1)
+            ],
+            "a call on top of a running event: both run"
         );
     }
 }

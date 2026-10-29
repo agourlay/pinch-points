@@ -11,11 +11,12 @@
 
 use crate::app::Screen;
 use crate::app::binds::{self, Action, ActionGroup, BOUND_SEATS, SeatBinds};
+use crate::app::cursor::{KeyDoing, key_doing, key_for};
 use crate::app::cycle::Turn;
 use crate::app::i18n::fill;
 use crate::app::menu_ui::{self, Half};
 use crate::app::palette;
-use crate::app::settings::GameSettings;
+use crate::app::settings::{CommitScheme, GameSettings};
 use bevy::prelude::*;
 
 /// Rows: the seat picker, then one per action, then reset-to-defaults.
@@ -167,6 +168,48 @@ pub(crate) fn rebind(
     }
 }
 
+/// Which slot of `seat`'s keys does the job `action` names, under the
+/// placing-keys scheme set in Settings: the rule the cursor reads
+/// ([`key_doing`]), so a row lists and rebinds the key that really does
+/// its job. The screen reads the scheme as set, not as a shared keyboard
+/// sets it aside ([`GameSettings::commit_in_play`]): it is the one the
+/// player picked, beside this screen.
+fn job_slot(commit: CommitScheme, seat: usize, action: Action) -> KeyDoing {
+    key_doing(seat as u8, commit, action)
+}
+
+/// The key a row shows: the one that does its job ([`job_slot`]).
+fn shown_key(settings: &GameSettings, seat: usize, action: Action) -> KeyCode {
+    key_for(settings, seat as u8, settings.commit, action)
+}
+
+/// Bind `key` to the job `action` for `seat` under `commit`: into the
+/// slot that does that job ([`job_slot`]), and a refusal names the job
+/// the clashing key does. The mirrored scheme's trade is its own inverse,
+/// so the slot holding a key and the job it does read through the same
+/// rule.
+pub(crate) fn rebind_job(
+    binds: &mut [SeatBinds; BOUND_SEATS],
+    commit: CommitScheme,
+    seat: usize,
+    action: Action,
+    key: KeyCode,
+) -> Result<(), (usize, Action)> {
+    let job = |seat: usize, slot: Action| match job_slot(commit, seat, slot) {
+        KeyDoing::Bound(job) => job,
+        // A slot the scheme sets aside does no job here; name it as
+        // bound, which is what it does at a shared keyboard.
+        KeyDoing::Preset(_) => slot,
+    };
+    match job_slot(commit, seat, action) {
+        KeyDoing::Bound(slot) => {
+            rebind(binds, seat, slot, key).map_err(|(s, taken)| (s, job(s, taken)))
+        }
+        // The screen never captures for a preset row; nothing to bind.
+        KeyDoing::Preset(_) => Ok(()),
+    }
+}
+
 /// The line a first reset press puts up: the key that takes it up, or
 /// for a pad's player the controls table's button for it.
 fn reset_question(tr: &crate::app::i18n::Tr, device: crate::app::gamepad::LastDevice) -> String {
@@ -223,7 +266,8 @@ pub fn controls_input(
             return;
         };
         let seat = menu.seat;
-        menu.feedback = match rebind(&mut settings.binds, seat, action, key) {
+        let commit = settings.commit;
+        menu.feedback = match rebind_job(&mut settings.binds, commit, seat, action, key) {
             Ok(()) => String::new(),
             Err((_, taken_by)) => fill(
                 tr.ctl_taken,
@@ -263,10 +307,18 @@ pub fn controls_input(
             // Taken above, as the second of two presses.
             ControlsLine::Reset => {}
             ControlsLine::Seat => menu.seat = (menu.seat + 1) % BOUND_SEATS,
-            ControlsLine::Bind(action) => {
-                menu.capturing = Some(action);
-                menu.feedback = tr.ctl_press_key.to_string();
-            }
+            ControlsLine::Bind(action) => match job_slot(settings.commit, menu.seat, action) {
+                KeyDoing::Bound(_) => {
+                    menu.capturing = Some(action);
+                    menu.feedback = tr.ctl_press_key.to_string();
+                }
+                // The scheme holds this key: the dial in Settings moves
+                // it, and a capture here would bind a slot that does not
+                // do this job.
+                KeyDoing::Preset(_) => {
+                    menu.feedback = fill(tr.ctl_preset, &[("s", tr.set_commit_keys)]);
+                }
+            },
         }
         return;
     }
@@ -307,7 +359,7 @@ pub fn update_controls_ui(
             // table's button for it: what the question it asks names.
             ControlsLine::Reset => (tr.ctl_reset.to_string(), reset_control(tr, *device)),
             ControlsLine::Bind(action) => {
-                let key = settings.binds[menu.seat].key(action);
+                let key = shown_key(&settings, menu.seat, action);
                 // The row being captured shows the prompt in place of its
                 // key, so it is obvious which one is listening.
                 let value = if menu.capturing == Some(action) {
@@ -552,6 +604,97 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Under the mirrored scheme the screen lists what each key does: the
+    /// "Move up" row shows the up arrow, and rebinding "Place up" moves
+    /// the key that places up, as the cursor reads it.
+    #[test]
+    fn the_mirrored_scheme_lists_and_rebinds_each_job() {
+        use crate::app::cursor::keymap;
+        use crate::sim::Direction;
+        let mut settings = GameSettings {
+            commit: CommitScheme::Wasd,
+            ..GameSettings::default()
+        };
+        let caps = crate::app::keycaps::KeyCaps::default();
+        assert_eq!(
+            caps.label(shown_key(&settings, 0, Action::MoveUp)),
+            caps.label(KeyCode::ArrowUp)
+        );
+        assert_eq!(shown_key(&settings, 0, Action::PlaceUp), KeyCode::KeyW);
+        // Seat 2 has no scheme.
+        assert_eq!(shown_key(&settings, 1, Action::MoveUp), KeyCode::KeyI);
+
+        assert_eq!(
+            rebind_job(
+                &mut settings.binds,
+                CommitScheme::Wasd,
+                0,
+                Action::PlaceUp,
+                KeyCode::KeyT
+            ),
+            Ok(())
+        );
+        let map = keymap(&settings, 0, CommitScheme::Wasd);
+        assert_eq!(map.places[0], (KeyCode::KeyT, Direction::Up), "T places up");
+        assert_eq!(map.moves[0].0, KeyCode::ArrowUp, "the up arrow still moves");
+        assert_eq!(shown_key(&settings, 0, Action::PlaceUp), KeyCode::KeyT);
+
+        // A clash names the job the key does, not the slot it sits in.
+        assert_eq!(
+            rebind_job(
+                &mut settings.binds,
+                CommitScheme::Wasd,
+                0,
+                Action::PlaceDown,
+                KeyCode::ArrowLeft
+            ),
+            Err((0, Action::MoveLeft))
+        );
+    }
+
+    /// Under the one-hand preset the place rows show IJKL, which is what
+    /// places, and a capture there binds nothing: the preset holds those
+    /// keys, and the screen says which setting to change.
+    #[test]
+    fn the_one_hand_preset_rows_show_ijkl_and_do_not_capture() {
+        let settings = GameSettings {
+            commit: CommitScheme::Ijkl,
+            ..GameSettings::default()
+        };
+        assert_eq!(shown_key(&settings, 0, Action::PlaceUp), KeyCode::KeyI);
+        assert_eq!(shown_key(&settings, 0, Action::PlaceLeft), KeyCode::KeyJ);
+        assert_eq!(shown_key(&settings, 0, Action::MoveUp), KeyCode::KeyW);
+
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Controls));
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.init_resource::<crate::app::gamepad::Bridged>();
+        app.init_resource::<crate::app::gamepad::LastDevice>();
+        app.init_resource::<Time>();
+        app.insert_resource(settings);
+        app.init_resource::<crate::app::keycaps::KeyCaps>();
+        app.insert_resource(ControlsMenu {
+            selected: 1 + Action::PlaceUp.index(),
+            ..ControlsMenu::default()
+        });
+        app.add_systems(Update, controls_input);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        app.update();
+        let menu = app.world().resource::<ControlsMenu>();
+        assert_eq!(menu.capturing, None, "no capture");
+        assert_eq!(
+            menu.feedback,
+            fill(
+                crate::app::i18n::EN.ctl_preset,
+                &[("s", crate::app::i18n::EN.set_commit_keys)]
+            )
+        );
     }
 
     /// Rebinding refuses a key another action already owns, including one

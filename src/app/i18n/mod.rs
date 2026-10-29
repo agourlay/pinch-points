@@ -467,7 +467,7 @@ struct Tr {
     /// headline on the centre-screen announcement.
     pub event_blurbs: [&'static str; 9],
     /// Castle Swap's line in place of its blurb when the seat that spun it
-    /// keeps its castle (three castles or more). `{p}` that seat.
+    /// keeps its castle (three seats or more hold castles). `{p}` that seat.
     pub event_blurb_swap_kept: &'static str,
     /// Over a spun event's headline: whose sparkling crab started it.
     /// `{p}` that seat.
@@ -591,6 +591,9 @@ struct Tr {
     pub ctl_reset_key: &'static str,
     pub ctl_press_key: &'static str,
     pub ctl_taken: &'static str,
+    /// Under the list when a row's key is set by P1's placing-keys
+    /// scheme rather than bound here: `{s}` is that setting's name.
+    pub ctl_preset: &'static str,
     pub ctl_reset: &'static str,
     /// The first press of a reset, waiting for the second: `{k}` is the
     /// key, or for a pad's player the button, that takes it up.
@@ -662,11 +665,12 @@ struct Tr {
     /// Step 2's card names in `MapChoice` order, the Random card's in the
     /// handmade slot.
     pub setup_map_names: [&'static str; 7],
-    /// A card's size line: `{w}x{h}` and the seats `{a}` to `{b}`, or one
-    /// count `{n}`; the open ocean's says it has no edges.
+    /// A card's size line: `{w}x{h}` and the seats `{a}` to `{b}`, or the
+    /// tables `{n}`; a map with no edges says so in either form.
     pub setup_map_sub: &'static str,
     pub setup_map_sub_wrap: &'static str,
     pub setup_map_sub_exact: &'static str,
+    pub setup_map_sub_exact_wrap: &'static str,
     /// The Random card's size line: any map seating the `{n}` at the table.
     pub setup_random_sub: &'static str,
     /// Added to a handmade map's size line when it is too big to send.

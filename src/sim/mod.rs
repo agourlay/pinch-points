@@ -55,5 +55,5 @@ pub use replay::{NEEDS_NEWER, Replay, SeatKind, seat_name};
 pub use rng::Pcg32;
 pub use solve::{
     DEFAULT_NODE_BUDGET, Deal, Effort, Placement, SolveOutcome, needs_both, solve, solve_from,
-    solve_with, validate,
+    solve_with, validate, winning_sets,
 };

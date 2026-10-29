@@ -62,6 +62,24 @@ impl Action {
             Action::Remove | Action::ClearAll => ActionGroup::Posts,
         }
     }
+
+    /// The action in the other of the move and place groups that faces
+    /// the same way: move-up for place-up and back. It is its own inverse,
+    /// and the two clearing-up actions have no partner, so they stay.
+    pub fn mirrored(self) -> Action {
+        match self {
+            Action::MoveUp => Action::PlaceUp,
+            Action::MoveDown => Action::PlaceDown,
+            Action::MoveLeft => Action::PlaceLeft,
+            Action::MoveRight => Action::PlaceRight,
+            Action::PlaceUp => Action::MoveUp,
+            Action::PlaceDown => Action::MoveDown,
+            Action::PlaceLeft => Action::MoveLeft,
+            Action::PlaceRight => Action::MoveRight,
+            Action::Remove => Action::Remove,
+            Action::ClearAll => Action::ClearAll,
+        }
+    }
 }
 
 /// The kinds of thing an action does: walk the cursor, put an arrow down,

@@ -1,5 +1,8 @@
 # A gull comes down a side passage into the corridor just as the crabs
-# pass. P1 keeps it busy at the top with a second arrow.
+# pass. P1 keeps it busy at the top with a second arrow: up the
+# passage, or into a nook beside it, where it paces for good. A nook on
+# each side means no arrow there sends it into a wall, where its hidden
+# claw would pick the way.
 name: Cover Me
 hands: 2 1
 kind: puzzle
@@ -12,9 +15,9 @@ map:
 +-+-+-+-+-+-+-+-+-+-+-+
 |K K K K 0 # . # # # #|
 + +-+ + + + + + + + + +
-|K K K|.|# #|.|# # # #|
+|K K K|.|# . . . # # #|
 +-+-+-+ +-+-+ +-+-+-+-+
-|# # #|.|# #|.|# # # #|
+|# # #|.|# . . . # # #|
 +-+-+-+ +-+-+ +-+-+-+-+
 |. . . . . . . . . . .|
 +-+-+-+-+-+-+-+-+ +-+-+

@@ -159,8 +159,8 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// - 46: a gull raid takes a third of the castle's bank, not half
 ///   (`sim::raid_loss`), so a 45 peer keeps a different score after the
 ///   same raid.
-/// - 47: two tide-event rules. A spun Castle Swap with three castles or
-///   more leaves the spinner's castle out of the rotation
+/// - 47: two tide-event rules. A spun Castle Swap with three castle
+///   owners or more leaves the spinner's castles out of the rotation
 ///   (`Board::castle_swap_keeper`), and Speed Up opens the holes twice as
 ///   often while it runs (`Board::hole_period`): a 46 peer hands castles
 ///   and spawns crabs differently after either.

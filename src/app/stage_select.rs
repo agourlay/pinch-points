@@ -689,8 +689,15 @@ const LINE: f32 = 1.2;
 const BADGE_MIN_PX: f32 = 8.0;
 
 /// A tile too small for the badge wears a bar this tall instead, or as
-/// tall as the gap over its number allows.
+/// tall as the gap over its number allows, but never less than
+/// [`STRIP_MIN_PX`].
 const STRIP_PX: f32 = 2.0;
+
+/// The least the bar is drawn, at any size: a co-op tile with no mark
+/// reads as a solo one. A tile this small (a shelf of some 140 levels of
+/// the player's own) has no gap over its number left, and its number is
+/// under four pixels tall, so the bar keeps its pixel over it.
+const STRIP_MIN_PX: f32 = 1.0;
 
 /// The size a tile's number is drawn at. It has to stay legible in
 /// whatever the tile shrank to, so it shrinks with it rather than by
@@ -717,7 +724,7 @@ impl CoopMark {
         let number = LINE * number_px(size);
         match LINE * badge + number <= inner {
             true => CoopMark::Badge(badge),
-            false => CoopMark::Strip(((inner - number) / 2.0).clamp(0.0, STRIP_PX)),
+            false => CoopMark::Strip(((inner - number) / 2.0).clamp(STRIP_MIN_PX, STRIP_PX)),
         }
     }
 
@@ -1353,21 +1360,16 @@ mod tests {
         );
     }
 
-    /// The key under the grid must explain every edge the grid can draw.
-    /// `difficulty_ink` falls through to one colour for anything above its
-    /// last named arm, so a harder tier than the key knows about ships in
-    /// the colour of the tier below: the first five-signpost levels
-    /// appeared tagged as four.
-    /// The co-op mark never touches a tile's number, at any size the grid
-    /// can draw a tile, down to the worst case: the shipped shelves and a
-    /// hundred levels of the player's own. Where the badge would, the tile
-    /// wears the bar instead, which the number always clears.
+    /// Every tile the grid can draw a co-op stage on wears a mark, and the
+    /// mark never touches the tile's number while there is room over it.
+    /// A property over sizes rather than a worst case: nothing caps the
+    /// player's own levels, so a tile can shrink to a pixel. Down there
+    /// the bar keeps [`STRIP_MIN_PX`] (an unmarked co-op tile reads as a
+    /// solo one); wherever the gap over the number holds that much, the
+    /// bar fits inside the gap. The shipped shelf keeps the 2P badge.
     #[test]
-    fn the_coop_mark_clears_the_number_at_every_tile_size() {
-        let shipped = rows_of(&[0..100, 100..120]).len();
-        let worst = tile(shipped + 10, 2.0 * HEADING_ROOM);
-        assert!(worst < 20.0, "the worst case is a small tile: {worst}");
-        let mut size = worst;
+    fn the_coop_mark_shows_and_clears_the_number_at_every_tile_size() {
+        let mut size = 1.0;
         while size <= 52.0 {
             let inner = size - 2.0 * TILE_BORDER;
             let number = LINE * number_px(size);
@@ -1377,20 +1379,29 @@ mod tests {
                     assert!(LINE * px + number <= inner, "badge on number at {size}");
                 }
                 CoopMark::Strip(height) => {
-                    assert!(
-                        height > 0.0 && height <= (inner - number) / 2.0,
-                        "bar at {size}"
-                    );
+                    assert!(height >= STRIP_MIN_PX, "no mark at {size}");
+                    if (inner - number) / 2.0 >= STRIP_MIN_PX {
+                        assert!(height <= (inner - number) / 2.0, "bar on number at {size}");
+                    }
                 }
             }
             size += 0.25;
         }
+        // Down to a pixel is far enough: some sixty rows, six hundred
+        // levels of the player's own, get there.
+        assert!(tile(60, 2.0 * HEADING_ROOM) < 1.0);
         // The shipped list, two co-op rows and no levels of the player's
         // own, still reads 2P.
+        let shipped = rows_of(&[0..100, 100..120]).len();
         let shelf = tile(shipped, HEADING_ROOM);
         assert!(matches!(CoopMark::on(shelf), CoopMark::Badge(_)), "{shelf}");
     }
 
+    /// The key under the grid must explain every edge the grid can draw.
+    /// `difficulty_ink` falls through to one colour for anything above its
+    /// last named arm, so a harder tier than the key knows about ships in
+    /// the colour of the tier below: the first five-signpost levels
+    /// appeared tagged as four.
     #[test]
     fn the_key_reaches_the_hardest_stage() {
         let hardest = campaign().levels.iter().map(|l| l.posts).max().unwrap();

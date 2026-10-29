@@ -163,7 +163,7 @@ puzzles):
 | Speed Up | Everything moves at double speed, and the spawner holes open twice as often, for 10 s |
 | Slow Down | Everything moves at half speed for 10 s |
 | Fresh Sand | Every signpost washes away |
-| Castle Swap | Castles trade owners in rotation ("rockets swap places"). With three castles or more, the spinner's castle sits out and the others rotate; two castles, or a swap the spectators call (nobody spun it), rotate everyone. Banks stay with their seats |
+| Castle Swap | Castles trade owners in rotation ("rockets swap places"). When three seats or more hold castles, the spinner's castles sit out and the other seats' rotate; two seats holding castles (however many castles each), or a swap the spectators call (nobody spun it), rotate everyone. Banks stay with their seats |
 | Right Claws | For 10 s a right-clawed crab banks for double and a left-clawed one costs what it was worth |
 
 One event runs at a time: after a timed one (the manias, Speed Up, Slow
