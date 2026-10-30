@@ -469,6 +469,9 @@ struct Tr {
     /// Castle Swap's line in place of its blurb when the seat that spun it
     /// keeps its castle (three seats or more hold castles). `{p}` that seat.
     pub event_blurb_swap_kept: &'static str,
+    /// Gull Attack's line in place of its blurb in a round played in
+    /// teams, where the spinner's partners are spared too.
+    pub event_blurb_attack_team: &'static str,
     /// Over a spun event's headline: whose sparkling crab started it.
     /// `{p}` that seat.
     pub ann_spun_by: &'static str,
@@ -1218,6 +1221,9 @@ struct Tr {
     pub bot_stand_in: &'static str,
     /// And it came back.
     pub bot_back: &'static str,
+    /// A local round set up on a handmade beach whose file went before it
+    /// was played: said on the feed over the generated beach it plays.
+    pub beach_gone: &'static str,
     /// The host's dial for letting bots in, and its two positions.
     pub lobby_bots_dial: &'static str,
     pub lobby_bots_values: [&'static str; 2],
@@ -1505,6 +1511,98 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Every notice the room sends ([`crate::transport::Notice`]) reads
+    /// as one chat line in every language, at the longest names and counts
+    /// it can carry. Worded by each peer now rather than sent as words, it
+    /// no longer crosses the wire's chat cap, but it still lands in the
+    /// feeds beside the chat lines that do, laid out for
+    /// [`crate::transport::CHAT_CHARS`]: a longer one would run past them
+    /// on every screen, where it used to be cut on all but the host's.
+    #[test]
+    fn every_notice_the_host_sends_fits_a_chat_line() {
+        use crate::transport::{Notice, chat_fits, wire_name};
+        // As long as a name off the wire gets, in characters and in bytes.
+        let names = [
+            "W".repeat(crate::transport::NAME_CHARS),
+            "é".repeat(crate::transport::NAME_CHARS),
+            "漢".repeat(crate::transport::WIRE_NAME / 3),
+        ];
+        for name in &names {
+            assert!(crate::transport::name_fits(name), "{name}");
+        }
+        let mut notices = vec![
+            Notice::PickCalledOff { bot: false },
+            Notice::PickCalledOff { bot: true },
+            // Every seat called by a full house.
+            Notice::CrowdPicked {
+                picks: [u8::MAX; crate::sim::MAX_PLAYERS],
+            },
+        ];
+        for event in 0..crate::sim::TideEvent::ALL.len() as u8 {
+            notices.push(Notice::Called { event });
+        }
+        for name in &names {
+            let name = wire_name(name);
+            notices.extend([
+                Notice::Joined {
+                    name,
+                    watching: false,
+                },
+                Notice::Joined {
+                    name,
+                    watching: true,
+                },
+                Notice::Left { name },
+                Notice::SentAway { name },
+            ]);
+        }
+        for lang in ALL_LANGS {
+            let tr = lang.tr();
+            for notice in &notices {
+                // The crowd's calls name the seats, by the longest names or
+                // by their labels.
+                let mut labels: Vec<Box<dyn Fn(u8) -> String>> =
+                    vec![Box::new(|seat| crate::app::seat_label(tr, seat))];
+                for name in &names {
+                    labels.push(Box::new(move |_| name.clone()));
+                }
+                for label in labels {
+                    let line = crate::app::net::notice_line(tr, notice, label);
+                    assert!(!line.is_empty() && !line.contains('{'), "{lang:?}: {line}");
+                    assert!(
+                        chat_fits(&line),
+                        "{lang:?}: {line} ({} chars, {} bytes)",
+                        line.chars().count(),
+                        line.len()
+                    );
+                }
+            }
+        }
+    }
+
+    /// A notice is worded by whoever reads it: the same called event reads
+    /// in each reader's own language, its event name the one that reader's
+    /// banner shows.
+    #[test]
+    fn a_notice_reads_in_the_readers_language() {
+        use crate::transport::Notice;
+        let event = crate::sim::TideEvent::CastleSwap;
+        let called = Notice::Called {
+            event: event.index() as u8,
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for lang in ALL_LANGS {
+            let tr = lang.tr();
+            let line = crate::app::net::notice_line(tr, &called, |seat| seat.to_string());
+            assert_eq!(
+                line,
+                fill(tr.spectator_called, &[("e", tr.events[event.index()])])
+            );
+            seen.insert(line);
+        }
+        assert_eq!(seen.len(), ALL_LANGS.len(), "{seen:?}");
     }
 
     /// The co-op lines call the two seats what the rest of the language

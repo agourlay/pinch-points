@@ -298,13 +298,15 @@ impl Lockstep {
     /// with the round already running: the host sent the board as it stood
     /// at `frame`, so that is where this session starts simulating.
     ///
-    /// Nothing is prefilled, unlike a session from frame zero: the frames
-    /// here were committed by players long since, and arrive in the resend
-    /// tails every peer keeps sending.
+    /// The frames from `delay` on were committed by players and arrive in
+    /// the resend tails every peer keeps sending. The idle frames below
+    /// `delay` are never committed by anybody, so a session starting
+    /// among them keeps their prefilled slots: dropping those froze a
+    /// watcher caught up at frame 1 for good.
     pub fn observer_from(players: Vec<PlayerId>, delay: u32, frame: u32) -> Lockstep {
         let mut session = Lockstep::seated(None, players, delay);
         if frame > 0 {
-            session.pending.clear();
+            session.pending.retain(|&at, _| at >= frame);
             session.frame = frame;
             session.next_commit = frame + delay;
         }

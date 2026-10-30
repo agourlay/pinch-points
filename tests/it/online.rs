@@ -71,6 +71,7 @@ impl Peer {
                 | NetMsg::Incompatible { .. }
                 | NetMsg::Queued { .. }
                 | NetMsg::Chat { .. }
+                | NetMsg::Notice(_)
                 | NetMsg::Roster { .. }
                 | NetMsg::Abandoned { .. }
                 | NetMsg::CatchUp { .. }

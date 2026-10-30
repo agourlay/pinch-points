@@ -144,6 +144,12 @@ pub struct OnlineSession {
     /// Drained rather than kept: the round's own feed is where a line is
     /// shown, and the feed keeps its own history.
     pub heard: Vec<(String, String)>,
+    /// What the room said since the shell last read it ([`Notice`]),
+    /// drained into the feed beside `heard` and worded there, in this
+    /// peer's language: the host's own notices and the ones it sent.
+    ///
+    /// [`Notice`]: crate::transport::Notice
+    pub notices: Vec<crate::transport::Notice>,
     /// What the people without a chair are doing: the tide vote, the
     /// crowd's size, the calls for the winner.
     pub stands: crate::app::spectators::Stands,
@@ -225,6 +231,14 @@ pub(crate) fn relay(transport: &UdpTransport, from: usize, msg: NetMsg) {
     }
 }
 
+/// Lift a pause the round ended under. See
+/// [`OnlineSession::drop_a_late_pause`].
+pub fn drop_a_late_pause(mut online: ResMut<Online>) {
+    if let Some(session) = &mut online.0 {
+        session.drop_a_late_pause();
+    }
+}
+
 /// Drain the session while the results card is up. See
 /// [`OnlineSession::poll_between_rounds`] for why this cannot wait for the
 /// sim: the sim is exactly what has stopped.
@@ -247,12 +261,14 @@ pub fn listen_before_the_round(time: Res<Time>, mut online: ResMut<Online>) {
 pub(crate) mod catch_up;
 mod crowd;
 mod home;
+mod notice;
 pub mod order;
 mod peers;
 mod presence;
 mod pump;
 mod rounds;
 pub use home::{Home, LobbyReturn};
+pub use notice::notice_line;
 use presence::StallWatch;
 pub(crate) use presence::{abandon_the_departed, catch_up_again, leave_a_hostless_round};
 #[cfg(test)]
@@ -287,6 +303,7 @@ impl OnlineSession {
             stall: StallWatch::default(),
             abandoned: Vec::new(),
             heard: Vec::new(),
+            notices: Vec::new(),
             stands: Default::default(),
             home: Home::nowhere(),
             next_round: false,

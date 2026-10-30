@@ -18,6 +18,9 @@ use std::collections::HashSet;
 /// newer build's, and kept for it as they stand ([`Progress::foreign`]).
 const LIST_KEY: &str = "tide";
 
+/// The line a reset of the record writes its count under (`reset: <n>`).
+const RESET_KEY: &str = "reset";
+
 /// The cleared-stage record, under the XDG data directory.
 fn save_path() -> std::path::PathBuf {
     crate::app::paths::merged_record("progress.txt")
@@ -54,6 +57,17 @@ pub struct Progress {
     /// heard of. Read and dropped, a player who opened an older or newer
     /// build once lost them on its next save.
     foreign: crate::app::paths::ForeignLines,
+    /// How many times the record has been reset, as of the file this one
+    /// was last read from or written to. A copy of the game still open on
+    /// the record from before a reset holds every clear in memory, and its
+    /// next save merged them all back; a file whose count is ahead says
+    /// the clears in hand were reset, and only those made since are kept
+    /// ([`Progress::merge`]).
+    reset: u64,
+    /// The clears made in this copy since the record last met the file:
+    /// the ones a reset elsewhere did not see, and so did not undo.
+    /// Never written.
+    marked: HashSet<String>,
 }
 
 impl Progress {
@@ -97,14 +111,27 @@ impl Progress {
 
     /// Records a clear; true when this was the first time.
     pub fn mark(&mut self, name: &str) -> bool {
+        self.marked.insert(name.to_string());
         self.cleared.insert(name.to_string())
     }
 
     /// Take in another record's clears, and the lines it kept that this
     /// build cannot read: a union, since a stage once cleared stays
-    /// cleared whichever copy of the game cleared it.
+    /// cleared whichever copy of the game cleared it. Unless `other` was
+    /// reset since this one was read: then what this one holds from
+    /// before is gone, and only the clears it made since are added.
     fn merge(&mut self, other: Progress) {
-        let Progress { cleared, foreign } = other;
+        let Progress {
+            cleared,
+            foreign,
+            reset,
+            marked: _,
+        } = other;
+        if reset > self.reset {
+            self.cleared.retain(|name| self.marked.contains(name));
+            self.foreign.clear();
+            self.reset = reset;
+        }
         self.cleared.extend(cleared);
         self.foreign.extend(foreign);
     }
@@ -121,6 +148,7 @@ impl Progress {
     pub fn clear_all(&mut self) {
         self.cleared.clear();
         self.foreign.clear();
+        self.marked.clear();
     }
 
     /// The classic rule: the first stage of a ladder is always open, so is
@@ -170,10 +198,19 @@ impl Progress {
         // Destructured with no rest pattern: a new field refuses to build
         // here until it is written out. `parse` is lenient and would never
         // notice one going unsaved.
-        let Self { cleared, foreign } = self;
+        let Self {
+            cleared,
+            foreign,
+            reset,
+            marked: _,
+        } = self;
         let mut names: Vec<&String> = cleared.iter().collect();
         names.sort_unstable();
-        let mut out = names.iter().fold(String::new(), |mut out, name| {
+        let head = match reset {
+            0 => String::new(),
+            n => format!("{RESET_KEY}: {n}\n"),
+        };
+        let mut out = names.iter().fold(head, |mut out, name| {
             out.push_str("cleared: ");
             out.push_str(LIST_KEY);
             out.push(':');
@@ -206,10 +243,14 @@ impl Progress {
                 };
                 match list == LIST_KEY {
                     true => {
-                        progress.mark(name);
+                        progress.cleared.insert(name.to_string());
                     }
                     false => progress.foreign.keep(line),
                 }
+            } else if key == RESET_KEY
+                && let Ok(n) = value.parse()
+            {
+                progress.reset = n;
             } else if !key.is_empty() {
                 progress.foreign.keep(line);
             }
@@ -249,13 +290,49 @@ pub fn save(progress: &mut Progress) {
 /// of writing, a clear made anywhere stays made.
 pub fn save_in(path: &std::path::Path, progress: &mut Progress) -> std::io::Result<()> {
     progress.merge(load_in(path));
+    progress.marked.clear();
+    crate::app::paths::write_atomic(path, progress.to_text())
+}
+
+/// Forget the clears filed under `keys`, in the record in hand and in the
+/// file: a level the editor deleted. Its tick is filed by its file name,
+/// which the next level saved under that name takes, and a brand-new level
+/// came up cleared. Merged first like any save, then struck, so a clear
+/// another copy filed meanwhile is kept, and this one is not merged back.
+pub fn forget(progress: &mut Progress, keys: &[&str]) {
+    let _ = forget_in(&save_path(), progress, keys);
+}
+
+/// [`forget`] in a file named outright, with the error kept.
+pub fn forget_in(
+    path: &std::path::Path,
+    progress: &mut Progress,
+    keys: &[&str],
+) -> std::io::Result<()> {
+    progress.merge(load_in(path));
+    let mut struck = false;
+    for key in keys {
+        struck |= progress.cleared.remove(*key);
+    }
+    if !struck {
+        return Ok(());
+    }
+    progress.marked.clear();
     crate::app::paths::write_atomic(path, progress.to_text())
 }
 
 /// Write the record as it stands, over whatever is on disk: the reset,
-/// which is the one change a merge would undo.
-pub fn save_reset(progress: &Progress) {
-    let _ = crate::app::paths::write_atomic(&save_path(), progress.to_text());
+/// which is the one change a merge would undo. Counted in the file, one
+/// past any count seen there or here, so another copy of the game open on
+/// the record from before takes its clears as reset too.
+pub fn save_reset(progress: &mut Progress) {
+    let _ = reset_in(&save_path(), progress);
+}
+
+/// [`save_reset`] to a file named outright, with the error kept.
+pub fn reset_in(path: &std::path::Path, progress: &mut Progress) -> std::io::Result<()> {
+    progress.reset = progress.reset.max(load_in(path).reset) + 1;
+    crate::app::paths::write_atomic(path, progress.to_text())
 }
 
 /// A cleared stage, saved the moment it is cleared: the stage list is the
@@ -293,6 +370,56 @@ mod tests {
         app.init_resource::<Progress>();
         let _ = app.world_mut().run_system_once(record_cleared);
         assert!(!app.world().resource::<Progress>().is_cleared("Code Probe"));
+    }
+
+    /// A deleted level's clear goes from the file as well as the record in
+    /// hand, and nothing else does: the next save does not merge it back.
+    #[test]
+    fn a_forgotten_clear_stays_forgotten() {
+        let path = crate::app::paths::test_dir("progress-forget").join("progress.txt");
+        let mut on_disk = Progress::default();
+        on_disk.mark("file:custom/gone.txt");
+        on_disk.mark("file:custom/kept.txt");
+        save_in(&path, &mut on_disk).expect("saved");
+        let mut progress = Progress::default();
+        forget_in(&path, &mut progress, &["file:custom/gone.txt"]).expect("forgot");
+        assert!(!progress.is_cleared("file:custom/gone.txt"));
+        assert!(progress.is_cleared("file:custom/kept.txt"), "merged in");
+        save_in(&path, &mut progress).expect("saved again");
+        let back = load_in(&path);
+        assert!(!back.is_cleared("file:custom/gone.txt"));
+        assert!(back.is_cleared("file:custom/kept.txt"));
+    }
+
+    /// A reset in one copy of the game is not undone by another copy
+    /// still holding the clears from before it: that copy's next save
+    /// keeps only what it cleared since, and the reset stands.
+    #[test]
+    fn a_reset_holds_against_a_copy_opened_before_it() {
+        let path = crate::app::paths::test_dir("progress-reset").join("progress.txt");
+        let mut first = Progress::default();
+        first.mark("Old A");
+        first.mark("Old B");
+        save_in(&path, &mut first).expect("saved");
+        let mut second = load_in(&path);
+        assert!(second.is_cleared("Old A"));
+        first.clear_all();
+        reset_in(&path, &mut first).expect("reset");
+        second.mark("New C");
+        save_in(&path, &mut second).expect("saved over");
+        let back = load_in(&path);
+        assert!(!back.is_cleared("Old A") && !back.is_cleared("Old B"));
+        assert!(back.is_cleared("New C"), "a clear made since stands");
+        assert!(!second.is_cleared("Old A"), "nor shown in the copy");
+        // And the copy that reset takes the new clear in as any other.
+        first.mark("New D");
+        save_in(&path, &mut first).expect("saved");
+        assert!(first.is_cleared("New C") && first.is_cleared("New D"));
+        // A second reset counts past the first.
+        first.clear_all();
+        reset_in(&path, &mut first).expect("reset again");
+        assert_eq!(load_in(&path).reset, 2);
+        assert_eq!(load_in(&path).cleared_count(), 0);
     }
 
     fn campaign(builtins: usize, extra: Vec<Level>) -> Campaign {

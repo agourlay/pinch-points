@@ -458,7 +458,8 @@ pub fn record_puzzle(
         &mut trophies.stats,
         &mut attempt,
         campaign.current().posts,
-        campaign.place().section == crate::app::campaign::Section::Custom,
+        campaign.place().section == crate::app::campaign::Section::Custom
+            && !campaign.is_from_a_code(campaign.index),
     );
     // The Tide Pool's own stages: the co-op ladder beside it is for two,
     // and finishing the campaign alone cannot wait on a friend.
@@ -479,7 +480,9 @@ pub fn record_puzzle(
 /// name), must not set it again: win, R, win again is one stage, not two.
 ///
 /// A spare signpost counts only on a player's own level (`own`, the stage
-/// list's section of them): the trophy says "a new stage of yours", and a
+/// list's section of them, less a level pasted from a code, which is
+/// somebody else's and, filed nowhere, new on every paste): the trophy
+/// says "a new stage of yours", and a
 /// shipped stage that grants a post it does not need, the tutorial's, is
 /// scenery rather than a feat.
 fn credit_stage(stats: &mut Stats, attempt: &mut PuzzleAttempt, posts: u8, own: bool) {
@@ -817,7 +820,8 @@ mod tests {
     /// A spare signpost counts on a player's own level and never on a
     /// shipped stage: Welcome Ashore's crab walks home with its post still
     /// in hand, and clearing it so is no trophy. The same level filed
-    /// behind the shipped list as the player's own is.
+    /// behind the shipped list as the player's own is, and pasted from
+    /// somebody's code is not.
     #[test]
     fn spare_signposts_count_only_on_a_players_own_level() {
         use crate::app::Campaign;
@@ -826,7 +830,13 @@ mod tests {
         levels.truncate(1);
         assert_eq!(levels[0].name, "Welcome Ashore");
         assert!(levels[0].posts > 0, "it grants a post");
-        levels.push(levels[0].clone());
+        let mut mine = levels[0].clone();
+        mine.filing = Some(crate::sim::Filing {
+            key: "file:custom/spare-probe.txt".into(),
+            legacy: None,
+        });
+        // The same level again, pasted from a code: filed nowhere.
+        levels.extend([mine, levels[0].clone()]);
         let mut app = tracking(true);
         app.init_resource::<Progress>();
         app.insert_resource(Campaign {
@@ -846,6 +856,7 @@ mod tests {
         };
         assert_eq!(spare(&mut app, 0), 0, "a shipped stage is not one of yours");
         assert_eq!(spare(&mut app, 1), 1, "a level of the player's own is");
+        assert_eq!(spare(&mut app, 2), 1, "one pasted from a code is not");
     }
 
     /// Entering a stage sends the same message that restarting it does, so

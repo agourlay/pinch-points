@@ -25,8 +25,9 @@ mod steps;
 mod ui;
 
 pub use beaches::{
-    Beach, CustomBeaches, beach_bytes, beach_from, beach_in_play, beach_on_air, beaches_note,
-    cycle_map, map_about, map_label, map_name, map_title, refresh_custom_beaches,
+    Beach, BeachGone, CustomBeaches, beach_bytes, beach_from, beach_in_play, beach_on_air,
+    beaches_note, cycle_map, map_about, map_label, map_name, map_title, refresh_custom_beaches,
+    say_beach_gone,
 };
 pub use board::{apply_terms, board_for, board_from, bot_seats_from, local_board, versus_board};
 pub use preview::{
@@ -1842,6 +1843,48 @@ mod tests {
         }
     }
 
+    /// A re-read of the shelf keeps the config on the beach it named, by
+    /// its file, wherever the beach now sorts; a file gone gives way to
+    /// the map sized for the table, and says which beach went.
+    #[test]
+    fn a_reread_shelf_keeps_the_picked_beach_by_its_file() {
+        let beach = |name: &str| {
+            let text = format!(
+                "name: {name}\nposts: 1\nkind: arena\ncrab: 0,1 R R common\nmap:\n\
+                 +-+-+-+\n|0 . 1|\n+ + + +\n|. . .|\n+ + + +\n|. . .|\n+-+-+-+\n"
+            );
+            let mut level = crate::sim::Level::parse(&text).expect("a level");
+            level.filing = Some(crate::sim::Filing {
+                key: format!("file:custom/{name}.txt"),
+                legacy: None,
+            });
+            Beach::new(level)
+        };
+        let old = CustomBeaches(vec![beach("b"), beach("c")]);
+        let mut config = MatchConfig {
+            map: MapChoice::Custom,
+            seats: 2,
+            custom: 1,
+            ..MatchConfig::default()
+        };
+        // A file sorting ahead of the pick turns up meanwhile.
+        let fresh = CustomBeaches(vec![beach("a"), beach("b"), beach("c")]);
+        assert_eq!(beaches::keep_the_pick(&mut config, &old, &fresh), None);
+        assert_eq!(config.map, MapChoice::Custom);
+        assert_eq!(fresh.fitting(2)[config.custom].level.name, "c");
+        // And then the pick's own file goes: no other beach is played.
+        let fewer = CustomBeaches(vec![beach("a"), beach("b")]);
+        let said = beaches::keep_the_pick(&mut config, &fresh, &fewer);
+        assert_eq!(said.as_deref(), Some("c"));
+        assert_eq!(config.map, sized_for(2));
+        assert!(holds(config.map, 2));
+        assert_eq!(
+            beaches::keep_the_pick(&mut config, &fewer, &fewer),
+            None,
+            "said once"
+        );
+    }
+
     /// The seat count turning keeps a map that was chosen for what it is:
     /// the 20x13 picked by hand, and the same handmade beach while it
     /// still seats everyone, though it now sits elsewhere in the list of
@@ -1936,6 +1979,36 @@ mod tests {
             last = area;
         }
         assert_eq!(sized_for(2), MapChoice::GenSmall);
+    }
+
+    /// The terms' team mode reaches the board every peer builds, where the
+    /// AI and Gull Attack read it, and survives a snapshot and a recording;
+    /// a mode the table does not fit is free-for-all there too.
+    #[test]
+    fn the_terms_split_the_board_into_teams() {
+        use crate::app::teams::TeamMode;
+        let terms = |mode: TeamMode| MatchTerms {
+            teams: mode.index() as u8,
+            seed: 5,
+            ..MatchTerms::default()
+        };
+        let pairs = board_for(&terms(TeamMode::Pairs), 4);
+        assert_eq!(pairs.rules().teams, Some([0, 0, 1, 1, 2, 2]));
+        assert!(pairs.rules().allies(0, 1) && !pairs.rules().allies(1, 2));
+        assert_eq!(
+            board_from(&terms(TeamMode::Pairs), 4, &[]).rules().teams,
+            pairs.rules().teams
+        );
+        assert_eq!(board_for(&terms(TeamMode::Pairs), 3).rules().teams, None);
+        assert_eq!(board_for(&terms(TeamMode::Solo), 4).rules().teams, None);
+        let trios = board_for(&terms(TeamMode::Trios), 6);
+        assert_eq!(trios.rules().teams, Some([0, 1, 0, 1, 0, 1]));
+        let restored = crate::sim::Board::parse_snapshot(&trios.to_snapshot()).expect("snapshot");
+        assert_eq!(restored.rules().teams, trios.rules().teams);
+        let level = crate::sim::Level::from_board("Versus", 3, trios.clone());
+        let replayed = crate::sim::Level::parse(&level.to_text()).expect("level");
+        assert_eq!(replayed.board().rules().teams, trios.rules().teams);
+        assert_eq!(replayed.board().state_hash(), trios.state_hash());
     }
 
     /// Open ocean, Round the World, Four Doors, Gull Road and Back to Back

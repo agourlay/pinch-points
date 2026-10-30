@@ -100,6 +100,9 @@ impl Board {
         if let Some([left, right]) = self.rules.claw_hands {
             let _ = writeln!(out, "claw_hands: {left} {right}");
         }
+        if let Some(teams) = &self.rules.teams {
+            let _ = writeln!(out, "sides: {}", sides_text(teams));
+        }
         if self.tide.enabled {
             let _ = writeln!(out, "events: on");
         }
@@ -292,6 +295,7 @@ struct Fields {
     /// would turn them off in every snapshot that omitted the line.
     no_castle_raids: bool,
     claw_hands: Option<[u8; 2]>,
+    teams: Option<[u8; MAX_PLAYERS]>,
     events_enabled: bool,
     lure: Option<(PlayerId, u32)>,
     lure_cooldown: u32,
@@ -384,6 +388,7 @@ impl Fields {
                     next_num(&mut words, "claw_hands right")?,
                 ]);
             }
+            "sides" => self.teams = Some(parse_sides(value)?),
             "events" => self.events_enabled = value == "on",
             "lure" => {
                 // A seat, like every other owner the snapshot names: the
@@ -711,6 +716,7 @@ impl Fields {
                 round_length: self.round_length,
                 castle_raids: !self.no_castle_raids,
                 claw_hands: self.claw_hands,
+                teams: self.teams,
             },
             crabs: self.crabs,
             scores,
@@ -1037,6 +1043,7 @@ mod tests {
         board.rules_mut().sweep_keeps_worth = true;
         board.rules_mut().fair_spawns = true;
         board.rules_mut().claw_hands = Some([2, 1]);
+        board.rules_mut().teams = Some([0, 1, 0, 1, 0, 1]);
         board.set_events_enabled(true);
         board.rules_mut().round_length = Some(1234);
         board.rules_mut().gull_period = 97;
@@ -1245,6 +1252,7 @@ mod tests {
                 "wrap:",
                 "raids:",
                 "claw_hands:",
+                "sides:",
                 "events:",
                 "lure:",
                 "cooldown:",

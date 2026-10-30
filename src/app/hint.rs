@@ -19,7 +19,8 @@ pub const STUCK_AFTER: u32 = 3;
 #[derive(Resource, Default)]
 pub struct Hints {
     /// The index of the level these counts belong to, so switching levels
-    /// starts fresh. `None` before any level has been played.
+    /// starts fresh. `None` until the first load since the puzzle screen
+    /// was entered ([`reset_on_entry`]).
     level: Option<usize>,
     /// Failed runs on it.
     losses: u32,
@@ -88,6 +89,16 @@ pub fn tick_denied_note(time: Res<Time>, campaign: Res<Campaign>, mut note: ResM
         return;
     }
     note.0 = (note.0 - time.delta_secs()).max(0.0);
+}
+
+/// Entering the puzzle screen starts the count over, as it does the
+/// attempt ([`crate::app::achievements::reset_puzzle_attempt`]): the list
+/// behind the index can have been rebuilt on the way in (a pasted code,
+/// a shelf another level now sorts into), so the same index is no proof
+/// of the same level, and the first load then counts afresh for the
+/// level it built.
+pub fn reset_on_entry(mut hints: ResMut<Hints>) {
+    *hints = Hints::default();
 }
 
 /// Count a failed run, and start over when the level changes.
@@ -250,6 +261,7 @@ pub fn hint_line(
 mod tests {
     use super::*;
     use crate::sim::Level;
+    use bevy::ecs::system::RunSystemOnce;
 
     fn campaign_at(index: usize) -> Campaign {
         Campaign {
@@ -537,6 +549,31 @@ mod tests {
         app.update();
         let hints = app.world().resource::<Hints>();
         assert!(!hints.offered(), "a new level starts from nothing");
+    }
+
+    /// Coming back in at the same index is no proof of the same level (a
+    /// pasted code, a shelf another level sorted into): entering the
+    /// screen starts the count over, and the load reads the level's own
+    /// solution for whether a hint can be given.
+    #[test]
+    fn entering_the_puzzle_counts_afresh_at_the_same_index() {
+        let campaign = campaign_at(27);
+        let mut app = App::new();
+        app.insert_resource(stuck_and_showing(&campaign));
+        app.insert_resource(Sim(campaign.current().board()));
+        app.insert_resource(campaign);
+        app.add_message::<crate::app::LoadLevel>();
+        app.add_systems(Update, reset_on_level);
+        app.world_mut()
+            .run_system_once(reset_on_entry)
+            .expect("entered");
+        app.world_mut()
+            .write_message(crate::app::LoadLevel { keep_posts: false });
+        app.update();
+        let hints = app.world().resource::<Hints>();
+        assert!(!hints.offered() && !hints.showing(), "nothing carried in");
+        assert_eq!(hints.level, Some(27));
+        assert!(hints.answerable, "read from the level the load built");
     }
 
     /// The denial fades with time, and goes at once when the level changes:

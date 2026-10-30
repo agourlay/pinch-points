@@ -62,6 +62,20 @@ pub(super) struct Validation {
 }
 
 impl Validation {
+    /// The save this check was finishing, carried on without the bench: a
+    /// check let go of while a save waits on it (the bench edited, or the
+    /// editor left) still owes the file its `solution:`. `None` for a check
+    /// no save waits on, or a file that cannot be read.
+    pub(super) fn orphan(self) -> Option<OrphanedSave> {
+        let (path, _) = self.save?;
+        let written = std::fs::read_to_string(&path).ok()?;
+        Some(OrphanedSave {
+            slot: self.slot,
+            path,
+            written,
+        })
+    }
+
     /// A check that never answers, for a test to drop or wait on.
     #[cfg(test)]
     pub(super) fn pending() -> Validation {
@@ -70,6 +84,58 @@ impl Validation {
             level: String::new(),
             save: None,
         }
+    }
+}
+
+/// A save's check that outlived the bench it was started on
+/// ([`Validation::orphan`]): its answer, when it comes, is written into
+/// the file as it was saved, wherever the player is by then.
+pub struct OrphanedSave {
+    pub(super) slot: SolverSlot,
+    path: std::path::PathBuf,
+    /// The file as the save left it. The way through is written in only
+    /// while the file still reads so: one saved over since, or deleted,
+    /// is no longer the level the check was about.
+    written: String,
+}
+
+impl OrphanedSave {
+    /// Write the answer in, if it is back: true once there is nothing more
+    /// to wait for.
+    fn settle(&self) -> bool {
+        let Some(verdict) = self.slot.lock().unwrap().take() else {
+            return false; // still searching
+        };
+        let SolveOutcome::Found(solution) = verdict.outcome else {
+            return true;
+        };
+        let still = std::fs::read_to_string(&self.path).is_ok_and(|now| now == self.written);
+        if let (true, Ok(mut level)) = (still, Level::parse(&self.written)) {
+            level.solution = solution;
+            if let Err(e) = crate::app::paths::write_atomic(&self.path, level.to_text()) {
+                warn!(
+                    "could not write the solution into {}: {e}",
+                    self.path.display()
+                );
+            }
+        }
+        true
+    }
+}
+
+/// The saves whose checks outlived their bench, finished on any screen.
+#[derive(Resource, Default)]
+pub struct SaveChecks(pub(super) Vec<OrphanedSave>);
+
+/// Take in the saves the bench let go of, and write each one's answer in
+/// as it comes back. Runs everywhere: the editor left is the usual way a
+/// check is orphaned.
+pub fn finish_orphaned_saves(mut state: ResMut<EditorState>, mut checks: ResMut<SaveChecks>) {
+    if !state.orphans.is_empty() {
+        checks.0.append(&mut state.orphans);
+    }
+    if !checks.0.is_empty() {
+        checks.0.retain(|check| !check.settle());
     }
 }
 

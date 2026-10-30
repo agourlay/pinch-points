@@ -55,16 +55,31 @@ impl Picks {
     /// "Maya ×2 · Theo ×1": the seats called, most called first, and the
     /// lower seat first on a tie so every screen lists them alike.
     pub fn line(&self, name: impl Fn(u8) -> String) -> String {
+        self.line_within(name, |_| true)
+    }
+
+    /// [`Self::line`] for as many seats as `fits` takes, most called first,
+    /// and always the first: the line a chat datagram carries whole, with
+    /// the less called seats dropped rather than the last one cut off.
+    pub fn line_within(&self, name: impl Fn(u8) -> String, fits: impl Fn(&str) -> bool) -> String {
         let mut called: Vec<(u8, u8)> = (0..crate::sim::MAX_PLAYERS as u8)
             .map(|seat| (seat, self.counts[usize::from(seat)]))
             .filter(|&(_, n)| n > 0)
             .collect();
         called.sort_by_key(|&(seat, n)| (std::cmp::Reverse(n), seat));
-        called
-            .into_iter()
-            .map(|(seat, n)| format!("{} ×{n}", name(seat)))
-            .collect::<Vec<_>>()
-            .join(" · ")
+        let mut line = String::new();
+        for (seat, n) in called {
+            let one = format!("{} ×{n}", name(seat));
+            let longer = match line.is_empty() {
+                true => one,
+                false => format!("{line} · {one}"),
+            };
+            if !line.is_empty() && !fits(&longer) {
+                break;
+            }
+            line = longer;
+        }
+        line
     }
 }
 
@@ -190,11 +205,7 @@ pub fn score_the_call(
 ///
 /// Said after they close as well: the closing count is one datagram too,
 /// and a spectator that missed it would be offered a call for ever.
-pub(super) fn say_the_calls(
-    session: &mut crate::app::net::OnlineSession,
-    tr: &crate::app::i18n::Tr,
-    again: bool,
-) {
+pub(super) fn say_the_calls(session: &mut crate::app::net::OnlineSession, again: bool) {
     // Counted until they close and then held, so a spectator who leaves
     // afterwards does not take their call out of a count the feed has
     // already read out and the results card will quote.
@@ -211,12 +222,14 @@ pub(super) fn say_the_calls(
     }
     if picks.open == 0 && !session.stands.winner.picks_said {
         session.stands.winner.picks_said = true;
+        // Sent as the counts, each peer naming the seats in its own
+        // language (`net::notice_line`).
         if picks.any() {
-            let names = &session.names;
-            let label = |seat: u8| crate::app::name_or_label(names, tr, seat);
-            let line = crate::app::i18n::fill(tr.crowd_picked, &[("l", &picks.line(label))]);
-            session.transport.send(NetMsg::chat("", &line));
-            session.heard.push((String::new(), line));
+            let notice = crate::transport::Notice::CrowdPicked {
+                picks: picks.counts,
+            };
+            session.transport.send(NetMsg::Notice(notice));
+            session.notices.push(notice);
         }
     }
 }

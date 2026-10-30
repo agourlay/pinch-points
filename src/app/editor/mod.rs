@@ -32,7 +32,7 @@ pub use setting::Setting;
 pub use share::{level_from_code, taken_from_elsewhere};
 pub use shelf::{Shelved, custom_dir, legacy_save_path, shelve};
 pub use symmetry::Symmetry;
-pub use validate::poll_solver;
+pub use validate::{SaveChecks, finish_orphaned_saves, poll_solver};
 
 use brush::{paint, stroke_onto};
 use naming::type_a_name;
@@ -458,6 +458,9 @@ pub struct EditorState {
     pub brush: Brush,
     pub feedback: String,
     solver: Option<Validation>,
+    /// Saves whose check the bench let go of while they waited on it,
+    /// handed on to [`validate::SaveChecks`] to be finished off the bench.
+    orphans: Vec<validate::OrphanedSave>,
     /// The level, as [`checked_level`] reads it, that the last check came
     /// back about: the bench is checked while it still reads the same.
     checked: Option<String>,
@@ -709,8 +712,9 @@ impl EditorState {
     /// Let a running check go, with its "checking..." line: it was asked
     /// about a board that is going.
     fn drop_check(&mut self) {
-        if self.solver.take().is_some() {
+        if let Some(check) = self.solver.take() {
             self.feedback.clear();
+            self.orphans.extend(check.orphan());
         }
     }
 
@@ -735,6 +739,7 @@ impl EditorState {
             brush: _,
             feedback: _,
             solver: _,
+            orphans: _,
             checked,
             tables,
             roll,
@@ -858,7 +863,12 @@ pub fn enter_editor(
 pub fn exit_editor(
     mut state: ResMut<EditorState>,
     mut controllers: ResMut<crate::app::Controllers>,
+    mut checks: ResMut<validate::SaveChecks>,
 ) {
+    // A save still waiting on its check gets its answer all the same.
+    let waiting = state.solver.take().and_then(validate::Validation::orphan);
+    checks.0.extend(waiting);
+    checks.0.append(&mut state.orphans);
     *state = EditorState::default();
     *controllers = crate::app::Controllers::default();
 }
@@ -1851,6 +1861,9 @@ mod tests {
         app.init_resource::<LastDevice>();
         app.init_resource::<crate::app::Controllers>();
         app.init_resource::<EditorOpening>();
+        app.insert_resource(crate::app::Campaign::tide_pool());
+        app.init_resource::<crate::app::progress::Progress>();
+        app.init_resource::<SaveChecks>();
         app
     }
 
@@ -2538,6 +2551,71 @@ mod tests {
         let state = app.world().resource::<EditorState>();
         let board = &app.world().resource::<Sim>().0;
         assert!(!unsaved_work(state, board), "and is filed");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A save still waiting on its check when the editor is left gets its
+    /// solution all the same, off the bench; and a file saved over in the
+    /// meantime is not the level the check was about, and is left alone.
+    #[test]
+    fn a_save_check_outlives_the_editor() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = bench_app();
+        // No poll here: the bench must not take the answer first.
+        app.add_systems(Update, (editor_input, editor_commands).chain());
+        let name = "Orphan Check Probe";
+        {
+            let mut state = app.world_mut().resource_mut::<EditorState>();
+            state.name = name.into();
+            state.posts = 1;
+        }
+        {
+            let board = &mut app.world_mut().resource_mut::<Sim>().0;
+            board.set_tile(3, 1, TileKind::Castle(0));
+            for x in 0..6 {
+                board.set_wall(x, 2, Direction::Down, true);
+                if x != 3 {
+                    board.set_wall(x, 2, Direction::Up, true);
+                }
+            }
+            board.spawn_crab(1, 2, Direction::Right, Handedness::Left, CrabKind::Common);
+        }
+        let path = save_path(name);
+        let _ = std::fs::remove_file(&path);
+        tap(&mut app, KeyCode::F2);
+        assert!(app.world().resource::<EditorState>().solver.is_some());
+        app.world_mut()
+            .run_system_once(exit_editor)
+            .expect("left the editor");
+        let settle = |app: &mut App| {
+            while !app.world().resource::<SaveChecks>().0.is_empty() {
+                app.world_mut()
+                    .run_system_once(finish_orphaned_saves)
+                    .expect("polled");
+                std::thread::yield_now();
+            }
+        };
+        settle(&mut app);
+        let text = std::fs::read_to_string(&path).expect("saved");
+        assert!(text.contains("solution: 3,2 U"), "{text}");
+
+        // Saved over while the check runs: the newer file stands.
+        let mut check = validate::Validation::pending();
+        check.save = Some((path.clone(), name.into()));
+        let orphan = check.orphan().expect("the file reads");
+        std::fs::write(&path, "name: Newer\n").expect("saved over");
+        *orphan.slot.lock().unwrap() = Some(validate::Verdict {
+            outcome: crate::sim::SolveOutcome::Found(vec![(3, 2, Direction::Up, 0)]),
+            needs: None,
+            shared: None,
+            coop: false,
+        });
+        app.world_mut().resource_mut::<SaveChecks>().0.push(orphan);
+        settle(&mut app);
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "name: Newer\n"
+        );
         let _ = std::fs::remove_file(&path);
     }
 

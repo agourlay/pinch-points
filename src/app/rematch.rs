@@ -49,6 +49,11 @@ impl LocalTable {
         }
     }
 
+    /// Whether the round on the sand was set up on this machine.
+    pub fn set_here(&self) -> bool {
+        self.set_here
+    }
+
     /// Whether the arena is being entered again on the same table, which
     /// keeps the match armed through the arena's own teardown.
     pub fn keeps_the_table(&self) -> bool {

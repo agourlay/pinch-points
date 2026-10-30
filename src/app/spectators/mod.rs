@@ -141,7 +141,6 @@ pub fn is_spectating(online: &Online) -> bool {
 /// peer learns what the spectators decided when the frame carrying it arrives.
 pub fn settle_spectator_vote(
     time: Res<Time>,
-    settings: Res<crate::app::settings::GameSettings>,
     phase: Res<State<crate::app::VersusPhase>>,
     sim: Res<crate::app::Sim>,
     mut online: ResMut<Online>,
@@ -197,18 +196,22 @@ pub fn settle_spectator_vote(
         });
     }
     // The calls for the winner, on the same clock.
-    say_the_calls(session, settings.tr(), again);
+    say_the_calls(session, again);
     let Some(event) = session.stands.tide.votes.settle(time.delta_secs()) else {
         return;
     };
     session.stands.tide.pending_call = Some(event);
-    // Said by the room rather than by anyone in it: an empty name is the
-    // beach's own voice, which is how the lobby already spells "this is
-    // not a person talking".
-    let tr = settings.tr();
-    let line = crate::app::i18n::fill(tr.spectator_called, &[("e", tr.events[event.index()])]);
-    session.transport.send(NetMsg::chat("", &line));
-    session.heard.push((String::new(), line));
+    // Said by the room rather than by anyone in it, as a notice sent as
+    // what was called, for each peer to word in its own language: sent as
+    // the host's words, it read in the host's. Named as it will run: in
+    // the surge a gull event is swapped for its crab one, and the line
+    // said Gull Mania over a banner saying Crab Mania.
+    let runs = sim.0.surge_safe(event);
+    let notice = crate::transport::Notice::Called {
+        event: runs.index() as u8,
+    };
+    session.transport.send(NetMsg::Notice(notice));
+    session.notices.push(notice);
 }
 
 /// A numbered list on a card over the round, for a spectator to press a
@@ -859,6 +862,47 @@ mod tests {
                 .pending_call;
             assert_eq!(call, expected, "seat {seat}");
         }
+    }
+
+    /// The line the crowd's call is announced with names what runs: in the
+    /// surge Gull Mania fires as Crab Mania, and the line said Gull Mania
+    /// right above a banner saying Crab Mania.
+    #[test]
+    fn a_call_is_announced_as_the_event_that_runs() {
+        let mut app = beach(Some(0));
+        {
+            let mut sim = app.world_mut().resource_mut::<crate::app::Sim>();
+            sim.0.rules_mut().round_length = Some(crate::sim::SURGE_TICKS);
+            sim.0.tick_idle();
+            assert!(sim.0.in_surge());
+        }
+        {
+            let mut online = app.world_mut().resource_mut::<Online>();
+            let session = online.0.as_mut().expect("a session");
+            session
+                .stands
+                .tide
+                .votes
+                .cast(90, TideEvent::GullMania.index() as u8);
+        }
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f32(WINDOW + 0.1));
+        app.update();
+        let online = app.world().resource::<Online>();
+        let session = online.0.as_ref().expect("a session");
+        assert_eq!(session.stands.tide.pending_call, Some(TideEvent::GullMania));
+        let notice = session.notices.last().expect("announced");
+        let en = &crate::app::i18n::EN;
+        let line = crate::app::net::notice_line(en, notice, |seat| seat.to_string());
+        assert!(
+            line.contains(en.events[TideEvent::CrabMania.index()]),
+            "{line}"
+        );
+        assert!(
+            !line.contains(en.events[TideEvent::GullMania.index()]),
+            "{line}"
+        );
     }
 
     /// The crowd's three numbers are told apart by name, not by where they

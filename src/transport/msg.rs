@@ -231,6 +231,13 @@ pub enum NetMsg {
     /// Relayed by the host to the rest of the table, like an input: the
     /// spokes of the star cannot hear each other.
     Chat { name: WireName, text: WireChat },
+    /// Host → everyone: something the room says rather than anyone in it,
+    /// sent as what happened rather than as words, so that each peer says
+    /// it in its own language. Sent as finished chat, every notice reached
+    /// the table in the host's language, event names and seat labels
+    /// included, under a banner the peer's own game had just written in
+    /// its own.
+    Notice(Notice),
     /// Host → everyone, once a second while it changes: how many are
     /// watching, how long a vote has left to join, and how long until the
     /// next one may be called. All in whole seconds, zero for none.
@@ -427,6 +434,101 @@ impl NetMsg {
     }
 }
 
+/// What a [`NetMsg::Notice`] says happened. Each peer words it from its
+/// own string table (`app::net::notice_line`); the host's own feed says it
+/// the same way.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Notice {
+    /// Somebody greeted the lobby by `name`, to play or to watch.
+    Joined { name: WireName, watching: bool },
+    /// Somebody left the lobby, or went quiet for good.
+    Left { name: WireName },
+    /// The host's word sent `name` away: asked to leave, or a bot the
+    /// "Bots welcome" dial turned away.
+    SentAway { name: WireName },
+    /// A player (or with `bot`, a bot) left while the host picked the
+    /// map, so the start is called off.
+    PickCalledOff { bot: bool },
+    /// The spectators called a tide event: its index in `TideEvent::ALL`,
+    /// as it will run (a gull event in the surge is its crab one).
+    Called { event: u8 },
+    /// The crowd's calls for the winner as they closed: how many called
+    /// each seat.
+    CrowdPicked {
+        picks: [u8; crate::sim::MAX_PLAYERS],
+    },
+}
+
+// What kind of notice a `TAG_NOTICE` carries, its first byte.
+const NOTICE_JOINED: u8 = 0;
+const NOTICE_LEFT: u8 = 1;
+const NOTICE_SENT_AWAY: u8 = 2;
+const NOTICE_CALLED_OFF: u8 = 3;
+const NOTICE_CALLED: u8 = 4;
+const NOTICE_CROWD_PICKED: u8 = 5;
+
+impl Notice {
+    fn write(self, bytes: &mut Vec<u8>) {
+        match self {
+            Notice::Joined { name, watching } => {
+                bytes.push(NOTICE_JOINED);
+                bytes.extend_from_slice(&name);
+                bytes.push(u8::from(watching));
+            }
+            Notice::Left { name } => {
+                bytes.push(NOTICE_LEFT);
+                bytes.extend_from_slice(&name);
+            }
+            Notice::SentAway { name } => {
+                bytes.push(NOTICE_SENT_AWAY);
+                bytes.extend_from_slice(&name);
+            }
+            Notice::PickCalledOff { bot } => {
+                bytes.push(NOTICE_CALLED_OFF);
+                bytes.push(u8::from(bot));
+            }
+            Notice::Called { event } => {
+                bytes.push(NOTICE_CALLED);
+                bytes.push(event);
+            }
+            Notice::CrowdPicked { picks } => {
+                bytes.push(NOTICE_CROWD_PICKED);
+                bytes.extend_from_slice(&picks);
+            }
+        }
+    }
+
+    /// A notice off the wire, refused whole when it names no event this
+    /// build has or says nothing it knows how to say.
+    fn read(body: &[u8]) -> Option<Notice> {
+        let (&kind, rest) = body.split_first()?;
+        let name = || -> Option<WireName> { rest.get(..WIRE_NAME)?.try_into().ok() };
+        let flag = |at: usize| match rest.get(at)? {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        };
+        match kind {
+            NOTICE_JOINED => Some(Notice::Joined {
+                name: name()?,
+                watching: flag(WIRE_NAME)?,
+            }),
+            NOTICE_LEFT => Some(Notice::Left { name: name()? }),
+            NOTICE_SENT_AWAY => Some(Notice::SentAway { name: name()? }),
+            NOTICE_CALLED_OFF => Some(Notice::PickCalledOff { bot: flag(0)? }),
+            NOTICE_CALLED => {
+                let event = *rest.first()?;
+                (usize::from(event) < crate::sim::TideEvent::ALL.len())
+                    .then_some(Notice::Called { event })
+            }
+            NOTICE_CROWD_PICKED => Some(Notice::CrowdPicked {
+                picks: rest.get(..crate::sim::MAX_PLAYERS)?.try_into().ok()?,
+            }),
+            _ => None,
+        }
+    }
+}
+
 // Byte 0 of every datagram.
 //
 // A new tag is three lines, not one: the tag, `HIGHEST_TAG` below it, and
@@ -468,12 +570,13 @@ const TAG_FULL: u8 = 24;
 /// peer's chair (`NetMsg::Roster::chair`). Spoken for, like
 /// `TAG_RETIRED_INPUT`, and still the highest tag.
 const TAG_RETIRED_NO_CHAIR: u8 = 25;
+const TAG_NOTICE: u8 = 26;
 /// The last of them, which `peek_version` uses to tell one of ours from
 /// stray traffic on the port.
 ///
 /// It said `TAG_INPUTS` through two more tags, so a build of another
 /// version sending the spectators' two was ignored rather than told why.
-const HIGHEST_TAG: u8 = TAG_RETIRED_NO_CHAIR;
+const HIGHEST_TAG: u8 = TAG_NOTICE;
 
 // What a `Batch` carries besides its inputs, a bit each in its flags byte.
 const CARRIES_WANTS: u8 = 1;
@@ -959,6 +1062,7 @@ impl NetMsg {
             NetMsg::Watch { .. } => vec![TAG_WATCH],
             NetMsg::Queued { .. } => vec![TAG_QUEUED],
             NetMsg::Chat { .. } => vec![TAG_CHAT],
+            NetMsg::Notice(_) => vec![TAG_NOTICE],
             NetMsg::Roster { .. } => vec![TAG_ROSTER],
             NetMsg::Abandoned { .. } => vec![TAG_ABANDONED],
             NetMsg::Inputs(_) => vec![TAG_INPUTS],
@@ -1006,6 +1110,7 @@ impl NetMsg {
                 bytes.extend_from_slice(&name);
                 bytes.extend_from_slice(&text);
             }
+            NetMsg::Notice(notice) => notice.write(&mut bytes),
             NetMsg::Roster {
                 seats,
                 names,
@@ -1318,6 +1423,7 @@ impl NetMsg {
                     picking,
                 })
             }
+            TAG_NOTICE => Notice::read(body).map(NetMsg::Notice),
             TAG_CHAT => Some(NetMsg::Chat {
                 name: body.get(..WIRE_NAME)?.try_into().ok()?,
                 text: body
@@ -1367,6 +1473,10 @@ mod tests {
                 name: widest,
                 text: wire_chat(&"W".repeat(CHAT_CHARS)),
             },
+            NetMsg::Notice(Notice::Joined {
+                name: widest,
+                watching: true,
+            }),
             NetMsg::Start(Start {
                 seats: 6,
                 seat: Some(5),
@@ -1691,6 +1801,18 @@ mod tests {
 
     use crate::sim::{Direction, PlayerAction};
 
+    /// A notice this build cannot word is dropped whole: an event past
+    /// the last one, or a kind it does not know.
+    #[test]
+    fn a_notice_it_cannot_say_is_refused() {
+        let events = crate::sim::TideEvent::ALL.len() as u8;
+        let past = NetMsg::Notice(Notice::Called { event: events }).encode();
+        assert_eq!(NetMsg::decode(&past), None);
+        let mut unknown = NetMsg::Notice(Notice::PickCalledOff { bot: true }).encode();
+        unknown[2] = 0xEE;
+        assert_eq!(NetMsg::decode(&unknown), None);
+    }
+
     #[test]
     fn messages_round_trip() {
         for msg in [
@@ -1831,6 +1953,26 @@ mod tests {
                 name: wire_name("Anna"),
                 text: wire_chat("wait for me!"),
             },
+            NetMsg::Notice(Notice::Joined {
+                name: wire_name("Anna"),
+                watching: false,
+            }),
+            NetMsg::Notice(Notice::Joined {
+                name: wire_name("Dee"),
+                watching: true,
+            }),
+            NetMsg::Notice(Notice::Left {
+                name: wire_name("Bo"),
+            }),
+            NetMsg::Notice(Notice::SentAway {
+                name: wire_name("Cy"),
+            }),
+            NetMsg::Notice(Notice::PickCalledOff { bot: true }),
+            NetMsg::Notice(Notice::PickCalledOff { bot: false }),
+            NetMsg::Notice(Notice::Called { event: 8 }),
+            NetMsg::Notice(Notice::CrowdPicked {
+                picks: [2, 0, 1, 0, 0, 255],
+            }),
             NetMsg::Roster {
                 seats: 4,
                 names: std::array::from_fn(|i| wire_name(&format!("P{i}"))),

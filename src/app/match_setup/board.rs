@@ -28,12 +28,17 @@ pub fn board_from(terms: &MatchTerms, seats: u8, beach: &[u8]) -> crate::sim::Bo
     // seats nobody sits in put away.
     let mut board = level.table_board(terms.seed, seats);
     apply_terms(&mut board, terms.gulls(), terms.round(), terms.posts());
+    board.rules_mut().teams = terms.teams().played_by(seats).sides();
     board
 }
 
+/// [`board_from`] with no beach sent: the beach the terms name, under the
+/// terms' rules, its seats split into the terms' teams, which the AI and
+/// Gull Attack read off the board.
 pub fn board_for(terms: &MatchTerms, seats: u8) -> crate::sim::Board {
     let mut board = versus_board(terms.map(), terms.seed, seats);
     apply_terms(&mut board, terms.gulls(), terms.round(), terms.posts());
+    board.rules_mut().teams = terms.teams().played_by(seats).sides();
     board
 }
 

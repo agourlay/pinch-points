@@ -115,7 +115,7 @@ impl OnlineSession {
     /// host repeating it: without that, "say something to the table" said
     /// it to exactly one person. And the name is checked against the one
     /// the peer greeted with, because an empty name is the beach's own
-    /// voice here (it is what announces a called event), so a peer that
+    /// voice here (the feed's slant for the room's notices), so a peer that
     /// has a name may not drop it and speak as the room.
     pub(super) fn take_chat(
         &self,

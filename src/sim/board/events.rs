@@ -89,7 +89,8 @@ pub enum TideEvent {
     GullMania,
     /// Half the loose crabs scuttle straight into the banker's castle.
     Monopoly,
-    /// A gull lands beside every rival castle.
+    /// A gull lands beside every rival castle: every one but the
+    /// banker's, and its partners' in a round played in teams.
     GullAttack,
     /// Every crab and gull moves at double speed, and the holes open
     /// twice as often.
@@ -179,7 +180,7 @@ impl Board {
     /// gull events for the last 30 seconds: Gull Mania on top of the surge
     /// left fifteen gulls and almost no crabs with half a minute to play.
     /// Swapped rather than re-rolled, so the draw count stays fixed.
-    pub(super) fn surge_safe(&self, event: TideEvent) -> TideEvent {
+    pub fn surge_safe(&self, event: TideEvent) -> TideEvent {
         if !self.in_surge() {
             return event;
         }
@@ -309,14 +310,20 @@ impl Board {
                 }
             }
             TideEvent::GullAttack => {
-                // A gull lands beside every rival castle, facing it.
+                // A gull lands beside every rival castle, facing it: every
+                // castle but the banker's, and in a round played in teams
+                // ([`Rules::teams`]) but its partners' too, whose raids
+                // came off the banker's own team total.
+                let rules = self.rules;
                 let targets: Vec<(u16, PlayerId)> = self
                     .grid
                     .tiles
                     .iter()
                     .enumerate()
                     .filter_map(|(t, tile)| match tile {
-                        TileKind::Castle(owner) if *owner != banker => Some((t as u16, *owner)),
+                        TileKind::Castle(owner) if !rules.allies(*owner, banker) => {
+                            Some((t as u16, *owner))
+                        }
                         TileKind::Castle(_)
                         | TileKind::Empty
                         | TileKind::Rock

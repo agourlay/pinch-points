@@ -196,7 +196,26 @@ pub fn prune(cap: u8) {
 /// [`prune`] on a directory named outright, so a test can hand it a
 /// scratch folder instead of the player's library.
 pub fn prune_in(dir: &std::path::Path, cap: u8) {
-    for old in listed_in(dir).iter().skip(usize::from(cap)) {
+    drop_oldest(listed_in(dir), usize::from(cap));
+}
+
+/// [`prune_in`] after filing the round at `kept`, which stays whatever its
+/// name says: the oldest *other* rounds go until the shelf is down to
+/// `cap`. A name carries the clock's stamp, and a machine whose clock is
+/// behind (a flat battery, the files copied in from elsewhere) files the
+/// new round under the oldest name, which was the one pruned while the
+/// card said it was kept.
+pub fn prune_sparing(dir: &std::path::Path, cap: u8, kept: &std::path::Path) {
+    let others: Vec<_> = listed_in(dir)
+        .into_iter()
+        .filter(|path| path != kept)
+        .collect();
+    drop_oldest(others, usize::from(cap).saturating_sub(1));
+}
+
+/// Delete all of `listed`, newest first, past its first `keep`.
+fn drop_oldest(listed: Vec<std::path::PathBuf>, keep: usize) {
+    for old in listed.iter().skip(keep) {
         if let Err(e) = std::fs::remove_file(old) {
             warn!("could not drop the oldest round: {e}");
         }
@@ -888,7 +907,7 @@ fn keep(
     let path = free_path(dir, crate::app::clock::now_secs(), winner.as_deref());
     match crate::app::paths::write_atomic(&path, &text) {
         Ok(()) => {
-            prune_in(dir, cap);
+            prune_sparing(dir, cap, &path);
             tr.code_round_saved.to_string()
         }
         Err(e) => fill(tr.code_round_bad, &[("e", &e.to_string())]),

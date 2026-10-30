@@ -106,6 +106,11 @@ pub struct Said {
     /// arriving, somebody leaving.
     pub who: String,
     pub line: String,
+    /// What the room said happened, for a room notice: the line is this
+    /// machine's wording of it, and a host catching a newcomer up on the
+    /// feed sends the notice again for the newcomer to word in its own
+    /// language ([`crate::app::net::notice_line`]).
+    pub notice: Option<crate::transport::Notice>,
 }
 
 impl Said {
@@ -184,13 +189,31 @@ impl LobbyState {
     /// Add a line to the feed, dropping the oldest to stay within
     /// [`CHAT_LINES`].
     pub fn say(&mut self, who: &str, line: &str) {
-        if line.is_empty() {
-            return;
-        }
-        self.chat.push(Said {
+        self.note(Said {
             who: who.to_string(),
             line: line.to_string(),
+            notice: None,
         });
+    }
+
+    /// Put a room notice in the feed, worded in this machine's language.
+    /// The lobby has no seats yet, so a seat a notice names is its label.
+    pub fn tell(&mut self, tr: &crate::app::i18n::Tr, notice: crate::transport::Notice) {
+        let label = |seat: u8| crate::app::seat_label(tr, seat);
+        self.note(Said {
+            who: String::new(),
+            line: crate::app::net::notice_line(tr, &notice, label),
+            notice: Some(notice),
+        });
+    }
+
+    /// Add a line to the feed, dropping the oldest to stay within
+    /// [`CHAT_LINES`].
+    fn note(&mut self, said: Said) {
+        if said.line.is_empty() {
+            return;
+        }
+        self.chat.push(said);
         let over = self.chat.len().saturating_sub(CHAT_LINES);
         self.chat.drain(..over);
     }

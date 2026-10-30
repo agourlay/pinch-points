@@ -167,8 +167,10 @@ rules, the clock and the table:
 team, counting from 0: in a free-for-all every seat is its own team
 (`[0, 1, 2, 3]`), and a round played in pairs at a table of four reads
 `[0, 0, 1, 1]`, your partner the seat that shares your number. Scores
-stay per seat; a team's is the sum of its seats'. A listener older than
-the field leaves it out, which means every seat for itself.
+stay per seat; a team's is the sum of its seats'. Teams change one rule:
+a Gull Attack lands no gull beside a castle of the spinner's team. A
+listener older than the field leaves it out, which means every seat for
+itself.
 
 **`tiles`**, one string per row, one character per tile:
 
@@ -600,7 +602,8 @@ and carries the remainder.
 
 1. A castle: a crab banks there and is gone; a walking gull raids it (a third
    of the bank, rounded up, is lost, some of it spilling back as crabs) and
-   leaves the beach.
+   leaves the beach. A flying gull that comes down on a castle raids it the
+   same way, on the tick it lands.
 2. A turnstile: deflect to its `next` side, flip it, then wall-resolve.
    Steps 3 and 4 do not run: a post on a turnstile is never consulted.
 3. A lure is running: a crab steps toward the luring castle instead of

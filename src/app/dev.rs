@@ -730,6 +730,7 @@ pub(super) fn debug_banner(
             event: TideEvent::ALL[index.parse::<usize>().unwrap_or(0) % TideEvent::ALL.len()],
             by: None,
             keeper: None,
+            teams: sim.0.rules().teams.is_some(),
         },
     });
 }

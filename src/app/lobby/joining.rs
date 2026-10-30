@@ -481,6 +481,8 @@ struct HostWord {
     /// The lobby roster's word on the host picking the map.
     picking: bool,
     said: Vec<(crate::transport::WireName, crate::transport::WireChat)>,
+    /// The room's notices, worded here in this player's language.
+    notices: Vec<crate::transport::Notice>,
     table: Option<(Vec<String>, [u8; MAX_PLAYERS])>,
     host_terms: Option<MatchTerms>,
 }
@@ -541,6 +543,7 @@ fn hear_the_host(joined: &mut Joined, hello: Option<NetMsg>, delta: f32) -> Host
             // `Start` when the next round comes round.
             NetMsg::Queued { ahead } => word.queued = Some(ahead),
             NetMsg::Chat { name, text } => word.said.push((name, text)),
+            NetMsg::Notice(notice) => word.notices.push(notice),
             // Round things, and this screen has no round.
             NetMsg::SpectatorVote { .. }
             | NetMsg::SpectatorTally { .. }
@@ -634,6 +637,7 @@ pub fn join_tick(
         no_chair,
         picking,
         said,
+        notices,
         table,
         host_terms,
     } = word;
@@ -667,6 +671,9 @@ pub fn join_tick(
     }
     for (name, text) in said {
         state.hear(&name, &text);
+    }
+    for notice in notices {
+        state.tell(settings.tr(), notice);
     }
     if let Some(no_chair) = no_chair {
         tell_of_a_chair(&mut state, settings.tr(), no_chair, picking);

@@ -518,11 +518,15 @@ impl OnlineSession {
             NetMsg::Start(start) if self.calls_the_next_round(&start) => {
                 self.take_the_next_round(start);
             }
-            NetMsg::Start(Invitation { names, .. }) => {
+            NetMsg::Start(Invitation { names, deal, .. }) => {
                 // Stale as a launch signal, but a joiner in the direct
                 // PINCH_HOST/PINCH_JOIN pair, which never waits in a
-                // lobby, learns the table's names from it.
-                if !host {
+                // lobby, learns the table's names from it. Only from this
+                // round's deal: the host answers results-card greetings
+                // with the last round's, whose seats were dealt before
+                // somebody left, and one arriving late named every seat
+                // wrong for the rest of the round.
+                if !host && deal == self.rounds_dealt {
                     for (slot, name) in self.names.iter_mut().zip(table_from_wire(&names)) {
                         if !name.is_empty() {
                             *slot = name;
@@ -570,6 +574,13 @@ impl OnlineSession {
             // with nothing to hold are the ones who can say something,
             // and the round's own feed is where it lands.
             NetMsg::Chat { name, text } => self.hear_chat(host, from, name, text),
+            // The room's word, which only the host speaks: worded in this
+            // peer's own language when the feed takes it.
+            NetMsg::Notice(notice) => {
+                if !host {
+                    self.notices.push(notice);
+                }
+            }
             // Only the host counts. Every peer hears the answer, and
             // hears it as an action on a frame rather than as a claim
             // about one, so there is nothing here for anyone else to
@@ -1003,6 +1014,45 @@ mod tests {
         );
     }
 
+    /// A player kicked on the interlude walks out then, to the lobby and
+    /// told why, rather than after the interlude and the whole count; and
+    /// the session armed for the round it will not play is let go.
+    #[test]
+    fn a_player_kicked_on_the_interlude_walks_out_at_once() {
+        use crate::app::{RoundNotice, Screen, settings::GameSettings};
+        let host = UdpTransport::host(0).expect("host socket");
+        let port = host.local_addr().expect("addr").port();
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            Lockstep::new(1, vec![0, 1], crate::sim::DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        joiner.home.from_lobby = true;
+        joiner.next_round = true;
+        joiner.hear_mid_round(false, 0, NetMsg::Kicked);
+
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Interlude));
+        app.insert_resource(GameSettings::default());
+        app.init_resource::<RoundNotice>();
+        app.insert_resource(Online(Some(joiner)));
+        app.add_systems(Update, leave_a_hostless_round);
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::Lobby
+        );
+        assert_eq!(
+            app.world().resource::<RoundNotice>().0,
+            PutOut::Kicked.feedback(&crate::app::i18n::EN),
+        );
+        assert!(app.world().resource::<Online>().0.is_none());
+    }
+
     /// A host whose table is Bo at seat 1 (peer 0), Dee watching (peer 1)
     /// and Cy in line for the next round (peer 2), at frame zero.
     fn table_of_three() -> OnlineSession {
@@ -1392,6 +1442,35 @@ mod tests {
         assert_eq!(joiner.stale_rounds, 1);
         joiner.hear_mid_round(false, 0, seat(now));
         assert_eq!(joiner.abandoned, vec![(2, 20)]);
+    }
+
+    /// A joiner takes the table's names only from this round's `Start`: the
+    /// last round's, the host's answer to a results-card greeting arriving
+    /// late, dealt the seats before somebody left and moved everyone up.
+    #[test]
+    fn the_last_rounds_start_does_not_rename_this_ones_seats() {
+        use crate::transport::wire_name;
+        let mut joiner = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", 9)).expect("socket"),
+            Lockstep::new(1, vec![0, 1], crate::sim::DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        joiner.rounds_dealt = 2;
+        joiner.names[1] = "Bo".to_string();
+        let start = |deal, name| {
+            let mut names = [wire_name(""); crate::sim::MAX_PLAYERS];
+            names[1] = wire_name(name);
+            NetMsg::Start(Invitation {
+                names,
+                deal,
+                ..Invitation::blank()
+            })
+        };
+        joiner.hear_mid_round(false, 0, start(1, "Cy"));
+        assert_eq!(joiner.names[1], "Bo", "the last round's seats");
+        joiner.hear_mid_round(false, 0, start(2, "Dee"));
+        assert_eq!(joiner.names[1], "Dee", "this round's");
     }
 
     /// A joiner takes only this round's batches, and only a notice about

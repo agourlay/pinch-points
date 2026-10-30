@@ -28,7 +28,10 @@ use crate::sim::gull::GullState;
 
 /// Bot difficulty. Levels differ in reaction cadence and search radii;
 /// Hard additionally plays offense, steering gulls at the leading rival's
-/// castle. All levels stay pure functions of the board.
+/// castle, a rival being a seat of another team ([`Rules::teams`]). All
+/// levels stay pure functions of the board.
+///
+/// [`Rules::teams`]: crate::sim::Rules::teams
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum BotLevel {
     Easy,
@@ -450,7 +453,7 @@ fn chase_jackpot(
     for crab in board.crabs() {
         let worth = match crab.kind {
             CrabKind::Golden => board.crab_value(CrabKind::Golden),
-            CrabKind::Molting => molt_worth(board, crab, castle),
+            CrabKind::Molting => molt_worth(board, player, crab, castle),
             CrabKind::Giant => 10,
             CrabKind::Common | CrabKind::Juvenile | CrabKind::Sparkling => continue,
         };
@@ -475,9 +478,9 @@ fn chase_jackpot(
 /// second it runs: 2.5, the 25 a 10 s lure was once counted at.
 const LURE_POINTS_PER_SECOND_X2: u32 = 5;
 
-/// What turning `crab`, a molt, home to `castle` is worth: its points, its
-/// lure when one could start by the time it gets there, and what banking
-/// it keeps from the rivals.
+/// What turning `crab`, a molt, home to `castle` (`player`'s) is worth:
+/// its points, its lure when one could start by the time it gets there,
+/// and what banking it keeps from the rivals.
 ///
 /// A molt banked while a lure runs or in the quiet spell after one starts
 /// none (`Board::lure_ready`), so the AI's own lure counts only for a molt
@@ -492,7 +495,11 @@ const LURE_POINTS_PER_SECOND_X2: u32 = 5;
 /// in full for each. That denial is what puts a molt ahead of a giant
 /// during the rest from three seats, and ahead of a called golden crab
 /// once it is ready from four.
-fn molt_worth(board: &Board, crab: &crate::sim::Crab, castle: u16) -> u32 {
+///
+/// A rival is a seat of another team: a partner that banks the molt later
+/// pulls the beach home for the AI's own team total, and is nothing kept
+/// from anyone.
+fn molt_worth(board: &Board, player: PlayerId, crab: &crate::sim::Crab, castle: u16) -> u32 {
     let points = board.crab_value(CrabKind::Molting);
     let lure = LURE_TICKS * LURE_POINTS_PER_SECOND_X2 / (2 * TICKS_PER_SECOND);
     let resting_for = match board.lure() {
@@ -502,7 +509,10 @@ fn molt_worth(board: &Board, crab: &crate::sim::Crab, castle: u16) -> u32 {
     let ticks_per_tile = u32::from(SUBUNITS_PER_TILE).div_ceil(u32::from(crab.kind.speed()));
     let arrives_in = manhattan(board, crab.tile, castle).unsigned_abs() * ticks_per_tile;
     let ours = if resting_for > arrives_in { 0 } else { lure };
-    let denied = lure * u32::from(board.seats_in_play().saturating_sub(2));
+    let rivals = (0..board.seats_in_play())
+        .filter(|&seat| !board.rules().allies(seat, player))
+        .count() as u32;
+    let denied = lure * rivals.saturating_sub(1);
     points + ours + denied
 }
 
@@ -559,7 +569,7 @@ fn recruit(
 }
 
 /// Fierce only: steer a gull that is already near the leading rival's castle
-/// the rest of the way in.
+/// the rest of the way in. Never a partner's: see [`leading_rival_castle`].
 fn attack(board: &Board, player: PlayerId, level: BotLevel) -> Option<(PlayerAction, Intent)> {
     if level != BotLevel::Hard {
         return None;
@@ -582,12 +592,16 @@ fn attack(board: &Board, player: PlayerId, level: BotLevel) -> Option<(PlayerAct
     None
 }
 
-/// The castle of the highest-scoring rival (ties to the lowest seat).
+/// The castle of the highest-scoring rival (ties to the lowest seat). A
+/// rival is a seat of another team ([`crate::sim::Rules::teams`]), read off
+/// the board so every peer's AI agrees on it: counting every seat but its
+/// own, the AI in a 2v2 walked gulls into its partner's castle whenever
+/// the partner led, and each raid took a third of the team's lead.
 fn leading_rival_castle(board: &Board, player: PlayerId) -> Option<u16> {
     let scores = board.scores();
     let mut best: Option<(u32, PlayerId)> = None;
     for seat in 0..crate::sim::MAX_PLAYERS as PlayerId {
-        if seat == player {
+        if board.rules().allies(seat, player) {
             continue;
         }
         let Some(_) = castle_of(board, seat) else {

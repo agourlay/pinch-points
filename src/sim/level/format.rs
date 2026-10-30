@@ -204,6 +204,12 @@ impl Level {
         if !rules.castle_raids {
             let _ = writeln!(out, "raids: off");
         }
+        // Who plays for whom, by the same reasoning: a recording of a
+        // round played in teams replays its Gull Attacks against the
+        // spinner's rivals alone only if the line comes with it.
+        if let Some(teams) = &rules.teams {
+            let _ = writeln!(out, "sides: {}", crate::sim::board::sides_text(teams));
+        }
         // Tide events are game state, not authoring flavour: dropping the
         // flag made replays of versus rounds silently diverge.
         if board.events_enabled() {
@@ -439,6 +445,7 @@ impl Header {
                 };
             }
             "raids" => self.rules.castle_raids = value != "off",
+            "sides" => self.rules.teams = Some(crate::sim::board::parse_sides(value)?),
             "kind" => {
                 self.kind = Some(
                     LevelKind::from_token(value)

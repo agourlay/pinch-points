@@ -1857,6 +1857,43 @@ fn event_gull_attack_targets_rival_castles_only() {
     assert_eq!(dist, 1, "landed adjacent to the rival castle");
 }
 
+/// In a round played in teams, Gull Attack spares the spinner's partners
+/// as well as the spinner: a gull beside a partner's castle raided the
+/// spinner's own team total.
+#[test]
+fn event_gull_attack_spares_the_spinners_team() {
+    let castled = |teams: Option<[u8; MAX_PLAYERS]>| {
+        let mut board = Board::new(9, 9, 5);
+        for (seat, (x, y)) in [(1, 1), (7, 1), (1, 7), (7, 7)].into_iter().enumerate() {
+            board.set_tile(x, y, TileKind::Castle(seat as u8));
+        }
+        board.rules_mut().teams = teams;
+        board.force_spun_tide_event(TideEvent::GullAttack, 0);
+        let mut near: Vec<u8> = board
+            .gulls()
+            .iter()
+            .filter_map(|gull| {
+                let (gx, gy) = board.coords_u8(gull.tile);
+                (0..4u8).find(|&seat| {
+                    let (x, y) = [(1, 1), (7, 1), (1, 7), (7, 7)][usize::from(seat)];
+                    gx.abs_diff(x) + gy.abs_diff(y) == 1
+                })
+            })
+            .collect();
+        near.sort_unstable();
+        near
+    };
+    assert_eq!(
+        castled(None),
+        vec![1, 2, 3],
+        "every castle but the spinner's"
+    );
+    // Pairs, {0,1} against {2,3}.
+    assert_eq!(castled(Some([0, 0, 1, 1, 2, 2])), vec![2, 3]);
+    // Trios' split at four, {0,2} against {1,3}.
+    assert_eq!(castled(Some([0, 1, 0, 1, 0, 1])), vec![1, 3]);
+}
+
 #[test]
 fn event_tempo_doubles_and_halves_movement() {
     let mut fast = party_board();

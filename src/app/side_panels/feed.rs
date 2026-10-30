@@ -85,7 +85,14 @@ const LOG_LINES: usize = 16;
 ///
 /// Idle ink, not a seat colour. The voice has no castle on the board, and
 /// a line in a player's colour reads as that player having said it.
-pub fn collect_chat(mut online: ResMut<crate::app::net::Online>, mut log: ResMut<EventLog>) {
+///
+/// The room's own notices are worded here, in this machine's language,
+/// from what the host said happened ([`crate::app::net::notice_line`]).
+pub fn collect_chat(
+    settings: Res<GameSettings>,
+    mut online: ResMut<crate::app::net::Online>,
+    mut log: ResMut<EventLog>,
+) {
     let Some(session) = &mut online.0 else {
         return;
     };
@@ -97,6 +104,15 @@ pub fn collect_chat(mut online: ResMut<crate::app::net::Online>, mut log: ResMut
             false => format!("{who}: {line}"),
         };
         log.push(said, palette::IDLE_ROW);
+    }
+    let tr = settings.tr();
+    let names = &session.names;
+    for notice in session.notices.drain(..) {
+        let label = |seat: u8| crate::app::name_or_label(names, tr, seat);
+        log.push(
+            crate::app::net::notice_line(tr, &notice, label),
+            palette::IDLE_ROW,
+        );
     }
 }
 

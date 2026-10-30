@@ -258,6 +258,8 @@ fn insert_resources(app: &mut App, saved: Option<(settings::GameSettings, keycap
     app.init_resource::<art::Art>();
     app.init_resource::<match_setup::MatchConfig>();
     app.init_resource::<match_setup::CustomBeaches>();
+    app.init_resource::<match_setup::BeachGone>();
+    app.init_resource::<editor::SaveChecks>();
     app.init_resource::<board_render::CastleFlight>();
     app.init_resource::<sim_events::BoardGeneration>();
     app.init_resource::<match_setup::MatchMenu>();
@@ -377,6 +379,7 @@ fn add_screen_transitions(app: &mut App) {
             // Before the first load, whose message this stage's retry count
             // is about to be measured against.
             achievements::reset_puzzle_attempt,
+            hint::reset_on_entry,
             cursor::spawn_stage_cursors,
             send_first_load,
         )
@@ -435,6 +438,7 @@ fn add_screen_transitions(app: &mut App) {
             // Bots' seats are named for their bots, over what was resolved.
             bot_seats::begin_round,
             side_panels::spawn_side_panels,
+            match_setup::say_beach_gone,
             achievements::reset_round_scratch,
             awards::RoundTally::forget,
         )
@@ -620,6 +624,8 @@ fn add_phase_transitions(app: &mut App) {
     app.add_systems(
         OnEnter(VersusPhase::Over),
         (
+            // Before the card, which a pause in flight would cover.
+            net::drop_a_late_pause.run_if(in_state(Screen::Versus)),
             tournament::record_series_round.run_if(in_state(Screen::Versus)),
             // For the host's call for the next round to carry.
             note_the_crowned.run_if(in_state(Screen::Versus)),
@@ -948,6 +954,9 @@ fn add_apply_systems(app: &mut App) {
 /// Play: level loading, cursors, the editor, pauses, and the checks that
 /// end a round.
 fn add_play_systems(app: &mut App) {
+    // Off the bench too: a save whose check outlived the editor is
+    // finished wherever the player went.
+    app.add_systems(Update, editor::finish_orphaned_saves);
     app.add_systems(
         Update,
         (
@@ -1085,6 +1094,16 @@ fn add_play_systems(app: &mut App) {
             .chain()
             .in_set(Frame::Play)
             .after(editor::rebuild_statics),
+    );
+    // A kick or a host gone, heard from the host's call to the first frame,
+    // walks the player out then rather than once the round runs. After the
+    // interlude's own tick, whose step into the round would win otherwise.
+    app.add_systems(
+        Update,
+        net::leave_a_hostless_round
+            .run_if(versus_before_the_round)
+            .after(tournament::interlude_tick)
+            .in_set(Frame::Events),
     );
 }
 

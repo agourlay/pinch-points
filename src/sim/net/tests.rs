@@ -136,6 +136,40 @@ fn a_session_from_a_later_frame_waits_for_real_inputs() {
     assert_eq!(late.frame(), 501);
 }
 
+/// A watcher caught up inside the first `delay` frames (the host packs
+/// its snapshot after the first pump of a round, at frame 1) plays on:
+/// nobody ever commits those idle frames, so the session has to keep
+/// them prefilled rather than wait for inputs that never come.
+#[test]
+fn a_watcher_caught_up_among_the_idle_frames_plays_on() {
+    let players = vec![0u8, 1];
+    let mut host = Lockstep::new(0, players.clone(), DEFAULT_DELAY);
+    let mut joiner = Lockstep::new(1, players.clone(), DEFAULT_DELAY);
+    let mut watcher = Lockstep::observer_from(players.clone(), DEFAULT_DELAY, 1);
+    for _ in 0..40 {
+        let mut sent = Vec::new();
+        sent.extend(host.commit_local(PlayerAction::None));
+        sent.extend(joiner.commit_local(PlayerAction::None));
+        for &msg in &sent {
+            host.receive(msg);
+            joiner.receive(msg);
+        }
+        while host.advance().is_some() {}
+        while joiner.advance().is_some() {}
+        // Everything the players have committed, as their tails repeat it.
+        for msg in host
+            .recent_commits()
+            .into_iter()
+            .chain(joiner.recent_commits())
+        {
+            watcher.receive(msg);
+        }
+        while watcher.advance().is_some() {}
+    }
+    assert!(host.frame() > 2 * DEFAULT_DELAY, "{}", host.frame());
+    assert_eq!(watcher.frame(), host.frame(), "the watcher kept step");
+}
+
 /// A stalled peer pushes back on local commits at the lead cap, and the
 /// queue reopens as soon as frames advance.
 #[test]

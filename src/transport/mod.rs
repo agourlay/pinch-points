@@ -172,6 +172,19 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 ///   nearer the middle and a wall behind each corner castle
 ///   (`levels/versus/round_table.txt`). The map byte is unchanged, so a 48
 ///   peer builds the old layout from the same `Start`.
+/// - 50: the board started knowing who plays for whom (`Rules::teams`,
+///   from the terms' team mode, hashed and carried by a snapshot as a
+///   `sides:` line). Gull Attack spun in a round played in teams lands no
+///   gull beside the spinner's partners' castles, so a 49 peer raids the
+///   spinner's own team and hashes the board differently, and refuses a
+///   catch-up snapshot over the unknown key. The AI reads the same split:
+///   the Hard AI steers no gull at a partner's castle and counts the lure
+///   a molt denies the rival teams alone, so a 49 peer moves its AI seats
+///   differently in a round played in teams. The room's notices (who
+///   joined, left or was sent away, a start called off, the spectators'
+///   call and the crowd's picks) travel as a `Notice` of what happened,
+///   a new tag, for each peer to word in its own language, where they had
+///   been chat in the host's: a 49 peer drops every one unread.
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in
@@ -181,7 +194,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 /// frozen for all time**: it is how a build tells "I cannot read this"
 /// apart from "I disagree with this", however the rest of the format
 /// moves.
-pub const PROTOCOL_VERSION: u8 = 49;
+pub const PROTOCOL_VERSION: u8 = 50;
 
 /// Connections a host accepts: five rivals (a six-seat table) and everyone
 /// else who turned up. How many of them get a seat is the lobby's

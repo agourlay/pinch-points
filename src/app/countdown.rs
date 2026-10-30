@@ -50,7 +50,8 @@ const RAID_EXAMPLE: u32 = 40;
 /// The rules tips that hold on `board`'s table, each a line for the count
 /// before a round: a rule switched off on this table (raids, the event
 /// wheel, the fading arrows of the versus rule, the called golden crab)
-/// has no tip. Every number is the rule's own, read from the constant or
+/// has no tip, and nor has a golden crab the round is too short to call
+/// (the field guide's own test). Every number is the rule's own, read from the constant or
 /// the board that plays it.
 pub fn tips(tr: &Tr, board: &Board) -> Vec<String> {
     let rules = board.rules();
@@ -68,7 +69,7 @@ pub fn tips(tr: &Tr, board: &Board) -> Vec<String> {
         out.push(fill(tr.tip_cap, &[("n", &rules.signpost_cap.to_string())]));
     }
     out.push(fill(tr.tip_lure, &[("n", &LURE_SECONDS.to_string())]));
-    if rules.golden_every > 0 {
+    if board.golden_crab_can_come() {
         let worth = board.crab_value(CrabKind::Golden);
         out.push(fill(tr.tip_golden, &[("n", &worth.to_string())]));
     }
@@ -599,6 +600,27 @@ mod tests {
             said.iter()
                 .all(|tip| !tip.contains("raid") && !tip.contains("event"))
         );
+    }
+
+    /// A one-minute round is over before its golden crab is called, so no
+    /// tip promises one, as the field guide hides its entry.
+    #[test]
+    fn a_round_too_short_for_a_golden_crab_has_no_tip_for_one() {
+        use crate::app::i18n::EN;
+        use crate::app::match_setup::{
+            MapChoice, MatchConfig, RoundLength, apply_terms, versus_board,
+        };
+        let golden = |round: RoundLength| {
+            let config = MatchConfig::default();
+            let mut board = versus_board(MapChoice::Classic, 7, 2);
+            apply_terms(&mut board, config.gulls, round, config.posts);
+            let worth = format!("worth {} points", board.crab_value(CrabKind::Golden));
+            let said = tips(&EN, &board).iter().any(|tip| tip.contains(&worth));
+            assert_eq!(said, board.golden_crab_can_come(), "{round:?}");
+            said
+        };
+        assert!(!golden(RoundLength::Quick));
+        assert!(golden(RoundLength::Short));
     }
 
     /// One tip a round, the same on every screen of a table (it is read

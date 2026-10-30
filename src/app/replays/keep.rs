@@ -77,7 +77,8 @@ impl RoundToKeep {
     }
 
     /// Put the round on the shelf in `dir` under [`super::free_path`],
-    /// then trim the shelf to `cap`, as a pasted code is kept. Only once:
+    /// then trim the shelf to `cap` but never of this round
+    /// ([`super::prune_sparing`]), as a pasted code is kept. Only once:
     /// a round already kept, or none to keep, files nothing and answers
     /// `None`. A write that fails leaves the offer standing, so the key
     /// can be tried again.
@@ -89,7 +90,7 @@ impl RoundToKeep {
         if let Err(e) = crate::app::paths::write_atomic(&path, &round.text) {
             return Some(Err(e));
         }
-        super::prune_in(dir, cap);
+        super::prune_sparing(dir, cap, &path);
         *self = RoundToKeep::Kept;
         Some(Ok(path))
     }
@@ -208,6 +209,28 @@ mod tests {
         let shelf = super::super::shelf_in(&dir);
         assert_eq!(shelf.len(), 2);
         assert_eq!(shelf[0].winner, "Bo", "the newest stays");
+    }
+
+    /// A clock behind the shelf's files a kept round under the oldest name
+    /// there is; the trim takes the oldest of the others, never the round
+    /// the card has just said is kept.
+    #[test]
+    fn keeping_on_a_clock_behind_the_shelf_keeps_the_round() {
+        let dir = scratch("behind");
+        for stamp in [1_800_000_000u64, 1_800_000_100] {
+            let path = super::super::free_path(&dir, stamp, None);
+            std::fs::write(path, "old").expect("stocked");
+        }
+        let mut round = offered("new");
+        let path = round.keep_in(&dir, 2).expect("on offer").expect("written");
+        assert!(path.exists(), "the round just kept stays");
+        let shelf = super::super::shelf_in(&dir);
+        assert_eq!(shelf.len(), 2, "still trimmed to the cap");
+        assert!(
+            dir.join(super::super::file_name(1_800_000_100, None))
+                .exists(),
+            "the newest of the others stays"
+        );
     }
 
     /// The keyboard's line and the pad's agree with the offer: the key

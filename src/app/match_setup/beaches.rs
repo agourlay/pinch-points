@@ -41,13 +41,94 @@ impl Beach {
     }
 }
 
+/// A handmade beach a local round was set up on whose file was gone when
+/// the shelf was read again to play it, by the name it was picked under:
+/// the round plays the generated beach sized for the table instead, and
+/// the feed says so ([`say_beach_gone`]). Written by every re-read.
+#[derive(Resource, Default)]
+pub struct BeachGone(pub Option<String>);
+
 /// Re-read the shelf. Runs on entering the screens that offer a beach, so
-/// one saved in the editor a moment ago is on the dial.
-pub fn refresh_custom_beaches(mut beaches: ResMut<CustomBeaches>) {
-    beaches.0 = crate::app::campaign::custom_arenas(crate::app::campaign::load_custom_levels())
-        .into_iter()
-        .map(Beach::new)
-        .collect();
+/// one saved in the editor a moment ago is on the dial, and on entering
+/// the arena, so a local round reads its beach off disk as it stands.
+///
+/// The config names its beach by place on the shelf, so a file added or
+/// taken away meanwhile (by another copy of the game, or by hand) moved
+/// the pick onto a different beach. It is found again by its file here
+/// ([`keep_the_pick`]).
+pub fn refresh_custom_beaches(
+    mut beaches: ResMut<CustomBeaches>,
+    mut config: ResMut<MatchConfig>,
+    mut gone: ResMut<BeachGone>,
+) {
+    let fresh = CustomBeaches(
+        crate::app::campaign::custom_arenas(crate::app::campaign::load_custom_levels())
+            .into_iter()
+            .map(Beach::new)
+            .collect(),
+    );
+    gone.0 = keep_the_pick(&mut config, &beaches, &fresh);
+    *beaches = fresh;
+}
+
+/// Point `config` at the beaches it named on the `old` shelf where they
+/// sit on the `fresh` one, by the file each was read from: the map in
+/// force and the pick kept while the map is moved off it. A beach in
+/// force whose file is gone gives way to the map sized for the table,
+/// as a pick no longer on the shelf does ([`settle_map`]), and its name
+/// is returned to be said.
+pub(super) fn keep_the_pick(
+    config: &mut MatchConfig,
+    old: &CustomBeaches,
+    fresh: &CustomBeaches,
+) -> Option<String> {
+    let file = |beach: &Beach| beach.level.filing.as_ref().map(|filing| filing.key.clone());
+    if let Some(Card::Shelf(shelf)) = config.pick {
+        let found = old
+            .0
+            .get(shelf)
+            .and_then(file)
+            .and_then(|key| fresh.0.iter().position(|b| file(b).as_ref() == Some(&key)));
+        config.pick = found.map(Card::Shelf);
+    }
+    if config.map != MapChoice::Custom {
+        return None;
+    }
+    let picked = old.fitting(config.seats).get(config.custom).copied()?;
+    let key = file(picked)?;
+    let found = fresh
+        .fitting(config.seats)
+        .iter()
+        .position(|beach| file(beach).as_ref() == Some(&key));
+    match found {
+        Some(at) => {
+            config.custom = at;
+            None
+        }
+        None => {
+            config.map = sized_for(config.seats);
+            config.custom = 0;
+            Some(picked.level.name.clone())
+        }
+    }
+}
+
+/// Say on the feed that the beach a round set up here was picked on is
+/// gone, over the beach it is played on instead. After the sidebars,
+/// which start the feed afresh.
+pub fn say_beach_gone(
+    mut gone: ResMut<BeachGone>,
+    table: Res<crate::app::rematch::LocalTable>,
+    settings: Res<crate::app::settings::GameSettings>,
+    mut log: ResMut<crate::app::side_panels::EventLog>,
+) {
+    let Some(name) = gone.0.take() else {
+        return;
+    };
+    if table.set_here() {
+        let line = crate::app::i18n::fill(settings.tr().beach_gone, &[("name", &name)]);
+        log.push(line, crate::app::palette::IDLE_ROW);
+    }
 }
 
 impl CustomBeaches {

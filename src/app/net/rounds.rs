@@ -285,9 +285,40 @@ impl OnlineSession {
                         .is_none_or(|row| row.place == Place::Queued && !row.watch)
                 })
                 .count();
+        // Nor is it next with no chair left for it at the next deal: a full
+        // table dealt it a watching place after telling it it was next up.
+        // It is behind as many players as would have to leave to free one.
+        // (While the host picks the map, the line says so instead.)
+        let wants_to_play = self.peers.get(peer).is_none_or(|row| !row.watches());
+        let chairless_next = self.peers.seat_plan(peer + 1).last() == Some(&None);
+        let ahead = match wants_to_play && chairless_next && !self.picking_map {
+            true => {
+                let takers = (0..=peer)
+                    .filter(|&p| self.peers.get(p).is_none_or(|row| !row.watches()))
+                    .count();
+                ahead.max(takers.saturating_sub(MAX_PLAYERS - 1))
+            }
+            false => ahead,
+        };
         Some(NetMsg::Queued {
             ahead: ahead.min(u8::MAX as usize) as u8,
         })
+    }
+
+    /// The round is over: a pause still in flight lands on no frame of it,
+    /// and is lifted here without a word to the table, on every peer.
+    ///
+    /// A pause called in the round's last half second named a frame past
+    /// the tide, so the round ended first and the call outlived it. The
+    /// pause card opened over every results card, a player's Continue sent
+    /// a `Resume` the others drop between rounds, and a spectator, who
+    /// cannot resume anything, saw the card reopen every frame until the
+    /// next round began. A pause asked for on the results card itself is
+    /// left alone: it is the card's menu.
+    pub fn drop_a_late_pause(&mut self) {
+        if self.session.paused() {
+            self.session.resume();
+        }
     }
 
     /// Drain the socket between rounds, when the sim is stopped and `pump`
@@ -367,6 +398,11 @@ impl OnlineSession {
                 // spectators' prompt offers it there: a line dropped here
                 // was a key that did nothing for anyone but its sender.
                 NetMsg::Chat { name, text } => self.hear_chat(host, from, name, text),
+                NetMsg::Notice(notice) => {
+                    if !host {
+                        self.notices.push(notice);
+                    }
+                }
                 // The host's word that it is picking the next map, which
                 // the results card says while the table waits on it.
                 NetMsg::Roster { picking, .. } => {
@@ -940,6 +976,30 @@ mod tests {
         session
     }
 
+    /// A pause the round ended under is lifted on the results card, on a
+    /// player and a spectator alike, and its echoes still arriving from a
+    /// peer do not put it back.
+    #[test]
+    fn a_pause_the_round_ended_under_is_dropped() {
+        let mut player = hosting(vec![Some(1)]);
+        player.session.request_pause();
+        let frame = player.session.pause_frame().expect("a pause in flight");
+        let mut watcher = OnlineSession::new(
+            UdpTransport::join(("127.0.0.1", 47999)).expect("join"),
+            Lockstep::observer(vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        watcher.session.receive_pause(frame);
+        for session in [&mut player, &mut watcher] {
+            assert!(session.session.paused());
+            session.drop_a_late_pause();
+            assert!(!session.session.paused(), "the card is not covered");
+            session.session.receive_pause(frame);
+            assert!(!session.session.paused(), "nor covered again");
+        }
+    }
+
     /// A bot's seat (route 1) watching a round says its lines under the
     /// seat name it greeted with, as it does in the lobby: the host vouches
     /// its chat under that name, and the sender's own echo said the
@@ -1040,6 +1100,20 @@ mod tests {
         // watch, is dealt the next one first: it is ahead of the line.
         session.peers.row(1).watch = false;
         assert_eq!(session.queue_place(3), Some(NetMsg::Queued { ahead: 1 }));
+    }
+
+    /// A full table tells a seventh player, dialled in by address past the
+    /// list's full check, how many have to leave before it plays, not that
+    /// it is next up: the next deal has no chair for it.
+    #[test]
+    fn a_player_with_no_chair_next_round_is_not_told_it_is_next() {
+        let mut session = hosting(vec![Some(1), Some(2), Some(3), Some(4), Some(5)]);
+        assert_eq!(session.queue_place(5), Some(NetMsg::Queued { ahead: 1 }));
+        assert_eq!(session.queue_place(6), Some(NetMsg::Queued { ahead: 2 }));
+        // One of the table moving to the stands frees a chair for the first
+        // in line.
+        session.peers.row(2).watch = true;
+        assert_eq!(session.queue_place(5), Some(NetMsg::Queued { ahead: 0 }));
     }
 
     /// A joiner holds no plan at all, and answers nobody: the star's spokes

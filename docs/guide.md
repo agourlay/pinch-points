@@ -200,8 +200,8 @@ score lost, so the rest of the table has something to point at too.
   so a big beach plays as busy as a small one. Dials for
   how many gulls and round length, **team play**, a **best of 3 or 5**
   series with rotating maps and nameable seats. AI comes at three levels:
-  easy fumbles, fierce reads the terrain and shoves gulls at the leader, and
-  all three walk a cursor at a capped speed rather than reaching across the
+  easy fumbles, fierce reads the terrain and shoves gulls at the leading
+  rival (never a partner, in team play), and all three walk a cursor at a capped speed rather than reaching across the
   board for free (`cargo run --example ladder` plays them off). Every
   round, local or online, opens on a **three-second count** with the board
   holding still, so the table can read the map and find its castles first.

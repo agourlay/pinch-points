@@ -52,11 +52,14 @@ const MAX_QUEUED: usize = 2;
 pub enum Announcement {
     /// A tide event: `by` is the seat whose sparkling crab spun it (`None`
     /// for a called one), `keeper` the seat whose castle sat out a Castle
-    /// Swap ([`crate::sim::Board::castle_swap_keeper`]).
+    /// Swap ([`crate::sim::Board::castle_swap_keeper`]), and `teams` says
+    /// the round is played in teams ([`crate::sim::Rules::teams`]), where
+    /// Gull Attack spares the spinner's partners as well.
     Tide {
         event: TideEvent,
         by: Option<PlayerId>,
         keeper: Option<PlayerId>,
+        teams: bool,
     },
     /// A molting crab banked: every loose crab now runs for this seat.
     Lure(PlayerId),
@@ -80,13 +83,23 @@ impl Announcement {
     ) -> (String, String, Color) {
         let tr = settings.tr();
         match self {
-            Announcement::Tide { event, keeper, .. } => (
+            Announcement::Tide {
+                event,
+                keeper,
+                teams,
+                ..
+            } => (
                 tr.events[event.index()].to_string(),
                 match keeper {
                     // Only a swap has a keeper, and then the blurb has to
                     // say whose castle stayed put, or it tells the spinner
                     // they lost theirs.
                     Some(seat) => fill(tr.event_blurb_swap_kept, &[("p", &names.label(tr, seat))]),
+                    // "Every castle but yours" left the partners' castles
+                    // in, which Gull Attack spares in a team round.
+                    None if teams && event == TideEvent::GullAttack => {
+                        tr.event_blurb_attack_team.to_string()
+                    }
                     None => tr.event_blurbs[event.index()].to_string(),
                 },
                 palette::INK_TIDE,
@@ -225,6 +238,7 @@ pub fn collect_announcements(
                     event: *event,
                     by: *by,
                     keeper,
+                    teams: sim.0.rules().teams.is_some(),
                 });
             }
             SimEvent::LureStarted { owner } => announcer.push(Announcement::Lure(*owner)),
@@ -444,6 +458,7 @@ mod tests {
             event: TideEvent::CrabMania,
             by: None,
             keeper: None,
+            teams: false,
         });
         announcer.push(Announcement::Lure(2));
         // Counted off the cap rather than written as a number, so moving
@@ -453,6 +468,7 @@ mod tests {
             event: TideEvent::FreshSand,
             by: Some(1),
             keeper: None,
+            teams: false,
         });
         assert_eq!(announcer.pending(), MAX_QUEUED, "the pile-up is capped");
     }
@@ -614,11 +630,19 @@ mod tests {
             event,
             by: Some(0),
             keeper: None,
+            teams: false,
         }));
         all.push(Announcement::Tide {
             event: TideEvent::CastleSwap,
             by: Some(0),
             keeper: Some(0),
+            teams: false,
+        });
+        all.push(Announcement::Tide {
+            event: TideEvent::GullAttack,
+            by: Some(0),
+            keeper: None,
+            teams: true,
         });
         for lang in ALL_LANGS {
             for announcement in &all {
@@ -639,6 +663,45 @@ mod tests {
         assert_eq!(ink, palette::INK_LURE, "the feed line's colour");
     }
 
+    /// In a round played in teams Gull Attack's banner says the partners
+    /// are spared too, in every language, on a line no wider than the
+    /// banner already shows for another event; every other event, and a
+    /// free-for-all round, keeps its own blurb.
+    #[test]
+    fn a_team_gull_attack_says_the_partners_are_spared() {
+        use crate::app::i18n::metrics::text_px;
+        let size = crate::app::menu_ui::type_scale::ROW;
+        let widest = ALL_LANGS
+            .iter()
+            .flat_map(|lang| lang.tr().event_blurbs)
+            .map(|blurb| text_px(blurb, size))
+            .fold(0.0, f32::max);
+        for lang in ALL_LANGS {
+            let settings = GameSettings {
+                language: lang,
+                ..GameSettings::default()
+            };
+            let names = crate::app::SeatNames(settings.names.clone());
+            let tr = settings.tr();
+            let blurb = |event: TideEvent, teams: bool| {
+                let banner = Announcement::Tide {
+                    event,
+                    by: Some(0),
+                    keeper: None,
+                    teams,
+                };
+                banner.lines(&settings, &names).1
+            };
+            let team = blurb(TideEvent::GullAttack, true);
+            assert_eq!(team, tr.event_blurb_attack_team, "{lang:?}");
+            assert!(text_px(&team, size) <= widest, "{lang:?}: {team}");
+            let attack = TideEvent::GullAttack.index();
+            assert_eq!(blurb(TideEvent::GullAttack, false), tr.event_blurbs[attack]);
+            let swap = TideEvent::CastleSwap.index();
+            assert_eq!(blurb(TideEvent::CastleSwap, true), tr.event_blurbs[swap]);
+        }
+    }
+
     /// A spun event's banner names the seat that spun it, in that seat's
     /// colour, in every language; a called one names nobody.
     #[test]
@@ -654,6 +717,7 @@ mod tests {
                 event: TideEvent::SpeedUp,
                 by: Some(2),
                 keeper: None,
+                teams: false,
             };
             let (line, ink) = spun.kicker(&settings, &names).expect("a spinner");
             assert!(line.contains(&label), "{lang:?}: {line}");
@@ -663,6 +727,7 @@ mod tests {
                 event: TideEvent::SpeedUp,
                 by: None,
                 keeper: None,
+                teams: false,
             };
             assert_eq!(called.kicker(&settings, &names), None);
         }

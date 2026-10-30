@@ -214,6 +214,8 @@ pub(in crate::app) struct RoundSource<'w, 's> {
     /// the series it belongs to.
     pub(in crate::app) table: ResMut<'w, rematch::LocalTable>,
     pub(in crate::app) tournament: Res<'w, tournament::Tournament>,
+    /// This machine's own say in how a round set up here is scored.
+    pub(in crate::app) settings: Res<'w, crate::app::settings::GameSettings>,
 }
 
 /// Boot the versus arena: fresh board, sprites, running phase. Online
@@ -244,6 +246,7 @@ pub(in crate::app) fn load_versus(
         resuming,
         table,
         tournament,
+        settings,
     } = &mut source;
     // The daily plays on a table of its own rather than the player's.
     let daily_config = match_setup::MatchConfig::daily();
@@ -278,6 +281,17 @@ pub(in crate::app) fn load_versus(
         "a table of {} seats",
         seats.0
     );
+    // Who plays for whom, on the board, where the AI and Gull Attack read
+    // it: a round set up here is scored as [`teams::local`] says. Every
+    // other board brought its own: the host's terms put it there on every
+    // peer (`match_setup::board_from`), and a snapshot or a recording
+    // carries it.
+    if matches!(
+        origin,
+        RoundOrigin::Configured(_) | RoundOrigin::Unconfigured
+    ) {
+        sim.0.rules_mut().teams = teams::local(settings, daily).played_by(seats.0).sides();
+    }
     recorder.0 = origin
         .recorded()
         .then(|| Replay::new(Level::from_board("Versus", 3, sim.0.clone())));

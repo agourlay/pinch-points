@@ -121,6 +121,10 @@ pub fn editor_levels_input(
     mut clipboard: ResMut<Clipboard>,
     news: EditorNews,
     mut swap: BoardSwap,
+    mut ledger: (
+        Res<crate::app::Campaign>,
+        ResMut<crate::app::progress::Progress>,
+    ),
 ) {
     let Workbench { mut sim, mut state } = bench;
     let EditorNews {
@@ -233,7 +237,10 @@ pub fn editor_levels_input(
                 return;
             }
             state.feedback = match std::fs::remove_file(&path) {
-                Ok(()) => fill(tr.ed_level_deleted, &[("name", &level.name)]),
+                Ok(()) => {
+                    forget_clear(&level, &ledger.0, &mut ledger.1);
+                    fill(tr.ed_level_deleted, &[("name", &level.name)])
+                }
                 Err(e) => fill(
                     tr.replay_delete_failed,
                     &[("r", &level.name), ("e", &e.to_string())],
@@ -255,6 +262,32 @@ pub fn editor_levels_input(
         }
         (Act::Copy | Act::Delete, Entry::New(_) | Entry::Paste) => {}
     }
+}
+
+/// Strike a deleted level's clear: the tick filed under its file, which
+/// the next level saved under its name would take over, and the one an
+/// older build filed under the name the stage list shows it by, which the
+/// next level alone under that name would adopt (see
+/// [`crate::app::progress::Progress::adopt_legacy`]). That name is never a
+/// shipped stage's: the list renames a level of the player's that would
+/// read as one.
+fn forget_clear(
+    level: &Level,
+    campaign: &crate::app::Campaign,
+    progress: &mut crate::app::progress::Progress,
+) {
+    let Some(key) = level.filing.as_ref().map(|filing| filing.key.as_str()) else {
+        return;
+    };
+    let legacy = campaign
+        .levels
+        .iter()
+        .skip(campaign.builtins)
+        .filter_map(|level| level.filing.as_ref())
+        .find(|filing| filing.key == key)
+        .and_then(|filing| filing.legacy.as_deref());
+    let keys: Vec<&str> = std::iter::once(key).chain(legacy).collect();
+    crate::app::progress::forget(progress, &keys);
 }
 
 /// A new level onto the bench, under a name no saved level has. Blank, it
@@ -586,7 +619,15 @@ mod tests {
         let board = &app.world().resource::<crate::app::Sim>().0;
         assert_eq!(board.tile_at(3, 3), crate::sim::TileKind::Empty);
 
-        // Deleted with a second press, and only then.
+        // Deleted with a second press, and only then, and its clear with
+        // it: a later level saved under its name takes its file name.
+        let key = format!(
+            "file:custom/{}",
+            path.file_name().expect("a file").to_string_lossy()
+        );
+        app.world_mut()
+            .resource_mut::<crate::app::progress::Progress>()
+            .mark(&key);
         tap(&mut app, KeyCode::F4);
         choose(&mut app, &path);
         tap(&mut app, KeyCode::KeyD);
@@ -596,6 +637,8 @@ mod tests {
         let state = app.world().resource::<EditorState>();
         assert!(!state.mine.contains(&path));
         assert!(state.filed.is_none(), "the bench is unsaved again");
+        let progress = app.world().resource::<crate::app::progress::Progress>();
+        assert!(!progress.is_cleared(&key), "its clear goes with it");
     }
 
     /// A level deleted while the check its save started is running stays

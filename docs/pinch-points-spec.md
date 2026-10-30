@@ -159,7 +159,7 @@ puzzles):
 | Crab Mania | Gulls washed away; spawners flood crabs for 10 s |
 | Gull Mania | Spawners emit gulls for 10 s |
 | Crab Monopoly | Half the loose crabs scuttle straight into the banker's castle |
-| Gull Attack | A gull lands beside every rival castle, facing it |
+| Gull Attack | A gull lands beside every rival castle, facing it: every castle but the spinner's, and in a round played in teams but its partners' too |
 | Speed Up | Everything moves at double speed, and the spawner holes open twice as often, for 10 s |
 | Slow Down | Everything moves at half speed for 10 s |
 | Fresh Sand | Every signpost washes away |

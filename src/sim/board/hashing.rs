@@ -50,6 +50,7 @@ impl Board {
                     round_length: _,
                     castle_raids: _,
                     claw_hands: _,
+                    teams: _,
                 },
             lure: _,
             lure_cooldown: _,
@@ -319,6 +320,16 @@ impl Board {
             h.u8(left);
             h.u8(right);
         }
+        // Who plays for whom, by the same rule: only a round scored in
+        // teams hashes it, so a free-for-all one keeps the bytes it always
+        // had. Its own marker, so a board with both lines never reads as
+        // one with claw hands alone.
+        if let Some(teams) = self.rules.teams {
+            h.u8(2);
+            for team in teams {
+                h.u8(team);
+            }
+        }
     }
 }
 
@@ -411,6 +422,10 @@ mod tests {
             (
                 "rules.castle_raids",
                 Box::new(|b| b.rules_mut().castle_raids = false),
+            ),
+            (
+                "rules.teams",
+                Box::new(|b| b.rules_mut().teams = Some([0, 0, 1, 1, 2, 2])),
             ),
             (
                 "set_signpost_rule",

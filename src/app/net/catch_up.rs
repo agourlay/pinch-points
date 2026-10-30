@@ -178,6 +178,13 @@ impl OnlineSession {
             return;
         }
         let frame = self.session.frame();
+        // The idle frames below the input delay are never committed by
+        // anybody, and a 0.9.0 watcher's session from such a frame drops
+        // their prefilled slots and waits on them for good. They pass in
+        // a tenth of a second, so the watcher is owed the round until then.
+        if frame > 0 && frame < self.session.delay() {
+            return;
+        }
         // A round the tide has ended: the board stops ticking while the
         // lockstep still counts frames, so the two part, and there is
         // nothing left to watch anyway. The watcher keeps greeting and is
@@ -596,6 +603,53 @@ mod session_tests {
             .into_iter()
             .any(|msg| matches!(msg, NetMsg::Queued { .. }));
         assert!(queued, "a player arriving mid-round waits for the next one");
+    }
+
+    /// A watcher owed the round in the interlude or countdown is not packed
+    /// a board after the first pump of the round, at frame 1: a 0.9.0
+    /// watcher's session from there waited for good on the idle frames
+    /// nobody commits. It is sent the round once the frame reaches the
+    /// input delay, a tenth of a second on.
+    #[test]
+    fn a_watcher_owed_the_round_is_not_sent_one_among_the_idle_frames() {
+        let mut host = OnlineSession::new(
+            UdpTransport::host(0).expect("host socket"),
+            Lockstep::new(0, vec![0, 1], DEFAULT_DELAY),
+            2,
+            MatchTerms::default(),
+        );
+        host.home.from_lobby = true;
+        let port = host.transport.local_addr().expect("addr").port();
+        let mut dee = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        dee.send(NetMsg::watch("Dee"));
+        drain(&mut host.transport);
+        host.owe_the_round(0);
+
+        let mut board = generate_arena(3, 2, 12, 9);
+        let mut sent_at = None;
+        for frame in 0..DEFAULT_DELAY + 2 {
+            host.session.commit_local(PlayerAction::None);
+            host.session.receive(InputMsg {
+                player: 1,
+                frame: DEFAULT_DELAY + frame,
+                action: PlayerAction::None,
+            });
+            if let Some(actions) = host.session.advance() {
+                board.tick(&actions);
+            }
+            host.send_catch_ups(&board);
+            if sent_at.is_none() && host.catch_up.owed.is_empty() {
+                sent_at = Some(host.session.frame());
+            }
+        }
+        assert_eq!(sent_at, Some(DEFAULT_DELAY), "held back until the delay");
+        let caught = drain(&mut dee).into_iter().find_map(|msg| {
+            let NetMsg::CatchUp { frame, .. } = msg else {
+                return None;
+            };
+            Some(frame)
+        });
+        assert_eq!(caught, Some(DEFAULT_DELAY));
     }
 
     /// A late watcher whose machine takes three seconds to walk into the

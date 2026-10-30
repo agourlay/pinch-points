@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::app::i18n::fill;
+use crate::transport::Notice;
 
 /// What a frame does about hosting.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -354,14 +355,11 @@ fn tend_the_pick(
             pick.menu,
             pick.beaches,
         );
-        let tr = settings.tr();
-        tell_the_room(
-            state,
-            match gone {
-                pick::Gone::Player => tr.lobby_pick_called_off,
-                pick::Gone::Bot => tr.lobby_pick_called_off_bot,
-            },
-        );
+        let bot = match gone {
+            pick::Gone::Player => false,
+            pick::Gone::Bot => true,
+        };
+        tell_the_room(state, settings.tr(), Notice::PickCalledOff { bot });
         send_roster(state, pick.config, settings.team_mode, pick.beaches);
         return;
     }
@@ -734,12 +732,11 @@ fn note_arrivals_and_departures(
             catch_up_on_the_feed(state, from);
         }
         if arrived {
-            let line = match watching {
-                true => tr.lobby_watching_joined,
-                false => tr.lobby_joined,
+            let notice = Notice::Joined {
+                name: crate::transport::wire_name(&told),
+                watching,
             };
-            let notice = fill(line, &[("p", &told)]);
-            tell_the_room(state, &notice);
+            tell_the_room(state, tr, notice);
         }
     }
     // Anyone unheard for too long has walked away: UDP will not say so, and
@@ -757,8 +754,8 @@ fn note_arrivals_and_departures(
             .map_or_else(String::new, |p| p.name.clone());
         hosted.forget_peer(peer);
         if !who.is_empty() {
-            let notice = fill(tr.lobby_left, &[("p", &who)]);
-            tell_the_room(state, &notice);
+            let name = crate::transport::wire_name(&who);
+            tell_the_room(state, tr, Notice::Left { name });
         }
     }
 }
@@ -884,7 +881,9 @@ fn work_the_socket(hosted: &mut Hosted, delta: f32, on_air: crate::transport::On
             // How long the round trip to it takes, for the input delay
             // the launch picks (`input_delay`).
             NetMsg::Pong { stamp } => peers.answered(from, stamp),
-            NetMsg::Hash { .. }
+            // The room's word is the host's own to say.
+            NetMsg::Notice(_)
+            | NetMsg::Hash { .. }
             | NetMsg::Start(_)
             | NetMsg::Pause { .. }
             | NetMsg::Resume { .. }
@@ -1012,9 +1011,12 @@ fn catch_up_on_the_feed(state: &LobbyState, peer: usize) {
         return;
     };
     for said in &state.chat {
-        hosted
-            .transport
-            .send_to(peer, NetMsg::chat(&said.who, &said.line));
+        // A notice again as what happened, for the newcomer to word.
+        let msg = match said.notice {
+            Some(notice) => NetMsg::Notice(notice),
+            None => NetMsg::chat(&said.who, &said.line),
+        };
+        hosted.transport.send_to(peer, msg);
     }
 }
 
@@ -1168,16 +1170,17 @@ pub(super) fn ask_to_leave(
 /// leave, or a bot the "Bots welcome" dial turned away, by either road.
 /// One line for all of them, so none goes without it.
 fn tell_sent_away(state: &mut LobbyState, tr: &crate::app::i18n::Tr, who: &str) {
-    tell_the_room(state, &fill(tr.lobby_kicked_feed, &[("p", who)]));
+    let name = crate::transport::wire_name(who);
+    tell_the_room(state, tr, Notice::SentAway { name });
 }
 
 /// Say a notice to the room as the lobby itself: in this host's own feed,
-/// and to every peer at the table. The lobby speaks with no name, which is
-/// what tells its notices from a player's line.
-fn tell_the_room(state: &mut LobbyState, notice: &str) {
-    state.say("", notice);
+/// and to every peer at the table. Sent as what happened rather than in
+/// this host's words, so each peer reads it in its own language.
+fn tell_the_room(state: &mut LobbyState, tr: &crate::app::i18n::Tr, notice: Notice) {
+    state.tell(tr, notice);
     if let Some(hosted) = state.hosted() {
-        hosted.transport.send(NetMsg::chat("", notice));
+        hosted.transport.send(NetMsg::Notice(notice));
     }
 }
 
@@ -1910,7 +1913,11 @@ mod tests {
         };
         // What the room said before anybody new was listening.
         state.say("Ann", "anyone up for a round?");
-        state.say("", "Bo joined");
+        let bo = Notice::Joined {
+            name: crate::transport::wire_name("Bo"),
+            watching: false,
+        };
+        state.tell(&crate::app::i18n::EN, bo);
         let port = state
             .hosted()
             .expect("hosting")
@@ -1935,6 +1942,9 @@ mod tests {
         assert_eq!(greeted, [(0, "Cy".to_string())], "Cy is at the door");
         note_arrivals_and_departures(&mut state, &crate::app::i18n::EN, greeted);
 
+        // Worded by the latecomer, whose game here is in French: the
+        // room's notices come as what happened, not in the host's English.
+        let fr = crate::app::i18n::Lang::Fr.tr();
         let mut heard = Vec::new();
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1944,6 +1954,9 @@ mod tests {
                         crate::transport::name_from_wire(&name),
                         crate::transport::chat_from_wire(&text),
                     ));
+                } else if let NetMsg::Notice(notice) = msg {
+                    let line = crate::app::net::notice_line(fr, &notice, |seat| seat.to_string());
+                    heard.push((String::new(), line));
                 }
             }
             if heard.len() >= 3 {
@@ -1954,8 +1967,8 @@ mod tests {
             heard,
             [
                 ("Ann".to_string(), "anyone up for a round?".to_string()),
-                (String::new(), "Bo joined".to_string()),
-                (String::new(), "Cy joined".to_string()),
+                (String::new(), fill(fr.lobby_joined, &[("p", "Bo")])),
+                (String::new(), fill(fr.lobby_joined, &[("p", "Cy")])),
             ],
             "the room as it stands, oldest first, and then their own arrival"
         );

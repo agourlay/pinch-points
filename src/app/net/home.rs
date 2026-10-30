@@ -246,6 +246,7 @@ impl OnlineSession {
             stall: _,
             abandoned: _,
             heard: _,
+            notices: _,
             stands: _,
             home,
             next_round: _,
@@ -417,6 +418,7 @@ mod tests {
                         | NetMsg::SpectatorVote { .. }
                         | NetMsg::SpectatorTally { .. }
                         | NetMsg::Chat { .. }
+                        | NetMsg::Notice(_)
                         | NetMsg::Roster { .. }
                         | NetMsg::Abandoned { .. }
                         | NetMsg::CatchUp { .. }

@@ -1,8 +1,9 @@
 //! How a round is scored: everyone for themselves, or in teams.
 //!
-//! Teams are presentation and win condition only. The sim has never known
-//! about them, which keeps them lockstep-safe. What lives here is the
-//! seat-to-team map, and it is chosen for fairness rather than convenience:
+//! Teams are mostly presentation and win condition. The sim knows only
+//! each seat's team ([`crate::sim::Rules::teams`], from [`TeamMode::sides`]),
+//! for the rules that pick on rivals, and it holds that in the hashed
+//! rules so every peer agrees. What lives here is the seat-to-team map, and it is chosen for fairness rather than convenience:
 //! castle spots come in 180-degree pairs (see
 //! [`castle_spots`](crate::sim::castle_spots)), so a team split is fair when
 //! every team is either built from whole pairs or is the mirror image of
@@ -65,6 +66,19 @@ impl TeamMode {
             TeamMode::Pairs => seat / 2,
             // Two mirror-image halves: {0,2,4} and {1,3,5}.
             TeamMode::Trios => seat % 2,
+        }
+    }
+
+    /// Each seat's team as the board's rules hold it
+    /// ([`crate::sim::Rules::teams`]): `None` for free-for-all, where
+    /// every seat is its own. Give it the mode a table plays
+    /// ([`Self::played_by`]).
+    pub fn sides(self) -> Option<[u8; MAX_PLAYERS]> {
+        match self {
+            TeamMode::Solo => None,
+            TeamMode::Pairs | TeamMode::Trios => {
+                Some(std::array::from_fn(|seat| self.team_of(seat as u8)))
+            }
         }
     }
 

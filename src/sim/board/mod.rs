@@ -394,6 +394,62 @@ pub struct Rules {
     /// pair of hands on a solo puzzle. `None` everywhere else, where every
     /// arrow turns every crab and [`Rules::signpost_cap`] is each seat's.
     pub claw_hands: Option<[u8; 2]>,
+    /// Who plays for whom: each seat's team, when the round is scored in
+    /// teams, and `None` when every seat plays for itself.
+    ///
+    /// Read by the rules that pick on rivals, so a seat never picks on its
+    /// own partner: Gull Attack lands no gull beside a castle of the
+    /// spinner's team, and the AI steers no gull at one. Scored by team,
+    /// one of the three raids a 2v2 spin set up used to hit the spinner's
+    /// own total. On the board rather than read off a setting, so every
+    /// peer of an online round plays by the same split: the host's terms
+    /// put it here on every peer alike (`match_setup::board_from`), and a
+    /// snapshot and a recording carry it.
+    pub teams: Option<[u8; MAX_PLAYERS]>,
+}
+
+/// [`Rules::teams`] as the `sides:` line of a snapshot or a level file
+/// writes it: each seat's team, in seat order.
+pub fn sides_text(teams: &[u8; MAX_PLAYERS]) -> String {
+    teams.map(|team| team.to_string()).join(" ")
+}
+
+/// A `sides:` line's value read back: a team for every seat, each one a
+/// seat number at most, as a team is numbered by its seats.
+pub fn parse_sides(value: &str) -> Result<[u8; MAX_PLAYERS], String> {
+    let mut words = value.split_whitespace();
+    let mut teams = [0u8; MAX_PLAYERS];
+    for (seat, slot) in teams.iter_mut().enumerate() {
+        let word = words
+            .next()
+            .ok_or_else(|| format!("sides: no team for seat {seat}"))?;
+        *slot = word
+            .parse::<u8>()
+            .ok()
+            .filter(|&team| usize::from(team) < MAX_PLAYERS)
+            .ok_or_else(|| format!("sides: bad team {word:?}"))?;
+    }
+    match words.next() {
+        Some(extra) => Err(format!("sides: more teams than seats at {extra:?}")),
+        None => Ok(teams),
+    }
+}
+
+impl Rules {
+    /// The team `seat` plays for: its own seat number when every seat is
+    /// for itself ([`Rules::teams`]).
+    pub fn team_of(&self, seat: PlayerId) -> u8 {
+        match self.teams {
+            Some(teams) => teams.get(usize::from(seat)).copied().unwrap_or(seat),
+            None => seat,
+        }
+    }
+
+    /// Whether two seats play for the same side: a seat and itself always,
+    /// two seats only when they share a team.
+    pub fn allies(&self, a: PlayerId, b: PlayerId) -> bool {
+        a == b || self.team_of(a) == self.team_of(b)
+    }
 }
 
 /// The claw a seat's arrows turn under claw-keyed arrows
@@ -437,6 +493,7 @@ impl Default for Rules {
             round_length: None,
             castle_raids: true,
             claw_hands: None,
+            teams: None,
         }
     }
 }

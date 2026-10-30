@@ -410,6 +410,39 @@ fn hard_steers_gulls_at_the_leader() {
     );
 }
 
+/// In a round played in teams the leader Hard picks on is a rival's: a
+/// partner leading the table is left alone, and the gull by its castle
+/// goes unsteered, while the same gull by a rival's castle is steered in.
+#[test]
+fn hard_never_steers_gulls_at_a_partner() {
+    let mut board = Board::new(9, 7, 5);
+    board.set_tile(8, 6, TileKind::Castle(1)); // ours, out of defend range
+    board.set_tile(0, 0, TileKind::Castle(0)); // our partner's, leading
+    // The rivals' castles, both out of the gull's attack radius.
+    board.set_tile(8, 3, TileKind::Castle(2));
+    board.set_tile(4, 6, TileKind::Castle(3));
+    board.set_score(0, 20);
+    board.spawn_gull(2, 0, Direction::Down); // 2 tiles from (0,0)
+    board.rules_mut().teams = Some([0, 0, 1, 1, 2, 2]);
+    assert_eq!(
+        first_window_action(&board, BotLevel::Hard),
+        PlayerAction::None,
+        "seat 0 is seat 1's partner"
+    );
+    // Free-for-all, the same leader is a rival and the gull is steered.
+    board.rules_mut().teams = None;
+    assert!(matches!(
+        first_window_action(&board, BotLevel::Hard),
+        PlayerAction::Place { .. }
+    ));
+    // Split {0,2} against {1,3} instead, seat 0 is a rival again.
+    board.rules_mut().teams = Some([0, 1, 0, 1, 0, 1]);
+    assert!(matches!(
+        first_window_action(&board, BotLevel::Hard),
+        PlayerAction::Place { .. }
+    ));
+}
+
 /// Advance a fresh clone to seat 1's next decision window and return the
 /// bot's action there.
 fn first_window_action(board: &Board, level: BotLevel) -> PlayerAction {
@@ -680,19 +713,23 @@ fn a_molt_is_worth_its_lure_only_when_one_can_start() {
     let points = board.crab_value(CrabKind::Molting);
     let lure = LURE_TICKS * LURE_POINTS_PER_SECOND_X2 / (2 * TICKS_PER_SECOND);
     assert_eq!(lure, 12, "2.5 points a second of a 5 s lure");
-    assert_eq!(molt_worth(&board, &molt, castle), points + lure);
+    assert_eq!(molt_worth(&board, 1, &molt, castle), points + lure);
     board.force_lure(0);
-    assert_eq!(molt_worth(&board, &molt, castle), points, "a lure is on");
+    assert_eq!(molt_worth(&board, 1, &molt, castle), points, "a lure is on");
     for _ in 0..LURE_TICKS {
         board.tick_idle();
     }
     assert!(board.lure().is_none() && board.lure_cooldown() == LURE_COOLDOWN);
-    assert_eq!(molt_worth(&board, &molt, castle), points, "the lure rests");
+    assert_eq!(
+        molt_worth(&board, 1, &molt, castle),
+        points,
+        "the lure rests"
+    );
     while board.lure_cooldown() > 60 {
         board.tick_idle();
     }
     assert_eq!(
-        molt_worth(&board, &molt, castle),
+        molt_worth(&board, 1, &molt, castle),
         points + lure,
         "the rest is over before it gets home"
     );
@@ -712,7 +749,7 @@ fn a_molt_is_worth_the_lure_it_keeps_from_each_rival_past_the_first() {
     let lure = LURE_TICKS * LURE_POINTS_PER_SECOND_X2 / (2 * TICKS_PER_SECOND);
     assert_eq!(board.seats_in_play(), 2);
     assert_eq!(
-        molt_worth(&board, &molt, castle),
+        molt_worth(&board, 1, &molt, castle),
         points + lure,
         "one rival"
     );
@@ -720,14 +757,33 @@ fn a_molt_is_worth_the_lure_it_keeps_from_each_rival_past_the_first() {
     board.set_tile(8, 0, TileKind::Castle(2));
     board.set_tile(8, 6, TileKind::Castle(3));
     assert_eq!(board.seats_in_play(), 4);
-    assert_eq!(molt_worth(&board, &molt, castle), points + 3 * lure);
-    assert!(molt_worth(&board, &molt, castle) > crate::sim::GOLDEN_CALLED_VALUE);
+    assert_eq!(molt_worth(&board, 1, &molt, castle), points + 3 * lure);
+    assert!(molt_worth(&board, 1, &molt, castle) > crate::sim::GOLDEN_CALLED_VALUE);
     board.force_lure(0);
     assert_eq!(
-        molt_worth(&board, &molt, castle),
+        molt_worth(&board, 1, &molt, castle),
         points + 2 * lure,
         "a lure is on: no lure of its own, still the two it denies"
     );
-    assert!(molt_worth(&board, &molt, castle) > board.crab_value(CrabKind::Giant));
-    assert!(molt_worth(&board, &molt, castle) < crate::sim::GOLDEN_CALLED_VALUE);
+    assert!(molt_worth(&board, 1, &molt, castle) > board.crab_value(CrabKind::Giant));
+    assert!(molt_worth(&board, 1, &molt, castle) < crate::sim::GOLDEN_CALLED_VALUE);
+}
+
+/// A partner is no rival: a molt left on the beach for it to bank is kept
+/// from nobody, so in 2v2 the AI counts the lure it denies the one rival
+/// past the first, and no more.
+#[test]
+fn a_molt_denies_nothing_to_a_partner() {
+    let mut board = arena();
+    let castle = board.index_of(4, 3);
+    for (seat, (x, y)) in [(0, (0, 0)), (2, (8, 0)), (3, (8, 6))] {
+        board.set_tile(x, y, TileKind::Castle(seat));
+    }
+    board.spawn_crab(1, 3, Direction::Right, Handedness::Left, CrabKind::Molting);
+    let molt = board.crabs()[0];
+    let points = board.crab_value(CrabKind::Molting);
+    let lure = LURE_TICKS * LURE_POINTS_PER_SECOND_X2 / (2 * TICKS_PER_SECOND);
+    assert_eq!(molt_worth(&board, 1, &molt, castle), points + 3 * lure);
+    board.rules_mut().teams = Some([0, 0, 1, 1, 2, 2]);
+    assert_eq!(molt_worth(&board, 1, &molt, castle), points + 2 * lure);
 }

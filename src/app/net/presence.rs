@@ -600,9 +600,16 @@ fn dropped_line(tr: &crate::app::i18n::Tr) -> String {
 /// at the main menu made them walk back in through the lobby door to
 /// reach the game next door. A direct `PINCH_HOST` pair has no hall to be
 /// put back in, and goes to the menu as before.
+///
+/// Watched from the host's call on, through the interlude and the count
+/// as well as the round: a kick or a host quitting heard on the interlude
+/// left the player sitting through it and the whole count, on a beach that
+/// would never start. Between two rounds the arena is already left, so
+/// the session armed for the next one is let go here (as `failsafe` does).
 pub(crate) fn leave_a_hostless_round(
     settings: Res<GameSettings>,
-    online: Res<Online>,
+    screen: Res<State<Screen>>,
+    mut online: ResMut<Online>,
     mut notice: ResMut<RoundNotice>,
     mut next_screen: ResMut<NextState<Screen>>,
 ) {
@@ -620,14 +627,17 @@ pub(crate) fn leave_a_hostless_round(
         return;
     };
     // Read by whichever screen takes them, and taken there rather than
-    // left to linger. The session itself needs no dropping here: nothing
-    // armed it for another round, so `end_versus` lets it go on the way
-    // out of the arena.
+    // left to linger. In the arena the session needs no dropping here:
+    // nothing armed it for another round, so `end_versus` lets it go on
+    // the way out.
     notice.0 = why;
     next_screen.set(match session.home.from_lobby {
         true => Screen::Lobby,
         false => Screen::Menu,
     });
+    if *screen.get() == Screen::Interlude {
+        online.0 = None;
+    }
 }
 
 #[cfg(test)]
