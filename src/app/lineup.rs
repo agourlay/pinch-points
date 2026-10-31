@@ -20,8 +20,9 @@
 
 use crate::app::cycle::Cycle;
 use crate::app::i18n::{Tr, fill};
-use crate::app::match_setup::{MapChoice, MapPreviews, Pic, TermsDials, cut_to, line_px};
+use crate::app::match_setup::{MapChoice, MapPreviews, Pic, TermsDials};
 use crate::app::menu_ui;
+use crate::app::menu_ui::{cut_to, line_px};
 use crate::app::net::Online;
 use crate::app::palette;
 use crate::app::settings::GameSettings;

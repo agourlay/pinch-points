@@ -249,12 +249,16 @@ pub fn editor_levels_input(
             // The bench's own file gone, what it held is no longer on the
             // shelf: leaving asks again, and saving makes a new file, under
             // the level's name, not the gone file's (`shelf::save_target`).
-            let opened = state.opened.as_ref().is_some_and(|(file, _)| *file == path);
+            let opened = state
+                .filing
+                .opened
+                .as_ref()
+                .is_some_and(|(file, _)| *file == path);
             if opened {
-                state.opened = None;
+                state.filing.opened = None;
             }
-            if state.mine.remove(&path) || opened {
-                state.filed = None;
+            if state.filing.mine.remove(&path) || opened {
+                state.filing.filed = None;
             }
             let mut fresh = LevelList::read();
             fresh.at = at.min(fresh.entries.len() - 1);
@@ -316,7 +320,7 @@ fn open_new(
             state.name = name;
             // Untouched, a starter is nobody's work: another can take its
             // place without asking.
-            state.filed = Some(super::filed_text(state, &sim.0));
+            state.filing.filed = Some(super::filed_text(state, &sim.0));
             fill(tr.ed_opened, &[("name", &template.label(tr))])
         }
         None => tr.ed_fresh_sand.into(),
@@ -336,9 +340,9 @@ pub(super) fn open_saved(
     tr: &Tr,
 ) {
     take_level(state, level, board, tr);
-    state.mine.insert(path.clone());
-    state.opened = Some((path, state.name.clone()));
-    state.filed = Some(super::filed_text(state, board));
+    state.filing.mine.insert(path.clone());
+    state.filing.opened = Some((path, state.name.clone()));
+    state.filing.filed = Some(super::filed_text(state, board));
     state.feedback = fill(tr.ed_opened, &[("name", &state.name)]);
 }
 
@@ -602,7 +606,7 @@ mod tests {
         tap(&mut app, KeyCode::Enter);
         let state = app.world().resource::<EditorState>();
         assert_eq!(state.name, name);
-        assert!(state.mine.contains(&path), "its file is the bench's");
+        assert!(state.filing.mine.contains(&path), "its file is the bench's");
         assert!(app.world().resource::<crate::app::Sim>().0.wrap());
 
         // Over unsaved work, opening asks first and the second Enter opens.
@@ -635,8 +639,8 @@ mod tests {
         tap(&mut app, KeyCode::KeyD);
         assert!(!path.exists(), "the second deletes");
         let state = app.world().resource::<EditorState>();
-        assert!(!state.mine.contains(&path));
-        assert!(state.filed.is_none(), "the bench is unsaved again");
+        assert!(!state.filing.mine.contains(&path));
+        assert!(state.filing.filed.is_none(), "the bench is unsaved again");
         let progress = app.world().resource::<crate::app::progress::Progress>();
         assert!(!progress.is_cleared(&key), "its clear goes with it");
     }
@@ -659,10 +663,10 @@ mod tests {
         {
             let mut state = app.world_mut().resource_mut::<EditorState>();
             state.name = name.into();
-            state.mine.insert(path.clone());
+            state.filing.mine.insert(path.clone());
             let mut check = Validation::pending();
             check.save = Some((path.clone(), name.into()));
-            state.solver = Some(check);
+            state.check.solver = Some(check);
         }
         tap(&mut app, KeyCode::F4);
         choose(&mut app, &path);
@@ -671,7 +675,7 @@ mod tests {
         assert!(!path.exists(), "deleted");
         {
             let state = app.world().resource::<EditorState>();
-            let check = state.solver.as_ref().expect("the check runs on");
+            let check = state.check.solver.as_ref().expect("the check runs on");
             *check.slot.lock().unwrap() = Some(Verdict {
                 outcome: crate::sim::SolveOutcome::Found(Vec::new()),
                 needs: None,
@@ -680,7 +684,7 @@ mod tests {
             });
         }
         app.update();
-        assert!(app.world().resource::<EditorState>().solver.is_none());
+        assert!(app.world().resource::<EditorState>().check.solver.is_none());
         assert!(!path.exists(), "and stays deleted");
     }
 

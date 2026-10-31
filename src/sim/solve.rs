@@ -515,6 +515,72 @@ mod tests {
     use crate::sim::campaign_levels;
     use crate::sim::level::PuzzleOutcome;
 
+    /// A co-op stage of two crabs circling the edge of a beach whose
+    /// castle stands in the middle, one crab of each hand, and an arrow in
+    /// each player's hand: each crab is turned in by its own hand's arrow.
+    /// `same` makes both crabs left-handed, which P1 turns alone.
+    fn duo(same: bool) -> Level {
+        let second = if same { "L" } else { "R" };
+        Level::parse(&format!(
+            "name: Duo\nhands: 1 1\nround: 120\ncrab: 0,2 R L common\ncrab: 2,0 L {second} common\n\
+             map:\n+-+-+-+\n|. . .|\n+ + + +\n|. 0 .|\n+ + + +\n|. . .|\n+-+-+-+\n"
+        ))
+        .expect("parses")
+    }
+
+    /// Each deal is the stage with its arrows dealt as named: a hand one
+    /// short, every arrow in one hand, or as many arrows turning every
+    /// crab. An empty hand has no shorter version. The co-op guards that
+    /// read these run only in release, so this keeps them honest between.
+    #[test]
+    fn each_deal_hands_out_the_arrows_it_names() {
+        let level = duo(false).with_hands(Some([2, 1]), 0);
+        let dealt = |deal: Deal| {
+            let level = deal.level(&level);
+            (level.hands(), level.posts)
+        };
+        assert_eq!(dealt(Deal::Short(0)), (Some([1, 1]), 2));
+        assert_eq!(dealt(Deal::Short(1)), (Some([2, 0]), 2));
+        assert_eq!(dealt(Deal::Alone(0)), (Some([3, 0]), 3));
+        assert_eq!(dealt(Deal::Alone(1)), (Some([0, 3]), 3));
+        assert_eq!(dealt(Deal::Ordinary), (None, 3));
+        assert_eq!(
+            Deal::all([2, 1]),
+            [
+                Deal::Short(0),
+                Deal::Short(1),
+                Deal::Alone(0),
+                Deal::Alone(1),
+                Deal::Ordinary
+            ]
+        );
+        assert_eq!(
+            Deal::all([0, 2]),
+            [
+                Deal::Short(1),
+                Deal::Alone(0),
+                Deal::Alone(1),
+                Deal::Ordinary
+            ]
+        );
+    }
+
+    /// A stage whose crabs are one of each hand needs both players; one
+    /// whose crabs are both P1's is won by P1 alone, and the answer says
+    /// with which arrows.
+    #[test]
+    fn a_stage_needs_both_only_when_neither_wins_it_alone() {
+        assert!(matches!(validate(&duo(false)).as_deref(), Ok([_, _])));
+        assert_eq!(
+            needs_both(&duo(false), Effort::Exhaustive),
+            SolveOutcome::Unsolvable
+        );
+        let SolveOutcome::Found(alone) = needs_both(&duo(true), Effort::Exhaustive) else {
+            panic!("P1 wins it alone");
+        };
+        assert!(alone.iter().all(|&(.., seat)| seat == 0), "{alone:?}");
+    }
+
     /// A search that starts past the counts already proved short finds
     /// the same fewest signposts for a fraction of the work: the editor's
     /// second search past a grant, which repeated the first search's

@@ -80,11 +80,9 @@ pub(super) fn take_level(
     state.roll = level.roll;
     state.solution.clone_from(&level.solution);
     state.hole_period = super::setting::first_hole_period(&level.board());
-    state.mine.clear();
-    state.opened = None;
-    state.filed = None;
+    state.filing.forget();
     state.symmetry = super::Symmetry::Off;
-    state.checked = None;
+    state.check.checked = None;
     state.begin_history(board);
 }
 
@@ -233,16 +231,21 @@ mod tests {
             ..EditorState::default()
         };
         state
+            .filing
             .mine
             .insert(super::super::shelf::save_path("My Beach"));
         state
+            .filing
             .mine
             .insert(super::super::shelf::save_path("Gull Alley"));
         let pasted = Level::from_board("Gull Alley", 5, sand()).with_kind(LevelKind::Arena);
         take_level(&mut state, &pasted, &pasted.board(), &crate::app::i18n::EN);
         assert_eq!(state.name, "Gull Alley");
         assert_eq!((state.posts, state.kind), (5, LevelKind::Arena));
-        assert!(state.mine.is_empty(), "a save over any of them is asked");
+        assert!(
+            state.filing.mine.is_empty(),
+            "a save over any of them is asked"
+        );
     }
 
     /// A pasted beach keeps the lines its board cannot carry: the tables

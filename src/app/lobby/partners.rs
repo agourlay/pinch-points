@@ -80,12 +80,8 @@ pub fn seats_shown(state: &LobbyState, tr: &crate::app::i18n::Tr) -> Vec<SeatSho
         match place.filter(|&place| place < places) {
             Some(place) => SeatShown {
                 seat,
-                name: state.table[place].clone(),
-                kind: state
-                    .table_kinds
-                    .get(place)
-                    .copied()
-                    .unwrap_or(crate::sim::SeatKind::Human),
+                name: state.table[place].name.clone(),
+                kind: state.table[place].kind,
             },
             // As the scoreboard names a seat the AI holds: its label, marked.
             None => SeatShown {

@@ -235,7 +235,9 @@ impl PlayAgain<'_> {
                 self.config.custom = custom;
             }
         }
-        if self.config.random && matches!(again, Again::Rematch(_)) {
+        if self.config.pick == crate::app::match_setup::Pick::Random
+            && matches!(again, Again::Rematch(_))
+        {
             let none = crate::app::match_setup::CustomBeaches::default();
             crate::app::match_setup::draw_map(
                 &mut self.config,
@@ -404,7 +406,7 @@ mod tests {
         world.init_resource::<LocalTable>();
         world.insert_resource(MatchConfig {
             seats: 5,
-            random: true,
+            pick: crate::app::match_setup::Pick::Random,
             map: MapChoice::GenOcean,
             seed: Some(5),
             ..MatchConfig::default()
@@ -423,7 +425,7 @@ mod tests {
             ask(&mut world, Again::Rematch(Rematch::Round));
             let config = world.resource::<MatchConfig>();
             assert!(crate::app::match_setup::holds(config.map, 5));
-            assert!(config.random);
+            assert_eq!(config.pick, crate::app::match_setup::Pick::Random);
             drawn.insert(format!("{:?}", config.map));
         }
         assert!(drawn.len() > 1, "drawn again, not kept: {drawn:?}");

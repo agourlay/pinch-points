@@ -189,7 +189,7 @@ fn sample(config: &MatchConfig, quarter: usize) -> (MatchConfig, u64) {
     let played = MatchConfig {
         seats,
         map: MapChoice::Surprise,
-        random: false,
+        pick: Pick::InForce,
         ..config.clone()
     };
     (played, seed)

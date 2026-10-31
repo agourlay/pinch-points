@@ -236,19 +236,79 @@ impl Hosted {
     }
 }
 
+/// Where a joiner stands for the next round, by the host's last word on
+/// it. One field, so in line and short of a chair cannot both be held: a
+/// lobby roster ends the line, and a peer in line has no chair to be
+/// short of.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Berth {
+    /// Nothing said against a place at the launch.
+    #[default]
+    Aboard,
+    /// The host's word on its last lobby roster: this peer came to play,
+    /// and the table has no chair left for it (`NetMsg::Roster::chair`),
+    /// so the launch seats it watching.
+    NoChair,
+    /// In line for the next round, `ahead` in front of it: a round is
+    /// under way, since one has to be before anybody queues.
+    Queued { ahead: u8 },
+}
+
+/// What a joiner's lines say of where it stands ([`Joined::stance`]): the
+/// prompt, the pad's face line and the status line all read this, so
+/// they cannot rank being in line, watching and short of a chair in
+/// different orders.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum JoinStance {
+    /// In line, having come to watch: not in line for a chair.
+    QueuedWatching,
+    /// In line for a chair at the next round.
+    Queued { ahead: u8 },
+    /// Came to watch, and is not in line.
+    Watching,
+    /// Came to play, past the table's last chair: the launch seats it
+    /// watching.
+    NoChair,
+    /// A chair at the launch.
+    Aboard,
+}
+
+/// The overlay a host's lobby card is under ([`Hosted::card`]): the map
+/// page first, then whom to ask to leave, then partners, else the table.
+/// The prompt and the pad's face both read this, so the order is decided
+/// once.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HostCard {
+    /// The host started the match and is picking the map.
+    Picking,
+    /// Picking whom to ask to leave, on this page of the peers.
+    Kicking(usize),
+    /// Picking partners.
+    Partnering,
+    /// The table, gathering.
+    Table,
+}
+
+impl Hosted {
+    /// Which overlay the card is under, by the one order every reader
+    /// keeps (see [`HostCard`]).
+    pub fn card(&self) -> HostCard {
+        match (self.picking.is_some(), self.kicking, self.partnering) {
+            (true, _, _) => HostCard::Picking,
+            (false, Some(page), _) => HostCard::Kicking(page),
+            (false, None, true) => HostCard::Partnering,
+            (false, None, false) => HostCard::Table,
+        }
+    }
+}
+
 /// A beach being greeted: the socket greeting it, and what has come back.
 pub struct Joined {
     pub transport: UdpTransport,
     /// We asked to watch, so we greet with `Watch` and expect no seat back.
     pub watching: bool,
-    /// How many are in front of us in line for the next round, once the
-    /// host has said we are in one. `None` while there is still a lobby
-    /// to be in: a round has to be under way before anybody queues.
-    pub queued: Option<u8>,
-    /// The host's word on its last lobby roster: this peer came to play,
-    /// and the table has no chair left for it (`NetMsg::Roster::chair`),
-    /// so the launch seats it watching.
-    pub no_chair: bool,
+    /// Where the host last said this peer stands for the next round.
+    pub berth: Berth,
     /// The host's word on its last lobby roster: it has started the match
     /// and is picking the map (`NetMsg::Roster::picking`).
     pub host_picking: bool,
@@ -278,9 +338,11 @@ pub struct Joined {
     /// `Start`; without this the lobby would read the repeat as an
     /// invitation and walk straight back into the finished round.
     played_seed: Option<u64>,
-    /// The host's dials and its beach's name, from its [`NetMsg::Roster`];
-    /// `None` until the first roster lands.
-    pub host_terms: Option<HostTerms>,
+    /// The host's dials, from its [`NetMsg::Roster`]; `None` until the
+    /// first roster lands. The terms card paints these rather than this
+    /// machine's own [`MatchConfig`], which is nothing to do with the match
+    /// being joined.
+    pub host_terms: Option<MatchTerms>,
     /// The round as it stands, arriving in parts, for a watcher who
     /// greeted a beach mid-round (`net::catch_up`).
     pub(super) catching_up: crate::app::net::catch_up::Assembly,
@@ -295,16 +357,20 @@ pub struct Joined {
     pub beach: Option<u64>,
 }
 
-/// What a joiner knows of the match it is joining, from the host's
-/// roster.
-pub struct HostTerms {
-    /// The host's dials. The terms card paints these rather than this
-    /// machine's own [`MatchConfig`], which is nothing to do with the match
-    /// being joined.
-    pub terms: MatchTerms,
-}
-
 impl Joined {
+    /// Where this peer stands, for every line that says so: in line first
+    /// (the round it is queued for has started without it), then
+    /// watching, which wants no chair, then short of one.
+    pub fn stance(&self) -> JoinStance {
+        match (self.berth, self.watching) {
+            (Berth::Queued { .. }, true) => JoinStance::QueuedWatching,
+            (Berth::Queued { ahead }, false) => JoinStance::Queued { ahead },
+            (Berth::Aboard | Berth::NoChair, true) => JoinStance::Watching,
+            (Berth::NoChair, false) => JoinStance::NoChair,
+            (Berth::Aboard, false) => JoinStance::Aboard,
+        }
+    }
+
     /// A beach dialled this frame: calling, not aboard, since nothing has
     /// answered yet and on UDP an open socket is no evidence that anything
     /// will.
@@ -312,8 +378,7 @@ impl Joined {
         Joined {
             transport,
             watching,
-            queued: None,
-            no_chair: false,
+            berth: Berth::Aboard,
             host_picking: false,
             told_full: false,
             hello_in: ANNOUNCE_EVERY,
@@ -340,8 +405,7 @@ impl Joined {
         Joined {
             transport,
             watching,
-            queued: None,
-            no_chair: false,
+            berth: Berth::Aboard,
             host_picking: false,
             told_full: false,
             hello_in: 0.0,

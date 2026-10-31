@@ -434,10 +434,9 @@ pub(super) fn kickoff(
                 config.controllers[seat] = crate::app::SeatController::Bot;
             }
             match std::env::var("PINCH_MATCH_MAP").ok().as_deref() {
-                Some("random") => config.random = true,
+                Some("random") => config.pick = match_setup::Pick::Random,
                 Some(name) => {
                     config.map = skirmish_map("PINCH_MATCH_MAP", name);
-                    config.random = false;
                     match_setup::pick_the_map_in_force(&mut config);
                 }
                 None => {}

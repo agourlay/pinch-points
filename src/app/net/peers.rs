@@ -31,6 +31,33 @@ pub enum Place {
     Queued,
 }
 
+/// What one end of a round has heard of the other's from its inputs: the
+/// host of each joiner ([`Peer::heard`]), a joiner of the host. Both are
+/// read the same way and taken in by [`Self::take`], so the two sides
+/// cannot drift apart in how they keep it.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct Heard {
+    /// The newest frame it has committed in this round, as far as its
+    /// inputs have arrived: what keeps the clocks together
+    /// (`NetMsg::Clock`). `None` until its first inputs.
+    pub newest: Option<u32>,
+    /// The frames it last said it was missing, per seat
+    /// (`transport::Batch::wants`), which what it is sent each tick is cut
+    /// from. `None` until it says, and sent the whole resend tail till then.
+    pub wants: Option<[u32; crate::sim::MAX_PLAYERS]>,
+}
+
+impl Heard {
+    /// One batch's word: the newest only ever moves on, and a batch that
+    /// said nothing of what it holds leaves the last word standing.
+    pub fn take(&mut self, newest: Option<u32>, wants: Option<[u32; crate::sim::MAX_PLAYERS]>) {
+        self.newest = self.newest.max(newest);
+        if wants.is_some() {
+            self.wants = wants;
+        }
+    }
+}
+
 /// One peer, by its index on the socket.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Peer {
@@ -63,16 +90,10 @@ pub struct Peer {
     /// Host: how long its last few answers to a `Ping` took, which picks
     /// the input delay of the next round it is dealt a chair in.
     pub round_trips: RoundTrips,
-    /// Host: the newest frame it has committed in this round, as far as
-    /// its inputs have arrived: what keeps its clock against the host's
-    /// (`NetMsg::Clock`). `None` until its first inputs, which is also
-    /// what says its `Start` got there; until then the host sends the
-    /// `Start` again every few ticks.
-    pub newest: Option<u32>,
-    /// Host: the frames it last said it was missing, per seat
-    /// (`transport::Batch::wants`), which what it is sent each tick is cut
-    /// from. `None` until it says, and sent the whole resend tail till then.
-    pub wants: Option<[u32; crate::sim::MAX_PLAYERS]>,
+    /// Host: what its inputs have said of its round so far. Its newest
+    /// frame is also what says its `Start` got there; until then the host
+    /// sends the `Start` again every few ticks.
+    pub heard: Heard,
     /// Host, in the lobby: frozen at the table the host is picking the map
     /// for (`lobby::pick`), which the launch seats. On the row so it moves
     /// with the peer when one before it is forgotten, and goes with it when
@@ -385,8 +406,7 @@ impl PeerBook {
     pub fn deal(&mut self, plan: &[Option<u8>]) {
         self.fit(plan.len());
         for (peer, slot) in self.0.iter_mut().zip(plan) {
-            peer.newest = None;
-            peer.wants = None;
+            peer.heard = Heard::default();
             peer.place = match slot {
                 Some(seat) => Place::Seated(*seat),
                 None => Place::Watching,

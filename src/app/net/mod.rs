@@ -12,7 +12,7 @@ use crate::transport::{
     name_from_wire, table_from_wire, wire_table,
 };
 use bevy::prelude::*;
-pub use peers::{Goodbye, Peer, PeerBook, Place, renumber};
+pub use peers::{Goodbye, Heard, Peer, PeerBook, Place, renumber};
 use std::collections::VecDeque;
 
 /// A bot connected straight to this host (route 2): the seat it holds
@@ -165,24 +165,10 @@ pub struct OnlineSession {
     /// way into the arena, so a peer admitted mid-series joins the table's
     /// standings rather than starting its own. `None` outside a series.
     pub series_standing: Option<SeriesStanding>,
-    /// Ticks of `Resume` still to repeat (see [`pump::RESUME_ECHOES`]).
-    resume_echo: u8,
     /// Host: seconds until the next `Ping`, between rounds.
     ping_in: f32,
-    /// Ticks played since the round began here, which spaces out the
-    /// host's `Start` sent again to a peer not heard from in it yet
-    /// (`pump::START_AGAIN`) and its players' clocks, and a watcher's word
-    /// on what it holds (`pump::WATCHER_WORD_EVERY`).
-    round_ticks: u32,
-    /// Joiner: the newest frame the host has committed this round, as far
-    /// as its inputs have arrived, read against the host's clock.
-    host_newest: Option<u32>,
-    /// Joiner: the frames the host last said it was missing, per seat
-    /// (`Batch::wants`): this peer's own commits are resent from there.
-    host_wants: Option<[u32; MAX_PLAYERS]>,
-    /// Joiner: the last clock reading not yet acted on (see
-    /// `pump::keep_time`).
-    clock_apart: Option<i64>,
+    /// How this round is going here, begun afresh with every round.
+    pace: Pace,
     /// How many rounds the host has dealt on this socket, the one being
     /// played included: what a `Start` is numbered with, so a joiner can
     /// tell the next round from any it has already been dealt
@@ -259,6 +245,27 @@ pub fn listen_before_the_round(time: Res<Time>, mut online: ResMut<Online>) {
 }
 
 pub(crate) mod catch_up;
+/// What one round keeps of how it is going, all of it this round's: a
+/// new round starts from [`Pace::default`] in one place
+/// (`OnlineSession::begin_round`).
+#[derive(Default)]
+struct Pace {
+    /// Ticks played since the round began here, which spaces out the
+    /// host's `Start` sent again to a peer not heard from in it yet
+    /// (`pump::START_AGAIN`) and its players' clocks, and a watcher's word
+    /// on what it holds (`pump::WATCHER_WORD_EVERY`).
+    round_ticks: u32,
+    /// Ticks of `Resume` still to repeat (see [`pump::RESUME_ECHOES`]).
+    resume_echo: u8,
+    /// Joiner: the last clock reading not yet acted on (see
+    /// `pump::keep_time`).
+    clock_apart: Option<i64>,
+    /// Joiner: what the host's inputs have said of its round: its newest
+    /// frame, read against the host's clock, and the frames it is missing,
+    /// which this peer's own commits are resent from.
+    host: Heard,
+}
+
 mod crowd;
 mod home;
 mod notice;
@@ -308,12 +315,8 @@ impl OnlineSession {
             home: Home::nowhere(),
             next_round: false,
             series_standing: None,
-            resume_echo: 0,
             ping_in: 0.0,
-            round_ticks: 0,
-            host_newest: None,
-            host_wants: None,
-            clock_apart: None,
+            pace: Pace::default(),
             rounds_dealt: 0,
             crowned: 0,
             catch_up: Default::default(),

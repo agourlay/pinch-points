@@ -673,6 +673,62 @@ mod tests {
         assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
     }
 
+    /// Whether each reload asked this frame keeps the posts.
+    fn kept(app: &App) -> Vec<bool> {
+        app.world()
+            .resource::<Messages<LoadLevel>>()
+            .iter_current_update_messages()
+            .map(|load| load.keep_posts)
+            .collect()
+    }
+
+    /// R on either card and Enter after a loss retry the stage with the
+    /// arrows the run began with; Enter after a win goes on to the next
+    /// stage bare, even with R in the same frame, which would otherwise
+    /// carry this stage's arrows onto it.
+    #[test]
+    fn a_retry_keeps_the_arrows_and_the_next_stage_starts_bare() {
+        let mut app = won(0);
+        tap(&mut app, KeyCode::KeyR);
+        assert_eq!(kept(&app), [true], "R on the won card");
+        assert_eq!(app.world().resource::<Campaign>().index, 0);
+
+        app.insert_resource(State::new(Phase::Lost));
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(kept(&app), [true], "Enter on the lost card");
+        assert_eq!(app.world().resource::<Campaign>().index, 0);
+
+        app.insert_resource(State::new(Phase::Won));
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.press(KeyCode::Enter);
+            keys.press(KeyCode::KeyR);
+        }
+        app.update();
+        assert_eq!(kept(&app), [false], "Enter and R together");
+        assert_eq!(app.world().resource::<Campaign>().index, 1);
+    }
+
+    /// Won, with a co-op stage next and only one player seated: Enter goes
+    /// back to the stage list, which says why, rather than loading a stage
+    /// nobody can finish alone.
+    #[test]
+    fn enter_before_a_coop_stage_alone_goes_to_the_list() {
+        let mut app = won(0);
+        {
+            let mut campaign = app.world_mut().resource_mut::<Campaign>();
+            campaign.levels[1] = campaign.levels[1].with_hands(Some([1, 1]), 2);
+        }
+        tap(&mut app, KeyCode::Enter);
+        assert!(kept(&app).is_empty(), "nothing loaded");
+        assert_eq!(app.world().resource::<Campaign>().index, 0);
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::StageSelect
+        );
+    }
+
     /// Num Enter is Enter on the puzzle's cards as on every menu and the
     /// versus results: it takes the next stage from the Won card.
     #[test]
@@ -764,5 +820,82 @@ mod tests {
             assert_eq!(loads(&app), 0, "{key:?} reloads nothing");
             assert_eq!(denials(&app), 0, "{key:?} refuses nothing");
         }
+    }
+
+    /// `command` from seat `seat`'s cursor at `(x, y)` on `board`, queued
+    /// over `pending` as a versus tick would queue it.
+    fn queued(
+        board: &Board,
+        seat: u8,
+        (x, y): (u8, u8),
+        command: SeatCommand,
+        pending: PendingActions,
+    ) -> PendingActions {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = App::new();
+        app.add_message::<PlacementDenied>();
+        let board = board.clone();
+        app.world_mut()
+            .run_system_once(move |mut denied: MessageWriter<PlacementDenied>| {
+                let mut cursor = Cursor::seated(seat);
+                (cursor.x, cursor.y) = (x, y);
+                let mut pending = PendingActions(pending.0);
+                queue_versus(command, &mut cursor, &board, &mut pending, &mut denied);
+                pending
+            })
+            .expect("queued")
+    }
+
+    /// Clear-all in a round takes the seat's own arrows up one a tick, the
+    /// first of them each time, until none are left, and then queues
+    /// nothing. A rival's arrow ahead of them in reading order is never
+    /// one of them, and a held RB that queued one removal and stopped
+    /// would leave the rest standing.
+    #[test]
+    fn clear_all_in_a_round_takes_the_seats_own_arrows_one_a_tick() {
+        let mut board = crate::sim::classic_arena(false, 2);
+        let tiles: Vec<(u8, u8)> = board.tiles().map(|(x, y, _)| (x, y)).collect();
+        let mut free = tiles
+            .into_iter()
+            .filter(|&(x, y)| board.can_place_signpost(1, x, y))
+            .collect::<Vec<_>>()
+            .into_iter();
+        let rival = free.next().expect("a tile");
+        assert!(board.place_signpost(1, rival.0, rival.1, Direction::Up));
+        let mut own = Vec::new();
+        for (x, y) in free {
+            if own.len() < 2 && board.place_signpost(0, x, y, Direction::Left) {
+                own.push((x, y));
+            }
+        }
+        assert_eq!(own.len(), 2);
+        let none = || PendingActions([PlayerAction::None; crate::sim::MAX_PLAYERS]);
+        for &(x, y) in &own {
+            let pending = queued(&board, 0, (0, 0), SeatCommand::ClearAll, none());
+            assert_eq!(pending.0[0], PlayerAction::Remove { x, y });
+            assert_eq!(pending.0[1], PlayerAction::None, "the rival's seat");
+            assert!(board.remove_signpost(0, x, y));
+        }
+        let earlier = PlayerAction::Place {
+            x: 1,
+            y: 1,
+            dir: Direction::Up,
+        };
+        let mut before = none();
+        before.0[0] = earlier;
+        let pending = queued(&board, 0, (0, 0), SeatCommand::ClearAll, before);
+        assert_eq!(pending.0[0], earlier, "nothing left, nothing queued");
+        assert!(board.signpost_at(rival.0, rival.1).is_some());
+
+        // Remove is the tile under the cursor, for the cursor's seat.
+        let pending = queued(&board, 1, rival, SeatCommand::Remove, none());
+        assert_eq!(
+            pending.0[1],
+            PlayerAction::Remove {
+                x: rival.0,
+                y: rival.1
+            }
+        );
+        assert_eq!(pending.0[0], PlayerAction::None);
     }
 }

@@ -184,7 +184,7 @@ fn enter_opens_the_map_page_and_esc_goes_back() {
     host_taps(&mut host, &mut [&mut joe], KeyCode::Enter);
     let picking = host.picking().expect("the map page is up");
     assert_eq!((picking.people, picking.bots.len()), (2, 0));
-    assert!(host.menu().online && host.menu().step == crate::app::match_setup::Step::Map);
+    assert!(host.menu().host_page_up());
     assert_eq!(host.config().seats, 2, "the cards grey by the table");
     let slots = map_slots(&CustomBeaches::default());
     assert_eq!(
@@ -228,6 +228,37 @@ fn enter_opens_the_map_page_and_esc_goes_back() {
     assert_eq!(host.state().hosted().map(Hosted::players_aboard), Some(1));
     run(&mut [&mut host, &mut joe], frames(0.5));
     assert_eq!(joe.state().feedback, EN.lobby_aboard, "nobody dropped");
+}
+
+/// Leaving the lobby with the map page up closes it as Esc does: the
+/// setup the page greyed and walked is put back as it was.
+#[test]
+fn leaving_the_lobby_under_the_page_puts_the_setup_back() {
+    use bevy::ecs::system::RunSystemOnce;
+    let config = MatchConfig {
+        map: MapChoice::TheMoat,
+        seats: 5,
+        ..MatchConfig::default()
+    };
+    let (mut host, mut joe) = a_table_of_two(config, CustomBeaches::default());
+    host_taps(&mut host, &mut [&mut joe], KeyCode::Enter);
+    host_taps(&mut host, &mut [&mut joe], KeyCode::KeyD);
+    assert!(host.picking().is_some());
+    assert_ne!(
+        (host.config().map, host.config().seats),
+        (MapChoice::TheMoat, 5)
+    );
+    host.app
+        .world_mut()
+        .run_system_once(exit_lobby)
+        .expect("left");
+    assert!(host.picking().is_none());
+    assert!(!host.menu().online, "the setup is the menu's again");
+    assert_eq!(
+        (host.config().map, host.config().seats),
+        (MapChoice::TheMoat, 5),
+        "the setup as it was"
+    );
 }
 
 /// A card picked on the page starts the match on it: the host's session
@@ -353,7 +384,11 @@ fn the_lobby_keeps_ticking_under_the_page() {
     run(&mut [&mut host, &mut joe, &mut kim], frames(1.5));
     assert_eq!(host.state().hosted().map(Hosted::players_aboard), Some(2));
     assert!(host.picking().is_some(), "a newcomer does not call it off");
-    assert!(kim.state().joined().is_some_and(|joined| joined.no_chair));
+    assert!(
+        kim.state()
+            .joined()
+            .is_some_and(|joined| joined.berth == crate::app::lobby::Berth::NoChair)
+    );
     host_taps(&mut host, &mut [&mut joe, &mut kim], KeyCode::Enter);
     run(&mut [&mut host, &mut joe, &mut kim], frames(1.0));
     let session = host.session().expect("the match started");
@@ -398,7 +433,11 @@ fn a_frozen_player_leaving_is_not_hidden_by_a_newcomer() {
     let mut kim = Peer::joiner("Kim", &host);
     run(&mut [&mut host, &mut joe, &mut ann, &mut kim], frames(1.5));
     assert!(host.picking().is_some(), "a newcomer does not call it off");
-    assert!(kim.state().joined().is_some_and(|joined| joined.no_chair));
+    assert!(
+        kim.state()
+            .joined()
+            .is_some_and(|joined| joined.berth == crate::app::lobby::Berth::NoChair)
+    );
     if let Some(transport) = joe.state().transport() {
         transport.send(NetMsg::Leaving);
     }

@@ -93,7 +93,7 @@ pub fn update_toasts(
     chime: Chime,
     mut toasts: Query<(Entity, &mut Toast, &mut Node, &ComputedNode)>,
 ) {
-    let held = crate::app::next_map::page_up(&menu);
+    let held = menu.host_page_up();
     let display = match held {
         true => Display::None,
         false => Display::Flex,

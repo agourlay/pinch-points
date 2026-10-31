@@ -693,6 +693,84 @@ mod tests {
         assert!(!app.world().resource::<Unsaved>().0, "and written");
     }
 
+    /// The round's events, each counted for the stat its trophy reads, and
+    /// only the local seat's (seat 0 on the couch) where it is somebody's:
+    /// any seat's wheel is one this seat saw, and only its own is one it
+    /// spun. A rival's golden crab, lure or raid is nothing of this seat's.
+    #[test]
+    fn each_event_counts_toward_its_own_trophy_for_its_own_seat() {
+        use crate::sim::TideEvent;
+        let mut app = tracking(true);
+        let banked = |owner, kind| SimEvent::CrabBanked {
+            id: 0,
+            owner,
+            pos: Vec2::ZERO,
+            keep: Vec2::ZERO,
+            points: 1,
+            kind,
+            handed: crate::sim::Handedness::Right,
+        };
+        let raided = |owner| SimEvent::CastleRaided {
+            owner,
+            pos: Vec2::ZERO,
+            lost: 3,
+            by: None,
+        };
+        for event in [
+            banked(0, CrabKind::Golden),
+            banked(0, CrabKind::Giant),
+            banked(1, CrabKind::Golden),
+            SimEvent::TideEventFired {
+                event: TideEvent::GullMania,
+                by: Some(1),
+            },
+            SimEvent::TideEventFired {
+                event: TideEvent::Monopoly,
+                by: Some(0),
+            },
+            SimEvent::LureStarted { owner: 0 },
+            SimEvent::LureStarted { owner: 1 },
+            raided(0),
+            raided(1),
+            SimEvent::CrabEaten { pos: Vec2::ZERO },
+        ] {
+            app.world_mut().write_message(event);
+        }
+        let _ = app.world_mut().run_system_once(track_events);
+        let stats = app.world().resource::<Stats>();
+        assert_eq!((stats.banked, stats.golden, stats.giants), (2, 1, 1));
+        assert_eq!(
+            stats.events_seen,
+            1 << TideEvent::GullMania.index() | 1 << TideEvent::Monopoly.index(),
+            "both wheels seen"
+        );
+        assert_eq!(stats.events, 1, "and one of them spun");
+        assert_eq!(stats.lures, 1);
+        assert_eq!(stats.raids_taken, 1);
+        assert_eq!(stats.gulls_fed, 1, "any crab eaten");
+        let scratch = app.world().resource::<RoundScratch>();
+        assert_eq!((scratch.banked, scratch.raids), (2, 1));
+    }
+
+    /// A level saved in the editor and a code copied out or taken in each
+    /// count once.
+    #[test]
+    fn a_level_built_and_a_code_shared_are_each_counted() {
+        let mut app = tracking(true);
+        app.add_message::<crate::app::LevelSaved>();
+        app.add_message::<crate::app::CodeShared>();
+        app.add_message::<crate::app::CodeTaken>();
+        app.world_mut().write_message(crate::app::LevelSaved);
+        app.world_mut().write_message(crate::app::CodeShared);
+        app.world_mut().write_message(crate::app::CodeShared);
+        app.world_mut().write_message(crate::app::CodeTaken);
+        let _ = app.world_mut().run_system_once(record_level_built);
+        let _ = app.world_mut().run_system_once(record_codes);
+        let stats = app.world().resource::<Stats>();
+        assert_eq!(stats.levels_built, 1);
+        assert_eq!((stats.codes_shared, stats.codes_taken), (2, 1));
+    }
+
     /// Winning untouched earns the dry-castle trophy; winning after a raid
     /// does not; and either way the round's raid count starts over.
     #[test]
@@ -1106,9 +1184,17 @@ mod tests {
             let stats = app.world().resource::<Stats>();
             (stats.rounds, stats.wins, stats.dry_wins, stats.online_wins)
         };
-        assert_eq!(walked_on(0b10, false), (1, 1, 0, 1), "seat 1 crowned");
-        assert_eq!(walked_on(0b01, false), (1, 0, 0, 0), "seat 0 crowned");
-        assert_eq!(walked_on(0b10, true), (0, 0, 0, 0), "the card's to count");
+        // Packed as the host packs them (`note_the_crowned`), not as bits
+        // written here, which would agree with the reader by construction.
+        let crowned =
+            |seat: usize| crate::transport::crowned_bits(&std::array::from_fn(|at| at == seat));
+        assert_eq!(walked_on(crowned(1), false), (1, 1, 0, 1), "seat 1 crowned");
+        assert_eq!(walked_on(crowned(0), false), (1, 0, 0, 0), "seat 0 crowned");
+        assert_eq!(
+            walked_on(crowned(1), true),
+            (0, 0, 0, 0),
+            "the card's to count"
+        );
     }
 
     /// A daily is counted under the day it was seeded for. A round begun

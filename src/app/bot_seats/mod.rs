@@ -438,4 +438,47 @@ mod tests {
         host.leave_the_beach(false);
         assert!(host.door.is_some());
     }
+
+    /// A couch round opens a bot's seat under the bot's name, and the
+    /// recording keeps that name: a kept round named the bot's seat after
+    /// the person who set the table up.
+    #[test]
+    fn a_couch_bots_seat_is_named_for_its_bot_in_the_recording_too() {
+        use crate::app::bot_seats::test_bots::{TestBot, poll_until};
+        use bevy::ecs::system::RunSystemOnce;
+        let mut door = Doorway::open().expect("a port on this machine");
+        door.seat_bots(&[2]);
+        let _bot = TestBot::register(&door.string(&door.chairs[0]));
+        assert!(poll_until(&mut door, |d| d.ready()), "the bot sat down");
+        let board = crate::sim::classic_arena(false, 4);
+        let mut app = App::new();
+        let mut controllers = Controllers::default();
+        controllers.0[2] = SeatController::Bot;
+        app.insert_resource(controllers);
+        app.init_resource::<crate::app::settings::GameSettings>();
+        app.init_resource::<crate::app::Daily>();
+        app.init_resource::<crate::app::net::Online>();
+        app.init_resource::<crate::app::Playback>();
+        app.init_resource::<SeatKinds>();
+        let names = std::array::from_fn(|seat| format!("Person {seat}"));
+        app.insert_resource(SeatNames(names));
+        app.insert_resource(crate::app::Recorder(Some(crate::sim::Replay::new(
+            crate::sim::Level::from_board("Versus", 3, board.clone()),
+        ))));
+        app.insert_resource(Sim(board));
+        app.insert_resource(BotSeats {
+            door: Some(door),
+            ..BotSeats::default()
+        });
+        app.world_mut()
+            .run_system_once(begin_round)
+            .expect("the round opens");
+        let names = &app.world().resource::<SeatNames>().0;
+        assert_eq!(names[2], "Greedy");
+        assert_eq!(names[1], "Person 1", "a person's seat keeps its name");
+        let recorder = app.world().resource::<crate::app::Recorder>();
+        let replay = recorder.0.as_ref().expect("recording");
+        assert_eq!(replay.names[2], "Greedy");
+        assert!(app.world().resource::<BotSeats>().round.is_some());
+    }
 }

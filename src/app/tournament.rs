@@ -497,6 +497,30 @@ pub fn reset_on_menu(mut tournament: ResMut<Tournament>) {
 mod tests {
     use super::*;
 
+    /// A series won in teams is every member's: under pairs the seats
+    /// sitting together, under trios every other seat. One won alone is
+    /// that seat's only.
+    #[test]
+    fn a_team_series_is_claimed_by_every_member() {
+        let claims = |champion: Champion, mode| -> Vec<bool> {
+            (0..MAX_PLAYERS as u8)
+                .map(|seat| champion.claims(seat, mode))
+                .collect()
+        };
+        assert_eq!(
+            claims(Champion::Team(1), TeamMode::Pairs),
+            [false, false, true, true, false, false]
+        );
+        assert_eq!(
+            claims(Champion::Team(1), TeamMode::Trios),
+            [false, true, false, true, false, true]
+        );
+        assert_eq!(
+            claims(Champion::Seat(2), TeamMode::Solo),
+            [false, false, true, false, false, false]
+        );
+    }
+
     /// The round line counts out of the series actually being played. The
     /// length lived inside the translated string for a while, so a
     /// best-of-three read "Round 1 of 5" and then stopped at three.

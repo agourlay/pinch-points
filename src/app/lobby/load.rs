@@ -282,11 +282,17 @@ fn hall(beaches: usize, people: usize) -> Measured {
     let storm: Vec<&LobbyState> = listeners.iter().take(7).map(Lobby::state).collect();
     let chairless = storm
         .iter()
-        .filter(|state| state.joined().is_some_and(|joined| joined.no_chair))
+        .filter(|state| {
+            state
+                .joined()
+                .is_some_and(|joined| joined.berth == crate::app::lobby::Berth::NoChair)
+        })
         .count();
     assert_eq!(chairless, 2, "two told there is no chair");
     for state in &storm {
-        let no_chair = state.joined().is_some_and(|joined| joined.no_chair);
+        let no_chair = state
+            .joined()
+            .is_some_and(|joined| joined.berth == crate::app::lobby::Berth::NoChair);
         let line = match no_chair {
             true => crate::app::i18n::EN.lobby_no_chair,
             false => crate::app::i18n::EN.lobby_aboard,

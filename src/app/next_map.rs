@@ -13,24 +13,14 @@
 
 use crate::app::cycle::Cycle;
 use crate::app::match_setup::{
-    CustomBeaches, MapChoice, MapPress, MatchConfig, MatchMenu, Step, TermsDials,
+    Close, CustomBeaches, HostPage, MapChoice, MapPress, MatchConfig, MatchMenu, TermsDials,
 };
 use crate::app::net::OnlineSession;
 use bevy::prelude::*;
 
 /// The host's map page between rounds, while it is up.
 #[derive(Resource, Default)]
-pub struct NextMap(Option<Open>);
-
-/// The page up: what to put back, and whether it opened this frame.
-struct Open {
-    /// The match setup as it was: put back whole on Esc, and its seat
-    /// count put back after a pick.
-    before: MatchConfig,
-    /// The page opened this frame, on the Enter that went on from the
-    /// results card: that Enter is not also a pick.
-    fresh: bool,
-}
+pub struct NextMap(Option<HostPage>);
 
 impl NextMap {
     /// Whether the page is up.
@@ -39,15 +29,9 @@ impl NextMap {
     }
 }
 
-/// Whether a map page is up over the round's screen: what the pause card,
-/// the face and the prompt stand down for.
-pub fn page_up(menu: &MatchMenu) -> bool {
-    menu.online && menu.step == Step::Map
-}
-
 /// The pause card's condition: not while the page has the keys.
 pub fn no_page_up(menu: Res<MatchMenu>) -> bool {
-    !page_up(&menu)
+    !menu.host_page_up()
 }
 
 /// Put the page up for the round after this one: the table told, and
@@ -69,23 +53,14 @@ pub fn open_next_map(
     let map = session.terms.map();
     config.seats = seats;
     config.clamp_bots();
-    config.random = false;
-    config.pick = None;
+    config.pick = crate::app::match_setup::Pick::InForce;
     config.map = map;
     config.custom = beaches
         .shelf_of(&session.beach)
         .filter(|_| map == MapChoice::Custom)
         .and_then(|shelf| beaches.among_fitting(seats, shelf))
         .unwrap_or(0);
-    next.0 = Some(Open {
-        before,
-        fresh: true,
-    });
-    menu.online = true;
-    menu.step = Step::Map;
-    menu.seed = crate::app::clock::fresh_seed();
-    menu.scroll = 0.0;
-    crate::app::match_setup::put_the_cursor_on_the_pick(menu, config, beaches);
+    next.0 = Some(HostPage::open(before, config, menu, beaches));
 }
 
 /// Keep the page greyed for the table the next round is dealt, every frame
@@ -104,15 +79,6 @@ fn follow_the_table(session: &OnlineSession, config: &mut MatchConfig) {
     }
 }
 
-/// How the page closes.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Close {
-    /// A card was picked: kept, on the couch's own seat count.
-    Keep,
-    /// Esc: the setup as it was.
-    PutBack,
-}
-
 fn close(
     next: &mut NextMap,
     close: Close,
@@ -120,14 +86,9 @@ fn close(
     menu: &mut MatchMenu,
     beaches: &CustomBeaches,
 ) {
-    if let Some(open) = next.0.take() {
-        match close {
-            Close::PutBack => *config = open.before,
-            Close::Keep => crate::app::match_setup::reseat(config, open.before.seats, beaches),
-        }
+    if let Some(page) = next.0.take() {
+        page.close(close, config, menu, beaches);
     }
-    menu.online = false;
-    menu.step = Step::Game;
 }
 
 /// The terms of the next round on the map the page has picked, for the
@@ -141,7 +102,7 @@ fn picked_terms(
     beaches: &CustomBeaches,
 ) -> crate::transport::MatchTerms {
     let mut table = config.clone();
-    if table.random {
+    if table.pick == crate::app::match_setup::Pick::Random {
         crate::app::match_setup::draw_online_map(
             &mut table,
             beaches,
@@ -186,11 +147,11 @@ pub fn next_map_keys(
     beaches: &CustomBeaches,
     standing: Option<crate::transport::SeriesStanding>,
 ) -> NextMapPress {
-    let Some(open) = next.0.as_mut() else {
+    let Some(page) = next.0.as_mut() else {
         return NextMapPress::Nothing;
     };
     follow_the_table(session, config);
-    if std::mem::take(&mut open.fresh) {
+    if page.just_opened() {
         return NextMapPress::Nothing;
     }
     match crate::app::match_setup::map_page_keys(keys, menu, config, beaches) {
@@ -336,7 +297,7 @@ mod tests {
             Card::Map(MapChoice::TheMoat),
         );
         assert!(matches!(press, NextMapPress::Called(_)));
-        assert!(!next.is_up() && !page_up(&menu), "the page is down");
+        assert!(!next.is_up() && !menu.host_page_up(), "the page is down");
         assert_eq!(
             (host.terms.map(), host.terms.seed),
             (MapChoice::TheMoat, seed)

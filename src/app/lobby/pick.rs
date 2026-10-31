@@ -10,7 +10,7 @@
 //! times out while the host makes up its mind.
 
 use super::*;
-use crate::app::match_setup::{CustomBeaches, MapPress, MatchMenu};
+use crate::app::match_setup::{Close, CustomBeaches, HostPage, MapPress, MatchMenu};
 use crate::bots::listener::BotId;
 
 /// The table the host froze to pick the map for, and what to put back.
@@ -25,13 +25,8 @@ pub struct Picking {
     /// The bots that came straight to this beach (route 2) seated behind
     /// them, by who they are.
     pub bots: Vec<BotId>,
-    /// The match setup as it was before the page opened: put back whole
-    /// on Esc, and its seat count put back after a pick, the couch's table
-    /// being nothing to do with this one.
-    before: MatchConfig,
-    /// The page opened this frame, on the Enter that started the match:
-    /// that Enter is not also a pick.
-    fresh: bool,
+    /// The map page up over the lobby, the setup to put back with it.
+    pub(super) page: HostPage,
     /// A card was picked: the match goes on at the host's next tick.
     pub chosen: bool,
 }
@@ -111,41 +106,9 @@ pub(super) fn open_the_pick(
     hosted.picking = Some(Picking {
         people,
         bots,
-        before,
-        fresh: true,
+        page: HostPage::open(before, config, menu, beaches),
         chosen: false,
     });
-    menu.online = true;
-    menu.step = crate::app::match_setup::Step::Map;
-    menu.seed = crate::app::clock::fresh_seed();
-    menu.scroll = 0.0;
-    crate::app::match_setup::put_the_cursor_on_the_pick(menu, config, beaches);
-}
-
-/// How the map page closes: on a pick, which is kept, or on Esc (or the
-/// table changing under it), which puts the setup back as it was.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Close {
-    Keep,
-    PutBack,
-}
-
-/// Take the map page down. `picking` is the one taken off the beach.
-pub(super) fn close_the_pick(
-    picking: Picking,
-    close: Close,
-    config: &mut MatchConfig,
-    menu: &mut MatchMenu,
-    beaches: &CustomBeaches,
-) {
-    match close {
-        Close::PutBack => *config = picking.before,
-        // The pick stays the host's (the next page opens on it, and so
-        // does the couch's step 2), on the couch's own table.
-        Close::Keep => crate::app::match_setup::reseat(config, picking.before.seats, beaches),
-    }
-    menu.online = false;
-    menu.step = crate::app::match_setup::Step::Game;
 }
 
 /// Pick the card under the page's cursor, as Enter there does, if the
@@ -185,7 +148,7 @@ pub(super) fn pick_keys(
     else {
         return false;
     };
-    if std::mem::take(&mut picking.fresh) || picking.chosen {
+    if picking.page.just_opened() || picking.chosen {
         return true;
     }
     match crate::app::match_setup::map_page_keys(keys, menu, config, beaches) {
@@ -193,7 +156,7 @@ pub(super) fn pick_keys(
         MapPress::Chosen(_) => picking.chosen = true,
         MapPress::Back => {
             if let Some(picking) = state.hosted_mut().and_then(|hosted| hosted.picking.take()) {
-                close_the_pick(picking, Close::PutBack, config, menu, beaches);
+                picking.page.close(Close::PutBack, config, menu, beaches);
             }
         }
     }
@@ -237,8 +200,7 @@ mod tests {
         let picking = Picking {
             people,
             bots,
-            before: MatchConfig::default(),
-            fresh: false,
+            page: HostPage::settled(MatchConfig::default()),
             chosen: false,
         };
         peers.reach(3);
@@ -258,8 +220,7 @@ mod tests {
         Picking {
             people,
             bots,
-            before: MatchConfig::default(),
-            fresh: false,
+            page: HostPage::settled(MatchConfig::default()),
             chosen: false,
         }
     }

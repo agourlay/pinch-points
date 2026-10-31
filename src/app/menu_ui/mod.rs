@@ -7,11 +7,13 @@
 //! screen reaches them as `menu_ui::x`. The scroll bar a long list wears
 //! is [`scroll_bar`].
 
+mod fit;
 mod frame;
 mod nav;
 pub mod scroll_bar;
 mod second_press;
 
+pub(crate) use fit::{cut_to, line_px};
 pub use frame::{FOAM_DEPTH, FRAME_PX, Framed, ShoreCard, dress_cards, tide_line};
 pub use nav::{
     Buttons, CLOSERS, NAV_KEYS, NUMBER_KEYS, Nav, enter, left_right, nav, number_pressed,

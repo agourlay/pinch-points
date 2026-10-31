@@ -155,8 +155,8 @@ impl OnlineSession {
             return;
         }
         let frame = self.session.resume();
-        self.resume_echo = RESUME_ECHOES;
-        self.clock_apart = None;
+        self.pace.resume_echo = RESUME_ECHOES;
+        self.pace.clock_apart = None;
         let round = self.round_tag();
         self.transport.send(NetMsg::Resume { round, frame });
     }
@@ -211,7 +211,7 @@ impl OnlineSession {
         // held back by a nudge: the clock readings taken across it are of
         // the table waiting, not of this peer's pace (`keep_time`).
         if !committed && !nudging {
-            self.clock_apart = None;
+            self.pace.clock_apart = None;
         }
         for (msg, from) in self.transport.recv_all() {
             // Whatever it was, that peer is still there, which is all
@@ -320,11 +320,11 @@ impl OnlineSession {
     /// `clocks`: whether the host's clock readings may ride along, which
     /// they may once its own commits are running ([`Self::listen`]).
     fn send_this_tick(&mut self, clocks: bool) {
-        self.round_ticks = self.round_ticks.saturating_add(1);
+        self.pace.round_ticks = self.pace.round_ticks.saturating_add(1);
         let (pause, resume) = match self.session.pause_frame() {
             Some(frame) => (Some(frame), None),
-            None if self.resume_echo > 0 => {
-                self.resume_echo -= 1;
+            None if self.pace.resume_echo > 0 => {
+                self.pace.resume_echo -= 1;
                 (None, Some(self.resumed_frame()))
             }
             None => (None, None),
@@ -342,7 +342,7 @@ impl OnlineSession {
             let quiet = self.watching()
                 && word.pause.is_none()
                 && word.resume.is_none()
-                && !self.round_ticks.is_multiple_of(WATCHER_WORD_EVERY);
+                && !self.pace.round_ticks.is_multiple_of(WATCHER_WORD_EVERY);
             if !quiet {
                 let batch = Batch {
                     inputs: self.own_inputs_unheard(),
@@ -352,10 +352,10 @@ impl OnlineSession {
             }
             return;
         }
-        if self.round_ticks.is_multiple_of(START_AGAIN) {
+        if self.pace.round_ticks.is_multiple_of(START_AGAIN) {
             self.start_again();
         }
-        let clock_due = clocks && self.round_ticks.is_multiple_of(CLOCK_EVERY);
+        let clock_due = clocks && self.pace.round_ticks.is_multiple_of(CLOCK_EVERY);
         for peer in 0..self.transport.peer_count() {
             if !self.follows_the_round(peer) {
                 // The seats given up on go to everybody the socket has, in
@@ -387,7 +387,7 @@ impl OnlineSession {
     fn own_inputs_unheard(&self) -> Vec<crate::sim::InputMsg> {
         let mut from = [None; MAX_PLAYERS];
         if let Some(seat) = self.session.seat() {
-            let wanted = self.host_wants.map(|wants| wants[usize::from(seat)]);
+            let wanted = self.pace.host.wants.map(|wants| wants[usize::from(seat)]);
             from[usize::from(seat)] = self.session.resend_from(seat, wanted);
         }
         self.session.held_between(&from, u32::MAX)
@@ -397,7 +397,7 @@ impl OnlineSession {
     /// seat it plays, whose inputs are its own, for the frames before
     /// `until` (`Lockstep::owed`).
     pub(super) fn unheard_by(&self, peer: usize, until: u32) -> Vec<crate::sim::InputMsg> {
-        let wants = self.peers.get(peer).and_then(|row| row.wants);
+        let wants = self.peers.get(peer).and_then(|row| row.heard.wants);
         self.session.owed(wants, self.seat_of(peer), until)
     }
 
@@ -407,7 +407,7 @@ impl OnlineSession {
         let watchers_too = self.session.frame() < catch_up::FRAME_ZERO_REACH;
         for (peer, row) in self.peers.iter().enumerate() {
             let owed = match row.place {
-                Place::Seated(_) => row.newest.is_none(),
+                Place::Seated(_) => row.heard.newest.is_none(),
                 Place::Watching => watchers_too,
                 Place::LateWatching | Place::Queued => false,
             };
@@ -420,7 +420,7 @@ impl OnlineSession {
     /// Host: how far its own next commit runs past the newest of `peer`'s,
     /// for a player it has heard from.
     fn clock_for(&self, peer: usize) -> Option<i16> {
-        let newest = self.peers.get(peer)?.newest?;
+        let newest = self.peers.get(peer)?.heard.newest?;
         let gap = i64::from(self.session.next_commit()) - i64::from(newest);
         Some(gap.clamp(i16::MIN.into(), i16::MAX.into()) as i16)
     }
@@ -443,29 +443,29 @@ impl OnlineSession {
     /// and a reading across the stop is of the stop. The pending one is
     /// dropped with it, and so is the nudge it gave (`Lockstep::nudge`).
     fn keep_time(&mut self, gap: i16) {
-        let Some(newest) = self.host_newest else {
+        let Some(newest) = self.pace.host.newest else {
             return;
         };
         if self.watching() {
             return;
         }
         if self.session.paused() {
-            self.clock_apart = None;
+            self.pace.clock_apart = None;
             return;
         }
         let ours = i64::from(self.session.next_commit()) - i64::from(newest);
         let apart = ours - i64::from(gap);
         let slack = clock_slack(self.session.delay());
         let past = |apart: i64| apart.signum() * (apart.abs() - slack).max(0);
-        let (now, before) = (past(apart), self.clock_apart.map_or(0, past));
+        let (now, before) = (past(apart), self.pace.clock_apart.map_or(0, past));
         if now.signum() != 0 && now.signum() == before.signum() {
             let ahead = now.signum() * (now.abs().min(before.abs()) + 1) / 2;
             self.session
                 .nudge(ahead.clamp(-MOST_NUDGE, MOST_NUDGE) as i32);
             // The next reading was taken before this nudge landed.
-            self.clock_apart = None;
+            self.pace.clock_apart = None;
         } else {
-            self.clock_apart = Some(apart);
+            self.pace.clock_apart = Some(apart);
         }
     }
 
@@ -738,16 +738,9 @@ impl OnlineSession {
         let wants = self.wants_of_this_round(wants);
         if host {
             // Its inputs are also what say its `Start` got there.
-            let row = self.peers.row(from);
-            row.newest = row.newest.max(newest);
-            if wants.is_some() {
-                row.wants = wants;
-            }
+            self.peers.row(from).heard.take(newest, wants);
         } else {
-            self.host_newest = self.host_newest.max(newest);
-            if wants.is_some() {
-                self.host_wants = wants;
-            }
+            self.pace.host.take(newest, wants);
         }
         if let Some(frame) = pause {
             self.take_pause(host, from, frame);
@@ -775,8 +768,8 @@ impl OnlineSession {
         // every peer answer every other peer's echoes, for the rest of the
         // match.
         if let Some(frame) = self.session.receive_resume(frame) {
-            self.resume_echo = RESUME_ECHOES;
-            self.clock_apart = None;
+            self.pace.resume_echo = RESUME_ECHOES;
+            self.pace.clock_apart = None;
             if host {
                 let round = self.round_tag();
                 relay(&self.transport, from, NetMsg::Resume { round, frame });
@@ -973,6 +966,83 @@ mod tests {
         );
         host.hashes.compare();
         assert_eq!(host.desync_at(), Some(30), "and a player's still does");
+    }
+
+    /// The room's word, the crowd's tally and the count of calls are the
+    /// host's to say: a peer sending any of them to the host is not
+    /// believed, or a joiner could forge a line into the host's feed or a
+    /// count onto its results card. A spoke takes each from the host. A
+    /// line said mid-round reaches the feed on both, the host's under the
+    /// name the peer greeted with.
+    #[test]
+    fn only_the_host_says_the_rooms_word_and_any_peer_can_chat() {
+        use crate::app::spectators::{Crowd, Picks};
+        use crate::transport::{Notice, wire_chat, wire_name};
+        let words = || {
+            [
+                NetMsg::Notice(Notice::SentAway {
+                    name: wire_name("Anna"),
+                }),
+                NetMsg::CrowdPicks {
+                    picks: [0, 3, 0, 0, 0, 0],
+                    open: 5,
+                },
+                NetMsg::SpectatorTally {
+                    watching: 4,
+                    open: 3,
+                    wait: 2,
+                },
+                NetMsg::Chat {
+                    name: wire_name("Bo"),
+                    text: wire_chat("go P2"),
+                },
+            ]
+        };
+        let session = |seat| {
+            OnlineSession::new(
+                UdpTransport::host(0).expect("socket"),
+                Lockstep::new(seat, vec![0, 1], crate::sim::DEFAULT_DELAY),
+                2,
+                MatchTerms::default(),
+            )
+        };
+
+        let mut host = session(0);
+        host.remember_peer_name(0, "Dee");
+        for word in words() {
+            host.hear_mid_round(true, 0, word);
+        }
+        assert_eq!(host.notices, [], "a forged notice");
+        assert_eq!(host.stands.winner.picks, Picks::default(), "forged calls");
+        assert_eq!(host.stands.tide.crowd, Crowd::default(), "a forged tally");
+        assert_eq!(host.heard, [("Dee".to_string(), "go P2".to_string())]);
+
+        let mut spoke = session(1);
+        for word in words() {
+            spoke.hear_mid_round(false, 0, word);
+        }
+        assert_eq!(
+            spoke.notices,
+            [Notice::SentAway {
+                name: wire_name("Anna")
+            }]
+        );
+        assert_eq!(
+            spoke.stands.winner.picks,
+            Picks {
+                counts: [0, 3, 0, 0, 0, 0],
+                open: 5
+            }
+        );
+        assert_eq!(
+            spoke.stands.tide.crowd,
+            Crowd {
+                watching: 4,
+                open: 3,
+                wait: 2
+            }
+        );
+        assert_eq!(spoke.heard, [("Bo".to_string(), "go P2".to_string())]);
     }
 
     /// A bot turned away mid-round for being a bot walks out told the
@@ -1502,7 +1572,7 @@ mod tests {
         joiner.take_inputs(false, 0, last.clone());
         assert_eq!(joiner.stale_rounds, 1, "dropped, and counted");
         assert!(joiner.abandoned.is_empty(), "the last round's notice");
-        assert_eq!(joiner.host_newest, None, "the last round's inputs");
+        assert_eq!(joiner.pace.host.newest, None, "the last round's inputs");
         // This round's, naming a frame it cannot have reached, or a seat it
         // does not play.
         for abandoned in [(2, 5000), (4, 20)] {
@@ -1519,7 +1589,7 @@ mod tests {
         }
         joiner.take_inputs(false, 0, Batch { round, ..last });
         assert_eq!(joiner.abandoned, vec![(2, 20)], "this round's is taken");
-        assert_eq!(joiner.host_newest, Some(10));
+        assert_eq!(joiner.pace.host.newest, Some(10));
     }
 
     /// The peers compare a hash one frame in [`HASH_INTERVAL`], and the

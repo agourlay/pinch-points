@@ -795,6 +795,40 @@ mod tests {
         );
     }
 
+    /// Online, each act's outcome is read off the frame it was committed
+    /// for, the board before it and the board after: a place on a rival's
+    /// post is refused, and a place on free sand lands. The bot is told
+    /// either way, or a refused arrow reads to it as one that stands.
+    #[test]
+    fn an_online_bot_is_told_what_became_of_its_act() {
+        let (mut bots, _bot, mut board) = a_round_with_a_bot(true);
+        let dir = crate::sim::Direction::Left;
+        let (x, y) = (CASTLE.0 - 1, CASTLE.1);
+        // A tick before: the board after the frame cannot say the rival's
+        // post went down on it, so only the board before refuses.
+        assert!(board.place_signpost(0, x, y, dir));
+        board.tick_idle();
+        let round = bots.round.as_mut().expect("a round");
+        for (frame, (x, y), told) in [
+            (1, (x, y), Outcome::Refused(Refusal::RivalPost)),
+            (2, (x, y - 1), Outcome::Accepted),
+        ] {
+            let action = PlayerAction::Place { x, y, dir };
+            round.committed(frame, 1, Some(Act::Place { x, y, dir }), action);
+            assert_eq!(board.ticks(), u64::from(frame));
+            round.before_frame(frame, &board);
+            let mut actions = [PlayerAction::None; MAX_PLAYERS];
+            actions[1] = action;
+            board.tick(&actions);
+            round.after_frame(frame, &board);
+            assert_eq!(
+                round.hand(1).expect("seat 1").last,
+                Some(("place", told)),
+                "frame {frame}"
+            );
+        }
+    }
+
     /// A placement the board refused before the tick, on a tile an earlier
     /// seat freed during it, stands: the bot is told it was accepted.
     #[test]

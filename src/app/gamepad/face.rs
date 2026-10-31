@@ -8,7 +8,7 @@
 use super::scheme::{Face, LastDevice, PadFamily, PickList, Picks, TextBox};
 use crate::app::bot_seats::BotSeats;
 use crate::app::editor::EditorState;
-use crate::app::lobby::{LobbyState, Standing};
+use crate::app::lobby::{HostCard, LobbyState, Standing};
 use crate::app::match_setup::MatchMenu;
 use crate::app::net::Online;
 use crate::app::pause::PauseMenu;
@@ -133,18 +133,15 @@ impl FaceSources<'_, '_> {
                 door().unwrap_or_else(|| lobby_face(&modes.lobby, &modes.bots, tr, map_pick()))
             }
             Screen::Editor => {
-                if modes.editor.is_naming() {
-                    Face::Typing(TextBox::Cancels)
-                } else if matches!(modes.editor.mode, crate::app::editor::Mode::Levels(_)) {
-                    Face::LevelList
-                } else if modes.editor.card().is_some() {
-                    Face::EditorCard
-                } else if let Some(test) = modes.editor.test() {
-                    Face::Playtest(test.phase)
-                } else {
-                    Face::Editor {
+                use crate::app::editor::Mode;
+                match &modes.editor.mode {
+                    Mode::Naming { .. } => Face::Typing(TextBox::Cancels),
+                    Mode::Levels(_) => Face::LevelList,
+                    Mode::Card(_) => Face::EditorCard,
+                    Mode::Testing(test) => Face::Playtest(test.phase),
+                    Mode::Painting | Mode::JustClosed => Face::Editor {
                         layer: editor_layer(seats, pads, settings),
-                    }
+                    },
                 }
             }
             Screen::Puzzle if modes.pause.is_open() => Face::Paused,
@@ -167,9 +164,7 @@ impl FaceSources<'_, '_> {
             // a pad's A included, until it is said or dropped.
             Screen::Versus if modes.pause.is_open() && !board.chat.open() => Face::Paused,
             // The host's map page for the next round of a series.
-            Screen::Versus if crate::app::next_map::page_up(&modes.match_menu) => {
-                Face::NextMap { pick: map_pick() }
-            }
+            Screen::Versus if modes.match_menu.host_page_up() => Face::NextMap { pick: map_pick() },
             Screen::Versus => versus_face(board, *modes.vphase.get(), tr),
         }
     }
@@ -224,23 +219,21 @@ pub fn lobby_face(
             hosts: !lobby.hosts.is_empty(),
             watching: *watching,
         },
-        Standing::Hosting(hosted) if hosted.picking.is_some() => Face::HostMap { pick: map_pick },
-        Standing::Hosting(hosted) => match hosted.kicking {
-            Some(_) => Face::Kicking {
+        Standing::Hosting(hosted) => match hosted.card() {
+            HostCard::Picking => Face::HostMap { pick: map_pick },
+            HostCard::Kicking(_) => Face::Kicking {
                 picks: Picks {
                     list: PickList::Kick,
                     rows: crate::app::lobby::kick_rows(hosted, bots, tr),
                 },
                 pages: crate::app::lobby::kick_pages(&hosted.peers) > 1,
             },
-            None => match hosted.partnering {
-                true => Face::Card(Picks {
-                    list: PickList::Partners,
-                    rows: crate::app::lobby::partner_rows(lobby, tr),
-                }),
-                false => Face::Hosting {
-                    partners: crate::app::lobby::partners_open(lobby),
-                },
+            HostCard::Partnering => Face::Card(Picks {
+                list: PickList::Partners,
+                rows: crate::app::lobby::partner_rows(lobby, tr),
+            }),
+            HostCard::Table => Face::Hosting {
+                partners: crate::app::lobby::partners_open(lobby),
             },
         },
         Standing::Joining(_) => Face::AtBeach,

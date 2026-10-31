@@ -767,12 +767,16 @@ fn random_draws_every_round_among_the_maps_that_seat_the_table() {
         let mut drawn = std::collections::BTreeSet::new();
         let mut config = MatchConfig {
             seats,
-            random: true,
+            pick: Pick::Random,
             ..MatchConfig::default()
         };
         for roll in 0..64u64 {
             map_for_next_round(&mut config, &shelf, roll);
-            assert!(config.random, "still random for the round after");
+            assert_eq!(
+                config.pick,
+                Pick::Random,
+                "still random for the round after"
+            );
             let played = local_board(&config, &shelf, roll);
             match config.map {
                 MapChoice::Custom => {
@@ -824,7 +828,7 @@ fn start_match_draws_random_and_keeps_the_previewed_seed() {
     let shelf = CustomBeaches::default();
     let mut random = MatchConfig {
         seats: 3,
-        random: true,
+        pick: Pick::Random,
         map: MapChoice::GenXl,
         ..MatchConfig::default()
     };
@@ -913,7 +917,7 @@ fn a_doorway_card_backed_out_of_leaves_the_table_as_it_was() {
     let mut table = MatchConfig {
         seats: 3,
         map: MapChoice::Duel,
-        random: true,
+        pick: Pick::Random,
         ..MatchConfig::default()
     };
     table.controllers[2] = SeatController::Bot;
@@ -1127,7 +1131,10 @@ fn the_map_follows_the_pick_and_says_when_it_cannot() {
         MapChoice::GenLarge,
         "the closest that seats five"
     );
-    assert_eq!(config(&app).pick, Some(Card::Map(MapChoice::GenSmall)));
+    assert_eq!(
+        config(&app).pick,
+        Pick::Moved(Card::Map(MapChoice::GenSmall))
+    );
     let said = note(&app);
     assert!(
         said.contains(EN.setup_map_names[MapChoice::GenSmall.index()])
@@ -1137,7 +1144,7 @@ fn the_map_follows_the_pick_and_says_when_it_cannot() {
     );
     tap(&mut app, KeyCode::KeyA);
     assert_eq!(config(&app).map, MapChoice::GenSmall, "the pick is back");
-    assert_eq!(config(&app).pick, None);
+    assert_eq!(config(&app).pick, Pick::InForce);
     assert_eq!(
         moved_note(&EN, config(&app), &CustomBeaches::default()),
         None
@@ -1150,7 +1157,10 @@ fn the_map_follows_the_pick_and_says_when_it_cannot() {
         ..MatchConfig::default()
     };
     reseat(&mut large, 2, &CustomBeaches::default());
-    assert_eq!((large.map, large.pick), (MapChoice::GenLarge, None));
+    assert_eq!(
+        (large.map, large.pick),
+        (MapChoice::GenLarge, Pick::InForce)
+    );
 
     // A handmade beach for two: moved off at three, back at two, and the
     // note names it.
@@ -1164,7 +1174,7 @@ fn the_map_follows_the_pick_and_says_when_it_cannot() {
     reseat(&mut config, 2, &pair);
     assert_eq!(
         (config.map, config.custom, config.pick),
-        (MapChoice::Custom, 0, None)
+        (MapChoice::Custom, 0, Pick::InForce)
     );
 }
 
@@ -1754,7 +1764,7 @@ fn the_make_one_card_explains_and_picks_nothing() {
     tap(&mut app, KeyCode::KeyD);
     assert_eq!(menu(&app).slot, make_one);
     assert_eq!(config(&app).map, MapChoice::GenOcean, "nothing picked");
-    assert!(!config(&app).random);
+    assert_eq!(config(&app).pick, Pick::InForce);
     tap(&mut app, KeyCode::Enter);
     assert_eq!(menu(&app).step, Step::Map, "Enter did not go on");
     assert_eq!(config(&app).map, MapChoice::GenOcean);

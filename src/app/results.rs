@@ -964,6 +964,109 @@ mod tests {
     use super::*;
     use crate::app::i18n::EN;
 
+    /// The crowd's lines say what the host counted: the calls listed most
+    /// called first, and a spectator's own call, right in gold with its
+    /// running tally or wrong in the colour of the seat it called. An
+    /// offline round has no crowd.
+    #[test]
+    fn the_crowds_lines_say_the_calls_and_how_ones_own_went() {
+        use crate::app::spectators::{Calls, Picks};
+        let settings = GameSettings::default();
+        let names = crate::app::SeatNames::default();
+        assert!(crowd_rows(&settings, &names, &Online::default()).is_empty());
+        let mut session = crate::app::net::OnlineSession::new(
+            crate::transport::UdpTransport::host(0).expect("socket"),
+            crate::sim::Lockstep::observer(vec![0, 1, 2, 3], crate::sim::DEFAULT_DELAY),
+            4,
+            crate::transport::MatchTerms::default(),
+        );
+        session.stands.winner.picks = Picks {
+            counts: [0, 2, 0, 1, 0, 0],
+            open: 0,
+        };
+        session.stands.winner.calls = Calls { right: 1, made: 3 };
+        session.stands.winner.last_call = Some((1, false));
+        let mut online = Online(Some(session));
+        let rows = crowd_rows(&settings, &names, &online);
+        let texts: Vec<&str> = rows.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                fill(EN.crowd_picked, &[("l", "P2 ×2 · P4 ×1")]),
+                fill(EN.call_wrong, &[("p", "P2"), ("a", "1"), ("b", "3")]),
+            ]
+        );
+        assert_eq!(rows[1].1, palette::seat_text(1));
+
+        let session = online.0.as_mut().expect("a session");
+        session.stands.winner.picks = Picks::default();
+        session.stands.winner.last_call = Some((1, true));
+        let rows = crowd_rows(&settings, &names, &online);
+        assert_eq!(
+            rows,
+            [(
+                fill(EN.call_right, &[("a", "1"), ("b", "3")]),
+                palette::GOLD
+            )]
+        );
+    }
+
+    /// The awards are said for a round the tally saw whole at a table of
+    /// two or more, and for nothing else: one picked up part way would
+    /// credit only the part it saw.
+    #[test]
+    fn awards_are_said_only_for_a_round_seen_whole() {
+        use crate::app::awards::{Reading, RoundTally};
+        use crate::sim::{BotLevel, PlayerAction, bot_action, classic_arena};
+        let settings = GameSettings::default();
+        let names = crate::app::SeatNames::default();
+        let play = |from: u64| {
+            let mut board = classic_arena(false, 2);
+            let mut tally = RoundTally::default();
+            for _ in 0..600 {
+                let actions: [PlayerAction; MAX_PLAYERS] =
+                    std::array::from_fn(|seat| bot_action(&board, seat as u8, BotLevel::Hard));
+                let before = Reading::of(&board);
+                board.tick(&actions);
+                if board.ticks() > from {
+                    tally.observe(before, &board, &actions);
+                }
+            }
+            (board, tally)
+        };
+        let (board, tally) = play(0);
+        let said = award_rows(&settings, &names, &tally, &board, 2, TeamMode::Solo);
+        assert!(!said.is_empty(), "a round seen whole earns something");
+        assert!(award_rows(&settings, &names, &tally, &board, 1, TeamMode::Solo).is_empty());
+        let (board, tally) = play(1);
+        assert!(
+            award_rows(&settings, &names, &tally, &board, 2, TeamMode::Solo).is_empty(),
+            "a round seen from its second tick"
+        );
+    }
+
+    /// A series champion in teams is named as its team and drawn in its
+    /// lowest seat's colour; one alone is its own seat.
+    #[test]
+    fn a_champion_team_is_named_as_the_team() {
+        use crate::app::tournament::{Champion, champion_name};
+        let settings = GameSettings::default();
+        let names = crate::app::SeatNames::default();
+        let named = |mode, champion, seats| champion_name(&settings, &names, mode, champion, seats);
+        assert_eq!(
+            named(TeamMode::Pairs, Champion::Team(1), 4),
+            ("P3+P4".to_string(), 2)
+        );
+        assert_eq!(
+            named(TeamMode::Trios, Champion::Team(1), 6),
+            ("P2+P4+P6".to_string(), 1)
+        );
+        assert_eq!(
+            named(TeamMode::Solo, Champion::Seat(3), 4),
+            ("P4".to_string(), 3)
+        );
+    }
+
     /// The beach is made safe on the Tide Pool's last stage, not on the
     /// co-op shelf's last, which is a ladder of its own.
     #[test]

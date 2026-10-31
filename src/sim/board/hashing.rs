@@ -53,7 +53,6 @@ impl Board {
                     teams: _,
                 },
             lure: _,
-            lure_cooldown: _,
             crabs_banked: _,
             golden_banked: _,
             golden_call: _,
@@ -94,12 +93,10 @@ impl Board {
                     // hash_round, at its tail
                     in_air: _,
                 },
-            // Outside the fingerprint: why a molt started no lure is
-            // written for the render layer and never read back by the sim.
-            refused_lures: _,
-            // Outside the fingerprint: which crabs walked home is written
-            // for the render layer and never read back by the sim.
-            walked_home: _,
+            // Outside the fingerprint: why a molt started no lure and
+            // which crabs walked home are written for the render layer and
+            // never read back by the sim.
+            bank_log: _,
             // Outside the fingerprint: who steered a gull is for the feed
             // and the awards, and never read by the rules.
             steering: _,
@@ -207,7 +204,10 @@ impl Board {
                 h.u32(len);
             }
         }
-        match self.lure {
+        // The running lure here and the quiet spell further down, where
+        // each was hashed when they were two fields: the two projections
+        // of every state the board can hold.
+        match self.lure.running() {
             None => h.u8(0),
             Some((p, t)) => {
                 h.u8(1);
@@ -276,7 +276,7 @@ impl Board {
         // at the tail or mid-stream as several rules since have been, is a
         // different hash, and ships with a protocol bump so builds that
         // hash differently never sit at one table.
-        h.u32(self.lure_cooldown);
+        h.u32(self.lure.cooldown());
         h.u32(self.tide.cooldown);
         // Crab Monopoly's crabs in the air: live state that decides whose
         // score moves on which tick.
@@ -467,7 +467,7 @@ mod tests {
         let armed = |cooldown: u32| {
             let mut board = Board::new(6, 5, 1);
             board.set_tile(3, 2, TileKind::Castle(0));
-            board.lure_cooldown = cooldown;
+            board.lure = super::Lure::quiet(cooldown);
             board.spawn_crab(2, 2, Direction::Right, Handedness::Right, CrabKind::Molting);
             board
         };

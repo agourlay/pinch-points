@@ -83,13 +83,13 @@ pub(super) fn keep_the_pick(
     fresh: &CustomBeaches,
 ) -> Option<String> {
     let file = |beach: &Beach| beach.level.filing.as_ref().map(|filing| filing.key.clone());
-    if let Some(Card::Shelf(shelf)) = config.pick {
+    if let Pick::Moved(Card::Shelf(shelf)) = config.pick {
         let found = old
             .0
             .get(shelf)
             .and_then(file)
             .and_then(|key| fresh.0.iter().position(|b| file(b).as_ref() == Some(&key)));
-        config.pick = found.map(Card::Shelf);
+        config.pick = found.map_or(Pick::InForce, |shelf| Pick::Moved(Card::Shelf(shelf)));
     }
     if config.map != MapChoice::Custom {
         return None;

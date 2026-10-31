@@ -251,12 +251,8 @@ impl OnlineSession {
             home,
             next_round: _,
             series_standing: _,
-            resume_echo: _,
             ping_in: _,
-            round_ticks: _,
-            host_newest: _,
-            host_wants: _,
-            clock_apart: _,
+            pace: _,
             rounds_dealt,
             crowned: _,
             catch_up: _,
@@ -318,6 +314,37 @@ mod tests {
             }
         }
         heard
+    }
+
+    /// The beacon of a round in progress counts the chairs spoken for,
+    /// the players in line for the next round with the ones at the table:
+    /// one that left the line out let a sixth player in to be dealt a
+    /// watching place with no notice.
+    #[test]
+    fn the_running_beacon_counts_the_line_for_the_next_round() {
+        use crate::transport::Air;
+        let mut discovery = Discovery::bind_on(&[0]).expect("a port");
+        let listening = discovery.port().expect("bound");
+        let mut session = hosting_session(0);
+        let port = session.transport.local_addr().expect("addr").port();
+        session.stay_on_air(Announcer::on(0x5EA7, Air::loopback(&[listening])).expect("air"));
+        // Seats 0 and 1 play, and somebody waits in line for a chair.
+        session.peers.reach(1);
+        assert!(session.peers.iter().all(|peer| peer.wants_a_chair()));
+        session.keep_announcing(1.0);
+        let heard = heard_for(&mut discovery, port);
+        let Some(Beacon::Here {
+            taken,
+            running,
+            full,
+            ..
+        }) = heard.first()
+        else {
+            panic!("no beacon: {heard:?}");
+        };
+        assert!(*running);
+        assert_eq!(*taken, 3, "the two at the table and the one in line");
+        assert!(!full);
     }
 
     /// The goodbye still fires on every ordinary way out: quitting to the

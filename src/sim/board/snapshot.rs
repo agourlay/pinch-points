@@ -106,11 +106,14 @@ impl Board {
         if self.tide.enabled {
             let _ = writeln!(out, "events: on");
         }
-        if let Some((owner, ticks)) = self.lure {
-            let _ = writeln!(out, "lure: {owner} {ticks}");
-        }
-        if self.lure_cooldown > 0 {
-            let _ = writeln!(out, "cooldown: {}", self.lure_cooldown);
+        match self.lure {
+            Lure::Ready => {}
+            Lure::Running { owner, left } => {
+                let _ = writeln!(out, "lure: {owner} {left}");
+            }
+            Lure::Quiet(ticks) => {
+                let _ = writeln!(out, "cooldown: {ticks}");
+            }
         }
         if self.tide.cooldown > 0 {
             let _ = writeln!(out, "event_cooldown: {}", self.tide.cooldown);
@@ -727,8 +730,13 @@ impl Fields {
             gulls: self.gulls,
             next_gull_id,
             incoming: self.incoming,
-            lure: self.lure,
-            lure_cooldown: self.lure_cooldown,
+            // A lure running beside a quiet spell (text an older build
+            // wrote after a forced lure, or a hand edit) is the lure: the
+            // spell was the last one's, and this one ends in its own.
+            lure: match self.lure {
+                Some((owner, left)) => Lure::Running { owner, left },
+                None => Lure::quiet(self.lure_cooldown),
+            },
             crabs_banked,
             golden_banked,
             golden_call,
@@ -754,8 +762,7 @@ impl Fields {
                 landed: Vec::new(),
             },
             // News for its own frame, like the landings above.
-            refused_lures: Vec::new(),
-            walked_home: Vec::new(),
+            bank_log: BankLog::default(),
             hands: self.hands,
             steering: self.steering,
         })
@@ -1058,9 +1065,11 @@ mod tests {
         board.next_gull_id = 3;
         board.crabs_banked = 12;
         board.golden_banked = 2;
-        board.lure = Some((1, 145));
+        board.lure = Lure::Running {
+            owner: 1,
+            left: 145,
+        };
         board.hands[1] = Some((6, 300));
-        board.lure_cooldown = 60;
         board.tide.cooldown = 210;
         board.tide.mania = Some((Mania::Gull, 88));
         board.tide.tempo = Some((Tempo::Slow, 44));
@@ -1135,7 +1144,6 @@ mod tests {
         // rather than the hash matching because both sides dropped them.
         for expected in [
             "lure: 1 145",
-            "cooldown: 60",
             "mania: gull 88",
             "tempo: slow 44",
             "last_event: 6 3000",
@@ -1276,6 +1284,37 @@ mod tests {
                 "dropping {line:?} should not still parse"
             );
         }
+    }
+
+    /// The quiet spell after a lure, which [`awkward_board`] cannot hold
+    /// beside its running lure, comes back from its own line. And a text
+    /// with both (an older build wrote one after a forced lure) reads as
+    /// the running lure: its spell was the last one's, and the lure ends
+    /// in a fresh one.
+    #[test]
+    fn the_quiet_spell_survives_a_snapshot_and_yields_to_a_lure() {
+        let mut board = awkward_board();
+        board.lure = Lure::Quiet(60);
+        let text = board.to_snapshot();
+        assert!(text.lines().any(|line| line == "cooldown: 60"), "{text}");
+        assert!(
+            !text.lines().any(|line| line.starts_with("lure:")),
+            "{text}"
+        );
+        let back = Board::parse_snapshot(&text).expect("its own output");
+        assert_eq!(back.lure, Lure::Quiet(60));
+        assert_eq!(back.state_hash(), board.state_hash());
+
+        let both = format!("{}\ncooldown: 60", awkward_board().to_snapshot());
+        let back = Board::parse_snapshot(&both).expect("a lure and a spell");
+        assert_eq!(
+            back.lure,
+            Lure::Running {
+                owner: 1,
+                left: 145
+            }
+        );
+        assert_eq!(back.to_snapshot(), awkward_board().to_snapshot());
     }
 
     /// Replace the value of `key` in a snapshot, leaving the rest alone.

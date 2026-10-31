@@ -441,4 +441,69 @@ mod tests {
         assert!(!fresh_press(true, false, false), "let go");
         assert!(!fresh_press(false, false, false), "at rest");
     }
+
+    /// RB held on a pad clears for the seat that pad drives, and no other:
+    /// two pads at a table of two, each on its own cursor. Nobody claimed
+    /// a seat, so the pads fill P2 up and P1 last (`Lineup::pads`): the
+    /// first plugged in plays P2.
+    #[test]
+    fn a_held_clear_is_the_pads_own_seats() {
+        use crate::app::{PendingActions, PlacementDenied};
+        use crate::sim::{Direction, MAX_PLAYERS, PlayerAction};
+        let mut board = crate::sim::classic_arena(false, 2);
+        let tiles: Vec<(u8, u8)> = board.tiles().map(|(x, y, _)| (x, y)).collect();
+        for seat in 0..2 {
+            let (x, y) = tiles
+                .iter()
+                .copied()
+                .find(|&(x, y)| board.can_place_signpost(seat, x, y))
+                .expect("a tile");
+            assert!(board.place_signpost(seat, x, y, Direction::Up));
+        }
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_state(crate::app::Screen::Versus);
+        app.insert_resource(Sim(board));
+        app.init_resource::<GameSettings>();
+        app.init_resource::<PadSeats>();
+        app.insert_resource(PadFace(Face::Round));
+        app.init_resource::<PendingActions>();
+        app.add_message::<PlacementDenied>();
+        app.world_mut().spawn(Cursor::seated(0));
+        app.world_mut().spawn(Cursor::seated(1));
+        let pads: Vec<Entity> = (0..2)
+            .map(|_| app.world_mut().spawn(Gamepad::default()).id())
+            .collect();
+        app.add_systems(Update, (seats::keep_pad_order, pad_versus_input).chain());
+        app.update();
+        let pending = |app: &App| app.world().resource::<PendingActions>().0;
+        assert_eq!(pending(&app), [PlayerAction::None; MAX_PLAYERS]);
+        // A frame with `pad`'s RB down: on the press, or held from before.
+        let frame = |app: &mut App, pad: Entity| {
+            app.insert_resource(PendingActions::default());
+            let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
+            gamepad.digital_mut().press(GamepadButton::RightTrigger);
+            app.update();
+            // A press is just pressed for the one frame it lands in.
+            let mut gamepad = app.world_mut().get_mut::<Gamepad>(pad).expect("pad");
+            gamepad.digital_mut().clear();
+            pending(app)
+        };
+        for (held, seat) in [(pads[0], 1), (pads[1], 0)] {
+            for when in ["pressed", "held"] {
+                let queued = frame(&mut app, held);
+                let at = app.world().resource::<Sim>().0.first_signpost_of(seat);
+                let (x, y) = at.expect("the seat's arrow");
+                for (other, action) in queued.iter().enumerate() {
+                    match other == usize::from(seat) {
+                        true => assert_eq!(*action, PlayerAction::Remove { x, y }, "{when}"),
+                        false => assert_eq!(*action, PlayerAction::None, "seat {other}"),
+                    }
+                }
+            }
+            let mut gamepad = app.world_mut().get_mut::<Gamepad>(held).expect("pad");
+            gamepad.digital_mut().release(GamepadButton::RightTrigger);
+            gamepad.digital_mut().clear();
+        }
+    }
 }

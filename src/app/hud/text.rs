@@ -7,7 +7,7 @@
 use crate::app::editor::EditorState;
 use crate::app::gamepad::scheme::{self, Face, LastDevice, Pad, PadPick};
 use crate::app::i18n::{Tr, fill};
-use crate::app::lobby::LobbyState;
+use crate::app::lobby::{HostCard, JoinStance, LobbyState};
 use crate::app::net::Online;
 use crate::app::seating::Viewer;
 use crate::app::settings::{GameSettings, KeyLegend};
@@ -106,43 +106,41 @@ pub(super) fn lobby_text(tr: &Tr, lobby: &LobbyState, map_pick: bool) -> HudText
             true => tr.lobby_watch_armed_none.to_string(),
             false => tr.lobby_watch_armed.to_string(),
         },
-        // A peer in line is not waiting for a launch either: the round it
-        // is queued for is the one already being played without it. And
-        // one that came to watch is not in line for a chair, so it is not
-        // told it will be sitting in one.
-        Standing::Joining(joined) if joined.queued.is_some() => match joined.watching {
-            true => tr.lobby_queued_watch_prompt.to_string(),
-            false => tr.lobby_queued_prompt.to_string(),
+        Standing::Joining(joined) => match joined.stance() {
+            // A peer in line is not waiting for a launch either: the round
+            // it is queued for is the one already being played without
+            // it. And one that came to watch is not in line for a chair,
+            // so it is not told it will be sitting in one.
+            JoinStance::QueuedWatching => tr.lobby_queued_watch_prompt.to_string(),
+            JoinStance::Queued { .. } => tr.lobby_queued_prompt.to_string(),
+            // "Aboard" is the joiner's word, and a spectator is not: the
+            // status line right above this one says "watching", and the
+            // two of them describing the same peer differently is the
+            // whole of what a player has to go on before the round starts.
+            JoinStance::Watching => tr.lobby_watching_prompt.to_string(),
+            // Past the last chair: the launch seats it watching, and the
+            // status line above says so.
+            JoinStance::NoChair => tr.lobby_no_chair_prompt.to_string(),
+            JoinStance::Aboard => tr.lobby_aboard_prompt.to_string(),
         },
-        // "Aboard" is the joiner's word, and a spectator is not: the
-        // status line right above this one says "watching", and the two
-        // of them describing the same peer differently is the whole of
-        // what a player has to go on before the round starts.
-        Standing::Joining(joined) if joined.watching => tr.lobby_watching_prompt.to_string(),
-        // Past the last chair: the launch seats it watching, and the
-        // status line above says so.
-        Standing::Joining(joined) if joined.no_chair => tr.lobby_no_chair_prompt.to_string(),
-        Standing::Joining(_) => tr.lobby_aboard_prompt.to_string(),
-        // The map page, once the host has started the match.
-        Standing::Hosting(hosted) if hosted.picking.is_some() => match map_pick {
-            true => tr.lobby_pick_prompt.to_string(),
-            false => tr.lobby_pick_prompt_no_pick.to_string(),
-        },
-        // Picking whom to ask to leave: the prompt says how.
-        Standing::Hosting(crate::app::lobby::Hosted {
-            peers,
-            kicking: Some(page),
-            ..
-        }) => crate::app::lobby::kick_prompt(tr, peers, *page),
-        // Picking partners: the seat numbers name whose partners change.
-        Standing::Hosting(hosted) if hosted.partnering => {
-            let seats = lobby.table.len() + usize::from(lobby.seated.ai);
-            fill(tr.lobby_partner_prompt, &[("n", &seats.to_string())])
-        }
-        // Under a team mode, P picks partners.
-        Standing::Hosting(_) => match crate::app::lobby::partners_open(lobby) {
-            true => format!("{} | {}", tr.lobby_broadcasting, tr.prompt_setup_partners),
-            false => tr.lobby_broadcasting.to_string(),
+        Standing::Hosting(hosted) => match hosted.card() {
+            // The map page, once the host has started the match.
+            HostCard::Picking => match map_pick {
+                true => tr.lobby_pick_prompt.to_string(),
+                false => tr.lobby_pick_prompt_no_pick.to_string(),
+            },
+            // Picking whom to ask to leave: the prompt says how.
+            HostCard::Kicking(page) => crate::app::lobby::kick_prompt(tr, &hosted.peers, page),
+            // Picking partners: the seat numbers name whose partners change.
+            HostCard::Partnering => {
+                let seats = lobby.table.len() + usize::from(lobby.seated.ai);
+                fill(tr.lobby_partner_prompt, &[("n", &seats.to_string())])
+            }
+            // Under a team mode, P picks partners.
+            HostCard::Table => match crate::app::lobby::partners_open(lobby) {
+                true => format!("{} | {}", tr.lobby_broadcasting, tr.prompt_setup_partners),
+                false => tr.lobby_broadcasting.to_string(),
+            },
         },
         Standing::Choosing { watching: false } if lobby.hosts.is_empty() => {
             tr.lobby_none_yet.to_string()
@@ -200,18 +198,17 @@ pub(super) fn editor_text(
         Some(test) => crate::app::editor::test_status(tr, test, board),
         None => editor.feedback.clone(),
     };
-    let prompt = match editor.test() {
+    use crate::app::editor::Mode;
+    let prompt = match &editor.mode {
         // F1's box has the keyboard: Enter keeps the name, Esc puts the
         // old one back (`type_a_name`).
-        _ if editor.is_naming() => typing_prompt(tr, true),
+        Mode::Naming { .. } => typing_prompt(tr, true),
         // "My levels" has the keys (`editor::editor_levels_input`).
-        _ if matches!(editor.mode, crate::app::editor::Mode::Levels(_)) => {
-            tr.ed_levels_keys.to_string()
-        }
+        Mode::Levels(_) => tr.ed_levels_keys.to_string(),
         // Any key puts a card away (`editor::editor_card_input`).
-        _ if editor.card().is_some() => tr.ed_card_close.to_string(),
-        Some(test) => crate::app::editor::test_prompt(tr, test, settings),
-        None => tr.ed_prompt.replacen("WASD", "{moves}", 1),
+        Mode::Card(_) => tr.ed_card_close.to_string(),
+        Mode::Testing(test) => crate::app::editor::test_prompt(tr, test, settings),
+        Mode::Painting | Mode::JustClosed => tr.ed_prompt.replacen("WASD", "{moves}", 1),
     };
     HudText::new(title, status, prompt)
 }
@@ -600,7 +597,7 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         // together, a series plays on, and the prompt must not promise a
         // door the key does not open.
         // The host's map page for the next round has the keys.
-        VersusPhase::Over if crate::app::next_map::page_up(r.match_menu) => match r.map_pick {
+        VersusPhase::Over if r.match_menu.host_page_up() => match r.map_pick {
             true => tr.series_pick_prompt.to_string(),
             false => tr.series_pick_prompt_no_pick.to_string(),
         },
@@ -757,12 +754,12 @@ pub(super) fn pad_prompt(r: &Readout) -> String {
             .get(r.pick.row(picks))
             .map(|(n, who)| format!("{n}. {who}")),
         Face::AtBeach => r.lobby.joined().map(|joined| {
-            match (joined.queued.is_some(), joined.watching, joined.no_chair) {
-                (true, true, _) => p.queued_watch,
-                (true, false, _) => p.queued,
-                (false, true, _) => p.watching,
-                (false, false, true) => p.no_chair,
-                (false, false, false) => p.joined,
+            match joined.stance() {
+                JoinStance::QueuedWatching => p.queued_watch,
+                JoinStance::Queued { .. } => p.queued,
+                JoinStance::Watching => p.watching,
+                JoinStance::NoChair => p.no_chair,
+                JoinStance::Aboard => p.joined,
             }
             .to_string()
         }),
@@ -1359,8 +1356,11 @@ mod tests {
             let mut lobby = LobbyState::default();
             let mut aboard =
                 Joined::returned(UdpTransport::host(0).expect("socket"), watching, 0, None);
-            aboard.queued = queued;
-            aboard.no_chair = no_chair;
+            aboard.berth = match (queued, no_chair) {
+                (Some(ahead), _) => crate::app::lobby::Berth::Queued { ahead },
+                (None, true) => crate::app::lobby::Berth::NoChair,
+                (None, false) => crate::app::lobby::Berth::Aboard,
+            };
             lobby.standing = Standing::Joining(aboard);
             lobby_text(&EN, &lobby, true).prompt
         };

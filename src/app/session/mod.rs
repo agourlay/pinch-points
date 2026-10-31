@@ -582,7 +582,7 @@ mod tests {
             bots: [None; MAX_PLAYERS],
             board: Board::new(4, 4, 1),
         };
-        let origin = RoundOrigin::Resumed(Box::new(resumed));
+        let origin = RoundOrigin::Resumed(&resumed);
         assert!(!origin.recorded());
         assert_eq!(
             origin.table(&config, &Board::new(4, 4, 1), 0).1,
@@ -1272,6 +1272,450 @@ mod tests {
             app.world().resource::<Sim>().0.ticks() > before,
             "and never started again"
         );
+    }
+
+    /// The world `load_versus` runs in: every resource it reads or writes,
+    /// a couch match of `seats` armed, scored as `team_mode` says.
+    fn versus_app(seats: u8, team_mode: teams::TeamMode) -> App {
+        use bevy::state::app::StatesPlugin;
+        let mut app = App::new();
+        app.add_plugins(StatesPlugin);
+        app.init_state::<VersusPhase>();
+        app.insert_resource(art::Art::blank());
+        app.insert_resource(Sim(Board::new(4, 4, 0)));
+        app.init_resource::<PendingActions>();
+        app.init_resource::<Paused>();
+        app.init_resource::<Seats>();
+        app.init_resource::<Controllers>();
+        app.init_resource::<Recorder>();
+        app.init_resource::<countdown::Countdown>();
+        app.init_resource::<countdown::FirstStep>();
+        app.init_resource::<sim_events::BoardGeneration>();
+        app.insert_resource(armed(seats, 0));
+        app.init_resource::<match_setup::CustomBeaches>();
+        app.init_resource::<Daily>();
+        app.init_resource::<Resuming>();
+        app.init_resource::<Playback>();
+        app.init_resource::<net::Online>();
+        app.init_resource::<rematch::LocalTable>();
+        app.init_resource::<tournament::Tournament>();
+        app.insert_resource(settings::GameSettings {
+            team_mode,
+            ..settings::GameSettings::default()
+        });
+        app.insert_resource(Sandbox(false));
+        app
+    }
+
+    fn load(app: &mut App) {
+        use bevy::ecs::system::RunSystemOnce;
+        app.world_mut()
+            .run_system_once(load_versus)
+            .expect("loaded");
+    }
+
+    /// The phase `load_versus` asked for: the count, or straight to play.
+    fn next_phase(app: &App) -> Option<VersusPhase> {
+        match app.world().resource::<NextState<VersusPhase>>() {
+            NextState::Pending(phase) | NextState::PendingIfDifferent(phase) => Some(*phase),
+            NextState::Unchanged => None,
+        }
+    }
+
+    /// `load_versus` is the one place a couch round learns its teams:
+    /// scoring reads them off the board alone (`teams::on_board`), so a
+    /// round set up here in pairs has to be stamped with them, the daily
+    /// is everyone for themselves, and a board that brought its own (a
+    /// pasted code) keeps them over this machine's setting.
+    /// `teams::tests::a_pasted_round_is_scored_by_its_own_board` stamps
+    /// its board by hand, so this is the guard on the stamp itself.
+    #[test]
+    fn a_round_is_stamped_with_its_teams_where_it_is_loaded() {
+        use teams::TeamMode;
+        // A couch match set up here in pairs plays in pairs, recorded and
+        // counted in.
+        let mut app = versus_app(4, TeamMode::Pairs);
+        load(&mut app);
+        assert_eq!(app.world().resource::<Seats>().0, 4);
+        assert_eq!(
+            app.world().resource::<Sim>().0.rules().teams,
+            TeamMode::Pairs.sides(),
+            "a couch round in pairs scored free for all"
+        );
+        assert!(app.world().resource::<Recorder>().0.is_some());
+        assert_eq!(next_phase(&app), Some(VersusPhase::Countdown));
+
+        // The daily is its own table, whatever the setting, and is played
+        // on the day it was loaded.
+        let mut app = versus_app(4, TeamMode::Pairs);
+        app.world_mut().resource_mut::<Daily>().active = true;
+        load(&mut app);
+        assert_eq!(app.world().resource::<Sim>().0.rules().teams, None);
+        assert_ne!(app.world().resource::<Daily>().day, 0, "the day kept");
+
+        // A pasted round in pairs, picked up here with the setting on
+        // solo: its own teams, no recording, and no count.
+        let mut app = versus_app(4, TeamMode::Solo);
+        let mut board = classic_arena(false, 4);
+        board.rules_mut().teams = TeamMode::Pairs.sides();
+        app.insert_resource(Resuming(Some(suspend::Suspended {
+            seats: 4,
+            bots: [None; MAX_PLAYERS],
+            board,
+        })));
+        load(&mut app);
+        assert_eq!(
+            app.world().resource::<Sim>().0.rules().teams,
+            TeamMode::Pairs.sides(),
+            "the pasted board's teams were overwritten"
+        );
+        assert!(app.world().resource::<Recorder>().0.is_none());
+        assert_eq!(next_phase(&app), Some(VersusPhase::Running));
+        assert!(app.world().resource::<Resuming>().0.is_none(), "taken");
+
+        // A recording being watched is not recorded again.
+        let mut app = versus_app(4, TeamMode::Solo);
+        app.insert_resource(Playback(Some((recorded(4), 0))));
+        load(&mut app);
+        assert!(app.world().resource::<Recorder>().0.is_none());
+        assert_eq!(app.world().resource::<Seats>().0, 4);
+    }
+
+    /// The far end of a round hosted by [`online_hosted`]: seat 1's peer,
+    /// a socket and a lockstep that say nothing until [`Joiner::answer`].
+    struct Joiner {
+        transport: crate::transport::UdpTransport,
+        session: crate::sim::Lockstep,
+    }
+
+    impl Joiner {
+        /// Take what the host sent, play every frame it can, commit up to
+        /// its lead and send its tail back, as a joiner's tick does.
+        fn answer(&mut self) {
+            use crate::transport::{Batch, NetMsg};
+            for (msg, _) in self.transport.recv_all() {
+                if let NetMsg::Inputs(batch) = msg {
+                    for input in batch.inputs {
+                        self.session.receive(input);
+                    }
+                }
+            }
+            while self.session.advance().is_some() {}
+            while self.session.commit_local(PlayerAction::None).is_some() {}
+            let tail = Batch {
+                inputs: self.session.recent_commits(),
+                ..Batch::default()
+            };
+            self.transport.send_batch(&tail, |_| true);
+        }
+    }
+
+    /// `advance_sim` hosting an online round at seat 0, on a beach whose
+    /// wheel is on, against a joiner at seat 1 that has greeted and then
+    /// says nothing. `tests/it/online.rs` drives a lockstep loop of its
+    /// own; this is the game's.
+    fn online_hosted() -> (App, Joiner) {
+        use crate::transport::{NetMsg, UdpTransport};
+        let mut app = sim_app();
+        let mut board = classic_arena(false, 2);
+        board.set_events_enabled(true);
+        app.insert_resource(Sim(board));
+        let session = online_at(2);
+        let port = session.transport.local_addr().expect("bound").port();
+        app.insert_resource(net::Online(Some(session)));
+        let transport = UdpTransport::join(("127.0.0.1", port)).expect("join");
+        transport.send(NetMsg::hello("Joiner"));
+        let joiner = Joiner {
+            transport,
+            session: crate::sim::Lockstep::new(1, vec![0, 1], crate::sim::DEFAULT_DELAY),
+        };
+        (app, joiner)
+    }
+
+    fn hosted(app: &mut App) -> &mut net::OnlineSession {
+        app.world_mut()
+            .resource_mut::<net::Online>()
+            .into_inner()
+            .0
+            .as_mut()
+            .expect("hosting")
+    }
+
+    /// Tick the host until `done`, the joiner answering each tick, over
+    /// a real socket that may take a moment.
+    fn tick_until(app: &mut App, joiner: &mut Joiner, done: impl Fn(&mut App) -> bool) {
+        for _ in 0..500 {
+            joiner.answer();
+            app.update();
+            if done(app) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("never got there");
+    }
+
+    /// Tick the host, its joiner silent, until it has committed as far
+    /// ahead as the lockstep lets it and waits on the table.
+    fn stall(app: &mut App) {
+        let mut last = None;
+        for _ in 0..100 {
+            app.update();
+            let next = hosted(app).session.next_commit();
+            if last == Some(next) {
+                return;
+            }
+            last = Some(next);
+        }
+        panic!("never reached the commit lead");
+    }
+
+    /// A press made while the table waits on a slow peer is kept and sent
+    /// when the round moves again, and one made during a pause is dropped:
+    /// at the commit lead the press was thrown away and the player's arrow
+    /// never landed, and a press queued under a pause fired on its resume.
+    #[test]
+    fn a_press_waits_out_a_stall_but_not_a_pause() {
+        let (mut app, _joiner) = online_hosted();
+        stall(&mut app);
+        let place = PlayerAction::Place {
+            x: 3,
+            y: 3,
+            dir: crate::sim::Direction::Up,
+        };
+        app.world_mut().resource_mut::<PendingActions>().0[0] = place;
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(
+            app.world().resource::<PendingActions>().0[0],
+            place,
+            "a press dropped at the commit lead"
+        );
+        hosted(&mut app).session.request_pause();
+        app.update();
+        assert_eq!(
+            app.world().resource::<PendingActions>().0[0],
+            PlayerAction::None,
+            "a press kept through a pause"
+        );
+    }
+
+    /// The crowd's call waits out a stalled frame rather than being lost
+    /// on it, leaves once it is committed, and the host tells the room it
+    /// ran when its frame is played.
+    #[test]
+    fn a_crowd_call_waits_for_its_frame_and_is_announced() {
+        use crate::sim::TideEvent;
+        use crate::transport::Notice;
+        let (mut app, mut joiner) = online_hosted();
+        stall(&mut app);
+        hosted(&mut app).stands.tide.pending_call = Some(TideEvent::FreshSand);
+        app.update();
+        assert_eq!(
+            hosted(&mut app).stands.tide.pending_call,
+            Some(TideEvent::FreshSand),
+            "a call lost on a stalled frame"
+        );
+        assert!(hosted(&mut app).notices.is_empty());
+        tick_until(&mut app, &mut joiner, |app| {
+            hosted(app).stands.tide.pending_call.is_none()
+        });
+        tick_until(&mut app, &mut joiner, |app| !hosted(app).notices.is_empty());
+        assert!(
+            matches!(hosted(&mut app).notices[..], [Notice::Called { .. }]),
+            "{:?}",
+            hosted(&mut app).notices
+        );
+        assert!(
+            app.world().resource::<Sim>().0.ticks() > u64::from(crate::sim::DEFAULT_DELAY),
+            "and played on"
+        );
+    }
+
+    /// A 4x3 puzzle stage with two arrows to spend, `goal` its goal.
+    fn stage(goal: &str) -> Level {
+        Level::parse(&format!(
+            "name: Retry\nposts: 2\nround: 2\ngoal: {goal}\nmap:\n\
+             +-+-+-+-+\n|. . . .|\n+ + + + +\n|. . . .|\n+ + + + +\n|. . . .|\n+-+-+-+-+\n"
+        ))
+        .expect("level")
+    }
+
+    /// The puzzle screen's reload with what it reads: the stage, the
+    /// attempt kept on it, and two pairs of hands.
+    fn puzzle_app() -> App {
+        use bevy::state::app::StatesPlugin;
+        let mut app = App::new();
+        app.add_plugins(StatesPlugin);
+        app.init_state::<Phase>();
+        app.insert_resource(art::Art::blank());
+        let level = stage("survive");
+        app.insert_resource(Sim(level.board()));
+        app.insert_resource(Campaign::tide_pool_of(vec![level]));
+        app.init_resource::<PendingActions>();
+        app.init_resource::<Paused>();
+        app.init_resource::<sim_events::BoardGeneration>();
+        app.init_resource::<achievements::PuzzleAttempt>();
+        app.init_resource::<achievements::StagesRun>();
+        app.init_resource::<progress::Progress>();
+        app.add_message::<LoadLevel>();
+        app.add_systems(
+            Update,
+            (achievements::track_puzzle_attempt, handle_load_level).chain(),
+        );
+        for seat in 0..2 {
+            app.world_mut()
+                .spawn((cursor::Cursor::seated(seat), Transform::default()));
+        }
+        app
+    }
+
+    fn reload(app: &mut App, keep_posts: bool) {
+        app.world_mut().write_message(LoadLevel { keep_posts });
+        app.update();
+    }
+
+    fn posts(app: &App) -> Vec<(u8, u8)> {
+        let board = &app.world().resource::<Sim>().0;
+        board
+            .tiles()
+            .filter(|&(x, y, _)| board.signpost_at(x, y).is_some())
+            .map(|(x, y, _)| (x, y))
+            .collect()
+    }
+
+    /// A retry puts back the arrows the run began with, a gull having
+    /// finished one off mid-run or not; with no run noted it keeps what
+    /// stands; a fresh load keeps nothing. And the hands are set down in
+    /// the middle, the second a tile to the right of the first.
+    #[test]
+    fn a_retry_gives_back_the_arrows_the_run_began_with() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = puzzle_app();
+        reload(&mut app, false);
+        let began = [(0, 0), (3, 2)];
+        {
+            let mut sim = app.world_mut().resource_mut::<Sim>();
+            for (x, y) in began {
+                assert!(sim.0.place_signpost(0, x, y, crate::sim::Direction::Right));
+            }
+        }
+        app.world_mut()
+            .run_system_once(achievements::note_posts_spent)
+            .expect("the run begins");
+        // A gull takes one of them mid-run.
+        assert!(
+            app.world_mut()
+                .resource_mut::<Sim>()
+                .0
+                .remove_signpost(0, 3, 2)
+        );
+        reload(&mut app, true);
+        assert_eq!(posts(&app), began, "a retry short of an arrow");
+        assert!(matches!(
+            app.world().resource::<NextState<Phase>>(),
+            NextState::Pending(Phase::Setup)
+        ));
+
+        reload(&mut app, false);
+        assert_eq!(posts(&app), [], "a fresh load kept arrows");
+
+        // No run noted on this stage: what stands is carried over.
+        app.insert_resource(achievements::PuzzleAttempt::default());
+        assert!(app.world_mut().resource_mut::<Sim>().0.place_signpost(
+            0,
+            1,
+            1,
+            crate::sim::Direction::Up
+        ));
+        reload(&mut app, true);
+        assert_eq!(posts(&app), [(1, 1)]);
+
+        let mut hands: Vec<(u8, u8, u8)> = app
+            .world_mut()
+            .query::<&cursor::Cursor>()
+            .iter(app.world())
+            .map(|cursor| (cursor.player, cursor.x, cursor.y))
+            .collect();
+        hands.sort_unstable();
+        assert_eq!(hands, [(0, 2, 1), (1, 3, 1)]);
+    }
+
+    /// The run is called as the stage's goal reads the board: a survive
+    /// stage that sees its round out is won, a bank stage that banks
+    /// nothing in it is lost, and one still going is left to run.
+    #[test]
+    fn a_run_is_won_or_lost_as_its_goal_reads() {
+        use bevy::ecs::system::RunSystemOnce;
+        use bevy::state::app::StatesPlugin;
+        for (goal, ticks, phase) in [
+            ("survive", 0, None),
+            ("survive", 2, Some(Phase::Won)),
+            ("bank 1", 2, Some(Phase::Lost)),
+        ] {
+            let mut app = App::new();
+            app.add_plugins(StatesPlugin);
+            app.init_state::<Phase>();
+            let level = stage(goal);
+            let mut board = level.board();
+            for _ in 0..ticks {
+                board.tick_idle();
+            }
+            app.insert_resource(Sim(board));
+            app.insert_resource(Campaign::tide_pool_of(vec![level]));
+            app.world_mut()
+                .run_system_once(check_outcome)
+                .expect("checked");
+            let next = match app.world().resource::<NextState<Phase>>() {
+                NextState::Pending(phase) => Some(*phase),
+                NextState::PendingIfDifferent(_) | NextState::Unchanged => None,
+            };
+            assert_eq!(next, phase, "{goal} after {ticks}");
+        }
+    }
+
+    /// The host writes down whom the results card crowns, by the table's
+    /// teams: a pairs round with scores 10, 0, 5 and 9 is the second
+    /// pair's, both of its seats, and the same scores alone are seat 0's.
+    #[test]
+    fn the_host_notes_the_crowned_by_the_tables_teams() {
+        use crate::transport::{MatchTerms, crowned_bits};
+        use bevy::ecs::system::RunSystemOnce;
+        for (mode, crowned) in [
+            (
+                teams::TeamMode::Pairs,
+                [false, false, true, true, false, false],
+            ),
+            (
+                teams::TeamMode::Solo,
+                [true, false, false, false, false, false],
+            ),
+        ] {
+            let mut app = App::new();
+            let mut board = classic_arena(false, 4);
+            for (seat, score) in [10, 0, 5, 9].into_iter().enumerate() {
+                board.set_score(seat as u8, score);
+            }
+            app.insert_resource(Sim(board));
+            app.insert_resource(Seats(4));
+            app.init_resource::<settings::GameSettings>();
+            app.init_resource::<Daily>();
+            let session = net::OnlineSession::new(
+                crate::transport::UdpTransport::host(0).expect("socket"),
+                crate::sim::Lockstep::new(0, vec![0, 1, 2, 3], crate::sim::DEFAULT_DELAY),
+                4,
+                MatchTerms {
+                    teams: mode.index() as u8,
+                    ..MatchTerms::default()
+                },
+            );
+            app.insert_resource(net::Online(Some(session)));
+            app.world_mut()
+                .run_system_once(note_the_crowned)
+                .expect("noted");
+            assert_eq!(hosted(&mut app).crowned, crowned_bits(&crowned), "{mode:?}");
+        }
     }
 
     /// A recording is fed one frame per tick, or as many as the transport

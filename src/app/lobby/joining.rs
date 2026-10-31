@@ -437,26 +437,36 @@ fn tell_of_a_chair(
     let Some(joined) = state.joined_mut() else {
         return;
     };
-    let was_queued = joined.queued.take().is_some();
-    // A watcher wants no chair.
-    let no_chair = no_chair && !joined.watching;
-    if joined.no_chair == no_chair && joined.host_picking == picking && !was_queued {
+    // A watcher wants no chair. And a lobby roster ends any line.
+    let berth = match no_chair && !joined.watching {
+        true => Berth::NoChair,
+        false => Berth::Aboard,
+    };
+    if joined.berth == berth && joined.host_picking == picking {
         return;
     }
-    joined.no_chair = no_chair;
+    joined.berth = berth;
     joined.host_picking = picking;
-    state.feedback = joiners_line(tr, joined).to_string();
+    state.feedback = joiners_line(tr, joined);
 }
 
 /// A joiner's status line at the lobby card, by what the host last said:
 /// the host picking the map, which the whole room waits on, else where
 /// this peer will be when the match starts.
-pub(super) fn joiners_line(tr: &'static crate::app::i18n::Tr, joined: &Joined) -> &'static str {
-    match (joined.host_picking, joined.watching, joined.no_chair) {
-        (true, _, _) => tr.lobby_host_picking,
-        (false, true, _) => tr.lobby_watching,
-        (false, false, true) => tr.lobby_no_chair,
-        (false, false, false) => tr.lobby_aboard,
+///
+/// A peer in line has its own line, from the `Queued` itself
+/// ([`queued_feedback`]), which ranks the host's map pick its own way.
+pub(super) fn joiners_line(tr: &'static crate::app::i18n::Tr, joined: &Joined) -> String {
+    let picking = joined.host_picking;
+    match (picking, joined.stance()) {
+        (_, JoinStance::QueuedWatching) => queued_feedback(tr, true, picking, 0),
+        (_, JoinStance::Queued { ahead }) => queued_feedback(tr, false, picking, ahead),
+        (true, JoinStance::Watching | JoinStance::NoChair | JoinStance::Aboard) => {
+            tr.lobby_host_picking.to_string()
+        }
+        (false, JoinStance::Watching) => tr.lobby_watching.to_string(),
+        (false, JoinStance::NoChair) => tr.lobby_no_chair.to_string(),
+        (false, JoinStance::Aboard) => tr.lobby_aboard.to_string(),
     }
 }
 
@@ -642,11 +652,6 @@ pub fn join_tick(
         host_terms,
     } = word;
     if let Some((table, kinds)) = table {
-        state.table_kinds = kinds
-            .iter()
-            .take(table.len())
-            .map(|&byte| crate::transport::kind_from_byte(byte))
-            .collect();
         // The seats the host dealt the places, from the terms beside them.
         if let Some(terms) = &host_terms {
             state.seated = Seated::from_terms(terms, table.len() as u8);
@@ -654,20 +659,24 @@ pub fn join_tick(
         // A place the host sent no name for reads as its seat, as on
         // every other screen.
         let seated = state.seated;
-        state.table = (0..table.len())
-            .map(|place| {
-                let name = table.get(place).map_or("", String::as_str);
-                match name.is_empty() {
+        // What holds each place rides beside its name, slot for slot.
+        state.table = table
+            .iter()
+            .zip(kinds)
+            .enumerate()
+            .map(|(place, (name, byte))| super::TablePlace {
+                name: match name.is_empty() {
                     true => crate::app::seat_label(settings.tr(), seated.seat_of(place)),
-                    false => name.to_string(),
-                }
+                    false => name.clone(),
+                },
+                kind: crate::transport::kind_from_byte(byte),
             })
             .collect();
     }
     if let Some(terms) = host_terms
         && let Some(joined) = state.joined_mut()
     {
-        joined.host_terms = Some(HostTerms { terms });
+        joined.host_terms = Some(terms);
     }
     for (name, text) in said {
         state.hear(&name, &text);
@@ -685,7 +694,7 @@ pub fn join_tick(
         // with it. A queued peer is not waiting for the host to launch:
         // the host launched without it.
         if let Some(joined) = state.joined_mut() {
-            joined.queued = Some(ahead);
+            joined.berth = Berth::Queued { ahead };
         }
     }
     if let Some(caught) = caught {
@@ -738,6 +747,141 @@ mod tests {
             put_out.map(|why| why.feedback(tr)),
             Some(tr.lobby_kicked_you.to_string())
         );
+    }
+
+    /// A host on a loopback socket and a lobby joiner greeted to it, the
+    /// greeting taken, as `join_tick` runs in: everything it reads and
+    /// writes.
+    fn joining_app() -> (App, UdpTransport) {
+        use bevy::state::app::StatesPlugin;
+        let mut host = UdpTransport::host(0).expect("bind");
+        let port = host.local_addr().expect("addr").port();
+        let state = LobbyState {
+            standing: Standing::Joining(Joined::dialled(
+                UdpTransport::join(("127.0.0.1", port)).expect("join"),
+                false,
+            )),
+            ..LobbyState::default()
+        };
+        state
+            .joined()
+            .expect("joined")
+            .transport
+            .send(NetMsg::hello("Gil"));
+        settle();
+        let _ = host.recv_all();
+        let mut app = App::new();
+        app.add_plugins(StatesPlugin);
+        app.init_state::<Screen>();
+        app.init_state::<VersusPhase>();
+        app.insert_resource(state);
+        app.init_resource::<Time>();
+        app.init_resource::<GameSettings>();
+        app.init_resource::<Online>();
+        app.init_resource::<crate::app::tournament::Tournament>();
+        app.add_systems(Update, join_tick);
+        (app, host)
+    }
+
+    fn settle() {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    /// The host's word that this joiner is out, or in line, is read for
+    /// what it is: a joiner left greeting a beach of another build, or a
+    /// lobby it was kicked from, sat on "joining" for good.
+    #[test]
+    fn the_host_saying_no_or_wait_is_heard() {
+        let mut host = UdpTransport::host(0).expect("bind");
+        let port = host.local_addr().expect("addr").port();
+        let mut joined = Joined::dialled(
+            UdpTransport::join(("127.0.0.1", port)).expect("join"),
+            false,
+        );
+        joined.transport.send(NetMsg::hello("Cy"));
+        settle();
+        let _ = host.recv_all();
+        for (said, put_out, queued) in [
+            (
+                NetMsg::Incompatible { version: 9 },
+                Some(PutOut::Mismatch(9)),
+                None,
+            ),
+            (NetMsg::Kicked, Some(PutOut::Kicked), None),
+            (NetMsg::NoBots, Some(PutOut::NoBots), None),
+            (NetMsg::Queued { ahead: 2 }, None, Some(2)),
+        ] {
+            host.send(said.clone());
+            settle();
+            let word = hear_the_host(&mut joined, None, 0.0);
+            assert_eq!(word.put_out, put_out, "{said:?}");
+            assert_eq!(word.queued, queued, "{said:?}");
+        }
+    }
+
+    /// Put out by the host, the joiner is back at the list with the reason
+    /// said; put in line, it stays, and is told how far back it stands.
+    #[test]
+    fn a_joiner_put_out_is_let_go_and_one_in_line_stays() {
+        let tr = &crate::app::i18n::EN;
+        let (mut app, host) = joining_app();
+        host.send(NetMsg::Queued { ahead: 2 });
+        settle();
+        app.update();
+        let state = app.world().resource::<LobbyState>();
+        assert_eq!(
+            state.joined().map(|joined| joined.berth),
+            Some(crate::app::lobby::Berth::Queued { ahead: 2 })
+        );
+        assert_eq!(state.feedback, queued_feedback(tr, false, false, 2));
+
+        host.send(NetMsg::Incompatible { version: 9 });
+        settle();
+        app.update();
+        let state = app.world().resource::<LobbyState>();
+        assert!(
+            matches!(state.standing, Standing::Choosing { .. }),
+            "still greeting a beach that cannot hear it"
+        );
+        assert_eq!(state.feedback, PutOut::Mismatch(9).feedback(tr));
+    }
+
+    /// A watcher arriving mid-round is handed the round in parts, and once
+    /// they are all in walks into the arena watching from the frame they
+    /// were sent at.
+    #[test]
+    fn a_watcher_handed_the_round_walks_into_it() {
+        let (mut app, host) = joining_app();
+        let mut board = crate::sim::classic_arena(false, 2);
+        for _ in 0..12 {
+            board.tick_idle();
+        }
+        let start = NetMsg::Start(Invitation {
+            seats: 2,
+            ..Invitation::blank()
+        });
+        for part in crate::app::net::catch_up::pack(&start, 12, &board) {
+            host.send(part);
+        }
+        settle();
+        app.update();
+        assert!(matches!(
+            app.world().resource::<NextState<Screen>>(),
+            NextState::Pending(Screen::Versus)
+        ));
+        let online = app.world().resource::<Online>();
+        let session = online.0.as_ref().expect("a session");
+        assert!(session.session.watching());
+        assert_eq!(session.session.frame(), 12);
+        assert_eq!(
+            session
+                .catch_up
+                .board
+                .as_ref()
+                .map(crate::sim::Board::state_hash),
+            Some(board.state_hash())
+        );
+        assert!(session.home.from_lobby);
     }
 
     /// The roster's table is as many places as it says, a nameless one
@@ -817,26 +961,41 @@ mod tests {
         };
         host.send(roster(Some(false)));
         hear(&mut state);
-        assert!(state.joined().is_some_and(|joined| joined.no_chair));
+        assert!(
+            state
+                .joined()
+                .is_some_and(|joined| joined.berth == crate::app::lobby::Berth::NoChair)
+        );
         assert_eq!(state.feedback, tr.lobby_no_chair);
         host.send(roster(Some(true)));
         hear(&mut state);
-        assert!(state.joined().is_some_and(|joined| !joined.no_chair));
+        assert!(
+            state
+                .joined()
+                .is_some_and(|joined| joined.berth == crate::app::lobby::Berth::Aboard)
+        );
         assert_eq!(state.feedback, tr.lobby_aboard, "a chair came free");
 
         // In line while a round plays: the round's roster leaves it there.
         if let Some(joined) = state.joined_mut() {
-            joined.queued = Some(0);
+            joined.berth = crate::app::lobby::Berth::Queued { ahead: 0 };
         }
         state.feedback = "next up".into();
         host.send(roster(None));
         hear(&mut state);
-        assert_eq!(state.joined().and_then(|joined| joined.queued), Some(0));
+        assert_eq!(
+            state.joined().map(|joined| joined.berth),
+            Some(crate::app::lobby::Berth::Queued { ahead: 0 })
+        );
         assert_eq!(state.feedback, "next up");
         // Back in the lobby, past the last chair: out of line, no chair.
         host.send(roster(Some(false)));
         hear(&mut state);
-        assert_eq!(state.joined().and_then(|joined| joined.queued), None);
+        assert_eq!(
+            state.joined().map(|joined| joined.berth),
+            Some(crate::app::lobby::Berth::NoChair),
+            "out of line"
+        );
         assert_eq!(state.feedback, tr.lobby_no_chair, "never told aboard");
     }
 

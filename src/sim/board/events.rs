@@ -213,9 +213,10 @@ impl Board {
     ///
     /// Same reason as [`Self::force_tide_event`]: the dev hook and the
     /// tests need one on demand, and a screenshot cannot wait for a molt to
-    /// turn up and be banked.
+    /// turn up and be banked. Forced in a quiet spell, it ends the spell:
+    /// a lure ends in a fresh one whatever was left of the last.
     pub fn force_lure(&mut self, owner: PlayerId) {
-        self.lure = Some((owner, LURE_TICKS));
+        self.lure = Lure::start(owner);
     }
 
     /// Every seat that owns a castle, once each, in reading order of

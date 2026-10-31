@@ -652,62 +652,10 @@ pub fn spawn_versus_cursors(
 /// answer the cursors are spawned by, and what tells a round one person
 /// plays alone here from a couch's.
 pub(crate) fn seats_played_here(source: &crate::app::session::RoundSource) -> Vec<u8> {
-    let crate::app::session::RoundSource {
-        online,
-        playback,
-        config,
-        daily,
-        resuming,
-        pads,
-        ..
-    } = source;
     // Before `load_versus` takes the resumed round, which is why this can
-    // still read it. Its table is the round's own: one cursor per human
-    // seat, and none for the AI's, or a keypress on the AI's keys steered
-    // its crabs over the head of the bot.
-    //
-    // By seat, not by head-count: the AI's seats need not be the top ones.
-    // An online seat given up on mid-round passes to the AI where it sits,
-    // and its code says so, so counting heads put a cursor on that seat
-    // and left the human above it with none.
-    if let Some(round) = &resuming.0 {
-        return round.bots[..usize::from(round.seats)]
-            .iter()
-            .enumerate()
-            .filter(|(_, bot)| bot.is_none())
-            .map(|(seat, _)| seat as u8)
-            .collect();
-    }
-    let daily_config = crate::app::match_setup::MatchConfig::daily();
-    let config = if daily.active {
-        &daily_config
-    } else {
-        &**config
-    };
-    // A replay has no cursor, for the same reason a spectator has none:
-    // there is no seat here to place from. Cursor movement was never
-    // recorded, so one drawn over a replay sits in the middle of the board
-    // looking broken.
-    if playback.0.is_some() {
-        return Vec::new();
-    }
-    if online.0.is_none() && config.armed {
-        // Configured match: one cursor per person's seat, where step 3
-        // put them.
-        return config.human_seats();
-    }
-    if let Some(session) = &online.0 {
-        // A spectator has no cursor: there is no seat for it to place from.
-        // Nor does a seat a bot drives from this machine: the keys here are
-        // not what plays it.
-        return session
-            .session
-            .seat()
-            .filter(|_| session.bot.is_none())
-            .into_iter()
-            .collect();
-    }
-    (0..(pads.iter().count() as u8).max(2)).collect()
+    // still read it.
+    let config = source.config();
+    source.origin(&config).seats_here(source.pad_count())
 }
 
 /// Snap every cursor to the board centre (used right after a mode spawns its
@@ -1462,9 +1410,11 @@ mod tests {
         // card it picks there calls the round.
         let mut app = results_card(0, true, true);
         assert_eq!(pressing_enter(&mut app), Screen::Versus, "the page first");
-        assert!(crate::app::next_map::page_up(
-            app.world().resource::<crate::app::match_setup::MatchMenu>()
-        ));
+        assert!(
+            app.world()
+                .resource::<crate::app::match_setup::MatchMenu>()
+                .host_page_up()
+        );
         assert_eq!(
             pressing_enter(&mut app),
             Screen::Interlude,
@@ -1493,7 +1443,7 @@ mod tests {
         tap(&mut app, KeyCode::Escape);
         app.update();
         let menu = app.world().resource::<crate::app::match_setup::MatchMenu>();
-        assert!(!crate::app::next_map::page_up(menu), "the page is down");
+        assert!(!menu.host_page_up(), "the page is down");
         assert_eq!(
             *app.world().resource::<State<Screen>>().get(),
             Screen::Versus
@@ -1514,9 +1464,11 @@ mod tests {
             "the table is told the host stopped picking"
         );
         assert_eq!(pressing_enter(&mut app), Screen::Versus);
-        assert!(crate::app::next_map::page_up(
-            app.world().resource::<crate::app::match_setup::MatchMenu>()
-        ));
+        assert!(
+            app.world()
+                .resource::<crate::app::match_setup::MatchMenu>()
+                .host_page_up()
+        );
     }
 
     /// Esc on the host's page between rounds puts the page away and opens
@@ -1537,13 +1489,15 @@ mod tests {
             crate::app::schedule::pause_card_systems().after(versus_over_input),
         );
         assert_eq!(pressing_enter(&mut app), Screen::Versus);
-        assert!(crate::app::next_map::page_up(
-            app.world().resource::<crate::app::match_setup::MatchMenu>()
-        ));
+        assert!(
+            app.world()
+                .resource::<crate::app::match_setup::MatchMenu>()
+                .host_page_up()
+        );
         tap(&mut app, KeyCode::Escape);
         app.update();
         let menu = app.world().resource::<crate::app::match_setup::MatchMenu>();
-        assert!(!crate::app::next_map::page_up(menu), "the page is down");
+        assert!(!menu.host_page_up(), "the page is down");
         assert!(
             !app.world()
                 .resource::<crate::app::pause::PauseMenu>()

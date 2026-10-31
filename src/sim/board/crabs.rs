@@ -298,7 +298,7 @@ impl Board {
         let t = crab.tile as usize;
         if let TileKind::Castle(owner) = self.grid.tiles[t] {
             let points = self.credit_bank(owner, crab);
-            self.walked_home.push(WalkedHome {
+            self.bank_log.walked.push(WalkedHome {
                 crab: crab.id,
                 owner,
                 tile: crab.tile,
@@ -310,11 +310,11 @@ impl Board {
                 // spell after one banks for its points and nothing more.
                 CrabKind::Molting => {
                     if self.lure_ready() {
-                        self.lure = Some((owner, LURE_TICKS));
+                        self.lure = Lure::start(owner);
                     } else {
-                        self.refused_lures.push(RefusedLure {
+                        self.bank_log.refused.push(RefusedLure {
                             crab: crab.id,
-                            running: self.lure.is_some(),
+                            running: self.lure.running().is_some(),
                             at: self.tick,
                         });
                     }
@@ -351,7 +351,7 @@ impl Board {
     /// still has a castle. Computed once per tick and threaded through
     /// arrivals, so the board scan is not repeated per crab.
     pub(super) fn lure_target(&self) -> Option<u16> {
-        let (owner, _) = self.lure?;
+        let (owner, _) = self.lure.running()?;
         self.grid
             .tiles
             .iter()

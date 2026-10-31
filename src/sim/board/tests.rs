@@ -1805,7 +1805,7 @@ fn a_sweep_leaves_the_fingerprint_alone() {
 fn a_refused_lure_leaves_the_fingerprint_alone() {
     let mut board = party_board();
     let before = board.state_hash();
-    board.refused_lures.push(RefusedLure {
+    board.bank_log.refused.push(RefusedLure {
         crab: 7,
         running: true,
         at: 0,

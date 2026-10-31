@@ -166,10 +166,7 @@ pub(super) fn board_cursor_free(
     pause: Res<crate::app::pause::PauseMenu>,
     menu: Res<match_setup::MatchMenu>,
 ) -> bool {
-    *screen.get() != Screen::Menu
-        && !editor.has_keys()
-        && !pause.is_open()
-        && !crate::app::next_map::page_up(&menu)
+    *screen.get() != Screen::Menu && !editor.has_keys() && !pause.is_open() && !menu.host_page_up()
 }
 
 /// Whether a versus round is dealt but not yet played: the interlude

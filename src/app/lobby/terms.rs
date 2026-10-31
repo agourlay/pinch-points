@@ -244,10 +244,10 @@ pub(super) fn card_of<'a>(
             mode: teams,
         };
     };
-    let Some(host) = joined.host_terms.as_ref() else {
+    let Some(terms) = joined.host_terms.as_ref() else {
         return TermsCard::Waiting;
     };
-    let (mut config, mode) = crate::app::match_setup::config_from_terms(&host.terms);
+    let (mut config, mode) = crate::app::match_setup::config_from_terms(terms);
     // Whether the beach takes bots is not one of the terms; a joiner reads
     // it off the beacon that listed the beach.
     config.bots_welcome = state.joined_entry().is_some_and(|entry| entry.bots);
@@ -255,7 +255,7 @@ pub(super) fn card_of<'a>(
         config,
         mode,
         // The table the round would be dealt as it sits now, off the roster.
-        dealt: roster_dealt(state.table.len(), &host.terms),
+        dealt: roster_dealt(state.table.len(), terms),
     }
 }
 

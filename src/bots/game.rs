@@ -111,6 +111,45 @@ pub enum Feed {
     Tick([PlayerAction; MAX_PLAYERS]),
 }
 
+/// What drives one seat of a game in play.
+enum Driver {
+    /// The game's AI, a pure function of the board, and its numbers.
+    Ai { level: BotLevel, result: SeatResult },
+    /// A bot over the protocol, which keeps its own numbers. Boxed: the
+    /// driver is far bigger than the AI's few bytes.
+    Bot(Box<BotDriver>),
+}
+
+impl Driver {
+    fn bot(&self) -> Option<&BotDriver> {
+        match self {
+            Driver::Ai { .. } => None,
+            Driver::Bot(bot) => Some(bot),
+        }
+    }
+
+    fn bot_mut(&mut self) -> Option<&mut BotDriver> {
+        match self {
+            Driver::Ai { .. } => None,
+            Driver::Bot(bot) => Some(bot),
+        }
+    }
+
+    fn result_mut(&mut self) -> &mut SeatResult {
+        match self {
+            Driver::Ai { result, .. } => result,
+            Driver::Bot(bot) => &mut bot.result,
+        }
+    }
+
+    fn into_result(self) -> SeatResult {
+        match self {
+            Driver::Ai { result, .. } => result,
+            Driver::Bot(bot) => bot.result,
+        }
+    }
+}
+
 /// A game in play.
 struct Match<'a, 's> {
     listener: &'a Listener,
@@ -118,10 +157,8 @@ struct Match<'a, 's> {
     spec: GameSpec,
     kinds: Vec<SeatKind>,
     sinks: &'a mut Sinks<'s>,
-    /// One per seat; `None` for the game's AI.
-    bots: Vec<Option<BotDriver>>,
-    /// The AI's numbers (the bots keep their own).
-    ai: Vec<SeatResult>,
+    /// One per seat: who decides its moves.
+    drivers: Vec<Driver>,
     cursors: Vec<SeatCursor>,
     last: Vec<Option<(&'static str, Outcome)>>,
     replay: Replay,
@@ -143,7 +180,7 @@ impl Match<'_, '_> {
     /// Hand one message to the seat it is for.
     fn take(&mut self, msg: GameMsg, t: u64) -> bool {
         let seat = usize::from(msg.seat());
-        let Some(Some(bot)) = self.bots.get_mut(seat) else {
+        let Some(bot) = self.drivers.get_mut(seat).and_then(Driver::bot_mut) else {
             return false;
         };
         let dropped = matches!(msg, GameMsg::Dropped { .. });
@@ -179,7 +216,7 @@ impl Match<'_, '_> {
         // dropped waits on from there, not from its going.
         let mut began: Vec<Instant> = vec![Instant::now(); n];
         for seat in 0..n {
-            let Some(bot) = &self.bots[seat] else {
+            let Some(bot) = self.drivers[seat].bot() else {
                 continue;
             };
             if let Presence::Waiting { since } = bot.presence {
@@ -196,7 +233,7 @@ impl Match<'_, '_> {
         loop {
             let now = Instant::now();
             let mut waiting = false;
-            for bot in self.bots.iter_mut().flatten() {
+            for bot in self.drivers.iter_mut().filter_map(Driver::bot_mut) {
                 let Presence::Waiting { since } = bot.presence else {
                     continue;
                 };
@@ -245,7 +282,10 @@ impl Match<'_, '_> {
             // Before the first tick a bot that comes back is greeted afresh
             // and given its ten seconds from now.
             if let GameMsg::Back { seat, serial } = msg
-                && let Some(Some(bot)) = self.bots.get_mut(usize::from(seat))
+                && let Some(bot) = self
+                    .drivers
+                    .get_mut(usize::from(seat))
+                    .and_then(Driver::bot_mut)
                 && !bot.forfeited()
             {
                 let at = usize::from(seat);
@@ -264,7 +304,10 @@ impl Match<'_, '_> {
                 continue;
             }
             if let GameMsg::Dropped { seat } = msg
-                && let Some(Some(bot)) = self.bots.get_mut(usize::from(seat))
+                && let Some(bot) = self
+                    .drivers
+                    .get_mut(usize::from(seat))
+                    .and_then(Driver::bot_mut)
             {
                 bot.connected = false;
                 if bot.presence == Presence::Ready {
@@ -286,15 +329,15 @@ impl Match<'_, '_> {
             listener,
             spec,
             kinds,
-            bots,
+            drivers,
             last,
             ..
         } = self;
         let table = table_of(spec, kinds);
         let mut send = |id: BotId, msg: &Value| listener.send(id, msg);
         let mut expecting = 0;
-        for (seat, bot) in bots.iter_mut().enumerate() {
-            let Some(bot) = bot else {
+        for (seat, driver) in drivers.iter_mut().enumerate() {
+            let Some(bot) = driver.bot_mut() else {
                 continue;
             };
             let player = seat as PlayerId;
@@ -352,13 +395,13 @@ impl Match<'_, '_> {
         let board = &self.spec.board;
         for seat in 0..self.n() {
             let player = seat as PlayerId;
-            let act = match (&mut self.bots[seat], self.spec.seats[seat]) {
-                (Some(bot), _) if !bot.playing() => {
+            let act = match &mut self.drivers[seat] {
+                Driver::Bot(bot) if !bot.playing() => {
                     bot.stand_down(&mut self.cursors[seat]);
                     Act::None
                 }
-                (Some(bot), _) => bot.order(&mut self.sinks.journal(self.spec.game)),
-                (None, Seat::Ai(level)) => {
+                Driver::Bot(bot) => bot.order(&mut self.sinks.journal(self.spec.game)),
+                &mut Driver::Ai { level, .. } => {
                     let hand = if self.spec.fair_cursor {
                         Hand::Fair
                     } else {
@@ -372,7 +415,6 @@ impl Match<'_, '_> {
                     }
                     continue;
                 }
-                (None, Seat::Bot(_)) => Act::None,
             };
             let (action, landed) =
                 self.cursors[seat].step(board, player, act, self.spec.fair_cursor);
@@ -382,19 +424,12 @@ impl Match<'_, '_> {
         (actions, done)
     }
 
-    fn result_mut(&mut self, seat: usize) -> &mut SeatResult {
-        match &mut self.bots[seat] {
-            Some(bot) => &mut bot.result,
-            None => &mut self.ai[seat],
-        }
-    }
-
     /// One tick of the round.
     fn tick(&mut self, wall: &mut Instant) {
         let t = self.spec.board.ticks();
         let n = self.n();
         let cursors: Vec<Option<(u8, u8)>> = self.cursors.iter().map(|c| Some(c.at)).collect();
-        if self.bots.iter().any(Option::is_some) {
+        if self.drivers.iter().any(|driver| driver.bot().is_some()) {
             let cap = if self.spec.clock.live {
                 lookahead::CAP_LIVE
             } else {
@@ -466,8 +501,8 @@ impl Match<'_, '_> {
             };
             self.last[seat] = Some((act.token(), outcome));
             if let Outcome::Refused(why) = outcome {
-                self.result_mut(seat).rejected += 1;
-                if let Some(bot) = &self.bots[seat] {
+                self.drivers[seat].result_mut().rejected += 1;
+                if let Some(bot) = self.drivers[seat].bot() {
                     let _ = writeln!(
                         self.sinks.log,
                         "g{} t{t} P{} {}: {} refused: {}",
@@ -485,10 +520,10 @@ impl Match<'_, '_> {
         for what in happened {
             match what {
                 Happened::Banked { owner, .. } if usize::from(owner) < n => {
-                    self.result_mut(usize::from(owner)).banked += 1;
+                    self.drivers[usize::from(owner)].result_mut().banked += 1;
                 }
                 Happened::Raided { owner, .. } if usize::from(owner) < n => {
-                    self.result_mut(usize::from(owner)).raided += 1;
+                    self.drivers[usize::from(owner)].result_mut().raided += 1;
                 }
                 Happened::Banked { .. }
                 | Happened::Raided { .. }
@@ -510,20 +545,25 @@ impl Match<'_, '_> {
         }
         let n = self.n();
         let forfeits: Vec<bool> = (0..n)
-            .map(|seat| self.bots[seat].as_ref().is_some_and(BotDriver::forfeited))
+            .map(|seat| self.drivers[seat].bot().is_some_and(BotDriver::forfeited))
             .collect();
         let scores: Vec<u32> = self.spec.board.scores()[..n].to_vec();
         let places = placings(&scores, &forfeits);
         // Kept before anybody is told the game is over, so a bot that asks
         // for the replay the moment it hears `end` finds it there.
-        let players = self.bots.iter().flatten().map(|b| b.id).collect();
+        let players = self
+            .drivers
+            .iter()
+            .filter_map(Driver::bot)
+            .map(|b| b.id)
+            .collect();
         // Played to the tide, so the recording says how it ended, as one
         // kept from a results card does.
         self.replay.scores = Some(*self.spec.board.scores());
         self.listener
             .keep_replay(self.spec.replay_id.clone(), players, self.replay.to_text());
         for seat in 0..n {
-            if let Some(bot) = &mut self.bots[seat] {
+            if let Some(bot) = self.drivers[seat].bot_mut() {
                 bot.close();
                 self.listener.send(
                     bot.id,
@@ -533,25 +573,20 @@ impl Match<'_, '_> {
                     }),
                 );
             }
-            let result = self.result_mut(seat);
+            let result = self.drivers[seat].result_mut();
             result.score = scores[seat];
             result.placing = places[seat];
         }
         let Match {
             link,
             spec,
-            bots,
-            ai,
+            drivers,
             replay,
             ..
         } = self;
         drop(link);
         GameResult {
-            seats: bots
-                .into_iter()
-                .zip(ai)
-                .map(|(bot, ai)| bot.map_or(ai, |b| b.result))
-                .collect(),
+            seats: drivers.into_iter().map(Driver::into_result).collect(),
             replay,
             ticks: spec.board.ticks(),
             elapsed: started.elapsed(),
@@ -603,19 +638,22 @@ pub fn play(listener: &Listener, spec: GameSpec, sinks: &mut Sinks) -> GameResul
         })
         .collect();
     let link = listener.open_game(spec.game, routes);
-    let bots: Vec<Option<BotDriver>> = spec
+    let drivers: Vec<Driver> = spec
         .seats
         .iter()
         .enumerate()
-        .map(|(seat, s)| match s {
-            Seat::Bot(id) => Some(BotDriver::new(
-                *id,
+        .map(|(seat, s)| match *s {
+            Seat::Bot(id) => Driver::Bot(Box::new(BotDriver::new(
+                id,
                 seat as PlayerId,
                 spec.names[seat].clone(),
-                listener.connected(*id),
+                listener.connected(id),
                 deadline,
-            )),
-            Seat::Ai(_) => None,
+            ))),
+            Seat::Ai(level) => Driver::Ai {
+                level,
+                result: SeatResult::default(),
+            },
         })
         .collect();
     let cursors = (0..n)
@@ -627,8 +665,7 @@ pub fn play(listener: &Listener, spec: GameSpec, sinks: &mut Sinks) -> GameResul
         spec,
         kinds,
         sinks,
-        bots,
-        ai: vec![SeatResult::default(); n],
+        drivers,
         cursors,
         last: vec![None; n],
         replay,

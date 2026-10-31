@@ -322,8 +322,8 @@ fn seat_tone(seat: usize) -> Color {
 /// the table sits in (`seated`). A name with no seat at the table, a
 /// watcher or somebody who has since walked off, reads idle rather than
 /// borrowing a colour that belongs to a player who is still here.
-fn name_ink(table: &[String], seated: &Seated, who: &str) -> Color {
-    match table.iter().position(|seat| seat == who) {
+fn name_ink(table: &[super::TablePlace], seated: &Seated, who: &str) -> Color {
+    match table.iter().position(|place| place.name == who) {
         Some(place) => seat_tone(usize::from(seated.seat_of(place))),
         None => palette::IDLE_ROW,
     }
@@ -382,7 +382,7 @@ pub fn update_lobby_robots(
 /// number of the seat it sits in and in its colour; under a team mode
 /// every seat, the AI's too, team by team, a team to a line
 /// ([`seats_shown`]). A line too long for its cell as laid out is cut
-/// short with "…" ([`crate::app::match_setup::cut_to`]); the cell clips
+/// short with "…" ([`crate::app::menu_ui::cut_to`]); the cell clips
 /// it otherwise, with no mark that anything is missing.
 pub fn update_lobby_players(
     state: Res<LobbyState>,
@@ -413,7 +413,7 @@ pub fn update_lobby_players(
                 let line = match rooms.get(row.0).copied().flatten() {
                     Some(room) => {
                         let robot = if bot { TABLE_ROBOT_PX } else { 0.0 };
-                        crate::app::match_setup::cut_to(&line, room - robot, TABLE_NAME_PX)
+                        crate::app::menu_ui::cut_to(&line, room - robot, TABLE_NAME_PX)
                     }
                     None => line,
                 };
@@ -1077,11 +1077,9 @@ mod list_row_tests {
                 UdpTransport::join(("127.0.0.1", 47997)).expect("join"),
                 false,
             );
-            joined.host_terms = Some(HostTerms {
-                terms: MatchTerms {
-                    map: crate::app::match_setup::MapChoice::Custom.index() as u8,
-                    ..MatchTerms::default()
-                },
+            joined.host_terms = Some(MatchTerms {
+                map: crate::app::match_setup::MapChoice::Custom.index() as u8,
+                ..MatchTerms::default()
             });
             state.standing = Standing::Joining(joined);
         }
@@ -1291,7 +1289,10 @@ mod feed_layout_tests {
     /// the two are read off one function.
     #[test]
     fn a_name_reads_in_its_seats_colour() {
-        let table = vec!["Anna".to_string(), "Bo".to_string()];
+        let table = ["Anna", "Bo"].map(|name| super::super::TablePlace {
+            name: name.to_string(),
+            kind: crate::sim::SeatKind::Human,
+        });
         let seated = Seated::default();
         assert_eq!(name_ink(&table, &seated, "Anna"), seat_tone(0));
         assert_eq!(name_ink(&table, &seated, "Bo"), seat_tone(1));
@@ -1604,7 +1605,7 @@ mod list_fit_tests {
     /// at the design sizes, and end on the cut mark.
     #[test]
     fn a_long_name_at_the_table_is_cut_to_its_cell() {
-        use crate::app::match_setup::line_px;
+        use crate::app::menu_ui::line_px;
         use crate::app::teams::TeamMode;
         use crate::transport::Air;
         for (width, height) in [(1280, 720), (1280, 800)] {
@@ -1618,8 +1619,13 @@ mod list_fit_tests {
                             Announcer::on(0x9A9B, Air::loopback(&[])).expect("announcer"),
                             UdpTransport::host(0).expect("game socket"),
                         );
-                        state.table = vec![name.clone(); MAX_PLAYERS];
-                        state.table_kinds = vec![crate::sim::SeatKind::Bot; MAX_PLAYERS];
+                        state.table = vec![
+                            crate::app::lobby::TablePlace {
+                                name: name.clone(),
+                                kind: crate::sim::SeatKind::Bot,
+                            };
+                            MAX_PLAYERS
+                        ];
                         state.seated = Seated {
                             teams,
                             ..Seated::default()

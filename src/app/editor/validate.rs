@@ -41,6 +41,47 @@ pub(super) type SolverSlot = Arc<Mutex<Option<Verdict>>>;
 /// time, the deeper search costing the most per answer.
 const WIDER_BUDGET: u32 = crate::sim::DEFAULT_NODE_BUDGET / 4;
 
+/// The bench's check: the one running, the saves let go of mid-check, and
+/// the level the last answer was about.
+#[derive(Default)]
+pub(super) struct Check {
+    pub(super) solver: Option<Validation>,
+    /// Saves whose check the bench let go of while they waited on it,
+    /// handed on to [`SaveChecks`] to be finished off the bench.
+    pub(super) orphans: Vec<OrphanedSave>,
+    /// The level, as [`checked_level`] reads it, that the last check came
+    /// back about: the bench is checked while it still reads the same.
+    pub(super) checked: Option<String>,
+}
+
+impl Check {
+    /// A bench with `solver` under way.
+    #[cfg(test)]
+    pub(super) fn running(solver: Validation) -> Self {
+        Check {
+            solver: Some(solver),
+            ..Check::default()
+        }
+    }
+
+    /// Let a running check go, keeping its save to be finished off the
+    /// bench. Whether one was running.
+    pub(super) fn drop_running(&mut self) -> bool {
+        let Some(check) = self.solver.take() else {
+            return false;
+        };
+        self.orphans.extend(check.orphan());
+        true
+    }
+
+    /// Hand every save still waiting on a check on to `checks`, the bench
+    /// going: the running one's too.
+    pub(super) fn hand_on(&mut self, checks: &mut Vec<OrphanedSave>) {
+        self.drop_running();
+        checks.append(&mut self.orphans);
+    }
+}
+
 /// A check in flight: where its answer will land.
 ///
 /// The answer quotes the signposts granted ("NOT solvable - arrows
@@ -131,8 +172,8 @@ pub struct SaveChecks(pub(super) Vec<OrphanedSave>);
 /// as it comes back. Runs everywhere: the editor left is the usual way a
 /// check is orphaned.
 pub fn finish_orphaned_saves(mut state: ResMut<EditorState>, mut checks: ResMut<SaveChecks>) {
-    if !state.orphans.is_empty() {
-        checks.0.append(&mut state.orphans);
+    if !state.check.orphans.is_empty() {
+        checks.0.append(&mut state.check.orphans);
     }
     if !checks.0.is_empty() {
         checks.0.retain(|check| !check.settle());
@@ -353,7 +394,7 @@ pub(super) fn start_validation(state: &mut EditorState, level: Level, wider: Opt
             coop: level.is_coop(),
         });
     });
-    state.solver = Some(Validation {
+    state.check.solver = Some(Validation {
         slot,
         level: text,
         save: None,
@@ -438,17 +479,17 @@ pub fn poll_solver(
     if state.is_testing() {
         return;
     }
-    let Some(check) = &state.solver else {
+    let Some(check) = &state.check.solver else {
         return;
     };
     let Some(verdict) = check.slot.lock().unwrap().take() else {
         return; // still searching
     };
-    let Some(Validation { level, save, .. }) = state.solver.take() else {
+    let Some(Validation { level, save, .. }) = state.check.solver.take() else {
         return;
     };
     // Whatever the answer, the level has been checked.
-    state.checked = Some(level);
+    state.check.checked = Some(level);
     if let SolveOutcome::Found(solution) = &verdict.outcome {
         // The way through, kept as the level's own (`solution:`) and drawn
         // on the sand until the next edit, which lets it go: the check was
@@ -473,7 +514,7 @@ pub fn poll_solver(
 /// into the file, which the bench has not changed since (an edit would
 /// have dropped the check). Says what the save line says of the file.
 ///
-/// Only into a file the bench still holds as its own ([`EditorState::mine`]):
+/// Only into a file the bench still holds as its own ([`super::shelf::Filing::mine`]):
 /// one deleted on "My levels" while the check ran is gone, and writing the
 /// solution into it brought the level back. `None` then, the save having
 /// nothing left to say.
@@ -485,7 +526,7 @@ fn finish_save(
     verdict: &Verdict,
     tr: &crate::app::i18n::Tr,
 ) -> Option<String> {
-    if !state.mine.contains(path) {
+    if !state.filing.mine.contains(path) {
         return None;
     }
     let file = super::shelf::file_name(path);
@@ -495,7 +536,7 @@ fn finish_save(
             return Some(fill(tr.ed_save_failed, &[("e", &e.to_string())]));
         }
         if state.name == name {
-            state.filed = Some(super::filed_text(state, board));
+            state.filing.filed = Some(super::filed_text(state, board));
         }
     }
     Some(fill(tr.ed_saved_to, &[("file", &file)]))
@@ -545,7 +586,7 @@ mod tests {
             // The dial cannot turn under a running search (it drops it),
             // so the count on the bench is the one the search was handed.
             posts: 2,
-            solver: Some(Validation {
+            check: Check::running(Validation {
                 slot: Arc::new(Mutex::new(verdict)),
                 level: String::new(),
                 save: None,
@@ -555,7 +596,7 @@ mod tests {
         app.add_systems(Update, poll_solver);
         app.update();
         let state = app.world().resource::<EditorState>();
-        (state.feedback.clone(), state.solver.is_some())
+        (state.feedback.clone(), state.check.solver.is_some())
     }
 
     /// A found solution is spelled out placement by placement, and one
@@ -777,6 +818,45 @@ mod tests {
         );
     }
 
+    /// A co-op stage that can be won is checked again with every arrow in
+    /// one hand, and the line leads with the answer: "needs both" for one
+    /// whose crabs are one of each hand, "one player alone" for one whose
+    /// crabs are both P1's and whose arrows are too. The same small stage
+    /// `sim::solve`'s tests use.
+    #[test]
+    fn a_coop_check_says_whether_it_needs_both_players() {
+        use crate::app::i18n::EN;
+        let duo = |second: &str| {
+            Level::parse(&format!(
+                "name: Duo\nhands: 1 1\nround: 120\ncrab: 0,2 R L common\n\
+                 crab: 2,0 L {second} common\n\
+                 map:\n+-+-+-+\n|. . .|\n+ + + +\n|. 0 .|\n+ + + +\n|. . .|\n+-+-+-+\n"
+            ))
+            .expect("parses")
+        };
+        // Both crabs P1's are won with both arrows in P1's hand, which is
+        // still a co-op stage's deal, and then by P1 alone.
+        let alone = duo("L").with_hands(Some([2, 0]), 0);
+        for (level, shared, lead) in [
+            (duo("R"), true, EN.ed_needs_both),
+            (alone, false, EN.ed_one_alone),
+        ] {
+            let mut state = EditorState::default();
+            start_validation(&mut state, level, None);
+            let slot = state.check.solver.expect("a validation is running").slot;
+            let verdict = loop {
+                if let Some(verdict) = slot.lock().unwrap().take() {
+                    break verdict;
+                }
+                std::thread::yield_now();
+            };
+            assert!(verdict.coop);
+            assert_eq!(verdict.shared, Some(shared), "{lead}");
+            let (said, _) = said_of(Some(verdict));
+            assert!(said.starts_with(&format!("{lead} - ")), "{said}");
+        }
+    }
+
     /// A validation started here really does come back with a verdict: the
     /// thread runs, the slot fills, and `poll_solver` has something to
     /// collect. Both answers are checked, because the interesting failure is
@@ -789,7 +869,7 @@ mod tests {
         fn needed(level: Level, wider: Option<Level>) -> Verdict {
             let mut state = EditorState::default();
             start_validation(&mut state, level, wider);
-            let slot = state.solver.expect("a validation is running").slot;
+            let slot = state.check.solver.expect("a validation is running").slot;
             // The solver is on its own thread; wait for it rather than
             // sleeping a fixed guess.
             loop {

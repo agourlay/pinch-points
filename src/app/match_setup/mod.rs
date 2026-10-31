@@ -43,7 +43,6 @@ pub use ui::{
     moved_note, paint_game_step, paint_map_step, paint_players_step, paint_start_button,
     paint_teams, start_button_label, update_host_map_ui, update_match_ui,
 };
-pub(crate) use ui::{cut_to, line_px};
 
 /// The playable beach for a local match.
 ///
@@ -508,23 +507,13 @@ pub struct MatchConfig {
     /// step 2's card and kept on one the table fits ([`settle_map`]); a
     /// series, a rematch and the Random card move it round to round.
     pub map: MapChoice,
-    /// The card the player picked on step 2, kept while the seat count has
-    /// moved the map in force off it, and `None` while the map in force is
-    /// the pick. The map follows the pick, not the last map it was moved
-    /// to: five players move a pick of the small beach to the large one,
-    /// and three put it back ([`settle_map`]). Step 2 and step 3 say so
-    /// while it is moved ([`map_moved`]).
-    pub pick: Option<Card>,
+    /// What the player picked on step 2, against the map in force.
+    pub pick: Pick,
     /// Which handmade beach, when `map` is [`MapChoice::Custom`]. An index
     /// into [`CustomBeaches::fitting`] for the table, which is read fresh
     /// each time the setup steps open: the editor may have saved another
     /// one since.
     pub custom: usize,
-    /// Step 2's Random card: every round launched from this config draws
-    /// `map` (and `custom`) afresh from the maps that seat the table
-    /// ([`draw_map`]). A local choice only: the round is built, recorded
-    /// and sent as the concrete map the draw landed on.
-    pub random: bool,
     pub gulls: GullPressure,
     pub round: RoundLength,
     /// Arrows each player may have standing. Placing one more takes the
@@ -555,6 +544,24 @@ pub struct MatchConfig {
     pub people: crate::app::partners::Who,
 }
 
+/// What the player picked on step 2 ([`MatchConfig::pick`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Pick {
+    /// The map in force is the card picked.
+    InForce,
+    /// The card picked (a map or a shelf beach), kept while the seat count
+    /// has moved the map in force off it. The map follows the pick, not
+    /// the last map it was moved to: five players move a pick of the small
+    /// beach to the large one, and three put it back ([`settle_map`]).
+    /// Step 2 and step 3 say so while it is moved ([`map_moved`]).
+    Moved(Card),
+    /// Step 2's Random card: every round launched from this config draws
+    /// `map` (and `custom`) afresh from the maps that seat the table
+    /// ([`draw_map`]). A local choice only: the round is built, recorded
+    /// and sent as the concrete map the draw landed on.
+    Random,
+}
+
 impl Default for MatchConfig {
     fn default() -> Self {
         MatchConfig {
@@ -563,9 +570,8 @@ impl Default for MatchConfig {
             ai_level: BotLevel::Normal,
             filled_at_start: [false; MAX_PLAYERS],
             map: MapChoice::Classic,
-            pick: None,
+            pick: Pick::InForce,
             custom: 0,
-            random: false,
             gulls: GullPressure::Normal,
             round: RoundLength::Standard,
             posts: MAX_SIGNPOSTS_PER_PLAYER as u8,
@@ -866,7 +872,7 @@ pub fn maps_that_seat(seats: u8, beaches: &CustomBeaches) -> Vec<(MapChoice, usi
 /// The Random card's draw: one of the maps that seat the table
 /// ([`maps_that_seat`]), picked by `roll`, written into `map` and
 /// `custom` so the round that follows is built, recorded and sent as that
-/// concrete map. `random` stays set, so the next round draws again.
+/// concrete map. `pick` stays [`Pick::Random`], so the next round draws again.
 pub fn draw_map(config: &mut MatchConfig, beaches: &CustomBeaches, roll: u64) {
     let maps = maps_that_seat(config.seats, beaches);
     if let Some(&(map, custom)) = maps.get((roll % maps.len().max(1) as u64) as usize) {
@@ -901,9 +907,9 @@ pub fn draw_online_map(config: &mut MatchConfig, beaches: &CustomBeaches, roll: 
 /// steps it otherwise ([`next_map`]). `roll` is the draw's die, fresh
 /// for every round.
 pub fn map_for_next_round(config: &mut MatchConfig, beaches: &CustomBeaches, roll: u64) {
-    match config.random {
-        true => draw_map(config, beaches, roll),
-        false => next_map(config, beaches),
+    match config.pick {
+        Pick::Random => draw_map(config, beaches, roll),
+        Pick::InForce | Pick::Moved(_) => next_map(config, beaches),
     }
 }
 
@@ -967,13 +973,19 @@ pub fn settle_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
 /// the map in force's own card. A handmade beach no longer on the shelf
 /// for this table names nothing, and gives way to the beach dealt to it.
 fn current_pick(config: &MatchConfig, beaches: &CustomBeaches) -> Card {
-    if let Some(pick) = config.pick.filter(|pick| on_the_shelf(*pick, beaches)) {
-        return pick;
+    match config.pick {
+        Pick::Moved(pick) if on_the_shelf(pick, beaches) => return pick,
+        Pick::Moved(_) | Pick::InForce | Pick::Random => {}
     }
-    match config.map {
-        MapChoice::Custom => beaches
-            .on_shelf(config.seats, config.custom)
-            .map_or(Card::Map(sized_for(config.seats)), Card::Shelf),
+    card_in_force(config, beaches).unwrap_or(Card::Map(sized_for(config.seats)))
+}
+
+/// The card of the map in force. `None` for a handmade beach no longer on
+/// the shelf for this table, which has no card; each caller says what
+/// stands in for it.
+fn card_in_force(config: &MatchConfig, beaches: &CustomBeaches) -> Option<Card> {
+    Some(match config.map {
+        MapChoice::Custom => Card::Shelf(beaches.on_shelf(config.seats, config.custom)?),
         map @ (MapChoice::Classic
         | MapChoice::GenSmall
         | MapChoice::GenClassic
@@ -992,7 +1004,7 @@ fn current_pick(config: &MatchConfig, beaches: &CustomBeaches) -> Card {
         | MapChoice::GullRoad
         | MapChoice::BackToBack
         | MapChoice::Surprise) => Card::Map(map),
-    }
+    })
 }
 
 /// Whether `card` names a beach there is: a handmade one must still be on
@@ -1005,7 +1017,8 @@ fn on_the_shelf(card: Card, beaches: &CustomBeaches) -> bool {
 }
 
 /// The map in force for `pick` at this table, with `pick` kept only while
-/// the map is moved off it.
+/// the map is moved off it. Under the Random card the map in force is
+/// only the beach dealt until the draw, and the card stays picked.
 fn place_pick(config: &mut MatchConfig, pick: Card, beaches: &CustomBeaches) {
     let (map, custom) = map_in_force(pick, config.seats, beaches);
     config.map = map;
@@ -1015,7 +1028,11 @@ fn place_pick(config: &mut MatchConfig, pick: Card, beaches: &CustomBeaches) {
         Card::Shelf(_) => map != MapChoice::Custom,
         Card::Random => false,
     };
-    config.pick = moved.then_some(pick);
+    config.pick = match (config.pick, moved) {
+        (Pick::Random, _) => Pick::Random,
+        (Pick::InForce | Pick::Moved(_), true) => Pick::Moved(pick),
+        (Pick::InForce | Pick::Moved(_), false) => Pick::InForce,
+    };
 }
 
 /// The map a table of `seats` plays when the player picked `pick`, as
@@ -1058,16 +1075,17 @@ pub fn map_in_force(pick: Card, seats: u8, beaches: &CustomBeaches) -> (MapChoic
 /// the map played instead. `None` under the Random card, which has no
 /// pick to move.
 pub fn map_moved(config: &MatchConfig, beaches: &CustomBeaches) -> Option<(Card, Card)> {
-    let pick = config
-        .pick
-        .filter(|pick| !config.random && on_the_shelf(*pick, beaches))?;
+    let pick = match config.pick {
+        Pick::Moved(pick) => Some(pick).filter(|pick| on_the_shelf(*pick, beaches))?,
+        Pick::InForce | Pick::Random => return None,
+    };
     Some((pick, picked_card(config, beaches)))
 }
 
 /// Make the map in force the pick: a map turned to by a dial other than
-/// step 2's (the lobby's) is the player's choice as it stands.
+/// step 2's (the dev hook's) is the player's choice as it stands.
 pub fn pick_the_map_in_force(config: &mut MatchConfig) {
-    config.pick = None;
+    config.pick = Pick::InForce;
 }
 
 #[cfg(test)]

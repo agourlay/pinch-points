@@ -23,6 +23,7 @@ mod entry;
 mod hosting;
 mod input;
 mod joining;
+mod kick;
 #[cfg(test)]
 mod load;
 mod partners;
@@ -37,6 +38,7 @@ pub use entry::*;
 pub use hosting::*;
 pub use input::*;
 pub use joining::*;
+pub use kick::*;
 pub use partners::{Seated, partner_rows, partners_open, seats_shown};
 pub use pick::Picking;
 pub use standing::*;
@@ -147,10 +149,7 @@ pub struct LobbyState {
     /// Who is at this beach, as this peer knows it: computed on the host,
     /// and told to a joiner by [`NetMsg::Roster`], since a joiner has only
     /// ever spoken to the host and would otherwise think itself alone.
-    pub table: Vec<String>,
-    /// What holds each place in [`Self::table`], so a bot at the beach
-    /// wears the robot on the card that lists who is there.
-    pub table_kinds: Vec<crate::sim::SeatKind>,
+    pub table: Vec<TablePlace>,
     /// The seat each of [`Self::table`]'s places sits in, the AI behind
     /// them and how the table is scored ([`Seated`]): the host's own
     /// partner picks on the host, the roster's terms on a joiner.
@@ -305,12 +304,11 @@ impl LobbyState {
         self.standing = Standing::Choosing { watching };
         self.chat.clear();
         self.table.clear();
-        self.table_kinds.clear();
     }
 
     /// The table as the lobby knows it: the host first, then every peer
     /// that came to play, by the name its greeting carried.
-    pub fn roster(&self, tr: &crate::app::i18n::Tr, me: &str) -> Vec<String> {
+    pub fn roster(&self, tr: &crate::app::i18n::Tr, me: &str) -> Vec<TablePlace> {
         let nobody = PeerBook::default();
         let peers = self.hosted().map_or(&nobody, |hosted| &hosted.peers);
         table_of(peers, tr, me)
@@ -338,21 +336,6 @@ impl LobbyState {
             true => host.addr.to_string(),
             false => host.name.clone(),
         })
-    }
-
-    /// What holds each place in [`Self::roster`]: the host a person, every
-    /// peer at the table whatever its greeting said. Read off the same
-    /// list as the roster ([`PeerBook::at_the_table`]), so a place and what
-    /// holds it never count past each other.
-    pub fn roster_kinds(&self) -> Vec<crate::sim::SeatKind> {
-        let nobody = PeerBook::default();
-        let peers = self.hosted().map_or(&nobody, |hosted| &hosted.peers);
-        std::iter::once(crate::sim::SeatKind::Human)
-            .chain(peers.at_the_table().map(|(_, peer)| match peer.bot {
-                true => crate::sim::SeatKind::Bot,
-                false => crate::sim::SeatKind::Human,
-            }))
-            .collect()
     }
 
     /// Where the cursor sits in the current list, if the beach it names is
@@ -447,24 +430,50 @@ impl LobbyState {
     }
 }
 
-/// The table as a host knows it: the host first, then every peer that
-/// came to play, by the name its greeting carried, as far as there are
-/// chairs ([`PeerBook::at_the_table`]). Onlookers are not at it, and a
-/// peer that has not said what to call it yet still holds its chair,
-/// under a seat label rather than a blank.
-pub(super) fn table_of(peers: &PeerBook, tr: &crate::app::i18n::Tr, me: &str) -> Vec<String> {
+/// One place at the lobby's table: who holds it, and what holds it, so a
+/// bot at the beach wears the robot on the card that lists who is there.
+/// One list of both, so a place and what holds it never count past each
+/// other.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TablePlace {
+    pub name: String,
+    pub kind: crate::sim::SeatKind,
+}
+
+/// The table as a host knows it: the host first, a person, then every
+/// peer that came to play, by the name its greeting carried, as far as
+/// there are chairs ([`PeerBook::at_the_table`]), each a bot or a person
+/// as its greeting said. Onlookers are not at it, and a peer that has not
+/// said what to call it yet still holds its chair, under a seat label
+/// rather than a blank.
+pub(super) fn table_of(peers: &PeerBook, tr: &crate::app::i18n::Tr, me: &str) -> Vec<TablePlace> {
     let mine = match me.trim().is_empty() {
         true => crate::app::seat_label(tr, 0),
         false => me.to_string(),
     };
-    let mut table = vec![mine];
+    let mut table = vec![TablePlace {
+        name: mine,
+        kind: crate::sim::SeatKind::Human,
+    }];
     for (_, peer) in peers.at_the_table() {
-        table.push(match peer.name.is_empty() {
-            true => crate::app::seat_label(tr, table.len() as u8),
-            false => peer.name.clone(),
+        table.push(TablePlace {
+            name: match peer.name.is_empty() {
+                true => crate::app::seat_label(tr, table.len() as u8),
+                false => peer.name.clone(),
+            },
+            kind: match peer.bot {
+                true => crate::sim::SeatKind::Bot,
+                false => crate::sim::SeatKind::Human,
+            },
         });
     }
     table
+}
+
+/// The names of a table's places, in order, for a test to compare.
+#[cfg(test)]
+pub(super) fn place_names(table: &[TablePlace]) -> Vec<&str> {
+    table.iter().map(|place| place.name.as_str()).collect()
 }
 
 /// A finished match walking its table back into the lobby, still
@@ -596,9 +605,8 @@ pub fn exit_lobby(
         beaches,
     } = dials;
     if let Some(picking) = state.hosted_mut().and_then(|hosted| hosted.picking.take()) {
-        pick::close_the_pick(
-            picking,
-            pick::Close::PutBack,
+        picking.page.close(
+            crate::app::match_setup::Close::PutBack,
             &mut config,
             &mut menu,
             &beaches,
@@ -610,6 +618,50 @@ pub fn exit_lobby(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A player the round put out walks into the lobby with the reason on
+    /// its status line, taken so the menu does not say it again; a host
+    /// walking its table back is hosting again, and does not listen for
+    /// beaches while it hosts.
+    #[test]
+    fn the_lobby_says_why_a_round_put_this_player_out() {
+        use bevy::ecs::system::RunSystemOnce;
+        let lobby = |homecoming: Option<LobbyReturn>| {
+            let mut app = App::new();
+            app.init_resource::<LobbyState>();
+            app.insert_resource(Homecoming(homecoming));
+            app.insert_resource(crate::app::RoundNotice("The host left.".into()));
+            app.init_resource::<GameSettings>();
+            app.insert_resource(crate::app::art::Art::blank());
+            app.world_mut()
+                .run_system_once(enter_lobby)
+                .expect("entered");
+            app
+        };
+        let app = lobby(None);
+        let state = app.world().resource::<LobbyState>();
+        assert_eq!(state.feedback, "The host left.");
+        assert!(
+            app.world()
+                .resource::<crate::app::RoundNotice>()
+                .0
+                .is_empty()
+        );
+
+        let mut session = crate::app::net::OnlineSession::new(
+            UdpTransport::host(0).expect("game socket"),
+            crate::sim::Lockstep::new(0, vec![0, 1], crate::sim::DEFAULT_DELAY),
+            2,
+            crate::transport::MatchTerms::default(),
+        );
+        session
+            .stay_on_air(Announcer::on(0x9A9B, crate::transport::Air::loopback(&[])).expect("air"));
+        session.home.from_lobby = true;
+        let app = lobby(Some(session.back_to_the_lobby()));
+        let state = app.world().resource::<LobbyState>();
+        assert!(state.hosting());
+        assert!(state.discovery.is_none(), "a host listening for beaches");
+    }
 
     fn addr(last: u8) -> SocketAddr {
         format!("10.0.0.{last}:47777").parse().expect("addr")
@@ -885,7 +937,7 @@ mod homecoming_tests {
         );
         assert_eq!(hosted.announce_in, 0.0, "back on the air this frame");
         assert_eq!(
-            state.roster(&EN, "Anna"),
+            place_names(&state.roster(&EN, "Anna")),
             ["Anna", "Bo"],
             "the table as it stood, minus the one watching"
         );
@@ -1099,22 +1151,25 @@ mod table_tests {
     #[test]
     fn the_table_is_the_host_and_the_players() {
         let state = seated(&["Bo", "Cy"], &[]);
-        assert_eq!(state.roster(&EN, "Anna"), ["Anna", "Bo", "Cy"]);
+        assert_eq!(
+            place_names(&state.roster(&EN, "Anna")),
+            ["Anna", "Bo", "Cy"]
+        );
 
         // Peer 0 came to watch, so the table is the host and Cy.
         let state = seated(&["Bo", "Cy"], &[0]);
-        assert_eq!(state.roster(&EN, "Anna"), ["Anna", "Cy"]);
+        assert_eq!(place_names(&state.roster(&EN, "Anna")), ["Anna", "Cy"]);
 
         // A nameless host, and a nameless peer, fall back to seat labels
         // rather than to blanks.
         let state = seated(&[""], &[]);
         let table = state.roster(&EN, "");
         assert_eq!(table.len(), 2);
-        assert!(table.iter().all(|who| !who.is_empty()), "{table:?}");
+        assert!(table.iter().all(|who| !who.name.is_empty()), "{table:?}");
 
         // And a lobby that is not hosting seats nobody but its owner.
         let state = LobbyState::default();
-        assert_eq!(state.roster(&EN, "Anna"), ["Anna"]);
+        assert_eq!(place_names(&state.roster(&EN, "Anna")), ["Anna"]);
     }
 
     /// Dropping a peer has to move the rows behind it with the socket's
@@ -1125,7 +1180,7 @@ mod table_tests {
     fn forgetting_a_peer_moves_everything_that_indexed_it() {
         let mut state = seated(&["Bo", "Cy", "Dee"], &[2]);
         assert_eq!(
-            state.roster(&EN, "Anna"),
+            place_names(&state.roster(&EN, "Anna")),
             ["Anna", "Bo", "Cy"],
             "Dee watches"
         );
@@ -1138,7 +1193,7 @@ mod table_tests {
         assert_eq!(hosted.watchers_aboard(), 1, "the wish followed Dee down");
         assert_eq!(hosted.players_aboard(), 1);
         assert_eq!(
-            state.roster(&EN, "Anna"),
+            place_names(&state.roster(&EN, "Anna")),
             ["Anna", "Cy"],
             "Dee still watches"
         );
@@ -1148,7 +1203,7 @@ mod table_tests {
         let hosted = state.hosted().expect("hosting");
         assert_eq!(hosted.peers.len(), 1);
         assert_eq!(hosted.watchers_aboard(), 0);
-        assert_eq!(state.roster(&EN, "Anna"), ["Anna", "Cy"]);
+        assert_eq!(place_names(&state.roster(&EN, "Anna")), ["Anna", "Cy"]);
     }
 }
 

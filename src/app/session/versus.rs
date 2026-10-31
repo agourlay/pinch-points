@@ -3,6 +3,7 @@
 //! the highlight reel, and the teardown on the way out.
 
 use super::*;
+use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 
 /// Who decides for each seat this round, by this machine's setup: seat by
@@ -22,9 +23,9 @@ pub(in crate::app) fn bot_seats(config: &match_setup::MatchConfig) -> Controller
 /// picked back up is already a beach mid-play, a recording is watched as
 /// it was, an online round is the lobby's agreement, and a match set up
 /// here is this machine's own.
-pub(super) enum RoundOrigin<'a> {
+pub(in crate::app) enum RoundOrigin<'a> {
     /// Resumed from a save or a pasted code: its own beach and table.
-    Resumed(Box<suspend::Suspended>),
+    Resumed(&'a suspend::Suspended),
     /// A recording being watched.
     Replay(&'a Replay),
     /// A round at an online table, from its first frame or caught up
@@ -36,7 +37,66 @@ pub(super) enum RoundOrigin<'a> {
     Unconfigured,
 }
 
-impl RoundOrigin<'_> {
+impl<'a> RoundOrigin<'a> {
+    /// The way into this round, in the order the variants win. `config`
+    /// is the table [`RoundSource::config`] chose.
+    fn of(
+        resuming: &'a Resuming,
+        playback: &'a Playback,
+        online: &'a net::Online,
+        config: &'a match_setup::MatchConfig,
+    ) -> Self {
+        if let Some(round) = &resuming.0 {
+            RoundOrigin::Resumed(round)
+        } else if let Some((replay, _)) = &playback.0 {
+            RoundOrigin::Replay(replay)
+        } else if let Some(session) = &online.0 {
+            RoundOrigin::Online(session)
+        } else if config.armed {
+            RoundOrigin::Configured(config)
+        } else {
+            RoundOrigin::Unconfigured
+        }
+    }
+
+    /// The seats this machine puts a cursor on, `pads` the gamepads
+    /// plugged in.
+    pub(in crate::app) fn seats_here(&self, pads: u8) -> Vec<u8> {
+        match self {
+            // Its table is the round's own: one cursor per human seat, and
+            // none for the AI's, or a keypress on the AI's keys steered its
+            // crabs over the head of the bot.
+            //
+            // By seat, not by head-count: the AI's seats need not be the
+            // top ones. An online seat given up on mid-round passes to the
+            // AI where it sits, and its code says so, so counting heads put
+            // a cursor on that seat and left the human above it with none.
+            RoundOrigin::Resumed(round) => round.bots[..usize::from(round.seats)]
+                .iter()
+                .enumerate()
+                .filter(|(_, bot)| bot.is_none())
+                .map(|(seat, _)| seat as u8)
+                .collect(),
+            // A replay has no cursor, for the same reason a spectator has
+            // none: there is no seat here to place from. Cursor movement
+            // was never recorded, so one drawn over a replay sits in the
+            // middle of the board looking broken.
+            RoundOrigin::Replay(_) => Vec::new(),
+            // A spectator has no cursor: there is no seat for it to place
+            // from. Nor does a seat a bot drives from this machine: the
+            // keys here are not what plays it.
+            RoundOrigin::Online(session) => session
+                .session
+                .seat()
+                .filter(|_| session.bot.is_none())
+                .into_iter()
+                .collect(),
+            // One cursor per person's seat, where step 3 put them.
+            RoundOrigin::Configured(config) => config.human_seats(),
+            RoundOrigin::Unconfigured => (0..pads.max(2)).collect(),
+        }
+    }
+
     /// The beach the round is played on.
     pub(super) fn board(
         &self,
@@ -218,6 +278,39 @@ pub(in crate::app) struct RoundSource<'w, 's> {
     pub(in crate::app) settings: Res<'w, crate::app::settings::GameSettings>,
 }
 
+impl RoundSource<'_, '_> {
+    /// The table this round is played with: the daily plays on a table
+    /// of its own rather than the player's.
+    pub(in crate::app) fn config(&self) -> Cow<'_, match_setup::MatchConfig> {
+        config_for(&self.daily, &self.config)
+    }
+
+    /// Where the round comes from, `config` the one [`Self::config`] gave.
+    pub(in crate::app) fn origin<'a>(
+        &'a self,
+        config: &'a match_setup::MatchConfig,
+    ) -> RoundOrigin<'a> {
+        RoundOrigin::of(&self.resuming, &self.playback, &self.online, config)
+    }
+
+    /// How many gamepads are plugged in.
+    pub(in crate::app) fn pad_count(&self) -> u8 {
+        self.pads.iter().count() as u8
+    }
+}
+
+/// [`RoundSource::config`], for a caller holding the fields apart.
+fn config_for<'a>(
+    daily: &Daily,
+    config: &'a match_setup::MatchConfig,
+) -> Cow<'a, match_setup::MatchConfig> {
+    if daily.active {
+        Cow::Owned(match_setup::MatchConfig::daily())
+    } else {
+        Cow::Borrowed(config)
+    }
+}
+
 /// Boot the versus arena: fresh board, sprites, running phase. Online
 /// sessions and replay playback use the same mode with a different board
 /// source and input path.
@@ -248,21 +341,10 @@ pub(in crate::app) fn load_versus(
         tournament,
         settings,
     } = &mut source;
-    // The daily plays on a table of its own rather than the player's.
-    let daily_config = match_setup::MatchConfig::daily();
-    let config: &match_setup::MatchConfig = if daily.active { &daily_config } else { config };
+    let config = config_for(daily, config);
+    let config: &match_setup::MatchConfig = &config;
     let pad_count = pads.iter().count() as u8;
-    let origin = if let Some(round) = resuming.0.take() {
-        RoundOrigin::Resumed(Box::new(round))
-    } else if let Some((replay, _)) = &playback.0 {
-        RoundOrigin::Replay(replay)
-    } else if let Some(session) = &online.0 {
-        RoundOrigin::Online(session)
-    } else if config.armed {
-        RoundOrigin::Configured(config)
-    } else {
-        RoundOrigin::Unconfigured
-    };
+    let origin = RoundOrigin::of(resuming, playback, online, config);
     // The daily's day is read once, here, and kept: the seed is built
     // from it and the trophies count the round under it when it ends.
     let daily_day =
@@ -303,6 +385,9 @@ pub(in crate::app) fn load_versus(
     }
     paused.0 = false;
     opening.open(origin.counts_in(), origin.opens_on_lineup(set_here));
+    // Taken only now, after the round was built from it: the cursors
+    // were spawned from the same answer one system earlier.
+    resuming.0.take();
 }
 
 /// Forget what was asked of a round that was never entered.

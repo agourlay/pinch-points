@@ -455,7 +455,7 @@ impl OnlineSession {
             return;
         }
         if let Some(wants) = self.wants_of_this_round(batch.wants) {
-            self.peers.row(from).wants = Some(wants);
+            self.peers.row(from).heard.wants = Some(wants);
         }
         self.send_the_tail(from);
     }
@@ -853,11 +853,7 @@ impl OnlineSession {
         // round's kinds say otherwise, which its caller writes after this.
         self.kinds = ai_where_the_terms_say(terms, seats);
         self.hashes.reset();
-        self.resume_echo = 0;
-        self.round_ticks = 0;
-        self.host_newest = None;
-        self.host_wants = None;
-        self.clock_apart = None;
+        self.pace = Pace::default();
         // Seats given up on were last round's seats, at last round's
         // frames. The seats are dealt afresh, so a stale entry would read
         // a re-seated player as dropped and hand its chair to the AI.
@@ -872,7 +868,7 @@ impl OnlineSession {
         for peer in self.peers.iter_mut() {
             peer.pick = None;
             peer.pause = None;
-            peer.wants = None;
+            peer.heard.wants = None;
         }
         // And nobody is late for a round that has not begun. The results
         // card is a place a table sits for a while, and carrying that

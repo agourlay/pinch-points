@@ -635,7 +635,7 @@ mod tests {
         let mut app = test_app(board, (2, 2));
         app.add_systems(Update, poll_solver);
         let found = vec![(2, 2, Direction::Right, 0)];
-        app.world_mut().resource_mut::<EditorState>().solver = Some(Validation::pending());
+        app.world_mut().resource_mut::<EditorState>().check.solver = Some(Validation::pending());
         tap(&mut app, KeyCode::Enter);
         assert_eq!(phase(&app), Some(TestPhase::Setup));
         let answer = Verdict {
@@ -646,16 +646,16 @@ mod tests {
         };
         {
             let state = app.world().resource::<EditorState>();
-            let check = state.solver.as_ref().expect("still running");
+            let check = state.check.solver.as_ref().expect("still running");
             *check.slot.lock().unwrap() = Some(answer);
         }
         app.update();
         let state = app.world().resource::<EditorState>();
-        assert!(state.solver.is_some(), "the answer waits");
+        assert!(state.check.solver.is_some(), "the answer waits");
         assert!(state.solution.is_empty());
         tap(&mut app, KeyCode::Escape);
         let state = app.world().resource::<EditorState>();
-        assert!(state.solver.is_none(), "taken once the bench is back");
+        assert!(state.check.solver.is_none(), "taken once the bench is back");
         assert_eq!(state.solution, found);
     }
 
