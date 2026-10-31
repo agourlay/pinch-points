@@ -694,6 +694,19 @@ impl Board {
     /// crabs arriving this tick. Once the tide is in (`round_over`), the sim
     /// is frozen and ticks are no-ops: scores locked at the wave (spec §3.6).
     pub fn tick(&mut self, actions: &[PlayerAction; MAX_PLAYERS]) {
+        self.tick_watching(actions, |_| {});
+    }
+
+    /// [`Board::tick`], showing `before_eat` the board between movement
+    /// and the eat pass: the one moment a crab a gull eats on arrival is
+    /// still standing on the tile it reached. The solver's candidate scan
+    /// needs that tile, since an arrow there would have turned the crab
+    /// away from the gull. Watching changes nothing in the tick.
+    pub(crate) fn tick_watching(
+        &mut self,
+        actions: &[PlayerAction; MAX_PLAYERS],
+        mut before_eat: impl FnMut(&Board),
+    ) {
         if self.round_over() {
             return;
         }
@@ -715,6 +728,7 @@ impl Board {
         self.run_gull_spawner();
         self.move_crabs();
         self.move_gulls();
+        before_eat(self);
         self.gulls_eat();
         self.lure.tick();
         if let Some((_, ticks)) = &mut self.tide.mania {

@@ -140,6 +140,19 @@ impl Board {
         }
     }
 
+    /// Whether a hole still sends a crab out on some tick from this one up
+    /// to (not including) `deadline`, at the cadence it keeps now, or a
+    /// golden crab already called is still to come. A beach with every crab
+    /// home is only finished when this is false: a hole is a promise of
+    /// more.
+    pub fn holes_send_before(&self, deadline: u64) -> bool {
+        self.golden_call.is_some_and(|(at, _)| at < deadline)
+            || self.grid.tiles.iter().any(|&tile| {
+                matches!(tile, TileKind::Spawner(s)
+                    if self.tick.next_multiple_of(u64::from(self.hole_period(s.period))) < deadline)
+            })
+    }
+
     /// How many live crabs the holes fill the beach to this tick. The beach
     /// fills to the cap and then waits for it to clear. Crab Mania floods
     /// past it, which is the event, but only to twice the cap, the same way

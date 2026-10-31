@@ -263,19 +263,33 @@ impl Board {
     /// The open spots, in bounds and on empty sand, along a ring of offsets
     /// around `(cx, cy)`, in ring order, each with the offset it sits at.
     /// The shared half of every castle-ring walk.
+    ///
+    /// On an open beach the ring carries on across the seam, the way
+    /// everything walking does: a castle by the rim spills as many crabs
+    /// as any other. A tile the seam brings round twice (a beach one or
+    /// two wide) is offered once.
     pub(super) fn ring_openings(
         &self,
         cx: i32,
         cy: i32,
         ring: &[(i32, i32)],
     ) -> Vec<(i32, i32, i32, i32)> {
-        ring.iter()
-            .map(|&(ox, oy)| (cx + ox, cy + oy, ox, oy))
-            .filter(|&(nx, ny, _, _)| {
-                self.in_bounds(nx, ny)
-                    && self.grid.tiles[self.index(nx, ny) as usize] == TileKind::Empty
-            })
-            .collect()
+        let mut open: Vec<(i32, i32, i32, i32)> = Vec::with_capacity(ring.len());
+        for &(ox, oy) in ring {
+            let (mut nx, mut ny) = (cx + ox, cy + oy);
+            if !self.in_bounds(nx, ny) {
+                if !self.wrap {
+                    continue;
+                }
+                (nx, ny) = self.wrap_coords(nx, ny);
+            }
+            if self.grid.tiles[self.index(nx, ny) as usize] == TileKind::Empty
+                && !open.iter().any(|&(x, y, _, _)| (x, y) == (nx, ny))
+            {
+                open.push((nx, ny, ox, oy));
+            }
+        }
+        open
     }
 
     pub(super) fn wrap_coords(&self, x: i32, y: i32) -> (i32, i32) {
@@ -569,5 +583,26 @@ mod tests {
                 .all(|&(x, y, _, _)| (0..3).contains(&x) && (0..3).contains(&y)),
             "nothing off the board: {corner:?}"
         );
+    }
+
+    /// On an open beach the ring wraps: a castle in the corner is offered
+    /// the sand across both seams, at the offsets it was asked for, and a
+    /// tile the seam brings round twice is offered once.
+    #[test]
+    fn a_ring_on_an_open_beach_carries_on_across_the_seam() {
+        let mut board = Board::new(4, 4, 1);
+        board.set_wrap(true);
+        board.set_tile(0, 0, TileKind::Castle(0));
+        let open = board.ring_openings(0, 0, &CASTLE_RING[..4]);
+        let mut places: Vec<(i32, i32)> = open.iter().map(|&(x, y, _, _)| (x, y)).collect();
+        places.sort_unstable();
+        assert_eq!(places, [(0, 1), (0, 3), (1, 0), (3, 0)], "{open:?}");
+        assert!(open.contains(&(3, 0, -1, 0)), "{open:?}");
+
+        let mut narrow = Board::new(2, 3, 1);
+        narrow.set_wrap(true);
+        narrow.set_tile(0, 1, TileKind::Castle(0));
+        let open = narrow.ring_openings(0, 1, &[(-1, 0), (1, 0)]);
+        assert_eq!(open, [(1, 1, -1, 0)], "one tile, offered once");
     }
 }

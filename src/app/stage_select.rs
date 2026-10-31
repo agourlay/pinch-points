@@ -91,10 +91,38 @@ pub fn tile_number(campaign: &Campaign, index: usize) -> usize {
 #[derive(Resource, Default)]
 pub struct StageList {
     pub selected: usize,
+    /// Where a puzzle sending the player back asks the list to open,
+    /// rather than on the furthest open stage. Taken on entering.
+    pub landing: Option<Landing>,
     /// The grid as it was drawn, one range per row. Kept rather than
     /// recomputed: the tiles are spawned once on entering and nothing
     /// reshuffles them while the screen is up.
     rows: Vec<std::ops::Range<usize>>,
+}
+
+/// A stage a puzzle sends the player back to the list on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Landing {
+    /// The stage the cursor lands on.
+    pub at: usize,
+    /// Whether the list says it needs two players: Enter on a won card or
+    /// N in setup asked for it with one seated, and was sent here instead.
+    pub needs_two: bool,
+}
+
+/// The way back to the stage list from a puzzle, landing where asked.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct BackToTheList<'w> {
+    list: ResMut<'w, StageList>,
+    next_screen: ResMut<'w, NextState<Screen>>,
+}
+
+impl BackToTheList<'_> {
+    /// Back to the list, opening on `landing`, else where it would.
+    pub fn go(&mut self, landing: Option<Landing>) {
+        self.list.landing = landing;
+        self.next_screen.set(Screen::StageSelect);
+    }
 }
 
 #[derive(Component)]
@@ -292,23 +320,39 @@ pub fn enter_stage_select(
 ) {
     // Whatever the menu last said is about the menu.
     notice.0.clear();
+    let landing = list.landing.take();
     // A stage played from a pasted code was put on the list for its one
     // go, and is no stage of the list's: the list is the shelf as it is
     // filed. Left on, it was offered as the player's own, with an Edit and
     // a Copy that found no file.
-    if campaign.holds_a_code() {
-        campaign.reset(crate::app::campaign::stage_list());
-    }
+    let landing = match campaign.holds_a_code() {
+        true => {
+            campaign.reset(crate::app::campaign::stage_list());
+            // The list just changed under it.
+            None
+        }
+        false => landing.filter(|landing| landing.at < campaign.levels.len()),
+    };
     // A tick an older build filed under a level's name is filed under its
     // file before the list is drawn, and kept there: a later file of the
     // same name would leave the name meaning neither.
     if progress.adopt_legacy(&campaign) {
         crate::app::progress::save(&mut progress);
     }
-    // Land the cursor where the player left off, not back at stage one.
-    list.selected = progress.furthest_open(&campaign);
-    list.rows = rows_of(&sections(&campaign).map(|(_, range)| range));
     let tr = settings.tr();
+    // Land the cursor where the player left off, not back at stage one:
+    // on the stage a puzzle sent them back on, saying why when it was
+    // refused them, else on the furthest open stage of the ladder.
+    list.selected = match landing {
+        Some(Landing { at, needs_two }) => {
+            if needs_two {
+                notice.0 = crate::app::name_the_pair(tr, tr.stage_needs_two);
+            }
+            at
+        }
+        None => progress.furthest_open(&campaign),
+    };
+    list.rows = rows_of(&sections(&campaign).map(|(_, range)| range));
     commands
         .spawn((
             StageSelectUi,
@@ -1111,6 +1155,43 @@ mod tests {
                 .levels
                 .iter()
                 .all(|level| level.name != "Pasted Probe")
+        );
+    }
+
+    /// A puzzle sending the player back on a stage brings the list up on
+    /// it, saying it needs two when that is why; the landing is spent, and
+    /// the next way in finds the furthest open stage again.
+    #[test]
+    fn the_list_lands_where_a_puzzle_sent_the_player() {
+        use bevy::ecs::system::RunSystemOnce;
+        let campaign = campaign();
+        let at = campaign.levels.len() - 1;
+        let mut app = App::new();
+        app.insert_resource(campaign);
+        app.init_resource::<Progress>();
+        app.insert_resource(StageList {
+            landing: Some(Landing {
+                at,
+                needs_two: true,
+            }),
+            ..StageList::default()
+        });
+        app.init_resource::<GameSettings>();
+        app.init_resource::<crate::app::RoundNotice>();
+        let _ = app.world_mut().run_system_once(enter_stage_select);
+        let list = app.world().resource::<StageList>();
+        assert_eq!((list.selected, list.landing), (at, None));
+        assert_eq!(
+            app.world().resource::<crate::app::RoundNotice>().0,
+            crate::app::name_the_pair(&EN, EN.stage_needs_two)
+        );
+        let _ = app.world_mut().run_system_once(enter_stage_select);
+        assert_eq!(app.world().resource::<StageList>().selected, 0);
+        assert!(
+            app.world()
+                .resource::<crate::app::RoundNotice>()
+                .0
+                .is_empty()
         );
     }
 

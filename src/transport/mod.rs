@@ -185,7 +185,11 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 ///   call, the crowd's picks and the host's address) travel as a `Notice`
 ///   of what happened, a new tag, for each peer to word in its own
 ///   language, where they had been chat in the host's: a 49 peer drops
-///   every one unread.
+///   every one unread. A full flock turning over keeps every gull within
+///   two tiles of any castle, a seat's second one too, measured across the
+///   seam on an open beach, so a 49 peer may send a different gull off.
+///   A raid on a castle by the rim of an open beach spills, and a Gull
+///   Attack lands, across the seam, where a 49 peer spills fewer crabs.
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in

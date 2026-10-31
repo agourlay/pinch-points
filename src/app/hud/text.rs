@@ -338,12 +338,12 @@ pub(super) fn puzzle_text(
         }
         .to_string(),
         Phase::Running => tr.prompt_running.to_string(),
-        // On the last level the card says the run is over and Enter goes
-        // home; a prompt line still offering "next level" under it is the
-        // game arguing with itself.
-        Phase::Won if campaign.is_last() => tr.last_level.to_string(),
-        Phase::Won if level.goal.saves_every_crab() => tr.prompt_won.to_string(),
-        Phase::Won => tr.prompt_won_goal.to_string(),
+        Phase::Won => crate::app::results::won_keys(
+            tr,
+            campaign.won_door(crate::app::Coop(coop)),
+            level.goal.saves_every_crab(),
+        )
+        .to_string(),
         Phase::Lost => crate::app::results::loss_words(tr, level.goal)
             .1
             .to_string(),
@@ -769,8 +769,10 @@ pub(super) fn pad_prompt(r: &Readout) -> String {
             arrows_all_down(r.campaign.current(), &r.sim.0).then(|| p.full.to_string())
         }
         Face::PuzzleRunning => Some(p.running.to_string()),
-        Face::PuzzleWon { last: true } => Some(p.last_level.to_string()),
-        Face::PuzzleWon { last: false } => Some(
+        Face::PuzzleWon {
+            door: crate::app::campaign::WonDoor::Menu,
+        } => Some(p.last_level.to_string()),
+        Face::PuzzleWon { .. } => Some(
             match r.campaign.current().goal.saves_every_crab() {
                 true => p.won,
                 false => p.won_goal,
@@ -1925,6 +1927,16 @@ mod tests {
         campaign.index = builtins - 1;
         assert_eq!(said(&campaign, Phase::Won).prompt, EN.last_level);
 
+        // A co-op stage of the player's own next, with one seated: Enter
+        // goes to the stage list, and the line does not promise the stage.
+        let mut alone = Campaign {
+            builtins,
+            ..Campaign::tide_pool_of(campaign.levels.clone())
+        };
+        alone.levels[builtins + 1] = alone.levels[builtins + 1].with_hands(Some([1, 1]), 2);
+        alone.index = builtins;
+        assert_eq!(said(&alone, Phase::Won).prompt, EN.prompt_won_stages);
+
         // The first of the player's own is one of two, under its own label.
         campaign.index = builtins;
         let HudText { title, prompt, .. } = said(&campaign, Phase::Won);
@@ -2504,6 +2516,8 @@ mod tests {
             tr.last_level.to_string(),
             tr.prompt_won.to_string(),
             tr.prompt_won_goal.to_string(),
+            tr.prompt_won_stages.to_string(),
+            tr.prompt_won_goal_stages.to_string(),
             tr.prompt_lost.to_string(),
             tr.prompt_lost_goal.to_string(),
             tr.prompt_paused.to_string(),

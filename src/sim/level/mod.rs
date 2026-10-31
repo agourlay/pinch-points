@@ -355,9 +355,14 @@ impl Level {
         // is checked first: a goal met on the same tick a crab was eaten does
         // not save an AllCrabs or Survive stage.
         let (lost, won) = match self.goal {
+            // Every crab home means every crab the stage will send: a
+            // quiet beach is not a win while a hole still has one to come
+            // (the solver's scan reads it the same way).
             Goal::AllCrabs => (
                 eaten,
-                alive == 0 && board.crabs_banked() == board.crabs_spawned(),
+                alive == 0
+                    && board.crabs_banked() == board.crabs_spawned()
+                    && !board.holes_send_before(Self::deadline(board)),
             ),
             Goal::Bank(n) => (false, board.crabs_banked() >= n),
             // Survive is the one goal the clock is *for*: running it out is
@@ -973,5 +978,34 @@ map:
         let recorded = Level::from_board("B", 3, fresh.clone()).to_text();
         let rebuilt = Level::parse(&recorded).expect("reads back").board();
         assert_eq!(rebuilt.state_hash(), fresh.state_hash());
+    }
+
+    /// An all-crabs stage with a hole is not won at its first lull: the
+    /// hole still has crabs to send, and every one of them must get home.
+    /// It is won once the last crab the hole sends before the tide is in,
+    /// and lost when the tide beats a late one home. The hole sends at
+    /// ticks 0 and 200, and even a giant walks the two tiles in under 100.
+    #[test]
+    fn an_all_crabs_stage_waits_for_the_crabs_its_hole_still_sends() {
+        let stage = |round: u32| {
+            Level::parse(&format!(
+                "name: H\nposts: 0\nround: {round}\nspawner: 0,0 R 200\nmap:\n+-+-+-+\n|. . 0|\n+-+-+-+\n"
+            ))
+            .expect("parses")
+        };
+        let (outcome, at) = stage(300).play_out(&mut stage(300).board());
+        assert_eq!(outcome, PuzzleOutcome::Won);
+        assert!(
+            at > 200,
+            "won at tick {at}, before the second crab came out"
+        );
+        let mut board = stage(300).board();
+        stage(300).play_out(&mut board);
+        assert_eq!(board.crabs_spawned(), 2);
+        // The second crab comes out ten ticks before the tide: too late.
+        assert_eq!(
+            stage(210).play_out(&mut stage(210).board()).0,
+            PuzzleOutcome::Lost
+        );
     }
 }

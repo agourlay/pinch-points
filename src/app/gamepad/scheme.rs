@@ -13,6 +13,7 @@
 //! ([`legend`]). A prompt cannot name a button the bridge does not press,
 //! or miss one it does, because the two are the same rows.
 
+use crate::app::campaign::WonDoor;
 use crate::app::editor::Command;
 use crate::app::i18n::{Tr, fill};
 use crate::app::menu_ui::{NUMBER_KEYS, Nav};
@@ -656,9 +657,9 @@ pub enum Face {
         hint: bool,
     },
     PuzzleRunning,
-    /// A puzzle's won card: `last` the end of the list.
+    /// A puzzle's won card: `door` where its A goes.
     PuzzleWon {
-        last: bool,
+        door: crate::app::campaign::WonDoor,
     },
     PuzzleLost {
         hint: bool,
@@ -1032,10 +1033,11 @@ pub fn binds(face: &Face) -> Vec<Bind> {
         // The results cards over a board never press the d-pad's keys:
         // nothing on them reads W/A/S/D, but the board cursor does, as
         // P1's keys.
-        Face::PuzzleWon { last } => out.extend([
-            match last {
-                true => bind(A, enter, Does::BackToMenu),
-                false => bind(A, enter, Does::NextStage),
+        Face::PuzzleWon { door } => out.extend([
+            match door {
+                WonDoor::Menu => bind(A, enter, Does::BackToMenu),
+                WonDoor::Stages => bind(A, enter, Does::Stages),
+                WonDoor::Next => bind(A, enter, Does::NextStage),
             },
             bind(Y, Key::Cap('R'), Does::Reset),
             bind(B, esc, Does::Stages),

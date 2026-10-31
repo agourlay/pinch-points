@@ -1,6 +1,7 @@
 //! Round-end overlays: the tide-is-in standings card, the puzzle victory
 //! card, and the winner confetti.
 
+use crate::app::campaign::WonDoor;
 use crate::app::gamepad::{Face, LastDevice, PadFamily};
 use crate::app::i18n::fill;
 use crate::app::menu_ui;
@@ -733,6 +734,7 @@ pub fn update_highlight_line(
 pub fn spawn_puzzle_won(
     mut commands: Commands,
     campaign: Res<Campaign>,
+    coop: Res<crate::app::Coop>,
     (settings, device): (Res<GameSettings>, Res<LastDevice>),
     sim: Res<Sim>,
     art: Res<crate::app::art::Art>,
@@ -746,7 +748,7 @@ pub fn spawn_puzzle_won(
     // last of those ends only the list. So the card counts this level
     // within whichever of the two it belongs to, and only the shipped
     // section's end is the campaign's end.
-    let last = campaign.is_last();
+    let door = campaign.won_door(*coop);
     let board = &sim.0;
     // The castle the crabs were routed to: the first on the beach, which
     // is the only one in all but a handful of stages.
@@ -775,15 +777,32 @@ pub fn spawn_puzzle_won(
             }
             saved_row(card, &art, &campaign, board);
             card.spawn(card_line(level_line(tr, &campaign, &name), 21.0, CARD_TEXT));
-            let (keys, lead) = match (last, saved_all) {
-                (true, _) => (tr.last_level, tr.pad.last_level),
-                (false, true) => (tr.prompt_won, tr.pad.won),
-                (false, false) => (tr.prompt_won_goal, tr.pad.won_goal),
+            let keys = won_keys(tr, door, saved_all);
+            let lead = match (door, saved_all) {
+                (WonDoor::Menu, _) => tr.pad.last_level,
+                (WonDoor::Next | WonDoor::Stages, true) => tr.pad.won,
+                (WonDoor::Next | WonDoor::Stages, false) => tr.pad.won_goal,
             };
-            let keys = CardKeys::new(keys, Some(lead), &Face::PuzzleWon { last }, tr);
+            let keys = CardKeys::new(keys, Some(lead), &Face::PuzzleWon { door }, tr);
             card.spawn(keys_line(keys, *device, 17.0, CARD_TEXT.darker(0.15)));
         });
     });
+}
+
+/// The won card's line of keys, and the header's prompt under it: where
+/// Enter goes ([`Campaign::won_door`]), after whether every crab came home
+/// or the goal was met. On the last stage the card says the run is over
+/// and Enter goes home; a line still offering "next level" under it, or
+/// before a co-op stage only one is seated for, is the game arguing with
+/// itself.
+pub fn won_keys(tr: &crate::app::i18n::Tr, door: WonDoor, saved_all: bool) -> &'static str {
+    match (door, saved_all) {
+        (WonDoor::Menu, _) => tr.last_level,
+        (WonDoor::Next, true) => tr.prompt_won,
+        (WonDoor::Next, false) => tr.prompt_won_goal,
+        (WonDoor::Stages, true) => tr.prompt_won_stages,
+        (WonDoor::Stages, false) => tr.prompt_won_goal_stages,
+    }
 }
 
 /// The won card's heading. The campaign's own last stage ends it, and

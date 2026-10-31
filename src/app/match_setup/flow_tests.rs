@@ -767,14 +767,14 @@ fn random_draws_every_round_among_the_maps_that_seat_the_table() {
         let mut drawn = std::collections::BTreeSet::new();
         let mut config = MatchConfig {
             seats,
-            pick: Pick::Random,
+            pick: Pick::Random { kept: None },
             ..MatchConfig::default()
         };
         for roll in 0..64u64 {
             map_for_next_round(&mut config, &shelf, roll);
             assert_eq!(
                 config.pick,
-                Pick::Random,
+                Pick::Random { kept: None },
                 "still random for the round after"
             );
             let played = local_board(&config, &shelf, roll);
@@ -828,7 +828,7 @@ fn start_match_draws_random_and_keeps_the_previewed_seed() {
     let shelf = CustomBeaches::default();
     let mut random = MatchConfig {
         seats: 3,
-        pick: Pick::Random,
+        pick: Pick::Random { kept: None },
         map: MapChoice::GenXl,
         ..MatchConfig::default()
     };
@@ -917,7 +917,7 @@ fn a_doorway_card_backed_out_of_leaves_the_table_as_it_was() {
     let mut table = MatchConfig {
         seats: 3,
         map: MapChoice::Duel,
-        pick: Pick::Random,
+        pick: Pick::Random { kept: None },
         ..MatchConfig::default()
     };
     table.controllers[2] = SeatController::Bot;
@@ -1176,6 +1176,46 @@ fn the_map_follows_the_pick_and_says_when_it_cannot() {
         (config.map, config.custom, config.pick),
         (MapChoice::Custom, 0, Pick::InForce)
     );
+}
+
+/// Under the Random card the map in force is only a placeholder until the
+/// draw, but the seat count moves it as it moves any pick, and the pick it
+/// moved off is kept: two players on Duel pick Random, three move the map
+/// to a generated one, and two put Duel back. The same when Random is
+/// picked while the count has the map moved already.
+#[test]
+fn random_keeps_the_pick_the_seat_count_moved() {
+    let shelf = CustomBeaches::default();
+    let duel = Card::Map(MapChoice::Duel);
+    let mut config = MatchConfig::default();
+    assert_eq!(config.seats, 2);
+    pick_card(&mut config, duel, &shelf);
+    pick_card(&mut config, Card::Random, &shelf);
+    assert_eq!(config.pick, Pick::Random { kept: None });
+    reseat(&mut config, 3, &shelf);
+    assert_ne!(config.map, MapChoice::Duel, "Duel seats two");
+    assert_eq!(config.pick, Pick::Random { kept: Some(duel) });
+    assert_eq!(picked_card(&config, &shelf), Card::Random);
+    assert_eq!(
+        map_moved(&config, &shelf),
+        None,
+        "Random has no pick to move"
+    );
+    reseat(&mut config, 2, &shelf);
+    assert_eq!(
+        (config.map, config.pick),
+        (MapChoice::Duel, Pick::Random { kept: None }),
+        "the map is back on Duel"
+    );
+
+    let mut config = MatchConfig::default();
+    pick_card(&mut config, duel, &shelf);
+    reseat(&mut config, 3, &shelf);
+    assert_eq!(config.pick, Pick::Moved(duel));
+    pick_card(&mut config, Card::Random, &shelf);
+    assert_eq!(config.pick, Pick::Random { kept: Some(duel) });
+    reseat(&mut config, 2, &shelf);
+    assert_eq!(config.map, MapChoice::Duel);
 }
 
 /// Each step's keyboard line is its own, and the pad's line is its

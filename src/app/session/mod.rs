@@ -397,6 +397,39 @@ mod tests {
         assert_eq!(bot_seats(&idle), Controllers::default());
     }
 
+    /// A recording is watched at the table it was played at: its AI seats
+    /// wear "(AI)" on the chips and the card as they did live, and C copies
+    /// them as the AI (a protocol bot's as the stand-in AI), not as seats
+    /// for people nobody here will sit in. An AI seat from before levels
+    /// were kept is still the AI.
+    #[test]
+    fn a_replay_is_watched_at_its_own_table() {
+        use crate::app::seating::{Viewer, seat_tag};
+        use crate::sim::SeatKind;
+        let level = Level::from_board("Turf War", 3, classic_arena(false, 4));
+        let mut replay = Replay::new(level);
+        replay.kinds[1] = SeatKind::Ai;
+        replay.ai[1] = Some(BotLevel::Hard);
+        replay.kinds[2] = SeatKind::Bot;
+        replay.kinds[3] = SeatKind::Ai;
+        let table = replay_controllers(&replay);
+        let tr = crate::app::i18n::Lang::En.tr();
+        assert_eq!(seat_tag(tr, &table, Viewer::Replay, 0), "");
+        assert_eq!(seat_tag(tr, &table, Viewer::Replay, 1), tr.tag_ai);
+        assert_eq!(seat_tag(tr, &table, Viewer::Replay, 3), tr.tag_ai);
+        assert_eq!(table.0[2], SeatController::Bot);
+        let copied = table.levels();
+        assert_eq!(copied[0], None, "the person stays a person");
+        assert_eq!(copied[1], Some(BotLevel::Hard));
+        assert_eq!(copied[2], Some(bot_seats::STAND_IN));
+        assert_eq!(copied[3], Some(BotLevel::default()));
+        // And the arena builds it so, whatever the player's own dials say.
+        let config = armed(4, 2);
+        let board = classic_arena(false, 4);
+        let origin = RoundOrigin::Replay(&replay);
+        assert_eq!(origin.table(&config, &board, 0).0, table);
+    }
+
     /// A round copied with a bot in it keeps that seat off the keyboard:
     /// pasted back, the bot is not there, so the AI that stands in for a
     /// bot holds it, rather than a person's keys or nobody at all.
@@ -782,6 +815,7 @@ mod tests {
         app.insert_resource(settings);
         app.insert_resource(online);
         app.init_resource::<Playback>();
+        app.init_resource::<replays::PlaybackSpeed>();
         app.init_resource::<Daily>();
         app.init_resource::<ReelThread>();
         app.init_resource::<Highlight>();
@@ -894,6 +928,14 @@ mod tests {
                 .names = names;
             app.world_mut().resource_mut::<Controllers>().0[1] = SeatController::Ai(BotLevel::Hard);
             app.init_resource::<SeatKinds>();
+            // A table set up here, whose names are the saved rows'.
+            app.world_mut()
+                .resource_mut::<rematch::LocalTable>()
+                .note_round(
+                    true,
+                    &match_setup::MatchConfig::default(),
+                    &Default::default(),
+                );
             app.add_systems(Startup, resolve_seat_names);
         });
         press_keep(&mut app);
@@ -1093,7 +1135,9 @@ mod tests {
     /// took a round by it.
     /// A couch round names each seat after the person partner picks put
     /// there, from the names saved in settings, which stay as typed; the
-    /// daily's own table goes by the saved rows.
+    /// daily's own table goes by the saved rows. A round picked up from a
+    /// pasted code (or a dev hook's) is no table set up here, and its seats
+    /// go by their labels, not by the last match's partner picks.
     #[test]
     fn a_couch_round_names_the_people_picked_into_each_seat() {
         let mut app = App::new();
@@ -1103,6 +1147,9 @@ mod tests {
         app.insert_resource(saved);
         let mut config = match_setup::MatchConfig::default();
         config.people.0.swap(1, 2);
+        let mut table = rematch::LocalTable::default();
+        table.note_round(true, &config, &Default::default());
+        app.insert_resource(table);
         app.insert_resource(config);
         app.init_resource::<Daily>();
         app.init_resource::<net::Online>();
@@ -1119,12 +1166,23 @@ mod tests {
         app.world_mut().resource_mut::<Daily>().active = true;
         app.update();
         assert_eq!(app.world().resource::<SeatNames>().0[1..3], ["Bo", "Cleo"]);
+        app.world_mut().resource_mut::<Daily>().active = false;
+        let config = app.world().resource::<match_setup::MatchConfig>().clone();
+        app.world_mut()
+            .resource_mut::<rematch::LocalTable>()
+            .note_round(false, &config, &Default::default());
+        app.update();
+        let names = app.world().resource::<SeatNames>();
+        assert_eq!(names.0[1..3], ["", ""]);
+        let tr = crate::app::i18n::Lang::En.tr();
+        assert_eq!(names.label(tr, 1), "P2");
     }
 
     #[test]
     fn a_recorded_round_keeps_each_ai_level() {
         let mut app = App::new();
         app.init_resource::<settings::GameSettings>();
+        app.init_resource::<rematch::LocalTable>();
         app.init_resource::<match_setup::MatchConfig>();
         app.init_resource::<Daily>();
         app.init_resource::<net::Online>();

@@ -613,7 +613,7 @@ fn launch_the_match(
     // can travel to it, and the terms name the map it landed on.
     let drawn;
     let config = match config.pick {
-        crate::app::match_setup::Pick::Random => {
+        crate::app::match_setup::Pick::Random { .. } => {
             let mut table = MatchConfig {
                 seats,
                 ..config.clone()

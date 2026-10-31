@@ -71,7 +71,7 @@ pub fn seat_the_match(
         config.filled_at_start[usize::from(seat)] = true;
     }
     match config.pick {
-        Pick::Random => {
+        Pick::Random { .. } => {
             draw_map(config, beaches, roll);
             config.seed = None;
         }

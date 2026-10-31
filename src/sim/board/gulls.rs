@@ -169,21 +169,24 @@ impl Board {
     /// of the castles, because a gull somebody walked up to a rival's keep
     /// is that player's attack, and pulling it away a tile short of the
     /// raid is the game cheating them.
+    ///
+    /// Every castle, a seat's second one too, and measured the way the
+    /// gull would walk it: across the seam on an open beach, where a bird
+    /// two tiles from a keep through the edge is as close as any other.
     fn send_a_gull_off(&mut self) -> bool {
-        let castles: Vec<(i32, i32)> = self
-            .castle_owners()
-            .filter_map(|owner| self.castle_of(owner))
-            .map(|(x, y)| (i32::from(x), i32::from(y)))
+        let castles: Vec<u16> = (0..self.grid.tiles.len())
+            .filter(|&t| matches!(self.grid.tiles[t], TileKind::Castle(_)))
+            .map(|t| t as u16)
             .collect();
         let leaving = self
             .gulls
             .iter()
             .filter(|gull| matches!(gull.state, GullState::Walking))
             .filter(|gull| {
-                let (x, y) = self.coords(gull.tile);
-                castles
-                    .iter()
-                    .all(|&(cx, cy)| (x - cx).abs().max((y - cy).abs()) > TURNOVER_CLEARANCE)
+                castles.iter().all(|&castle| {
+                    let (dx, dy) = self.displacement(gull.tile, castle);
+                    dx.abs().max(dy.abs()) > TURNOVER_CLEARANCE
+                })
             })
             .map(|gull| gull.id)
             .min();

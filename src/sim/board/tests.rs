@@ -2236,6 +2236,29 @@ fn a_full_flock_turns_over_from_its_oldest_gull_clear_of_the_castles() {
     }
 }
 
+/// On the open ocean the clearance is measured across the seam: a gull
+/// two tiles from a castle through the edge is somebody's attack and
+/// stays, and so is one beside a seat's second castle. The oldest gull
+/// clear of every castle is the one that goes.
+#[test]
+fn turnover_keeps_a_gull_near_a_castle_across_the_seam_and_by_a_second_keep() {
+    let mut board = Board::new(16, 11, 7);
+    board.set_wrap(true);
+    board.set_tile(1, 1, TileKind::Castle(0));
+    board.set_tile(8, 5, TileKind::Castle(1));
+    board.set_tile(14, 9, TileKind::Castle(1));
+    board.rules_mut().gull_period = 10;
+    board.rules_mut().gull_cap = 3;
+    board.rules_mut().gull_turnover = true;
+    board.rules_mut().whole_flock = false;
+    board.spawn_gull(15, 1, Left); // two from castle 0, through the seam
+    board.spawn_gull(13, 9, Right); // beside seat 1's second castle
+    board.spawn_gull(4, 9, Up); // clear of every castle
+    board.run_gull_spawner();
+    let ids: Vec<u32> = board.gulls().iter().map(|g| g.id).collect();
+    assert_eq!(ids, [0, 1], "only the gull clear of every keep left");
+}
+
 /// A full flock that keeps whole sends a gull off only for a newcomer
 /// that can land: on a beach whose rim is all rock every roll misses, and
 /// the flock stays as it is rather than losing a gull at each turn. The

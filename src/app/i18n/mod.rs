@@ -324,6 +324,11 @@ struct Tr {
     /// The won prompt for a stage whose goal lets crabs go (bank a number,
     /// bank the golden one), where "all crabs safe" is not what happened.
     pub prompt_won_goal: &'static str,
+    /// `prompt_won` and `prompt_won_goal` when the next stage is a co-op
+    /// stage and only one is seated: Enter goes back to the stage list,
+    /// which says why ([`crate::app::campaign::WonDoor::Stages`]).
+    pub prompt_won_stages: &'static str,
+    pub prompt_won_goal_stages: &'static str,
     pub prompt_lost: &'static str,
     /// The loss prompt under `goal_missed`.
     pub prompt_lost_goal: &'static str,

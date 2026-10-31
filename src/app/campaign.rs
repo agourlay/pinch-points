@@ -21,6 +21,22 @@ pub(crate) const KEY_LESSON_LEVEL: &str = "Welcome Ashore";
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Coop(pub bool);
 
+/// Where Enter on a puzzle's won card goes ([`Campaign::won_door`]).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum WonDoor {
+    /// On to the next stage of the run.
+    Next,
+    /// The next stage is a co-op stage and only one is seated: back to the
+    /// stage list, on that stage, which says why.
+    Stages,
+    /// The end of the run: back to the menu.
+    Menu,
+}
+
+impl WonDoor {
+    pub const ALL: [WonDoor; 3] = [WonDoor::Next, WonDoor::Stages, WonDoor::Menu];
+}
+
 #[derive(Resource)]
 pub struct Campaign {
     pub levels: Vec<Level>,
@@ -216,6 +232,19 @@ impl Campaign {
     pub fn is_last(&self) -> bool {
         let Place { at, of, .. } = self.place();
         at == of
+    }
+
+    /// Where Enter on a won card goes, `coop` the table as seated: the one
+    /// answer the key, the card's prompt, the header's and the pad's all
+    /// read.
+    pub fn won_door(&self, coop: Coop) -> WonDoor {
+        if self.is_last() {
+            WonDoor::Menu
+        } else if self.needs_partner(self.index + 1, coop) {
+            WonDoor::Stages
+        } else {
+            WonDoor::Next
+        }
     }
 
     /// Swap in a fresh level list and start from its first level.

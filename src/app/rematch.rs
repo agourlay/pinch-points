@@ -49,6 +49,18 @@ impl LocalTable {
         }
     }
 
+    /// The arena left for anything but the interlude or the same table
+    /// again: a table set up here goes back to the map its series opened
+    /// on. Each interlude steps the player's own map dial, and left there
+    /// a best of five came back to step 2, and to the next beach hosted,
+    /// four maps on from the one picked.
+    pub fn put_back_the_opening(&self, config: &mut MatchConfig) {
+        if let (true, Some((map, custom))) = (self.set_here, self.opening) {
+            config.map = map;
+            config.custom = custom;
+        }
+    }
+
     /// Whether the round on the sand was set up on this machine.
     pub fn set_here(&self) -> bool {
         self.set_here
@@ -235,9 +247,7 @@ impl PlayAgain<'_> {
                 self.config.custom = custom;
             }
         }
-        if self.config.pick == crate::app::match_setup::Pick::Random
-            && matches!(again, Again::Rematch(_))
-        {
+        if self.config.pick.is_random() && matches!(again, Again::Rematch(_)) {
             let none = crate::app::match_setup::CustomBeaches::default();
             crate::app::match_setup::draw_map(
                 &mut self.config,
@@ -394,6 +404,60 @@ mod tests {
         assert_eq!(world.resource::<MatchConfig>().map, MapChoice::Classic);
     }
 
+    /// A local series steps the player's own map dial each interlude; once
+    /// the arena is left for anything else (the menu after the last round,
+    /// or a walk out midway) the dial is back on the map the series opened
+    /// on, and step 2 and the next beach hosted offer the one picked.
+    #[test]
+    fn a_series_left_puts_the_map_dial_back() {
+        let mut app = arena();
+        app.update();
+        let tournament = Tournament::start(crate::app::tournament::SeriesLength::BestOfFive);
+        let picked = MatchConfig {
+            map: MapChoice::GenSmall,
+            ..MatchConfig::default()
+        };
+        app.world_mut()
+            .resource_mut::<LocalTable>()
+            .note_round(true, &picked, &tournament);
+        let go = |app: &mut App, screen: Screen, map: MapChoice| {
+            app.world_mut().resource_mut::<MatchConfig>().map = map;
+            app.world_mut()
+                .resource_mut::<NextState<Screen>>()
+                .set(screen);
+            app.update();
+        };
+        // The interlude steps it, and the next round is played on it.
+        go(&mut app, Screen::Interlude, MapChoice::Classic);
+        assert_eq!(
+            app.world().resource::<MatchConfig>().map,
+            MapChoice::Classic
+        );
+        go(&mut app, Screen::Versus, MapChoice::GenLarge);
+        // Left for the menu: back on the map picked.
+        go(&mut app, Screen::Menu, MapChoice::GenLarge);
+        assert_eq!(
+            app.world().resource::<MatchConfig>().map,
+            MapChoice::GenSmall
+        );
+    }
+
+    /// The replay speed belongs to the recording it was set on: leaving
+    /// the arena puts it back to x1, so the next recording watched does
+    /// not start at the 4x the last one was skimmed at.
+    #[test]
+    fn leaving_the_arena_puts_the_replay_speed_back() {
+        use crate::app::replays::PlaybackSpeed;
+        let mut app = arena();
+        app.update();
+        app.insert_resource(PlaybackSpeed(4));
+        app.world_mut()
+            .resource_mut::<NextState<Screen>>()
+            .set(Screen::Replays);
+        app.update();
+        assert_eq!(app.world().resource::<PlaybackSpeed>().0, 1);
+    }
+
     /// Under step 2's Random card a rematch draws its map again, among the
     /// maps that seat the table, and on a seed of its own; a restart is the
     /// same round and keeps its map.
@@ -406,7 +470,7 @@ mod tests {
         world.init_resource::<LocalTable>();
         world.insert_resource(MatchConfig {
             seats: 5,
-            pick: crate::app::match_setup::Pick::Random,
+            pick: crate::app::match_setup::Pick::Random { kept: None },
             map: MapChoice::GenOcean,
             seed: Some(5),
             ..MatchConfig::default()
@@ -425,19 +489,15 @@ mod tests {
             ask(&mut world, Again::Rematch(Rematch::Round));
             let config = world.resource::<MatchConfig>();
             assert!(crate::app::match_setup::holds(config.map, 5));
-            assert_eq!(config.pick, crate::app::match_setup::Pick::Random);
+            assert!(config.pick.is_random());
             drawn.insert(format!("{:?}", config.map));
         }
         assert!(drawn.len() > 1, "drawn again, not kept: {drawn:?}");
     }
 
-    /// The arena re-entered on the same table: its teardown, which
-    /// disarms every other way out, leaves the match armed for its build,
-    /// which then reads the couch's table rather than nobody's, and the
-    /// round comes back in on its count. Any other screen entered lets the
-    /// table go.
-    #[test]
-    fn a_rematch_comes_back_in_armed_and_on_the_count() {
+    /// The arena on a couch table, with its teardown and the check that
+    /// lets a table go when another screen is entered.
+    fn arena() -> App {
         use crate::app::session::{end_versus, forget_a_round_not_entered};
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin);
@@ -445,6 +505,7 @@ mod tests {
         app.insert_state(VersusPhase::Running);
         app.init_resource::<Online>();
         app.init_resource::<crate::app::Playback>();
+        app.init_resource::<crate::app::replays::PlaybackSpeed>();
         app.init_resource::<crate::app::Recorder>();
         app.init_resource::<crate::app::session::ReelThread>();
         app.init_resource::<crate::app::replays::RoundToKeep>();
@@ -459,18 +520,29 @@ mod tests {
         let mut table = LocalTable::default();
         table.note_round(true, &MatchConfig::default(), &Tournament::default());
         app.insert_resource(table);
-        #[derive(Resource, Default)]
-        struct Entered(Vec<bool>);
-        app.init_resource::<Entered>();
         app.add_systems(OnExit(Screen::Versus), end_versus);
-        app.add_systems(
-            OnEnter(Screen::Versus),
-            |config: Res<MatchConfig>, mut entered: ResMut<Entered>| entered.0.push(config.armed),
-        );
         app.add_systems(
             StateTransition,
             forget_a_round_not_entered
                 .after(bevy::state::state::StateTransitionSystems::EnterSchedules),
+        );
+        app
+    }
+
+    /// The arena re-entered on the same table: its teardown, which
+    /// disarms every other way out, leaves the match armed for its build,
+    /// which then reads the couch's table rather than nobody's, and the
+    /// round comes back in on its count. Any other screen entered lets the
+    /// table go.
+    #[test]
+    fn a_rematch_comes_back_in_armed_and_on_the_count() {
+        let mut app = arena();
+        #[derive(Resource, Default)]
+        struct Entered(Vec<bool>);
+        app.init_resource::<Entered>();
+        app.add_systems(
+            OnEnter(Screen::Versus),
+            |config: Res<MatchConfig>, mut entered: ResMut<Entered>| entered.0.push(config.armed),
         );
         app.update();
         let ask = |app: &mut App, again: Again| {

@@ -497,7 +497,9 @@ mod tests {
             (
                 "puzzle cards",
                 vec![
-                    Face::PuzzleWon { last: false },
+                    Face::PuzzleWon {
+                        door: crate::app::campaign::WonDoor::Next,
+                    },
                     Face::PuzzleLost { hint: true },
                 ],
                 vec![Enter, KeyR, Escape],
@@ -641,7 +643,9 @@ mod tests {
             keys(&app).just_pressed(KeyCode::Enter),
             "A still takes the card's door"
         );
-        let mut app = bridged(Face::PuzzleWon { last: false });
+        let mut app = bridged(Face::PuzzleWon {
+            door: crate::app::campaign::WonDoor::Next,
+        });
         press(&mut app, Pad::Down);
         assert!(!keys(&app).pressed(KeyCode::KeyS), "nor on a puzzle's");
     }

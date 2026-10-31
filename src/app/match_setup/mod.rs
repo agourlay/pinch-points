@@ -559,7 +559,27 @@ pub enum Pick {
     /// `map` (and `custom`) afresh from the maps that seat the table
     /// ([`draw_map`]). A local choice only: the round is built, recorded
     /// and sent as the concrete map the draw landed on.
-    Random,
+    ///
+    /// Until the draw the map in force is a placeholder, and the seat count
+    /// moves it as it moves any pick: `kept` is the card it was moved off,
+    /// as [`Pick::Moved`] keeps it, so the count going back puts it back.
+    Random { kept: Option<Card> },
+}
+
+impl Pick {
+    /// Whether step 2's Random card is picked.
+    pub fn is_random(self) -> bool {
+        matches!(self, Pick::Random { .. })
+    }
+
+    /// The card kept while the seat count has moved the map off it.
+    pub fn kept(self) -> Option<Card> {
+        match self {
+            Pick::Moved(pick) => Some(pick),
+            Pick::Random { kept } => kept,
+            Pick::InForce => None,
+        }
+    }
 }
 
 impl Default for MatchConfig {
@@ -908,7 +928,7 @@ pub fn draw_online_map(config: &mut MatchConfig, beaches: &CustomBeaches, roll: 
 /// for every round.
 pub fn map_for_next_round(config: &mut MatchConfig, beaches: &CustomBeaches, roll: u64) {
     match config.pick {
-        Pick::Random => draw_map(config, beaches, roll),
+        Pick::Random { .. } => draw_map(config, beaches, roll),
         Pick::InForce | Pick::Moved(_) => next_map(config, beaches),
     }
 }
@@ -973,9 +993,12 @@ pub fn settle_map(config: &mut MatchConfig, beaches: &CustomBeaches) {
 /// the map in force's own card. A handmade beach no longer on the shelf
 /// for this table names nothing, and gives way to the beach dealt to it.
 fn current_pick(config: &MatchConfig, beaches: &CustomBeaches) -> Card {
-    match config.pick {
-        Pick::Moved(pick) if on_the_shelf(pick, beaches) => return pick,
-        Pick::Moved(_) | Pick::InForce | Pick::Random => {}
+    if let Some(pick) = config
+        .pick
+        .kept()
+        .filter(|pick| on_the_shelf(*pick, beaches))
+    {
+        return pick;
     }
     card_in_force(config, beaches).unwrap_or(Card::Map(sized_for(config.seats)))
 }
@@ -1018,7 +1041,8 @@ fn on_the_shelf(card: Card, beaches: &CustomBeaches) -> bool {
 
 /// The map in force for `pick` at this table, with `pick` kept only while
 /// the map is moved off it. Under the Random card the map in force is
-/// only the beach dealt until the draw, and the card stays picked.
+/// only the beach dealt until the draw, and the card stays picked, with
+/// the pick kept beside it the same way.
 fn place_pick(config: &mut MatchConfig, pick: Card, beaches: &CustomBeaches) {
     let (map, custom) = map_in_force(pick, config.seats, beaches);
     config.map = map;
@@ -1029,7 +1053,9 @@ fn place_pick(config: &mut MatchConfig, pick: Card, beaches: &CustomBeaches) {
         Card::Random => false,
     };
     config.pick = match (config.pick, moved) {
-        (Pick::Random, _) => Pick::Random,
+        (Pick::Random { .. }, moved) => Pick::Random {
+            kept: moved.then_some(pick),
+        },
         (Pick::InForce | Pick::Moved(_), true) => Pick::Moved(pick),
         (Pick::InForce | Pick::Moved(_), false) => Pick::InForce,
     };
@@ -1077,7 +1103,7 @@ pub fn map_in_force(pick: Card, seats: u8, beaches: &CustomBeaches) -> (MapChoic
 pub fn map_moved(config: &MatchConfig, beaches: &CustomBeaches) -> Option<(Card, Card)> {
     let pick = match config.pick {
         Pick::Moved(pick) => Some(pick).filter(|pick| on_the_shelf(*pick, beaches))?,
-        Pick::InForce | Pick::Random => return None,
+        Pick::InForce | Pick::Random { .. } => return None,
     };
     Some((pick, picked_card(config, beaches)))
 }
@@ -1901,6 +1927,24 @@ mod tests {
             None,
             "said once"
         );
+        // A shelf pick kept beside the Random card, while the seat count
+        // has the map off it, follows its file the same way, and the card
+        // stays picked when the file is gone.
+        let mut config = MatchConfig {
+            pick: Pick::Random {
+                kept: Some(Card::Shelf(1)),
+            },
+            ..MatchConfig::default()
+        };
+        assert_eq!(beaches::keep_the_pick(&mut config, &old, &fresh), None);
+        assert_eq!(
+            config.pick,
+            Pick::Random {
+                kept: Some(Card::Shelf(2))
+            }
+        );
+        let _ = beaches::keep_the_pick(&mut config, &fresh, &fewer);
+        assert_eq!(config.pick, Pick::Random { kept: None });
     }
 
     /// The seat count turning keeps a map that was chosen for what it is:

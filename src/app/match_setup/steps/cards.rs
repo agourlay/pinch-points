@@ -191,7 +191,7 @@ pub fn card_open(card: Card, seats: u8, beaches: &CustomBeaches, online: bool) -
 /// a generated 20x13, which [`map_label`] names the same way.
 pub fn picked_card(config: &MatchConfig, beaches: &CustomBeaches) -> Card {
     match config.pick {
-        Pick::Random => Card::Random,
+        Pick::Random { .. } => Card::Random,
         Pick::InForce | Pick::Moved(_) => {
             card_in_force(config, beaches).unwrap_or(Card::Map(MapChoice::GenXl))
         }
@@ -216,7 +216,12 @@ pub fn pick_card(config: &mut MatchConfig, card: Card, beaches: &CustomBeaches) 
                 config.pick = Pick::InForce;
             }
         }
-        Card::Random => config.pick = Pick::Random,
+        // A pick the seat count moved the map off stays kept beside it.
+        Card::Random => {
+            config.pick = Pick::Random {
+                kept: config.pick.kept(),
+            }
+        }
     }
 }
 

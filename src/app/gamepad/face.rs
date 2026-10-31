@@ -50,6 +50,9 @@ pub struct Board<'w> {
     vote_card: Res<'w, SpectatorCard>,
     pick_card: Res<'w, PickCard>,
     campaign: Res<'w, Campaign>,
+    /// Whether two are seated at the stage list, which says where a won
+    /// card's A goes ([`Campaign::won_door`]).
+    coop: Res<'w, crate::app::Coop>,
     sim: Res<'w, Sim>,
     hints: Res<'w, crate::app::hint::Hints>,
     tournament: Res<'w, crate::app::tournament::Tournament>,
@@ -155,7 +158,7 @@ impl FaceSources<'_, '_> {
                     },
                     Phase::Running => Face::PuzzleRunning,
                     Phase::Won => Face::PuzzleWon {
-                        last: board.campaign.is_last(),
+                        door: board.campaign.won_door(*board.coop),
                     },
                     Phase::Lost => Face::PuzzleLost { hint },
                 }
@@ -561,10 +564,10 @@ pub fn every_face() -> Vec<Face> {
         }
     }
     faces.extend(crate::app::editor::TestPhase::ALL.map(Face::Playtest));
+    faces.extend(crate::app::campaign::WonDoor::ALL.map(|door| Face::PuzzleWon { door }));
     for on in [false, true] {
         faces.extend([
             Face::Door { lan: on },
-            Face::PuzzleWon { last: on },
             Face::PuzzleLost { hint: on },
             Face::Editor { layer: on },
             Face::Kicking {

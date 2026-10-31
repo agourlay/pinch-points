@@ -6,6 +6,7 @@
 //! leave the results card. None of it moves a cursor, and two of the
 //! systems never read one.
 
+use crate::app::campaign::WonDoor;
 use crate::app::cursor::{Cursor, FLASH_SECS, keymap, seat_keymap};
 use crate::app::settings::GameSettings;
 use crate::app::{Campaign, LoadLevel, PendingActions, Phase, PlacementDenied, Screen, Sim};
@@ -157,11 +158,14 @@ pub fn clear_setup(sim: &mut Sim, seat: u8) {
 
 /// N/P during puzzle setup: the next level or the one before, as far as
 /// the ladder goes. A stage not yet open is refused with the same flash
-/// and word as a placement that cannot go down.
+/// and word as a placement that cannot go down. A co-op stage with one
+/// seated goes back to the stage list, on that stage, as Enter on a won
+/// card does ([`crate::app::campaign::WonDoor::Stages`]).
 pub fn browse_levels(
     keyboard: crate::app::keycaps::Keyboard,
     pads: crate::app::gamepad::face::PadsOnFace,
     mut ladder: crate::app::progress::Ladder,
+    mut back: crate::app::stage_select::BackToTheList,
     mut load: MessageWriter<LoadLevel>,
     mut denied: MessageWriter<PlacementDenied>,
     mut cursors: Query<&mut Cursor>,
@@ -196,8 +200,15 @@ pub fn browse_levels(
         return;
     }
     // A co-op stage among the player's own wants a second cursor this
-    // screen was not opened with: the stage list is where one sits down.
-    if !ladder.campaign.needs_partner(asked, partner) && ladder.climb_to(asked) {
+    // screen was not opened with: the stage list is where one sits down,
+    // and it opens on that stage saying so.
+    let open = ladder.progress.unlocked(&ladder.campaign, asked);
+    if open && ladder.campaign.needs_partner(asked, partner) {
+        back.go(Some(crate::app::stage_select::Landing {
+            at: asked,
+            needs_two: true,
+        }));
+    } else if open && ladder.climb_to(asked) {
         load.write(LoadLevel { keep_posts: false });
     } else {
         cursor.flash = FLASH_SECS;
@@ -241,12 +252,23 @@ pub fn done_input(
     phase: Res<State<Phase>>,
     coop: Res<crate::app::Coop>,
     mut campaign: ResMut<Campaign>,
+    mut list: ResMut<crate::app::stage_select::StageList>,
     mut next_screen: ResMut<NextState<Screen>>,
     mut load: MessageWriter<LoadLevel>,
 ) {
+    use crate::app::stage_select::Landing;
     if keyboard.keys.just_pressed(KeyCode::Escape) {
         // Back to the stage list, which is the door every puzzle is entered
-        // through; Esc again from there reaches the menu.
+        // through; Esc again from there reaches the menu. From a co-op
+        // stage or one of the player's own, on the stage just left: the
+        // list's own landing is the furthest open stage of the Tide Pool,
+        // a shelf away.
+        if campaign.section_of(campaign.index) != crate::app::campaign::Section::TidePool {
+            list.landing = Some(Landing {
+                at: campaign.index,
+                needs_two: false,
+            });
+        }
         next_screen.set(Screen::StageSelect);
         return;
     }
@@ -255,20 +277,28 @@ pub fn done_input(
             load.write(LoadLevel { keep_posts: true });
             return;
         }
-        // The end of the list is the end of the list: wrapping to level one
-        // reads as the game not having noticed, the card saying "that was
-        // the last level" and then putting you back on the first. The
-        // shipped campaign ends with its last shipped stage too, rather
-        // than walking on into the player's own levels.
-        if campaign.is_last() {
-            next_screen.set(Screen::Menu);
-            return;
-        }
-        // The next of the player's own levels is a co-op stage and only
-        // one is seated: back to the stage list, which says why.
-        if campaign.needs_partner(campaign.index + 1, *coop) {
-            next_screen.set(Screen::StageSelect);
-            return;
+        match campaign.won_door(*coop) {
+            // The end of the list is the end of the list: wrapping to level
+            // one reads as the game not having noticed, the card saying
+            // "that was the last level" and then putting you back on the
+            // first. The shipped campaign ends with its last shipped stage
+            // too, rather than walking on into the player's own levels.
+            WonDoor::Menu => {
+                next_screen.set(Screen::Menu);
+                return;
+            }
+            // The next of the player's own levels is a co-op stage and only
+            // one is seated: back to the stage list, on that stage, which
+            // says why.
+            WonDoor::Stages => {
+                list.landing = Some(Landing {
+                    at: campaign.index + 1,
+                    needs_two: true,
+                });
+                next_screen.set(Screen::StageSelect);
+                return;
+            }
+            WonDoor::Next => {}
         }
         campaign.index += 1;
         load.write(LoadLevel { keep_posts: false });
@@ -523,6 +553,7 @@ pub fn after_round(online: &crate::app::net::Online, series_on: bool) -> AfterRo
 mod tests {
     use super::*;
     use crate::app::progress::Progress;
+    use crate::app::stage_select::{Landing, StageList};
     use crate::sim::{Goal, Level, campaign_levels};
 
     /// The prompt line and the key have to name the same door. At a local
@@ -599,9 +630,14 @@ mod tests {
         app.init_resource::<crate::app::cursor::LiveSeatKeys>();
         app.insert_resource(campaign(index));
         app.init_resource::<crate::app::Coop>();
+        app.init_resource::<StageList>();
         app.add_message::<LoadLevel>();
         app.add_systems(Update, done_input);
         app
+    }
+
+    fn landing(app: &App) -> Option<Landing> {
+        app.world().resource::<StageList>().landing
     }
 
     fn loads(app: &App) -> usize {
@@ -719,9 +755,68 @@ mod tests {
             let mut campaign = app.world_mut().resource_mut::<Campaign>();
             campaign.levels[1] = campaign.levels[1].with_hands(Some([1, 1]), 2);
         }
+        assert_eq!(
+            app.world()
+                .resource::<Campaign>()
+                .won_door(crate::app::Coop(false)),
+            WonDoor::Stages,
+            "and the card's prompt says so"
+        );
         tap(&mut app, KeyCode::Enter);
         assert!(kept(&app).is_empty(), "nothing loaded");
         assert_eq!(app.world().resource::<Campaign>().index, 0);
+        assert_eq!(
+            landing(&app),
+            Some(Landing {
+                at: 1,
+                needs_two: true
+            }),
+            "on that stage, saying why"
+        );
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<Screen>>().get(),
+            Screen::StageSelect
+        );
+    }
+
+    /// Esc from a stage of the player's own (or a co-op one) brings the
+    /// list up on the stage just left; from the Tide Pool the list finds
+    /// the furthest open stage itself.
+    #[test]
+    fn esc_from_a_stage_off_the_tide_pool_lands_the_list_on_it() {
+        let mut app = won(3);
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(
+            landing(&app),
+            Some(Landing {
+                at: 3,
+                needs_two: false
+            })
+        );
+        let mut app = won(0);
+        tap(&mut app, KeyCode::Escape);
+        assert_eq!(landing(&app), None);
+    }
+
+    /// N in setup onto a co-op stage with one seated goes to the list on
+    /// that stage, which says why, rather than only flashing.
+    #[test]
+    fn browsing_onto_a_coop_stage_alone_goes_to_the_list() {
+        let mut campaign = campaign_with(3, true);
+        let coop = campaign.levels[3].with_hands(Some([1, 1]), 2);
+        campaign.levels.push(coop);
+        let mut app = browsing_app(campaign);
+        tap(&mut app, KeyCode::KeyN);
+        assert_eq!(app.world().resource::<Campaign>().index, 3);
+        assert_eq!(loads(&app), 0);
+        assert_eq!(
+            landing(&app),
+            Some(Landing {
+                at: 4,
+                needs_two: true
+            })
+        );
         app.update();
         assert_eq!(
             *app.world().resource::<State<Screen>>().get(),
@@ -781,8 +876,11 @@ mod tests {
     fn browsing_app(campaign: Campaign) -> App {
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<Screen>();
+        app.insert_resource(State::new(Screen::Puzzle));
         app.init_state::<Phase>();
         app.insert_resource(State::new(Phase::Setup));
+        app.init_resource::<StageList>();
         app.init_resource::<ButtonInput<KeyCode>>();
         app.init_resource::<crate::app::gamepad::PadFace>();
         app.init_resource::<crate::app::gamepad::LastDevice>();

@@ -141,9 +141,10 @@ impl<'a> RoundOrigin<'a> {
     /// Who decides for each seat, and how many seats there are.
     ///
     /// Online, the AI seats are part of the agreed terms; a resumed round
-    /// brings its own table; everywhere else they come from this machine's
-    /// setup screen, which leaves a replay or a dev hook botting nobody
-    /// unless a match was set up. `board` is the one [`Self::board`] built.
+    /// and a recording bring their own tables; everywhere else they come
+    /// from this machine's setup screen, which leaves a dev hook botting
+    /// nobody unless a match was set up. `board` is the one [`Self::board`]
+    /// built.
     pub(super) fn table(
         &self,
         config: &match_setup::MatchConfig,
@@ -157,9 +158,8 @@ impl<'a> RoundOrigin<'a> {
             // The AI seats are the terms'; this peer plays its own seat and
             // every other one is somebody's down the wire.
             RoundOrigin::Online(session) => online_controllers(session),
-            RoundOrigin::Replay(_) | RoundOrigin::Configured(_) | RoundOrigin::Unconfigured => {
-                bot_seats(config)
-            }
+            RoundOrigin::Replay(replay) => replay_controllers(replay),
+            RoundOrigin::Configured(_) | RoundOrigin::Unconfigured => bot_seats(config),
         };
         (controllers, clamp_seats(self.asked_seats(board, pads)))
     }
@@ -235,6 +235,25 @@ pub(super) fn online_controllers(session: &net::OnlineSession) -> Controllers {
         None if driven(seat) => SeatController::Bot,
         None if Some(seat) == mine => SeatController::Local,
         None => SeatController::Remote,
+    }))
+}
+
+/// The table a recording was played at, as it recorded it: the AI's seats
+/// at the level each played, a protocol bot's as a bot, the rest people.
+/// What the chips' and the card's "(AI)" read, and what C copies. Nobody
+/// drives them: playback feeds the recorded inputs (`advance_sim`), and
+/// no bot is opened for a seat while a recording plays
+/// (`bot_seats::begin_round`). An AI seat recorded before levels were
+/// kept is the AI at its default level.
+pub(in crate::app) fn replay_controllers(replay: &Replay) -> Controllers {
+    use crate::sim::SeatKind;
+    Controllers(std::array::from_fn(|seat| {
+        match (replay.ai[seat], replay.kinds[seat]) {
+            (Some(level), _) => SeatController::Ai(level),
+            (None, SeatKind::Ai) => SeatController::Ai(BotLevel::default()),
+            (None, SeatKind::Bot) => SeatController::Bot,
+            (None, SeatKind::Human) => SeatController::Local,
+        }
     }))
 }
 
@@ -429,11 +448,27 @@ pub(in crate::app) struct RoundLog<'w> {
     keep: ResMut<'w, replays::RoundToKeep>,
 }
 
+/// A recording being watched, and the speed it plays at.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(in crate::app) struct Tape<'w> {
+    playback: ResMut<'w, Playback>,
+    speed: ResMut<'w, replays::PlaybackSpeed>,
+}
+
+impl Tape<'_> {
+    /// Stop watching. The speed was this recording's: the next one starts
+    /// at x1, not at the 4x the last was skimmed at.
+    fn eject(&mut self) {
+        self.playback.0 = None;
+        *self.speed = replays::PlaybackSpeed::default();
+    }
+}
+
 /// Tear down per-round versus resources when leaving the mode.
 pub(in crate::app) fn end_versus(
     screen: Res<State<Screen>>,
     mut online: ResMut<net::Online>,
-    mut playback: ResMut<Playback>,
+    mut tape: Tape,
     log: RoundLog,
     mut pending: ResMut<PendingActions>,
     mut controllers: ResMut<Controllers>,
@@ -456,7 +491,7 @@ pub(in crate::app) fn end_versus(
     if !online.0.as_ref().is_some_and(|session| session.next_round) {
         online.0 = None;
     }
-    playback.0 = None;
+    tape.eject();
     recorder.0 = None;
     // The results card is left: a round not kept from it is let go
     // (`replays::keep`), unless the way on is the interlude before the
@@ -465,6 +500,11 @@ pub(in crate::app) fn end_versus(
     // as this one is left.
     if *screen.get() != Screen::Interlude {
         *keep = replays::RoundToKeep::Nothing;
+    }
+    // A series over or walked out of leaves the map dial where the player
+    // set it, not where its interludes stepped it.
+    if *screen.get() != Screen::Interlude && !table.keeps_the_table() {
+        table.put_back_the_opening(&mut config);
     }
     // A reel still being written finishes on disk; its news is for a card
     // that is gone.
@@ -479,15 +519,38 @@ pub(in crate::app) fn end_versus(
     next_vphase.set(VersusPhase::Countdown);
 }
 
+/// This machine's table, as the names a round is played under read it.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(in crate::app) struct CouchTable<'w> {
+    table: Res<'w, rematch::LocalTable>,
+    config: Res<'w, match_setup::MatchConfig>,
+}
+
+impl CouchTable<'_> {
+    /// The names an offline round's seats go by, from the names `saved` in
+    /// settings: see [`resolve_seat_names`].
+    fn names(&self, saved: &[String; MAX_PLAYERS]) -> [String; MAX_PLAYERS] {
+        match self.table.set_here() {
+            true => self.config.seat_names(saved),
+            false => Default::default(),
+        }
+    }
+}
+
 /// Resolve what each seat is called this round; chained right after
 /// `load_versus`. Online, the handshake's table is the only truth, since
 /// the local couch names must never label a rival; offline they are just
-/// what the player typed for their table, each seat named after the person
-/// partner picks put there ([`match_setup::MatchConfig::seat_names`]),
-/// except at the daily's own table.
+/// what the player typed for their table: at a table set up here each seat
+/// named after the person partner picks put there
+/// ([`match_setup::MatchConfig::seat_names`]), at the daily's own table
+/// row by row. A round picked up from a pasted code, or a dev hook's, is
+/// no table set up here and its code carries no names, so its seats go by
+/// their labels ("P1"): read through the partner picks, they took the
+/// names of whatever match was last set up, shuffled the way its picks
+/// were.
 pub(in crate::app) fn resolve_seat_names(
     scoring: teams::Scoring,
-    config: Res<match_setup::MatchConfig>,
+    couch: CouchTable,
     controllers: Res<Controllers>,
     seats: Res<Seats>,
     mut recorder: ResMut<Recorder>,
@@ -501,17 +564,13 @@ pub(in crate::app) fn resolve_seat_names(
         sim: _,
     } = &scoring;
     let settings = &local.settings;
-    let couch;
     let given = match (&playback.0, &online.0) {
         // A replay is watched, not played: the names belong to the round on
         // screen, not to whoever is sitting here now.
         (Some((replay, _)), _) => &replay.names,
         (None, Some(session)) => &session.names,
         (None, None) if local.daily.active => &settings.names,
-        (None, None) => {
-            couch = config.seat_names(&settings.names);
-            &couch
-        }
+        (None, None) => &couch.names(&settings.names),
     };
     // Spelled as the recording spells them ([`crate::sim::seat_name`]), so
     // the card, the file the round is kept under and the shelf reading that

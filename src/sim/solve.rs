@@ -7,7 +7,7 @@
 //! outcome, and the candidate set is recomputed at each depth so placements
 //! that open new paths are still found.
 
-use crate::sim::board::{Board, PlayerId, TileKind};
+use crate::sim::board::{Board, MAX_PLAYERS, PlayerAction, PlayerId, TileKind};
 use crate::sim::crab::Handedness;
 use crate::sim::direction::Direction;
 use crate::sim::level::{Level, PuzzleOutcome};
@@ -19,6 +19,20 @@ use crate::sim::level::{Level, PuzzleOutcome};
 /// The same four are a solution step, a hint, and a line in a level file,
 /// so they are one name rather than three spellings.
 pub type Placement = (u8, u8, Direction, PlayerId);
+
+/// Mark in `visited` (one entry per tile) the tile every walker on `board`
+/// stands on, as the kind of walker it is (see [`turned_by`]).
+fn mark_walkers(board: &Board, visited: &mut [u8]) {
+    for crab in board.crabs() {
+        visited[crab.tile as usize] |= match crab.handed {
+            Handedness::Left => LEFT_CLAW,
+            Handedness::Right => RIGHT_CLAW,
+        };
+    }
+    for gull in board.gulls() {
+        visited[gull.tile as usize] |= GULL;
+    }
+}
 
 /// The seats whose arrows a search on `board` places: both hands under
 /// claw-keyed arrows, else the one seat every puzzle is played for.
@@ -316,17 +330,17 @@ impl<'a> Search<'a> {
         self.visited.clear();
         self.visited
             .resize(self.sim.width() as usize * self.sim.height() as usize, 0);
+        let idle = [PlayerAction::None; MAX_PLAYERS];
         for _ in 0..Level::deadline(&self.sim) {
-            self.sim.tick_idle();
-            for crab in self.sim.crabs() {
-                self.visited[crab.tile as usize] |= match crab.handed {
-                    Handedness::Left => LEFT_CLAW,
-                    Handedness::Right => RIGHT_CLAW,
-                };
-            }
-            for gull in self.sim.gulls() {
-                self.visited[gull.tile as usize] |= GULL;
-            }
+            // Read before the eat pass as well as after the tick: a crab
+            // a gull eats on the tick it arrives is gone by the end of it,
+            // and its tile is exactly where an arrow would have turned it
+            // out of the gull's reach. After the tick catches what lands
+            // late in it.
+            let visited = &mut self.visited;
+            self.sim
+                .tick_watching(&idle, |board| mark_walkers(board, visited));
+            mark_walkers(&self.sim, &mut self.visited);
             // Once the goal is decided, by the same judge `wins` plays to,
             // nothing later matters: a post only acts on what arrives at
             // it, so a tile first reached after the decision cannot change
@@ -828,5 +842,58 @@ map:
             solve_with(level, Effort::Budget(DEFAULT_NODE_BUDGET)),
             solve_with(level, Effort::Exhaustive),
         );
+    }
+
+    /// A 14x2 corridor: a crab of `kind` walking right along row 1 from
+    /// the left end, a gull walking left from `gull`, a pool at `pool`, and
+    /// the only way up at `turn`, to a castle at (`turn`, 0). The crab
+    /// reaches `turn` on the very tick the gull eats it, so the tile is
+    /// never stood on at the end of a tick, yet an arrow there wins.
+    fn corridor(kind: &str, turn: usize, gull: usize, pool: usize) -> Level {
+        let w = 14;
+        let (mut top, mut row0, mut mid, mut row1) = (
+            "+".to_owned(),
+            "|".to_owned(),
+            "+".to_owned(),
+            "|".to_owned(),
+        );
+        for x in 0..w {
+            top.push_str("-+");
+            row0.push(if x == turn { '0' } else { '#' });
+            row0.push('|');
+            mid.push(if x == turn { ' ' } else { '-' });
+            mid.push('+');
+            row1.push(if x == pool { '~' } else { '.' });
+            row1.push(if x + 1 == w { '|' } else { ' ' });
+        }
+        Level::parse(&format!(
+            "name: Corridor\nposts: 1\ncrab: 0,1 R R {kind}\ngull: {gull},1 L\n\
+             map:\n{top}\n{row0}\n{mid}\n{row1}\n{top}\n"
+        ))
+        .expect("parses")
+    }
+
+    /// The tile a crab is eaten on the tick it arrives at is a candidate:
+    /// the arrow there is the whole answer, for every kind of crab the
+    /// review's probe caught it with.
+    #[test]
+    fn a_tile_the_crab_is_eaten_on_arrival_is_a_candidate() {
+        for (kind, turn, gull, pool) in [
+            ("juvenile", 6, 8, 7),
+            ("giant", 4, 8, 5),
+            ("golden", 5, 7, 6),
+        ] {
+            let level = corridor(kind, turn, gull, pool);
+            let answer = vec![(turn as u8, 1, Direction::Up, 0)];
+            let mut board = level.board();
+            assert!(board.place_signpost(0, turn as u8, 1, Direction::Up));
+            assert_eq!(level.play_out(&mut board).0, PuzzleOutcome::Won, "{kind}");
+            assert_eq!(
+                solve_with(&level, Effort::Exhaustive),
+                SolveOutcome::Found(answer.clone()),
+                "{kind}"
+            );
+            assert!(winning_sets(&level).contains(&answer), "{kind}");
+        }
     }
 }

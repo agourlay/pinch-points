@@ -144,9 +144,19 @@ offensive layer.
 **Tuning dials:** takeoff frequency, flight distance, walking speed. If the
 game becomes all gull-aiming, raise takeoff frequency.
 
-**Population (balance freeze):** the ambient edge spawner pauses at the flock
-cap (6); tide events bypass the cap on purpose. With raiders departing, gull
-pressure cycles instead of accumulating.
+**Population (balance freeze):** the ambient edge spawner keeps the flock
+at a cap, counting the gulls on their way in: 6 on a puzzle and on a versus
+beach no bigger than the classic 12x9; a bigger versus beach scales the cap
+and the spawner's rate by its area, so gulls per tile stay level. Tide
+events bypass the cap on purpose. With raiders departing, gull pressure
+cycles instead of accumulating.
+
+In versus the full flock turns over rather than pausing the spawner: once
+the newcomer has a tile to land on, the oldest walking gull more than two
+tiles from every castle (measured across the seam on an open beach) flies
+off as it is sent for. A gull that close to a castle is somebody's attack
+and is never the one sent off. In the final 30 seconds the cap rises by
+half, so the doubled rate adds birds rather than only swapping them.
 
 ### 3.6 Tide events (the sparkling crab)
 
@@ -166,10 +176,16 @@ puzzles):
 | Castle Swap | Castles trade owners in rotation ("rockets swap places"). When three seats or more hold castles, the spinner's castles sit out and the other seats' rotate; two seats holding castles (however many castles each), or a swap the spectators call (nobody spun it), rotate everyone. Banks stay with their seats |
 | Right Claws | For 10 s a right-clawed crab banks for double and a left-clawed one costs what it was worth |
 
-One event runs at a time: after a timed one (the manias, Speed Up, Slow
-Down, Right Claws) the roulette locks until it ends, and a sparkling crab
-banked meanwhile scores but spins nothing. The instant ones (Crab
-Monopoly, Gull Attack, Fresh Sand, Castle Swap) leave it free.
+The roulette spins one event at a time: after a timed one (the manias,
+Speed Up, Slow Down, Right Claws) it locks until the event ends, and a
+sparkling crab banked meanwhile scores but spins nothing. The instant ones
+(Crab Monopoly, Gull Attack, Fresh Sand, Castle Swap) leave it free.
+
+A spectators' call is not a spin, and fires whatever the lock says, so
+timed events can overlap. The manias, the speed pair and Right Claws each
+keep their own clock: a called event lands on top of a running one from
+another of the three, and replaces one from its own (a mania for a mania,
+a speed for a speed). The feed card shows every timed event running.
 
 On screen, the event's banner names it, says what it does and, above
 the name, whose sparkling crab spun it, in that seat's colour; the feed
@@ -276,9 +292,28 @@ Within one 30 Hz tick:
    the tick (so peers and replays agree). On a same-tile conflict the order
    decides; the rotation exists so this does not always favour the lowest
    seat.
-2. **Spawners**, in tile-index order.
-3. **Creature movement**, in stable spawn order; banking removes a crab
+2. **Signpost expiry**, where posts expire (versus).
+3. **The golden call**: a called golden crab comes out of its hole on its
+   tick, past the crab cap; at the start of each stretch the next call is
+   drawn.
+4. **Spawners**, in tile-index order. On a versus beach (fair spawns), a
+   tick where the room left under the crab cap is less than the holes
+   opening draws, from the board's PRNG, which opening hole starts, and
+   the rest follow round in tile-index order; a beach that never fills
+   plays in plain tile-index order.
+5. **The gull spawner**: gulls sent for earlier land, then the edge
+   spawner sends for the next (see §3.5, population).
+6. **Crab movement**, in stable spawn order; banking removes a crab
    without disturbing the survivors' order.
+7. **Gull movement**, in stable spawn order; a raider leaves the beach.
+8. **The eat pass**: each walking gull, in order, eats every crab within
+   range (§4.3).
+9. **Timers** count down: the lure, then the mania, Right Claws and the
+   speed events.
+10. **Crab Monopoly's crabs** in flight land and bank.
+
+The event cooldown counts down before any of it, so an event spun this
+tick gets its whole cooldown.
 
 A signpost placed this tick affects creatures arriving this tick. A crab
 sealed on all four sides waits in place.

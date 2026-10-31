@@ -102,7 +102,7 @@ fn picked_terms(
     beaches: &CustomBeaches,
 ) -> crate::transport::MatchTerms {
     let mut table = config.clone();
-    if table.pick == crate::app::match_setup::Pick::Random {
+    if table.pick.is_random() {
         crate::app::match_setup::draw_online_map(
             &mut table,
             beaches,

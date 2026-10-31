@@ -287,6 +287,11 @@ pub fn begin_round(
     let online = &scoring.online;
     bots.round = None;
     bots.news.clear();
+    // A recording's bot seats are the recording's: their names came with
+    // it, and its inputs, not a bot here, play them.
+    if scoring.playback.0.is_some() {
+        return;
+    }
     let route = match online.0.as_ref() {
         Some(session) => match session.session.seat().filter(|_| session.bot.is_some()) {
             Some(seat) => BotRoute::JoinedAsBot(seat),
@@ -480,5 +485,17 @@ mod tests {
         let replay = recorder.0.as_ref().expect("recording");
         assert_eq!(replay.names[2], "Greedy");
         assert!(app.world().resource::<BotSeats>().round.is_some());
+        // A recording of that round, watched with the bot still at the
+        // door: its seat is the recording's, named as it was recorded, and
+        // no bot is sent a round to play.
+        let watched = replay.clone();
+        app.insert_resource(SeatNames(std::array::from_fn(|_| "Recorded".to_string())));
+        app.insert_resource(crate::app::Recorder(None));
+        app.insert_resource(crate::app::Playback(Some((watched, 0))));
+        app.world_mut()
+            .run_system_once(begin_round)
+            .expect("the recording opens");
+        assert_eq!(app.world().resource::<SeatNames>().0[2], "Recorded");
+        assert!(app.world().resource::<BotSeats>().round.is_none());
     }
 }
