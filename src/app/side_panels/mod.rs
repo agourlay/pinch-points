@@ -120,8 +120,14 @@ fn chip_ink(fill: Color, named: bool) -> Color {
 /// There was a third, three castle-tier pips, gone because they said
 /// again what the number beside them says and the castle on the beach
 /// shows, and nobody could tell what they were for.
-const CHIP_TOPS: [f32; MAX_PLAYERS] = [10.0, 106.0, 172.0, 234.0, 294.0, 352.0];
+///
+/// Seats on level terms share a size, the smallest of the slots they take
+/// between them ([`Chart::size`]), so the column never grows past six of
+/// these stacked.
 const CHIP_HEIGHTS: [f32; MAX_PLAYERS] = [88.0, 58.0, 54.0, 52.0, 50.0, 48.0];
+/// Where the first chip starts, and the gap under each one.
+const CHIP_TOP: f32 = 10.0;
+const CHIP_GAP: f32 = 8.0;
 const SCORE_PX: [f32; MAX_PLAYERS] = [46.0, 28.0, 24.0, 21.0, 19.0, 18.0];
 
 /// Rank medal colours: gold, silver, bronze, then driftwood for the rest.
@@ -144,17 +150,81 @@ const LOG_TOP: f32 = clock::CLOCK_TOP + clock::CLOCK_H + 14.0;
 /// card's height.
 const CARD_BORDER: f32 = 2.0;
 
-/// Seats ranked by score (descending, seat number breaking ties), and each
-/// seat's rank.
-fn ranks(scores: &[u32; MAX_PLAYERS], seats: u8) -> [usize; MAX_PLAYERS] {
-    let count = usize::from(seats.max(2));
-    let mut order: Vec<usize> = (0..count).collect();
-    order.sort_by_key(|&seat| (std::cmp::Reverse(scores[seat]), seat));
-    let mut rank = [0usize; MAX_PLAYERS];
-    for (place, &seat) in order.iter().enumerate() {
-        rank[seat] = place;
+/// How the chips stand: each seat's slot down the column, its place and
+/// the size it is drawn at, all indexed by seat.
+///
+/// The place is the results card's ([`crate::app::teams::placings`]): by
+/// the team's total under a team mode, and level totals sharing a place,
+/// so a dead heat wears one digit and medal, as the card and the crown
+/// call it. Only the order needs a tie broken, and it breaks it by team,
+/// then seat, keeping partners together.
+struct Chart {
+    slot: [usize; MAX_PLAYERS],
+    place: [u32; MAX_PLAYERS],
+    /// The geometry row a seat is drawn at: the last slot its place takes,
+    /// so seats that share a place share a size.
+    size: [usize; MAX_PLAYERS],
+    /// Whether every seat shares first place, as at the start of a round:
+    /// a table with nobody ahead, whose medals are all driftwood rather
+    /// than six golds.
+    level: bool,
+}
+
+impl Chart {
+    fn of(scores: &[u32; MAX_PLAYERS], seats: u8, mode: crate::app::teams::TeamMode) -> Chart {
+        let seats = seats.clamp(2, MAX_PLAYERS as u8);
+        let count = usize::from(seats);
+        let placings = crate::app::teams::placings(scores, seats, mode);
+        let mut place = [1u32; MAX_PLAYERS];
+        place[..count].copy_from_slice(&placings);
+        let mut order: Vec<usize> = (0..count).collect();
+        order.sort_by_key(|&seat| (place[seat], mode.team_of(seat as u8), seat));
+        // Seats past the table keep the slots past it, so the slots stay
+        // one per seat and `frames` can walk them in order.
+        let mut slot: [usize; MAX_PLAYERS] = std::array::from_fn(|seat| seat);
+        for (at, &seat) in order.iter().enumerate() {
+            slot[seat] = at;
+        }
+        let size = std::array::from_fn(|seat| {
+            let within = place[..count].iter().filter(|&&p| p <= place[seat]).count();
+            within.saturating_sub(1).min(MAX_PLAYERS - 1)
+        });
+        let level = place[..count].iter().all(|&p| p == 1);
+        Chart {
+            slot,
+            place,
+            size,
+            level,
+        }
     }
-    rank
+
+    /// The medal disc seat `seat` wears.
+    fn medal(&self, seat: usize) -> Color {
+        match self.level {
+            true => palette::MEDAL_DRIFTWOOD,
+            false => MEDALS[(self.place[seat] as usize).clamp(1, MAX_PLAYERS) - 1],
+        }
+    }
+
+    /// The digit on that medal.
+    fn digit(&self, seat: usize) -> &'static str {
+        PLACES[(self.place[seat] as usize).clamp(1, MAX_PLAYERS) - 1]
+    }
+
+    /// Each seat's chip: its top and its height.
+    fn frames(&self) -> [(f32, f32); MAX_PLAYERS] {
+        let mut by_slot = [0usize; MAX_PLAYERS];
+        for seat in 0..MAX_PLAYERS {
+            by_slot[self.slot[seat]] = seat;
+        }
+        let mut tops = [0.0f32; MAX_PLAYERS];
+        let mut top = CHIP_TOP;
+        for slot in 0..MAX_PLAYERS {
+            tops[slot] = top;
+            top += CHIP_HEIGHTS[self.size[by_slot[slot]]] + CHIP_GAP;
+        }
+        std::array::from_fn(|seat| (tops[self.slot[seat]], CHIP_HEIGHTS[self.size[seat]]))
+    }
 }
 
 /// One sidebar's frame: full height, pinned to one edge, under the header
@@ -217,10 +287,10 @@ fn spawn_score_chip(
         SidePanel(seat),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(CHIP_TOPS[seat as usize]),
+            top: Val::Px(CHIP_TOP + f32::from(seat) * (CHIP_HEIGHTS[5] + CHIP_GAP)),
             left: Val::Px(10.0),
             right: Val::Px(10.0),
-            height: Val::Px(CHIP_HEIGHTS[seat as usize]),
+            height: Val::Px(CHIP_HEIGHTS[5]),
             align_items: AlignItems::Center,
             column_gap: Val::Px(10.0),
             padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
@@ -244,7 +314,7 @@ fn spawn_score_chip(
                 border_radius: BorderRadius::all(Val::Px(13.0)),
                 ..default()
             },
-            BackgroundColor(MEDALS[seat as usize]),
+            BackgroundColor(palette::MEDAL_DRIFTWOOD),
         ))
         .with_children(|medal| {
             medal.spawn((
@@ -254,7 +324,7 @@ fn spawn_score_chip(
                     font_size: FontSize::Px(menu_ui::type_scale::BODY),
                     ..default()
                 },
-                TextColor(palette::ink_on(MEDALS[seat as usize])),
+                TextColor(palette::ink_on(palette::MEDAL_DRIFTWOOD)),
             ));
         });
         let fill = chip_fill(seat, false);
@@ -361,7 +431,7 @@ fn spawn_score_chip(
         chip.spawn((
             SideScore { seat, bump: 0.0 },
             Text::new("0"),
-            menu_ui::display_font(SCORE_PX[seat as usize]),
+            menu_ui::display_font(SCORE_PX[5]),
             ChipInk(seat, false),
             TextColor(chip_ink(fill, false)),
         ));
@@ -464,6 +534,7 @@ pub struct Chips<'w, 's> {
 /// crown on the leader (all writes guarded).
 pub fn update_side_panels(
     scoring: crate::app::teams::Scoring,
+    round: crate::app::round_state::RoundState,
     sim: Res<Sim>,
     seats: Res<Seats>,
     time: Res<Time>,
@@ -480,11 +551,11 @@ pub fn update_side_panels(
     } = &mut chips;
     let board_scores = sim.0.scores();
     let leaders = scoring.leaders(board_scores, seats.0);
-    let rank = ranks(board_scores, seats.0);
+    let chart = Chart::of(board_scores, seats.0, scoring.mode(seats.0));
+    let frames = chart.frames();
     for (panel, mut node, mut bg, mut border) in panels {
         let seat = panel.0 as usize;
-        let r = rank[seat];
-        let (top, height) = (Val::Px(CHIP_TOPS[r]), Val::Px(CHIP_HEIGHTS[r]));
+        let (top, height) = (Val::Px(frames[seat].0), Val::Px(frames[seat].1));
         if node.top != top {
             node.top = top;
         }
@@ -501,12 +572,12 @@ pub fn update_side_panels(
         border.set_if_neq(edge);
     }
     for (medal, mut bg) in medals {
-        menu_ui::set_bg(&mut bg, MEDALS[rank[medal.0 as usize]]);
+        menu_ui::set_bg(&mut bg, chart.medal(medal.0 as usize));
     }
     for (digit, mut text, mut ink) in digits {
-        let r = rank[digit.0 as usize];
-        menu_ui::set_text(&mut text, PLACES[r]);
-        menu_ui::set_color(&mut ink, palette::ink_on(MEDALS[r]));
+        let seat = digit.0 as usize;
+        menu_ui::set_text(&mut text, chart.digit(seat));
+        menu_ui::set_color(&mut ink, palette::ink_on(chart.medal(seat)));
     }
     for (chip, mut ink) in inks {
         let fill = chip_fill(chip.0, leaders[usize::from(chip.0)]);
@@ -527,10 +598,14 @@ pub fn update_side_panels(
                 1.0
             };
         }
-        chip.bump = (chip.bump - time.delta_secs() * 4.0).max(0.0);
-        // The size follows the seat's rank, and only that: six fixed values,
-        // each rasterized into the glyph atlas once and reused forever.
-        let base = FontSize::Px(SCORE_PX[rank[chip.seat as usize]]);
+        // Held mid-pop under a pause card, with the beach.
+        if !round.held() {
+            chip.bump = (chip.bump - time.delta_secs() * 4.0).max(0.0);
+        }
+        // The size follows the seat's standing, and only that: six fixed
+        // values, each rasterized into the glyph atlas once and reused
+        // forever.
+        let base = FontSize::Px(SCORE_PX[chart.size[chip.seat as usize]]);
         if font.font_size != base {
             font.font_size = base;
         }
@@ -698,9 +773,7 @@ mod tests {
     /// the bump. The size here follows rank alone, six fixed values.
     #[test]
     fn the_score_pop_is_scale_and_never_a_new_font_size() {
-        let mut app = App::new();
-        app.init_resource::<Time>();
-        app.init_resource::<crate::app::net::Online>();
+        let mut app = crate::app::round_state::held_test_app();
         app.init_resource::<crate::app::Playback>();
         app.init_resource::<Seats>();
         app.insert_resource(GameSettings::default());
@@ -735,6 +808,17 @@ mod tests {
             "the bump should be running"
         );
 
+        // Held mid-pop under the pause card, with the beach.
+        let before = app.world().get::<SideScore>(chip).expect("chip").bump;
+        app.insert_resource(crate::app::pause::PauseMenu::raised());
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(100));
+        app.update();
+        let held = app.world().get::<SideScore>(chip).expect("chip").bump;
+        assert_eq!(held, before, "the pop held under the card");
+        app.insert_resource(crate::app::pause::PauseMenu::default());
+
         // Several frames later it is settling, and the font size has not
         // moved once: one atlas entry for the whole animation.
         for _ in 0..5 {
@@ -751,12 +835,51 @@ mod tests {
     }
 
     #[test]
-    fn ranks_sort_by_score_then_seat() {
-        // P3 leads, P1 and P2 tie (seat order breaks it), P4 trails.
-        assert_eq!(ranks(&[4, 4, 9, 1, 0, 0], 4), [1, 2, 0, 3, 0, 0]);
-        // Two seats only: the trailing slots keep rank 0 but are unused.
-        assert_eq!(ranks(&[0, 7, 0, 0, 0, 0], 2), [1, 0, 0, 0, 0, 0]);
+    fn level_scores_share_a_place_and_a_size() {
+        use crate::app::teams::TeamMode;
+        // P3 leads, P1 and P2 tie for second (seat order only orders
+        // them), P4 trails in fourth, as the results card numbers them.
+        let chart = Chart::of(&[4, 4, 9, 1, 0, 0], 4, TeamMode::Solo);
+        assert_eq!(&chart.slot[..4], &[1, 2, 0, 3]);
+        assert_eq!(&chart.place[..4], &[2, 2, 1, 4]);
+        assert_eq!(&chart.size[..4], &[2, 2, 0, 3], "the pair shares a size");
+        assert_eq!((chart.digit(0), chart.digit(1)), ("2", "2"));
+        assert_eq!(chart.medal(0), chart.medal(1));
+        assert!(!chart.level);
         // A full table of six ranks all of them.
-        assert_eq!(ranks(&[1, 6, 2, 5, 3, 4], 6), [5, 0, 4, 1, 3, 2]);
+        let chart = Chart::of(&[1, 6, 2, 5, 3, 4], 6, TeamMode::Solo);
+        assert_eq!(chart.slot, [5, 0, 4, 1, 3, 2]);
+        assert_eq!(chart.size, [5, 0, 4, 1, 3, 2]);
+        // A 30-30 finish is a dead heat on the card: no gold "1" and a
+        // silver "2".
+        let chart = Chart::of(&[30, 30, 0, 0, 0, 0], 2, TeamMode::Solo);
+        assert_eq!(&chart.place[..2], &[1, 1]);
+        assert_eq!(chart.medal(0), chart.medal(1));
+        // At the start every seat is level: one place, one calm medal, the
+        // smallest chip, and the column no taller than a ranked one.
+        let chart = Chart::of(&[0; MAX_PLAYERS], 6, TeamMode::Solo);
+        assert!(chart.level);
+        assert_eq!(chart.size, [5; MAX_PLAYERS]);
+        assert!((0..6).all(|seat| chart.digit(seat) == "1"));
+        assert!((0..6).all(|seat| chart.medal(seat) == palette::MEDAL_DRIFTWOOD));
+        let (top, height) = chart.frames()[chart.slot.iter().position(|&s| s == 5).unwrap()];
+        let ranked = Chart::of(&[1, 6, 2, 5, 3, 4], 6, TeamMode::Solo).frames();
+        let (last_top, last_height) = ranked[0];
+        assert!(top + height <= last_top + last_height);
+    }
+
+    /// Under a team mode a seat wears its team's place, as the crown and
+    /// the results card rank it: the top single score on the losing team
+    /// is no gold "1".
+    #[test]
+    fn a_team_mode_ranks_seats_by_their_team() {
+        use crate::app::teams::TeamMode;
+        // Pairs at four: {0,1} bank 40, {2,3} bank 50.
+        let chart = Chart::of(&[40, 0, 25, 25, 0, 0], 4, TeamMode::Pairs);
+        assert_eq!(&chart.place[..4], &[2, 2, 1, 1]);
+        assert_eq!(&chart.slot[..4], &[2, 3, 0, 1], "partners side by side");
+        assert_eq!(chart.digit(0), "2");
+        assert_eq!(chart.medal(2), MEDALS[0]);
+        assert_eq!(chart.size[0], chart.size[1]);
     }
 }

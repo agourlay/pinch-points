@@ -1539,6 +1539,10 @@ mod tests {
             Notice::CrowdPicked {
                 picks: [u8::MAX; crate::sim::MAX_PLAYERS],
             },
+            // The longest address there is to read out.
+            Notice::HostingAt {
+                addr: "255.255.255.255:65535".parse().expect("addr"),
+            },
         ];
         for event in 0..crate::sim::TideEvent::ALL.len() as u8 {
             notices.push(Notice::Called { event });

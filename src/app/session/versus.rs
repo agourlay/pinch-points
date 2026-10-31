@@ -413,6 +413,7 @@ pub(in crate::app) fn resolve_seat_names(
         local,
         online,
         playback,
+        sim: _,
     } = &scoring;
     let settings = &local.settings;
     let couch;

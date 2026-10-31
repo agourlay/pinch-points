@@ -76,9 +76,22 @@ pinch-points watch FILE      watch a replay in the game's window
 `pinch-points <command> --help` says more. Writing a bot: docs/bot-protocol.md
 ";
 
+const WATCH_USAGE: &str = "\
+pinch-points watch FILE
+
+Watch a replay, such as one an arena or a cup wrote, in the game's window,
+with the seat names and kinds on screen.
+";
+
 /// `pinch-points watch FILE`: the real game, playing a replay at full
 /// fidelity, with the seat names and kinds on screen.
 fn watch(args: &[OsString]) -> Result<(), String> {
+    // Asked for, as every command's help is; a replay with that name is
+    // still reachable as `./--help`.
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print!("{WATCH_USAGE}");
+        return Ok(());
+    }
     let [path] = args else {
         return Err("watch takes one replay file".into());
     };
@@ -115,6 +128,16 @@ mod args_tests {
             text(&[OsString::from("--games"), OsString::from("3")]),
             Ok(vec!["--games".to_string(), "3".to_string()])
         );
+    }
+
+    /// `watch --help` is the help, as `arena --help` is, not a file
+    /// name: it returns without opening a window or reading a file.
+    #[test]
+    fn watch_help_is_the_help() {
+        for flag in ["--help", "-h"] {
+            assert_eq!(watch(&[OsString::from(flag)]), Ok(()), "{flag}");
+        }
+        assert!(watch(&[]).is_err());
     }
 
     /// A replay whose file name is not UTF-8 is read all the same.

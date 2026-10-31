@@ -82,6 +82,15 @@ impl TeamMode {
         }
     }
 
+    /// The mode whose [`Self::sides`] a board's rules hold: free-for-all
+    /// for none, and for a split no mode makes (a hand-edited file).
+    pub fn of_sides(sides: Option<[u8; MAX_PLAYERS]>) -> TeamMode {
+        TeamMode::ALL
+            .into_iter()
+            .find(|mode| mode.sides() == sides)
+            .unwrap_or(TeamMode::Solo)
+    }
+
     /// How many teams are on the beach.
     pub fn teams(self, seats: u8) -> u8 {
         match self {
@@ -157,8 +166,10 @@ impl Cycle for TeamMode {
 /// different winners. A `replay` being watched is scored the way it was
 /// played, which it records: read off the setting, a round played in pairs
 /// and watched after switching to free-for-all crowned its top single
-/// seat. Otherwise it is this machine's `local` mode ([`local`]). Either
-/// way a mode that does not fit the seat count falls back to free-for-all.
+/// seat. Otherwise it is `local`: this machine's mode ([`local`]) before a
+/// round, and the board's own ([`on_board`]) once one is on the table.
+/// Either way a mode that does not fit the seat count falls back to
+/// free-for-all.
 pub(crate) fn in_play(
     local: TeamMode,
     online: &net::Online,
@@ -187,6 +198,15 @@ pub(crate) fn local(settings: &GameSettings, daily: &crate::app::Daily) -> TeamM
     }
 }
 
+/// How the round on `board` is scored offline: the teams its rules hold,
+/// which Gull Attack and the AI play by. A round set up here was given
+/// [`local`]'s; a pasted code brings the teams it was played in, and read
+/// off the setting instead, a pairs code pasted under free-for-all was
+/// played in pairs but crowned one seat.
+pub(crate) fn on_board(board: &crate::sim::Board) -> TeamMode {
+    TeamMode::of_sides(board.rules().teams)
+}
+
 /// This machine's own say in how a round is scored ([`local`]). Its own
 /// param for a system that writes the online session, which [`Scoring`]
 /// reads: such a system hands [`in_play`] this and the session itself.
@@ -210,13 +230,15 @@ pub(crate) struct Scoring<'w> {
     pub local: LocalScoring<'w>,
     pub online: bevy::prelude::Res<'w, net::Online>,
     pub playback: bevy::prelude::Res<'w, crate::app::Playback>,
+    pub sim: bevy::prelude::Res<'w, crate::app::Sim>,
 }
 
 impl Scoring<'_> {
-    /// How the round on screen is scored, a replay's the way it was played.
+    /// How the round on screen is scored, a replay's the way it was played
+    /// and an offline one by its board ([`on_board`]).
     pub fn mode(&self, seats: u8) -> TeamMode {
         let replay = self.playback.0.as_ref().map(|(replay, _)| replay);
-        in_play(self.local.mode(), &self.online, replay, seats)
+        in_play(on_board(&self.sim.0), &self.online, replay, seats)
     }
 
     /// How the round being played here is scored, never one being
@@ -414,6 +436,24 @@ mod tests {
         }
         assert_eq!(TeamMode::from_key("2v2"), TeamMode::Pairs, "old setting");
         assert_eq!(TeamMode::from_key("nonsense"), TeamMode::Solo);
+    }
+
+    /// A pasted code plays by the teams on its board, Gull Attack and the
+    /// AI included, so it is scored by them too, whatever the paster's
+    /// setting says: both ways round.
+    #[test]
+    fn a_pasted_round_is_scored_by_its_own_board() {
+        let online = net::Online::default();
+        let mut board = crate::sim::Board::new(5, 5, 0);
+        board.rules_mut().teams = TeamMode::Pairs.sides();
+        assert_eq!(in_play(on_board(&board), &online, None, 4), TeamMode::Pairs);
+        board.rules_mut().teams = None;
+        assert_eq!(in_play(on_board(&board), &online, None, 4), TeamMode::Solo);
+        for mode in TeamMode::ALL {
+            assert_eq!(TeamMode::of_sides(mode.sides()), mode);
+        }
+        // A split no mode makes, from a hand-edited file, is scored seat by seat.
+        assert_eq!(TeamMode::of_sides(Some([0, 1, 1, 0, 2, 2])), TeamMode::Solo);
     }
 
     /// The daily's four seats fit pairs, and it was crowned a pair under

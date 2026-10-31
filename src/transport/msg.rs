@@ -457,6 +457,9 @@ pub enum Notice {
     CrowdPicked {
         picks: [u8; crate::sim::MAX_PLAYERS],
     },
+    /// Where the host's beach is on the network, the address a friend on
+    /// a network that eats broadcasts dials.
+    HostingAt { addr: std::net::SocketAddrV4 },
 }
 
 // What kind of notice a `TAG_NOTICE` carries, its first byte.
@@ -466,6 +469,7 @@ const NOTICE_SENT_AWAY: u8 = 2;
 const NOTICE_CALLED_OFF: u8 = 3;
 const NOTICE_CALLED: u8 = 4;
 const NOTICE_CROWD_PICKED: u8 = 5;
+const NOTICE_HOSTING_AT: u8 = 6;
 
 impl Notice {
     fn write(self, bytes: &mut Vec<u8>) {
@@ -494,6 +498,11 @@ impl Notice {
             Notice::CrowdPicked { picks } => {
                 bytes.push(NOTICE_CROWD_PICKED);
                 bytes.extend_from_slice(&picks);
+            }
+            Notice::HostingAt { addr } => {
+                bytes.push(NOTICE_HOSTING_AT);
+                bytes.extend_from_slice(&addr.ip().octets());
+                bytes.extend_from_slice(&addr.port().to_be_bytes());
             }
         }
     }
@@ -524,6 +533,13 @@ impl Notice {
             NOTICE_CROWD_PICKED => Some(Notice::CrowdPicked {
                 picks: rest.get(..crate::sim::MAX_PLAYERS)?.try_into().ok()?,
             }),
+            NOTICE_HOSTING_AT => {
+                let ip: [u8; 4] = rest.get(..4)?.try_into().ok()?;
+                let port: [u8; 2] = rest.get(4..6)?.try_into().ok()?;
+                Some(Notice::HostingAt {
+                    addr: std::net::SocketAddrV4::new(ip.into(), u16::from_be_bytes(port)),
+                })
+            }
             _ => None,
         }
     }
@@ -1972,6 +1988,9 @@ mod tests {
             NetMsg::Notice(Notice::Called { event: 8 }),
             NetMsg::Notice(Notice::CrowdPicked {
                 picks: [2, 0, 1, 0, 0, 255],
+            }),
+            NetMsg::Notice(Notice::HostingAt {
+                addr: "192.168.1.20:41234".parse().expect("addr"),
             }),
             NetMsg::Roster {
                 seats: 4,

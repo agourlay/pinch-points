@@ -8,7 +8,8 @@ it tries a handful of signposts: for the crabs worth the most that are not
 already walking home, the first few tiles on their way where a post could
 turn them. It walks every crab's path with and without each candidate, and
 plants the one that sends the most value home (and the least to a rival, or
-a gull to its own castle). Then it rests a few ticks, so its few posts
+a gull to its own castle). In a round played in teams a partner's castle
+counts as home: placing goes by the team's total. Then it rests a few ticks, so its few posts
 live long enough to do their work. How many it may have standing, and what
 happens to a placement past that, come from the rules in `hello`.
 
@@ -98,6 +99,10 @@ class Beach:
         self.tiles = board["tiles"]
         self.hw, self.vw = board["walls"]["h"], board["walls"]["v"]
         self.seat = hello["seat"]
+        # The seats on our side, ourselves included: those sharing our team
+        # number. A listener older than `teams` means every seat for itself.
+        teams = hello.get("teams") or list(range(hello["seats"]))
+        self.friends = {s for s, t in enumerate(teams) if t == teams[self.seat]}
         rules = hello["rules"]
         # Posts standing at once, and whether one more evicts the oldest
         # ("evict") or is refused ("reject").
@@ -202,12 +207,13 @@ def walk(beach, x, y, d, claw, posts, castles, turnstiles, gull=False):
     return None, STEPS, seen
 
 
-def worth(walker, owner, me, score):
+def worth(walker, owner, friends, scores):
     if owner is None:
         return 0.0
     if walker["gull"]:
-        return -score / 2.0 if owner == me else 0.0
-    return walker["value"] if owner == me else -0.3 * walker["value"]
+        # A raid takes a third of the castle's bank.
+        return -scores[owner] / 3.0 if owner in friends else 0.0
+    return walker["value"] if owner in friends else -0.3 * walker["value"]
 
 
 def decide(beach, tick):
@@ -240,7 +246,7 @@ def decide(beach, tick):
 
     def outcome(w, with_posts):
         owner, steps, tiles = walk(beach, w["x"], w["y"], w["dir"], w["claw"], with_posts, castles, turnstiles, w["gull"])
-        return worth(w, owner, me, score), tiles
+        return worth(w, owner, beach.friends, tick["scores"]), tiles
 
     base = []
     for w in walkers:

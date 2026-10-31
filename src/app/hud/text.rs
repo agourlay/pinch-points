@@ -380,7 +380,6 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
         settings,
         names,
         playback,
-        daily,
         online,
         controllers,
         vphase,
@@ -392,12 +391,8 @@ pub(super) fn versus_text(r: &Readout) -> HudText {
     } = *r;
     let scores = sim.0.scores();
     let replay = playback.0.as_ref().map(|(replay, _)| replay);
-    let team_mode = crate::app::teams::in_play(
-        crate::app::teams::local(settings, daily),
-        online,
-        replay,
-        seats.0,
-    );
+    let team_mode =
+        crate::app::teams::in_play(crate::app::teams::on_board(&sim.0), online, replay, seats.0);
     let viewer = header_viewer(online, playback);
     let mut mode = match viewer {
         Viewer::Replay => tr.title_replay.to_string(),
@@ -636,9 +631,6 @@ pub(super) struct Readout<'a> {
     pub editor: &'a EditorState,
     pub online: &'a Online,
     pub playback: &'a Playback,
-    /// Whether the round is the daily, which is scored every seat for
-    /// itself whatever the setting says.
-    pub daily: &'a crate::app::Daily,
     pub lobby: &'a LobbyState,
     /// Whether a series is mid-flight, which changes what the results
     /// card's Enter does and so what the prompt may promise.
@@ -966,7 +958,6 @@ mod tests {
         editor: EditorState,
         online: Online,
         playback: Playback,
-        daily: crate::app::Daily,
         lobby: LobbyState,
         tournament: crate::app::tournament::Tournament,
         seats: Seats,
@@ -989,7 +980,6 @@ mod tests {
                 editor: EditorState::default(),
                 online: Online::default(),
                 playback: Playback::default(),
-                daily: crate::app::Daily::default(),
                 lobby: LobbyState::default(),
                 tournament: crate::app::tournament::Tournament::default(),
                 seats: Seats(2),
@@ -1014,7 +1004,6 @@ mod tests {
                 editor,
                 online,
                 playback,
-                daily,
                 lobby,
                 tournament,
                 seats,
@@ -1037,7 +1026,6 @@ mod tests {
                 editor,
                 online,
                 playback,
-                daily,
                 lobby,
                 tournament,
                 seats,

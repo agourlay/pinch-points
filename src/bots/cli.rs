@@ -5,8 +5,7 @@ use super::connstr::DEFAULT_PORT;
 use super::listener::{BotId, Listener};
 use crate::app::match_setup::{GullPressure, MapChoice, RoundLength};
 use crate::sim::{
-    Board, BotLevel, CapPolicy, Level, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER, PlayerId,
-    TICKS_PER_SECOND,
+    Board, BotLevel, Level, MAX_PLAYERS, MAX_SIGNPOSTS_PER_PLAYER, PlayerId, TICKS_PER_SECOND,
 };
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -308,8 +307,9 @@ impl Beach {
     }
 
     /// The board for one game, the way a match set up in the game builds
-    /// it (`match_setup::board_for`): normal gulls, the round's tide, three
-    /// arrows a seat.
+    /// it (`match_setup::local_board`): normal gulls, the round's length,
+    /// three arrows a seat and the tide-event wheel, all laid on by the
+    /// game's own `apply_terms`, so the two cannot drift apart again.
     pub fn board(&self, seed: u64, seats: u8, round: RoundLength) -> Board {
         let mut board = match self {
             Beach::File(_, level) => level.table_board(seed, seats),
@@ -327,11 +327,43 @@ impl Beach {
                 crate::app::match_setup::versus_board(map, seed, seats)
             }
         };
-        crate::sim::set_versus_rules(&mut board, GullPressure::Normal.period());
-        board.rules_mut().round_length = Some(round.ticks());
-        board.set_signpost_rule(MAX_SIGNPOSTS_PER_PLAYER as u8, CapPolicy::Evict);
+        crate::app::match_setup::apply_terms(
+            &mut board,
+            GullPressure::Normal,
+            round,
+            MAX_SIGNPOSTS_PER_PLAYER as u8,
+        );
         board
     }
+}
+
+/// A command's `--help`, with the `{maps}` line filled in by every name
+/// `--map` takes ([`Beach::parse`]), read off the game's own list of maps
+/// so the help cannot leave one out. Wrapped under the flags' column.
+pub fn usage(text: &str) -> String {
+    const INDENT: &str = "                           ";
+    let names: Vec<&str> = MapChoice::ALL
+        .into_iter()
+        .filter(|&map| map != MapChoice::Custom)
+        .map(MapChoice::token)
+        .collect();
+    let mut lines: Vec<String> = vec![INDENT.to_string()];
+    for (i, name) in names.iter().enumerate() {
+        let word = match i + 1 < names.len() {
+            true => format!("{name},"),
+            false => name.to_string(),
+        };
+        let last = lines.last_mut().expect("a line");
+        if last.len() > INDENT.len() && last.len() + 1 + word.len() > 80 {
+            lines.push(INDENT.to_string());
+        }
+        let last = lines.last_mut().expect("a line");
+        if last.len() > INDENT.len() {
+            last.push(' ');
+        }
+        last.push_str(&word);
+    }
+    text.replace("{maps}", &lines.join("\n"))
 }
 
 /// A seed nobody chose: the clock's nanoseconds, cut short enough to type.
@@ -534,6 +566,43 @@ mod tests {
         assert!(Args::new(["--open".to_string()]).all("open").is_err());
     }
 
+    /// `--help` names every map `--map` takes, and only those, in lines
+    /// that fit a terminal.
+    #[test]
+    fn the_help_lists_every_map_name() {
+        for text in [super::super::arena::USAGE, super::super::cup::USAGE] {
+            let help = usage(text);
+            assert!(!help.contains("{maps}"));
+            let start = help.find("The maps:").expect("a list of maps") + "The maps:".len();
+            let lines: Vec<&str> = help[start..]
+                .lines()
+                .skip(1)
+                .take_while(|l| !l.trim_start().starts_with("--"))
+                .collect();
+            assert!(lines.iter().all(|l| l.chars().count() <= 80), "{help}");
+            let listed: Vec<&str> = lines
+                .iter()
+                .flat_map(|l| l.split(','))
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .collect();
+            for name in &listed {
+                assert!(
+                    matches!(Beach::parse(name), Ok(Beach::Map(_) | Beach::Generated)),
+                    "{name}"
+                );
+            }
+            for map in MapChoice::ALL {
+                assert_eq!(
+                    listed.contains(&map.token()),
+                    map != MapChoice::Custom,
+                    "{}",
+                    map.token()
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_percentile_is_one_of_the_times() {
         let times = [5.0, 1.0, 3.0, 2.0, 4.0];
@@ -575,6 +644,16 @@ mod tests {
             );
             assert_eq!(board.height(), h, "{seats} seats");
             assert_eq!(config.map.wraps(), board.wrap(), "{seats} seats");
+            // The game's rules too, the wheel and all: the arena once
+            // copied them by hand and left the tide events off.
+            let config = crate::app::match_setup::MatchConfig {
+                round: RoundLength::Short,
+                ..config
+            };
+            let game = crate::app::match_setup::local_board(&config, &Default::default(), 3);
+            assert!(board.events_enabled(), "{seats} seats");
+            assert_eq!(board.rules(), game.rules(), "{seats} seats");
+            assert_eq!(board.state_hash(), game.state_hash(), "{seats} seats");
         }
     }
 }

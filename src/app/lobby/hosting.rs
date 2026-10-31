@@ -69,10 +69,13 @@ pub(super) fn peers_named(names: &[&str], watchers: &[usize]) -> PeerBook {
 /// itself, or a socket that will not say what port it took. The
 /// beacon carries the address for everyone who can hear it; this is for
 /// the friend who cannot.
-pub(super) fn address_here(transport: &UdpTransport) -> Option<String> {
+pub(super) fn address_here(transport: &UdpTransport) -> Option<std::net::SocketAddrV4> {
     let port = transport.local_addr().ok()?.port();
-    let ip = crate::transport::local_ip()?;
-    Some(SocketAddr::new(ip, port).to_string())
+    match crate::transport::local_ip()? {
+        std::net::IpAddr::V4(ip) => Some(std::net::SocketAddrV4::new(ip, port)),
+        // The probe binds an IPv4 socket, so never asked.
+        std::net::IpAddr::V6(_) => None,
+    }
 }
 
 /// Whether this frame asks about hosting, does it, or neither.
@@ -1918,6 +1921,11 @@ mod tests {
             watching: false,
         };
         state.tell(&crate::app::i18n::EN, bo);
+        // The host's own word of where the beach is, a notice too.
+        let at = Notice::HostingAt {
+            addr: "192.168.1.20:41234".parse().expect("addr"),
+        };
+        state.tell(&crate::app::i18n::EN, at);
         let port = state
             .hosted()
             .expect("hosting")
@@ -1959,7 +1967,7 @@ mod tests {
                     heard.push((String::new(), line));
                 }
             }
-            if heard.len() >= 3 {
+            if heard.len() >= 4 {
                 break;
             }
         }
@@ -1968,6 +1976,10 @@ mod tests {
             [
                 ("Ann".to_string(), "anyone up for a round?".to_string()),
                 (String::new(), fill(fr.lobby_joined, &[("p", "Bo")])),
+                (
+                    String::new(),
+                    fill(fr.lobby_hosting_at, &[("a", "192.168.1.20:41234")])
+                ),
                 (String::new(), fill(fr.lobby_joined, &[("p", "Cy")])),
             ],
             "the room as it stands, oldest first, and then their own arrival"

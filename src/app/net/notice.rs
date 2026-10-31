@@ -40,5 +40,6 @@ pub fn notice_line(tr: &Tr, notice: &Notice, label: impl Fn(u8) -> String) -> St
             let said = |l: &str| fill(tr.crowd_picked, &[("l", l)]);
             said(&picks.line_within(label, |l| chat_fits(&said(l))))
         }
+        Notice::HostingAt { addr } => fill(tr.lobby_hosting_at, &[("a", &addr.to_string())]),
     }
 }

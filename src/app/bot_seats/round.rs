@@ -860,16 +860,21 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(walking, "the order was never taken");
-        let id = bots.round.as_ref().expect("a round").seats[0].driver.id;
         drop(bot);
-        let door = bots.door.as_ref().expect("a door");
+        // Waited for as the round hears of it, read off the link without
+        // a commit, so the hand takes no step meanwhile. The listener
+        // forgets the connection before it tells the round, and a test
+        // that waited on `Listener::connected` could commit in between,
+        // walk the hand on and land the order: it failed once that way.
+        let round = bots.round.as_mut().expect("a round");
         for _ in 0..400 {
-            if !door.listener().connected(id) {
+            round.drain(board.ticks(), &mut Vec::new());
+            if !round.seats[0].driver.connected {
                 break;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(!door.listener().connected(id), "the drop was never seen");
+        assert!(!round.seats[0].driver.connected, "the drop was never seen");
         for _ in 0..100 {
             let committed = bots.commit(&board, &mut actions).expect("a round");
             assert_eq!(actions[1], PlayerAction::None, "the walk landed");

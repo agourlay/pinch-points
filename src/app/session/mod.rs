@@ -1107,6 +1107,7 @@ mod tests {
         app.init_resource::<Daily>();
         app.init_resource::<net::Online>();
         app.init_resource::<Playback>();
+        app.insert_resource(Sim(Board::new(5, 5, 0)));
         app.init_resource::<SeatNames>();
         app.init_resource::<SeatKinds>();
         app.insert_resource(Seats(4));
@@ -1128,6 +1129,7 @@ mod tests {
         app.init_resource::<Daily>();
         app.init_resource::<net::Online>();
         app.init_resource::<Playback>();
+        app.insert_resource(Sim(Board::new(5, 5, 0)));
         app.init_resource::<SeatNames>();
         app.init_resource::<SeatKinds>();
         app.insert_resource(Seats(4));

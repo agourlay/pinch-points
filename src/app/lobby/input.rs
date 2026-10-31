@@ -225,9 +225,10 @@ pub fn lobby_input(
                 // the moment somebody arrives, and this is the number a
                 // friend on a network that eats broadcasts has to be told
                 // before they can dial it.
-                if let Some(here) = address_here(&transport) {
-                    let notice = fill(tr.lobby_hosting_at, &[("a", &here)]);
-                    state.say("", &notice);
+                // A notice, so a newcomer caught up on the feed reads it
+                // in its own language.
+                if let Some(addr) = address_here(&transport) {
+                    state.tell(tr, crate::transport::Notice::HostingAt { addr });
                 }
                 state.standing = Standing::hosting(announcer, transport);
                 // Stop listening. A host cannot join anyone, and holding a

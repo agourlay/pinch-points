@@ -93,6 +93,33 @@ fn parse_crab_fields<'a>(
     })
 }
 
+/// `hello`'s `teams` as the board's rules hold them ([`crate::sim::Rules::teams`]):
+/// `None` when every seat is its own team, or from a listener older than
+/// the field. A seat past the table, whose castle is put away, is given a
+/// team of its own: a team is numbered below the seats, so it shares
+/// with nobody.
+fn sides(hello: &Value) -> Result<Option<[u8; MAX_PLAYERS]>, String> {
+    let Some(list) = hello.get("teams").and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    let mut sides: [u8; MAX_PLAYERS] = std::array::from_fn(|seat| seat as u8);
+    if list.len() > MAX_PLAYERS {
+        return Err("`teams` has more seats than a table".into());
+    }
+    for (slot, team) in sides.iter_mut().zip(list) {
+        *slot = team
+            .as_u64()
+            .and_then(|t| u8::try_from(t).ok())
+            .filter(|&t| usize::from(t) < MAX_PLAYERS)
+            .ok_or("`teams` holds a team that is not a seat number")?;
+    }
+    let identity = sides
+        .iter()
+        .enumerate()
+        .all(|(seat, &t)| usize::from(t) == seat);
+    Ok((!identity).then_some(sides))
+}
+
 /// The board `hello` and `tick` describe, ready to run forward.
 pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     let w = num(hello, "board.width")? as usize;
@@ -255,6 +282,9 @@ pub fn board_from(hello: &Value, tick: &Value) -> Result<Board, String> {
     }
     if field(hello, "rules.events")?.as_bool() == Some(true) {
         let _ = writeln!(out, "events: on");
+    }
+    if let Some(sides) = sides(hello)? {
+        let _ = writeln!(out, "sides: {}", crate::sim::sides_text(&sides));
     }
     if let Some(call) = tick.get("golden_call").filter(|c| !c.is_null()) {
         let _ = writeln!(
@@ -631,6 +661,69 @@ mod tests {
             !theirs.rules().timed_lock
                 && !theirs.rules().sweep_flight
                 && !theirs.rules().whole_flock
+        );
+    }
+
+    /// A round in pairs rebuilds in pairs: `hello`'s `teams` reaches the
+    /// rules, so a Gull Attack and the AI on the rebuilt board spare the
+    /// partner as the real sim does. At six the rules are the real ones
+    /// exactly; at four the seats past the table, which `hello` never
+    /// names, are allied with nobody.
+    #[test]
+    fn a_pairs_round_rebuilds_with_its_teams() {
+        // Whole opposite pairs, as the game splits them (`TeamMode::Pairs`).
+        let pair = |seat: u8| seat / 2;
+        for (seats, w, h) in [(4u8, 16, 11), (6, 18, 13)] {
+            let mut board = generate_arena(11, seats, w, h);
+            crate::app::match_setup::apply_terms(
+                &mut board,
+                crate::app::match_setup::GullPressure::Normal,
+                crate::app::match_setup::RoundLength::Short,
+                3,
+            );
+            board.rules_mut().teams = Some(std::array::from_fn(|s| pair(s as u8)));
+            let names = vec!["a".to_string(); usize::from(seats)];
+            let kinds = vec![SeatKind::Bot; names.len()];
+            let teams: Vec<u8> = (0..seats).map(pair).collect();
+            let table = Table {
+                game: 1,
+                names: &names,
+                kinds: &kinds,
+                clock: Clock {
+                    live: false,
+                    deadline_ms: 33,
+                    input_delay: 0,
+                },
+                cursor: false,
+                teams: Some(&teams),
+            };
+            let hello = protocol::hello(&board, &table, 0, false);
+            let you = You {
+                seat: 0,
+                last: None,
+            };
+            let tick = protocol::tick(&board, 1, &you, &[]);
+            let theirs = board_from(&hello, &tick).expect("rebuilds");
+            let ours = board.lookahead(LOOKAHEAD_SEED);
+            for a in 0..MAX_PLAYERS as u8 {
+                for b in 0..MAX_PLAYERS as u8 {
+                    let real = match a < seats && b < seats {
+                        true => ours.rules().allies(a, b),
+                        false => a == b,
+                    };
+                    assert_eq!(theirs.rules().allies(a, b), real, "{seats}: {a} and {b}");
+                }
+            }
+            if seats == 6 {
+                assert_eq!(theirs.rules(), ours.rules());
+            }
+        }
+        // Every seat its own team is no teams at all.
+        let (hello, tick) = shown(&classic_arena(false, 2));
+        assert_eq!(hello["teams"], serde_json::json!([0, 1]));
+        assert_eq!(
+            board_from(&hello, &tick).expect("rebuilds").rules().teams,
+            None
         );
     }
 

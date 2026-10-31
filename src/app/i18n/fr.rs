@@ -582,7 +582,7 @@ pub static FR: Tr = Tr {
     ],
     lobby_ask_address: "Adresse de la partie (ip:port) : ",
     lobby_bad_address: "Ce n'est pas une adresse - essaie 192.168.1.5:47777",
-    lobby_hosting_at: "cette partie est à l'adresse {a}",
+    lobby_hosting_at: "adresse de la partie : {a}",
     lobby_calling: "appel de {a}...",
     lobby_no_answer: "aucune réponse de {a} - vérifie l'adresse, ou demande-leur d'ouvrir",
     lobby_card_beaches: "PARTIES OUVERTES",

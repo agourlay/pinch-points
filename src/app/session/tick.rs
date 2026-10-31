@@ -154,6 +154,8 @@ pub(in crate::app) fn advance_sim(
         // table agreed on, so the chair plays the same on all of them.
         let level = match_setup::TermsDials::bot_level(&session.terms);
         let mut advanced = false;
+        // The crowd's calls that fired, named as they ran.
+        let mut fired = Vec::new();
         let committed = session.pump_with(action, &extra, |net| {
             if let Some(mut frame_actions) = net.session.advance() {
                 // The lockstep carries only the humans; the AI seats are
@@ -170,6 +172,7 @@ pub(in crate::app) fn advance_sim(
                     &mut frame_actions,
                 );
                 bots.before_frame(at, sim_board);
+                fired.extend(call_fired(sim_board, &frame_actions));
                 play_tick(sim_board, &frame_actions, tally, recording.as_mut());
                 bots.after_frame(at, sim_board);
                 // The board is at the lockstep's frame: the hash sent for a
@@ -210,6 +213,22 @@ pub(in crate::app) fn advance_sim(
             sim.set_changed();
             recorder.set_changed();
         }
+        // Said by the room rather than by anyone in it, as a notice sent as
+        // what ran, for each peer to word in its own language. Named here,
+        // as it fires `input_delay` frames after the vote settled, rather
+        // than at the settle: a Gull Mania settled just before the surge
+        // fires as Crab Mania, under a line that said Gull Mania.
+        if session.is_host() {
+            for event in fired {
+                let notice = crate::transport::Notice::Called {
+                    event: event.index() as u8,
+                };
+                session
+                    .transport
+                    .send(crate::transport::NetMsg::Notice(notice));
+                session.notices.push(notice);
+            }
+        }
         if call.is_some() {
             // Only a committed call is done with: a stalled or paused
             // commit leaves it for the next frame, or they would have
@@ -239,6 +258,24 @@ pub(in crate::app) fn advance_sim(
     drivers.after(&sim.0, committed, recorder.0.as_ref());
 }
 
+/// The crowd's call among a frame's `actions`, named as it runs on
+/// `board` as the frame is about to be played ([`Board::call_runs`]):
+/// nothing once the tide is in, where the tick does nothing.
+fn call_fired(
+    board: &Board,
+    actions: &[PlayerAction; MAX_PLAYERS],
+) -> Option<crate::sim::TideEvent> {
+    if board.round_over() {
+        return None;
+    }
+    actions.iter().find_map(|action| {
+        let PlayerAction::CallEvent(event) = action else {
+            return None;
+        };
+        board.call_runs(*event)
+    })
+}
+
 /// One tick of a round, however its actions arrived: the board steps, the
 /// round's tally sees the step, and a round being recorded keeps the
 /// actions.
@@ -265,5 +302,35 @@ fn play_tick(
             board.round_over() || replay.inputs.len() as u64 == board.ticks(),
             "a recording out of step with its round"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::TideEvent;
+
+    /// A call is named on the board of the frame it fires on: settled
+    /// before the surge and fired inside it, Gull Mania runs as Crab
+    /// Mania, and the line says so.
+    #[test]
+    fn a_call_is_named_as_it_fires() {
+        let mut board = crate::sim::classic_arena(false, 2);
+        board.set_events_enabled(true);
+        board.rules_mut().round_length = Some(crate::sim::SURGE_TICKS + 2);
+        assert!(!board.in_surge(), "settled before the surge");
+        let mut actions = [PlayerAction::None; MAX_PLAYERS];
+        actions[0] = PlayerAction::CallEvent(TideEvent::GullMania);
+        assert_eq!(call_fired(&board, &actions), Some(TideEvent::GullMania));
+        board.tick_idle();
+        board.tick_idle();
+        assert!(board.in_surge(), "fired inside it");
+        assert_eq!(call_fired(&board, &actions), Some(TideEvent::CrabMania));
+        // A beach whose wheel is off fires nothing, and says nothing.
+        board.set_events_enabled(false);
+        assert_eq!(call_fired(&board, &actions), None);
+        let idle = [PlayerAction::None; MAX_PLAYERS];
+        board.set_events_enabled(true);
+        assert_eq!(call_fired(&board, &idle), None);
     }
 }

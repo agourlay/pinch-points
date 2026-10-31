@@ -395,10 +395,16 @@ fn board_scale(board: Vec2, fit: Vec2, scale_factor: f32) -> f32 {
 /// what a 1:1 one is.
 pub(super) fn shake_camera(
     time: Res<Time>,
+    round: crate::app::round_state::RoundState,
     settings: Res<crate::app::settings::GameSettings>,
     mut trauma: ResMut<crate::app::effects::Trauma>,
     mut cameras: Query<(&Projection, &mut Transform), crate::app::match_setup::GameCamera>,
 ) {
+    // Under a pause card the camera rests and the shake waits, kept for
+    // when the beach moves again.
+    if round.held() {
+        return;
+    }
     let offset = trauma.offset(time.delta_secs(), time.elapsed_secs());
     // Drained either way, so nothing accumulates while the shake is off.
     if offset == Vec2::ZERO || settings.reduced_motion || crate::app::dev::screenshotting() {
@@ -470,6 +476,9 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.insert_state(Screen::Versus);
+        app.init_resource::<crate::app::Paused>();
+        app.init_resource::<crate::app::pause::PauseMenu>();
+        app.init_resource::<crate::app::net::Online>();
         app.insert_resource(Sim(crate::sim::classic_arena(false, 2)));
         app.insert_resource(UiScale(1.0));
         app.insert_resource(crate::app::settings::GameSettings::default());

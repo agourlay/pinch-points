@@ -408,6 +408,7 @@ pub struct Table<'w> {
     scoring: crate::app::teams::Scoring<'w>,
     time: Res<'w, Time>,
     clock: Res<'w, crate::app::round_state::RoundClock>,
+    round: crate::app::round_state::RoundState<'w>,
 }
 
 /// Float a crown over the castle of whoever leads, so the board itself
@@ -444,7 +445,11 @@ pub fn crown_the_leader(
         }
     }
     let calm = table.scoring.local.settings.reduced_motion;
-    let dt = table.time.delta_secs();
+    // A new crown's drop-in holds under a pause card too.
+    let dt = match table.round.held() {
+        true => 0.0,
+        false => table.time.delta_secs(),
+    };
     // The bob breathes with the round: still under a pause card and on
     // the results.
     let now = table.clock.0;
@@ -581,6 +586,14 @@ fn hop(from: Vec2, home: Vec2, progress: f32) -> (Vec2, f32) {
     (from.lerp(home, eased), 1.0 + RISE * height)
 }
 
+/// The clock a swap's flight runs on: the wall's, stopped while a pause
+/// card holds the round.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct FlightClock<'w> {
+    time: Res<'w, Time>,
+    round: crate::app::round_state::RoundState<'w>,
+}
+
 /// Fly the castles to their new places when the tide swaps them round.
 ///
 /// The sim hands each castle to the next owner where it stands: nothing
@@ -605,7 +618,7 @@ fn hop(from: Vec2, home: Vec2, progress: f32) -> (Vec2, f32) {
 ///
 /// [`BoardGeneration`]: crate::app::sim_events::BoardGeneration
 pub fn fly_castles(
-    time: Res<Time>,
+    clock: FlightClock,
     current: crate::app::sim_events::CurrentBoard,
     settings: Res<crate::app::settings::GameSettings>,
     mut flight: ResMut<CastleFlight>,
@@ -641,10 +654,11 @@ pub fn fly_castles(
         flight.left = FLIGHT;
     }
     std::mem::swap(&mut before.held, &mut now);
-    if flight.left <= 0.0 {
+    // Held in the air under a pause card, with the crabs.
+    if flight.left <= 0.0 || clock.round.held() {
         return;
     }
-    flight.left = (flight.left - time.delta_secs()).max(0.0);
+    flight.left = (flight.left - clock.time.delta_secs()).max(0.0);
     let progress = 1.0 - flight.left / FLIGHT;
     let flying = |sprite: &CastleSprite| {
         flight
@@ -1117,14 +1131,21 @@ pub fn cheer_tier_ups(
 
 /// Flutter every pennant: a small shear-like x-scale ripple plus a slight
 /// tilt, phased per entity so flags do not wave in lockstep. With less
-/// motion asked for, every flag hangs at rest, as it is spawned.
+/// motion asked for, every flag hangs at rest, as it is spawned. Held
+/// still under a pause card with the rest of the beach, on a clock of its
+/// own that stops for one (`wind`).
 pub fn wave_pennants(
     time: Res<Time>,
+    round: crate::app::round_state::RoundState,
     settings: Res<crate::app::settings::GameSettings>,
     castles: Query<&CastleFlinch>,
     mut flags: Query<(Entity, &mut Transform, &ChildOf), With<Pennant>>,
+    mut wind: Local<f32>,
 ) {
-    let t = time.elapsed_secs();
+    if !round.held() {
+        *wind += time.delta_secs();
+    }
+    let t = *wind;
     for (entity, mut transform, castle) in &mut flags {
         // A castle swaying after a raid flings its flag the other way.
         let fling = castles
@@ -1209,8 +1230,7 @@ mod tests {
     fn pennants_hang_still_for_less_motion() {
         use super::{Pennant, wave_pennants};
         use bevy::prelude::*;
-        let mut app = App::new();
-        app.init_resource::<Time>();
+        let mut app = crate::app::round_state::held_test_app();
         app.insert_resource(crate::app::settings::GameSettings {
             reduced_motion: true,
             ..Default::default()

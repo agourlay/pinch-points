@@ -99,9 +99,15 @@ const CARD_GRACE: f32 = 0.5;
 /// round. The keyboard has no such clash, since no seat key means anything
 /// on the card, and is not held back. A card brought up any other way (a
 /// spectator's, a recording's) needs no pause.
+///
+/// The pause card over a round being played still counts as playing: a
+/// pause called in the round's last moments is dropped as the tide comes
+/// in (`drop_a_late_pause`), and the card follows it with no round frame
+/// between.
 #[derive(Default)]
 pub struct CardGrace {
-    /// The face last frame was a round being played.
+    /// The face last frame was a round being played, or the pause card
+    /// over one.
     playing: bool,
     /// Until when the card's pause lasts, in elapsed seconds.
     until: f32,
@@ -114,7 +120,8 @@ impl CardGrace {
         if card && self.playing {
             self.until = now + CARD_GRACE;
         }
-        self.playing = *face == scheme::Face::Round;
+        self.playing =
+            *face == scheme::Face::Round || (*face == scheme::Face::Paused && self.playing);
         card && now < self.until
     }
 }
@@ -667,6 +674,29 @@ mod tests {
         assert!(
             keys(&app).just_pressed(KeyCode::Enter),
             "a press once the card is read takes its door"
+        );
+    }
+
+    /// A pause called as the tide comes in is dropped for the results
+    /// card, which follows the pause card with no round frame between: a
+    /// tap meant for an arrow still goes by.
+    #[test]
+    fn a_card_after_a_late_pause_lets_the_rush_taps_go_by() {
+        let card = Face::Results {
+            door: AfterRound::Menu,
+            talk: false,
+            rematch: Some(crate::app::rematch::Rematch::Round),
+            keep: crate::app::replays::KeepOffer::Offered,
+        };
+        let mut app = bridged(Face::Round);
+        app.update();
+        app.insert_resource(PadFace(Face::Paused));
+        app.update();
+        app.insert_resource(PadFace(card));
+        press(&mut app, Pad::A);
+        assert!(
+            keys(&app).get_just_pressed().next().is_none(),
+            "A tapped as the pause dropped is not the card's"
         );
     }
 

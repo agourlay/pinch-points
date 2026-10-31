@@ -36,8 +36,9 @@ Console commands while registration is open: start, invite NAME, list.
   --open-registration      no key: anyone who can reach the port may enter
   --per-owner N            bots one owner may enter (default 1)
   --parallel-cap N         games one bot may play at once, at most (default 8)
-  --map NAME|FILE          classic, generated, small, large, xl, ocean, or a level file
-                           whose castles are marked exactly 0 to seats-1
+  --map NAME|FILE          a map, or a level file whose castles are marked
+                           exactly 0 to seats-1. The maps:
+{maps}
   --round quick|short|standard|long
   --deadline MS            the reply deadline (default 33, one tick)
   --fair-cursor on|off     walk every seat's cursor at a person's pace
@@ -95,6 +96,11 @@ fn plan(args: Vec<String>) -> Result<Plan, String> {
         .map(|s| cli::ai_seat(s))
         .collect::<Result<Vec<_>, _>>()?;
     let tables = args.parsed::<usize>("tables")?;
+    // Refused rather than raised to one: a cup of no games would close
+    // registration and leave every bot waiting for nothing.
+    if tables == Some(0) {
+        return Err("--tables must be at least 1".into());
+    }
     let start_when = args.parsed::<usize>("start-when")?;
     let invites = args.all("invite")?;
     let open = args.switch("open-registration");
@@ -145,12 +151,12 @@ fn plan(args: Vec<String>) -> Result<Plan, String> {
 /// `pinch-points cup ...`.
 pub fn run(args: Vec<String>) -> Result<(), String> {
     let Some((sub, rest)) = args.split_first() else {
-        print!("{USAGE}");
+        print!("{}", cli::usage(USAGE));
         return Ok(());
     };
     match sub.as_str() {
         "serve" if rest.iter().any(|a| a == "--help" || a == "-h") => {
-            print!("{USAGE}");
+            print!("{}", cli::usage(USAGE));
             Ok(())
         }
         "serve" => serve(plan(rest.to_vec())?),
@@ -160,7 +166,7 @@ pub fn run(args: Vec<String>) -> Result<(), String> {
                 .into(),
         ),
         "--help" | "-h" | "help" => {
-            print!("{USAGE}");
+            print!("{}", cli::usage(USAGE));
             Ok(())
         }
         other => Err(format!("no cup command {other:?}; try `cup serve`")),
@@ -835,6 +841,8 @@ mod tests {
         assert_eq!(p.table.listen.to_string(), "0.0.0.0:47710");
         assert_eq!(p.out, PathBuf::from("cup-t1"));
         assert!(plan(args("--seats 9")).is_err());
+        assert!(plan(args("--tables 0")).is_err());
+        assert!(plan(args("--tables 1")).is_ok());
         assert!(plan(args("--open-registration --invite ana")).is_err());
         assert!(plan(args("--id ../x")).is_err());
     }

@@ -182,9 +182,10 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 ///   a molt denies the rival teams alone, so a 49 peer moves its AI seats
 ///   differently in a round played in teams. The room's notices (who
 ///   joined, left or was sent away, a start called off, the spectators'
-///   call and the crowd's picks) travel as a `Notice` of what happened,
-///   a new tag, for each peer to word in its own language, where they had
-///   been chat in the host's: a 49 peer drops every one unread.
+///   call, the crowd's picks and the host's address) travel as a `Notice`
+///   of what happened, a new tag, for each peer to word in its own
+///   language, where they had been chat in the host's: a 49 peer drops
+///   every one unread.
 ///
 /// Version 10 is the shape worth reading twice: not one byte of the `Start`
 /// moved. Two builds hold the identical datagram, agree on every field in

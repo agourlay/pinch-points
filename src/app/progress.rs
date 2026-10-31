@@ -94,6 +94,10 @@ impl Progress {
     /// that level (see [`crate::app::campaign::disambiguate`]). True when
     /// anything moved, which is worth a save. The name's own line stays:
     /// it is what an older build still reads.
+    ///
+    /// Filed, not marked: it is an old clear under a new key, not one made
+    /// here, and marked, a copy open on the record from before a reset
+    /// elsewhere wrote it back over the reset ([`Progress::merge`]).
     pub fn adopt_legacy(&mut self, campaign: &Campaign) -> bool {
         let mut moved = false;
         for level in &campaign.levels {
@@ -103,7 +107,7 @@ impl Progress {
             if let Some(name) = &filing.legacy
                 && self.is_cleared(name)
             {
-                moved |= self.mark(&filing.key);
+                moved |= self.cleared.insert(filing.key.clone());
             }
         }
         moved
@@ -420,6 +424,30 @@ mod tests {
         reset_in(&path, &mut first).expect("reset again");
         assert_eq!(load_in(&path).reset, 2);
         assert_eq!(load_in(&path).cleared_count(), 0);
+    }
+
+    /// A copy opened before a reset that adopts an old name's tick under
+    /// its file has not cleared anything: its next save keeps the reset.
+    #[test]
+    fn an_adopted_tick_does_not_outlive_a_reset() {
+        let path = crate::app::paths::test_dir("progress-adopt-reset").join("progress.txt");
+        let mut alone = crate::sim::Level::from_board("Alone", 1, crate::sim::Board::new(4, 4, 0));
+        alone.filing = Some(crate::sim::Filing {
+            key: "file:custom/alone.txt".into(),
+            legacy: Some("Alone".into()),
+        });
+        let campaign = campaign(1, vec![alone]);
+        let mut stale = Progress::default();
+        stale.mark("Alone");
+        save_in(&path, &mut stale).expect("saved");
+        let mut first = load_in(&path);
+        first.clear_all();
+        reset_in(&path, &mut first).expect("reset");
+        assert!(stale.adopt_legacy(&campaign), "the tick moves");
+        save_in(&path, &mut stale).expect("saved over");
+        let back = load_in(&path);
+        assert!(!back.is_cleared("file:custom/alone.txt"));
+        assert!(!back.is_cleared("Alone"));
     }
 
     fn campaign(builtins: usize, extra: Vec<Level>) -> Campaign {

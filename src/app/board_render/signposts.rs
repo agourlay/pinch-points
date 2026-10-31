@@ -279,12 +279,14 @@ pub struct PostParts<'w, 's> {
 }
 
 /// The two clocks a post is drawn on: the wall's for the settle after a
-/// plant, and the round's for the next-to-go mark, which holds under the
-/// pause card and pulses with its dot on the chip.
+/// plant, stopped under a pause card (`state`), and the round's for the
+/// next-to-go mark, which holds under the pause card and pulses with its
+/// dot on the chip.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct PostClocks<'w> {
     time: Res<'w, Time>,
     round: Res<'w, crate::app::round_state::RoundClock>,
+    state: crate::app::round_state::RoundState<'w>,
 }
 
 /// Write what a post looks like *now*: how far it has settled after being
@@ -314,8 +316,12 @@ pub fn dress_signposts(
         mut halos,
     } = parts;
     let board = &sim.0;
-    let PostClocks { time, round } = clocks;
-    let dt = time.delta_secs();
+    let PostClocks { time, round, state } = clocks;
+    // The plant's pop holds under a pause card with the beach.
+    let dt = match state.held() {
+        true => 0.0,
+        false => time.delta_secs(),
+    };
     let next: [Option<(u8, u8)>; crate::sim::MAX_PLAYERS] = std::array::from_fn(|seat| {
         seating
             .played_here(seat as u8)

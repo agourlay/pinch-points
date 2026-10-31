@@ -200,6 +200,15 @@ impl Board {
         }
     }
 
+    /// The event a crowd's call of `event` fires on this tick's actions
+    /// (`PlayerAction::CallEvent`): none on a beach whose wheel is off, and
+    /// in the surge the swap [`Self::surge_safe`] makes. What the call is
+    /// announced as, asked on the board it fires on, so the line names
+    /// what the banner shows.
+    pub fn call_runs(&self, event: TideEvent) -> Option<TideEvent> {
+        self.tide.enabled.then(|| self.surge_safe(event))
+    }
+
     /// Start a lure for `owner`, as banking a molting crab does.
     ///
     /// Same reason as [`Self::force_tide_event`]: the dev hook and the

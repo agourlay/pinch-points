@@ -1090,10 +1090,11 @@ impl Board {
             // puzzle, or a versus round replayed from before every round
             // turned it, where the wheel is off. The `enabled` flag says where events fire,
             // and a call is an event firing.
-            PlayerAction::CallEvent(event) if self.tide.enabled => {
-                self.force_tide_event(self.surge_safe(event), player);
+            PlayerAction::CallEvent(event) => {
+                if let Some(runs) = self.call_runs(event) {
+                    self.force_tide_event(runs, player);
+                }
             }
-            PlayerAction::CallEvent(_) => {}
         }
     }
 

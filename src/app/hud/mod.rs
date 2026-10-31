@@ -616,7 +616,6 @@ pub struct HudSources<'w> {
     speed: Res<'w, crate::app::replays::PlaybackSpeed>,
     tournament: Res<'w, crate::app::tournament::Tournament>,
     spectators: Res<'w, crate::app::spectators::SpectatorChat>,
-    daily: Res<'w, crate::app::Daily>,
     pad: PadSources<'w>,
 }
 
@@ -643,7 +642,6 @@ impl HudSources<'_> {
             speed,
             tournament,
             spectators,
-            daily,
             pad,
         } = self;
         text::Readout {
@@ -657,7 +655,6 @@ impl HudSources<'_> {
             editor: &modes.editor,
             online: &seating.online,
             playback: &seating.playback,
-            daily,
             lobby: &modes.lobby,
             tournament,
             seats: &seating.seats,

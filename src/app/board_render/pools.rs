@@ -204,7 +204,9 @@ fn pond_pieces(board: &Board) -> Vec<PondPiece> {
 /// Swell each pool's ripple out of the water and fade it, over and over.
 ///
 /// On the wall clock rather than the sim's: it is weather, and it keeps
-/// breathing through a pause the way the clouds keep drifting.
+/// breathing through a pause, the water's own small stir. The cloud
+/// shadows are not this: they hold still with the round
+/// ([`super::surround::drift_cloud_shadows`]).
 ///
 /// Not at all for a player who asked for less motion: a ripple is nothing
 /// but motion, so it stays the clear water it is spawned as, and one

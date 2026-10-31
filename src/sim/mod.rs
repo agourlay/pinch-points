@@ -26,7 +26,7 @@ pub use board::{
     TICKS_PER_SECOND, TIER_FLOORS, Tempo, TideEvent, TileKind, castle_tier, claw_of, raid_loss,
     seat_of_claw,
 };
-pub(crate) use board::{bits_to_hex, tile_token};
+pub(crate) use board::{bits_to_hex, sides_text, tile_token};
 pub use bot::{
     BotLevel, FAIR_LIFT, FAIR_TICKS_PER_TILE, Hand, bot_action, bot_action_with, fair_walk,
     hand_steps,

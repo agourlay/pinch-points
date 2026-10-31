@@ -141,6 +141,22 @@ impl RoundState<'_> {
     }
 }
 
+/// An app holding what [`RoundState`] reads: a versus round running,
+/// unpaused, with a time to advance. For a test of a system that holds
+/// still under a pause card.
+#[cfg(test)]
+pub fn held_test_app() -> App {
+    let mut app = App::new();
+    app.add_plugins(bevy::state::app::StatesPlugin);
+    app.insert_state(Screen::Versus);
+    app.insert_state(VersusPhase::Running);
+    app.init_resource::<Time>();
+    app.init_resource::<Paused>();
+    app.init_resource::<PauseMenu>();
+    app.init_resource::<Online>();
+    app
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,14 +166,7 @@ mod tests {
     /// glow) freezes with the beach instead of running on the wall clock.
     #[test]
     fn the_round_clock_holds_under_the_pause_card() {
-        let mut app = App::new();
-        app.add_plugins(bevy::state::app::StatesPlugin);
-        app.insert_state(Screen::Versus);
-        app.insert_state(VersusPhase::Running);
-        app.init_resource::<Time>();
-        app.init_resource::<Paused>();
-        app.init_resource::<PauseMenu>();
-        app.init_resource::<Online>();
+        let mut app = held_test_app();
         app.init_resource::<RoundClock>();
         app.insert_resource(crate::app::Sim(Board::new(9, 7, 1)));
         app.add_systems(Update, tick_round_clock);
