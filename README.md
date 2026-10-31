@@ -20,8 +20,9 @@ take everything back.
   irm https://raw.githubusercontent.com/agourlay/pinch-points/master/site/install.ps1 | iex
   ```
 - **Prebuilt binaries** for Linux, macOS and Windows (x86_64 and arm64) are
-  attached to each [GitHub release](https://github.com/agourlay/pinch-points/releases).
-  Unpack the archive and run `pinch-points`.
+  attached to each [GitHub release](https://github.com/agourlay/pinch-points/releases)
+  and on [itch.io](https://agourlay.itch.io/pinch-points). Unpack the archive
+  and run `pinch-points`.
 - **From crates.io**, with a Rust toolchain:
   ```sh
   cargo install --locked pinch-points
