@@ -102,6 +102,63 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # The same six archives, pushed to itch.io with butler once every build is
+  # attached to the release. One channel per build: itch ticks the platform
+  # from the channel's name, keeps each download's display name across
+  # pushes, and shows --userversion on the page. Only after all six legs
+  # pass, so the page never offers half a release.
+  push-itch:
+    name: "Push to itch.io"
+    needs: upload-bins
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      ITCH_GAME: agourlay/pinch-points
+      # Pinned and checked: butler is handed the itch API key.
+      BUTLER_VERSION: 15.32.0
+      BUTLER_SHA256: 2335971394ef6596f95ded0833e85ee28755e13761716ef4c91d6b11f69162f5
+    steps:
+      - name: Install butler
+        run: |
+          curl -fsSL -o butler.zip \
+            "https://broth.itch.zone/butler/linux-amd64/$BUTLER_VERSION/archive/default"
+          echo "$BUTLER_SHA256  butler.zip" | sha256sum --check
+          mkdir -p "$HOME/butler" && unzip -q butler.zip -d "$HOME/butler"
+          echo "$HOME/butler" >> "$GITHUB_PATH"
+      - name: Fetch the release archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -D archives
+      # butler is pushed the unpacked folder, not the archive: it packs its
+      # own and sends only what changed, which is what lets the itch app
+      # install and update the game.
+      - name: Push each build
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        run: |
+          if [ -z "$BUTLER_API_KEY" ]; then
+            echo "::warning::BUTLER_API_KEY is not set, skipping itch.io"
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          push() {
+            target=$1 channel=$2
+            dir="builds/$channel"
+            mkdir -p "$dir"
+            case "$target" in
+              *windows*) unzip -q "archives/pinch-points-$GITHUB_REF_NAME-$target.zip" -d "$dir" ;;
+              *) tar -xzf "archives/pinch-points-$GITHUB_REF_NAME-$target.tar.gz" -C "$dir" ;;
+            esac
+            butler push "$dir" "$ITCH_GAME:$channel" --userversion "$version"
+          }
+          push x86_64-pc-windows-msvc windows
+          push aarch64-pc-windows-msvc windows-arm64
+          push aarch64-apple-darwin mac-arm64
+          push x86_64-apple-darwin mac
+          push x86_64-unknown-linux-gnu linux
+          push aarch64-unknown-linux-gnu linux-arm64
+
   publish-crate:
     name: "Publish on crates.io"
     runs-on: ubuntu-latest
