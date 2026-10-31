@@ -326,7 +326,9 @@ sealed on all four sides waits in place.
 
 Fixed signpost inventory, no score: place, press start, watch it run.
 The classic goal, and most of the campaign, is **all crabs**: every crab
-home is a win, one escapee is a loss. A handful of stages carry a goal of
+home is a win, one escapee is a loss. A stage with a hole keeps sending
+crabs until the tide, so it is judged there: won if none was eaten, the
+crabs still walking at the tide not counted. A handful of stages carry a goal of
 their own instead (`goal:` in the level file, `round:` for a tide of its
 own): **bank N** crabs, **survive** with none eaten until the tide, or
 bank a **golden** crab. Every stage ends inside a sixty-second tick limit

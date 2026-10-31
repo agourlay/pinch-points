@@ -879,6 +879,48 @@ fn a_second_round_dealt_over_the_last_ones_stragglers_runs_level() {
     );
 }
 
+/// Watchers who arrive late at a table formed in the lobby, through lossy
+/// proxies of their own: one mid-round is handed the round as it stands
+/// and watches it level from there, one on the results card is dealt the
+/// next round with everybody else, and one mid-way through that round is
+/// handed it in turn. Each agrees with the host on every hash it took.
+#[test]
+fn late_watchers_are_handed_the_round_as_it_stands() {
+    let scenario = soak::Scenario {
+        players: 3,
+        watchers: 1,
+        steps: 1400,
+        round_frames: 600,
+        card: 150,
+        loss: 0.02,
+        latency: 2,
+        late: vec![300, 650, 1200],
+        ..soak::Scenario::default()
+    };
+    let report = soak::play(&scenario);
+    let described = soak::describe(&scenario, &report);
+    assert_eq!(report.desyncs, 0, "{described}");
+    assert_eq!(report.hash_mismatches, 0, "{described}");
+    assert_eq!(report.abandoned, 0, "{described}");
+    let caught: Vec<(u64, u32)> = report
+        .caught_up
+        .iter()
+        .map(|caught| (caught.came, caught.round))
+        .collect();
+    assert_eq!(caught, [(300, 1), (1200, 2)], "{described}");
+    assert!(
+        report.caught_up.iter().all(|caught| caught.frame > 100),
+        "handed a round well under way\n{described}"
+    );
+    assert_eq!(report.late_came, 3, "{described}");
+    assert_eq!(report.late_dealt, 1, "{described}");
+    assert_eq!(report.late_waiting, 0, "{described}");
+    assert_eq!(report.reached_round_two, report.peers, "{described}");
+    // And all three watch round 2 on with the table, to its last step.
+    let late_frames = &report.round_two.frames[report.peers - 3..];
+    assert!(late_frames.iter().all(|&frame| frame > 100), "{described}");
+}
+
 /// A mirrored round over the wire: the host builds the board from its
 /// terms, the joiner from the `Start` it decoded, on a handmade map whose
 /// seed mirrors it both ways and on Round the World rolled round, and on a

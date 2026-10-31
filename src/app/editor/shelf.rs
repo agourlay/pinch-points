@@ -74,9 +74,22 @@ fn filed_name(path: &std::path::Path) -> Option<String> {
         .map(|name| name.trim().to_string())
 }
 
-/// Whether the level filed at `path` goes by `name`.
-fn files_level_named(path: &std::path::Path, name: &str) -> bool {
-    filed_name(path).is_some_and(|filed| filed == name)
+/// Whether an older build's file at `legacy` holds the very level being
+/// saved as `text`: the bench was opened from it, or it reads back as the
+/// same level. Only then is it tidied away. A file of the same name is not
+/// enough: every Cyrillic or kana name went to `level.txt`, and a fresh
+/// bench on the language's default name met the old level filed there.
+fn holds_this_level(state: &EditorState, legacy: &std::path::Path, text: &str) -> bool {
+    let opened_there = state
+        .filing
+        .opened
+        .as_ref()
+        .is_some_and(|(path, _)| path == legacy);
+    opened_there
+        || std::fs::read_to_string(legacy)
+            .ok()
+            .and_then(|old| crate::sim::Level::parse(&old).ok())
+            .is_some_and(|old| old.to_text() == text)
 }
 
 /// A file's name without its folder: what the status line says a level was
@@ -214,12 +227,12 @@ pub fn shelve(
 /// answer finishes the save (`validate::poll_solver`). Saved unchecked, a
 /// stage joined the list with nobody knowing whether it could be won, and
 /// the way through the author had found by hand went nowhere.
-fn check_for_save(state: &mut EditorState, board: &Board, save: (std::path::PathBuf, String)) {
+fn check_for_save(state: &mut EditorState, board: &Board, path: std::path::PathBuf, name: String) {
     if state.check.solver.is_none() {
         start_check(state, board);
     }
     if let Some(check) = state.check.solver.as_mut() {
-        check.save = Some(save);
+        check.join(path, name);
     }
 }
 
@@ -247,14 +260,15 @@ pub(super) fn save_level(
     if !ask_first(state, Offer::Overwrite, replaced.is_some(), prompt) {
         return;
     }
-    state.feedback = match write_level(&path, &level.to_text()) {
+    let text = level.to_text();
+    state.feedback = match write_level(&path, &text) {
         Ok(is_new) => {
             // The same level under the name an older build cut it to:
             // one level, so one file, the new one. Only when that file
-            // really holds a level of this name, as `level.txt` may well
-            // hold another.
+            // really holds this level, as `level.txt` may well hold
+            // another of the same name.
             let legacy = ascii_era_path(&state.name);
-            let moved = legacy != path && files_level_named(&legacy, &state.name);
+            let moved = legacy != path && holds_this_level(state, &legacy, &text);
             if moved {
                 let _ = std::fs::remove_file(&legacy);
             }
@@ -270,7 +284,7 @@ pub(super) fn save_level(
             match save_warning(state, &level, tr) {
                 Some(warning) => format!("{warning} - {filed}"),
                 None if state.kind == LevelKind::Puzzle && !is_checked(state, board) => {
-                    check_for_save(state, board, (path.clone(), state.name.clone()));
+                    check_for_save(state, board, path.clone(), state.name.clone());
                     format!("{} - {filed}", tr.ed_validating)
                 }
                 None => filed,
@@ -351,11 +365,54 @@ pub(super) fn ask_first(
 ) -> bool {
     if at_stake && state.offer != Some(offer) {
         state.offer = Some(offer);
+        state.asked = Asked {
+            line: prompt.clone(),
+            cursors: None,
+        };
         state.feedback = prompt;
         return false;
     }
     state.offer = None;
     true
+}
+
+/// What stood when the offer was made: the question's own line, and where
+/// the cursors were (noted the first frame after it was asked). The offer
+/// is only good while both still stand ([`settle_offer`]).
+#[derive(Default)]
+pub(super) struct Asked {
+    line: String,
+    cursors: Option<Vec<(u8, u8)>>,
+}
+
+/// Take the standing offer back, and its question with it while the line
+/// still asks it: a question left on screen with no offer behind it
+/// promised a second press that would only ask again.
+pub(super) fn take_back_offer(state: &mut EditorState) {
+    if state.offer.take().is_some() && state.feedback == state.asked.line {
+        state.feedback.clear();
+    }
+}
+
+/// Let the standing offer go once the question is no longer what the
+/// author is looking at: its line replaced by another (a check's verdict
+/// landing between the two presses), or a cursor moved without a key (a
+/// pad's stick). Either way the second press would have gone ahead with
+/// nothing on screen saying it would.
+pub(super) fn settle_offer(state: &mut EditorState, cursors: impl Iterator<Item = (u8, u8)>) {
+    if state.offer.is_none() {
+        return;
+    }
+    if state.feedback != state.asked.line {
+        state.offer = None;
+        return;
+    }
+    let now: Vec<_> = cursors.collect();
+    match &state.asked.cursors {
+        Some(was) if *was != now => take_back_offer(state),
+        Some(_) => {}
+        None => state.asked.cursors = Some(now),
+    }
 }
 
 /// Whether anything has been built on this board yet.
@@ -486,6 +543,52 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// A question stands only while it is on screen and the cursor is
+    /// where it was asked: a check's verdict landing on its line, or a
+    /// pad's stick walking the cursor off, takes it back, and the next
+    /// press asks again rather than leaving with no warning showing.
+    #[test]
+    fn a_question_goes_with_its_line_or_a_cursor_moved() {
+        let mut app = bench_app();
+        app.insert_state(Screen::Editor);
+        let cursor = app
+            .world_mut()
+            .spawn((crate::app::cursor::Cursor::seated(0), Transform::default()))
+            .id();
+        app.add_systems(Update, (editor_input, editor_commands).chain());
+        let screen = |app: &App| *app.world().resource::<State<Screen>>().get();
+        let asked = |app: &App| app.world().resource::<EditorState>().offer;
+        app.world_mut().resource_mut::<Sim>().0.set_wrap(true);
+
+        tap_and_settle(&mut app, KeyCode::Escape);
+        assert_eq!(asked(&app), Some(Offer::Leave));
+        // The verdict of a check the author started takes the line.
+        app.world_mut().resource_mut::<EditorState>().feedback = "solvable".into();
+        app.update();
+        assert_eq!(asked(&app), None, "the verdict took the question");
+        assert_eq!(app.world().resource::<EditorState>().feedback, "solvable");
+        tap_and_settle(&mut app, KeyCode::Escape);
+        assert_eq!(screen(&app), Screen::Editor, "asked again");
+        assert_eq!(asked(&app), Some(Offer::Leave));
+
+        // The stick moves the cursor with no key pressed.
+        app.world_mut()
+            .get_mut::<crate::app::cursor::Cursor>(cursor)
+            .expect("cursor")
+            .x += 1;
+        app.update();
+        assert_eq!(asked(&app), None, "the cursor walked off it");
+        assert_eq!(
+            app.world().resource::<EditorState>().feedback,
+            "",
+            "and its line went with it"
+        );
+        tap_and_settle(&mut app, KeyCode::Escape);
+        assert_eq!(screen(&app), Screen::Editor, "asked again");
+        tap_and_settle(&mut app, KeyCode::Escape);
+        assert_eq!(screen(&app), Screen::Menu, "the second press leaves");
+    }
+
     /// F2 onto a file this bench did not write asks first: the first
     /// press leaves the other level's file as it was and names the level
     /// in it, and only a second press replaces it. Saved at once, the note
@@ -533,12 +636,48 @@ mod tests {
         let name = "Café Legacy Probe";
         let legacy = ascii_era_path(name);
         assert!(legacy.ends_with("caf-legacy-probe.txt"), "{legacy:?}");
-        crate::app::paths::write_atomic(&legacy, format!("name: {name}\n")).expect("wrote");
         app.world_mut().resource_mut::<EditorState>().name = name.to_string();
+        let bench = |app: &App| {
+            let state = app.world().resource::<EditorState>();
+            super::super::level_here(state, &app.world().resource::<Sim>().0, name).to_text()
+        };
+        crate::app::paths::write_atomic(&legacy, bench(&app)).expect("wrote");
         tap(&mut app, KeyCode::F2);
         assert!(save_path(name).exists(), "saved under its whole name");
         assert!(!legacy.exists(), "and the old file tidied away");
         let _ = std::fs::remove_file(save_path(name));
+    }
+
+    /// An older build filed every Cyrillic or kana name under the ASCII it
+    /// kept, so one old file holds whatever level last went by the
+    /// language's default name. A fresh bench saved under that name is
+    /// another level: the old file stays.
+    #[test]
+    fn an_older_builds_file_of_another_level_is_left_alone() {
+        let mut app = bench_app();
+        app.add_systems(Update, (editor_input, editor_commands));
+        for name in ["Моя карта Legacy Probe", "わたしのマップ Legacy Probe"] {
+            let legacy = ascii_era_path(name);
+            assert!(legacy.ends_with("legacy-probe.txt"), "{legacy:?}");
+            let theirs = format!(
+                "name: {name}\nposts: 0\ncrab: 0,0 R R common\nmap:\n+-+-+\n|. 0|\n+-+-+\n"
+            );
+            crate::app::paths::write_atomic(&legacy, &theirs).expect("wrote");
+            let _ = std::fs::remove_file(save_path(name));
+            app.world_mut().resource_mut::<EditorState>().name = name.to_string();
+            tap(&mut app, KeyCode::F2);
+            assert!(
+                save_path(name).exists(),
+                "{name}: saved under its whole name"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&legacy).ok().as_deref(),
+                Some(theirs.as_str()),
+                "{name}: the old level is still there"
+            );
+            let _ = std::fs::remove_file(save_path(name));
+            let _ = std::fs::remove_file(&legacy);
+        }
     }
 
     /// A file holding a level of this very name is still somebody's level

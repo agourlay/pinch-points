@@ -5,6 +5,7 @@
 
 mod brush;
 mod card;
+mod closing;
 mod help;
 mod history;
 mod keys;
@@ -24,6 +25,7 @@ mod validate;
 
 pub use brush::Brush;
 pub use card::update_settings_card;
+pub use closing::close_when_asked;
 pub use help::{editor_card_input, show_editor_card};
 pub use keys::Command;
 pub(crate) use keys::{
@@ -109,6 +111,8 @@ pub struct EditorState {
     filing: shelf::Filing,
     /// A board-replacing key pressed once and waiting to be taken up.
     offer: Option<Offer>,
+    /// What was on screen when it was: see [`shelf::Asked`].
+    asked: shelf::Asked,
     /// The settings card's row "+" and "-" turn ([`Setting::chosen`]).
     pub setting: Setting,
     /// The copies every edit is made on as well ([`Symmetry`]): how the
@@ -339,6 +343,7 @@ impl EditorState {
             solution,
             filing,
             offer: _,
+            asked: _,
             setting: _,
             symmetry,
             hole_period,
@@ -529,7 +534,8 @@ fn replace_board(board: Board, sim: &mut Sim, state: &mut EditorState, swap: &mu
 /// back on the bench: its board, sprites and all, since its creatures are
 /// read back from text and numbered afresh ([`swap_board`]), and the lines
 /// of its own an edit can change (signposts, kind, goal, solution and the
-/// holes' rate). Not the tables and the roll: those the bench carries
+/// holes' rate). Not the tables and the roll, nor P2's hand from a beach's
+/// snapshot, which has none: those the bench carries
 /// whole from the level it took on, and a snapshot holds them only as far
 /// as its board fits them ([`level_here`]), so put back from one, a table
 /// of four left out while the fourth castle was gone was gone for good.
@@ -541,7 +547,12 @@ fn put_back(text: &str, sim: &mut Sim, state: &mut EditorState, swap: &mut Board
     };
     swap_board(level.board(), sim, state, &mut swap.commands, &swap.sprites);
     state.posts = level.hands().map_or(level.posts, |[p1, _]| p1);
-    state.second_hand = level.hands().map(|[_, p2]| p2);
+    // A beach writes no hands, so a beach's snapshot says nothing of P2's:
+    // the bench keeps the hand for the stage F6 turns it back into, as it
+    // does through F6 itself.
+    if level.kind == LevelKind::Puzzle {
+        state.second_hand = level.hands().map(|[_, p2]| p2);
+    }
     state.kind = level.kind;
     state.goal = level.goal;
     state.solution.clone_from(&level.solution);
@@ -616,6 +627,10 @@ pub fn editor_input(
     mut swap: BoardSwap,
 ) {
     let Workbench { mut sim, mut state } = bench;
+    shelf::settle_offer(
+        &mut state,
+        swap.cursors.iter().map(|(cursor, _)| (cursor.x, cursor.y)),
+    );
     // Naming swallows the keyboard: every letter is a letter, not a brush.
     if state.is_naming() {
         type_a_name(&mut typed, &keys, &mut state, settings.tr());
@@ -645,7 +660,7 @@ pub fn editor_input(
             .get_just_pressed()
             .any(|&k| k != offer.key() && k != KeyCode::Escape)
     {
-        state.offer = None;
+        shelf::take_back_offer(&mut state);
     }
     // Beach size, on a function key: the next size up, or down with
     // Shift. On `[` and `]`, which are *physical* keys, the prompt named
@@ -1534,6 +1549,62 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// Renamed and saved again while the first save's check runs, the
+    /// bench filed one level in two files, and each gets its way through:
+    /// the second save used to take the check over from the first.
+    #[test]
+    fn a_rename_mid_check_finishes_both_saves() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = bench_app();
+        // No poll until both saves are in: the answer must not beat them.
+        app.add_systems(Update, (editor_input, editor_commands).chain());
+        let (first, second) = ("Rename Check Probe A", "Rename Check Probe B");
+        {
+            let mut state = app.world_mut().resource_mut::<EditorState>();
+            state.name = first.into();
+            state.posts = 1;
+        }
+        {
+            let board = &mut app.world_mut().resource_mut::<Sim>().0;
+            board.set_tile(3, 1, TileKind::Castle(0));
+            for x in 0..6 {
+                board.set_wall(x, 2, Direction::Down, true);
+                if x != 3 {
+                    board.set_wall(x, 2, Direction::Up, true);
+                }
+            }
+            board.spawn_crab(1, 2, Direction::Right, Handedness::Left, CrabKind::Common);
+        }
+        let paths = [save_path(first), save_path(second)];
+        for path in &paths {
+            let _ = std::fs::remove_file(path);
+        }
+        tap(&mut app, KeyCode::F2);
+        app.world_mut().resource_mut::<EditorState>().name = second.into();
+        tap(&mut app, KeyCode::F2);
+        assert_eq!(
+            app.world()
+                .resource::<EditorState>()
+                .check
+                .solver
+                .as_ref()
+                .map(|c| c.saves.len()),
+            Some(2),
+            "one check, both saves waiting on it"
+        );
+        while app.world().resource::<EditorState>().check.solver.is_some() {
+            app.world_mut()
+                .run_system_once(poll_solver)
+                .expect("polled");
+            std::thread::yield_now();
+        }
+        for path in &paths {
+            let text = std::fs::read_to_string(path).expect("saved");
+            assert!(text.contains("solution: 3,2 U"), "{path:?}: {text}");
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
     /// A save still waiting on its check when the editor is left gets its
     /// solution all the same, off the bench; and a file saved over in the
     /// meantime is not the level the check was about, and is left alone.
@@ -1581,7 +1652,7 @@ mod tests {
 
         // Saved over while the check runs: the newer file stands.
         let mut check = validate::Validation::pending();
-        check.save = Some((path.clone(), name.into()));
+        check.join(path.clone(), name.into());
         let orphan = check.orphan().expect("the file reads");
         std::fs::write(&path, "name: Newer\n").expect("saved over");
         *orphan.slot.lock().unwrap() = Some(validate::Verdict {
@@ -2106,6 +2177,33 @@ mod tests {
         let state = app.world().resource::<EditorState>();
         assert!(state.solution.is_empty(), "the rock let it go");
         assert!(!checked(&app), "so a save checks again");
+    }
+
+    /// A co-op stage turned into a beach, edited and undone keeps P2's
+    /// hand for the stage it turns back into: a beach's snapshot has no
+    /// hands to read, and putting it back made the stage solo.
+    #[test]
+    fn undo_onto_a_beach_keeps_the_co_op_hand() {
+        let (mut app, _) = painting_app((2, 2));
+        {
+            let world = app.world_mut();
+            let board = world.resource::<Sim>().0.clone();
+            let mut state = world.resource_mut::<EditorState>();
+            state.second_hand = Some(3);
+            state.begin_history(&board);
+        }
+        tap(&mut app, KeyCode::F6);
+        tap(&mut app, KeyCode::KeyR);
+        tap(&mut app, KeyCode::KeyZ);
+        assert_eq!(
+            app.world().resource::<EditorState>().kind,
+            LevelKind::Arena,
+            "undone onto the beach"
+        );
+        tap(&mut app, KeyCode::F6);
+        let state = app.world().resource::<EditorState>();
+        assert_eq!(state.kind, LevelKind::Puzzle);
+        assert_eq!(state.second_hand, Some(3), "still co-op");
     }
 
     /// The tables a pasted beach named come back with the castle they

@@ -1136,8 +1136,9 @@ mod tests {
     /// A couch round names each seat after the person partner picks put
     /// there, from the names saved in settings, which stay as typed; the
     /// daily's own table goes by the saved rows. A round picked up from a
-    /// pasted code (or a dev hook's) is no table set up here, and its seats
-    /// go by their labels, not by the last match's partner picks.
+    /// pasted code (or a dev hook's) is no table set up here: it goes by
+    /// the saved rows as the daily does, not by the last match's partner
+    /// picks, nor by bare labels.
     #[test]
     fn a_couch_round_names_the_people_picked_into_each_seat() {
         let mut app = App::new();
@@ -1172,10 +1173,7 @@ mod tests {
             .resource_mut::<rematch::LocalTable>()
             .note_round(false, &config, &Default::default());
         app.update();
-        let names = app.world().resource::<SeatNames>();
-        assert_eq!(names.0[1..3], ["", ""]);
-        let tr = crate::app::i18n::Lang::En.tr();
-        assert_eq!(names.label(tr, 1), "P2");
+        assert_eq!(app.world().resource::<SeatNames>().0[1..3], ["Bo", "Cleo"]);
     }
 
     #[test]

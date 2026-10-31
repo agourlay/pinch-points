@@ -40,6 +40,9 @@ pub(super) fn run_with(watching: watch::Watch) {
                     present_mode: dev::present_mode().unwrap_or_default(),
                     ..default()
                 }),
+                // Closed by `editor::close_when_asked` instead, which asks
+                // about unsaved editor work first, as Esc does.
+                close_when_requested: false,
                 ..default()
             })
             .set(bevy::log::LogPlugin {
@@ -957,6 +960,12 @@ fn add_play_systems(app: &mut App) {
     // Off the bench too: a save whose check outlived the editor is
     // finished wherever the player went.
     app.add_systems(Update, editor::finish_orphaned_saves);
+    // Where the window plugin's own close system would run: before the
+    // exit check, which sees the window gone the frame it is despawned.
+    app.add_systems(
+        Last,
+        editor::close_when_asked.before(bevy::window::ExitSystems),
+    );
     app.add_systems(
         Update,
         (

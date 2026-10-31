@@ -96,25 +96,40 @@ impl Check {
 pub(super) struct Validation {
     pub(super) slot: SolverSlot,
     pub(super) level: String,
-    /// The save waiting on the answer, if F2 started or joined the check:
-    /// the file and the name the level went into it under. A way through
-    /// found is written into that file as its `solution:`.
-    pub(super) save: Option<(std::path::PathBuf, String)>,
+    /// The saves waiting on the answer, each F2 that started or joined the
+    /// check: the file and the name the level went into it under. A way
+    /// through found is written into each file as its `solution:`. A list,
+    /// as naming the level is no edit: renamed and saved again mid-check,
+    /// the bench filed the one level twice, and with one save kept the
+    /// first file never got its way through.
+    pub(super) saves: Vec<(std::path::PathBuf, String)>,
 }
 
 impl Validation {
-    /// The save this check was finishing, carried on without the bench: a
-    /// check let go of while a save waits on it (the bench edited, or the
-    /// editor left) still owes the file its `solution:`. `None` for a check
-    /// no save waits on, or a file that cannot be read.
+    /// The saves this check was finishing, carried on without the bench:
+    /// a check let go of while saves wait on it (the bench edited, or the
+    /// editor left) still owes each file its `solution:`. `None` for a
+    /// check no save waits on, or whose files cannot be read.
     pub(super) fn orphan(self) -> Option<OrphanedSave> {
-        let (path, _) = self.save?;
-        let written = std::fs::read_to_string(&path).ok()?;
-        Some(OrphanedSave {
+        let files: Vec<_> = self
+            .saves
+            .into_iter()
+            .filter_map(|(path, _)| {
+                let written = std::fs::read_to_string(&path).ok()?;
+                Some((path, written))
+            })
+            .collect();
+        (!files.is_empty()).then_some(OrphanedSave {
             slot: self.slot,
-            path,
-            written,
+            files,
         })
+    }
+
+    /// F2 waiting on this check for the file at `path`, under `name`. A
+    /// file saved again replaces its own earlier save.
+    pub(super) fn join(&mut self, path: std::path::PathBuf, name: String) {
+        self.saves.retain(|(saved, _)| *saved != path);
+        self.saves.push((path, name));
     }
 
     /// A check that never answers, for a test to drop or wait on.
@@ -123,7 +138,7 @@ impl Validation {
         Validation {
             slot: Arc::new(Mutex::new(None)),
             level: String::new(),
-            save: None,
+            saves: Vec::new(),
         }
     }
 }
@@ -133,11 +148,10 @@ impl Validation {
 /// the file as it was saved, wherever the player is by then.
 pub struct OrphanedSave {
     pub(super) slot: SolverSlot,
-    path: std::path::PathBuf,
-    /// The file as the save left it. The way through is written in only
-    /// while the file still reads so: one saved over since, or deleted,
-    /// is no longer the level the check was about.
-    written: String,
+    /// Each file with its text as the save left it. The way through is
+    /// written in only while the file still reads so: one saved over
+    /// since, or deleted, is no longer the level the check was about.
+    files: Vec<(std::path::PathBuf, String)>,
 }
 
 impl OrphanedSave {
@@ -150,14 +164,13 @@ impl OrphanedSave {
         let SolveOutcome::Found(solution) = verdict.outcome else {
             return true;
         };
-        let still = std::fs::read_to_string(&self.path).is_ok_and(|now| now == self.written);
-        if let (true, Ok(mut level)) = (still, Level::parse(&self.written)) {
-            level.solution = solution;
-            if let Err(e) = crate::app::paths::write_atomic(&self.path, level.to_text()) {
-                warn!(
-                    "could not write the solution into {}: {e}",
-                    self.path.display()
-                );
+        for (path, written) in &self.files {
+            let still = std::fs::read_to_string(path).is_ok_and(|now| now == *written);
+            if let (true, Ok(mut level)) = (still, Level::parse(written)) {
+                level.solution.clone_from(&solution);
+                if let Err(e) = crate::app::paths::write_atomic(path, level.to_text()) {
+                    warn!("could not write the solution into {}: {e}", path.display());
+                }
             }
         }
         true
@@ -397,7 +410,7 @@ pub(super) fn start_validation(state: &mut EditorState, level: Level, wider: Opt
     state.check.solver = Some(Validation {
         slot,
         level: text,
-        save: None,
+        saves: Vec::new(),
     });
 }
 
@@ -485,7 +498,7 @@ pub fn poll_solver(
     let Some(verdict) = check.slot.lock().unwrap().take() else {
         return; // still searching
     };
-    let Some(Validation { level, save, .. }) = state.check.solver.take() else {
+    let Some(Validation { level, saves, .. }) = state.check.solver.take() else {
         return;
     };
     // Whatever the answer, the level has been checked.
@@ -502,8 +515,12 @@ pub fn poll_solver(
     }
     let granted = state.posts.saturating_add(state.second_hand.unwrap_or(0));
     let said = verdict_line(&verdict, granted, tr);
-    let filed =
-        save.and_then(|(path, name)| finish_save(&mut state, &sim.0, &path, &name, &verdict, tr));
+    // Each file the level went into gets its way through; the line says
+    // what it says of the last, the one under the name on the bench.
+    let filed = saves
+        .into_iter()
+        .filter_map(|(path, name)| finish_save(&mut state, &sim.0, &path, &name, &verdict, tr))
+        .last();
     state.feedback = match filed {
         Some(filed) => format!("{said} - {filed}"),
         None => said,
@@ -589,7 +606,7 @@ mod tests {
             check: Check::running(Validation {
                 slot: Arc::new(Mutex::new(verdict)),
                 level: String::new(),
-                save: None,
+                saves: Vec::new(),
             }),
             ..EditorState::default()
         });

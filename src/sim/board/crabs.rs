@@ -140,17 +140,14 @@ impl Board {
         }
     }
 
-    /// Whether a hole still sends a crab out on some tick from this one up
-    /// to (not including) `deadline`, at the cadence it keeps now, or a
-    /// golden crab already called is still to come. A beach with every crab
-    /// home is only finished when this is false: a hole is a promise of
-    /// more.
-    pub fn holes_send_before(&self, deadline: u64) -> bool {
-        self.golden_call.is_some_and(|(at, _)| at < deadline)
-            || self.grid.tiles.iter().any(|&tile| {
-                matches!(tile, TileKind::Spawner(s)
-                    if self.tick.next_multiple_of(u64::from(self.hole_period(s.period))) < deadline)
-            })
+    /// Whether the beach has a hole: a stage that keeps sending crabs
+    /// until the tide, which an all-crabs goal judges at the tide rather
+    /// than once every crab is home.
+    pub fn has_holes(&self) -> bool {
+        self.grid
+            .tiles
+            .iter()
+            .any(|tile| matches!(tile, TileKind::Spawner(_)))
     }
 
     /// How many live crabs the holes fill the beach to this tick. The beach

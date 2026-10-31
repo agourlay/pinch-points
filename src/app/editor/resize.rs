@@ -33,8 +33,9 @@ pub(super) struct Resized {
 /// The rim is the new board's own. The old rim's walls were the fence, and
 /// carried inward they would wall the level in on a larger beach; a wall
 /// inside the old beach that lands on the new rim is the fence already, or
-/// the open seam of a wrapping beach, which takes none. The rules, the
-/// wrap and the seed come along unchanged.
+/// the open seam of a wrapping beach, which takes none. Everything else
+/// the level's text reads off the board comes along unchanged: the rules,
+/// the wrap, the seed, the tide events and the scores.
 pub(super) fn resized(board: &Board, (w, h): (u8, u8)) -> Resized {
     let dx = (i16::from(w) - i16::from(board.width())) / 2;
     let dy = (i16::from(h) - i16::from(board.height())) / 2;
@@ -46,6 +47,10 @@ pub(super) fn resized(board: &Board, (w, h): (u8, u8)) -> Resized {
     let mut out = Board::new(w, h, board.seed());
     *out.rules_mut() = *board.rules();
     out.set_wrap(board.wrap());
+    out.set_events_enabled(board.events_enabled());
+    for (player, &score) in board.scores().iter().enumerate() {
+        out.set_score(player as u8, score);
+    }
     let mut cut = false;
     for (x, y, kind) in board.tiles() {
         match to(x, y) {
@@ -130,6 +135,30 @@ mod tests {
         assert!(!back.cut);
         assert_eq!(back.board.tile_at(4, 3), TileKind::Castle(0));
         assert!(back.board.wall_at(4, 3, Direction::Left));
+    }
+
+    /// What the level's text reads off the board besides what stands on
+    /// it comes along: `events: on` was dropped, and F2, F3 and the
+    /// playtest handed on a level without tide events.
+    #[test]
+    fn a_resize_keeps_what_the_board_says_of_the_level() {
+        let mut board = Board::new(9, 7, 5);
+        board.set_events_enabled(true);
+        board.set_wrap(true);
+        board.set_score(1, 7);
+        board.rules_mut().golden_every = 40;
+        let level = |board: &Board| {
+            crate::sim::Level::from_board("R", 1, board.clone())
+                .to_text()
+                .lines()
+                .take_while(|&line| line != "map:")
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        let grown = resized(&board, (12, 9)).board;
+        assert!(grown.events_enabled());
+        assert!(level(&board).iter().any(|line| line == "events: on"));
+        assert_eq!(level(&grown), level(&board));
     }
 
     /// Shrinking past what is built says so, which is the author's cue

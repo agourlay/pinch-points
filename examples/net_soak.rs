@@ -20,7 +20,10 @@
 //! ends. `AI` seats that many AI after the players, `ORDER` deals the
 //! places (the host, the joiners, then the AI) into the seats listed,
 //! `0,2,1,3`, as a host's partner picks do, and `TEAMS` (solo, pairs or
-//! trios) is the scoring the terms carry.
+//! trios) is the scoring the terms carry. `FROM_LOBBY=false` plays the
+//! direct `PINCH_HOST` pair's rules rather than a lobby table's, and
+//! `LATE` lists the steps a late watcher greets the host at, `300,900`:
+//! handed the round as it stands mid-round, dealt the next between.
 
 #[path = "soak/table.rs"]
 mod table;
@@ -30,6 +33,17 @@ fn env<T: std::str::FromStr>(name: &str, default: T) -> T {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+/// A switch, `true` or `1` and `false` or `0`: one that read as neither
+/// used to fall back to its default without a word.
+fn flag(name: &str, default: bool) -> bool {
+    match std::env::var(name).ok().as_deref() {
+        None => default,
+        Some("true" | "1") => true,
+        Some("false" | "0") => false,
+        Some(other) => panic!("{name}: true or false, not {other}"),
+    }
 }
 
 /// A seat order written as the seats of the places in turn, `0,2,1,3`:
@@ -43,6 +57,16 @@ fn seat_order(written: &str) -> [u8; 6] {
             .expect("ORDER: seats as numbers, 0,2,1,3");
     }
     order
+}
+
+/// Steps written as a list, `300,900`, and none written as nothing.
+fn steps(written: &str) -> Vec<u64> {
+    written
+        .split(',')
+        .map(str::trim)
+        .filter(|step| !step.is_empty())
+        .map(|step| step.parse().expect("LATE: steps as numbers, 300,900"))
+        .collect()
 }
 
 /// A scoring mode by name, as the terms number it.
@@ -87,10 +111,14 @@ fn main() {
         card: env("CARD", base.card),
         beat: env("BEAT", base.beat),
         opening: env("OPENING", base.opening),
-        listen: env("LISTEN", base.listen),
+        listen: flag("LISTEN", base.listen),
         straggle: env("STRAGGLE", base.straggle),
-        lose_deal_start: env("LOSE_DEAL_START", base.lose_deal_start),
+        lose_deal_start: flag("LOSE_DEAL_START", base.lose_deal_start),
         watcher_lag: env("WATCHER_LAG", base.watcher_lag),
+        from_lobby: flag("FROM_LOBBY", base.from_lobby),
+        late: std::env::var("LATE")
+            .ok()
+            .map_or(base.late, |late| steps(&late)),
     };
     let started = std::time::Instant::now();
     let report = table::play(&scenario);

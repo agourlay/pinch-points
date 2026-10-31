@@ -532,7 +532,7 @@ impl CouchTable<'_> {
     fn names(&self, saved: &[String; MAX_PLAYERS]) -> [String; MAX_PLAYERS] {
         match self.table.set_here() {
             true => self.config.seat_names(saved),
-            false => Default::default(),
+            false => saved.clone(),
         }
     }
 }
@@ -544,10 +544,10 @@ impl CouchTable<'_> {
 /// named after the person partner picks put there
 /// ([`match_setup::MatchConfig::seat_names`]), at the daily's own table
 /// row by row. A round picked up from a pasted code, or a dev hook's, is
-/// no table set up here and its code carries no names, so its seats go by
-/// their labels ("P1"): read through the partner picks, they took the
-/// names of whatever match was last set up, shuffled the way its picks
-/// were.
+/// no table set up here and its code carries no names, so it reads the
+/// saved rows row by row as the daily does: read through the partner
+/// picks, they took the names of whatever match was last set up,
+/// shuffled the way its picks were.
 pub(in crate::app) fn resolve_seat_names(
     scoring: teams::Scoring,
     couch: CouchTable,

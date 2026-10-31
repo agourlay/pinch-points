@@ -90,6 +90,15 @@ pub struct Scenario {
     /// steps before round 1 ends: that far behind the table when the
     /// host's results card comes up.
     pub watcher_lag: u64,
+    /// Whether the table was formed in the lobby, as every party table
+    /// is: its sessions keep the lobby's rules (`home.from_lobby`), and
+    /// its watchers greet as the watchers they asked to be. `false` is the
+    /// direct `PINCH_HOST` pair, which has no lobby.
+    pub from_lobby: bool,
+    /// The steps a late watcher greets the host at, one each: with the
+    /// round running it is handed the round as it stands and watches from
+    /// there, and between rounds it is dealt the next.
+    pub late: Vec<u64>,
 }
 
 impl Default for Scenario {
@@ -123,6 +132,8 @@ impl Default for Scenario {
             straggle: 0.0,
             lose_deal_start: false,
             watcher_lag: 0,
+            from_lobby: true,
+            late: Vec::new(),
         }
     }
 }
@@ -358,7 +369,10 @@ struct Proxy {
 
 impl Proxy {
     fn new(host: SocketAddr, seed: u64) -> Proxy {
-        let socket = UdpSocket::bind("127.0.0.1:0").expect("proxy socket");
+        // Off the lobby ports, as every game socket is: a proxy that drew
+        // one would take a rung from a lobby, or hear its beacons, while
+        // the soak runs beside the beacon tests.
+        let socket = pinch_points::transport::bind_udp(0).expect("proxy socket");
         socket.set_nonblocking(true).expect("non-blocking");
         Proxy {
             socket,
@@ -369,8 +383,10 @@ impl Proxy {
         }
     }
 
+    /// Where a spoke dials it: on every interface, so over loopback.
     fn addr(&self) -> SocketAddr {
-        self.socket.local_addr().expect("proxy address")
+        let port = self.socket.local_addr().expect("proxy address").port();
+        SocketAddr::from(([127, 0, 0, 1], port))
     }
 
     /// Take in whatever either end sent, and pass on whatever is due.
@@ -410,6 +426,9 @@ enum Phase {
     /// Walked on to round 2, in the interlude, line-up and count until
     /// this step.
     Interlude { until: u64 },
+    /// A late watcher that has greeted the host, waiting between rounds to
+    /// be handed the round as it stands or dealt the next.
+    Late,
 }
 
 struct Seat {
@@ -422,6 +441,8 @@ struct Seat {
     phase: Phase,
     /// Steps in a row this player's frame has not moved, in round 1.
     stalled: u32,
+    /// The step a late watcher greeted the host at.
+    came_at: Option<u64>,
 }
 
 /// What a played scenario measured.
@@ -483,6 +504,27 @@ pub struct Report {
     pub missed_card: usize,
     /// Seats a host gave to the AI for silence, in either round.
     pub abandoned: usize,
+    /// The late watchers ([`Scenario::late`]) that greeted a host, of
+    /// every game, and those handed the round as it stands.
+    pub late_came: usize,
+    pub caught_up: Vec<CaughtUp>,
+    /// Late watchers dealt the next round instead, and those still waiting
+    /// when the scenario ended.
+    pub late_dealt: usize,
+    pub late_waiting: usize,
+}
+
+/// A late watcher handed the round as it stands.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CaughtUp {
+    pub game: usize,
+    /// The step it greeted the host at, and the step its snapshot was
+    /// whole on.
+    pub came: u64,
+    pub whole: u64,
+    /// The round and frame it watched from.
+    pub round: u32,
+    pub frame: u32,
 }
 
 /// How the second round of a scenario of two went, once settled.
@@ -605,6 +647,7 @@ fn table(scenario: &Scenario, game: usize) -> Vec<Seat> {
         proxy: None,
         phase: Phase::Playing(1),
         stalled: 0,
+        came_at: None,
     }];
     let peers = usize::from(players) + scenario.watchers;
     for i in 1..peers {
@@ -639,6 +682,7 @@ fn table(scenario: &Scenario, game: usize) -> Vec<Seat> {
             proxy: Some(proxy),
             phase: Phase::Playing(1),
             stalled: 0,
+            came_at: None,
         });
     }
     table
@@ -654,11 +698,12 @@ fn watcher_lag(scenario: &Scenario) -> (u64, u64) {
     }
 }
 
-/// Whether peer `i` of `peers` sits this step out: joiner 1's late start
-/// and its hitch, and the last watcher's lag before round 1 ends.
-fn sits_out(scenario: &Scenario, i: usize, peers: usize, step: u64) -> bool {
+/// Whether peer `i` sits this step out: joiner 1's late start and its
+/// hitch, and the last watcher at the launch's lag before round 1 ends.
+fn sits_out(scenario: &Scenario, i: usize, step: u64) -> bool {
     let (from, until) = watcher_lag(scenario);
-    let lags = i == peers - 1 && step >= from && step < until;
+    let last = usize::from(scenario.players) + scenario.watchers - 1;
+    let lags = i == last && step >= from && step < until;
     lags || i == 1
         && (step < scenario.skew
             || (step >= scenario.hitch_at && step < scenario.hitch_at + scenario.hitch))
@@ -743,6 +788,11 @@ fn seat(scenario: &Scenario, table: &mut [Seat]) {
         .map(|seat| seat.net.session.seat())
         .collect();
     table[0].net.seat_the_table(&plan);
+    // Only now, with every greeting placed: a table from the lobby is
+    // formed before its round begins, so nobody at it is late.
+    for seat in table.iter_mut() {
+        from_the_lobby(scenario, &mut seat.net, seat.role);
+    }
     // The host remembers where its partner picks put the AI, which deals
     // the next round's AI back into those seats ([`Scenario::order`]).
     if scenario.order != IN_SEAT_ORDER {
@@ -751,6 +801,72 @@ fn seat(scenario: &Scenario, table: &mut [Seat]) {
             bots: Vec::new(),
             ai: host.terms.ai_seats(scenario.seats()),
         });
+    }
+}
+
+/// A session as the lobby hands it over, where the scenario's table was
+/// formed there: its watchers greet as watchers by their own wish
+/// (`watch_wish`), not by their lockstep, or a greeting between rounds
+/// is a player's, answered with a place in line for good.
+fn from_the_lobby(scenario: &Scenario, net: &mut OnlineSession, role: Role) {
+    net.home.from_lobby = scenario.from_lobby;
+    net.home.wants_to_watch = scenario.from_lobby && role == Role::Watcher;
+}
+
+/// A late watcher greets the host of game `game` at `step`, through a
+/// proxy of its own like every spoke: the `n`th of [`Scenario::late`].
+fn late_watcher(scenario: &Scenario, game: usize, table: &[Seat], n: usize, step: u64) -> Seat {
+    let host = &table[0].net;
+    let port = host.transport.local_addr().expect("host address").port();
+    let seed = scenario.seed ^ ((game as u64) << 32) ^ ((table.len() + n) as u64 * 0x9E37_79B9);
+    let proxy = Proxy::new(SocketAddr::from(([127, 0, 0, 1], port)), seed);
+    let socket = UdpTransport::join(proxy.addr()).expect("late socket");
+    socket.send(NetMsg::watch("L"));
+    let lockstep = Lockstep::observer(host.terms.player_seats(host.seats), scenario.delay());
+    let mut net = OnlineSession::new(socket, lockstep, host.seats, host.terms);
+    from_the_lobby(scenario, &mut net, Role::Watcher);
+    Seat {
+        role: Role::Watcher,
+        net,
+        // A stand-in: the round it is handed, or dealt, brings its own.
+        board: board_for(scenario, game, 1),
+        hashes: BTreeMap::new(),
+        proxy: Some(proxy),
+        phase: Phase::Late,
+        stalled: 0,
+        came_at: Some(step),
+    }
+}
+
+/// A late watcher between rounds, as the lobby keeps it: the host's word
+/// heard, and the round as it stands taken up once the whole of it is in.
+/// Dealt the next round instead, it walks on to it like everybody else.
+fn wait_late(scenario: &Scenario, game: usize, seat: &mut Seat, step: u64, report: &mut Report) {
+    seat.net.poll_between_rounds(TICK);
+    if !seat.net.next_round {
+        return;
+    }
+    match seat.net.catch_up.board.clone() {
+        Some(board) => {
+            seat.net.next_round = false;
+            let frame = seat.net.session.frame();
+            assert_eq!(board.ticks(), u64::from(frame), "the snapshot's frame");
+            // The deal it was handed, after the ones before it.
+            let round = seat.net.rounds_dealt + 1;
+            seat.board = board;
+            seat.phase = Phase::Playing(round);
+            report.caught_up.push(CaughtUp {
+                game,
+                came: seat.came_at.expect("a late watcher"),
+                whole: step,
+                round,
+                frame,
+            });
+        }
+        None => {
+            report.late_dealt += 1;
+            let _ = walk_on(scenario, game, seat, step);
+        }
     }
 }
 
@@ -828,6 +944,16 @@ pub fn play(scenario: &Scenario) -> Report {
         steer_ping_clock((step * 1000 / u64::from(TICKS_PER_SECOND)) as u32);
         for (game, table) in tables.iter_mut().enumerate() {
             let host_out_was: u64 = host_out(table);
+            for (n, _) in scenario
+                .late
+                .iter()
+                .enumerate()
+                .filter(|(_, at)| **at == step)
+            {
+                let late = late_watcher(scenario, game, table, n, step);
+                table.push(late);
+                report.late_came += 1;
+            }
             for seat in table.iter_mut() {
                 if let Some(proxy) = &mut seat.proxy {
                     proxy.up.new_step(scenario);
@@ -845,7 +971,7 @@ pub fn play(scenario: &Scenario) -> Report {
                         }
                     }
                 }
-                if sits_out(scenario, i, table.len(), step) {
+                if sits_out(scenario, i, step) {
                     continue;
                 }
                 let round = match table[i].phase {
@@ -869,6 +995,10 @@ pub fn play(scenario: &Scenario) -> Report {
                             seat.net.call_next_round(scenario.terms(game, 2), None);
                         }
                         let _ = walk_on(scenario, game, seat, step);
+                        continue;
+                    }
+                    Phase::Late => {
+                        wait_late(scenario, game, &mut table[i], step, &mut report);
                         continue;
                     }
                     Phase::Playing(round) => round,
@@ -901,6 +1031,11 @@ pub fn play(scenario: &Scenario) -> Report {
                         }
                     }
                 });
+                // As the shell does after each tick: a late watcher owed
+                // the round is handed the board just simulated.
+                if seat.role == Role::Host {
+                    seat.net.send_catch_ups(&seat.board);
+                }
                 // Less than nothing for a peer walked on to the next round.
                 let moved = seat.net.session.frame().saturating_sub(before);
                 if seat.role == Role::Host {
@@ -1007,6 +1142,10 @@ pub fn play(scenario: &Scenario) -> Report {
             .map(|seat| u64::from(seat.net.stale_rounds))
             .sum::<u64>();
         report.peers += table.len();
+        report.late_waiting += table
+            .iter()
+            .filter(|seat| seat.phase == Phase::Late)
+            .count();
         report.reached_round_two += table
             .iter()
             .filter(|seat| seat.phase == Phase::Playing(2))
@@ -1130,6 +1269,24 @@ pub fn describe(scenario: &Scenario, report: &Report) -> String {
             two.settled_lead,
             two.frames,
             two.ai_seats,
+        );
+    }
+    if !scenario.late.is_empty() {
+        let slowest = report.caught_up.iter().map(|c| c.whole - c.came).max();
+        let game_0: Vec<(u64, u64, u32, u32)> = report
+            .caught_up
+            .iter()
+            .filter(|c| c.game == 0)
+            .map(|c| (c.came, c.whole, c.round, c.frame))
+            .collect();
+        let _ = writeln!(
+            out,
+            "late watchers: {} came, {} handed the round as it stands (whole within {} steps), {} dealt the next, {} still waiting; game 0's (came, whole, round, frame) {game_0:?}",
+            report.late_came,
+            report.caught_up.len(),
+            slowest.unwrap_or(0),
+            report.late_dealt,
+            report.late_waiting,
         );
     }
     let mut ticks = report.host_tick_us.clone();

@@ -160,7 +160,7 @@ pub fn editor_levels_input(
     }
     let entry = list.entries.get(at).cloned();
     if other(Act::Open) {
-        state.offer = None;
+        super::shelf::take_back_offer(&mut state);
     }
     if moved {
         state.feedback.clear();
@@ -249,6 +249,10 @@ pub fn editor_levels_input(
             // The bench's own file gone, what it held is no longer on the
             // shelf: leaving asks again, and saving makes a new file, under
             // the level's name, not the gone file's (`shelf::save_target`).
+            // Only the file the bench's level is filed in: another this
+            // bench wrote (the level under a name it has since left) is
+            // not the one the level on the bench is safe in.
+            let filed_in = super::shelf::save_target(&state);
             let opened = state
                 .filing
                 .opened
@@ -257,7 +261,8 @@ pub fn editor_levels_input(
             if opened {
                 state.filing.opened = None;
             }
-            if state.filing.mine.remove(&path) || opened {
+            state.filing.mine.remove(&path);
+            if path == filed_in {
                 state.filing.filed = None;
             }
             let mut fresh = LevelList::read();
@@ -471,6 +476,8 @@ mod tests {
     use super::super::tests::{bench_app, tap};
     use super::super::{editor_commands, editor_input};
     use super::*;
+    use crate::app::Sim;
+    use crate::sim::{CrabKind, Direction, Handedness, TileKind};
 
     /// Every row fits the card in every language: the longest name a
     /// level may have, with the longer of the two kinds after it.
@@ -551,6 +558,45 @@ mod tests {
             .iter()
             .position(|entry| matches!(entry, Entry::Saved { path: p, .. } if p == path))
             .expect("the saved level is listed");
+    }
+
+    /// Deleting another file this bench wrote leaves the level on the
+    /// bench saved: it is filed in the file its name makes, and Esc asked
+    /// about it as if it would be lost. Deleting that file does ask.
+    #[test]
+    fn deleting_another_file_the_bench_wrote_keeps_it_saved() {
+        let mut app = list_app();
+        let (first, second) = ("Delete Other Probe A", "Delete Other Probe B");
+        let paths = [first, second].map(super::super::shelf::save_path);
+        for path in &paths {
+            let _ = std::fs::remove_file(path);
+        }
+        {
+            let board = &mut app.world_mut().resource_mut::<Sim>().0;
+            board.set_tile(3, 1, TileKind::Castle(0));
+            board.spawn_crab(1, 1, Direction::Right, Handedness::Left, CrabKind::Common);
+        }
+        app.world_mut().resource_mut::<EditorState>().name = first.into();
+        tap(&mut app, KeyCode::F2);
+        app.world_mut().resource_mut::<EditorState>().name = second.into();
+        tap(&mut app, KeyCode::F2);
+        let unsaved = |app: &App| {
+            let world = app.world();
+            super::super::unsaved_work(world.resource::<EditorState>(), &world.resource::<Sim>().0)
+        };
+        assert!(paths.iter().all(|path| path.exists()));
+        assert!(!unsaved(&app), "saved");
+        tap(&mut app, KeyCode::F4);
+        choose(&mut app, &paths[0]);
+        tap(&mut app, KeyCode::KeyD);
+        tap(&mut app, KeyCode::KeyD);
+        assert!(!paths[0].exists(), "deleted");
+        assert!(!unsaved(&app), "the level on the bench is still filed");
+        choose(&mut app, &paths[1]);
+        tap(&mut app, KeyCode::KeyD);
+        tap(&mut app, KeyCode::KeyD);
+        assert!(!paths[1].exists(), "deleted");
+        assert!(unsaved(&app), "its own file gone, it is not");
     }
 
     /// F4 puts the list up and Esc takes it down, the editor staying, and
@@ -665,7 +711,7 @@ mod tests {
             state.name = name.into();
             state.filing.mine.insert(path.clone());
             let mut check = Validation::pending();
-            check.save = Some((path.clone(), name.into()));
+            check.join(path.clone(), name.into());
             state.check.solver = Some(check);
         }
         tap(&mut app, KeyCode::F4);

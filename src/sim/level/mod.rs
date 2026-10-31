@@ -355,15 +355,15 @@ impl Level {
         // is checked first: a goal met on the same tick a crab was eaten does
         // not save an AllCrabs or Survive stage.
         let (lost, won) = match self.goal {
-            // Every crab home means every crab the stage will send: a
-            // quiet beach is not a win while a hole still has one to come
-            // (the solver's scan reads it the same way).
-            Goal::AllCrabs => (
-                eaten,
-                alive == 0
-                    && board.crabs_banked() == board.crabs_spawned()
-                    && !board.holes_send_before(Self::deadline(board)),
-            ),
+            // A hole sends crabs until the tide, so a stage with one is
+            // judged there, like Survive: won if nobody was eaten, with the
+            // crabs still walking not counted against it. Without a hole,
+            // every crab home is every crab the stage has (the solver's
+            // scan and the editor's check read the same judge).
+            Goal::AllCrabs => (eaten, {
+                let home = alive == 0 && board.crabs_banked() == board.crabs_spawned();
+                (home || timed_out) && if board.has_holes() { timed_out } else { home }
+            }),
             Goal::Bank(n) => (false, board.crabs_banked() >= n),
             // Survive is the one goal the clock is *for*: running it out is
             // the win (see `deadline` for which clock).
@@ -980,32 +980,79 @@ map:
         assert_eq!(rebuilt.state_hash(), fresh.state_hash());
     }
 
-    /// An all-crabs stage with a hole is not won at its first lull: the
-    /// hole still has crabs to send, and every one of them must get home.
-    /// It is won once the last crab the hole sends before the tide is in,
-    /// and lost when the tide beats a late one home. The hole sends at
-    /// ticks 0 and 200, and even a giant walks the two tiles in under 100.
-    #[test]
-    fn an_all_crabs_stage_waits_for_the_crabs_its_hole_still_sends() {
-        let stage = |round: u32| {
-            Level::parse(&format!(
-                "name: H\nposts: 0\nround: {round}\nspawner: 0,0 R 200\nmap:\n+-+-+-+\n|. . 0|\n+-+-+-+\n"
-            ))
-            .expect("parses")
+    /// A one-row stage: a hole at the left end sending crabs right every
+    /// `period` ticks, a castle `tiles` tiles away, no arrows, an optional
+    /// `round:` and an optional gull in the middle of the row.
+    fn hole_stage(tiles: usize, period: u32, round: Option<u32>, gull: bool) -> Level {
+        let border = format!("+{}", "-+".repeat(tiles + 1));
+        let row: String = (0..=tiles)
+            .map(|x| if x == tiles { "0|" } else { ". " })
+            .collect();
+        let round = round.map_or(String::new(), |r| format!("round: {r}\n"));
+        let gull = if gull {
+            format!("gull: {},0 L\n", tiles / 2 + 1)
+        } else {
+            String::new()
         };
-        let (outcome, at) = stage(300).play_out(&mut stage(300).board());
-        assert_eq!(outcome, PuzzleOutcome::Won);
+        Level::parse(&format!(
+            "name: H\nposts: 0\n{round}spawner: 0,0 R {period}\n{gull}map:\n{border}\n|{row}\n{border}\n"
+        ))
+        .expect("parses")
+    }
+
+    /// An all-crabs stage with a hole keeps sending crabs until the tide,
+    /// so it is judged there: won if nobody was eaten, the crabs still
+    /// walking not counted. Not won at its first lull, and not lost
+    /// because the hole's last crab could not walk home in one period.
+    /// The editor's real hole periods, on the review's probe table.
+    #[test]
+    fn an_all_crabs_stage_with_a_hole_is_judged_at_the_tide() {
+        for (tiles, period, round) in [
+            (2, 60, None),
+            (5, 60, None),
+            (8, 60, Some(900)),
+            (5, 180, None),
+        ] {
+            let level = hole_stage(tiles, period, round, false);
+            let mut board = level.board();
+            let (outcome, at) = level.play_out(&mut board);
+            let case = format!("{tiles} tiles, period {period}, round {round:?}");
+            assert_eq!(outcome, PuzzleOutcome::Won, "{case}");
+            assert_eq!(at, Level::deadline(&board), "{case}: won at the tide");
+            assert!(board.crabs_spawned() > 1, "{case}");
+            // The solver, and so the editor's check, reads the same judge.
+            assert_eq!(
+                crate::sim::solve::solve(&level),
+                crate::sim::solve::SolveOutcome::Found(Vec::new()),
+                "{case}"
+            );
+        }
+    }
+
+    /// A crab eaten on a stage with a hole still loses it, on the tick.
+    #[test]
+    fn an_all_crabs_stage_with_a_hole_loses_a_crab_eaten() {
+        let level = hole_stage(5, 60, None, true);
+        let mut board = level.board();
+        let (outcome, at) = level.play_out(&mut board);
+        assert_eq!(outcome, PuzzleOutcome::Lost);
         assert!(
-            at > 200,
-            "won at tick {at}, before the second crab came out"
+            at < Level::deadline(&board),
+            "lost at {at}, not at the tide"
         );
-        let mut board = stage(300).board();
-        stage(300).play_out(&mut board);
-        assert_eq!(board.crabs_spawned(), 2);
-        // The second crab comes out ten ticks before the tide: too late.
-        assert_eq!(
-            stage(210).play_out(&mut stage(210).board()).0,
-            PuzzleOutcome::Lost
-        );
+    }
+
+    /// Without a hole the crabs on the beach are every crab the stage has:
+    /// it is won once they are home, long before the tide.
+    #[test]
+    fn an_all_crabs_stage_without_a_hole_is_won_once_every_crab_is_home() {
+        let level = Level::parse(
+            "name: H\nposts: 0\ncrab: 0,0 R R common\nmap:\n+-+-+-+\n|. . 0|\n+-+-+-+\n",
+        )
+        .expect("parses");
+        let mut board = level.board();
+        let (outcome, at) = level.play_out(&mut board);
+        assert_eq!(outcome, PuzzleOutcome::Won);
+        assert!(at < Level::deadline(&board), "won at {at}");
     }
 }
