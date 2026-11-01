@@ -302,4 +302,62 @@ mod tests {
             Some(&["A", "B", "C", "D", "F"].map(String::from)[..])
         );
     }
+
+    /// The rows a pad picks from are the K numbers a keyboard presses: the
+    /// table from 2, then past the card the page of peers it has no row
+    /// for, a nameless one shown as "?". The rows follow the page Tab
+    /// turned to.
+    #[test]
+    fn a_pad_picks_from_the_numbers_k_asks() {
+        let mut state = LobbyState {
+            standing: hosting_lobby(),
+            ..LobbyState::default()
+        };
+        if let Standing::Hosting(hosted) = &mut state.standing {
+            hosted.peers = peers_named(&["A", "", "B", "C", "D", "E", "F", "G", "H", "I"], &[1]);
+        }
+        let bots = crate::app::bot_seats::BotSeats::default();
+        let tr = &crate::app::i18n::EN;
+        let rows = |state: &LobbyState| {
+            state
+                .hosted()
+                .map(|hosted| kick_rows(hosted, &bots, tr))
+                .unwrap_or_default()
+        };
+        let named = |rows: &[(u8, &str)]| {
+            rows.iter()
+                .map(|(at, who)| (*at, who.to_string()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            rows(&state),
+            named(&[
+                (2, "A"),
+                (3, "B"),
+                (4, "C"),
+                (5, "D"),
+                (6, "E"),
+                (7, "?"),
+                (8, "F"),
+                (9, "G"),
+            ])
+        );
+        if let Some(hosted) = state.hosted_mut() {
+            hosted.kicking = Some(1);
+        }
+        let turned = rows(&state);
+        assert_eq!(&turned[5..], named(&[(7, "H"), (8, "I")]), "page two");
+        // And the number on a row asks the one it names.
+        ask_to_leave(
+            &mut state,
+            &mut crate::app::bot_seats::BotSeats::default(),
+            tr,
+            8,
+        );
+        let left: Vec<String> = state.hosted().map_or_else(Vec::new, |hosted| {
+            hosted.peers.iter().map(|peer| peer.name.clone()).collect()
+        });
+        assert!(!left.contains(&"I".to_string()), "{left:?}");
+        assert_eq!(left.len(), 9);
+    }
 }

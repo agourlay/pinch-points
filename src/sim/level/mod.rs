@@ -717,6 +717,23 @@ map:
         assert!(solo.solution.is_empty(), "the deal's own answer is unknown");
     }
 
+    /// A stage that writes its own rule keeps the rule's policy through a
+    /// new deal, but the cap follows the grant: a cap left at the old count
+    /// would refuse the second hand's last arrow, or allow one too many.
+    #[test]
+    fn a_new_deal_moves_a_written_rule_cap_with_it() {
+        use crate::sim::board::CapPolicy;
+        let level =
+            Level::parse(&TINY.replace("posts: 1", "posts: 1\nrule: evict 1")).expect("parses");
+        assert_eq!(level.board().signpost_rule(), (1, CapPolicy::Evict));
+        let duo = level.with_hands(Some([2, 1]), 0);
+        assert_eq!(duo.posts, 3);
+        assert_eq!(duo.board().signpost_rule(), (3, CapPolicy::Evict));
+        let solo = level.with_hands(None, 4);
+        assert_eq!(solo.board().signpost_rule(), (4, CapPolicy::Evict));
+        assert_eq!(solo.board().rules().claw_hands, None);
+    }
+
     #[test]
     fn terrain_tiles_round_trip() {
         let mut board = Board::new(4, 3, 7);

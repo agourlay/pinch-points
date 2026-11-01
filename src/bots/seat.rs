@@ -525,6 +525,87 @@ mod tests {
         assert_eq!(everyone, vec![0.0; 4]);
     }
 
+    /// Two seats placing on one free tile in one tick: the tick's leading
+    /// seat stands, and the other hears it lost the tile to a rival, though
+    /// nothing stood there when it asked.
+    #[test]
+    fn a_tile_taken_earlier_in_the_tick_is_a_rival_post() {
+        use crate::sim::{Direction, TileKind};
+        let mut board = Board::new(6, 3, 1);
+        board.set_tile(0, 1, TileKind::Castle(0));
+        board.set_tile(5, 1, TileKind::Castle(1));
+        board.set_signpost_rule(3, crate::sim::CapPolicy::Evict);
+        let mut actions = [PlayerAction::None; crate::sim::MAX_PLAYERS];
+        for (seat, dir) in [(0, Direction::Up), (1, Direction::Down)] {
+            actions[seat] = PlayerAction::Place { x: 2, y: 1, dir };
+        }
+        let tick = board.ticks();
+        assert_eq!(refusal(&board, 1, actions[1]), None, "free when asked");
+        board.tick(&actions);
+        let act = |dir| Act::Place { x: 2, y: 1, dir };
+        assert_eq!(
+            outcome(act(Direction::Up), actions[0], None, &board, 0, tick),
+            Some(Outcome::Accepted)
+        );
+        assert_eq!(
+            outcome(act(Direction::Down), actions[1], None, &board, 1, tick),
+            Some(Outcome::Refused(Refusal::RivalPost))
+        );
+    }
+
+    /// An act that asks the sim for nothing has no outcome to report; a
+    /// clear with nothing to clear is refused as no post, a refusal the sim
+    /// gave is passed on as given, and a removal it let through stood.
+    #[test]
+    fn what_became_of_an_act_that_placed_nothing() {
+        let board = Board::new(4, 3, 1);
+        let at = |act, action, refused| outcome(act, action, refused, &board, 0, 0);
+        assert_eq!(at(Act::None, PlayerAction::None, None), None);
+        assert_eq!(
+            at(Act::Move { x: 1, y: 1 }, PlayerAction::None, None),
+            None,
+            "a cursor's step is not an action"
+        );
+        assert_eq!(
+            at(Act::Clear, PlayerAction::None, None),
+            Some(Outcome::Refused(Refusal::NoPost))
+        );
+        let remove = PlayerAction::Remove { x: 1, y: 1 };
+        assert_eq!(
+            at(Act::Remove { x: 1, y: 1 }, remove, Some(Refusal::NoPost)),
+            Some(Outcome::Refused(Refusal::NoPost))
+        );
+        assert_eq!(
+            at(Act::Remove { x: 1, y: 1 }, remove, None),
+            Some(Outcome::Accepted)
+        );
+    }
+
+    /// The game AI's actions show on its cursor and in the trace as the
+    /// acts a bot would have sent; an event call is not one of them.
+    #[test]
+    fn an_ai_action_is_shown_as_the_act_a_bot_would_send() {
+        use crate::sim::{Direction, TideEvent};
+        assert_eq!(act_of(PlayerAction::None), None);
+        assert_eq!(act_of(PlayerAction::CallEvent(TideEvent::SpeedUp)), None);
+        assert_eq!(
+            act_of(PlayerAction::Place {
+                x: 1,
+                y: 2,
+                dir: Direction::Right
+            }),
+            Some(Act::Place {
+                x: 1,
+                y: 2,
+                dir: Direction::Right
+            })
+        );
+        assert_eq!(
+            act_of(PlayerAction::Remove { x: 3, y: 0 }),
+            Some(Act::Remove { x: 3, y: 0 })
+        );
+    }
+
     fn reply(tick: u64, act: Act) -> GameMsg {
         GameMsg::Reply {
             seat: 0,

@@ -1292,6 +1292,191 @@ mod tests {
         assert!(!r.owner.unwrap_or_default().contains('|'));
     }
 
+    /// Every act a bot can send is written the way it is read: the trace
+    /// and a `simulate` plan hand acts back in this form, and one that read
+    /// back as another would replay a different game.
+    #[test]
+    fn every_act_reads_back_from_what_it_writes() {
+        let acts = [
+            Act::None,
+            Act::Clear,
+            Act::Place {
+                x: 3,
+                y: 0,
+                dir: Direction::Left,
+            },
+            Act::Remove { x: 0, y: 7 },
+            Act::Move { x: 255, y: 2 },
+        ];
+        for act in acts {
+            assert_eq!(parse_act(&act.to_json()), Ok(act), "{act:?}");
+        }
+        let described: Vec<String> = acts.iter().map(|act| act.describe()).collect();
+        assert_eq!(
+            described,
+            [
+                "none",
+                "clear",
+                "place 3,0 left",
+                "remove 0,7",
+                "move 255,2"
+            ]
+        );
+        let targets: Vec<_> = acts.iter().map(|act| act.target()).collect();
+        assert_eq!(
+            targets,
+            [None, None, Some((3, 0)), Some((0, 7)), Some((255, 2))]
+        );
+    }
+
+    /// `ready`, `resync` and `simulate` are about one game: without one
+    /// they are answered with an error naming the message, and with one
+    /// they are what they say.
+    #[test]
+    fn a_request_about_no_game_is_a_bad_request() {
+        for kind in ["ready", "resync", "simulate"] {
+            let line = json!({"type": kind}).to_string();
+            let Incoming::BadRequest { game: None, why } = parse_incoming(&line) else {
+                panic!("{kind}: {:?}", parse_incoming(&line));
+            };
+            assert!(why.contains(kind), "{kind}: {why}");
+        }
+        assert_eq!(
+            parse_incoming(r#"{"type": "ready", "game": 4}"#),
+            Incoming::Ready { game: 4 }
+        );
+        assert_eq!(
+            parse_incoming(r#"{"type": "resync", "game": 4}"#),
+            Incoming::Resync { game: 4 }
+        );
+    }
+
+    /// A plan is read step by step in the order sent, a step with no `at`
+    /// lands never rather than now, and a tick count past the clock's
+    /// reach is held at its end.
+    #[test]
+    fn a_simulate_plan_is_read_step_by_step() {
+        let line = json!({
+            "type": "simulate", "game": 2, "ticks": 1u64 << 40,
+            "plan": [
+                {"at": 5, "act": "place", "x": 1, "y": 2, "dir": "up"},
+                {"act": "clear"},
+            ],
+        })
+        .to_string();
+        assert_eq!(
+            parse_incoming(&line),
+            Incoming::Simulate {
+                game: 2,
+                ticks: u32::MAX,
+                plan: vec![
+                    Planned {
+                        at: 5,
+                        act: Act::Place {
+                            x: 1,
+                            y: 2,
+                            dir: Direction::Up
+                        }
+                    },
+                    Planned {
+                        at: u32::MAX,
+                        act: Act::Clear
+                    },
+                ],
+            }
+        );
+        assert_eq!(
+            parse_incoming(r#"{"type": "simulate", "game": 2}"#),
+            Incoming::Simulate {
+                game: 2,
+                ticks: 0,
+                plan: Vec::new()
+            },
+            "nothing to plan is an empty plan"
+        );
+    }
+
+    /// A reply that names no tick cannot be matched to one, and a type
+    /// nobody defined is not guessed at: both are garbled, kept with the
+    /// game they named so the tick is still charged.
+    #[test]
+    fn a_reply_without_its_tick_or_a_made_up_type_is_garbled() {
+        assert!(matches!(
+            parse_incoming(r#"{"game": 9, "act": "none"}"#),
+            Incoming::Garbled { game: Some(9), .. }
+        ));
+        let Incoming::Garbled { game, why } =
+            parse_incoming(r#"{"type": "teleport\u0007", "game": 9}"#)
+        else {
+            panic!("garbled");
+        };
+        assert_eq!(game, Some(9));
+        assert!(why.contains("\"teleport\""), "{why}");
+    }
+
+    /// A note is for a human reading the log: it keeps its line breaks and
+    /// loses what would move the cursor or ring the bell.
+    #[test]
+    fn a_note_keeps_its_lines_and_loses_its_control_characters() {
+        let line = json!({"game": 1, "tick": 0, "note": "go\nleft\u{1b}[2J\u{7}!"}).to_string();
+        let Incoming::Reply(reply) = parse_incoming(&line) else {
+            panic!("a reply");
+        };
+        assert_eq!(reply.note.as_deref(), Some("go\nleft[2J!"));
+        assert_eq!(reply.act, Act::None, "no act is none");
+    }
+
+    /// A pong without an id answers ping 0, and a replay asked for with no
+    /// id asks for the empty one (which is no replay) rather than failing.
+    #[test]
+    fn a_pong_or_a_replay_without_an_id_still_reads() {
+        assert_eq!(
+            parse_incoming(r#"{"type": "pong", "id": 12}"#),
+            Incoming::Pong { id: 12 }
+        );
+        assert_eq!(
+            parse_incoming(r#"{"type": "pong"}"#),
+            Incoming::Pong { id: 0 }
+        );
+        assert_eq!(
+            parse_incoming(r#"{"type": "replay"}"#),
+            Incoming::Replay { id: String::new() }
+        );
+        let long = "r".repeat(REPLAY_ID_CAP + 10);
+        let Incoming::Replay { id } =
+            parse_incoming(&json!({"type": "replay", "id": long}).to_string())
+        else {
+            panic!("a replay");
+        };
+        assert_eq!(id.len(), REPLAY_ID_CAP);
+    }
+
+    /// Every reason the sim gives for turning a placement down is a word
+    /// the bot protocol's document explains.
+    #[test]
+    fn every_refusal_is_in_the_protocol_document() {
+        let doc = include_str!("../../docs/bot-protocol.md");
+        let every = [
+            Refusal::NoSeat,
+            Refusal::OffBoard,
+            Refusal::Rock,
+            Refusal::Castle,
+            Refusal::Spawner,
+            Refusal::Turnstile,
+            Refusal::Kelp,
+            Refusal::Pool,
+            Refusal::RivalPost,
+            Refusal::OutOfPosts,
+            Refusal::NoPost,
+        ];
+        for why in every {
+            assert!(
+                doc.contains(&format!("`{}`", why.token())),
+                "{why:?} is not in docs/bot-protocol.md"
+            );
+        }
+    }
+
     /// A `simulate` with a plan this protocol cannot read is a request
     /// answered with an error, not a reply to the tick: it must not stand
     /// for the bot's move.

@@ -1443,6 +1443,46 @@ mod tests {
         }
     }
 
+    /// A crab in the air and a gull being steered are a late watcher's to
+    /// read off the host's text too, and each line that could not have
+    /// been written is refused by what is wrong with it: a sweep for no
+    /// seat, landing before it took off, or with a call that is not one;
+    /// a steer by nobody, or of one gull by two seats; a theft by nobody.
+    #[test]
+    fn a_sweep_or_a_steer_no_tick_could_leave_is_refused_by_name() {
+        let good = awkward_board().to_snapshot();
+        let sweep = good
+            .lines()
+            .find(|line| line.starts_with("sweeping: 1 4330 4360 "))
+            .expect("the fixture's sweep")
+            .to_string();
+        assert!(sweep.ends_with(" claws"), "{sweep}");
+        let cases = [
+            (
+                good.replace(&sweep, &sweep.replacen("sweeping: 1 ", "sweeping: 6 ", 1)),
+                "no seat 6",
+            ),
+            (
+                good.replace(&sweep, &sweep.replacen(" 4330 4360 ", " 4360 4330 ", 1)),
+                "before it leaves",
+            ),
+            (
+                good.replace(&sweep, &sweep.replace(" claws", " paws")),
+                "bad call",
+            ),
+            (format!("{good}\nsteered: 2 9"), "no seat 9"),
+            (format!("{good}\nsteered: 2 0\nsteered: 2 1"), "twice"),
+            (format!("{good}\nstolen: 0 9 5"), "no seats"),
+        ];
+        for (bent, why) in cases {
+            assert_ne!(bent, good, "{why}: nothing was bent");
+            let err = Board::parse_snapshot(&bent).expect_err(why);
+            assert!(err.contains(why), "{why}: {err}");
+        }
+        let steered = format!("{good}\nsteered: 2 0\nstolen: 0 1 5");
+        assert!(Board::parse_snapshot(&steered).is_ok(), "the lines read");
+    }
+
     /// The counters are held well short of their type's end, not one
     /// short: a tick books calls and sweeps ahead of itself, and a flood
     /// spawns crabs by the handful. At the bound a board still loads, and

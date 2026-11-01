@@ -531,3 +531,34 @@ fn driftwood(board: &mut Board, t: &Terrain, rng: &mut Pcg32) {
     let n = 1 + roll(rng, 2);
     scatter(board, t, rng, TileKind::Rock, n);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A bot's command line names a style by its token: every style reads
+    /// back as itself, no two share a word, and a word no style has is
+    /// nobody's.
+    #[test]
+    fn every_style_reads_back_from_its_token() {
+        for style in BeachStyle::ALL {
+            assert_eq!(BeachStyle::from_token(style.token()), Some(style));
+        }
+        let mut tokens: Vec<_> = BeachStyle::ALL.map(BeachStyle::token).to_vec();
+        tokens.sort_unstable();
+        tokens.dedup();
+        assert_eq!(tokens.len(), BeachStyle::ALL.len());
+        assert_eq!(BeachStyle::from_token("Classic"), None);
+        assert_eq!(BeachStyle::from_token(""), None);
+    }
+
+    /// Each style draws from a stream of its own, so laying one cannot
+    /// replay another's choices.
+    #[test]
+    fn no_two_styles_share_a_stream() {
+        let mut streams: Vec<u64> = BeachStyle::ALL.map(BeachStyle::stream).to_vec();
+        streams.sort_unstable();
+        streams.dedup();
+        assert_eq!(streams.len(), BeachStyle::ALL.len());
+    }
+}

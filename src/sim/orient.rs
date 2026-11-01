@@ -244,6 +244,31 @@ mod tests {
         assert_eq!(turned.tile_at(0, 0), TileKind::Castle(0));
     }
 
+    /// A mirror takes the gulls to their images, facing the other way, and
+    /// the scores along unmoved: a seat's castle is wherever its tile went,
+    /// and its points are still its own. One mirror swaps the claws.
+    #[test]
+    fn a_mirror_carries_the_gulls_and_the_scores() {
+        let mut board = Board::new(5, 3, 9);
+        board.set_tile(2, 0, TileKind::Castle(1));
+        board.spawn_gull(1, 0, Direction::Down);
+        board.spawn_crab(3, 1, Direction::Up, Handedness::Right, CrabKind::Common);
+        board.set_score(1, 40);
+        let flipped = Orientation {
+            flip_y: true,
+            ..Orientation::default()
+        }
+        .apply(&board);
+        let gull = flipped.gulls()[0];
+        assert_eq!(flipped.coords_u8(gull.tile), (1, 2));
+        assert_eq!(gull.dir, Direction::Up);
+        assert_eq!(flipped.tile_at(2, 2), TileKind::Castle(1));
+        let crab = flipped.crabs()[0];
+        assert_eq!(flipped.coords_u8(crab.tile), (3, 1));
+        assert_eq!((crab.dir, crab.handed), (Direction::Down, Handedness::Left));
+        assert_eq!(flipped.scores(), board.scores());
+    }
+
     /// The draw is the seed's, and over many seeds lands on all four
     /// mirrors and every whole strip.
     #[test]

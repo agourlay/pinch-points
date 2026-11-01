@@ -337,7 +337,9 @@ last acted on: the same reply sent twice never acts twice.
 `spawner`, `turnstile`, `kelp`, `pool` (only sand takes a post),
 `rival_post` (somebody else's post stands there, or got there first this
 tick), `out_of_posts` (every post spent on a board that refuses rather than
-evicts), `no_post` (a removal or clear with nothing of yours there).
+evicts), `no_post` (a removal or clear with nothing of yours there),
+`no_seat` (the action named a seat that is not at the table; a seated bot
+should never see it).
 
 ### `end`
 

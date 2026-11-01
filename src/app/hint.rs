@@ -510,6 +510,38 @@ mod tests {
         }
     }
 
+    /// A pad's player is told the button rather than the key, offered and
+    /// shown alike; and a refused arrow's sentence outranks the hint, in
+    /// any phase, for as long as it lasts.
+    #[test]
+    fn a_pad_hears_its_button_and_a_denial_comes_first() {
+        use crate::app::i18n::EN;
+        let campaign = campaign_at(3);
+        let showing = stuck_and_showing(&campaign);
+        let offered = Hints {
+            shown: None,
+            ..stuck_and_showing(&campaign)
+        };
+        let quiet = DeniedNote(0.0);
+        let line = |hints, denied, phase| hint_line(&EN, hints, denied, phase, Some("Y"));
+        assert_eq!(
+            line(&showing, &quiet, &Phase::Setup),
+            Some(fill(EN.pad.hint_showing, &[("b", "Y")]))
+        );
+        assert_eq!(
+            line(&offered, &quiet, &Phase::Lost),
+            Some(fill(EN.pad.hint_offer, &[("b", "Y")]))
+        );
+        let denied = DeniedNote(1.0);
+        for phase in [Phase::Setup, Phase::Running] {
+            assert_eq!(
+                hint_line(&EN, &offered, &denied, &phase, None).as_deref(),
+                Some(EN.denied_no_posts),
+                "{phase:?}"
+            );
+        }
+    }
+
     /// A retry keeps the posts and the step shown from them; going back to
     /// the same level with the posts cleared takes the step off but keeps
     /// the count, so the offer stands; a different level starts clean.

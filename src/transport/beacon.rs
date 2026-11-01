@@ -984,4 +984,30 @@ mod tests {
             "an open beach, not the kind of the packet before it"
         );
     }
+
+    /// Room is what the list offers a join on: a beach saying it is full is
+    /// full whatever its count, one too old to count has room, a counted
+    /// one has room below its seats, and one closing has none. The id is
+    /// the announcer's either way.
+    #[test]
+    fn a_beach_has_room_until_it_says_otherwise() {
+        let here = |taken, seats, full| Beacon::Here {
+            id: 7,
+            name: "Room 3".to_string(),
+            host: String::new(),
+            taken,
+            seats,
+            running: false,
+            bots: false,
+            full,
+        };
+        assert!(here(1, 6, false).has_room());
+        assert!(!here(6, 6, false).has_room());
+        assert!(!here(1, 6, true).has_room(), "full says so outright");
+        assert!(here(0, 0, false).has_room(), "an old build's table");
+        assert!(!here(0, 0, true).has_room());
+        let closing = Beacon::Closing { id: 7 };
+        assert!(!closing.has_room());
+        assert_eq!(here(1, 6, false).id(), closing.id());
+    }
 }
