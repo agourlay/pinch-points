@@ -8,6 +8,7 @@ use super::{BoardSwap, EditorState, Mode, level_here, swap_board};
 use crate::app::gamepad::scheme::Does;
 use crate::app::i18n::{Tr, fill};
 use crate::app::settings::{GameSettings, KeyLegend};
+use crate::app::teams::TeamMode;
 use crate::app::{Controllers, SeatController, Sim};
 use crate::sim::{Board, BotLevel, Level, LevelKind, PuzzleOutcome, TICKS_PER_SECOND};
 use bevy::prelude::*;
@@ -83,7 +84,12 @@ impl Playtest {
     /// any), already under way. A beach for four and six with castles for
     /// six and no table of six named sits four, as the map dial sits it;
     /// tested at six, it was a beach nobody plays.
-    pub(super) fn of(bench: Board, level: Level) -> Playtest {
+    ///
+    /// A beach is played in `teams`, the player's Scoring setting, where
+    /// the table fits it, as a match set up on it would be: the AI and
+    /// Gull Attack read the board's teams, and a beach meant for pairs was
+    /// otherwise only ever tried free-for-all.
+    pub(super) fn of(bench: Board, level: Level, teams: TeamMode) -> Playtest {
         let (start, seats, phase) = match level.kind {
             LevelKind::Puzzle => (level.board(), 1, TestPhase::Setup),
             LevelKind::Arena => {
@@ -100,6 +106,7 @@ impl Playtest {
                     config.round,
                     config.posts,
                 );
+                board.rules_mut().teams = teams.played_by(seats).sides();
                 (board, seats, TestPhase::Match)
             }
         };
@@ -148,9 +155,9 @@ impl Playtest {
 /// end (`validate::poll_solver`): it is about the bench, which the test
 /// leaves as it was, and a save may be waiting on it to file its way
 /// through.
-pub(super) fn start(sim: &mut Sim, state: &mut EditorState, swap: &mut BoardSwap) {
+pub(super) fn start(sim: &mut Sim, state: &mut EditorState, swap: &mut BoardSwap, teams: TeamMode) {
     let level = level_here(state, &sim.0, &state.name);
-    let test = Playtest::of(sim.0.clone(), level);
+    let test = Playtest::of(sim.0.clone(), level, teams);
     swap_board(
         test.start.clone(),
         sim,
@@ -165,9 +172,9 @@ pub(super) fn start(sim: &mut Sim, state: &mut EditorState, swap: &mut BoardSwap
 /// [`start`] as the editor opens from the menu's level card, before
 /// anything is drawn: no sprite of the bench's is on the sand yet to take
 /// away, and ending the test goes back to the menu.
-pub(super) fn begin(sim: &mut Sim, state: &mut EditorState) {
+pub(super) fn begin(sim: &mut Sim, state: &mut EditorState, teams: TeamMode) {
     let level = level_here(state, &sim.0, &state.name);
-    let mut test = Playtest::of(sim.0.clone(), level);
+    let mut test = Playtest::of(sim.0.clone(), level, teams);
     test.from_menu = true;
     sim.0 = test.start.clone();
     state.dirty = true;
@@ -761,7 +768,7 @@ mod tests {
         let mut level = Level::from_board("Six", 3, board.clone()).with_kind(LevelKind::Arena);
         level.tables = vec![2, 4];
         assert!(!level.board().events_enabled(), "the file says nothing");
-        let test = Playtest::of(board, level);
+        let test = Playtest::of(board, level, TeamMode::Solo);
         assert!(
             test.start.events_enabled(),
             "the wheel turns, as in a real round"
@@ -772,6 +779,27 @@ mod tests {
             Some(4),
             "castles 5 and 6 put away"
         );
+    }
+
+    /// A beach is tested in the player's Scoring setting where its table
+    /// fits it, as a match on it would be scored, and free-for-all where
+    /// it does not; a stage has no teams to play.
+    #[test]
+    fn a_beach_is_tested_in_the_teams_a_match_would_play() {
+        let mut board = Board::new(9, 7, 3);
+        for (seat, (x, y)) in [(0, 0), (8, 6), (8, 0), (0, 6)].into_iter().enumerate() {
+            board.set_tile(x, y, TileKind::Castle(seat as u8));
+        }
+        let level = Level::from_board("Four", 3, board.clone()).with_kind(LevelKind::Arena);
+        let test = Playtest::of(board.clone(), level.clone(), TeamMode::Pairs);
+        assert_eq!(test.seats, 4);
+        assert_eq!(test.start.rules().teams, TeamMode::Pairs.sides());
+        assert!(test.start.rules().teams.is_some());
+        let test = Playtest::of(board.clone(), level, TeamMode::Trios);
+        assert_eq!(test.start.rules().teams, None, "four seats make no trios");
+        let stage = Level::from_board("Stage", 3, board.clone()).with_kind(LevelKind::Puzzle);
+        let test = Playtest::of(board, stage, TeamMode::Pairs);
+        assert_eq!(test.start.rules().teams, None);
     }
 
     /// A beach's playtest is a match under way at once, every seat but

@@ -8,7 +8,7 @@
 //! entered from the menu. Every reader asks [`rematch`], so the prompt,
 //! the pad's row and the key all agree on whether there is one.
 
-use crate::app::match_setup::{MapChoice, MatchConfig};
+use crate::app::match_setup::{CustomBeaches, MapChoice, MatchConfig, follow_the_file, sized_for};
 use crate::app::net::Online;
 use crate::app::tournament::Tournament;
 use crate::app::{Screen, VersusPhase};
@@ -59,6 +59,22 @@ impl LocalTable {
             config.map = map;
             config.custom = custom;
         }
+    }
+
+    /// The shelf read again from disk: a series that opened on a
+    /// handmade beach opens on it again wherever its file now sorts, and
+    /// on the map sized for the table when the file is gone, as the map
+    /// in force does. Kept by place alone, a file added mid-series sent
+    /// the series played again onto its neighbour.
+    pub fn keep_the_opening(&mut self, seats: u8, old: &CustomBeaches, fresh: &CustomBeaches) {
+        let Some((MapChoice::Custom, custom)) = self.opening else {
+            return;
+        };
+        self.opening = match follow_the_file(old, fresh, seats, custom) {
+            None => return,
+            Some(Ok(at)) => Some((MapChoice::Custom, at)),
+            Some(Err(_)) => Some((sized_for(seats), 0)),
+        };
     }
 
     /// Whether the round on the sand was set up on this machine.
@@ -402,6 +418,48 @@ mod tests {
         assert_eq!(tournament.wins, [0; crate::sim::MAX_PLAYERS]);
         assert!(tournament.is_running());
         assert_eq!(world.resource::<MatchConfig>().map, MapChoice::Classic);
+    }
+
+    /// The shelf is read from disk again each round, and a beach file
+    /// added or taken away mid-series moves the others along it: the
+    /// series played again opens on the beach it opened on, found by its
+    /// file, and on the map sized for the table once that file is gone.
+    #[test]
+    fn a_series_opening_beach_follows_its_file() {
+        let beach = |name: &str| {
+            let text = format!(
+                "name: {name}\nposts: 1\nkind: arena\ncrab: 0,1 R R common\nmap:\n\
+                 +-+-+-+\n|0 . 1|\n+ + + +\n|. . .|\n+ + + +\n|. . .|\n+-+-+-+\n"
+            );
+            let mut level = crate::sim::Level::parse(&text).expect("a level");
+            level.filing = Some(crate::sim::Filing {
+                key: format!("file:custom/{name}.txt"),
+                legacy: None,
+            });
+            crate::app::match_setup::Beach::new(level)
+        };
+        let config = MatchConfig {
+            map: MapChoice::Custom,
+            custom: 1,
+            seats: 2,
+            ..MatchConfig::default()
+        };
+        let mut table = LocalTable::default();
+        table.note_round(true, &config, &Tournament::start(SeriesLength::BestOfThree));
+        let old = CustomBeaches(vec![beach("b"), beach("c")]);
+        let fresh = CustomBeaches(vec![beach("a"), beach("b"), beach("c")]);
+        table.keep_the_opening(2, &old, &fresh);
+        let mut back = MatchConfig::default();
+        table.put_back_the_opening(&mut back);
+        assert_eq!(
+            (back.map, back.custom),
+            (MapChoice::Custom, 2),
+            "still on c"
+        );
+        let fewer = CustomBeaches(vec![beach("a"), beach("b")]);
+        table.keep_the_opening(2, &fresh, &fewer);
+        table.put_back_the_opening(&mut back);
+        assert_eq!((back.map, back.custom), (sized_for(2), 0), "c is gone");
     }
 
     /// A local series steps the player's own map dial each interlude; once

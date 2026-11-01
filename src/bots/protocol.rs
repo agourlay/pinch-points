@@ -157,10 +157,6 @@ pub struct Table<'a> {
     pub clock: Clock,
     /// The fair cursor rule.
     pub cursor: bool,
-    /// Each seat's team, counting from 0, when the round is played in
-    /// teams; `None` for every seat for itself, which `hello` says as
-    /// every seat its own team.
-    pub teams: Option<&'a [u8]>,
 }
 
 /// `hello`: the start of a game for `seat`.
@@ -221,10 +217,11 @@ pub fn hello(board: &Board, table: &Table, seat: PlayerId, resumed: bool) -> Val
         "seats": table.names.len(),
         "names": table.names,
         "kinds": table.kinds.iter().map(|k| k.token()).collect::<Vec<_>>(),
-        "teams": match table.teams {
-            Some(teams) => teams.to_vec(),
-            None => (0..table.names.len() as u8).collect(),
-        },
+        // Off the board, where the AI and Gull Attack read them: every seat
+        // its own team when the round is free-for-all.
+        "teams": (0..table.names.len() as PlayerId)
+            .map(|seat| board.rules().team_of(seat))
+            .collect::<Vec<_>>(),
         "board": {
             "width": w, "height": h, "wrap": board.wrap(),
             "tiles": tiles,
@@ -1001,7 +998,6 @@ mod tests {
                 input_delay: 0,
             },
             cursor: false,
-            teams: None,
         }
     }
 

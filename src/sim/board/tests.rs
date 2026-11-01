@@ -1409,6 +1409,22 @@ fn a_called_event_fires_from_a_seats_input() {
     assert_eq!(event, TideEvent::FreshSand);
 }
 
+/// A call rides on the host's seat, so an event that favours a seat would
+/// favour the host: the board fires neither of the two, whoever sends one.
+/// The spectators' card never offers them; this is the rule underneath.
+#[test]
+fn a_call_that_would_favour_a_seat_fires_nothing() {
+    for event in TideEvent::ALL.into_iter().filter(|event| !event.callable()) {
+        let mut board = party_board();
+        board.spawn_crab(3, 2, Right, Handedness::Right, CrabKind::Common);
+        let mut actions = [PlayerAction::None; MAX_PLAYERS];
+        actions[0] = PlayerAction::CallEvent(event);
+        board.tick(&actions);
+        assert_eq!(board.last_event(), None, "{event:?}");
+        assert_eq!(board.call_runs(event), None, "{event:?}");
+    }
+}
+
 /// A called event goes through the surge guard, the same as a spun one.
 ///
 /// The guard is not the wheel's bookkeeping but a rule about the beach,

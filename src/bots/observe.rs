@@ -470,7 +470,6 @@ mod tests {
                 input_delay: 0,
             },
             cursor: false,
-            teams: None,
         };
         for _ in 0..warmup {
             let mut actions = [PlayerAction::None; MAX_PLAYERS];
@@ -518,7 +517,6 @@ mod tests {
                 input_delay: 0,
             },
             cursor: false,
-            teams: None,
         };
         let hello = protocol::hello(board, &table, 0, false);
         let you = You {
@@ -566,7 +564,10 @@ mod tests {
             board.tick_idle();
         }
         call(&mut board, TideEvent::RightClaws);
-        call(&mut board, TideEvent::Monopoly);
+        // Nobody may call Crab Monopoly, which banks for a seat: spun, as
+        // a sparkling crab of seat 0's would.
+        board.force_spun_tide_event(TideEvent::Monopoly, 0);
+        board.tick_idle();
         assert!(!board.sweeping().is_empty(), "crabs in the air");
         let (hello, tick) = shown(&board);
         let theirs = board_from(&hello, &tick).expect("rebuilds").to_snapshot();
@@ -684,7 +685,6 @@ mod tests {
             board.rules_mut().teams = Some(std::array::from_fn(|s| pair(s as u8)));
             let names = vec!["a".to_string(); usize::from(seats)];
             let kinds = vec![SeatKind::Bot; names.len()];
-            let teams: Vec<u8> = (0..seats).map(pair).collect();
             let table = Table {
                 game: 1,
                 names: &names,
@@ -695,7 +695,6 @@ mod tests {
                     input_delay: 0,
                 },
                 cursor: false,
-                teams: Some(&teams),
             };
             let hello = protocol::hello(&board, &table, 0, false);
             let you = You {
@@ -780,7 +779,6 @@ mod tests {
                 input_delay: 0,
             },
             cursor: false,
-            teams: None,
         };
         let hello = protocol::hello(&board, &table, 0, false);
         let tick = protocol::tick(

@@ -602,7 +602,6 @@ fn table_of<'a>(spec: &'a GameSpec, kinds: &'a [SeatKind]) -> Table<'a> {
         kinds,
         clock: spec.clock,
         cursor: spec.fair_cursor,
-        teams: None,
     }
 }
 

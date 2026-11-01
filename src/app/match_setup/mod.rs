@@ -26,8 +26,8 @@ mod ui;
 
 pub use beaches::{
     Beach, BeachGone, CustomBeaches, beach_bytes, beach_from, beach_in_play, beach_on_air,
-    beaches_note, cycle_map, map_about, map_label, map_name, map_title, refresh_custom_beaches,
-    say_beach_gone,
+    beaches_note, cycle_map, follow_the_file, map_about, map_label, map_name, map_title,
+    refresh_custom_beaches, say_beach_gone,
 };
 pub use board::{apply_terms, board_for, board_from, bot_seats_from, local_board, versus_board};
 pub use preview::{

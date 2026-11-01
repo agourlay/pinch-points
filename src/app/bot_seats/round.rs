@@ -98,25 +98,15 @@ fn party_replay_id(game: u32) -> String {
 pub(super) struct PartyTable {
     names: Vec<String>,
     kinds: Vec<SeatKind>,
-    /// How the round is scored, which `hello` tells as each seat's team
-    /// and `end` places by.
+    /// How the round is scored, which `end` places by. `hello` tells each
+    /// seat's team off the board, which holds the same teams.
     mode: TeamMode,
-    /// Each seat's team under `mode`, as `hello` sends it.
-    teams: Vec<u8>,
 }
 
 impl PartyTable {
     /// A table of `names` and `kinds`, one per seat, scored under `mode`.
     pub(super) fn new(names: Vec<String>, kinds: Vec<SeatKind>, mode: TeamMode) -> PartyTable {
-        let teams = (0..names.len() as u8)
-            .map(|seat| mode.team_of(seat))
-            .collect();
-        PartyTable {
-            names,
-            kinds,
-            mode,
-            teams,
-        }
+        PartyTable { names, kinds, mode }
     }
 
     /// How many seats the table has.
@@ -131,7 +121,6 @@ impl PartyTable {
             names,
             kinds,
             mode: _,
-            teams,
         } = self;
         Table {
             game,
@@ -139,7 +128,6 @@ impl PartyTable {
             kinds,
             clock,
             cursor: true,
-            teams: Some(teams),
         }
     }
 }
@@ -589,7 +577,7 @@ mod tests {
         )
     }
 
-    /// The same at a table of `names`, scored under `mode`.
+    /// The same at a table of `names`, scored and played under `mode`.
     fn a_table_with_a_bot(
         online: bool,
         names: Vec<String>,
@@ -601,7 +589,10 @@ mod tests {
         let bot = TestBot::register(&door.string(&door.chairs[0]));
         assert!(poll_until(&mut door, |d| d.ready()), "the bot sat down");
         let id = door.chairs[0].bot.expect("seated");
-        let board = beach();
+        // The board holds the teams the table is scored in, as every
+        // round's does: `hello` reads them off it.
+        let mut board = beach();
+        board.rules_mut().teams = mode.played_by(names.len() as u8).sides();
         let party = PartyTable::new(names, kinds, mode);
         let delay = online.then_some(crate::sim::DEFAULT_DELAY);
         let round = BotRound::open(&door, &board, &[(1, id)], party, delay, 1);

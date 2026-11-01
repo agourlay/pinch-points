@@ -257,7 +257,13 @@ pub fn done_input(
     mut load: MessageWriter<LoadLevel>,
 ) {
     use crate::app::stage_select::Landing;
-    if keyboard.keys.just_pressed(KeyCode::Escape) {
+    // Won before a co-op stage only one is seated for, Enter goes to the
+    // stage list on that stage ([`WonDoor::Stages`]), and Esc goes the same
+    // way: the pad's legend reads A and B as the one "stages", and a B
+    // that landed a stage further back made two doors of it.
+    let won_door = (*phase.get() == Phase::Won).then(|| campaign.won_door(*coop));
+    let escape = keyboard.keys.just_pressed(KeyCode::Escape);
+    if escape && won_door != Some(WonDoor::Stages) {
         // Back to the stage list, which is the door every puzzle is entered
         // through; Esc again from there reaches the menu. From a co-op
         // stage or one of the player's own, on the stage just left: the
@@ -272,12 +278,12 @@ pub fn done_input(
         next_screen.set(Screen::StageSelect);
         return;
     }
-    if crate::app::menu_ui::enter(&keyboard.keys) {
-        if *phase.get() != Phase::Won {
+    if escape || crate::app::menu_ui::enter(&keyboard.keys) {
+        let Some(door) = won_door else {
             load.write(LoadLevel { keep_posts: true });
             return;
-        }
-        match campaign.won_door(*coop) {
+        };
+        match door {
             // The end of the list is the end of the list: wrapping to level
             // one reads as the game not having noticed, the card saying
             // "that was the last level" and then putting you back on the
@@ -747,9 +753,16 @@ mod tests {
 
     /// Won, with a co-op stage next and only one player seated: Enter goes
     /// back to the stage list, which says why, rather than loading a stage
-    /// nobody can finish alone.
+    /// nobody can finish alone. Esc goes the same way: the pad's legend
+    /// reads A and B there as the one "stages".
     #[test]
     fn enter_before_a_coop_stage_alone_goes_to_the_list() {
+        for key in [KeyCode::Enter, KeyCode::Escape] {
+            enter_before_a_coop_stage_alone_goes_to_the_list_on(key);
+        }
+    }
+
+    fn enter_before_a_coop_stage_alone_goes_to_the_list_on(key: KeyCode) {
         let mut app = won(0);
         {
             let mut campaign = app.world_mut().resource_mut::<Campaign>();
@@ -762,8 +775,8 @@ mod tests {
             WonDoor::Stages,
             "and the card's prompt says so"
         );
-        tap(&mut app, KeyCode::Enter);
-        assert!(kept(&app).is_empty(), "nothing loaded");
+        tap(&mut app, key);
+        assert!(kept(&app).is_empty(), "nothing loaded on {key:?}");
         assert_eq!(app.world().resource::<Campaign>().index, 0);
         assert_eq!(
             landing(&app),
@@ -771,7 +784,7 @@ mod tests {
                 at: 1,
                 needs_two: true
             }),
-            "on that stage, saying why"
+            "on that stage, saying why, on {key:?}"
         );
         app.update();
         assert_eq!(

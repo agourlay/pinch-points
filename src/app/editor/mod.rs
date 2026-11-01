@@ -176,7 +176,7 @@ impl Mode {
     #[cfg(test)]
     pub fn testing(bench: Board) -> Mode {
         let level = Level::from_board("Test", 3, bench.clone());
-        let mut test = Playtest::of(bench, level);
+        let mut test = Playtest::of(bench, level, crate::app::teams::TeamMode::Solo);
         test.phase = TestPhase::Running;
         Mode::Testing(Box::new(test))
     }
@@ -448,7 +448,7 @@ pub fn enter_editor(
         }
     }
     if test {
-        playtest::begin(&mut sim, &mut state);
+        playtest::begin(&mut sim, &mut state, settings.team_mode);
     }
 }
 
@@ -1013,7 +1013,7 @@ pub fn editor_commands(
         save_level(&mut state, board, (tr, *device), &mut saved);
     }
     if crate::app::menu_ui::enter(&keys) {
-        playtest::start(&mut sim, &mut state, &mut swap);
+        playtest::start(&mut sim, &mut state, &mut swap, settings.team_mode);
     }
     // Leaving resets the bench, and the editor has no load: the level goes
     // with it unless it is on the shelf, so Esc asks first, as F5 does.

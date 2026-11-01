@@ -573,6 +573,7 @@ mod tests {
     fn spectators_cannot_call_an_event_that_favours_a_seat() {
         for event in [TideEvent::Monopoly, TideEvent::GullAttack] {
             assert!(!SPECTATOR_EVENTS.contains(&event), "{event:?}");
+            assert!(!event.callable(), "and the board would not fire it");
             let mut votes = SpectatorVotes::default();
             votes.cast(9, event.index() as u8);
             assert!(votes.open().is_none(), "{event:?} is not on the list");
@@ -582,6 +583,7 @@ mod tests {
             TideEvent::ALL.len(),
             "and the rest are"
         );
+        assert!(SPECTATOR_EVENTS.iter().all(|event| event.callable()));
     }
 
     /// Spectators are the people with no seat, and only they type: a player's

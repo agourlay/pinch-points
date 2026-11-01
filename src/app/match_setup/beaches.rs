@@ -55,11 +55,13 @@ pub struct BeachGone(pub Option<String>);
 /// The config names its beach by place on the shelf, so a file added or
 /// taken away meanwhile (by another copy of the game, or by hand) moved
 /// the pick onto a different beach. It is found again by its file here
-/// ([`keep_the_pick`]).
+/// ([`keep_the_pick`]), and so is the one a series opened on, which a
+/// rematch goes back to (`LocalTable::keep_the_opening`).
 pub fn refresh_custom_beaches(
     mut beaches: ResMut<CustomBeaches>,
     mut config: ResMut<MatchConfig>,
     mut gone: ResMut<BeachGone>,
+    mut table: ResMut<crate::app::rematch::LocalTable>,
 ) {
     let fresh = CustomBeaches(
         crate::app::campaign::custom_arenas(crate::app::campaign::load_custom_levels())
@@ -68,6 +70,7 @@ pub fn refresh_custom_beaches(
             .collect(),
     );
     gone.0 = keep_the_pick(&mut config, &beaches, &fresh);
+    table.keep_the_opening(config.seats, &beaches, &fresh);
     *beaches = fresh;
 }
 
@@ -99,23 +102,37 @@ pub(super) fn keep_the_pick(
     if config.map != MapChoice::Custom {
         return None;
     }
-    let picked = old.fitting(config.seats).get(config.custom).copied()?;
-    let key = file(picked)?;
-    let found = fresh
-        .fitting(config.seats)
-        .iter()
-        .position(|beach| file(beach).as_ref() == Some(&key));
-    match found {
-        Some(at) => {
+    match follow_the_file(old, fresh, config.seats, config.custom)? {
+        Ok(at) => {
             config.custom = at;
             None
         }
-        None => {
+        Err(name) => {
             config.map = sized_for(config.seats);
             config.custom = 0;
-            Some(picked.level.name.clone())
+            Some(name)
         }
     }
+}
+
+/// Where the `custom`-th beach fitting `seats` on the `old` shelf sits
+/// among the ones fitting on the `fresh` shelf, found by the file it was
+/// read from: `Err` with its name when that file is gone, and `None` when
+/// there is no such beach, or no file, to follow.
+pub fn follow_the_file(
+    old: &CustomBeaches,
+    fresh: &CustomBeaches,
+    seats: u8,
+    custom: usize,
+) -> Option<Result<usize, String>> {
+    let file = |beach: &Beach| beach.level.filing.as_ref().map(|filing| filing.key.clone());
+    let picked = old.fitting(seats).get(custom).copied()?;
+    let key = file(picked)?;
+    let found = fresh
+        .fitting(seats)
+        .iter()
+        .position(|beach| file(beach).as_ref() == Some(&key));
+    Some(found.ok_or_else(|| picked.level.name.clone()))
 }
 
 /// Say on the feed that the beach a round set up here was picked on is

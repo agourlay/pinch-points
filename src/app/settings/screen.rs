@@ -1062,7 +1062,8 @@ mod tests {
     }
 
     /// The reset clears every stage, and the lines kept for other builds
-    /// with them.
+    /// with them. What it cleared is written down as erased, for an older
+    /// copy open alongside that would write it back.
     #[test]
     fn resetting_progress_clears_the_record() {
         use crate::app::progress::Progress;
@@ -1073,7 +1074,11 @@ mod tests {
         progress.clear_all();
         assert!(!progress.is_cleared("Welcome Ashore"));
         assert!(!progress.is_cleared("Undertow"));
-        assert!(progress.to_text().is_empty(), "and nothing to write back");
+        assert_eq!(
+            progress.to_text(),
+            "erased: tide:Undertow\nerased: tide:Welcome Ashore\n",
+            "and no clear to write back"
+        );
     }
 
     /// "Rounds kept" lowered and then the key bindings visited: the shelf

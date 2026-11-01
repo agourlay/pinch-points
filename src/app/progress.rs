@@ -21,6 +21,10 @@ const LIST_KEY: &str = "tide";
 /// The line a reset of the record writes its count under (`reset: <n>`).
 const RESET_KEY: &str = "reset";
 
+/// The line a reset files each clear it took away under
+/// (`erased: tide:<name>`).
+const ERASED_KEY: &str = "erased";
+
 /// The cleared-stage record, under the XDG data directory.
 fn save_path() -> std::path::PathBuf {
     crate::app::paths::merged_record("progress.txt")
@@ -68,6 +72,15 @@ pub struct Progress {
     /// the ones a reset elsewhere did not see, and so did not undo.
     /// Never written.
     marked: HashSet<String>,
+    /// The clears a reset took away and nobody has made again since.
+    ///
+    /// For a copy of a build from before the reset count (0.9.0), open
+    /// alongside: it holds every old clear in memory, and its next save
+    /// wrote them all back. It keeps the lines it cannot read as they
+    /// stand, though, so this list survives its save, and a stage on both
+    /// lists is a clear it put back: read as erased ([`Progress::parse`]).
+    /// This build never writes a stage on both.
+    erased: HashSet<String>,
 }
 
 impl Progress {
@@ -115,6 +128,7 @@ impl Progress {
 
     /// Records a clear; true when this was the first time.
     pub fn mark(&mut self, name: &str) -> bool {
+        self.erased.remove(name);
         self.marked.insert(name.to_string());
         self.cleared.insert(name.to_string())
     }
@@ -130,12 +144,20 @@ impl Progress {
             foreign,
             reset,
             marked: _,
+            erased,
         } = other;
         if reset > self.reset {
             self.cleared.retain(|name| self.marked.contains(name));
             self.foreign.clear();
+        }
+        // The file's word on what the reset took away, unless it is
+        // older than the record in hand (the file deleted meanwhile), less
+        // what was cleared here since.
+        if reset >= self.reset {
+            self.erased = erased;
             self.reset = reset;
         }
+        self.erased.retain(|name| !self.marked.contains(name));
         self.cleared.extend(cleared);
         self.foreign.extend(foreign);
     }
@@ -150,7 +172,7 @@ impl Progress {
     /// The lines this build cannot read go too: they are clears from
     /// another build's lists, and the player asked to start over.
     pub fn clear_all(&mut self) {
-        self.cleared.clear();
+        self.erased.extend(self.cleared.drain());
         self.foreign.clear();
         self.marked.clear();
     }
@@ -207,21 +229,28 @@ impl Progress {
             foreign,
             reset,
             marked: _,
+            erased,
         } = self;
-        let mut names: Vec<&String> = cleared.iter().collect();
-        names.sort_unstable();
         let head = match reset {
             0 => String::new(),
             n => format!("{RESET_KEY}: {n}\n"),
         };
-        let mut out = names.iter().fold(head, |mut out, name| {
-            out.push_str("cleared: ");
-            out.push_str(LIST_KEY);
-            out.push(':');
-            out.push_str(name);
-            out.push('\n');
-            out
-        });
+        let mut out = head;
+        for (key, names) in [("cleared", cleared), (ERASED_KEY, erased)] {
+            let mut names: Vec<&String> = names
+                .iter()
+                .filter(|name| key == "cleared" || !cleared.contains(*name))
+                .collect();
+            names.sort_unstable();
+            for name in names {
+                out.push_str(key);
+                out.push_str(": ");
+                out.push_str(LIST_KEY);
+                out.push(':');
+                out.push_str(name);
+                out.push('\n');
+            }
+        }
         foreign.append_to(&mut out);
         out
     }
@@ -239,26 +268,36 @@ impl Progress {
                 continue;
             };
             let (key, value) = (key.trim(), value.trim());
-            if key == "cleared" {
+            if key == "cleared" || key == ERASED_KEY {
                 // A `cleared:` line naming nothing is junk, not news.
                 let Some((list, name)) = value.split_once(':').filter(|(_, n)| !n.is_empty())
                 else {
                     continue;
                 };
+                let into = match key == ERASED_KEY {
+                    true => &mut progress.erased,
+                    false => &mut progress.cleared,
+                };
                 match list == LIST_KEY {
                     true => {
-                        progress.cleared.insert(name.to_string());
+                        into.insert(name.to_string());
                     }
                     false => progress.foreign.keep(line),
                 }
             } else if key == RESET_KEY
-                && let Ok(n) = value.parse()
+                && let Ok(n) = value.parse::<u64>()
             {
-                progress.reset = n;
+                // The highest: an older build keeps the line as it read it
+                // and writes the newer one back beside it.
+                progress.reset = progress.reset.max(n);
             } else if !key.is_empty() {
                 progress.foreign.keep(line);
             }
         }
+        // A stage on both lists was put back by a copy that cannot read
+        // the erased one ([`Progress::erased`]).
+        let erased = &progress.erased;
+        progress.cleared.retain(|name| !erased.contains(name));
         progress
     }
 }
@@ -335,7 +374,10 @@ pub fn save_reset(progress: &mut Progress) {
 
 /// [`save_reset`] to a file named outright, with the error kept.
 pub fn reset_in(path: &std::path::Path, progress: &mut Progress) -> std::io::Result<()> {
-    progress.reset = progress.reset.max(load_in(path).reset) + 1;
+    let file = load_in(path);
+    progress.reset = progress.reset.max(file.reset) + 1;
+    progress.erased.extend(file.cleared);
+    progress.erased.extend(file.erased);
     crate::app::paths::write_atomic(path, progress.to_text())
 }
 
@@ -424,6 +466,44 @@ mod tests {
         reset_in(&path, &mut first).expect("reset again");
         assert_eq!(load_in(&path).reset, 2);
         assert_eq!(load_in(&path).cleared_count(), 0);
+    }
+
+    /// A reset is not undone by a copy of 0.9.0 open alongside, which has
+    /// no reset count and wrote its old clears back over it. It keeps the
+    /// lines it cannot read, the erased list among them, so a stage on
+    /// both lists is read as erased; one cleared again here since is not.
+    #[test]
+    fn a_reset_holds_against_an_older_build_open_beside_it() {
+        let path = crate::app::paths::test_dir("progress-reset-old").join("progress.txt");
+        let mut ours = Progress::default();
+        ours.mark("Old A");
+        ours.mark("Old B");
+        save_in(&path, &mut ours).expect("saved");
+        ours.clear_all();
+        reset_in(&path, &mut ours).expect("reset");
+        // What a 0.9.0 save writes: its clears, the ones from before the
+        // reset and one made since, then the lines it kept as they stood.
+        let written = std::fs::read_to_string(&path).expect("the file");
+        assert!(written.contains("erased: tide:Old A"), "{written}");
+        let mut old =
+            String::from("cleared: tide:New C\ncleared: tide:Old A\ncleared: tide:Old B\n");
+        old.push_str(&written);
+        std::fs::write(&path, old).expect("written over");
+        let back = load_in(&path);
+        assert!(!back.is_cleared("Old A") && !back.is_cleared("Old B"));
+        assert!(back.is_cleared("New C"), "a clear made since stands");
+        // A stage cleared again here comes off the erased list for good.
+        ours.mark("Old B");
+        save_in(&path, &mut ours).expect("saved");
+        let back = load_in(&path);
+        assert!(back.is_cleared("Old B"), "cleared again");
+        assert!(!back.is_cleared("Old A"));
+        assert!(back.is_cleared("New C"));
+        assert!(
+            !std::fs::read_to_string(&path)
+                .expect("the file")
+                .contains("erased: tide:Old B")
+        );
     }
 
     /// A copy opened before a reset that adopts an old name's tick under

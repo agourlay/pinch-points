@@ -144,6 +144,23 @@ impl TideEvent {
         }
     }
 
+    /// Whether the spectators may call it: every event but the two that
+    /// hand one seat something. Crab Monopoly banks for a seat and Gull
+    /// Attack spares one, and a call has no seat behind it: it rides on
+    /// the host's, which would make the host the one favoured.
+    pub fn callable(self) -> bool {
+        match self {
+            TideEvent::Monopoly | TideEvent::GullAttack => false,
+            TideEvent::CrabMania
+            | TideEvent::GullMania
+            | TideEvent::SpeedUp
+            | TideEvent::SlowDown
+            | TideEvent::FreshSand
+            | TideEvent::CastleSwap
+            | TideEvent::RightClaws => true,
+        }
+    }
+
     /// Position in [`TideEvent::ALL`]: the index of this event's name in the
     /// string tables, and the bit that records having seen it.
     pub fn index(self) -> usize {
@@ -201,12 +218,13 @@ impl Board {
     }
 
     /// The event a crowd's call of `event` fires on this tick's actions
-    /// (`PlayerAction::CallEvent`): none on a beach whose wheel is off, and
-    /// in the surge the swap [`Self::surge_safe`] makes. What the call is
+    /// (`PlayerAction::CallEvent`): none on a beach whose wheel is off or
+    /// for an event nobody may call ([`TideEvent::callable`]), and in the
+    /// surge the swap [`Self::surge_safe`] makes. What the call is
     /// announced as, asked on the board it fires on, so the line names
     /// what the banner shows.
     pub fn call_runs(&self, event: TideEvent) -> Option<TideEvent> {
-        self.tide.enabled.then(|| self.surge_safe(event))
+        (self.tide.enabled && event.callable()).then(|| self.surge_safe(event))
     }
 
     /// Start a lure for `owner`, as banking a molting crab does.
