@@ -353,12 +353,11 @@ pub fn paste_round(
 /// The main menu's quit card: up while a pad's player is asked whether to
 /// leave the game.
 ///
-/// A pad's Start asks rather than leaves, as the keyboard's Esc does: Start
-/// is the button a player reaches for to get going, and on the first
-/// screen a stray press would close the game under them. Esc on the menu
-/// stays an instant quit, the way every desktop game reads it; on the
-/// card it is the keyboard's way back, and Enter its way out
-/// ([`quit_card_keys`]).
+/// Both ways out ask first: a pad's Start, the button a player reaches for
+/// to get going, and the keyboard's Esc, which a player leaving a round
+/// presses a few times over and which the menu would otherwise read as
+/// "close the game" on the last press. On the card Esc is the keyboard's
+/// way back and Enter its way out ([`quit_card_keys`]).
 #[derive(Resource, Default)]
 pub struct QuitCard {
     pub open: bool,
@@ -449,9 +448,9 @@ pub fn close_quit_card(
 /// does in the lobby's list: with no numbers printed beside the rows, a
 /// stray press launching a mode was a mode nobody asked for.
 ///
-/// Esc leaves the game. A pad's Start raises the quit card instead
-/// ([`QuitCard`]), whose A or Enter leaves and whose B, Start or Esc puts
-/// it away; the menu waits while it is up.
+/// Esc or a pad's Start raises the quit card ([`QuitCard`]), whose A or
+/// Enter leaves and whose B, Start or Esc puts it away; the menu waits
+/// while it is up. Nothing on the menu leaves the game in one press.
 pub fn menu_input(
     keys: Res<ButtonInput<KeyCode>>,
     pads: crate::app::gamepad::face::PadsOnFace,
@@ -482,14 +481,10 @@ pub fn menu_input(
         return;
     }
     // Every other screen leaves on Esc, and the menu is the one screen with
-    // nowhere left to go: it leaves the game. Without this the only way out
-    // is the window's own close button, which a fullscreen player has not
-    // got.
-    if keys.just_pressed(KeyCode::Escape) {
-        exit.write(AppExit::Success);
-        return;
-    }
-    if pads.pressed(Does::Quit) {
+    // nowhere left to go: it offers to leave the game. Without this the
+    // only way out is the window's own close button, which a fullscreen
+    // player has not got.
+    if keys.just_pressed(KeyCode::Escape) || pads.pressed(Does::Quit) {
         quit.open = true;
         return;
     }
@@ -700,17 +695,37 @@ mod tests {
         assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
     }
 
-    /// The keyboard's Esc on the menu leaves at once, without a card.
+    /// The keyboard's Esc on the menu asks before leaving, however often
+    /// it is pressed: the card comes up, Esc again puts it away, and only
+    /// Enter on the card leaves. A player backing out of a round with Esc
+    /// pressed once too many used to close the game.
     #[test]
-    fn escape_leaves_at_once() {
+    fn escape_asks_before_leaving() {
         let (mut app, _) = menu_app();
         app.update();
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::Escape);
-        app.update();
-        assert!(left(&app));
-        assert!(!quit_asked(&app), "without asking");
+        let key = |app: &mut App, key: KeyCode| {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+            app.update();
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.release(key);
+            keys.clear();
+            app.update();
+        };
+        key(&mut app, KeyCode::Escape);
+        assert!(quit_asked(&app), "Esc raises the card");
+        assert!(!left(&app), "and leaves nothing yet");
+        key(&mut app, KeyCode::Escape);
+        assert!(!quit_asked(&app), "Esc again puts it away");
+        for _ in 0..5 {
+            key(&mut app, KeyCode::Escape);
+        }
+        assert!(!left(&app), "Esc over and over never leaves");
+        assert!(quit_asked(&app), "an odd count leaves the card up");
+        key(&mut app, KeyCode::Enter);
+        assert!(left(&app), "Enter on the card leaves the game");
+        assert_eq!(*app.world().resource::<State<Screen>>().get(), Screen::Menu);
     }
 
     /// A digit puts the cursor on its row and launches nothing; Enter
