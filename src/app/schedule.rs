@@ -193,11 +193,12 @@ pub(super) fn run_with(watching: watch::Watch) {
     app.run();
 }
 
-/// Take out the default plugins this game draws nothing with: no 3D
-/// (meshes, lights, glTF, scenes, animation), no gizmos, no post-process
-/// or screen-space anti-aliasing passes (the only anti-aliasing here is
-/// MSAA, which is the core pipeline's), and no ready-made UI widgets (every
-/// card here is plain nodes read from the keyboard and pads).
+/// Take out the default plugins this game draws nothing with: no scenes
+/// or animation, no gizmos, no post-process pass (the only anti-aliasing
+/// here is MSAA, which is the core pipeline's), and no ready-made UI
+/// widgets (every card here is plain nodes read from the keyboard and
+/// pads). The 3D renderer, glTF and lights are not compiled in at all: the
+/// `bevy` dependency names Bevy's 2D, UI and audio sets, not its defaults.
 ///
 /// Each one still adds its systems to every frame, in the main world and in
 /// the render world, and a system that finds nothing to do still costs the
@@ -214,16 +215,12 @@ fn trim_unused_plugins(plugins: bevy::app::PluginGroupBuilder) -> bevy::app::Plu
         TextInputPlugin,
     };
     plugins
-        .disable::<bevy::pbr::PbrPlugin>()
-        .disable::<bevy::gltf::GltfPlugin>()
         .disable::<bevy::scene::ScenePlugin>()
         .disable::<bevy::world_serialization::WorldSerializationPlugin>()
         .disable::<AnimationPlugin>()
         .disable::<bevy::gizmos::GizmoPlugin>()
         .disable::<bevy::gizmos_render::GizmoRenderPlugin>()
-        .disable::<bevy::anti_alias::AntiAliasPlugin>()
         .disable::<bevy::post_process::PostProcessPlugin>()
-        .disable::<bevy::light::LightPlugin>()
         .disable::<ButtonPlugin>()
         .disable::<CheckboxPlugin>()
         .disable::<TextInputPlugin>()
