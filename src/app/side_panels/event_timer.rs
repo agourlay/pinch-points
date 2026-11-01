@@ -6,7 +6,7 @@
 //! and leave nothing on the beach to say so: the banner is gone in two and
 //! a half, and the header's line in three. A player banking a left claw at
 //! second eight had no way to know the call was still on. The block reads
-//! [`crate::sim::Board::running_events`], the same ticks the sim counts
+//! [`Board::running_events`], the same ticks the sim counts
 //! down, so it freezes with the round under a pause and ends on the tick
 //! the event does. Every running event gets its own block: the three run
 //! in separate slots, and a block naming only the first left the other

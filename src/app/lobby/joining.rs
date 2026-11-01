@@ -664,7 +664,7 @@ pub fn join_tick(
             .iter()
             .zip(kinds)
             .enumerate()
-            .map(|(place, (name, byte))| super::TablePlace {
+            .map(|(place, (name, byte))| TablePlace {
                 name: match name.is_empty() {
                     true => crate::app::seat_label(settings.tr(), seated.seat_of(place)),
                     false => name.clone(),
@@ -831,7 +831,7 @@ mod tests {
         let state = app.world().resource::<LobbyState>();
         assert_eq!(
             state.joined().map(|joined| joined.berth),
-            Some(crate::app::lobby::Berth::Queued { ahead: 2 })
+            Some(Berth::Queued { ahead: 2 })
         );
         assert_eq!(state.feedback, queued_feedback(tr, false, false, 2));
 
@@ -964,7 +964,7 @@ mod tests {
         assert!(
             state
                 .joined()
-                .is_some_and(|joined| joined.berth == crate::app::lobby::Berth::NoChair)
+                .is_some_and(|joined| joined.berth == Berth::NoChair)
         );
         assert_eq!(state.feedback, tr.lobby_no_chair);
         host.send(roster(Some(true)));
@@ -972,20 +972,20 @@ mod tests {
         assert!(
             state
                 .joined()
-                .is_some_and(|joined| joined.berth == crate::app::lobby::Berth::Aboard)
+                .is_some_and(|joined| joined.berth == Berth::Aboard)
         );
         assert_eq!(state.feedback, tr.lobby_aboard, "a chair came free");
 
         // In line while a round plays: the round's roster leaves it there.
         if let Some(joined) = state.joined_mut() {
-            joined.berth = crate::app::lobby::Berth::Queued { ahead: 0 };
+            joined.berth = Berth::Queued { ahead: 0 };
         }
         state.feedback = "next up".into();
         host.send(roster(None));
         hear(&mut state);
         assert_eq!(
             state.joined().map(|joined| joined.berth),
-            Some(crate::app::lobby::Berth::Queued { ahead: 0 })
+            Some(Berth::Queued { ahead: 0 })
         );
         assert_eq!(state.feedback, "next up");
         // Back in the lobby, past the last chair: out of line, no chair.
@@ -993,7 +993,7 @@ mod tests {
         hear(&mut state);
         assert_eq!(
             state.joined().map(|joined| joined.berth),
-            Some(crate::app::lobby::Berth::NoChair),
+            Some(Berth::NoChair),
             "out of line"
         );
         assert_eq!(state.feedback, tr.lobby_no_chair, "never told aboard");

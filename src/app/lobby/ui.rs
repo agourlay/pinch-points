@@ -322,7 +322,7 @@ fn seat_tone(seat: usize) -> Color {
 /// the table sits in (`seated`). A name with no seat at the table, a
 /// watcher or somebody who has since walked off, reads idle rather than
 /// borrowing a colour that belongs to a player who is still here.
-fn name_ink(table: &[super::TablePlace], seated: &Seated, who: &str) -> Color {
+fn name_ink(table: &[TablePlace], seated: &Seated, who: &str) -> Color {
     match table.iter().position(|place| place.name == who) {
         Some(place) => seat_tone(usize::from(seated.seat_of(place))),
         None => palette::IDLE_ROW,
@@ -1289,7 +1289,7 @@ mod feed_layout_tests {
     /// the two are read off one function.
     #[test]
     fn a_name_reads_in_its_seats_colour() {
-        let table = ["Anna", "Bo"].map(|name| super::super::TablePlace {
+        let table = ["Anna", "Bo"].map(|name| TablePlace {
             name: name.to_string(),
             kind: crate::sim::SeatKind::Human,
         });
@@ -1620,7 +1620,7 @@ mod list_fit_tests {
                             UdpTransport::host(0).expect("game socket"),
                         );
                         state.table = vec![
-                            crate::app::lobby::TablePlace {
+                            TablePlace {
                                 name: name.clone(),
                                 kind: crate::sim::SeatKind::Bot,
                             };

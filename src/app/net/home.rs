@@ -132,7 +132,7 @@ pub enum LobbyReturn {
         rounds_dealt: u32,
         /// The seats the host's partner picks put its bots and the AI in
         /// ([`OnlineSession::arranged`]), for the next match's deal.
-        arranged: Option<super::order::Arranged>,
+        arranged: Option<order::Arranged>,
     },
     Joiner {
         transport: UdpTransport,

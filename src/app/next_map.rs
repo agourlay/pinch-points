@@ -6,7 +6,7 @@
 //! card with the series where it was, so Enter there opens it again.
 //!
 //! The next round is called as it always has been, by the host's `Start`
-//! to every peer ([`crate::app::net::OnlineSession::call_next_round`]),
+//! to every peer ([`OnlineSession::call_next_round`]),
 //! now on the picked map rather than on the next one along: the joiners
 //! walk in on it exactly as before, and every peer opens it on the
 //! line-up ([`crate::app::lineup`]), which names it.

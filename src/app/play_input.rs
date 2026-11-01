@@ -160,7 +160,7 @@ pub fn clear_setup(sim: &mut Sim, seat: u8) {
 /// the ladder goes. A stage not yet open is refused with the same flash
 /// and word as a placement that cannot go down. A co-op stage with one
 /// seated goes back to the stage list, on that stage, as Enter on a won
-/// card does ([`crate::app::campaign::WonDoor::Stages`]).
+/// card does ([`WonDoor::Stages`]).
 pub fn browse_levels(
     keyboard: crate::app::keycaps::Keyboard,
     pads: crate::app::gamepad::face::PadsOnFace,

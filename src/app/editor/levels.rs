@@ -582,7 +582,7 @@ mod tests {
         tap(&mut app, KeyCode::F2);
         let unsaved = |app: &App| {
             let world = app.world();
-            super::super::unsaved_work(world.resource::<EditorState>(), &world.resource::<Sim>().0)
+            unsaved_work(world.resource::<EditorState>(), &world.resource::<Sim>().0)
         };
         assert!(paths.iter().all(|path| path.exists()));
         assert!(!unsaved(&app), "saved");
@@ -609,10 +609,7 @@ mod tests {
         let path = super::super::shelf::save_path(name);
         let _ = std::fs::remove_file(&path);
         app.world_mut().resource_mut::<EditorState>().name = name.into();
-        app.world_mut()
-            .resource_mut::<crate::app::Sim>()
-            .0
-            .set_wrap(true);
+        app.world_mut().resource_mut::<Sim>().0.set_wrap(true);
         tap(&mut app, KeyCode::F2);
         tap(&mut app, KeyCode::F4);
         let shown = list(&app).expect("the list is up");
@@ -639,10 +636,7 @@ mod tests {
         tap(&mut app, KeyCode::F4);
         tap(&mut app, KeyCode::Enter);
         assert!(list(&app).is_none());
-        assert!(
-            !app.world().resource::<crate::app::Sim>().0.wrap(),
-            "fresh sand"
-        );
+        assert!(!app.world().resource::<Sim>().0.wrap(), "fresh sand");
         assert_ne!(app.world().resource::<EditorState>().name, name);
         assert!(!app.world().resource::<EditorState>().is_testing());
 
@@ -653,21 +647,21 @@ mod tests {
         let state = app.world().resource::<EditorState>();
         assert_eq!(state.name, name);
         assert!(state.filing.mine.contains(&path), "its file is the bench's");
-        assert!(app.world().resource::<crate::app::Sim>().0.wrap());
+        assert!(app.world().resource::<Sim>().0.wrap());
 
         // Over unsaved work, opening asks first and the second Enter opens.
         app.world_mut()
-            .resource_mut::<crate::app::Sim>()
+            .resource_mut::<Sim>()
             .0
-            .set_tile(3, 3, crate::sim::TileKind::Rock);
+            .set_tile(3, 3, TileKind::Rock);
         tap(&mut app, KeyCode::F4);
         choose(&mut app, &path);
         tap(&mut app, KeyCode::Enter);
         assert!(list(&app).is_some(), "the first Enter asks");
         tap(&mut app, KeyCode::Enter);
         assert!(list(&app).is_none(), "the second opens");
-        let board = &app.world().resource::<crate::app::Sim>().0;
-        assert_eq!(board.tile_at(3, 3), crate::sim::TileKind::Empty);
+        let board = &app.world().resource::<Sim>().0;
+        assert_eq!(board.tile_at(3, 3), TileKind::Empty);
 
         // Deleted with a second press, and only then, and its clear with
         // it: a later level saved under its name takes its file name.
@@ -753,8 +747,8 @@ mod tests {
         let level = Level::parse(&std::fs::read_to_string(&path).expect("reads")).expect("parses");
         {
             let world = app.world_mut();
-            world.resource_mut::<crate::app::Sim>().0 = level.board();
-            let board = world.resource::<crate::app::Sim>().0.clone();
+            world.resource_mut::<Sim>().0 = level.board();
+            let board = world.resource::<Sim>().0.clone();
             let mut state = world.resource_mut::<EditorState>();
             open_saved(
                 &mut state,
@@ -764,10 +758,7 @@ mod tests {
                 &crate::app::i18n::EN,
             );
         }
-        app.world_mut()
-            .resource_mut::<crate::app::Sim>()
-            .0
-            .set_wrap(true);
+        app.world_mut().resource_mut::<Sim>().0.set_wrap(true);
         tap(&mut app, KeyCode::F2);
         assert!(!own.exists(), "no second copy under the name");
         assert!(
@@ -804,8 +795,8 @@ mod tests {
         let level = Level::parse(&std::fs::read_to_string(&path).expect("reads")).expect("parses");
         {
             let world = app.world_mut();
-            world.resource_mut::<crate::app::Sim>().0 = level.board();
-            let board = world.resource::<crate::app::Sim>().0.clone();
+            world.resource_mut::<Sim>().0 = level.board();
+            let board = world.resource::<Sim>().0.clone();
             let mut state = world.resource_mut::<EditorState>();
             open_saved(
                 &mut state,
@@ -861,7 +852,7 @@ mod tests {
             state.name,
             super::super::shelf::fresh_name(&crate::app::i18n::EN)
         );
-        let board = &app.world().resource::<crate::app::Sim>().0;
+        let board = &app.world().resource::<Sim>().0;
         assert_eq!(board.table_seats(), Some(2));
 
         // Untouched, the starter is no work to lose: a blank level takes
@@ -872,10 +863,7 @@ mod tests {
         assert!(list(&app).is_none(), "opened at once");
         let state = app.world().resource::<EditorState>();
         assert_eq!(state.symmetry, super::super::Symmetry::Off);
-        assert_eq!(
-            app.world().resource::<crate::app::Sim>().0.table_seats(),
-            Some(0)
-        );
+        assert_eq!(app.world().resource::<Sim>().0.table_seats(), Some(0));
     }
 
     /// A level opened onto the bench starts with the mirror off, whatever

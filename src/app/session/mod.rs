@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn a_couch_match_opens_on_the_lineup() {
         use super::versus::RoundOrigin;
-        let config = crate::app::match_setup::MatchConfig::default();
+        let config = match_setup::MatchConfig::default();
         assert!(RoundOrigin::Configured(&config).opens_on_lineup(true));
         assert!(
             !RoundOrigin::Configured(&config).opens_on_lineup(false),
@@ -413,7 +413,7 @@ mod tests {
         replay.kinds[2] = SeatKind::Bot;
         replay.kinds[3] = SeatKind::Ai;
         let table = replay_controllers(&replay);
-        let tr = crate::app::i18n::Lang::En.tr();
+        let tr = i18n::Lang::En.tr();
         assert_eq!(seat_tag(tr, &table, Viewer::Replay, 0), "");
         assert_eq!(seat_tag(tr, &table, Viewer::Replay, 1), tr.tag_ai);
         assert_eq!(seat_tag(tr, &table, Viewer::Replay, 3), tr.tag_ai);
@@ -1018,7 +1018,7 @@ mod tests {
             app.insert_resource(Tournament::start(SeriesLength::BestOfThree));
             app.init_resource::<lobby::Homecoming>();
             app.init_resource::<Time>();
-            app.init_resource::<crate::app::next_map::NextMap>();
+            app.init_resource::<next_map::NextMap>();
             app.init_resource::<match_setup::MatchMenu>();
             app.add_systems(
                 Update,

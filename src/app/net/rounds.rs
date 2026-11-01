@@ -78,7 +78,7 @@ fn ai_where_the_terms_say(terms: MatchTerms, seats: u8) -> [crate::sim::SeatKind
 }
 
 /// Put a dealt table in the seats its host arranged when it picked
-/// partners ([`super::order`]): `plan` and `bots_here` come dealt in places
+/// partners ([`order`]): `plan` and `bots_here` come dealt in places
 /// (the host, the players in peer order, the host's bots), and leave in
 /// the seats each was arranged in, the AI in what is left, the order in
 /// `terms`; and the seats are remembered for the next deal. A table never

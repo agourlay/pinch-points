@@ -199,9 +199,7 @@ pub fn seat_hint(tr: &crate::app::i18n::Tr, device: LastDevice, seat: u8) -> Str
     }
     let keys = match device {
         LastDevice::Keyboard => "A/D".to_string(),
-        LastDevice::Pad(family) => crate::app::gamepad::scheme::Pad::Left
-            .name(tr, family)
-            .to_string(),
+        LastDevice::Pad(family) => Pad::Left.name(tr, family).to_string(),
     };
     fill(tr.setup_seat_hint, &[("k", &keys)])
 }

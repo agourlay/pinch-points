@@ -107,12 +107,12 @@ pub struct EditorState {
     /// until an edit changes the board they win.
     solution: Vec<Placement>,
     /// What the shelf remembers of this bench's writing: see
-    /// [`shelf::Filing`].
-    filing: shelf::Filing,
+    /// [`Filing`].
+    filing: Filing,
     /// A board-replacing key pressed once and waiting to be taken up.
     offer: Option<Offer>,
-    /// What was on screen when it was: see [`shelf::Asked`].
-    asked: shelf::Asked,
+    /// What was on screen when it was: see [`Asked`].
+    asked: Asked,
     /// The settings card's row "+" and "-" turn ([`Setting::chosen`]).
     pub setting: Setting,
     /// The copies every edit is made on as well ([`Symmetry`]): how the
@@ -351,7 +351,7 @@ impl EditorState {
             history: _,
             dirty: _,
         } = self;
-        *name = shelf::fresh_name(tr);
+        *name = fresh_name(tr);
         *goal = Goal::default();
         *hole_period = None;
         *stroke = None;
@@ -457,7 +457,7 @@ pub fn enter_editor(
 pub fn exit_editor(
     mut state: ResMut<EditorState>,
     mut controllers: ResMut<crate::app::Controllers>,
-    mut checks: ResMut<validate::SaveChecks>,
+    mut checks: ResMut<SaveChecks>,
 ) {
     // A save still waiting on its check gets its answer all the same.
     state.check.hand_on(&mut checks.0);
@@ -627,7 +627,7 @@ pub fn editor_input(
     mut swap: BoardSwap,
 ) {
     let Workbench { mut sim, mut state } = bench;
-    shelf::settle_offer(
+    settle_offer(
         &mut state,
         swap.cursors.iter().map(|(cursor, _)| (cursor.x, cursor.y)),
     );
@@ -660,7 +660,7 @@ pub fn editor_input(
             .get_just_pressed()
             .any(|&k| k != offer.key() && k != KeyCode::Escape)
     {
-        shelf::take_back_offer(&mut state);
+        take_back_offer(&mut state);
     }
     // Beach size, on a function key: the next size up, or down with
     // Shift. On `[` and `]`, which are *physical* keys, the prompt named
@@ -1010,7 +1010,7 @@ pub fn editor_commands(
         };
     }
     if pressed(KeyCode::F2) {
-        shelf::save_level(&mut state, board, (tr, *device), &mut saved);
+        save_level(&mut state, board, (tr, *device), &mut saved);
     }
     if crate::app::menu_ui::enter(&keys) {
         playtest::start(&mut sim, &mut state, &mut swap);

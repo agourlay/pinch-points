@@ -332,8 +332,8 @@ fn every_line_fits_its_place_in_every_language() {
         assert!(names + 2.0 * 40.0 <= LABEL_W + VALUE_W, "{lang:?}: {names}");
         // The lobby host's page: its heading, and the line under a beach
         // too big to travel, at the longest name a card gives.
-        let heading = super::ui::host_map_title(tr, 6);
-        let wide = display_px(&heading, super::ui::HOST_MAP_TITLE_FONT);
+        let heading = host_map_title(tr, 6);
+        let wide = display_px(&heading, ui::HOST_MAP_TITLE_FONT);
         assert!(wide <= MAP_CARD_W / 2.0, "{lang:?}: {heading}");
         let far = fill(tr.host_map_too_big, &[("m", &card_name(&"W".repeat(60)))]);
         long(&far, NOTE_FONT, note_room);
@@ -1231,7 +1231,7 @@ fn each_step_has_its_own_keys() {
     let [game, map, players] = Step::ALL.map(|step| {
         legend(
             &EN,
-            crate::app::gamepad::PadFamily::Xbox,
+            PadFamily::Xbox,
             &Face::MatchSetup {
                 step,
                 join: true,
@@ -1249,7 +1249,7 @@ fn each_step_has_its_own_keys() {
     }
     let seated = legend(
         &EN,
-        crate::app::gamepad::PadFamily::Xbox,
+        PadFamily::Xbox,
         &Face::MatchSetup {
             step: Step::Players,
             join: false,
@@ -1985,12 +1985,12 @@ fn the_host_map_heading_follows_the_table() {
     };
     assert_eq!(
         heading(&mut app),
-        [ui::host_map_title(&crate::app::i18n::EN, 4)]
+        [host_map_title(&crate::app::i18n::EN, 4)]
     );
     app.world_mut().resource_mut::<MatchConfig>().seats = 3;
     app.update();
     assert_eq!(
         heading(&mut app),
-        [ui::host_map_title(&crate::app::i18n::EN, 3)]
+        [host_map_title(&crate::app::i18n::EN, 3)]
     );
 }

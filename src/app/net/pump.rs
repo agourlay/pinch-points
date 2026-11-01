@@ -1529,7 +1529,7 @@ mod tests {
         joiner.rounds_dealt = 2;
         joiner.names[1] = "Bo".to_string();
         let start = |deal, name| {
-            let mut names = [wire_name(""); crate::sim::MAX_PLAYERS];
+            let mut names = [wire_name(""); MAX_PLAYERS];
             names[1] = wire_name(name);
             NetMsg::Start(Invitation {
                 names,

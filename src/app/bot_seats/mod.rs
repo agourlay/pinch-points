@@ -467,7 +467,7 @@ mod tests {
         app.init_resource::<SeatKinds>();
         let names = std::array::from_fn(|seat| format!("Person {seat}"));
         app.insert_resource(SeatNames(names));
-        app.insert_resource(crate::app::Recorder(Some(crate::sim::Replay::new(
+        app.insert_resource(crate::app::Recorder(Some(Replay::new(
             crate::sim::Level::from_board("Versus", 3, board.clone()),
         ))));
         app.insert_resource(Sim(board));

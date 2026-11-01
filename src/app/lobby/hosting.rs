@@ -203,7 +203,7 @@ pub fn host_tick(
     // screen for up to a second.
     state.table = state.roster(tr, &crate::transport::name_as_sent(&settings.names[0]));
     seat_door_bots(&mut state, &arrived);
-    state.seated = super::partners::host_seated(&state, &config, settings.team_mode, &arrived);
+    state.seated = partners::host_seated(&state, &config, settings.team_mode, &arrived);
     if let Some(hosted) = state.hosted_mut() {
         hosted.bot_string = arena
             .bots
@@ -276,9 +276,9 @@ pub fn host_tick(
     if let Some((seat, at)) = crate::app::dev::lobby_partners()
         && rivals >= at
         && !std::mem::replace(&mut *partnered, true)
-        && super::partners::partners_open(&state)
+        && partners_open(&state)
     {
-        super::partners::pick_partners(&mut state, &arrived, seat.saturating_sub(1));
+        partners::pick_partners(&mut state, &arrived, seat.saturating_sub(1));
         send_roster(&state, &config, settings.team_mode, &beaches);
     }
     let quota = crate::app::dev::auto_host_quota();
@@ -399,7 +399,7 @@ struct Frozen {
 fn seat_door_bots(state: &mut LobbyState, arrived: &[(crate::bots::listener::BotId, String)]) {
     for (_, name) in arrived {
         if state.table.len() < MAX_PLAYERS {
-            state.table.push(super::TablePlace {
+            state.table.push(TablePlace {
                 name: name.clone(),
                 kind: crate::sim::SeatKind::Bot,
             });

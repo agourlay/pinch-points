@@ -280,7 +280,7 @@ mod tests {
         let tr = &crate::app::i18n::EN;
         let table = state.roster(tr, "Host");
         assert_eq!(
-            super::super::place_names(&table),
+            place_names(&table),
             ["Host", "A", "B", "C", "D", "E"],
             "a row a chair"
         );

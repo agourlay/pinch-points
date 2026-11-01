@@ -76,7 +76,7 @@ pub(super) const TILE_W: f32 = ((MAP_CARD_W
     / CARD_COLUMNS as f32) as u32 as f32;
 pub(super) const THUMB_W: f32 = TILE_W - 2.0 * TILE_PAD;
 /// A card's picture's height: [`THUMB_W`] over it is the shape the
-/// pictures are drawn in ([`preview::PREVIEW_PX`]), so a board is
+/// pictures are drawn in ([`PREVIEW_PX`]), so a board is
 /// not stretched.
 pub(super) const THUMB_H: f32 = 148.0;
 /// A card's whole height: the picture, its padding and edge, the name

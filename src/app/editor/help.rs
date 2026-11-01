@@ -577,8 +577,7 @@ mod tests {
                     .unwrap_or_else(|| panic!("{face:?}: no line for {row:?}"));
                 assert_ne!(line.keys, "-", "{face:?}: {row:?} has no key");
                 assert!(
-                    line.pad
-                        .contains(row.pad.name(tr, crate::app::gamepad::PadFamily::Xbox)),
+                    line.pad.contains(row.pad.name(tr, PadFamily::Xbox)),
                     "{face:?}: {row:?} not on {line:?}"
                 );
             }

@@ -30,7 +30,7 @@ pub(super) struct Filing {
     pub(super) opened: Option<(std::path::PathBuf, String)>,
     /// The level's text as F2 last wrote it, or as a starter opened it, so
     /// Esc can tell work already on the shelf, or no work of the author's
-    /// at all, from work that would be lost (see [`super::unsaved_work`]).
+    /// at all, from work that would be lost (see [`unsaved_work`]).
     pub(super) filed: Option<String>,
 }
 
@@ -122,7 +122,7 @@ fn replaced_level(state: &EditorState, path: &std::path::Path) -> Option<String>
 /// default name, or the first "My Map 2", "My Map 3"... whose file is free.
 /// Every fresh bench used to be "My Map", so the second level left
 /// unnamed was saved over the first.
-pub(super) fn fresh_name(tr: &crate::app::i18n::Tr) -> String {
+pub(super) fn fresh_name(tr: &Tr) -> String {
     let base = tr.ed_default_name;
     std::iter::once(base.to_string())
         .chain((2..).map(|n| format!("{base} {n}")))
@@ -203,11 +203,7 @@ pub enum Shelved {
 /// stage list and the map dial find it. Over a file already there it asks
 /// first, as F2 does over a file the bench did not write: `replace` is the
 /// second press.
-pub fn shelve(
-    level: &crate::sim::Level,
-    replace: bool,
-    tr: &crate::app::i18n::Tr,
-) -> Result<Shelved, String> {
+pub fn shelve(level: &crate::sim::Level, replace: bool, tr: &Tr) -> Result<Shelved, String> {
     let mut level = level.clone();
     level.name = super::naming::tidy_name(&level.name, tr);
     let path = save_path(&level.name);
@@ -244,7 +240,7 @@ fn check_for_save(state: &mut EditorState, board: &Board, path: std::path::PathB
 pub(super) fn save_level(
     state: &mut EditorState,
     board: &Board,
-    (tr, device): (&crate::app::i18n::Tr, crate::app::gamepad::LastDevice),
+    (tr, device): (&Tr, LastDevice),
     saved: &mut MessageWriter<crate::app::LevelSaved>,
 ) {
     let level = level_here(state, board, &state.name);
@@ -276,7 +272,7 @@ pub(super) fn save_level(
                 saved.write(crate::app::LevelSaved);
             }
             state.filing.mine.insert(path.clone());
-            state.filing.filed = Some(super::filed_text(state, board));
+            state.filing.filed = Some(filed_text(state, board));
             // A warning leads: the line clips at the header's end, and the
             // file's name is the part the author can do without. The level
             // it replaced was named by the question before it.
@@ -553,7 +549,7 @@ mod tests {
         app.insert_state(Screen::Editor);
         let cursor = app
             .world_mut()
-            .spawn((crate::app::cursor::Cursor::seated(0), Transform::default()))
+            .spawn((Cursor::seated(0), Transform::default()))
             .id();
         app.add_systems(Update, (editor_input, editor_commands).chain());
         let screen = |app: &App| *app.world().resource::<State<Screen>>().get();
@@ -572,10 +568,7 @@ mod tests {
         assert_eq!(asked(&app), Some(Offer::Leave));
 
         // The stick moves the cursor with no key pressed.
-        app.world_mut()
-            .get_mut::<crate::app::cursor::Cursor>(cursor)
-            .expect("cursor")
-            .x += 1;
+        app.world_mut().get_mut::<Cursor>(cursor).expect("cursor").x += 1;
         app.update();
         assert_eq!(asked(&app), None, "the cursor walked off it");
         assert_eq!(
@@ -639,7 +632,7 @@ mod tests {
         app.world_mut().resource_mut::<EditorState>().name = name.to_string();
         let bench = |app: &App| {
             let state = app.world().resource::<EditorState>();
-            super::super::level_here(state, &app.world().resource::<Sim>().0, name).to_text()
+            level_here(state, &app.world().resource::<Sim>().0, name).to_text()
         };
         crate::app::paths::write_atomic(&legacy, bench(&app)).expect("wrote");
         tap(&mut app, KeyCode::F2);

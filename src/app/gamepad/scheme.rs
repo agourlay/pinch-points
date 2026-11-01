@@ -659,7 +659,7 @@ pub enum Face {
     PuzzleRunning,
     /// A puzzle's won card: `door` where its A goes.
     PuzzleWon {
-        door: crate::app::campaign::WonDoor,
+        door: WonDoor,
     },
     PuzzleLost {
         hint: bool,
@@ -1356,7 +1356,7 @@ mod tests {
     /// A is the door's.
     #[test]
     fn the_settings_legend_names_what_a_does_on_the_row() {
-        let xbox = crate::app::gamepad::PadFamily::Xbox;
+        let xbox = PadFamily::Xbox;
         let dial = legend(&EN, xbox, &Face::Settings { dial: true });
         assert!(dial.contains("A/B: "), "{dial}");
         assert!(!dial.contains(EN.pad.confirm), "{dial}");
@@ -1385,17 +1385,17 @@ mod tests {
     #[test]
     fn the_legend_shares_a_slot_between_rows_with_the_same_words() {
         assert_eq!(
-            legend(&EN, crate::app::gamepad::PadFamily::Xbox, &Face::Menu),
+            legend(&EN, PadFamily::Xbox, &Face::Menu),
             "D-pad: choose | A: play | X: paste a code | Y: mute | Start: quit"
         );
         assert_eq!(
-            legend(&EN, crate::app::gamepad::PadFamily::Xbox, &Face::Quitting),
+            legend(&EN, PadFamily::Xbox, &Face::Quitting),
             "A: quit | B/Start: back"
         );
         assert_eq!(
             legend(
                 &EN,
-                crate::app::gamepad::PadFamily::Xbox,
+                PadFamily::Xbox,
                 &Face::PuzzleSetup {
                     posts: true,
                     hint: false

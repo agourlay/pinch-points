@@ -474,7 +474,7 @@ mod tests {
         let pads: Vec<Entity> = (0..2)
             .map(|_| app.world_mut().spawn(Gamepad::default()).id())
             .collect();
-        app.add_systems(Update, (seats::keep_pad_order, pad_versus_input).chain());
+        app.add_systems(Update, (keep_pad_order, pad_versus_input).chain());
         app.update();
         let pending = |app: &App| app.world().resource::<PendingActions>().0;
         assert_eq!(pending(&app), [PlayerAction::None; MAX_PLAYERS]);

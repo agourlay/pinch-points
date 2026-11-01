@@ -315,7 +315,7 @@ mod tests {
     /// Mania, and the line says so.
     #[test]
     fn a_call_is_named_as_it_fires() {
-        let mut board = crate::sim::classic_arena(false, 2);
+        let mut board = classic_arena(false, 2);
         board.set_events_enabled(true);
         board.rules_mut().round_length = Some(crate::sim::SURGE_TICKS + 2);
         assert!(!board.in_surge(), "settled before the surge");

@@ -349,7 +349,7 @@ impl Discovery {
     pub fn bind_on(ports: &[u16]) -> io::Result<Discovery> {
         let mut last_err = io::Error::new(io::ErrorKind::AddrInUse, "no lobby port free");
         for &port in ports {
-            match super::bind_udp(port) {
+            match bind_udp(port) {
                 Ok(socket) => {
                     socket.set_nonblocking(true)?;
                     return Ok(Discovery { socket });
@@ -511,7 +511,7 @@ impl Announcer {
 
     /// [`Announcer::new`], sending where `air` says.
     pub fn on(id: u64, air: Air) -> io::Result<Announcer> {
-        let socket = super::bind_udp(0)?;
+        let socket = bind_udp(0)?;
         socket.set_broadcast(true)?;
         socket.set_nonblocking(true)?;
         let port = u64::from(socket.local_addr()?.port());

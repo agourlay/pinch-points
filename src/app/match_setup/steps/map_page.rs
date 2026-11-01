@@ -213,19 +213,19 @@ impl MapPage {
     /// scrolled to `scroll`. Only whole ones are drawn: a card or a
     /// heading cut by the window's edge reads as a glitch.
     pub fn whole_in_view(scroll: f32, top: f32, height: f32) -> bool {
-        top >= scroll - 0.5 && top + height <= scroll + super::ui::VIEW_H + 0.5
+        top >= scroll - 0.5 && top + height <= scroll + ui::VIEW_H + 0.5
     }
 
     /// Whether place `slot`'s row is whole in view at `scroll`.
     pub fn slot_in_view(&self, scroll: f32, slot: usize) -> bool {
         self.rows
             .get(self.row_of(slot))
-            .is_some_and(|row| Self::whole_in_view(scroll, row.top, super::ui::TILE_H))
+            .is_some_and(|row| Self::whole_in_view(scroll, row.top, ui::TILE_H))
     }
 
     /// Whether `section`'s heading is whole in view at `scroll`.
     pub fn heading_in_view(&self, scroll: f32, section: MapSection) -> bool {
-        Self::whole_in_view(scroll, self.headings[section.index()], super::ui::HEADING_H)
+        Self::whole_in_view(scroll, self.headings[section.index()], ui::HEADING_H)
     }
 
     /// The page as its scroll bar sees it, in pixels: the window's height
@@ -233,7 +233,7 @@ impl MapPage {
     pub fn window(&self, scroll: f32) -> menu_ui::scroll_bar::ScrollWindow {
         menu_ui::scroll_bar::ScrollWindow {
             first: scroll,
-            shown: super::ui::VIEW_H,
+            shown: ui::VIEW_H,
             total: self.height,
         }
     }

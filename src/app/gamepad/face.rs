@@ -725,23 +725,15 @@ mod tests {
     fn the_map_pages_a_says_what_it_does_there() {
         use crate::app::gamepad::scheme::legend;
         use crate::app::i18n::EN;
-        let between = legend(
-            &EN,
-            crate::app::gamepad::PadFamily::Xbox,
-            &Face::NextMap { pick: true },
-        );
+        let between = legend(&EN, PadFamily::Xbox, &Face::NextMap { pick: true });
         assert!(between.contains(EN.pad.next_round), "{between}");
         assert!(!between.contains(EN.pad.start_match), "{between}");
         assert!(between.contains(EN.pad.back), "{between}");
-        let lobby = legend(
-            &EN,
-            crate::app::gamepad::PadFamily::Xbox,
-            &Face::HostMap { pick: true },
-        );
+        let lobby = legend(&EN, PadFamily::Xbox, &Face::HostMap { pick: true });
         assert!(lobby.contains(EN.pad.start_match), "{lobby}");
         // On a card A picks nothing from, A is not offered.
         for face in [Face::HostMap { pick: false }, Face::NextMap { pick: false }] {
-            let said = legend(&EN, crate::app::gamepad::PadFamily::Xbox, &face);
+            let said = legend(&EN, PadFamily::Xbox, &face);
             assert!(!said.contains(EN.pad.start_match), "{said}");
             assert!(!said.contains(EN.pad.next_round), "{said}");
             assert!(said.contains(EN.pad.back), "{said}");

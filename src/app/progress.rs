@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn an_adopted_tick_does_not_outlive_a_reset() {
         let path = crate::app::paths::test_dir("progress-adopt-reset").join("progress.txt");
-        let mut alone = crate::sim::Level::from_board("Alone", 1, crate::sim::Board::new(4, 4, 0));
+        let mut alone = Level::from_board("Alone", 1, crate::sim::Board::new(4, 4, 0));
         alone.filing = Some(crate::sim::Filing {
             key: "file:custom/alone.txt".into(),
             legacy: Some("Alone".into()),

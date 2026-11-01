@@ -119,7 +119,7 @@ impl Peer {
             .and_then(|hosted| hosted.picking.as_ref())
     }
 
-    fn session(&self) -> Option<&crate::app::net::OnlineSession> {
+    fn session(&self) -> Option<&OnlineSession> {
         self.app.world().resource::<Online>().0.as_ref()
     }
 
@@ -387,7 +387,7 @@ fn the_lobby_keeps_ticking_under_the_page() {
     assert!(
         kim.state()
             .joined()
-            .is_some_and(|joined| joined.berth == crate::app::lobby::Berth::NoChair)
+            .is_some_and(|joined| joined.berth == Berth::NoChair)
     );
     host_taps(&mut host, &mut [&mut joe, &mut kim], KeyCode::Enter);
     run(&mut [&mut host, &mut joe, &mut kim], frames(1.0));
@@ -436,7 +436,7 @@ fn a_frozen_player_leaving_is_not_hidden_by_a_newcomer() {
     assert!(
         kim.state()
             .joined()
-            .is_some_and(|joined| joined.berth == crate::app::lobby::Berth::NoChair)
+            .is_some_and(|joined| joined.berth == Berth::NoChair)
     );
     if let Some(transport) = joe.state().transport() {
         transport.send(NetMsg::Leaving);

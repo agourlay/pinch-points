@@ -279,7 +279,7 @@ pub fn lobby_input(
     let partner_key = caps
         .key_for(crate::app::gamepad::scheme::PARTNER_CAP)
         .is_some_and(|key| keys.just_pressed(key));
-    let open = super::partners::partners_open(&state);
+    let open = partners_open(&state);
     if let Some(hosted) = state.hosted_mut()
         && hosted.partnering
     {
@@ -293,13 +293,13 @@ pub fn lobby_input(
                 .as_ref()
                 .map(|door| door.arrived(tr))
                 .unwrap_or_default();
-            let picker = super::partners::pick_partners(&mut state, &door, at as u8);
+            let picker = partners::pick_partners(&mut state, &door, at as u8);
             // The pad's cursor follows the person it picked for, as step
             // 3's does on the couch.
             if let (Some(seat), Some(pad_pick)) = (picker, pad_pick.as_deref_mut()) {
                 let picks = crate::app::gamepad::scheme::Picks {
                     list: crate::app::gamepad::scheme::PickList::Partners,
-                    rows: super::partners::partner_rows(&state, tr),
+                    rows: partner_rows(&state, tr),
                 };
                 pad_pick.stand_on(&picks, seat + 1);
             }

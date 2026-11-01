@@ -412,7 +412,7 @@ mod tests {
     fn a_series_left_puts_the_map_dial_back() {
         let mut app = arena();
         app.update();
-        let tournament = Tournament::start(crate::app::tournament::SeriesLength::BestOfFive);
+        let tournament = Tournament::start(SeriesLength::BestOfFive);
         let picked = MatchConfig {
             map: MapChoice::GenSmall,
             ..MatchConfig::default()

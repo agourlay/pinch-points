@@ -637,7 +637,7 @@ mod tests {
         app.init_resource::<crate::app::gamepad::LastDevice>();
         app.init_resource::<crate::app::keycaps::KeyCaps>();
         app.init_resource::<PauseMenu>();
-        app.init_resource::<crate::app::spectators::SpectatorChat>();
+        app.init_resource::<SpectatorChat>();
         app.init_resource::<Paused>();
         app.add_message::<bevy::input::keyboard::KeyboardInput>();
         let mut settings = GameSettings::default();

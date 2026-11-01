@@ -11,7 +11,7 @@ use super::*;
 /// names are the players' own. Everything else about the round is the
 /// host's to set, and travels to every peer in the invitation. The map is
 /// not turned here: the host picks it on the map page once it starts the
-/// match and the table is frozen ([`super::pick`]), and the row says so.
+/// match and the table is frozen ([`pick`]), and the row says so.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Dial {
     Map,

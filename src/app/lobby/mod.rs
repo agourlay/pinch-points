@@ -648,11 +648,11 @@ mod tests {
                 .is_empty()
         );
 
-        let mut session = crate::app::net::OnlineSession::new(
+        let mut session = OnlineSession::new(
             UdpTransport::host(0).expect("game socket"),
             crate::sim::Lockstep::new(0, vec![0, 1], crate::sim::DEFAULT_DELAY),
             2,
-            crate::transport::MatchTerms::default(),
+            MatchTerms::default(),
         );
         session
             .stay_on_air(Announcer::on(0x9A9B, crate::transport::Air::loopback(&[])).expect("air"));

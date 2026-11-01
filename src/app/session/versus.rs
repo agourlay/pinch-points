@@ -294,7 +294,7 @@ pub(in crate::app) struct RoundSource<'w, 's> {
     pub(in crate::app) table: ResMut<'w, rematch::LocalTable>,
     pub(in crate::app) tournament: Res<'w, tournament::Tournament>,
     /// This machine's own say in how a round set up here is scored.
-    pub(in crate::app) settings: Res<'w, crate::app::settings::GameSettings>,
+    pub(in crate::app) settings: Res<'w, settings::GameSettings>,
 }
 
 impl RoundSource<'_, '_> {

@@ -834,7 +834,7 @@ mod tests {
                 "{action:?}"
             );
         }
-        assert_eq!(table[0], binds::SeatBinds::default_for(0), "unchanged");
+        assert_eq!(table[0], SeatBinds::default_for(0), "unchanged");
         assert!(!crate::app::cursor::preset_clash(&table, ijkl));
         assert_eq!(
             rebind_job(&mut table, ijkl, 0, Action::PlaceUp, KeyCode::KeyI),

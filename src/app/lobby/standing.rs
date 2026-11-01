@@ -116,10 +116,10 @@ pub struct Hosted {
     /// Begun again at one, the joiner sits the new match out.
     pub(super) rounds_dealt: u32,
     /// The host started the match and is picking the map for the table
-    /// frozen then ([`super::pick`]). `None` while gathering.
+    /// frozen then ([`pick`]). `None` while gathering.
     pub picking: Option<Picking>,
     /// The host pressed P and is picking partners: the next number is the
-    /// seat whose partners change ([`super::partners`]), and Esc or P puts
+    /// seat whose partners change ([`partners`]), and Esc or P puts
     /// it away.
     pub partnering: bool,
     /// The seats the host's partner picks put its bots and the AI in, once

@@ -670,7 +670,7 @@ mod tests {
     #[test]
     fn a_team_gull_attack_says_the_partners_are_spared() {
         use crate::app::i18n::metrics::text_px;
-        let size = crate::app::menu_ui::type_scale::ROW;
+        let size = menu_ui::type_scale::ROW;
         let widest = ALL_LANGS
             .iter()
             .flat_map(|lang| lang.tr().event_blurbs)

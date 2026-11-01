@@ -131,8 +131,8 @@ pub fn say_beach_gone(
         return;
     };
     if table.set_here() {
-        let line = crate::app::i18n::fill(settings.tr().beach_gone, &[("name", &name)]);
-        log.push(line, crate::app::palette::IDLE_ROW);
+        let line = fill(settings.tr().beach_gone, &[("name", &name)]);
+        log.push(line, palette::IDLE_ROW);
     }
 }
 
